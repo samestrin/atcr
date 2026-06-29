@@ -410,3 +410,29 @@ func TestParseSource_BashGroupCommandStillBlock(t *testing.T) {
 		t.Fatalf("group command must still open one block; got %d: %+v", got, root.Children[0].Children)
 	}
 }
+
+func TestParseSource_BashArithmeticShiftNotHeredoc(t *testing.T) {
+	// `<<` inside bash arithmetic `$((...))` / `((...))` is a left-shift, NOT a
+	// heredoc. The scanner must not enter heredoc state (which would swallow the
+	// rest of the file). Both the spaced and no-space forms must stay structural.
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"spaced-expansion", "f() {\n  echo $(( 1 << n ))\n  echo done\n}\ng() {\n  echo hi\n}\n"},
+		{"nospace-assign", "f() {\n  x=$((a<<bits))\n  echo done\n}\ng() {\n  echo hi\n}\n"},
+		{"arith-command", "f() {\n  (( y = 1 << 3 ))\n  echo done\n}\ng() {\n  echo hi\n}\n"},
+	}
+	for _, tc := range cases {
+		root := parseSource([]byte(tc.src), bashConfig)
+		if len(root.Children) != 2 {
+			t.Fatalf("%s: arithmetic shift must not start a heredoc; want 2 funcs, got %d: %+v", tc.name, len(root.Children), root.Children)
+		}
+		if root.Children[0].Name != "f" || root.Children[1].Name != "g" {
+			t.Fatalf("%s: want funcs f and g, got %q and %q", tc.name, root.Children[0].Name, root.Children[1].Name)
+		}
+		if root.Children[0].EndLine != 4 {
+			t.Fatalf("%s: func f should end at its real brace on line 4, got EndLine=%d", tc.name, root.Children[0].EndLine)
+		}
+	}
+}
