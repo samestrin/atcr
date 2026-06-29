@@ -130,6 +130,8 @@ func parseSource(src []byte, cfg langConfig) node {
 	heredocStrip := false
 	heredocPending := false
 	paramDepth := 0
+	var paramQuote byte
+	paramEscape := false
 
 	for i := 0; i < len(src); i++ {
 		c := src[i]
@@ -171,15 +173,26 @@ func parseSource(src []byte, cfg langConfig) node {
 		case stParamExp:
 			// Inside a ${...} parameter expansion: count nested braces so the
 			// matching close returns to normal without ever touching the block
-			// stack. Other chars (including a stray quote) are ignored — good
-			// enough for a structural pre-pass.
-			if c == '{' {
+			// stack. Braces inside quoted strings are ignored so that patterns
+			// like ${var/"}"/"{"} do not desync the brace depth.
+			if paramQuote != 0 {
+				if paramEscape {
+					paramEscape = false
+				} else if c == '\\' {
+					paramEscape = true
+				} else if c == paramQuote {
+					paramQuote = 0
+				}
+			} else if c == '{' {
 				paramDepth++
 			} else if c == '}' {
 				paramDepth--
 				if paramDepth <= 0 {
 					state = stNormal
 				}
+			} else if c == '"' || c == '\'' {
+				paramQuote = c
+				paramEscape = false
 			}
 
 		default: // stNormal
