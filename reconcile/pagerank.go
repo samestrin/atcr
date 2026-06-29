@@ -160,15 +160,15 @@ func (g *agreementGraph) pageRank() map[string]float64 {
 // confidence stays byte-identical to the pre-13.3 vote-count behavior.
 func modelAuthority(groups [][]Finding) map[string]float64 {
 	g := newAgreementGraph()
-	any := false
+	hasAgreement := false
 	for _, group := range groups {
 		revs := distinctReviewers(group)
 		if len(revs) >= 2 {
 			g.addAgreement(revs)
-			any = true
+			hasAgreement = true
 		}
 	}
-	if !any {
+	if !hasAgreement {
 		return map[string]float64{}
 	}
 	return g.pageRank()
