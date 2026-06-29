@@ -46,6 +46,7 @@ func (g *agreementGraph) addAgreement(reviewers []string) {
 		seen[r] = true
 		distinct = append(distinct, r)
 	}
+	sort.Strings(distinct)
 	for i := 0; i < len(distinct); i++ {
 		for j := i + 1; j < len(distinct); j++ {
 			g.addEdge(distinct[i], distinct[j])
