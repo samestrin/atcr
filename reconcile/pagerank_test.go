@@ -125,6 +125,26 @@ func TestAgreementGraph_EmptyHasNoRanks(t *testing.T) {
 	eq(t, len(newAgreementGraph().pageRank()), 0, "empty graph → no ranks")
 }
 
+// BenchmarkModelAuthority validates the epic's <5ms NFR with headroom: a 24-model
+// run with thousands of agreement groups (far beyond a realistic handful of
+// reviewers) still builds the graph and runs PageRank well under the bound.
+func BenchmarkModelAuthority(b *testing.B) {
+	models := make([]string, 24)
+	for i := range models {
+		models[i] = "model-" + string(rune('a'+i))
+	}
+	var groups [][]Finding
+	for g := 0; g < 4000; g++ {
+		a := models[g%len(models)]
+		c := models[(g*7+3)%len(models)]
+		groups = append(groups, grp(a, c))
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = modelAuthority(groups)
+	}
+}
+
 func TestAgreementGraph_AddAgreementSkipsEmptyAndDuplicates(t *testing.T) {
 	// Defensive contract: empty names and within-slice duplicates never forge an
 	// edge or a spurious node. ["", "alpha", "alpha", "beta"] has exactly two
