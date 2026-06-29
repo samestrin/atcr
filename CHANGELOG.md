@@ -1,3 +1,20 @@
+## [Technical Debt] - 2026-06-28
+
+### Fixed
+
+- Capped distinct reviewers per agreement group and sorted them deterministically, eliminating an unbounded quadratic loop in `addAgreement`
+- Stored PageRank edge weights as `float64` to avoid repeated int-to-float conversions
+- Replaced manual absolute-value delta logic with `math.Abs` for consistent convergence
+- Precomputed the authority baseline once per reconcile run and added an explicit authority map lookup before promotion
+- Renamed the `any` variable to `hasAgreement` to avoid shadowing the Go builtin
+- Preallocated the `allGroups` slice with known capacity
+- Updated `Confidence` documentation to reflect that `HIGH` can result from authority promotion, not only multiple reviewers
+- Annotated dangling-mass redistribution as defensive-only for the always-connected agreement graph
+- Documented the strict authority baseline boundary assumption
+- Added invariant tests for symmetric K4/K5/cycle graphs, disconnected components, never-agreed isolated findings, and run-twice determinism
+- Reworded `BenchmarkModelAuthority` to characterize rather than validate the NFR
+- Fixed undefined `merged` variable and removed dead code in `reconcile/reconcile.go`
+
 ## [13.3.0] - 2026-06-28
 
 ### Added

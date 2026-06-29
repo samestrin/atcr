@@ -1,0 +1,536 @@
+diff --git a/reconcile/pagerank.go b/reconcile/pagerank.go
+new file mode 100644
+index 00000000..a294352d
+--- /dev/null
++++ b/reconcile/pagerank.go
+@@ -0,0 +1,192 @@
++package reconcile
++
++import "sort"
++
++// PageRank parameters (epic 13.3). The damping factor is the standard 0.85.
++// Convergence is driven by the L1 epsilon: the power method's error contracts at
++// ~damping per step, so reaching epsilon=1e-12 takes on the order of 170
++// iterations — the iteration cap is therefore a strict backstop set comfortably
++// above that (so the early-exit, not the cap, normally ends the loop) yet still
++// bounds a pathological graph from spinning (the epic's convergence risk). All
++// three are fixed — the signal must be deterministic per run.
++const (
++	pageRankDamping = 0.85
++	pageRankMaxIter = 1000
++	pageRankEpsilon = 1e-12
++)
++
++// agreementGraph is the run-global model-agreement graph (epic 13.3): nodes are
++// models (reviewers), an edge between two models is count-weighted by how many
++// findings they agreed on across the whole reconcile run. It is undirected — an
++// agreement is mutual — and stored as a symmetric adjacency map. Authority
++// (PageRank over this graph) is therefore a property of the whole run, not of any
++// single cluster.
++type agreementGraph struct {
++	// adj[u][v] == adj[v][u] is the number of findings models u and v agreed on.
++	adj map[string]map[string]int
++}
++
++// newAgreementGraph returns an empty graph ready for addAgreement.
++func newAgreementGraph() *agreementGraph {
++	return &agreementGraph{adj: map[string]map[string]int{}}
++}
++
++// addAgreement records that every distinct pair of the given reviewers agreed on
++// one finding: each unordered pair's edge weight is incremented by one. Empty
++// reviewer names and self-pairs are ignored, and duplicate names within the slice
++// are collapsed, so a single model repeating itself never forges an edge. A slice
++// with fewer than two distinct non-empty reviewers adds nothing (no agreement).
++func (g *agreementGraph) addAgreement(reviewers []string) {
++	seen := make(map[string]bool, len(reviewers))
++	distinct := make([]string, 0, len(reviewers))
++	for _, r := range reviewers {
++		if r == "" || seen[r] {
++			continue
++		}
++		seen[r] = true
++		distinct = append(distinct, r)
++	}
++	for i := 0; i < len(distinct); i++ {
++		for j := i + 1; j < len(distinct); j++ {
++			g.addEdge(distinct[i], distinct[j])
++		}
++	}
++}
++
++// addEdge increments the symmetric count-weighted edge between u and v.
++func (g *agreementGraph) addEdge(u, v string) {
++	if g.adj[u] == nil {
++		g.adj[u] = map[string]int{}
++	}
++	if g.adj[v] == nil {
++		g.adj[v] = map[string]int{}
++	}
++	g.adj[u][v]++
++	g.adj[v][u]++
++}
++
++// nodes returns the sorted node list. Sorting fixes the iteration order so the
++// power iteration's float accumulation is byte-identical across runs.
++func (g *agreementGraph) nodes() []string {
++	out := make([]string, 0, len(g.adj))
++	for u := range g.adj {
++		out = append(out, u)
++	}
++	sort.Strings(out)
++	return out
++}
++
++// pageRank runs deterministic weighted PageRank over the agreement graph and
++// returns each model's authority score. Scores sum to 1. An empty graph returns
++// an empty map.
++//
++// The iteration is the standard damped power method: rank flows along edges in
++// proportion to their weight share of the source node's total out-weight, with a
++// (1-d)/N teleport term and uniform redistribution of any dangling mass. Node and
++// neighbor traversal both follow sorted order, and the iteration cap guarantees
++// termination — together these make the result reproducible per run.
++func (g *agreementGraph) pageRank() map[string]float64 {
++	nodes := g.nodes()
++	n := len(nodes)
++	if n == 0 {
++		return map[string]float64{}
++	}
++
++	// Precompute each node's total out-weight and its sorted neighbor list so the
++	// inner accumulation order is fixed.
++	outWeight := make(map[string]int, n)
++	neighbors := make(map[string][]string, n)
++	for _, u := range nodes {
++		w := 0
++		nbrs := make([]string, 0, len(g.adj[u]))
++		for v, c := range g.adj[u] {
++			w += c
++			nbrs = append(nbrs, v)
++		}
++		sort.Strings(nbrs)
++		outWeight[u] = w
++		neighbors[u] = nbrs
++	}
++
++	rank := make(map[string]float64, n)
++	for _, u := range nodes {
++		rank[u] = 1.0 / float64(n)
++	}
++
++	teleport := (1.0 - pageRankDamping) / float64(n)
++	next := make(map[string]float64, n)
++	for iter := 0; iter < pageRankMaxIter; iter++ {
++		// Dangling mass (nodes with no out-edges) is redistributed uniformly so the
++		// total rank stays conserved at 1.
++		dangling := 0.0
++		for _, u := range nodes {
++			if outWeight[u] == 0 {
++				dangling += rank[u]
++			}
++		}
++		danglingShare := pageRankDamping * dangling / float64(n)
++
++		delta := 0.0
++		for _, u := range nodes {
++			inflow := 0.0
++			for _, v := range neighbors[u] {
++				if ow := outWeight[v]; ow > 0 {
++					inflow += float64(g.adj[v][u]) / float64(ow) * rank[v]
++				}
++			}
++			nv := teleport + danglingShare + pageRankDamping*inflow
++			next[u] = nv
++			d := nv - rank[u]
++			if d < 0 {
++				d = -d
++			}
++			delta += d
++		}
++		rank, next = next, rank
++		if delta < pageRankEpsilon {
++			break
++		}
++	}
++	return rank
++}
++
++// modelAuthority builds the run-global agreement graph from every merge group and
++// returns each model's PageRank authority. A group corroborated by two or more
++// distinct reviewers is an agreement; single-reviewer (isolated) and unattributed
++// groups add no edges. When no agreement exists anywhere in the run the result is
++// empty — the backward-compatible signal that disables authority promotion, so
++// confidence stays byte-identical to the pre-13.3 vote-count behavior.
++func modelAuthority(groups [][]Finding) map[string]float64 {
++	g := newAgreementGraph()
++	any := false
++	for _, group := range groups {
++		revs := distinctReviewers(group)
++		if len(revs) >= 2 {
++			g.addAgreement(revs)
++			any = true
++		}
++	}
++	if !any {
++		return map[string]float64{}
++	}
++	return g.pageRank()
++}
++
++// promoteByAuthority raises an isolated finding's confidence from MEDIUM to HIGH
++// when its sole reviewer's run authority exceeds the uniform 1/N baseline (epic
++// 13.3, AC3). It is promote-only: a finding is never demoted, so a valid isolated
++// finding can never be silently dropped below the downstream HIGH gate. Findings
++// with two or more reviewers (already HIGH) and findings whose model sits at or
++// below the baseline pass through unchanged, and an empty authority map (no
++// agreement in the run) is a no-op — together these keep the pre-13.3 confidence
++// exactly when no model has earned differential authority.
++func promoteByAuthority(m Merged, authority map[string]float64) Merged {
++	if len(authority) == 0 || len(m.Reviewers) != 1 || m.Confidence != ConfMedium {
++		return m
++	}
++	baseline := 1.0 / float64(len(authority))
++	if authority[m.Reviewers[0]] > baseline {
++		m.Confidence = ConfHigh
++	}
++	return m
++}
+diff --git a/reconcile/pagerank_confidence_test.go b/reconcile/pagerank_confidence_test.go
+new file mode 100644
+index 00000000..455bd048
+--- /dev/null
++++ b/reconcile/pagerank_confidence_test.go
+@@ -0,0 +1,111 @@
++package reconcile
++
++import "testing"
++
++// TestReconcile_AuthorityPromotesIsolatedHighAuthorityFinding is the AC3
++// behavior: alpha agrees with beta on one issue and with gamma on another, making
++// alpha the central (above-baseline-authority) model for the run. alpha's
++// otherwise-isolated finding is therefore promoted MEDIUM→HIGH, while beta's
++// isolated finding — beta sits below the 1/N baseline — stays MEDIUM.
++func TestReconcile_AuthorityPromotesIsolatedHighAuthorityFinding(t *testing.T) {
++	sources := []Source{
++		{Name: "alpha", Findings: []Finding{
++			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "alpha"),
++			mf("HIGH", "b.go", 20, "shared issue two here", "fix", "security", 15, "e", "alpha"),
++			mf("HIGH", "c.go", 30, "isolated alpha only finding", "fix", "security", 15, "e", "alpha"),
++		}},
++		{Name: "beta", Findings: []Finding{
++			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "beta"),
++			mf("HIGH", "d.go", 40, "isolated beta only finding", "fix", "security", 15, "e", "beta"),
++		}},
++		{Name: "gamma", Findings: []Finding{
++			mf("HIGH", "b.go", 20, "shared issue two here", "fix", "security", 15, "e", "gamma"),
++		}},
++	}
++	res := Reconcile(sources, recAt())
++	length(t, res.Findings, 4, "two merges (a.go,b.go) + two isolated (c.go,d.go)")
++
++	// All HIGH severity → sorted by file: a.go, b.go, c.go, d.go.
++	byFile := map[string]Merged{}
++	for _, m := range res.Findings {
++		byFile[m.File] = m
++	}
++	eq(t, byFile["a.go"].Confidence, ConfHigh, "alpha+beta agreement → HIGH")
++	eq(t, byFile["b.go"].Confidence, ConfHigh, "alpha+gamma agreement → HIGH")
++	eq(t, byFile["c.go"].Confidence, ConfHigh, "isolated finding from high-authority alpha promoted to HIGH")
++	eq(t, byFile["d.go"].Confidence, ConfMedium, "isolated finding from below-baseline beta stays MEDIUM")
++
++	// Promotion must not touch the reviewer set — it only adjusts confidence.
++	deepEq(t, byFile["c.go"].Reviewers, []string{"alpha"}, "single reviewer unchanged by promotion")
++}
++
++// TestReconcile_SymmetricAuthorityDoesNotPromote proves a regular (symmetric)
++// agreement graph promotes nothing: in a two-model run both models sit exactly at
++// the 1/N baseline, and the strict > comparison fails. This protects every
++// existing two-reviewer fixture from silent confidence drift.
++func TestReconcile_SymmetricAuthorityDoesNotPromote(t *testing.T) {
++	sources := []Source{
++		{Name: "alpha", Findings: []Finding{
++			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "alpha"),
++			mf("HIGH", "c.go", 30, "isolated alpha only finding", "fix", "security", 15, "e", "alpha"),
++		}},
++		{Name: "beta", Findings: []Finding{
++			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "beta"),
++		}},
++	}
++	res := Reconcile(sources, recAt())
++	byFile := map[string]Merged{}
++	for _, m := range res.Findings {
++		byFile[m.File] = m
++	}
++	eq(t, byFile["a.go"].Confidence, ConfHigh, "two reviewers → HIGH")
++	eq(t, byFile["c.go"].Confidence, ConfMedium, "symmetric authority does not exceed baseline → no promotion")
++}
++
++// TestReconcile_SymmetricTripleDoesNotPromote locks the float boundary: three
++// models that all pairwise agree form a vertex-transitive (symmetric) graph whose
++// PageRank converges to EXACTLY 1/N for every node, so the strict > baseline test
++// promotes nothing. A regression that introduced float drift at this boundary
++// would spuriously promote isolated findings in any fully-corroborated run.
++func TestReconcile_SymmetricTripleDoesNotPromote(t *testing.T) {
++	sources := []Source{
++		{Name: "alpha", Findings: []Finding{
++			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "alpha"),
++			mf("HIGH", "c.go", 30, "shared issue three here", "fix", "security", 15, "e", "alpha"),
++			mf("HIGH", "d.go", 40, "isolated alpha only finding", "fix", "security", 15, "e", "alpha"),
++		}},
++		{Name: "beta", Findings: []Finding{
++			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "beta"),
++			mf("HIGH", "b.go", 20, "shared issue two here", "fix", "security", 15, "e", "beta"),
++		}},
++		{Name: "gamma", Findings: []Finding{
++			mf("HIGH", "b.go", 20, "shared issue two here", "fix", "security", 15, "e", "gamma"),
++			mf("HIGH", "c.go", 30, "shared issue three here", "fix", "security", 15, "e", "gamma"),
++		}},
++	}
++	res := Reconcile(sources, recAt())
++	byFile := map[string]Merged{}
++	for _, m := range res.Findings {
++		byFile[m.File] = m
++	}
++	eq(t, byFile["d.go"].Confidence, ConfMedium, "symmetric K3 → no node exceeds baseline → no promotion")
++}
++
++// TestReconcile_NoAgreementLeavesConfidenceUnchanged is the backward-compat
++// invariant: with no cross-model agreement anywhere in the run the authority graph
++// is empty and confidence is exactly the pre-13.3 vote-count result.
++func TestReconcile_NoAgreementLeavesConfidenceUnchanged(t *testing.T) {
++	sources := []Source{
++		{Name: "alpha", Findings: []Finding{
++			mf("HIGH", "a.go", 10, "alpha distinct finding alpha", "fix", "security", 15, "e", "alpha"),
++		}},
++		{Name: "beta", Findings: []Finding{
++			mf("HIGH", "b.go", 20, "beta distinct finding beta", "fix", "security", 15, "e", "beta"),
++		}},
++	}
++	res := Reconcile(sources, recAt())
++	length(t, res.Findings, 2, "two isolated findings, no merge")
++	for _, m := range res.Findings {
++		eq(t, m.Confidence, ConfMedium, "isolated finding with no run agreement stays MEDIUM")
++	}
++}
+diff --git a/reconcile/pagerank_test.go b/reconcile/pagerank_test.go
+new file mode 100644
+index 00000000..adcdbd3b
+--- /dev/null
++++ b/reconcile/pagerank_test.go
+@@ -0,0 +1,163 @@
++package reconcile
++
++import "testing"
++
++// grp builds a merge group (slice of co-located findings) from a list of
++// reviewer names, one finding per reviewer. Only the Reviewer field matters for
++// authority graph construction.
++func grp(reviewers ...string) []Finding {
++	out := make([]Finding, len(reviewers))
++	for i, r := range reviewers {
++		out[i] = Finding{Reviewer: r}
++	}
++	return out
++}
++
++func TestModelAuthority_NoGroupsIsEmpty(t *testing.T) {
++	eq(t, len(modelAuthority(nil)), 0, "nil groups → no authority")
++	eq(t, len(modelAuthority([][]Finding{})), 0, "empty groups → no authority")
++}
++
++func TestModelAuthority_AllSingletonsHaveNoGraph(t *testing.T) {
++	// A run where no two models ever agreed produces no edges → empty authority,
++	// which is the backward-compat signal (no promotions happen downstream).
++	groups := [][]Finding{grp("alpha"), grp("beta"), grp("gamma")}
++	eq(t, len(modelAuthority(groups)), 0, "no agreement → no authority nodes")
++}
++
++func TestModelAuthority_SelfDuplicateIsNotAgreement(t *testing.T) {
++	// Two findings from the SAME reviewer in one group is one model repeating
++	// itself, not cross-model agreement: it must add no edge and no node.
++	groups := [][]Finding{grp("alpha", "alpha")}
++	eq(t, len(modelAuthority(groups)), 0, "self-duplicate is not agreement")
++}
++
++func TestModelAuthority_KeyedByReviewer(t *testing.T) {
++	groups := [][]Finding{grp("alpha", "beta")}
++	auth := modelAuthority(groups)
++	eq(t, len(auth), 2, "two agreeing models → two authority nodes")
++	_, hasA := auth["alpha"]
++	_, hasB := auth["beta"]
++	isTrue(t, hasA && hasB, "authority keyed by reviewer name")
++}
++
++func TestModelAuthority_EmptyReviewerCarriesNoAuthority(t *testing.T) {
++	// Unattributed findings (empty Reviewer) must not become a graph node.
++	groups := [][]Finding{grp("alpha", "")}
++	eq(t, len(modelAuthority(groups)), 0, "empty reviewer is not a node")
++}
++
++func TestAgreementGraph_SymmetricPairSplitsEvenly(t *testing.T) {
++	g := newAgreementGraph()
++	g.addAgreement([]string{"alpha", "beta"})
++	pr := g.pageRank()
++	inDelta(t, pr["alpha"], 0.5, 1e-6, "symmetric pair → 0.5 each")
++	inDelta(t, pr["beta"], 0.5, 1e-6, "symmetric pair → 0.5 each")
++	// Neither strictly exceeds the 1/N baseline (0.5): a regular graph yields no
++	// promotion, which protects existing 2-reviewer fixtures.
++	isTrue(t, pr["alpha"] <= 0.5, "symmetric node does not exceed baseline")
++}
++
++func TestAgreementGraph_StarCenterOutranksLeaves(t *testing.T) {
++	// alpha agrees with both beta and gamma; beta and gamma never agree with
++	// each other. alpha is the central, authoritative model.
++	g := newAgreementGraph()
++	g.addAgreement([]string{"alpha", "beta"})
++	g.addAgreement([]string{"alpha", "gamma"})
++	pr := g.pageRank()
++	inDelta(t, pr["alpha"], 0.486486, 1e-5, "star center PageRank")
++	inDelta(t, pr["beta"], 0.256757, 1e-5, "star leaf PageRank")
++	inDelta(t, pr["gamma"], 0.256757, 1e-5, "star leaf PageRank")
++	baseline := 1.0 / 3.0
++	isTrue(t, pr["alpha"] > baseline, "center exceeds 1/N baseline")
++	isTrue(t, pr["beta"] < baseline, "leaf below 1/N baseline")
++}
++
++func TestAgreementGraph_CompleteGraphIsUniform(t *testing.T) {
++	// Every model agrees with every other → fully symmetric → uniform authority.
++	g := newAgreementGraph()
++	g.addAgreement([]string{"alpha", "beta", "gamma"})
++	pr := g.pageRank()
++	third := 1.0 / 3.0
++	inDelta(t, pr["alpha"], third, 1e-6, "K3 uniform")
++	inDelta(t, pr["beta"], third, 1e-6, "K3 uniform")
++	inDelta(t, pr["gamma"], third, 1e-6, "K3 uniform")
++}
++
++func TestAgreementGraph_SumsToOne(t *testing.T) {
++	g := newAgreementGraph()
++	g.addAgreement([]string{"alpha", "beta"})
++	g.addAgreement([]string{"alpha", "gamma"})
++	g.addAgreement([]string{"beta", "delta"})
++	pr := g.pageRank()
++	sum := 0.0
++	for _, v := range pr {
++		sum += v
++	}
++	inDelta(t, sum, 1.0, 1e-6, "PageRank distribution sums to 1")
++}
++
++func TestAgreementGraph_CountWeightAffectsRank(t *testing.T) {
++	// alpha agreed with beta twice but gamma once. beta's stronger tie to the
++	// central node earns it more inherited authority than gamma.
++	g := newAgreementGraph()
++	g.addAgreement([]string{"alpha", "beta"})
++	g.addAgreement([]string{"alpha", "beta"})
++	g.addAgreement([]string{"alpha", "gamma"})
++	pr := g.pageRank()
++	isTrue(t, pr["alpha"] > pr["beta"], "central node ranks highest")
++	isTrue(t, pr["beta"] > pr["gamma"], "stronger tie outranks weaker tie")
++}
++
++func TestAgreementGraph_Deterministic(t *testing.T) {
++	build := func() map[string]float64 {
++		g := newAgreementGraph()
++		g.addAgreement([]string{"gamma", "alpha"})
++		g.addAgreement([]string{"alpha", "beta"})
++		g.addAgreement([]string{"delta", "alpha"})
++		g.addAgreement([]string{"beta", "gamma"})
++		return g.pageRank()
++	}
++	deepEq(t, build(), build(), "PageRank is byte-identical across runs")
++}
++
++func TestAgreementGraph_EmptyHasNoRanks(t *testing.T) {
++	eq(t, len(newAgreementGraph().pageRank()), 0, "empty graph → no ranks")
++}
++
++// BenchmarkModelAuthority validates the epic's <5ms NFR with headroom: a 24-model
++// run with thousands of agreement groups (far beyond a realistic handful of
++// reviewers) still builds the graph and runs PageRank well under the bound.
++func BenchmarkModelAuthority(b *testing.B) {
++	models := make([]string, 24)
++	for i := range models {
++		models[i] = "model-" + string(rune('a'+i))
++	}
++	var groups [][]Finding
++	for g := 0; g < 4000; g++ {
++		a := models[g%len(models)]
++		c := models[(g*7+3)%len(models)]
++		groups = append(groups, grp(a, c))
++	}
++	b.ResetTimer()
++	for i := 0; i < b.N; i++ {
++		_ = modelAuthority(groups)
++	}
++}
++
++func TestAgreementGraph_AddAgreementSkipsEmptyAndDuplicates(t *testing.T) {
++	// Defensive contract: empty names and within-slice duplicates never forge an
++	// edge or a spurious node. ["", "alpha", "alpha", "beta"] has exactly two
++	// distinct real models, so it is one alpha-beta agreement and nothing else.
++	g := newAgreementGraph()
++	g.addAgreement([]string{"", "alpha", "alpha", "beta"})
++	eq(t, len(g.adj), 2, "only the two real models become nodes")
++	eq(t, g.adj["alpha"]["beta"], 1, "exactly one alpha-beta edge")
++	_, hasEmpty := g.adj[""]
++	isTrue(t, !hasEmpty, "empty reviewer never becomes a node")
++
++	// A slice with only one distinct real model adds no edge at all.
++	g2 := newAgreementGraph()
++	g2.addAgreement([]string{"alpha", "", "alpha"})
++	eq(t, len(g2.adj), 0, "single distinct model → no agreement edge")
++}
+diff --git a/reconcile/reconcile.go b/reconcile/reconcile.go
+index 14c6a151..d839f0fe 100644
+--- a/reconcile/reconcile.go
++++ b/reconcile/reconcile.go
+@@ -79,23 +79,35 @@ type Summary struct {
+ func Reconcile(sources []Source, opts Options) Result {
+ 	clusters := ClusterWith(AllFindings(sources), opts.Grouper)
+ 
+-	var merged []Merged
++	// First pass: dedupe every cluster into merge groups. The groups are collected
++	// across ALL clusters before any confidence is assigned because authority
++	// (epic 13.3) is a run-global property — a model's PageRank depends on every
++	// agreement it took part in, not just the ones inside one location cluster.
++	var allGroups [][]Finding
+ 	ambiguous := []AmbiguousCluster{}
+-	clustersCollapsed, disagreements := 0, 0
+-
+ 	for _, cl := range clusters {
+ 		groups, amb := dedupeCluster(cl, clusterKeys(cl, opts.Grouper), opts.Merges)
+ 		ambiguous = append(ambiguous, amb...)
+-		for _, g := range groups {
+-			m := Merge(g)
+-			if len(g) >= 2 {
+-				clustersCollapsed++
+-			}
+-			if m.Disagreement != "" {
+-				disagreements++
+-			}
+-			merged = append(merged, m)
++		allGroups = append(allGroups, groups...)
++	}
++
++	// Build the run-global model-agreement graph and compute per-model authority.
++	// An empty result (no cross-model agreement) disables promotion, keeping
++	// confidence byte-identical to the pre-13.3 vote-count behavior.
++	authority := modelAuthority(allGroups)
++
++	// Second pass: merge each group and assign authority-aware confidence.
++	var merged []Merged
++	clustersCollapsed, disagreements := 0, 0
++	for _, g := range allGroups {
++		m := promoteByAuthority(Merge(g), authority)
++		if len(g) >= 2 {
++			clustersCollapsed++
++		}
++		if m.Disagreement != "" {
++			disagreements++
+ 		}
++		merged = append(merged, m)
+ 	}
+ 	sortMerged(merged)
+ 	outOfScope := 0

@@ -1,0 +1,95 @@
+{
+  "reviewers": [
+    {
+      "agent": "ronin",
+      "model": "nemotron-3-nano",
+      "status": "failed",
+      "durationMs": 6037,
+      "tdLineCount": 0,
+      "error": "no content in stream"
+    },
+    {
+      "agent": "dax",
+      "model": "deepseek-4",
+      "status": "ok",
+      "durationMs": 29400,
+      "tdLineCount": 5
+    },
+    {
+      "agent": "kai",
+      "model": "kimi-k2.6",
+      "status": "ok",
+      "durationMs": 59258,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "mira",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 65935,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "bruce",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 100803,
+      "tdLineCount": 2
+    },
+    {
+      "agent": "greta",
+      "model": "openai/qwen-3.6-plus",
+      "status": "ok",
+      "durationMs": 108587,
+      "tdLineCount": 3
+    },
+    {
+      "agent": "bob2",
+      "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+      "status": "ok",
+      "durationMs": 186164,
+      "tdLineCount": 586
+    },
+    {
+      "agent": "bob",
+      "model": "bob-model",
+      "status": "ok",
+      "durationMs": 207647,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "otto",
+      "model": "gemma-4-31b",
+      "status": "ok",
+      "durationMs": 212372,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "vera",
+      "model": "gpt-oss-20b",
+      "status": "ok",
+      "durationMs": 248615,
+      "tdLineCount": 3
+    },
+    {
+      "agent": "brad",
+      "model": "openai/qwen-3.7-plus",
+      "status": "ok",
+      "durationMs": 261568,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "archer",
+      "model": "glm-5.2",
+      "status": "ok",
+      "durationMs": 303715,
+      "tdLineCount": 2
+    }
+  ],
+  "totalFindings": 603,
+  "partial": true,
+  "totalDurationMs": 303716,
+  "bundleSize": 0,
+  "remoteRepoPath": "",
+  "timestamp": "2026-06-28T18:24:26-07:00"
+}

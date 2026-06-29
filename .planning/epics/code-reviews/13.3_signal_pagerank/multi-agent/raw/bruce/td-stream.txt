@@ -1,0 +1,2 @@
+LOW|reconcile/pagerank.go:142|Variable name `any` shadows Go 1.18+ builtin type alias|Rename to `anyAgreement` or `hasAny`|maintainability|2|any := false shadows predeclared any type (interface{})|bruce
+LOW|reconcile/pagerank.go:142|Variable name `any` shadows Go 1.18+ builtin type alias|Rename to e.g. `hasAgreement` or `found` to avoid shadowing `any`|maintainability|2|`any := false` shadows predeclared `any` (interface{} alias); some linters flag this|bruce

@@ -1,0 +1,3 @@
+HIGH|reconcile/reconcile.go:36|Undefined variable 'merged' used|Define merged before use|error-handling|10|merged used but not declared|bruce
+LOW|reconcile/reconcile.go:21|Dead code: ambiguous slice never used after loop|Remove or use ambiguous variable|maintainability|5|ambiguous declared and appended but never read|bruce
+LOW|reconcile/reconcile.go:61|Dead code: outOfScope variable unused|Remove outOfScope variable|maintainability|5|outOfScope declared but never referenced|bruce

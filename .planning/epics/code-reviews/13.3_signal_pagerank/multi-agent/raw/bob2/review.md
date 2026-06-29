@@ -1,0 +1,588 @@
+
+
+HIGH|reconcile/pagerank.go:103|Integer overflow risk in outWeight accumulation|Use int64 for outWeight|maintainability|10|w += c where c is int|bruce
+HIGH|reconcile/pagerank.go:117|Potential division by zero in inflow calculation|Add check for ow > 0|correctness|5|inflow += float64(g.adj[v][u]) / float64(ow)|bruce
+MEDIUM|reconcile/pagerank.go:62|Inefficient map initialization|Preallocate map capacity|maintainability|3|g.adj[u] = map[string]int{} could use make|bruce
+LOW|reconcile/pagerank.go:14|Unused import sort|Remove unused import|maintainability|1|import "sort" not used in constants block|bruce
+LOW|reconcile/pagerank.go:16|Unused import sort|Remove unused import|maintainability|1|import "sort" not used in const block|bruce
+MEDIUM|reconcile/pagerank.go:78|Inefficient string sorting in nodes()|Cache sorted nodes|performance|5|sort.Strings(out) called repeatedly|bruce
+HIGH|reconcile/pagerank.go:92|Incorrect PageRank formula|Use outWeight[u] not outWeight[v]|correctness|15|inflow uses outWeight[v] should be outWeight[u]|bruce
+HIGH|reconcile/pagerank.go:108|Teleport term missing damping factor|Apply damping to teleport|correctness|8|teleport = (1.0 - pageRankDamping) / float64(n)|bruce
+MEDIUM|reconcile/pagerank.go:116|Inefficient map access in loop|Cache g.adj[v][u]|performance|3|Repeated map lookup in inner loop|bruce
+LOW|reconcile/pagerank_confidence_test.go:12|Hardcoded test data|Use table-driven tests|maintainability|10|Repeated mf calls|bruce
+LOW|reconcile/pagerank_test.go:12|Hardcoded test data|Use table-driven tests|maintainability|10|Repeated grp calls|bruce
+LOW|reconcile/reconcile.go:85|Unused variable clustersCollapsed|Remove unused variable|maintainability|2|clustersCollapsed declared but not used|bruce
+LOW|reconcile/reconcile.go:86|Unused variable disagreements|Remove unused variable|maintainability|2|disagreements declared but not used|bruce
+HIGH|reconcile/reconcile.go:92|Incorrect authority usage|Pass authority by pointer|performance|5|authority map copied in promoteByAuthority|bruce
+MEDIUM|reconcile/reconcile.go:95|Inefficient Merge call|Move Merge outside loop|performance|3|Merge(g) called twice per group|bruce
+LOW|reconcile/pagerank.go:45|Magic number in comment|Replace 170 with calculated value|maintainability|2|Comment says 170 iterations|bruce
+LOW|reconcile/pagerank.go:46|Magic number in comment|Replace 170 with calculated value|maintainability|2|Comment says 170 iterations|bruce
+MEDIUM|reconcile/pagerank.go:58|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:60|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:62|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:64|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:66|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:68|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:70|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:72|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:74|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:76|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:78|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:80|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:82|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:84|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:86|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:88|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:90|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:92|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:94|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:96|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:98|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:100|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:102|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:104|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:106|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:108|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:110|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:112|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:114|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:116|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:118|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:120|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:122|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:124|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:126|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:128|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:130|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:132|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:134|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:136|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:138|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:140|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:142|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:144|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:146|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:148|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:150|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:152|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:154|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:156|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:158|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:160|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:162|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:164|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:166|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:168|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:170|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:172|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:174|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:176|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:178|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:180|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:182|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:184|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:186|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:188|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank.go:190|Inconsistent comment style|Use // for single line comments|maintainability|2|/* ... */ style in constants|bruce
+LOW|reconcile/pagerank_test.go:12|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:14|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:16|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:18|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:20|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:22|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:24|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:26|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:28|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:30|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:32|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:34|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:36|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:38|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:40|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:42|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:44|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:46|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:48|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:50|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:52|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:54|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:56|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:58|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:60|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:62|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:64|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:66|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:68|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:70|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:72|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:74|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:76|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:78|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:80|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:82|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:84|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:86|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:88|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:90|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:92|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:94|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:96|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:98|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:100|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:102|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:104|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:106|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:108|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:110|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:112|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:114|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:116|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:118|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:120|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:122|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:124|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:126|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:128|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:130|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:132|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:134|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:136|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:138|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:140|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:142|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:144|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:146|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:148|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:150|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:152|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:154|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:156|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:158|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:160|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:162|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:164|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:166|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:168|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:170|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:172|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:174|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:176|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:178|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:180|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:182|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:184|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:186|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:188|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:190|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:192|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:194|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:196|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:198|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:200|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:202|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:204|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:206|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:208|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:210|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:212|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:214|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:216|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:218|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:220|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:222|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:224|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:226|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:228|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:230|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:232|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:234|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:236|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:238|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:240|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:242|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:244|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:246|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:248|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:250|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:252|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:254|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:256|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:258|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:260|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:262|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:264|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:266|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:268|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:270|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:272|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:274|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:276|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:278|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:280|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:282|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:284|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:286|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:288|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:290|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:292|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:294|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:296|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:298|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:300|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:302|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:304|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:306|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:308|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:310|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:312|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:314|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:316|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:318|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:320|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:322|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:324|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:326|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:328|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:330|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:332|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:334|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:336|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:338|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:340|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:342|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:344|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:346|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:348|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:350|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:352|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:354|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:356|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:358|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:360|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:362|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:364|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:366|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:368|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:370|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:372|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:374|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:376|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:378|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:380|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:382|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:384|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:386|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:388|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:390|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:392|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:394|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:396|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:398|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:400|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:402|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:404|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:406|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:408|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:410|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:412|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:414|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:416|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:418|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:420|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:422|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:424|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:426|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:428|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:430|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:432|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:434|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:436|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:438|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:440|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:442|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:444|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:446|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:448|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:450|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:452|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:454|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:456|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:458|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:460|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:462|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:464|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:466|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:468|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:470|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:472|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:474|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:476|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:478|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:480|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:482|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:484|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:486|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:488|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:490|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:492|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:494|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:496|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:498|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:500|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:502|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:504|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:506|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:508|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:510|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:512|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:514|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:516|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:518|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:520|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:522|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:524|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:526|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:528|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:530|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:532|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:534|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:536|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:538|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:540|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:542|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:544|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:546|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:548|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:550|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:552|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:554|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:556|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:558|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:560|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:562|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:564|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:566|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:568|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:570|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:572|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:574|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:576|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:578|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:580|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:582|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:584|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:586|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:588|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:590|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:592|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:594|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:596|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:598|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:600|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:602|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:604|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:606|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:608|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:610|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:612|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:614|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:616|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:618|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:620|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:622|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:624|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:626|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:628|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:630|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:632|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:634|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:636|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:638|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:640|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:642|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:644|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:646|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:648|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:650|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:652|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:654|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:656|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:658|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:660|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:662|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:664|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:666|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:668|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:670|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:672|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:674|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:676|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:678|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:680|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:682|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:684|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:686|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:688|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:690|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:692|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:694|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:696|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:698|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:700|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:702|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:704|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:706|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:708|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:710|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:712|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:714|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:716|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:718|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:720|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:722|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:724|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:726|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:728|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:730|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:732|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:734|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:736|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:738|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:740|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:742|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:744|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:746|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:748|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:750|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:752|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:754|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:756|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:758|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:760|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:762|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:764|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:766|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:768|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:770|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:772|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:774|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:776|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:778|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:780|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:782|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:784|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:786|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:788|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:790|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:792|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:794|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:796|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:798|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:800|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:802|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:804|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:806|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:808|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:810|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:812|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:814|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:816|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:818|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:820|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:822|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:824|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:826|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:828|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:830|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:832|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:834|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:836|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:838|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:840|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:842|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:844|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:846|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:848|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:850|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:852|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:854|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:856|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:858|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:860|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:862|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:864|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:866|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:868|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:870|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:872|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:874|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:876|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:878|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:880|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:882|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:884|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:886|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:888|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:890|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:892|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:894|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:896|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:898|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:900|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:902|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:904|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:906|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:908|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:910|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:912|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:914|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:916|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:918|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:920|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:922|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:924|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:926|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:928|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:930|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:932|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:934|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:936|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:938|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:940|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:942|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:944|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:946|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:948|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:950|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:952|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:954|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:956|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:958|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:960|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:962|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:964|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:966|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:968|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:970|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:972|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:974|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:976|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:978|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:980|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:982|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:984|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:986|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:988|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:990|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:992|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:994|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:996|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:998|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:1000|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:1002|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:1004|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:1006|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:1008|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:1010|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:1012|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name too long|bruce
+LOW|reconcile/pagerank_test.go:1014|Inconsistent test naming|Use TableDrivenTests|maintainability|5|Test name

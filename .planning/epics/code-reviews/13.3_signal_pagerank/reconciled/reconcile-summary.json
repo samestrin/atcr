@@ -1,0 +1,22 @@
+{
+  "target": "13.3_signal_pagerank",
+  "mode": "epic",
+  "sources": ["claude", "multi-agent"],
+  "raw_count": 23,
+  "merged_count": 22,
+  "clusters_collapsed": "23 raw findings -> 16 dedupe clusters -> 22 final (5 proximity false-merges split back apart during adjudication; net 1 true collapse)",
+  "severity_disagreements": 0,
+  "intent_annotations": 0,
+  "validated_count": 22,
+  "pruned_count": 0,
+  "corrected_count": 0,
+  "annotated_count": 0,
+  "claude_role": "intent_verifier",
+  "timestamp": "2026-06-29T01:57:27Z",
+  "notes": {
+    "quarantine": "multi-agent reviewer 'bob2' (NVIDIA-Nemotron-3-Super-120B-A12B) emitted 586 of 603 raw findings in a repetition loop (502x 'Inconsistent test naming', 67x 'Inconsistent comment style' stamped across consecutive line numbers of pagerank_test.go). Excluded entirely before dedupe. Original contaminated stream preserved at multi-agent/td-stream.txt.bak-runaway.",
+    "attribution_fix": "Per-row REVIEWER column in the multi-agent fan-out was mislabeled (dax/vera/brad rows tagged 'bruce'; archer tagged 'base-reviewer'). Rebuilt multi-agent/td-stream.txt from raw/<agent>/td-stream.txt with REVIEWER corrected to the authoritative raw-dir agent name. 17 legitimate findings retained from dax(5), greta(3), vera(3), bruce(2), archer(2), otto(1), brad(1).",
+    "confidence": "All 22 final findings are MEDIUM. No genuine 2+-distinct-reviewer agreement on the same issue exists after quarantine; every HIGH-confidence cluster the dedupe proposed was a line-proximity false-merge of distinct concerns.",
+    "harness_bugs": "Two upstream multi-agent harness issues surfaced: (1) no runaway/repetition cap let bob2 emit 586 near-duplicate rows with status=ok; (2) per-row reviewer attribution does not reliably match the emitting agent."
+  }
+}

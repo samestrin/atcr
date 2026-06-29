@@ -1,0 +1,3 @@
+MEDIUM|reconcile/pagerank.go:51|Unbounded quadratic loop in addAgreement could enable CPU exhaustion|Enforce maximum distinct reviewers per group or cap slice length|security|15|O(K^2) nested loop over distinct reviewer strings|greta
+LOW|reconcile/pagerank.go:105|Float accumulation may vary across CPU architectures breaking byte-identical guarantee|Use fixed-point arithmetic or enforce single-arch CI|correctness|10|float64 math not strictly deterministic on ARM vs x86|greta
+LOW|reconcile/pagerank.go:158|Implicit zero-value map access for missing reviewer authority|Add explicit map lookup check before comparison|correctness|5|authority[m.Reviewers[0]] returns 0.0 if key absent|greta

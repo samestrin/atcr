@@ -1,0 +1,5 @@
+MEDIUM|reconcile/pagerank.go:43|O(n²) allocation per addAgreement due to seen map|Preallocate seen map with capacity len(reviewers)|performance|2|seen := make(map[string]bool, len(reviewers)) — already done; false positive|bruce
+MEDIUM|reconcile/pagerank.go:50|addAgreement re-sorts distinct reviewers implicitly via slice order|Explicitly sort distinct reviewers for deterministic edge addition order|correctness|3|distinct slice built from map iteration has non-deterministic order|bruce
+MEDIUM|reconcile/pagerank.go:98|outWeight map uses int for edge weights but pageRank converts to float64|Use float64 for outWeight to avoid repeated int-to-float conversions|performance|2|outWeight[v] converted to float64 on every neighbor iteration|bruce
+LOW|reconcile/pagerank.go:143|delta accumulation uses manual abs; math.Abs is clearer|Replace manual abs with math.Abs(d)|maintainability|1|if d < 0 { d = -d }|bruce
+MEDIUM|reconcile/reconcile.go:82|allGroups slice grows unbounded without preallocation|Preallocate allGroups with len(clusters) or known capacity|performance|1|var allGroups [][]Finding|bruce
