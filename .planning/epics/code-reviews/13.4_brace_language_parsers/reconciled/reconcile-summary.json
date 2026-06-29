@@ -1,0 +1,17 @@
+{
+  "sources": ["claude", "multi-agent"],
+  "raw_count": 25,
+  "merged_count": 23,
+  "clusters_collapsed": {
+    "input_rows": 25,
+    "merged_rows": 20
+  },
+  "severity_disagreements": 1,
+  "intent_annotations": 0,
+  "validated_count": 23,
+  "pruned_count": 0,
+  "corrected_count": 0,
+  "annotated_count": 0,
+  "claude_role": "intent_verifier",
+  "timestamp": "2026-06-29T13:55:33Z"
+}

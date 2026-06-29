@@ -1,0 +1,1 @@
+MEDIUM|internal/astgroup/parsers/src/braceparser/main.go:49|Missing negative length check causes panic on negative n|Add n < 0 to guard condition|error-handling|2|src := buf[:n] panics if n < 0; guard only checks > len(buf)|bruce

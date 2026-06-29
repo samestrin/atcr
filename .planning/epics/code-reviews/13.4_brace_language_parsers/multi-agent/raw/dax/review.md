@@ -1,0 +1,1 @@
+LOW|internal/astgroup/parsers/src/braceparser/parse_core.go:283|Scanner does not handle \r line ending, may miscount lines on Windows files|Handle \r as newline or normalize input before scanning|correctness|5|line counting only increments on \n; \r not handled|reviewer

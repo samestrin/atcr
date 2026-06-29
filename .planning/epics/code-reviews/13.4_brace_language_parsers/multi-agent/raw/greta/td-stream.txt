@@ -1,0 +1,1 @@
+LOW|internal/astgroup/parsers/src/braceparser/main.go:50|Negative length bypasses bounds check and panics|Add n < 0 validation before slicing|security|2|src := buf[:n] panics if n is negative|greta

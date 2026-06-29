@@ -1,0 +1,97 @@
+{
+  "reviewers": [
+    {
+      "agent": "ronin",
+      "model": "nemotron-3-nano",
+      "status": "failed",
+      "durationMs": 13242,
+      "tdLineCount": 0,
+      "error": "no content in stream"
+    },
+    {
+      "agent": "otto",
+      "model": "gemma-4-31b",
+      "status": "ok",
+      "durationMs": 25512,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "bob2",
+      "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+      "status": "ok",
+      "durationMs": 72711,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "greta",
+      "model": "openai/qwen-3.6-plus",
+      "status": "ok",
+      "durationMs": 131357,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "kai-backup",
+      "model": "kimi-k2.5",
+      "status": "ok",
+      "durationMs": 15690,
+      "tdLineCount": 7
+    },
+    {
+      "agent": "bob",
+      "model": "bob-model",
+      "status": "ok",
+      "durationMs": 227984,
+      "tdLineCount": 4
+    },
+    {
+      "agent": "dax",
+      "model": "deepseek-4",
+      "status": "ok",
+      "durationMs": 289791,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "brad",
+      "model": "openai/qwen-3.7-plus",
+      "status": "ok",
+      "durationMs": 304085,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "mira",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 456279,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "bruce",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 536910,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "vera",
+      "model": "gpt-oss-20b",
+      "status": "timeout",
+      "durationMs": 600000,
+      "tdLineCount": 0,
+      "error": "stream read failed: context deadline exceeded"
+    },
+    {
+      "agent": "archer",
+      "model": "glm-5.2",
+      "status": "timeout",
+      "durationMs": 600000,
+      "tdLineCount": 0,
+      "error": "stream read failed: context deadline exceeded (fallback archer-backup also failed: stream read failed: context deadline exceeded)"
+    }
+  ],
+  "totalFindings": 15,
+  "partial": true,
+  "totalDurationMs": 900000,
+  "bundleSize": 0,
+  "remoteRepoPath": "",
+  "timestamp": "2026-06-29T06:48:30-07:00"
+}
