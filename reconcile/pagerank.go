@@ -162,6 +162,8 @@ func modelAuthority(groups [][]Finding) map[string]float64 {
 	g := newAgreementGraph()
 	hasAgreement := false
 	for _, group := range groups {
+		// distinctReviewers is the ≥2 gate for hasAgreement; addAgreement is the
+		// authoritative deduplicator for the graph, so empties/duplicates are safe.
 		revs := distinctReviewers(group)
 		if len(revs) >= 2 {
 			g.addAgreement(revs)
