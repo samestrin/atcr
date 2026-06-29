@@ -136,6 +136,7 @@ func parseSource(src []byte, cfg langConfig) node {
 	paramDepth := 0
 	var paramQuote byte
 	paramEscape := false
+	arithDepth := 0 // bash `((...))` / `$((...))` nesting; a `<<` inside is a shift, not a heredoc
 
 	for i := 0; i < len(src); i++ {
 		c := src[i]
@@ -223,12 +224,31 @@ func parseSource(src []byte, cfg langConfig) node {
 				state = stString
 				strDelim = c
 				escape = false
-			case cfg.heredocs && matchAt(src, i, cfg.heredocOp) && isHeredocStart(src, i+len(cfg.heredocOp)):
+			case cfg.heredocs && arithDepth == 0 && matchAt(src, i, cfg.heredocOp) && isHeredocStart(src, i+len(cfg.heredocOp)):
 				tag, strip, consumed := parseHeredoc(src, i+len(cfg.heredocOp), cfg.heredocOp == "<<<")
 				heredocTag = tag
 				heredocStrip = strip
 				heredocPending = true
 				i += len(cfg.heredocOp) + consumed - 1
+			case cfg.heredocs && cfg.heredocOp == "<<" && c == '(' && i+1 < len(src) && src[i+1] == '(':
+				// Bash arithmetic `((...))` / `$((...))`: a `<<` inside is a left-shift,
+				// never a heredoc. Track depth so heredoc detection is suppressed within
+				// (the `<<` then falls through to header text, which is harmless).
+				arithDepth++
+				parenDepth += 2
+				addHeader('(')
+				addHeader('(')
+				i++
+			case cfg.heredocs && cfg.heredocOp == "<<" && arithDepth > 0 && c == ')' && i+1 < len(src) && src[i+1] == ')':
+				arithDepth--
+				if parenDepth >= 2 {
+					parenDepth -= 2
+				} else {
+					parenDepth = 0
+				}
+				addHeader(')')
+				addHeader(')')
+				i++
 			case c == '(':
 				parenDepth++
 				addHeader(c)
