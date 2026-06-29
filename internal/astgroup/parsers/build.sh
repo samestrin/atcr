@@ -26,22 +26,34 @@ fi
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 build() {
-  local name="$1" srcdir="$2"
-  echo "building ${name}.wasm from ${srcdir}"
+  local name="$1" srcdir="$2" tags="${3:-}"
+  local tagflag=()
+  [ -n "${tags}" ] && tagflag=(-tags "${tags}")
+  echo "building ${name}.wasm from ${srcdir}${tags:+ (tags: ${tags})}"
   ( cd "${here}/src/${srcdir}" && \
     GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -trimpath \
-      -o "${here}/${name}.wasm" . )
+      ${tagflag[@]+"${tagflag[@]}"} -o "${here}/${name}.wasm" . )
   echo "  -> $(wc -c < "${here}/${name}.wasm") bytes"
 }
 
 build go goparser
 build python pyparser
 
+# The brace parser is ONE Go source (src/braceparser) compiled once per language
+# with the language's keyword/naming table baked in via build tag. Four binaries
+# (not one shared binary) is the deliberate design: the host already holds the
+# language string from the file extension and uses the .wasm as the discriminator,
+# exactly like go/python — see the epic's recorded clarifications.
+build ts braceparser ts
+build php braceparser php
+build rust braceparser rust
+build bash braceparser bash
+
 # Refresh the checksum manifest so the committed binaries stay verifiable from a
 # committed hash. TestEmbeddedParsersMatchManifest (go test ./...) fails in CI if
 # the .wasm files and SHA256SUMS drift, catching a tampered or stale binary
 # without needing a Wasm toolchain in the pipeline. Commit SHA256SUMS with the
 # regenerated .wasm files.
-( cd "${here}" && sha256sum go.wasm python.wasm > SHA256SUMS )
+( cd "${here}" && sha256sum go.wasm python.wasm ts.wasm php.wasm rust.wasm bash.wasm > SHA256SUMS )
 echo "wrote SHA256SUMS"
 echo "done"
