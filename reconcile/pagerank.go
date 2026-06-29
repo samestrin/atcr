@@ -1,6 +1,9 @@
 package reconcile
 
-import "sort"
+import (
+	"math"
+	"sort"
+)
 
 // PageRank parameters (epic 13.3). The damping factor is the standard 0.85.
 // Convergence is driven by the L1 epsilon: the power method's error contracts at
@@ -14,6 +17,14 @@ const (
 	pageRankMaxIter = 1000
 	pageRankEpsilon = 1e-12
 )
+
+// maxDistinctReviewers bounds the per-finding agreement fan-out. addAgreement's
+// pair loop is O(n^2) in the distinct reviewer count, so a single source that
+// floods one finding location with fabricated reviewer names could force
+// quadratic edge-building work (a CPU-exhaustion vector). A real run has a
+// handful of models, so this cap is a defensive backstop that never triggers in
+// practice.
+const maxDistinctReviewers = 64
 
 // agreementGraph is the run-global model-agreement graph (epic 13.3): nodes are
 // models (reviewers), an edge between two models is count-weighted by how many
@@ -36,6 +47,8 @@ func newAgreementGraph() *agreementGraph {
 // reviewer names and self-pairs are ignored, and duplicate names within the slice
 // are collapsed, so a single model repeating itself never forges an edge. A slice
 // with fewer than two distinct non-empty reviewers adds nothing (no agreement).
+// The distinct set is capped at maxDistinctReviewers to bound the O(n^2) pair
+// loop against a flooded reviewer list (DoS backstop).
 func (g *agreementGraph) addAgreement(reviewers []string) {
 	seen := make(map[string]bool, len(reviewers))
 	distinct := make([]string, 0, len(reviewers))
@@ -45,6 +58,10 @@ func (g *agreementGraph) addAgreement(reviewers []string) {
 		}
 		seen[r] = true
 		distinct = append(distinct, r)
+	}
+	sort.Strings(distinct)
+	if len(distinct) > maxDistinctReviewers {
+		distinct = distinct[:maxDistinctReviewers]
 	}
 	for i := 0; i < len(distinct); i++ {
 		for j := i + 1; j < len(distinct); j++ {
@@ -94,13 +111,13 @@ func (g *agreementGraph) pageRank() map[string]float64 {
 
 	// Precompute each node's total out-weight and its sorted neighbor list so the
 	// inner accumulation order is fixed.
-	outWeight := make(map[string]int, n)
+	outWeight := make(map[string]float64, n)
 	neighbors := make(map[string][]string, n)
 	for _, u := range nodes {
-		w := 0
+		w := 0.0
 		nbrs := make([]string, 0, len(g.adj[u]))
 		for v, c := range g.adj[u] {
-			w += c
+			w += float64(c)
 			nbrs = append(nbrs, v)
 		}
 		sort.Strings(nbrs)
@@ -117,7 +134,9 @@ func (g *agreementGraph) pageRank() map[string]float64 {
 	next := make(map[string]float64, n)
 	for iter := 0; iter < pageRankMaxIter; iter++ {
 		// Dangling mass (nodes with no out-edges) is redistributed uniformly so the
-		// total rank stays conserved at 1.
+		// total rank stays conserved at 1. This branch is defensive-only for the
+		// agreement graph: addEdge always creates symmetric edges, so every node
+		// has outWeight >= 1 and dangling remains 0.
 		dangling := 0.0
 		for _, u := range nodes {
 			if outWeight[u] == 0 {
@@ -131,16 +150,12 @@ func (g *agreementGraph) pageRank() map[string]float64 {
 			inflow := 0.0
 			for _, v := range neighbors[u] {
 				if ow := outWeight[v]; ow > 0 {
-					inflow += float64(g.adj[v][u]) / float64(ow) * rank[v]
+					inflow += float64(g.adj[v][u]) / ow * rank[v]
 				}
 			}
 			nv := teleport + danglingShare + pageRankDamping*inflow
 			next[u] = nv
-			d := nv - rank[u]
-			if d < 0 {
-				d = -d
-			}
-			delta += d
+			delta += math.Abs(nv - rank[u])
 		}
 		rank, next = next, rank
 		if delta < pageRankEpsilon {
@@ -158,15 +173,17 @@ func (g *agreementGraph) pageRank() map[string]float64 {
 // confidence stays byte-identical to the pre-13.3 vote-count behavior.
 func modelAuthority(groups [][]Finding) map[string]float64 {
 	g := newAgreementGraph()
-	any := false
+	hasAgreement := false
 	for _, group := range groups {
+		// distinctReviewers is the ≥2 gate for hasAgreement; addAgreement is the
+		// authoritative deduplicator for the graph, so empties/duplicates are safe.
 		revs := distinctReviewers(group)
 		if len(revs) >= 2 {
 			g.addAgreement(revs)
-			any = true
+			hasAgreement = true
 		}
 	}
-	if !any {
+	if !hasAgreement {
 		return map[string]float64{}
 	}
 	return g.pageRank()
@@ -180,12 +197,15 @@ func modelAuthority(groups [][]Finding) map[string]float64 {
 // below the baseline pass through unchanged, and an empty authority map (no
 // agreement in the run) is a no-op — together these keep the pre-13.3 confidence
 // exactly when no model has earned differential authority.
-func promoteByAuthority(m Merged, authority map[string]float64) Merged {
+func promoteByAuthority(m Merged, authority map[string]float64, baseline float64) Merged {
 	if len(authority) == 0 || len(m.Reviewers) != 1 || m.Confidence != ConfMedium {
 		return m
 	}
-	baseline := 1.0 / float64(len(authority))
-	if authority[m.Reviewers[0]] > baseline {
+	// The strict > baseline comparison is intentional and exact for
+	// vertex-transitive agreement graphs. Non-vertex-transitive nodes landing
+	// infinitesimally above 1/N due to float truncation stay at MEDIUM, per the
+	// epic clarification that the threshold should not be relaxed.
+	if score, ok := authority[m.Reviewers[0]]; ok && score > baseline {
 		m.Confidence = ConfHigh
 	}
 	return m

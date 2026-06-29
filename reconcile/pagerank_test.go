@@ -1,6 +1,9 @@
 package reconcile
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // grp builds a merge group (slice of co-located findings) from a list of
 // reviewer names, one finding per reviewer. Only the Reviewer field matters for
@@ -125,7 +128,7 @@ func TestAgreementGraph_EmptyHasNoRanks(t *testing.T) {
 	eq(t, len(newAgreementGraph().pageRank()), 0, "empty graph → no ranks")
 }
 
-// BenchmarkModelAuthority validates the epic's <5ms NFR with headroom: a 24-model
+// BenchmarkModelAuthority characterizes the epic's <5ms NFR with headroom: a 24-model
 // run with thousands of agreement groups (far beyond a realistic handful of
 // reviewers) still builds the graph and runs PageRank well under the bound.
 func BenchmarkModelAuthority(b *testing.B) {
@@ -160,4 +163,74 @@ func TestAgreementGraph_AddAgreementSkipsEmptyAndDuplicates(t *testing.T) {
 	g2 := newAgreementGraph()
 	g2.addAgreement([]string{"alpha", "", "alpha"})
 	eq(t, len(g2.adj), 0, "single distinct model → no agreement edge")
+}
+
+func TestAgreementGraph_SymmetricCompleteGraphsNeverExceedBaseline(t *testing.T) {
+	// Invariant (epic 13.3, AC3 boundary): complete graphs K_n are vertex-transitive,
+	// so PageRank lands at EXACTLY 1/n for every node and the strict > baseline
+	// promotion test fails for all of them. K4 and K5 are the sizes the reviewer
+	// flagged as unproven; verified here so a float regression that pushed any node
+	// one ULP above 1/n (which would spuriously promote isolated findings in a fully
+	// corroborated run) is caught.
+	for _, models := range [][]string{
+		{"alpha", "beta", "gamma", "delta"},            // K4
+		{"alpha", "beta", "gamma", "delta", "epsilon"}, // K5
+	} {
+		g := newAgreementGraph()
+		g.addAgreement(models)
+		pr := g.pageRank()
+		baseline := 1.0 / float64(len(models))
+		for _, m := range models {
+			inDelta(t, pr[m], baseline, 1e-9, "K_n uniform authority")
+			isTrue(t, pr[m] <= baseline, "symmetric K_n node never strictly exceeds 1/N baseline")
+		}
+	}
+}
+
+func TestAgreementGraph_CycleNeverExceedsBaseline(t *testing.T) {
+	// A 4-cycle (alpha-beta-gamma-delta-alpha) is also vertex-transitive → uniform
+	// 1/4, so it promotes nothing.
+	g := newAgreementGraph()
+	g.addAgreement([]string{"alpha", "beta"})
+	g.addAgreement([]string{"beta", "gamma"})
+	g.addAgreement([]string{"gamma", "delta"})
+	g.addAgreement([]string{"delta", "alpha"})
+	pr := g.pageRank()
+	for _, m := range []string{"alpha", "beta", "gamma", "delta"} {
+		inDelta(t, pr[m], 0.25, 1e-9, "4-cycle uniform authority")
+		isTrue(t, pr[m] <= 0.25, "cycle node never strictly exceeds 1/N baseline")
+	}
+}
+
+func TestAgreementGraph_DisconnectedComponentsBridgedByTeleport(t *testing.T) {
+	// Two independent agreement pairs share no edge; only the (1-d)/N teleport term
+	// links them. PageRank still sums to 1 and, by symmetry, every node sits at
+	// exactly the global 1/4 baseline — so a disconnected run promotes nothing.
+	g := newAgreementGraph()
+	g.addAgreement([]string{"alpha", "beta"})
+	g.addAgreement([]string{"gamma", "delta"})
+	pr := g.pageRank()
+	sum := 0.0
+	for _, m := range []string{"alpha", "beta", "gamma", "delta"} {
+		inDelta(t, pr[m], 0.25, 1e-9, "disconnected symmetric node at global baseline")
+		isTrue(t, pr[m] <= 0.25, "disconnected node never strictly exceeds baseline")
+		sum += pr[m]
+	}
+	inDelta(t, sum, 1.0, 1e-9, "rank conserved across disconnected components")
+}
+
+func TestAddAgreement_CapsDistinctReviewers(t *testing.T) {
+	// Security backstop: a single source can attribute one finding location to a
+	// flood of distinct reviewer names, and the unbounded O(n^2) pair loop would
+	// then build n*(n-1)/2 edges — a CPU-exhaustion vector. The cap bounds that
+	// quadratic work; legitimate runs (a handful of models) never reach it.
+	g := newAgreementGraph()
+	revs := make([]string, 0, maxDistinctReviewers+200)
+	for i := 0; i < maxDistinctReviewers+200; i++ {
+		revs = append(revs, fmt.Sprintf("model-%05d", i))
+	}
+	g.addAgreement(revs)
+	if got := len(g.nodes()); got > maxDistinctReviewers {
+		t.Fatalf("addAgreement created %d nodes from a flooded reviewer list, want <= %d (DoS cap)", got, maxDistinctReviewers)
+	}
 }

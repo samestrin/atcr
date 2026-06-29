@@ -14,8 +14,9 @@ const (
 	SevLow      = "LOW"
 )
 
-// Confidence values. HIGH = 2+ distinct reviewers, MEDIUM = single reviewer,
-// LOW = reserved for untrusted sources (unused in v1).
+// Confidence values. HIGH = 2+ distinct reviewers OR a single reviewer whose
+// run authority exceeds the baseline (see promoteByAuthority), MEDIUM = single
+// reviewer, LOW = reserved for untrusted sources (unused in v1).
 const (
 	ConfHigh   = "HIGH"
 	ConfMedium = "MEDIUM"
