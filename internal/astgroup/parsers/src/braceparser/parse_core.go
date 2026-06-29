@@ -52,6 +52,7 @@ type langConfig struct {
 	funcParen    bool     // treat `ident(...) {` as a named function block (TS methods, Bash name())
 	heredocs     bool     // enable heredoc bodies (Bash <<, PHP <<<)
 	heredocOp    string   // heredoc operator: "<<" (Bash) or "<<<" (PHP)
+	paramExpand  bool     // treat ${...} as opaque (Bash) so its braces never open/close a block
 	keywords     []blockKeyword
 }
 
@@ -63,6 +64,7 @@ const (
 	stString
 	stRawString
 	stHeredoc
+	stParamExp
 )
 
 // parseSource scans src under cfg and returns the structural node tree rooted at
@@ -124,6 +126,7 @@ func parseSource(src []byte, cfg langConfig) node {
 	var heredocTag string
 	heredocStrip := false
 	heredocPending := false
+	paramDepth := 0
 
 	for i := 0; i < len(src); i++ {
 		c := src[i]
@@ -162,6 +165,20 @@ func parseSource(src []byte, cfg langConfig) node {
 				}
 			}
 
+		case stParamExp:
+			// Inside a ${...} parameter expansion: count nested braces so the
+			// matching close returns to normal without ever touching the block
+			// stack. Other chars (including a stray quote) are ignored — good
+			// enough for a structural pre-pass.
+			if c == '{' {
+				paramDepth++
+			} else if c == '}' {
+				paramDepth--
+				if paramDepth <= 0 {
+					state = stNormal
+				}
+			}
+
 		default: // stNormal
 			switch {
 			case cfg.blockOpen != "" && matchAt(src, i, cfg.blockOpen):
@@ -178,6 +195,10 @@ func parseSource(src []byte, cfg langConfig) node {
 					i += n - 1 // consume whole 'x' / '\n' literal; not a string, not a lifetime
 				}
 				// else: a lone ' (lifetime / apostrophe) — treat as ordinary text.
+			case cfg.paramExpand && c == '$' && i+1 < len(src) && src[i+1] == '{':
+				i++ // consume the '{'; depth tracks nested ${...}
+				paramDepth = 1
+				state = stParamExp
 			case strings.IndexByte(cfg.strChars, c) >= 0:
 				state = stString
 				strDelim = c
