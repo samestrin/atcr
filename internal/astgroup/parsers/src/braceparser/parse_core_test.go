@@ -249,3 +249,20 @@ func TestBashConfig_HashCommentStillWorks(t *testing.T) {
 		t.Fatalf("boundary # comment must still be stripped: %+v", root.Children)
 	}
 }
+
+func TestParseSource_BashParamExpQuotedBracesIgnored(t *testing.T) {
+	// A closing brace inside a quoted string inside ${...} must not exit the
+	// parameter-expansion state prematurely; the enclosing function must keep
+	// its real closing brace.
+	src := []byte("f() { x=${var/\"}\"/}; echo done; }\n")
+	root := parseSource(src, bashConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("quoted brace inside ${...} must not desync parser; got %d children %+v", len(root.Children), root.Children)
+	}
+	if root.Children[0].Kind != "func" || root.Children[0].Name != "f" {
+		t.Fatalf("expected func/f, got %q/%q", root.Children[0].Kind, root.Children[0].Name)
+	}
+	if root.Children[0].EndLine != 1 {
+		t.Fatalf("func f should end on line 1, got EndLine=%d", root.Children[0].EndLine)
+	}
+}
