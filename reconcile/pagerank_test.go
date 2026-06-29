@@ -1,6 +1,9 @@
 package reconcile
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // grp builds a merge group (slice of co-located findings) from a list of
 // reviewer names, one finding per reviewer. Only the Reviewer field matters for
@@ -160,4 +163,20 @@ func TestAgreementGraph_AddAgreementSkipsEmptyAndDuplicates(t *testing.T) {
 	g2 := newAgreementGraph()
 	g2.addAgreement([]string{"alpha", "", "alpha"})
 	eq(t, len(g2.adj), 0, "single distinct model → no agreement edge")
+}
+
+func TestAddAgreement_CapsDistinctReviewers(t *testing.T) {
+	// Security backstop: a single source can attribute one finding location to a
+	// flood of distinct reviewer names, and the unbounded O(n^2) pair loop would
+	// then build n*(n-1)/2 edges — a CPU-exhaustion vector. The cap bounds that
+	// quadratic work; legitimate runs (a handful of models) never reach it.
+	g := newAgreementGraph()
+	revs := make([]string, 0, maxDistinctReviewers+200)
+	for i := 0; i < maxDistinctReviewers+200; i++ {
+		revs = append(revs, fmt.Sprintf("model-%05d", i))
+	}
+	g.addAgreement(revs)
+	if got := len(g.nodes()); got > maxDistinctReviewers {
+		t.Fatalf("addAgreement created %d nodes from a flooded reviewer list, want <= %d (DoS cap)", got, maxDistinctReviewers)
+	}
 }
