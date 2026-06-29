@@ -91,6 +91,57 @@ func TestReconcile_SymmetricTripleDoesNotPromote(t *testing.T) {
 	eq(t, byFile["d.go"].Confidence, ConfMedium, "symmetric K3 → no node exceeds baseline → no promotion")
 }
 
+// TestReconcile_IsolatedFindingFromNeverAgreedModelStaysMedium pins the common
+// path: alpha and beta corroborate one issue (so the run HAS agreement and the
+// authority map is non-empty), but gamma never agreed with anyone. gamma's
+// isolated finding must stay MEDIUM — its reviewer is absent from the authority
+// map (zero-value lookup), so promoteByAuthority is a no-op for it. Without this
+// test nothing pins the absent-reviewer branch of promoteByAuthority.
+func TestReconcile_IsolatedFindingFromNeverAgreedModelStaysMedium(t *testing.T) {
+	sources := []Source{
+		{Name: "alpha", Findings: []Finding{
+			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "alpha"),
+		}},
+		{Name: "beta", Findings: []Finding{
+			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "beta"),
+		}},
+		{Name: "gamma", Findings: []Finding{
+			mf("HIGH", "c.go", 30, "gamma isolated finding text", "fix", "security", 15, "e", "gamma"),
+		}},
+	}
+	res := Reconcile(sources, recAt())
+	byFile := map[string]Merged{}
+	for _, m := range res.Findings {
+		byFile[m.File] = m
+	}
+	eq(t, byFile["a.go"].Confidence, ConfHigh, "alpha+beta agreement → HIGH")
+	eq(t, byFile["c.go"].Confidence, ConfMedium, "isolated finding from never-agreed gamma stays MEDIUM")
+}
+
+// TestReconcile_AuthorityWiredRunIsDeterministic runs Reconcile twice over
+// identical input with the authority feature active (alpha is the central model
+// whose isolated finding gets promoted) and asserts byte-identical Findings —
+// pinning determinism at the full pipeline level, not just the bare pageRank().
+func TestReconcile_AuthorityWiredRunIsDeterministic(t *testing.T) {
+	build := func() Result {
+		sources := []Source{
+			{Name: "alpha", Findings: []Finding{
+				mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "alpha"),
+				mf("HIGH", "b.go", 20, "shared issue two here", "fix", "security", 15, "e", "alpha"),
+				mf("HIGH", "c.go", 30, "isolated alpha only finding", "fix", "security", 15, "e", "alpha"),
+			}},
+			{Name: "beta", Findings: []Finding{
+				mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "beta"),
+			}},
+			{Name: "gamma", Findings: []Finding{
+				mf("HIGH", "b.go", 20, "shared issue two here", "fix", "security", 15, "e", "gamma"),
+			}},
+		}
+		return Reconcile(sources, recAt())
+	}
+	deepEq(t, build().Findings, build().Findings, "authority-wired Reconcile is deterministic")
+}
+
 // TestReconcile_NoAgreementLeavesConfidenceUnchanged is the backward-compat
 // invariant: with no cross-model agreement anywhere in the run the authority graph
 // is empty and confidence is exactly the pre-13.3 vote-count result.

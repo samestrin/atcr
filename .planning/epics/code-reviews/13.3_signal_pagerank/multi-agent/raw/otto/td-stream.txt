@@ -1,0 +1,1 @@
+MEDIUM|reconcile/pagerank.go:116|Potential floating point precision drift in delta calculation|Use `math.Abs` for calculating delta to ensure consistency|correctness|5|`d := nv - rank[u]; if d < 0 { d = -d }` is a manual Abs implementation|otto

@@ -1,0 +1,1 @@
+LOW|reconcile/pagerank.go:158|Baseline recalculated per finding|Precompute baseline once per run|maintainability|2|baseline := 1.0 / float64(len(authority)) inside loop|bruce

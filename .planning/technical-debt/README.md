@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 1 | 26 | 0 |
-| LOW | 5 | 24 | 0 |
+| MEDIUM | 0 | 26 | 0 |
+| LOW | 0 | 25 | 0 |
 
-**Last Modified:** 2026-06-28 | **Open Items:** 6 | **Deferred Items:** 52 | **Resolved Items:** 0 | **Total Items:** 58
+**Last Modified:** 2026-06-28 | **Open Items:** 0 | **Deferred Items:** 53 | **Resolved Items:** 0 | **Total Items:** 53
 
 ## Directory Structure
 
@@ -66,12 +66,7 @@ table with zero data loss) is proven by the Go test suite in
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | LOW | reconcile/pagerank.go:160 | PageRank authority is keyed by raw reviewer name, so one source emitting findings under multiple distinct reviewer names could forge cross-model agreement and self-promote an isolated finding | For v2 severity-weighted edges, bind authority to an authenticated source identity rather than the free-form Reviewer string; note this is the same trust assumption the existing flat vote-counter already makes (two distinct names yields HIGH today), so it is not a new surface | SECURITY | 30 | execute-epic-stage3 |
-| 1 | [ ] | MEDIUM | reconcile/pagerank.go:181 | A promoted single-reviewer HIGH finding clears the HIGH fix gate at internal/verify/executor.go:126, so one model's uncorroborated finding drives automated fix generation on authority earned on unrelated findings — DELIBERATE and user-confirmed (clarification Q2 chose promote-only with this blast radius in mind), retained here only for visibility | If the blast radius later proves too broad, gate authority-promoted fixes behind a verify confirmation or a severity floor rather than letting promotion alone clear the fix gate; do NOT change without revisiting the epic clarification | INTEGRATION | 45 | execute-epic-independent |
-| 1 | [ ] | LOW | reconcile/pagerank.go:120 | The dangling-mass redistribution branch in pageRank is unreachable for the agreement graph because every node added via addEdge has at least one symmetric neighbor (outWeight>=1), so dangling is always 0 | Either drop the dangling handling or annotate it as defensive-only for the always-connected agreement topology | OVER_ENGINEERING | 15 | execute-epic-independent |
-| 1 | [ ] | LOW | reconcile/pagerank.go:193 | The strict > 1/N baseline test is provably exact only for vertex-transitive graphs (which stay at exactly 1/N); a non-vertex-transitive node landing truly at 1/N could sit just above due to ~1e-7 truncation and spuriously promote | User confirmed the strict threshold as-is; document the boundary assumption or, only if a real fixture ever exhibits it, add a small epsilon margin (authority > baseline+eps) | DETERMINISM | 20 | execute-epic-independent |
-| 1 | [ ] | LOW | reconcile/pagerank.go:181 | Authority promotion is silent: no counter or Summary stat records that a HIGH came from authority rather than reviewer count, so a misfiring promotion is only derivable as HIGH-with-a-single-reviewer | Add a Summary stat (e.g. AuthorityPromoted int) counting authority-promoted findings for observability; out of v1 scope since the clarification fixed the wire schema | OBSERVABILITY | 30 | execute-epic-independent |
-| 1 | [ ] | LOW | reconcile/reconcile.go:97 | The byte-identical backward-compat invariant holds only when no model has differential authority; a future internal/reconcile golden fixture with asymmetric 3+ reviewer agreement plus an isolated central-model finding would silently flip MEDIUM to HIGH | Add an internal/reconcile regression test asserting authority promotion explicitly for an asymmetric multi-reviewer golden fixture so future confidence drift is caught (the reconcile-lib layer is already covered by pagerank_confidence_test.go) | REGRESSION_RISK | 30 | execute-epic-independent |
+| u | [/] | LOW | reconcile/pagerank.go:181 | Authority promotion is silent: no counter or Summary stat records that a HIGH came from authority rather than reviewer count, so a misfiring promotion is only derivable as HIGH-with-a-single-reviewer (Deferred: Epic Plan 13.4) | Add a Summary stat (e.g. AuthorityPromoted int) counting authority-promoted findings for observability; out of v1 scope since the clarification fixed the wire schema | OBSERVABILITY | 30 | execute-epic-independent |
 
 ### [2026-06-27] From Sprint: 13.1_ast_plugin_architecture
 
