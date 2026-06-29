@@ -2,14 +2,16 @@ package reconcile
 
 import "sort"
 
-// PageRank parameters (epic 13.3). The damping factor is the standard 0.85; the
-// iteration cap is a strict convergence bound so a pathological graph can never
-// spin (see the epic's convergence risk). Epsilon is the L1 delta below which the
-// power iteration is considered converged and stops early. All three are fixed —
-// the signal must be deterministic per run.
+// PageRank parameters (epic 13.3). The damping factor is the standard 0.85.
+// Convergence is driven by the L1 epsilon: the power method's error contracts at
+// ~damping per step, so reaching epsilon=1e-12 takes on the order of 170
+// iterations — the iteration cap is therefore a strict backstop set comfortably
+// above that (so the early-exit, not the cap, normally ends the loop) yet still
+// bounds a pathological graph from spinning (the epic's convergence risk). All
+// three are fixed — the signal must be deterministic per run.
 const (
 	pageRankDamping = 0.85
-	pageRankMaxIter = 100
+	pageRankMaxIter = 1000
 	pageRankEpsilon = 1e-12
 )
 
