@@ -117,7 +117,9 @@ func (g *agreementGraph) pageRank() map[string]float64 {
 	next := make(map[string]float64, n)
 	for iter := 0; iter < pageRankMaxIter; iter++ {
 		// Dangling mass (nodes with no out-edges) is redistributed uniformly so the
-		// total rank stays conserved at 1.
+		// total rank stays conserved at 1. This branch is defensive-only for the
+		// agreement graph: addEdge always creates symmetric edges, so every node
+		// has outWeight >= 1 and dangling remains 0.
 		dangling := 0.0
 		for _, u := range nodes {
 			if outWeight[u] == 0 {
