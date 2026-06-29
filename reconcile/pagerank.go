@@ -191,7 +191,7 @@ func promoteByAuthority(m Merged, authority map[string]float64) Merged {
 	// vertex-transitive agreement graphs. Non-vertex-transitive nodes landing
 	// infinitesimally above 1/N due to float truncation stay at MEDIUM, per the
 	// epic clarification that the threshold should not be relaxed.
-	if authority[m.Reviewers[0]] > baseline {
+	if score, ok := authority[m.Reviewers[0]]; ok && score > baseline {
 		m.Confidence = ConfHigh
 	}
 	return m
