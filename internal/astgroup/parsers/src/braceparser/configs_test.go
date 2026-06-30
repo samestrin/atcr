@@ -195,6 +195,21 @@ func TestJavaConfig_TextBlockEscapedTripleQuoteDegradesGracefully(t *testing.T) 
 	}
 }
 
+func TestJavaConfig_SynchronizedIsNotFunc(t *testing.T) {
+	// Java synchronized blocks must not be misnamed as functions via funcParenName.
+	src := []byte("class C {\n  void m() {\n    synchronized (lock) {\n      Work();\n    }\n  }\n}\n")
+	root := parseSource(src, javaConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func m, got %+v", root.Children)
+	}
+	for _, c := range m.Children {
+		if c.Kind == "func" && c.Name == "synchronized" {
+			t.Fatalf("synchronized misclassified as func: %+v", c)
+		}
+	}
+}
+
 func TestJavaConfig_CharLiteralBraceIgnored(t *testing.T) {
 	// A char literal '{' must not skew brace depth.
 	src := []byte("class C {\n  void m() {\n    char open = '{';\n    char close = '}';\n    next();\n  }\n}\n")
@@ -289,6 +304,21 @@ func TestCSharpConfig_ForeachIsFor(t *testing.T) {
 	b, _ := deepest(root, 5)
 	if a.Kind != "for" || a.StartLine != b.StartLine {
 		t.Fatalf("csharp foreach body lines should share a for block: %+v / %+v", a, b)
+	}
+}
+
+func TestCSharpConfig_UsingLockAreNotFuncs(t *testing.T) {
+	// Resource/control scopes must not be misnamed as functions via funcParenName.
+	src := []byte("class C {\n  void m() {\n    using (var r = Get()) {\n      Work();\n    }\n    lock (o) {\n      Guard();\n    }\n  }\n}\n")
+	root := parseSource(src, csharpConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func m, got %+v", root.Children)
+	}
+	for _, c := range m.Children {
+		if c.Kind == "func" && (c.Name == "using" || c.Name == "lock") {
+			t.Fatalf("using/lock misclassified as func: %+v", c)
+		}
 	}
 }
 
