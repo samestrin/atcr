@@ -292,6 +292,105 @@ func TestParseSource_ArrowFunctionStillFunc(t *testing.T) {
 	}
 }
 
+// braceMethodConfig is a minimal brace-language shape (Java/C#/C++-like) used to
+// exercise the trailing-identifier funcParenName rework and the tripleQuote state
+// independently of the per-language tables in configs.go.
+var braceMethodConfig = langConfig{
+	name:         "bracemethod",
+	lineComments: []string{"//"},
+	blockOpen:    "/*",
+	blockClose:   "*/",
+	strChars:     "\"",
+	charLiterals: true,
+	tripleQuote:  true,
+	funcParen:    true,
+	keywords: []blockKeyword{
+		{word: "class", kind: "class", named: true},
+		{word: "if", kind: "if"},
+		{word: "else", kind: "else"},
+		{word: "for", kind: "for"},
+		{word: "while", kind: "while"},
+		{word: "switch", kind: "switch"},
+	},
+}
+
+func TestFuncParenName_ModifierAndReturnTypeNamed(t *testing.T) {
+	// A keyword-less method header carrying modifiers and a return type
+	// (`public void execute() {`) must recover the trailing identifier as the
+	// func name rather than falling through to an anonymous block.
+	src := []byte("class C {\n  public void execute() {\n    work();\n  }\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	m, ok := findFunc(root, "execute")
+	if !ok {
+		t.Fatalf("expected func/execute recovered from `public void execute()`, got %+v", root.Children)
+	}
+	if m.Kind != "func" {
+		t.Fatalf("execute kind = %q, want func", m.Kind)
+	}
+}
+
+func TestFuncParenName_ScopeResolutionNamed(t *testing.T) {
+	// A C++ out-of-line definition `void Foo::bar() {` must name the func `bar`
+	// (the `::` scope-resolution operator is not a member-access call).
+	src := []byte("void Foo::bar() {\n  doIt();\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	if _, ok := findFunc(root, "bar"); !ok {
+		t.Fatalf("expected func/bar from `void Foo::bar()`, got %+v", root.Children)
+	}
+}
+
+func TestFuncParenName_MemberAccessCallNotFunc(t *testing.T) {
+	// A keyword-less, call-shaped header `foo.bar() {` must NOT be named as a
+	// function definition: the `.` marks a member-access call. It degrades to an
+	// anonymous block (grouping still works; naming does not false-attribute).
+	src := []byte("foo.bar() {\n  x();\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("want one block, got %+v", root.Children)
+	}
+	if root.Children[0].Kind != "block" || root.Children[0].Name != "" {
+		t.Fatalf("member-access call header must be anonymous block, got %q/%q",
+			root.Children[0].Kind, root.Children[0].Name)
+	}
+}
+
+func TestFuncParenName_BareNameStillFunc(t *testing.T) {
+	// The existing bare-name() form (TS methods, Bash functions) must resolve
+	// identically after the rework.
+	src := []byte("class C {\n  render() {\n    draw();\n  }\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	if _, ok := findFunc(root, "render"); !ok {
+		t.Fatalf("bare name() method should still be func/render, got %+v", root.Children)
+	}
+}
+
+func TestParseSource_TripleQuotedBracesIgnored(t *testing.T) {
+	// A triple-quoted string (Kotlin multiline / Java text block / C# raw string)
+	// is opaque: braces and quotes inside it must never open/close a block.
+	src := []byte("class C {\n  void m() {\n    String s = \"\"\"\n      { not a block } \"still\" text\n    \"\"\";\n    next();\n  }\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func/m, got %+v", root.Children)
+	}
+	if len(m.Children) != 0 {
+		t.Fatalf("triple-quoted braces must not create child blocks: %+v", m.Children)
+	}
+}
+
+func TestParseSource_TripleQuoteOffKeepsSingleQuote(t *testing.T) {
+	// With tripleQuote disabled, an ordinary "" empty string followed by a quote
+	// must still behave as single-quote string state (no regression for configs
+	// that do not opt into the triple-quote state, e.g. C/C++).
+	cfg := braceMethodConfig
+	cfg.tripleQuote = false
+	src := []byte("void m() {\n  const char* a = \"x\";\n  next();\n}\n")
+	root := parseSource(src, cfg)
+	if _, ok := findFunc(root, "m"); !ok {
+		t.Fatalf("expected func/m with tripleQuote off, got %+v", root.Children)
+	}
+}
+
 func TestParseSource_TSCatchClauseNotFunc(t *testing.T) {
 	// TypeScript catch clauses look like `catch (e) {` and must not be
 	// misclassified as a function named catch by funcParenName.
