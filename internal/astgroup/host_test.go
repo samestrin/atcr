@@ -91,6 +91,16 @@ func TestLanguageForExt(t *testing.T) {
 	require.Equal(t, "rust", LanguageForExt(".rs"))
 	require.Equal(t, "bash", LanguageForExt(".sh"))
 	require.Equal(t, "bash", LanguageForExt(".bash"))
+
+	// Brace languages (epic 13.6): Java, Kotlin, C/C++, C#.
+	require.Equal(t, "java", LanguageForExt(".java"))
+	for _, ext := range []string{".kt", ".kts"} {
+		require.Equalf(t, "kotlin", LanguageForExt(ext), "ext %s should map to kotlin", ext)
+	}
+	for _, ext := range []string{".c", ".cpp", ".cc", ".cxx", ".h", ".hpp"} {
+		require.Equalf(t, "cpp", LanguageForExt(ext), "ext %s should map to cpp", ext)
+	}
+	require.Equal(t, "csharp", LanguageForExt(".cs"))
 }
 
 // TestHost_BraceParsersLoadAndParse proves each embedded brace .wasm instantiates
@@ -103,6 +113,10 @@ func TestHost_BraceParsersLoadAndParse(t *testing.T) {
 		{"php", "<?php\nfunction f() {\n  $x = 1;\n  return $x;\n}\n"},
 		{"rust", "fn f() -> i32 {\n  let x = 1;\n  x\n}\n"},
 		{"bash", "f() {\n  local x=1\n  echo $x\n}\n"},
+		{"java", "void f() {\n  int x = 1;\n  use(x);\n}\n"},
+		{"kotlin", "fun f() {\n  val x = 1\n  use(x)\n}\n"},
+		{"cpp", "int f() {\n  int x = 1;\n  return x;\n}\n"},
+		{"csharp", "void F() {\n  int x = 1;\n  Use(x);\n}\n"},
 	}
 	h := NewHost()
 	defer func() { _ = h.Close() }()

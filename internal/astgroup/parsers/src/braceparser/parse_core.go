@@ -59,6 +59,7 @@ type langConfig struct {
 	braceExpand         bool     // treat {a,b} / {1..N} brace expansion as opaque (Bash) so its braces never open/close a block
 	commentWordBoundary bool     // a "#" line comment requires a preceding word boundary (Bash: keeps $#, ${#a} out of comments)
 	attrHash            bool     // a "#" immediately followed by "[" is a PHP 8 attribute (#[Attr]), not a line comment
+	tripleQuote         bool     // treat """...""" as an opaque string (Kotlin multiline strings, Java text blocks, C# raw string literals) so its braces/quotes never skew block depth
 	keywords            []blockKeyword
 }
 
@@ -68,6 +69,7 @@ const (
 	stLineComment
 	stBlockComment
 	stString
+	stTripleString
 	stRawString
 	stHeredoc
 	stParamExp
@@ -163,6 +165,16 @@ func parseSource(src []byte, cfg langConfig) node {
 				state = stNormal
 			}
 
+		case stTripleString:
+			// A """ triple-quoted string (Kotlin/Java text block, C# raw string)
+			// is opaque: only the closing """ returns to normal. Everything in
+			// between — braces, single quotes, interpolation — is ignored, so it
+			// can never open or close a block.
+			if matchAt(src, i, "\"\"\"") {
+				i += 2 // consume the remaining two quotes of the closing """
+				state = stNormal
+			}
+
 		case stRawString:
 			if c == '"' && hasHashes(src, i+1, rawHashes) {
 				i += rawHashes
@@ -227,6 +239,15 @@ func parseSource(src []byte, cfg langConfig) node {
 				i++ // consume the '{'; depth tracks nested ${...}
 				paramDepth = 1
 				state = stParamExp
+			case cfg.tripleQuote && matchAt(src, i, "\"\"\""):
+				// Must precede the single-" strChars case: a """ opens an opaque
+				// triple-quoted string, not three single-char strings. Exactly
+				// three quotes are matched; a C# 11 raw string opened with 4+
+				// quotes (used when the body itself contains """) is a known
+				// limitation that degrades to ±3 line proximity — like the
+				// out-of-scope raw/verbatim forms, a misparse never breaks reconcile.
+				i += 2 // consume the opening """; the loop's i++ advances past it
+				state = stTripleString
 			case strings.IndexByte(cfg.strChars, c) >= 0:
 				state = stString
 				strDelim = c
@@ -449,16 +470,47 @@ func identAfter(h string, pos int) string {
 	return name
 }
 
-// funcParenName recognizes a `name(...)` function header (Bash name(), TS
-// methods): the trimmed header ends in ')', and the identifier immediately
-// before the first '(' is the name. Leading modifier words (async, public,
-// static, get, set, etc.) are skipped so TS class methods are named correctly.
+// funcParenName recognizes a `name(...)` function header and returns the trailing
+// identifier run before the parameter list as the name. The trimmed header must
+// end in ')'. This names methods that carry modifiers and/or a return type without
+// a block keyword — `public void execute() {` -> execute, `void Foo::bar() {` ->
+// bar — so they group as named func blocks instead of falling through to an
+// anonymous block. Because classifyHeader checks the keyword table first,
+// keyword-introduced blocks (if/for/while/class/...) never reach here, so the
+// existing TS/PHP/Rust/Bash behavior is unchanged; the only new behavior is naming
+// previously-anonymous keyword-less method headers.
+//
+// The parameter list's '(' is found by matching the trailing ')' via a balanced
+// scan from the end, NOT the first '(' — so an annotation/decorator carrying its
+// own argument list (`@SuppressWarnings("x") public void execute()`,
+// `@HostListener(...) onClick()`) does not steal the name from the real method.
+//
+// A call-shaped header whose name is reached through member access (`foo.bar()`)
+// is NOT a definition: the '.' immediately before the identifier marks a method
+// call, so it is rejected and degrades to an anonymous block. The C++ scope
+// operator `::` (`Foo::bar`) is a definition and is accepted.
 func funcParenName(h string) (string, bool) {
 	t := strings.TrimSpace(h)
 	if !strings.HasSuffix(t, ")") {
 		return "", false
 	}
-	open := strings.IndexByte(t, '(')
+	// Find the '(' that matches the trailing ')' (balanced scan from the end).
+	depth := 0
+	open := -1
+	for k := len(t) - 1; k >= 0; k-- {
+		switch t[k] {
+		case ')':
+			depth++
+		case '(':
+			depth--
+			if depth == 0 {
+				open = k
+			}
+		}
+		if open >= 0 {
+			break
+		}
+	}
 	if open <= 0 {
 		return "", false
 	}
@@ -481,17 +533,10 @@ func funcParenName(h string) (string, bool) {
 	case "catch", "with", "switch":
 		return "", false
 	}
-	// If there is any leading text, it must be only modifier words/whitespace;
-	// arbitrary expressions like `return foo()` must not become functions.
-	modifiers := strings.Fields(prefix[:start])
-	for _, m := range modifiers {
-		switch m {
-		case "async", "public", "private", "protected", "static", "get", "set",
-			"readonly", "abstract", "override":
-			// allowed modifier
-		default:
-			return "", false
-		}
+	// A '.' immediately before the identifier is member access (a call like
+	// `foo.bar()`), not a declaration — reject so it stays an anonymous block.
+	if start > 0 && prefix[start-1] == '.' {
+		return "", false
 	}
 	return name, true
 }

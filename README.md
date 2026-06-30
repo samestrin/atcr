@@ -85,7 +85,7 @@ Key flags:
 
 Environment variables:
 
-- `ATCR_DISABLE_AST_GROUPING` — `atcr reconcile` clusters findings by AST isomorphism (the smallest covering AST block of each finding's line) by default, so findings group together across line-number drift, with line proximity as the per-finding fallback when no parser is available or the source is missing. Set this to a truthy value (`1`, `true`) to revert to legacy line-proximity-only clustering; a falsy, unparseable, or unset value keeps AST grouping on.
+- `ATCR_DISABLE_AST_GROUPING` — `atcr reconcile` clusters findings by AST isomorphism (the smallest covering AST block of each finding's line) by default, so findings group together across line-number drift, with line proximity as the per-finding fallback when no parser is available or the source is missing. AST grouping covers Go, Python, TypeScript/JavaScript, PHP, Rust, Bash, Java, Kotlin, C/C++, and C#; any other file type falls back to line proximity. Set this to a truthy value (`1`, `true`) to revert to legacy line-proximity-only clustering; a falsy, unparseable, or unset value keeps AST grouping on.
 
 ### Redirecting output for orchestrators (`--output-dir`)
 

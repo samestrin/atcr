@@ -122,13 +122,135 @@ func TestBashConfig_NestedParamExpansion(t *testing.T) {
 // TestConfigs_AllNamed guards that every config carries its language name so the
 // build-tag selection and any future per-language assertion can rely on it.
 func TestConfigs_AllNamed(t *testing.T) {
-	for _, c := range []langConfig{tsConfig, phpConfig, rustConfig, bashConfig} {
+	for _, c := range []langConfig{tsConfig, phpConfig, rustConfig, bashConfig, javaConfig, kotlinConfig, cppConfig, csharpConfig} {
 		if c.name == "" {
 			t.Fatalf("config missing name: %+v", c)
 		}
 		if len(c.keywords) == 0 {
 			t.Fatalf("config %q has no keywords", c.name)
 		}
+	}
+}
+
+func TestJavaConfig_MethodGroupingNamed(t *testing.T) {
+	// A Java method with modifiers + return type must group as a named func via
+	// the trailing-identifier funcParen rule, and its body lines must share it.
+	src := []byte("class Service {\n  public void execute() {\n    int x = 1;\n    int y = 2;\n    use(x, y);\n  }\n}\n")
+	root := parseSource(src, javaConfig)
+	if len(root.Children) != 1 || root.Children[0].Kind != "class" || root.Children[0].Name != "Service" {
+		t.Fatalf("want class Service, got %+v", root.Children)
+	}
+	m, ok := findFunc(root, "execute")
+	if !ok {
+		t.Fatalf("expected func execute in tree: %+v", root)
+	}
+	if m.Kind != "func" {
+		t.Fatalf("execute kind = %q, want func", m.Kind)
+	}
+	a, _ := deepest(root, 3)
+	b, _ := deepest(root, 5)
+	if a.Name != "execute" || a.StartLine != b.StartLine {
+		t.Fatalf("java method body lines should share func execute: %+v / %+v", a, b)
+	}
+}
+
+func TestJavaConfig_TextBlockBracesIgnored(t *testing.T) {
+	// A Java text block """...""" is opaque: its braces must not open a block.
+	src := []byte("class C {\n  void m() {\n    String s = \"\"\"\n      { not a block }\n    \"\"\";\n    next();\n  }\n}\n")
+	root := parseSource(src, javaConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func m, got %+v", root.Children)
+	}
+	if len(m.Children) != 0 {
+		t.Fatalf("java text-block braces must not create child blocks: %+v", m.Children)
+	}
+}
+
+func TestJavaConfig_CharLiteralBraceIgnored(t *testing.T) {
+	// A char literal '{' must not skew brace depth.
+	src := []byte("class C {\n  void m() {\n    char open = '{';\n    char close = '}';\n    next();\n  }\n}\n")
+	root := parseSource(src, javaConfig)
+	m, ok := findFunc(root, "m")
+	if !ok || len(m.Children) != 0 {
+		t.Fatalf("java char-literal braces broke structure: %+v", root.Children)
+	}
+}
+
+func TestKotlinConfig_FunAndMultilineString(t *testing.T) {
+	// Kotlin `fun` introduces a named func; a """multiline""" string with an
+	// interpolation brace must be opaque.
+	src := []byte("fun target() {\n  val s = \"\"\"\n    value = ${ a { b } }\n  \"\"\"\n  val x = 1\n  use(s, x)\n}\n")
+	root := parseSource(src, kotlinConfig)
+	fn, ok := findFunc(root, "target")
+	if !ok {
+		t.Fatalf("expected func target, got %+v", root.Children)
+	}
+	if len(fn.Children) != 0 {
+		t.Fatalf("kotlin multiline string braces must not create child blocks: %+v", fn.Children)
+	}
+}
+
+func TestKotlinConfig_WhenIsSwitch(t *testing.T) {
+	src := []byte("fun f(v: Int) {\n  when (v) {\n    1 -> a()\n    else -> b()\n  }\n}\n")
+	root := parseSource(src, kotlinConfig)
+	fn, ok := findFunc(root, "f")
+	if !ok || len(fn.Children) != 1 || fn.Children[0].Kind != "switch" {
+		t.Fatalf("kotlin when should map to a switch block inside f: %+v", root.Children)
+	}
+}
+
+func TestCppConfig_OutOfLineMethodNamed(t *testing.T) {
+	// A C++ out-of-line definition `void Foo::bar()` must name the func bar.
+	src := []byte("void Foo::bar() {\n  int x = 1;\n  step();\n}\n")
+	root := parseSource(src, cppConfig)
+	if _, ok := findFunc(root, "bar"); !ok {
+		t.Fatalf("expected func bar from `void Foo::bar()`, got %+v", root.Children)
+	}
+}
+
+func TestCppConfig_StructAndPreprocessorIgnored(t *testing.T) {
+	// `#include` / `#define` lines are treated as line comments so their angle
+	// brackets and stray tokens never skew structure; a struct maps to class.
+	src := []byte("#include <vector>\n#define N 4\nstruct Point {\n  int x;\n  int y;\n};\n")
+	root := parseSource(src, cppConfig)
+	if len(root.Children) != 1 || root.Children[0].Kind != "class" || root.Children[0].Name != "Point" {
+		t.Fatalf("cpp struct should map to class Point with preprocessor lines ignored: %+v", root.Children)
+	}
+}
+
+func TestCppConfig_CharLiteralBraceIgnored(t *testing.T) {
+	src := []byte("int f() {\n  char a = '{';\n  char b = '}';\n  return 0;\n}\n")
+	root := parseSource(src, cppConfig)
+	fn, ok := findFunc(root, "f")
+	if !ok || len(fn.Children) != 0 {
+		t.Fatalf("cpp char-literal braces broke structure: %+v", root.Children)
+	}
+}
+
+func TestCSharpConfig_MethodAndRawString(t *testing.T) {
+	// A C# method groups as a named func; a """raw string""" is opaque.
+	src := []byte("class C {\n  public void Run() {\n    var s = \"\"\"\n      { not a block }\n    \"\"\";\n    Next();\n  }\n}\n")
+	root := parseSource(src, csharpConfig)
+	if len(root.Children) != 1 || root.Children[0].Kind != "class" || root.Children[0].Name != "C" {
+		t.Fatalf("want class C, got %+v", root.Children)
+	}
+	m, ok := findFunc(root, "Run")
+	if !ok {
+		t.Fatalf("expected func Run, got %+v", root.Children)
+	}
+	if len(m.Children) != 0 {
+		t.Fatalf("csharp raw-string braces must not create child blocks: %+v", m.Children)
+	}
+}
+
+func TestCSharpConfig_ForeachIsFor(t *testing.T) {
+	src := []byte("class C {\n  void m() {\n    foreach (var it in items) {\n      total += it;\n      log(it);\n    }\n  }\n}\n")
+	root := parseSource(src, csharpConfig)
+	a, _ := deepest(root, 4)
+	b, _ := deepest(root, 5)
+	if a.Kind != "for" || a.StartLine != b.StartLine {
+		t.Fatalf("csharp foreach body lines should share a for block: %+v / %+v", a, b)
 	}
 }
 

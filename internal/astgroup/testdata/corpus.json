@@ -382,5 +382,101 @@
     "a_line": 5,
     "b_line": 8,
     "same_block": false
+  },
+  {
+    "name": "java_same_method_small_drift",
+    "file": "a.java",
+    "source": "class C {\n  void target() {\n    int x = 1;\n    int y = 2;\n    use(x, y);\n  }\n}\n",
+    "a_line": 3,
+    "b_line": 5,
+    "same_block": true
+  },
+  {
+    "name": "java_same_method_large_drift_blank_lines",
+    "file": "a.java",
+    "source": "class C {\n  void target() {\n    int x = 1;\n\n\n\n\n    int y = 2;\n    use(x, y);\n  }\n}\n",
+    "a_line": 3,
+    "b_line": 8,
+    "same_block": true
+  },
+  {
+    "name": "java_different_methods_adjacent",
+    "file": "a.java",
+    "source": "class C {\n  void a() {\n    int x = 1;\n  }\n  void b() {\n    int y = 2;\n  }\n}\n",
+    "a_line": 3,
+    "b_line": 6,
+    "same_block": false
+  },
+  {
+    "name": "kotlin_same_fun_small_drift",
+    "file": "a.kt",
+    "source": "fun target() {\n  val x = 1\n  val y = 2\n  use(x, y)\n}\n",
+    "a_line": 2,
+    "b_line": 4,
+    "same_block": true
+  },
+  {
+    "name": "kotlin_same_fun_large_drift_blank_lines",
+    "file": "a.kt",
+    "source": "fun target() {\n  val x = 1\n\n\n\n\n  val y = 2\n  use(x, y)\n}\n",
+    "a_line": 2,
+    "b_line": 7,
+    "same_block": true
+  },
+  {
+    "name": "kotlin_multiline_string_no_overmerge",
+    "file": "a.kt",
+    "source": "fun ra() {\n  val s = \"\"\"\n  } {\n  \"\"\"\n  done()\n}\nfun rb() {\n  val t = 2\n}\n",
+    "a_line": 5,
+    "b_line": 8,
+    "same_block": false
+  },
+  {
+    "name": "cpp_same_fn_small_drift",
+    "file": "a.cpp",
+    "source": "int target() {\n  int x = 1;\n  int y = 2;\n  return x + y;\n}\n",
+    "a_line": 2,
+    "b_line": 4,
+    "same_block": true
+  },
+  {
+    "name": "cpp_out_of_line_method_large_drift",
+    "file": "a.cpp",
+    "source": "void Foo::bar() {\n  int a = 1;\n\n\n\n  int b = 2;\n  step(a, b);\n}\n",
+    "a_line": 2,
+    "b_line": 6,
+    "same_block": true
+  },
+  {
+    "name": "cpp_preprocessor_different_fns",
+    "file": "a.cpp",
+    "source": "#include <vector>\nint a() {\n  int x = 1;\n}\nint b() {\n  int y = 2;\n}\n",
+    "a_line": 3,
+    "b_line": 6,
+    "same_block": false
+  },
+  {
+    "name": "csharp_same_method_small_drift",
+    "file": "a.cs",
+    "source": "class C {\n  void Target() {\n    int x = 1;\n    int y = 2;\n    Use(x, y);\n  }\n}\n",
+    "a_line": 3,
+    "b_line": 5,
+    "same_block": true
+  },
+  {
+    "name": "csharp_same_method_large_drift_blank_lines",
+    "file": "a.cs",
+    "source": "class C {\n  void Target() {\n    int x = 1;\n\n\n\n\n    int y = 2;\n    Use(x, y);\n  }\n}\n",
+    "a_line": 3,
+    "b_line": 8,
+    "same_block": true
+  },
+  {
+    "name": "csharp_raw_string_no_overmerge",
+    "file": "a.cs",
+    "source": "class C {\n  void Ra() {\n    var s = \"\"\"\n    } {\n    \"\"\";\n    Done();\n  }\n  void Rb() {\n    var t = 2;\n  }\n}\n",
+    "a_line": 6,
+    "b_line": 9,
+    "same_block": false
   }
 ]

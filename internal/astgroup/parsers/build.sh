@@ -48,12 +48,16 @@ build ts braceparser ts
 build php braceparser php
 build rust braceparser rust
 build bash braceparser bash
+build java braceparser java
+build kotlin braceparser kotlin
+build cpp braceparser cpp
+build csharp braceparser csharp
 
 # Refresh the checksum manifest so the committed binaries stay verifiable from a
 # committed hash. TestEmbeddedParsersMatchManifest (go test ./...) fails in CI if
 # the .wasm files and SHA256SUMS drift, catching a tampered or stale binary
 # without needing a Wasm toolchain in the pipeline. Commit SHA256SUMS with the
 # regenerated .wasm files.
-( cd "${here}" && sha256sum go.wasm python.wasm ts.wasm php.wasm rust.wasm bash.wasm > SHA256SUMS )
+( cd "${here}" && sha256sum go.wasm python.wasm ts.wasm php.wasm rust.wasm bash.wasm java.wasm kotlin.wasm cpp.wasm csharp.wasm > SHA256SUMS )
 echo "wrote SHA256SUMS"
 echo "done"

@@ -1,3 +1,17 @@
+## [13.6.0] - 2026-06-30
+
+Expanded AST-isomorphism finding grouping to four more brace-based language families.
+
+### Added
+
+- AST-isomorphism finding grouping now covers Java (`.java`), Kotlin (`.kt`/`.kts`), C/C++ (`.c`/`.cpp`/`.cc`/`.cxx`/`.h`/`.hpp`), and C# (`.cs`) source, so `atcr reconcile` clusters findings in those languages by their enclosing code block across line-number drift instead of falling back to ±3 line proximity.
+
+### Changed
+
+- The shared brace parser now names methods that carry modifiers/return types (e.g. `public void execute()`, `void Foo::bar()`) so they group as named blocks, and treats `"""` triple-quoted strings (Kotlin multiline strings, Java text blocks, C# raw string literals) as opaque so their braces never skew block structure.
+
+*Shipped via /execute-epic (epic 13.6)*
+
 ## [Technical Debt] - 2026-06-30
 
 ### Fixed

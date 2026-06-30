@@ -4,6 +4,7 @@ import "embed"
 
 //go:embed parsers/go.wasm parsers/python.wasm
 //go:embed parsers/ts.wasm parsers/php.wasm parsers/rust.wasm parsers/bash.wasm
+//go:embed parsers/java.wasm parsers/kotlin.wasm parsers/cpp.wasm parsers/csharp.wasm
 var parserFS embed.FS
 
 // builtinParsers maps a language id to its embedded .wasm plugin path. Adding a
@@ -11,10 +12,10 @@ var parserFS embed.FS
 // mapping in LanguageForExt). The embedded set is the hermetic default; a runtime
 // override directory (future extension) would be consulted before this map.
 //
-// The ts/php/rust/bash plugins are four builds of one shared brace-block parser
-// source (parsers/src/braceparser), each with its language's keyword/naming table
-// baked in at compile time; the language id is the discriminator the host uses to
-// pick the binary, exactly as for go/python.
+// The ts/php/rust/bash/java/kotlin/cpp/csharp plugins are eight builds of one
+// shared brace-block parser source (parsers/src/braceparser), each with its
+// language's keyword/naming table baked in at compile time; the language id is the
+// discriminator the host uses to pick the binary, exactly as for go/python.
 var builtinParsers = map[string]string{
 	"go":     "parsers/go.wasm",
 	"python": "parsers/python.wasm",
@@ -22,6 +23,10 @@ var builtinParsers = map[string]string{
 	"php":    "parsers/php.wasm",
 	"rust":   "parsers/rust.wasm",
 	"bash":   "parsers/bash.wasm",
+	"java":   "parsers/java.wasm",
+	"kotlin": "parsers/kotlin.wasm",
+	"cpp":    "parsers/cpp.wasm",
+	"csharp": "parsers/csharp.wasm",
 }
 
 // LanguageForExt maps a file extension (including the dot, lowercased) to a
@@ -42,6 +47,16 @@ func LanguageForExt(ext string) string {
 		return "rust"
 	case ".sh", ".bash":
 		return "bash"
+	case ".java":
+		return "java"
+	// Kotlin source and script files — one shared brace parser, one language id.
+	case ".kt", ".kts":
+		return "kotlin"
+	// C/C++ translation units and headers — one shared brace parser, one language id.
+	case ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp":
+		return "cpp"
+	case ".cs":
+		return "csharp"
 	default:
 		return ""
 	}
