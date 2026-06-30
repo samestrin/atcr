@@ -18,12 +18,19 @@ export GOTOOLCHAIN="${GOTOOLCHAIN:-local}"
 min_go="1.24"
 have_go="$(go env GOVERSION 2>/dev/null)"; have_go="${have_go#go}"
 if [ -z "${have_go}" ] || \
-   [ "$(printf '%s\n%s\n' "${min_go}" "${have_go}" | sort -V | head -n1)" != "${min_go}" ]; then
+   [ "$(printf '%s\n%s\n' "${min_go}" "${have_go}" | sort -t. -k1,1n -k2,2n | head -n1)" != "${min_go}" ]; then
   echo "error: build.sh requires Go >= ${min_go} for the wasip1 wasmexport ABI; found '${have_go:-none}'" >&2
   exit 1
 fi
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Portable checksum tool: GNU coreutils sha256sum or macOS shasum.
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256_cmd() { sha256sum "$@"; }
+else
+  sha256_cmd() { shasum -a 256 "$@"; }
+fi
 
 build() {
   local name="$1" srcdir="$2" tags="${3:-}"
@@ -58,6 +65,6 @@ build csharp braceparser csharp
 # the .wasm files and SHA256SUMS drift, catching a tampered or stale binary
 # without needing a Wasm toolchain in the pipeline. Commit SHA256SUMS with the
 # regenerated .wasm files.
-( cd "${here}" && sha256sum go.wasm python.wasm ts.wasm php.wasm rust.wasm bash.wasm java.wasm kotlin.wasm cpp.wasm csharp.wasm > SHA256SUMS )
+( cd "${here}" && sha256_cmd go.wasm python.wasm ts.wasm php.wasm rust.wasm bash.wasm java.wasm kotlin.wasm cpp.wasm csharp.wasm > SHA256SUMS )
 echo "wrote SHA256SUMS"
 echo "done"
