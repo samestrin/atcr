@@ -254,6 +254,22 @@ func TestCSharpConfig_ForeachIsFor(t *testing.T) {
 	}
 }
 
+func TestCSharpConfig_NestedInterpolationDegradesGracefully(t *testing.T) {
+	// Nested string literals inside interpolation holes are not tracked; the
+	// scanner closes the outer string on the first inner quote. Accept this as a
+	// degrade-to-proximity limitation: the parse must not panic and the enclosing
+	// method must still be recoverable.
+	src := []byte("class C {\n  void m() {\n    var s = $\"{(\"x\")}\";\n    Next();\n  }\n}\n")
+	root := parseSource(src, csharpConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func m despite nested interpolation, got %+v", root.Children)
+	}
+	if m.Kind != "func" || m.Name != "m" {
+		t.Fatalf("want func m, got %+v", m)
+	}
+}
+
 func TestPHPConfig_HeredocBracesIgnored(t *testing.T) {
 	// PHP heredoc terminator EOT; (marker + semicolon) must close, so the sibling
 	// func `b` is not swallowed, and the braces inside the heredoc create no block.
