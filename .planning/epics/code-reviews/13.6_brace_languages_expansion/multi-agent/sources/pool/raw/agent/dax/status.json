@@ -1,0 +1,14 @@
+{
+  "agent": "dax",
+  "status": "ok",
+  "findings_count": 8,
+  "duration_ms": 60244,
+  "payload_mode": "blocks",
+  "truncated": false,
+  "files_dropped": [],
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0,
+  "model": "deepseek-4",
+  "tokens_in": 33683,
+  "tokens_out": 775
+}

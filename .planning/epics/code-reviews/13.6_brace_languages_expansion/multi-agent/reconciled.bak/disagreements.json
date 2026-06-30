@@ -1,0 +1,110 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/host_test.go",
+      "line": 80,
+      "severity": "MEDIUM",
+      "problem": "TestHost_BraceParsersLoadAndParse only asserts a func child exists; does not validate block structure for edge cases (nested blocks, empty bodies, annotations)",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/parsers/src/braceparser/configs_test.go",
+      "line": 122,
+      "severity": "MEDIUM",
+      "problem": "New language config tests cover happy paths only; no test for malformed input (unclosed triple-quote, unterminated block comment, empty source)",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/parsers/src/braceparser/parse_core.go",
+      "line": 43,
+      "severity": "MEDIUM",
+      "problem": "New tripleQuote config field has no test proving it interacts correctly with charLiterals/strChars when all are enabled simultaneously",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/parsers/src/braceparser/parse_core.go",
+      "line": 248,
+      "severity": "MEDIUM",
+      "problem": "C# 11 raw strings with 4+ quotes desync state machine; documented limitation but no test proving graceful degradation",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/parsers/src/braceparser/parse_core.go",
+      "line": 515,
+      "severity": "MEDIUM",
+      "problem": "funcParenName reserved-word guard omits try/synchronized/using/lock/fixed; Java/C# control headers misclassify as named funcs",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/embed.go",
+      "line": 4,
+      "severity": "LOW",
+      "problem": "Four new .wasm files added to embed.FS but no test verifies they are actually embedded and loadable",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/parsers/src/braceparser/configs_test.go",
+      "line": 122,
+      "severity": "LOW",
+      "problem": "No test for C# verbatim strings (@\"...\") which are documented as out-of-scope; regression could silently break",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/parsers/src/braceparser/parse_core.go",
+      "line": 476,
+      "severity": "LOW",
+      "problem": "funcParenName modifier allowlist removed; keyword-less statement-prefixed calls like `return foo() {` now name func \"foo\"",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    }
+  ]
+}

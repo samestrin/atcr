@@ -103,20 +103,57 @@ func TestLanguageForExt(t *testing.T) {
 	require.Equal(t, "csharp", LanguageForExt(".cs"))
 }
 
+// findNode reports whether the tree rooted at n contains a node with the given
+// kind and name. An empty want name matches any name for that kind.
+func findNode(n Node, kind, name string) bool {
+	if n.Kind == kind && (name == "" || n.Name == name) {
+		return true
+	}
+	for _, c := range n.Children {
+		if findNode(c, kind, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestHost_BraceParsersLoadAndParse proves each embedded brace .wasm instantiates
-// and recovers a function block for representative source of its language — the
-// end-to-end check that the build-tag-selected table reached the binary the host
-// loads for that language id.
+// AND that the build-tag-selected per-language keyword table actually reached the
+// binary the host loads for that language id — not merely that some .wasm parses.
+//
+// Every source is language-DISTINCTIVE: each asserts either a keyword-derived
+// kind (class/switch/for) or a trailing-identifier name that the shared funcParen
+// path alone cannot fabricate. funcParen only ever yields kind "func", so a
+// class/switch/for assertion can only pass if that language's keyword table was
+// compiled in. This closes the gap the previous all-generic sources left open:
+// because `void f()` / `int f()` / `fun f()` all recover a func under ANY brace
+// table, the old test would still pass if all eight .wasm files were identical
+// copies of one build. The cases below would NOT.
 func TestHost_BraceParsersLoadAndParse(t *testing.T) {
-	cases := []struct{ lang, src string }{
-		{"ts", "function f() {\n  const x = 1\n  return x\n}\n"},
-		{"php", "<?php\nfunction f() {\n  $x = 1;\n  return $x;\n}\n"},
-		{"rust", "fn f() -> i32 {\n  let x = 1;\n  x\n}\n"},
-		{"bash", "f() {\n  local x=1\n  echo $x\n}\n"},
-		{"java", "void f() {\n  int x = 1;\n  use(x);\n}\n"},
-		{"kotlin", "fun f() {\n  val x = 1\n  use(x)\n}\n"},
-		{"cpp", "int f() {\n  int x = 1;\n  return x;\n}\n"},
-		{"csharp", "void F() {\n  int x = 1;\n  Use(x);\n}\n"},
+	type kn struct{ kind, name string }
+	cases := []struct {
+		lang string
+		src  string
+		want []kn // every (kind,name) must be present in the parsed tree
+	}{
+		// Arrow function => func is a TS-only feature (arrowFunc); under any other
+		// brace table this `=>` header degrades to an anonymous block, not a func.
+		{"ts", "const add = (a, b) => {\n  const s = a + b\n  return s\n}\n", []kn{{"func", ""}}},
+		// `class` keyword + funcParen-named method; the class kind needs the table.
+		{"php", "<?php\nclass Repo {\n  function find($id) {\n    return $id;\n  }\n}\n", []kn{{"class", "Repo"}, {"func", "find"}}},
+		// `impl` maps to a named class only in the Rust table; funcParen-named fn.
+		{"rust", "impl Widget {\n  fn build(&self) -> i32 {\n    let x = 1;\n    x\n  }\n}\n", []kn{{"class", "Widget"}, {"func", "build"}}},
+		// `name() {` recovers a named func via funcParen in the Bash table.
+		{"bash", "deploy() {\n  local x=1\n  echo $x\n}\n", []kn{{"func", "deploy"}}},
+		// `record` -> class is Java-distinctive; the inner `void f()` verifies the
+		// trailing-identifier funcParen naming through the compiled wasm.
+		{"java", "record Pair() {\n  void f() {\n    g();\n  }\n}\n", []kn{{"class", "Pair"}, {"func", "f"}}},
+		// `fun` -> named func and `when` -> switch are both Kotlin table mappings.
+		{"kotlin", "fun process(v: Int) {\n  when (v) {\n    1 -> a()\n    else -> b()\n  }\n}\n", []kn{{"func", "process"}, {"switch", ""}}},
+		// `struct` -> named class is the C/C++ table mapping.
+		{"cpp", "struct Point {\n  int x;\n  int y;\n};\n", []kn{{"class", "Point"}}},
+		// funcParen-named method + `foreach` -> for, the C# table mapping.
+		{"csharp", "void Run() {\n  foreach (var it in items) {\n    total += it;\n  }\n}\n", []kn{{"func", "Run"}, {"for", ""}}},
 	}
 	h := NewHost()
 	defer func() { _ = h.Close() }()
@@ -126,13 +163,11 @@ func TestHost_BraceParsersLoadAndParse(t *testing.T) {
 		root, err := p.Parse([]byte(c.src))
 		require.NoErrorf(t, err, "parse %q", c.lang)
 		require.Equalf(t, "file", root.Kind, "%q root kind", c.lang)
-		var hasFunc bool
-		for _, ch := range root.Children {
-			if ch.Kind == "func" {
-				hasFunc = true
-			}
+		for _, w := range c.want {
+			require.Truef(t, findNode(root, w.kind, w.name),
+				"%q: expected a %q node named %q (proves the %q keyword table reached the wasm), got %+v",
+				c.lang, w.kind, w.name, c.lang, root.Children)
 		}
-		require.Truef(t, hasFunc, "%q: expected a func block, got %+v", c.lang, root.Children)
 	}
 }
 

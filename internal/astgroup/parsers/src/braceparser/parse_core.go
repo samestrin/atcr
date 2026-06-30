@@ -1,5 +1,5 @@
 // Package main is the shared brace-block structural parser. One Go source is
-// compiled once per target language (build tag ts|php|rust|bash) into a wasip1
+// compiled once per target language (build tag ts|php|rust|bash|java|kotlin|cpp|csharp) into a wasip1
 // reactor .wasm loaded by the internal/astgroup wazero host. It recovers block
 // structure for brace-delimited languages by tracking { } depth (plus string,
 // comment, and heredoc state so braces inside literals do not fabricate blocks)
@@ -169,7 +169,9 @@ func parseSource(src []byte, cfg langConfig) node {
 			// A """ triple-quoted string (Kotlin/Java text block, C# raw string)
 			// is opaque: only the closing """ returns to normal. Everything in
 			// between — braces, single quotes, interpolation — is ignored, so it
-			// can never open or close a block.
+			// can never open or close a block. Java escaped \"\"\" inside a text
+			// block and C# raw strings with 4+ opening quotes are out of scope
+			// and degrade to proximity.
 			if matchAt(src, i, "\"\"\"") {
 				i += 2 // consume the remaining two quotes of the closing """
 				state = stNormal
@@ -262,6 +264,9 @@ func parseSource(src []byte, cfg langConfig) node {
 				// Bash arithmetic `((...))` / `$((...))`: a `<<` inside is a left-shift,
 				// never a heredoc. Track depth so heredoc detection is suppressed within
 				// (the `<<` then falls through to header text, which is harmless).
+				// A malformed or single-paren-closed span leaves arithDepth/parenDepth
+				// imbalanced; this is self-inflicted by broken input and accepted as a
+				// degrade-to-proximity limitation rather than adding recovery heuristics.
 				arithDepth++
 				parenDepth += 2
 				addHeader('(')
@@ -349,6 +354,14 @@ func classifyHeader(h string, cfg langConfig) (kind, name string) {
 		if idx := lastWholeWord(h, "impl"); idx >= 0 {
 			bestIdx = idx
 			bestKw = blockKeyword{word: "impl", kind: "class", named: true}
+		}
+	}
+	// `} else if (x) {` and similar else-prefixed chains should classify as the
+	// else block, not as the following control keyword, so the else kind stays
+	// reachable.
+	if bestKw.word == "if" || bestKw.word == "while" || bestKw.word == "for" || bestKw.word == "switch" {
+		if idx := lastWholeWord(h, "else"); idx >= 0 && idx < bestIdx {
+			return "else", ""
 		}
 	}
 	if cfg.arrowFunc {
@@ -489,6 +502,11 @@ func identAfter(h string, pos int) string {
 // is NOT a definition: the '.' immediately before the identifier marks a method
 // call, so it is rejected and degrades to an anonymous block. The C++ scope
 // operator `::` (`Foo::bar`) is a definition and is accepted.
+//
+// Inherent limitation: without a leading keyword, call-shaped EXPRESSION
+// statements also reach here, e.g. `a ? b : c() {` (names "c") or GoogleTest
+// macros `TEST(A,B) {` (names "TEST"). These are tolerated misnames; grouping
+// still works and the risk model treats them as degrade-to-proximity.
 func funcParenName(h string) (string, bool) {
 	t := strings.TrimSpace(h)
 	if !strings.HasSuffix(t, ")") {
@@ -530,8 +548,25 @@ func funcParenName(h string) (string, bool) {
 	name := prefix[start:end]
 	// Reserved control words must not be misclassified as function names.
 	switch name {
-	case "catch", "with", "switch":
+	case "catch", "with", "switch", "try", "synchronized", "using", "lock", "fixed":
 		return "", false
+	}
+	// Statement keywords that prefix an expression statement (`return foo()`,
+	// `throw foo()`, `await foo()`, `yield foo()`) must not leave the trailing
+	// call named as a function definition.
+	prev := start
+	for prev > 0 && prefix[prev-1] == ' ' {
+		prev--
+	}
+	prevStart := prev
+	for prevStart > 0 && isIdentByte(prefix[prevStart-1]) {
+		prevStart--
+	}
+	if prevStart < prev {
+		switch prefix[prevStart:prev] {
+		case "return", "throw", "await", "yield":
+			return "", false
+		}
 	}
 	// A '.' immediately before the identifier is member access (a call like
 	// `foo.bar()`), not a declaration — reject so it stays an anonymous block.

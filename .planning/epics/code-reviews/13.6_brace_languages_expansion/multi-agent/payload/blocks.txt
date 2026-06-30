@@ -1,0 +1,1914 @@
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index 1671755b..79333b10 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,16 +3,16 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 2 | 0 |
+ | MEDIUM | 0 | 26 | 0 |
+-| LOW | 0 | 27 | 0 |
++| LOW | 4 | 27 | 0 |
+ 
+-**Last Modified:** 2026-06-30 | **Open Items:** 0 | **Deferred Items:** 55 | **Resolved Items:** 0 | **Total Items:** 55
++**Last Modified:** 2026-06-30 | **Open Items:** 4 | **Deferred Items:** 55 | **Resolved Items:** 0 | **Total Items:** 59
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -62,207 +62,216 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
++### [2026-06-30] From Sprint: epic-13.6
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| 1 | [ ] | LOW | internal/astgroup/parsers/src/braceparser/parse_core.go:476 | A keyword-less statement-prefixed call header like `return foo()` followed by a bare `{` block is now named func "foo" instead of an anonymous block (grouping is unaffected; naming precision only) | If precision matters add a small statement-keyword denylist (return/throw/await/yield) to funcParenName | CORRECTNESS | 15 | execute-epic-stage3 |
++| 1 | [ ] | LOW | internal/astgroup/parsers/src/braceparser/parse_core.go:520 | Dropping the modifier allowlist broadens funcParenName so a keyword-less expression statement ending in a call then a block (`return cb()` then `{...}`) is named func in existing TS/Bash configs (was anonymous block); cosmetic only since the address+blockIdx group key keeps grouping correct | Re-add a lightweight guard rejecting a name whose immediately-preceding word is a statement keyword (return/throw/await/yield), or accept only pure modifier/type prefixes | REGRESSION_RISK | 30 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/astgroup/parsers/src/braceparser/parse_core.go:515 | The funcParenName reserved-word guard (catch/with/switch) omits the new languages' parenthesized control headers, so Java `try (Resource r=...)`/`synchronized (o)` and C# `using (...)`/`lock (...)`/`fixed (...)` classify as func named after the control word (cosmetic given the address-based group key, but wrong kind/name) | Extend the reserved-word set with try/synchronized/using/lock/fixed | CORRECTNESS | 15 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/astgroup/parsers/src/braceparser/parse_core.go:248 | A C# 11 raw string opened with 4+ quotes desyncs (triple state opens on first three quotes; the 4th quote of the closing run re-enters single-quote string state), leaving brace depth opaque to EOF or next quote; degrades to proximity, never breaks reconcile (now documented inline) | Match the longest run of quotes when opening/closing the triple-string state | EDGE_CASES | 45 | execute-epic-independent |
++
+ ### [2026-06-29] From Sprint: 13.4_brace_language_parsers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:1 | Wasm ABI (alloc/free/parse/emit/pins) duplicated across three parser modules | Extract shared ABI into common guest package | maintainability | 60 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-28] From Sprint: epic-13.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:20 | The alloc/free/emit/pins guest ABI is duplicated across three parser sources (goparser, pyparser, braceparser); the threshold the existing code documents for extraction (parser count > 2) is now crossed | Extract the shared guest ABI into a package referenced via go.mod replace directives coordinated in build.sh | MAINTAINABILITY | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-28] From Sprint: epic-13.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | u | [/] | LOW | reconcile/pagerank.go:181 | Authority promotion is silent: no counter or Summary stat records that a HIGH came from authority rather than reviewer count, so a misfiring promotion is only derivable as HIGH-with-a-single-reviewer (Deferred: Epic Plan 13.4) | Add a Summary stat (e.g. AuthorityPromoted int) counting authority-promoted findings for observability; out of v1 scope since the clarification fixed the wire schema | OBSERVABILITY | 30 | execute-epic-independent |
+ 
+ ### [2026-06-27] From Sprint: 13.1_ast_plugin_architecture
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | u | [/] | LOW | internal/astgroup/parsers/src/goparser/main.go:39 | The guest pins alloc'd buffers and hands the host int32(uintptr(unsafe.Pointer(&b[0]))) as a stable guest offset, valid only because the current Go GC is non-moving. This is an undocumented runtime invariant, not a language guarantee; a future moving GC makes the packed pointer a dangling offset with no detection. The unsafe alloc/free/emit/node boilerplate is copy-pasted across goparser, pyparser, and the 13.4 brace parsers, so any ABI fix must be applied N times. (Deferred: extraction premature at 2 parsers; epic scope fixed at Go+Python — a future-remedy note is in each parser's ABI section, revisit if parser count grows.) | Extract the shared alloc/free/emit/pins ABI into one internal guest package imported by every parser main.go, and add a build-time note pinning the GC assumption (or switch to an explicitly reserved arena). | maintainability | 120 | code-review | claude | MEDIUM |
+ | u | [/] | MEDIUM | internal/astgroup/parsers/src/pyparser/main.go:112 | scanTripleQuotes and stripComment are quote/escape-unaware. A triple-quote appearing inside a # comment, or a # appearing inside a string literal, flips the multi-line-string state machine the wrong way, so arbitrary spans of real code get classified as string content and dropped from significantLines, silently erasing blocks. The heuristic disclaimer documents the risk but does not bound it: on unusual source the structural hash diverges from the true AST. (Deferred: accepted PoC scope; heuristic limitation already documented at pyparser/main.go:72-78 and 152-156, degrades to proximity grouping.) | Run scanTripleQuotes only over the code portion (skip after an unquoted #) and skip triple-quotes occurring inside single-line strings. Add regression fixtures: a # containing a triple-quote, and a string literal containing #. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-26] From Sprint: 11.0_executing_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/tools/dispatch.go:146 | Tool gating for run_tests/run_script lives only in fanout.wireToolDefs (what the model is TOLD about); Dispatcher.Execute looks up d.handlers[name] with no check that the call was offered to the calling agent, and EnableExecution registers the exec handlers on the single dispatcher shared by the whole pool. The read-only guarantee for non-exec agents is therefore advisory, not structural — if any future caller enables exec non-uniformly across agents sharing one dispatcher, a non-exec agent could invoke run_script by simply naming it. No live exploit today: the sole exec caller, verify, sets exec uniformly for all skeptics. (Deferred: Epic Plan 11.1) | Pass the agent's allowed tool set (or Exec flag) into Execute and reject any call whose name was not offered to this agent, or gate the exec handlers behind a per-call capability rather than a globally-registered handler. Verify with a test where a non-exec agent emits a run_script tool_call and asserts it is refused. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-25] From Sprint: epic-11.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/tools/exec_tools.go:69 | Execution tools are gated per-agent only at the definition level (wireToolDefs); the shared per-run dispatcher will execute a run_tests/run_script call from any agent once EnableExecution is wired. The sandbox isolates every run identically so this is not a containment gap, but a non-designated agent could still incur execution cost. (Deferred: .planning/epics/active/11.1_dispatcher-structural-gating.md — exec_tools.go:69 is a data struct, not a gating point; the offering-layer gate is already structural, and a runtime per-call guard is the multi-file change scoped to Epic 11.1) | Thread agent exec-eligibility into the dispatcher (or add a per-call guard) so only designated agents execute, for precise cost attribution. | SECURITY | 30 | execute-epic-stage3 |
+ 
+ ### [2026-06-23] From Sprint: 8.0_reconciler_library
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | internal/reconcile/discover.go:25 | `internal/reconcile` keeps its discovery `Source` (Name + `[]stream.Finding` + Skipped + SkippedFiles); the library now defines a public `Source` (Name + `[]Finding`) | moved `Reconcile` takes the library `Source`; discovery output (`discover.Source`) is converted to `reconcile.Source` in the adapter/discovery layer | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | MEDIUM | unknown:0 | [Story 01 / Story 06] DoD item not implemented: both CI jobs (root ci.yml + reconcile-module PR-time job) must be marked as REQUIRED status checks on the main branch-protection rule. The CI workflow deliverables they depend on are all present and verified; only the protection-rule toggle is unset. The two story-level [ ] boxes (AC 01-06, AC 06-02) are the same single external action. (intent_note: deferred per sprint-plan Final Phase / dod-completion-summary.md (external repo-admin action)) | Configure branch protection in GitHub repo Settings -> Branches: add the root CI job and the reconcile-module PR-time job as required status checks. External repo-admin UI action (post-merge), not a source-tree change; documented deferred in dod-completion-summary.md. | docs | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: 7.3_github_action_pr_integration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 6 | [/] | MEDIUM | cmd/atcr/github.go:148-167 | Sequential inline comment posting is slow for PRs with many findings (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ | 6 | [/] | LOW | cmd/atcr/github.go:148-167 | Conclusion is computed twice for the same findings/failOn inputs (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: epic-7.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/verify/syntaxguard.go:130 | An unfenced multi-line JSON/config snippet with block braces can still satisfy looksLikeGoCode and be parsed as Go, producing a spurious invalid_syntax flag on non-Go content (residual after heuristic hardening). | Detect obviously non-Go brace content (JSON object / key:value lines) before treating block braces as a Go signal; deferred as a separate design refinement (unfenced non-Go fixes are rare; fenced non-Go is already handled). [Deferred 2026-06-22 to Epic Plan 7.5 syntax-guard-refinements per clarification] | EDGE_CASES | 30 | execute-epic-independent |
+ 
+ ### [2026-06-22] From Sprint: 7.0.1_executor_model_configuration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 7 | [/] | LOW | internal/registry/config.go:524 | Potential prompt injection via system_prompt (Won't-fix: config.go:531–534 explicitly documents that control chars are intentionally NOT rejected in system_prompt; the --- delimiter added at executor.go:225 eliminates the CRLF metadata-forgery surface; otto's fix conflicts with the documented design decision) | Add control character validation to SystemPrompt | security | 15 | code-review | otto | MEDIUM |
+ 
+ ### [2026-06-21] From Sprint: epic-6.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/debate/debate.go:165 | Gray-zone cluster merge/separate rulings are recorded in debate.json but not physically applied to findings.json; clusters still resolve via the existing adjudication path (Deferred: Epic Plan 6.1) | Wire the judge cluster decision into the reconcile adjudication application so unattended runs auto-merge gray-zone clusters inline | INTEGRATION | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-20] From Sprint: epic-5.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/cache/store.go:115 | Eviction does a full ReadDir+Stat of the cache dir on every Put even when under the cap; O(n) per write scales poorly if the cache accumulates thousands of entries (Won't-fix 2026-06-21: scan runs serially under the store mutex and LLM calls dominate latency; no Epic 5.2 perf criterion requires O(1) Put — added state not justified at LOW) | Maintain a running total-size counter and skip the directory scan when it is under the cap, or evict only on a periodic/threshold basis | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-06-20] From Sprint: epic-5.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/report/render.go:317 | The "File not found" warning format string is duplicated across internal/reconcile/emit.go (writeFindingsList) and internal/report/render.go (writePathWarning) in separate packages | Extract a shared constant/helper only if a common low-level rendering package emerges; a cross-package dependency is not justified for one format string today (Won't-fix 2026-06-21: two independent format strings across packages with no shared dependency; the recorded fix confirms extraction is not justified at this scope) | CROSS_CUTTING | 15 | execute-epic-cumulative |
+ | U | [/] | MEDIUM | internal/reconcile/reconcile.go:26 | Validation root is hardcoded to "." at every call site, so "atcr reconcile <path>" for a review of another repo, or running from a non-repo-root CWD, falsely flags every finding as "file not found" | Thread the reviewed repo root explicitly or add a --repo flag, applied consistently with the verify stage which uses the same "." convention (Deferred 2026-06-21: the narrow Root: os.Getwd() variant is a no-op — filepath.Abs(".") already equals the CWD, so it would not fix the non-repo-root / other-repo case; the real fix is to plumb the reviewed-repo path explicitly via a --repo flag threaded through the reconcile and verify call sites, est 60) | EDGE_CASES | 60 | execute-epic-independent |
+ 
+ ### [2026-06-20] From Sprint: 4.7.1_backup-swap-hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:318 | backupExisting() unconditionally RemoveAll's <path>.bak.old and <path>.bak.new at entry, but forceBackupOutputDir() only calls guardForeignBackup(dir+".bak") — the two staging siblings are not guarded. On an arbitrary --output-dir a user who owns <output-dir>.bak.old or <output-dir>.bak.new has it silently deleted by --force, re-opening the Epic 4.7 "never silently delete user data" contract. NOTE: epic clarification Q4 deliberately scoped the guard to .bak only (atcr-internal suffixes); this finding re-raises that decision as worth reconsidering, not a defect against the recorded scope. (intent_note: deferred per epic §Clarifications Q4 — extending guardForeignBackup to .bak.old/.bak.new is out of scope) (Won't-fix 2026-06-20: binding Epic 4.7.1 Q4 — guard stays scoped to .bak; .bak.old/.bak.new are atcr-owned staging names cleared by entry-time RemoveAll; confirmed via /sprint-clarification 95%) | In forceBackupOutputDir() (reviewdir.go:440) extend the guard to guardForeignBackup(dir+".bak.old") and guardForeignBackup(dir+".bak.new") before backupExisting, or refuse if either exists non-empty. Add a test pre-creating a foreign <output-dir>.bak.old with user content and assert --force errors instead of deleting it. | security | 60 | code-review | claude | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:373 | The advertised "an interrupted swap never leaves the user with neither generation" invariant is conditional on a best-effort SILENT restore succeeding. If restorePriorBackup's os.Rename(backupOld,backup) fails (e.g. backup partially recreated, or perms change), the only surviving copy is stranded under .bak.old — which the very next run's entry-time RemoveAll(backupOld) (line 318) then deletes. Same pattern at the copy site swapStagedBackup (atomic.go:159-167) feeding atomic.go:97 RemoveAll(bakOld). (Won't-fix 2026-06-20: observability half done (restore failure now logged); the lone-.bak.old-as-generation redesign is rejected per Epic 4.7.1 Q3 — .bak.old is atcr-owned temp deleted at entry, one-generation contract + TestBackupExisting_CleansStaleStagingStragglers stand; confirmed via /sprint-clarification 95%) | Surface restore failures loudly (log/return) instead of dropping them, and/or do not auto-RemoveAll .bak.old at entry when .bak is absent — treat a lone .bak.old as the surviving generation to recover. Add a test where restore fails and a subsequent run is asserted not to delete the only surviving copy. | correctness | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir.go:388 | backupCrossDevice's inner os.Rename(backupNew,backup) relies on backupNew and backup sharing a filesystem, an invariant that holds only by naming coincidence (both are siblings of path). If anyone later relocates backupNew under path, the inner rename silently becomes cross-device and returns a raw EXDEV to the user. (Won't-fix 2026-06-20: same-fs invariant holds by construction — backup and backupNew are both siblings of path; a runtime guard would be unreachable dead code today and is already documented at reviewdir.go:415-419; confirmed via /sprint-clarification 90%) | Add a test that forces renameFn to return syscall.EXDEV and makes the copy fail (a copy seam, or unreadable src), staging a prior .bak first; assert the prior .bak content is restored intact, the live tree survives, and .bak.new is cleaned up. Cover the copy-failure leg at minimum. | testing | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir_test.go:458 | Test-coverage gaps in the failed-swap/cleanup paths: TestBackupExisting_FailedSwapPreservesPriorBak asserts no .bak.old straggler but not .bak.new; the non-ErrNotExist Lstat(backup) error branch (reviewdir.go:333-335) is untested; the entry-time RemoveAll straggler-cleanup failure legs (reviewdir.go:318-323) are untested. Each is a real error branch a regression could silently break. | Add assert.NoDirExists for src+".bak.new" at reviewdir_test.go:458; add a perms-based test forcing Lstat(backup) to fail with a non-ErrNotExist error; add a test where .bak.old cannot be removed and assert the typed "clearing stale staging backup" error. Skip on root/CI where perms are not enforced. (Partial 2026-06-21: gaps 1 (.bak.new assertion) and 3 (RemoveAll(.bak.old) failure) covered; gap 2 (non-ErrNotExist Lstat(backup)) deferred — needs an lstatFn production seam since the staging siblings share a parent dir so perms cannot isolate it) | testing | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-19] From Sprint: 4.7_idempotency
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:284 | backupExisting() does os.RemoveAll(backup) then os.Rename(path, backup); BackupToDotBak() does os.RemoveAll(bak) then copyTree. If the rename/copy fails (cross-filesystem EXDEV when --output-dir and its .bak sibling are on different mounts, disk-full mid-copy, or SIGKILL), the single prior backup generation is already destroyed while the new backup is absent or partial. The live/original tree is preserved (good), but the one recoverable prior .bak is lost for no benefit — counter to the safe-to-retry goal. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 4.7.1) | Stage the new backup first: copy/rename into <path>.bak.new (or rename old .bak aside to .bak.old), confirm it is complete, then swap and only then remove the old generation. For backupExisting, attempt os.Rename before RemoveAll so a failed rename leaves the old .bak intact; detect EXDEV and fall back to copy+remove. Add a fault-injection test asserting the prior .bak survives a failed swap. | correctness | 120 | code-review | code-reviewer, claude | HIGH |
+ 
+ ### [2026-06-19] From Sprint: 4.5_circuit_breaker
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | MEDIUM | internal/fanout/metrics.go:37 | recordAgentOutcome zeroes apiCalls for any result whose error unwraps to context.DeadlineExceeded/Canceled, assuming no request was made. But a per-agent timeout routinely fires AFTER real HTTP round-trips (and mid tool-loop after several Chat turns already hit the wire), so atcr_api_calls_total undercounts real provider traffic exactly when a provider is degraded. The no-request assumption is only provably safe for CircuitOpenError and pre-first-send cancellation. (Deferred: Epic Plan 4.11) | Use max(1, r.Turns) for the deadline case instead of a flat 0, or thread a real calls-attempted counter out of the client rather than inferring from the terminal error class. Keep the apiCalls=0 path only for CircuitOpenError. | performance | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-18] From Sprint: epic-4.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/validation/validation.go:62 | System-dir denylist covers only /etc, /proc, /sys, leaving /boot, /dev, /root, /var and ~/.ssh writable via --output-dir / --output (deliberate Option-B permissive choice) (Won't-fix: intended Option-B policy per epic 4.3 clarifications 2026-06-18; revisit only on a concrete isolation requirement) | If stronger isolation is later required, switch to an allowlist anchored at the repo/.atcr root instead of a denylist | SECURITY | 30 | execute-epic-independent |
+ | 1 | [/] | LOW | internal/validation/validation.go:86 | Severity and Enum validators are shipped but wired to nothing (ParseSeverity/ValidFormat remain the live paths); they exist only to satisfy AC5/AC7 and future use (Won't-fix: intentionally public for AC5/AC7 per epic 4.3 clarifications; deletion breaks ACs, wire-in out of scope) | Revisit and delete if no caller adopts them within a release, or wire them in where duplication can be removed | OVER_ENGINEERING | 15 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/registry/attribution.go:55 | attribute() recurses and reconstructs the join even for a single-error errors.Join (which still satisfies Unwrap() []error), a small avoidable cost on the load-time validation path | Optionally short-circuit when len(children)==1 if profiling ever flags it (WON'T-FIX 2026-06-18: trigger unmet — error-path only, never hit on normal load; no perf AC in epic 4.2) | INTEGRATION | 5 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.1.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/fanout/review.go:361 | If a server shutdown (or CLI SIGINT) fires after all agents already succeeded but before ExecuteReview's interrupted := errors.Is(ctx.Err(), context.Canceled) check, a fully-completed run is stamped Interrupted=true and status.go:216 overrides RunCompleted to RunInterrupted (a false interrupted; inverse of AC4). Pre-existing in the CLI-shared path, newly reachable via MCP shutdown. | Gate the interrupted marker on at least one agent ending in StatusTimeout/cancelled rather than purely on parent ctx.Err()==Canceled. NOTE: touches CLI-shared review.go (out of scope for epic 4.1.2's MCP-only change); window is microscopic and outcome benign (resume no-ops a complete run) - separate design. (WON'T-FIX 2026-06-18: --resume self-healing via ClearInterrupted (resume.go:220) already recovers a stale interrupted-on-complete; revisit in a backlog sprint if insufficient) | CORRECTNESS | 30 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: epic-4.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:88 | Serve-mode background fan-out runs under context.WithoutCancel(ctx) so a SIGINT to the MCP server never cancels or marks an in-flight detached review interrupted; it is allowed to finish (intended MCP design) but never gets the interrupted marker CLI mode promises. (Deferred: Epic Plan 4.1.2) | Decide whether detached MCP reviews should be marked interrupted on server shutdown; if so, thread a cancellable/interrupt-aware context or post-hoc marker into the background review path — a separate design from this CLI-focused epic. | REGRESSION_RISK | 60 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: 4.0_structured_logging
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/review.go:172 | Both review entry points call `NewRedactor(root)` with ZERO configured secrets — cmd/atcr/review.go:172 and internal/mcp/handlers.go:87 pass only the path root, never the registry API keys. The exact-value secret-scrubbing loop in Redact is therefore dead in production; redaction relies entirely on the `sk-`/`Bearer` regexes, which miss raw provider keys that lack those prefixes (Google `AIzaSy...`, Azure `api-key`, JWTs `eyJ...`). The AC5 "no API key in log output" guarantee holds only for sk-/Bearer-shaped keys; the passing integration test likely uses an sk- key, masking the gap. (Deferred: Epic Plan 4.9 secret-value-redaction) | Thread resolved registry API key values into `NewRedactor(root, keys...)` at both review.go:172 and handlers.go:87 (keys are discoverable from prep.Slots / cfg.Registry). Add an integration test using a non-sk-shaped key (e.g. `AIzaSy...`) asserting it is redacted. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: 3.5_severity-rank-consolidation
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:18 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:30 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestGrayZoneNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:42 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNoDisagreementOnCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: epic-3.5
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/stream/severity.go:20 | The canonical SeverityRank map carries a read-only-after-init invariant in a comment only, with no test guard preventing a future caller from mutating the shared map (which would race across concurrent fan-out agents). (Won't fix: structural guard — reconcile copy-on-init at merge.go:29-31 means no consumer writes stream.SeverityRank directly; grep confirms zero write sites across consumers. Snapshot test trips the over-simplification gate; Rank() accessor cascades to 14+ direct-lookup sites — both out of pure-consolidation scope.) | Add a stream test that snapshots the map and asserts it is unchanged after consumers run, or wrap it behind a Rank(sev) accessor. | OBSERVABILITY | 20 | execute-epic-independent |
+ 
+ ### [2026-06-16] From Sprint: 3.4_scorecard-diagnostics-writer
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:118 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; the diagnostic already routes to the injectable writer, only fmt.Fprintf's own return is dropped; propagating it breaks Emit's never-fail contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:199 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; Append loop already surfaces firstErr; propagating the Fprintf return breaks the best-effort contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:235 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verdictTallies already writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:248 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verification-read-failed diagnostic writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:276 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; orphan-verdict diagnostic routes to injectable w, locked by TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/scorecard_test.go:291 | Epic 3.4 added unit tests proving EmitOpts.Diag / ReadOpts.Writer routing at the scorecard layer, but there is no test asserting the wiring itself — that the MCP handler passes a non-default writer or that the three CLI entry points pass cmd.ErrOrStderr(). This plumbing can silently regress (a future refactor swaps cmd.ErrOrStderr() back to a default and no test fails). (Deferred: Epic Plan 3.6 scorecard-wiring-tests) | Add a CLI-level test that drives a scorecard command against a deliberately-malformed store and asserts the read diagnostic reaches the command's ErrOrStderr buffer; once MCP diagnostics route through e.log, add a handler-level test asserting against a captured logger buffer. | testing | 60 | code-review | claude | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:114 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; over-long-line warning uses injectable w via diagWriter; read continues; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:145 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; decodeRecord writes to injectable w then returns (Record,bool) — no error cascade) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:155 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; schema-version skip writes to injectable w; identical to malformed-record path) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/store.go:194 | Redundant call to diagWriter (Wontfix: FALSE POSITIVE — diagWriter is the required typed-nil guard for the nil-able opts.Writer interface, not redundant; removing it reintroduces the panic fixed by commit 476c6d1) | Remove diagWriter call and use opts.Writer directly since ReadRecords already resolves it | performance | 2 | code-review | otto | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:211 | Error from diagWriter is silently discarded (Wontfix: FALSE POSITIVE — `_, _ = fmt.Fprintf` is the documented best-effort never-panic diagnostics contract at store.go:22-24; returning the write error would regress a successful read on a broken sink and logging is circular; confirmed working as designed via /sprint-clarification 97%) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:220 | The MCP engine carries a structured *slog.Logger (e.log) used for every other diagnostic in handleReconcile (e.g. the require_verified warning at line ~225), but scorecard diagnostics are routed to raw os.Stderr, so MCP-path scorecard write-failures/malformed-record/orphan-verdict warnings emit as unstructured plaintext that bypasses the logger's level filtering, formatting, and sink redirection. NOTE: this was a DELIBERATE, documented epic decision (Clarifications Q2: supply os.Stderr at the call site; adapting e.log to an io.Writer was explicitly OUT of scope), so this is enhancement debt, not a regression. (intent_note: deferred per epic Clarifications Q2 — adapting e.log to an io.Writer is out of scope) (Wontfix: ACCEPTED ENHANCEMENT DEBT — handlers.go:220 is an unconditional EmitOpts{Diag: os.Stderr} call, not deferred logic; all five Epic 3.4 ACs are met and the comment at handlers.go:214-219 satisfies AC4; e.log→io.Writer adaptation is out of scope per Clarifications Q2; confirmed via /sprint-clarification 97%) | If MCP observability is later desired, adapt e.log into an io.Writer shim (slog-backed at Warn level) and pass it as Diag instead of os.Stderr, so MCP-path scorecard diagnostics flow through the same structured pipeline as the rest of the handler. Defer unless/until structured MCP diagnostics are required. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-15] From Sprint: 3.3_per-run_scorecard
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go (FindByRunID adjacent-month notice; ReadRecords malformed-line notice); internal/scorecard/scorecard.go (Emit notices) | Store/emit diagnostics ("skipping malformed record", "run spans adjacent month files", "write failed") are written directly to the process-global `os.Stderr` rather than to a writer threaded from the cobra command (`cmd.ErrOrStderr()`). (Deferred: Epic Plan 3.4) | accept an `io.Writer` (or logger) on the store/emit entry points and have the CLI pass `cmd.ErrOrStderr()`, so warnings are capturable and redirectable. | ops | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-06-14] From Sprint: 3.2_disagreement_radar
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/reconcile/disagree.go:280 | Duplicate writeRadarSection rendering logic risks divergent escaping across packages (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Consolidate radar rendering into report package; reconcile should call report.writeRadarSection | security | 20 | code-review | greta | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/disagree.go:350 | Duplicated radar section rendering logic (Deferred: Epic Plan 7.2) | Extract shared writeRadarSection to a common package | maintainability | 10 | code-review | bruce | MEDIUM |
+ | 4 | [/] | MEDIUM | internal/reconcile/disagree.go:354 | Duplicated radar markdown rendering diverges (Deferred: Epic Plan 7.2) | Extract shared writer or make reconcile use report package's escTrunc | maintainability | 10 | code-review | bruce | MEDIUM |
+ | U | [/] | LOW | internal/reconcile/disagree.go:413 | Redundant implementation of writeRadarSection (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Remove duplicate function from internal/reconcile and use internal/report | maintainability | 15 | code-review | otto | MEDIUM |
+ | 5 | [/] | MEDIUM | internal/report/disagree.go:47 | The radar markup is rendered by two divergent copies: writeRadarSection + formatScore in internal/report/disagree.go and a structurally different copy in internal/reconcile/disagree.go:389. They are intentionally not identical (report copy truncates via escTrunc + uses joinReviewers/reviewerOrUnknown; reconcile copy uses uncapped esc + joinOrNone), so a future markup change (new field, reordered bullets) must be made in both or the live `atcr report` radar and the archival reconciled/report.md silently drift. (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Extract one shared item renderer parameterized by a truncate-vs-verbatim flag and heading prefix; have both call sites delegate. Add a test that diffs the rendered markup of both paths on the same DisagreementsFile asserting the only intended difference is truncation. | correctness | 60 | code-review | bruce, claude | HIGH |
+ 
+ ### [2026-06-14] From Sprint: 2.2_code_review_fanout_hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | MEDIUM | internal/fanout/postprocess.go:14 | The severity-rank rubric {CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1} is independently redefined in fanout/postprocess.go:17, reconcile/merge.go, verify, report, plus a set-form copy reviewSeverities in registry/config.go. postprocess looks up severityRank[strings.ToUpper(...)] while reconcile looks up the raw value, so a future severity change or non-canonical casing silently desyncs fan-out truncation from reconcile merging. The postprocess copy was newly added by Epic 2.2. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 3.5) | Extract a single canonical severity package (or export from internal/stream) exposing the ordered rank map plus normalizeSeverity, and have registry/fanout/reconcile/verify/report consume it. Verify by deleting the local maps and confirming the suite passes with one source of truth. | maintainability | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-14] From Review: llmclient OpenAI-compatible tool handling
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | U | [/] | LOW | internal/llmclient/chat.go:1 | No provider-conformance test matrix for the OpenAI-compatible surface. The client deliberately absorbs real wire divergence (string-encoded vs raw-object tool_call `arguments`, lenient finish_reason) but is exercised only against synthetic fixtures, so a regression against a specific provider's actual tool_call shape (OpenAI, litellm, Ollama, vLLM, Together) would not be caught. This is the robustness the official SDK is assumed to provide, achievable here without adopting it. | Add a recorded-fixture conformance suite: capture a real `tool_calls` response from each target provider and assert the parser (`ToolCallArguments`, `chatToolResponse` decode, finish_reason handling) yields identical engine-facing results. NOTE: scope is a few days, not a quick-win — consider promoting to a standalone test-remediation plan rather than resolving inline. | testing | 480 | review | claude | LOW |
+ 
+ ### [2026-06-14] From Sprint: 3.0_adversarial_verification
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 7 | [/] | LOW | internal/verify/pipeline.go:238 | The rich VerificationResult built in verifyFinding never populates TrippedBudgets (invokeSkeptic folds tripped budgets only into free-text Notes), base.Model is hard-coded to skeptics[0].Config.Model even when another skeptic produced the winning verdict, and the skip-already-verified rebuild (pipeline.go:199) re-synthesizes records from the compact on-disk block losing Model/DurationMs/TrippedBudgets — so verification.json's structured audit fields degrade or misattribute on multi-skeptic and no-op re-runs (extends the model-attribution gap of TD-011). Also: Model is empty on the no_eligible_skeptic / tool_harness_unavailable early-return paths. [intent: deferred per sprint-plan TD-011] | Thread the tripped-budget slice and the winning skeptic's model up from invokeSkeptic into base.TrippedBudgets/base.Model (join models when multiple voters agree, mirroring joinSkeptics), and carry Model/DurationMs/TrippedBudgets forward for skipped findings instead of synthesizing a lossy record. | correctness | 120 | execute-sprint | execute-sprint, claude | HIGH |
+ 
+ ### [2026-06-13] From Sprint: 2.0_tool_using_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 5 | [/] | LOW | internal/tools/snapshot.go | AC 03-02 Scenario 5 and AC 03-03 Scenarios 4-5 require `manifest.json` `stages.review` to record `snapshot_mode` (live/worktree), `head_sha`, and `snapshot_worktree_path`. (intent_note: deferred per sprint-plan §2.5.A (manifest review-stage recording is Phase 5 work); Deferred to Epic Plan 2.1) | when wiring `SnapshotFor` into the agent loop, record `snapshot_mode`/`head_sha`/`snapshot_worktree_path` into `internal/payload/manifest.go` review stage and add the manifest assertion tests from AC 03-02/03-03. | testing | 0 | execute-sprint | execute-sprint | MEDIUM |
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index e8d74a49..c98b615b 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,101 +1,115 @@
++## [13.6.0] - 2026-06-30
++
++Expanded AST-isomorphism finding grouping to four more brace-based language families.
++
++### Added
++
++- AST-isomorphism finding grouping now covers Java (`.java`), Kotlin (`.kt`/`.kts`), C/C++ (`.c`/`.cpp`/`.cc`/`.cxx`/`.h`/`.hpp`), and C# (`.cs`) source, so `atcr reconcile` clusters findings in those languages by their enclosing code block across line-number drift instead of falling back to ±3 line proximity.
++
++### Changed
++
++- The shared brace parser now names methods that carry modifiers/return types (e.g. `public void execute()`, `void Foo::bar()`) so they group as named blocks, and treats `"""` triple-quoted strings (Kotlin multiline strings, Java text blocks, C# raw string literals) as opaque so their braces never skew block structure.
++
++*Shipped via /execute-epic (epic 13.6)*
++
+ ## [Technical Debt] - 2026-06-30
+ 
+ ### Fixed
+ 
+ - Fixed missing `authority_promoted` count in report output.
+ - Hardened `countAuthorityFlips` oracle to mirror the base-confidence flip predicate.
+ 
+ ## [13.5.0] - 2026-06-29
+ 
+ ### Added
+ 
+ - Added an `authority_promoted` field to the reconcile run summary
+   (`reconcile-json/v1`) recording how many findings PageRank authority promotion
+   raised from MEDIUM to HIGH confidence in a run — observability for the epic 13.3
+   promotion signal, which was previously silent.
+ 
+ ### Changed
+ 
+ - The reconcile summary wire schema gained the additive `authority_promoted` key.
+   This is a v2 wire-schema change (sanctioned by this epic); existing consumers are
+   unaffected unless they decode `reconcile-json/v1` with strict unknown-field
+   rejection.
+ 
+ *Shipped via /execute-epic (epic 13.5)*
+ 
+ ## [Technical Debt] - 2026-06-29
+ 
+ ### Fixed
+ 
+ - Fixed PHP attributes (`#[...]`) being swallowed as comments in the brace parser.
+ - Corrected typed arrow annotations (`foo<T>() => ...`) being mislabeled as functions.
+ - Stopped Bash arithmetic shifts (`<<` / `>>`) from being misdetected as heredoc starts.
+ - Added handling for Bash brace expansion so it no longer opens spurious blocks.
+ - Fixed heredoc strip-tab logic so PHP `<<<` heredocs no longer incorrectly strip leading tabs.
+ - Fixed multi-byte escape sequences (`\u{7f}`) being dropped due to `charLiteralLen` returning zero.
+ - Relaxed `funcParenName` so TypeScript method modifiers no longer defeat function detection.
+ - Fixed `identAfter` to skip generic parameters after keywords like `impl`, preserving the real identifier name.
+ - Stopped `classifyHeader` from treating `catch (e)` as a function when TypeScript `funcParen` is enabled.
+ - Corrected `classifyHeader` arrow-function detection to consider arrow position rather than just the last `=>` index.
+ - Reduced inefficient string allocation in the brace parser core scanner.
+ - Documented regex-as-unhandled in the brace parser normal state and added a dedicated CI job for the brace parser module.
+ 
+ ## [13.4.0] - 2026-06-28
+ 
+ ### Added
+ 
+ - AST-isomorphism grouping now covers TypeScript/JavaScript (`.ts`/`.tsx`/`.cts`/`.mts`/`.js`/`.jsx`/`.mjs`), PHP (`.php`), Rust (`.rs`), and Bash (`.sh`/`.bash`): duplicate findings in those languages group by their smallest covering block across line drift > 3, instead of falling back to the ±3 line-proximity gate.
+ - A shared brace-block parser (`braceparser`) compiled once per language into a vendored wasip1 `.wasm`, parameterized by a per-language keyword/comment/string/heredoc table — adding the next brace language is a config-table plus corpus change, not new parser code.
+ 
+ *Shipped via /execute-epic (epic 13.4)*
+ 
+ ## [Technical Debt] - 2026-06-28
+ 
+ ### Fixed
+ 
+ - Capped distinct reviewers per agreement group and sorted them deterministically, eliminating an unbounded quadratic loop in `addAgreement`
+ - Stored PageRank edge weights as `float64` to avoid repeated int-to-float conversions
+ - Replaced manual absolute-value delta logic with `math.Abs` for consistent convergence
+ - Precomputed the authority baseline once per reconcile run and added an explicit authority map lookup before promotion
+ - Renamed the `any` variable to `hasAgreement` to avoid shadowing the Go builtin
+ - Preallocated the `allGroups` slice with known capacity
+ - Updated `Confidence` documentation to reflect that `HIGH` can result from authority promotion, not only multiple reviewers
+ - Annotated dangling-mass redistribution as defensive-only for the always-connected agreement graph
+ - Documented the strict authority baseline boundary assumption
+ - Added invariant tests for symmetric K4/K5/cycle graphs, disconnected components, never-agreed isolated findings, and run-twice determinism
+ - Reworded `BenchmarkModelAuthority` to characterize rather than validate the NFR
+ - Fixed undefined `merged` variable and removed dead code in `reconcile/reconcile.go`
+ 
+ ## [13.3.0] - 2026-06-28
+ 
+ ### Added
+ 
+ - Deterministic per-run PageRank "authority" signal over a model-agreement graph (nodes are models, count-weighted edges are cross-model agreements), built once per reconcile run with a damped power iteration (damping 0.85, strict iteration backstop) — fully offline and stdlib-only.
+ 
+ ### Changed
+ 
+ - Confidence scoring now factors model authority: an isolated (single-reviewer) finding is promoted from `MEDIUM` to `HIGH` when its model's run authority exceeds the uniform `1/N` baseline. Promotion is one-directional (authority never lowers confidence), and confidence stays identical to the prior reviewer-count behavior when a run has no cross-model agreement.
+ 
+ *Shipped via /execute-epic (epic 13.3)*
+ 
+ ## [Technical Debt] - 2026-06-28
+ 
+ ### Fixed
+ 
+ - Cached per-cluster relation and similarity matrix once and read it from all three sites in `reconcile/dedupe.go`
+ - Collapsed unattributed findings to one density source so duplicate hallucinations no longer self-corroborate
+ - Namespaced real versus anonymous source keys disjointly to block reviewer spoofing
+ - Capped location clusters at `maxClusterSize`, degrading to singletons to prevent unbounded memory growth
+ - Locked DBSCAN single-pass neighbor invariant and documented why no adjacency cache is needed
+ - Added complete-linkage acceptance to `bipartiteGroups` to prevent merge-strength chain over-merges
+ - Short-circuited `hungarianAssign` single-row/column paths to an O(n) argmin
+ - Added a maximum matrix size guard to the Hungarian algorithm
+ - Added `AmbiguousCount` and `NoiseCount` fields to the reconciler summary
+ - Skipped gray recording for findings that share an AST key
+ - Validated key length in `dedupeCluster`
+ - Deduplicated the DBSCAN seed queue to avoid O(n²) growth
+ - Added a safety iteration limit to the Hungarian algorithm
+ - Derived `noMatchSentinel` from the distance ceiling
+ - Resolved documentation accuracy for bipartite matching
+ 
+ ## [13.2.0] - 2026-06-28
+diff --git a/README.md b/README.md
+index b1648753..670bf913 100644
+--- a/README.md
++++ b/README.md
+@@ -85,7 +85,7 @@ Key flags:
+ 
+ Environment variables:
+ 
+-- `ATCR_DISABLE_AST_GROUPING` — `atcr reconcile` clusters findings by AST isomorphism (the smallest covering AST block of each finding's line) by default, so findings group together across line-number drift, with line proximity as the per-finding fallback when no parser is available or the source is missing. Set this to a truthy value (`1`, `true`) to revert to legacy line-proximity-only clustering; a falsy, unparseable, or unset value keeps AST grouping on.
++- `ATCR_DISABLE_AST_GROUPING` — `atcr reconcile` clusters findings by AST isomorphism (the smallest covering AST block of each finding's line) by default, so findings group together across line-number drift, with line proximity as the per-finding fallback when no parser is available or the source is missing. AST grouping covers Go, Python, TypeScript/JavaScript, PHP, Rust, Bash, Java, Kotlin, C/C++, and C#; any other file type falls back to line proximity. Set this to a truthy value (`1`, `true`) to revert to legacy line-proximity-only clustering; a falsy, unparseable, or unset value keeps AST grouping on.
+ 
+ ### Redirecting output for orchestrators (`--output-dir`)
+ 
+diff --git a/internal/astgroup/embed.go b/internal/astgroup/embed.go
+index 1575e505..03757959 100644
+--- a/internal/astgroup/embed.go
++++ b/internal/astgroup/embed.go
+@@ -4,45 +4,60 @@ import "embed"
+ 
+ //go:embed parsers/go.wasm parsers/python.wasm
+ //go:embed parsers/ts.wasm parsers/php.wasm parsers/rust.wasm parsers/bash.wasm
++//go:embed parsers/java.wasm parsers/kotlin.wasm parsers/cpp.wasm parsers/csharp.wasm
+ var parserFS embed.FS
+ 
+ // builtinParsers maps a language id to its embedded .wasm plugin path. Adding a
+ // language is "drop in a new .wasm file" plus one entry here (and an extension
+ // mapping in LanguageForExt). The embedded set is the hermetic default; a runtime
+ // override directory (future extension) would be consulted before this map.
+ //
+-// The ts/php/rust/bash plugins are four builds of one shared brace-block parser
+-// source (parsers/src/braceparser), each with its language's keyword/naming table
+-// baked in at compile time; the language id is the discriminator the host uses to
+-// pick the binary, exactly as for go/python.
++// The ts/php/rust/bash/java/kotlin/cpp/csharp plugins are eight builds of one
++// shared brace-block parser source (parsers/src/braceparser), each with its
++// language's keyword/naming table baked in at compile time; the language id is the
++// discriminator the host uses to pick the binary, exactly as for go/python.
+ var builtinParsers = map[string]string{
+ 	"go":     "parsers/go.wasm",
+ 	"python": "parsers/python.wasm",
+ 	"ts":     "parsers/ts.wasm",
+ 	"php":    "parsers/php.wasm",
+ 	"rust":   "parsers/rust.wasm",
+ 	"bash":   "parsers/bash.wasm",
++	"java":   "parsers/java.wasm",
++	"kotlin": "parsers/kotlin.wasm",
++	"cpp":    "parsers/cpp.wasm",
++	"csharp": "parsers/csharp.wasm",
+ }
+ 
+ // LanguageForExt maps a file extension (including the dot, lowercased) to a
+ // parser language id, or "" if no parser is available for it. Callers that get
+ // "" should fall back to line-proximity grouping for that finding.
+ func LanguageForExt(ext string) string {
+ 	switch ext {
+ 	case ".go":
+ 		return "go"
+ 	case ".py":
+ 		return "python"
+ 	// TypeScript/JavaScript family — one shared brace parser, one language id.
+ 	case ".ts", ".tsx", ".cts", ".mts", ".js", ".jsx", ".mjs":
+ 		return "ts"
+ 	case ".php":
+ 		return "php"
+ 	case ".rs":
+ 		return "rust"
+ 	case ".sh", ".bash":
+ 		return "bash"
++	case ".java":
++		return "java"
++	// Kotlin source and script files — one shared brace parser, one language id.
++	case ".kt", ".kts":
++		return "kotlin"
++	// C/C++ translation units and headers — one shared brace parser, one language id.
++	case ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp":
++		return "cpp"
++	case ".cs":
++		return "csharp"
+ 	default:
+ 		return ""
+ 	}
+ }
+diff --git a/internal/astgroup/host_test.go b/internal/astgroup/host_test.go
+index 424d274c..0b0eec95 100644
+--- a/internal/astgroup/host_test.go
++++ b/internal/astgroup/host_test.go
+@@ -80,44 +80,58 @@ func TestHost_ParsePythonMultiLineHeader(t *testing.T) {
+ func TestLanguageForExt(t *testing.T) {
+ 	require.Equal(t, "go", LanguageForExt(".go"))
+ 	require.Equal(t, "python", LanguageForExt(".py"))
+ 	require.Equal(t, "", LanguageForExt(".rb")) // Ruby is intentionally out of scope
+ 	require.Equal(t, "", LanguageForExt(""))
+ 
+ 	// Brace languages (epic 13.4): TypeScript/JavaScript family, PHP, Rust, Bash.
+ 	for _, ext := range []string{".ts", ".tsx", ".cts", ".mts", ".js", ".jsx", ".mjs"} {
+ 		require.Equalf(t, "ts", LanguageForExt(ext), "ext %s should map to ts", ext)
+ 	}
+ 	require.Equal(t, "php", LanguageForExt(".php"))
+ 	require.Equal(t, "rust", LanguageForExt(".rs"))
+ 	require.Equal(t, "bash", LanguageForExt(".sh"))
+ 	require.Equal(t, "bash", LanguageForExt(".bash"))
++
++	// Brace languages (epic 13.6): Java, Kotlin, C/C++, C#.
++	require.Equal(t, "java", LanguageForExt(".java"))
++	for _, ext := range []string{".kt", ".kts"} {
++		require.Equalf(t, "kotlin", LanguageForExt(ext), "ext %s should map to kotlin", ext)
++	}
++	for _, ext := range []string{".c", ".cpp", ".cc", ".cxx", ".h", ".hpp"} {
++		require.Equalf(t, "cpp", LanguageForExt(ext), "ext %s should map to cpp", ext)
++	}
++	require.Equal(t, "csharp", LanguageForExt(".cs"))
+ }
+ 
+ // TestHost_BraceParsersLoadAndParse proves each embedded brace .wasm instantiates
+ // and recovers a function block for representative source of its language — the
+ // end-to-end check that the build-tag-selected table reached the binary the host
+ // loads for that language id.
+ func TestHost_BraceParsersLoadAndParse(t *testing.T) {
+ 	cases := []struct{ lang, src string }{
+ 		{"ts", "function f() {\n  const x = 1\n  return x\n}\n"},
+ 		{"php", "<?php\nfunction f() {\n  $x = 1;\n  return $x;\n}\n"},
+ 		{"rust", "fn f() -> i32 {\n  let x = 1;\n  x\n}\n"},
+ 		{"bash", "f() {\n  local x=1\n  echo $x\n}\n"},
++		{"java", "void f() {\n  int x = 1;\n  use(x);\n}\n"},
++		{"kotlin", "fun f() {\n  val x = 1\n  use(x)\n}\n"},
++		{"cpp", "int f() {\n  int x = 1;\n  return x;\n}\n"},
++		{"csharp", "void F() {\n  int x = 1;\n  Use(x);\n}\n"},
+ 	}
+ 	h := NewHost()
+ 	defer func() { _ = h.Close() }()
+ 	for _, c := range cases {
+ 		p, err := h.Parser(c.lang)
+ 		require.NoErrorf(t, err, "parser for %q should be registered", c.lang)
+ 		root, err := p.Parse([]byte(c.src))
+ 		require.NoErrorf(t, err, "parse %q", c.lang)
+ 		require.Equalf(t, "file", root.Kind, "%q root kind", c.lang)
+ 		var hasFunc bool
+ 		for _, ch := range root.Children {
+ 			if ch.Kind == "func" {
+ 				hasFunc = true
+ 			}
+ 		}
+ 		require.Truef(t, hasFunc, "%q: expected a func block, got %+v", c.lang, root.Children)
+ 	}
+ }
+diff --git a/internal/astgroup/parsers/SHA256SUMS b/internal/astgroup/parsers/SHA256SUMS
+index e9f4c513..a78bc87a 100644
+--- a/internal/astgroup/parsers/SHA256SUMS
++++ b/internal/astgroup/parsers/SHA256SUMS
+@@ -1,6 +1,10 @@
+-5890693a806ef23fbe633bcb7e0e50b83405c84084466d367ebbf52555453e35  go.wasm
+-0b79ffcf5eec314e3a02d359dc1a09d74b4093f1951d5415e25f286ebc851439  python.wasm
+-fab785501e1d58207fba2541877db39aceda56ca822d48b5994ef7e34a27d52a  ts.wasm
+-e6fa06d0e5fb936ce347b5f58ece1e4472723ba2fd7b441b5983d91c87dafc51  php.wasm
+-968df24de55b5fbee5ee58087efb67194d57d7d563b4ffff6fbcdc249277d5db  rust.wasm
+-1e9c061bda3682782540e4d8e2585e0bf6f256deb3280fe96df633e32dd523db  bash.wasm
++cc753226fda40467dce68f3d43371f3a4e54dfa68042b2f15eb7be8ded606c5f  go.wasm
++af8fef875d7c083ae80b1d3384a6278a88a587badd7587c1550952bab28ba5c5  python.wasm
++31bd34bea9666518f65276d5ea6c58a287fa627036d70413ad745948e1197cc8  ts.wasm
++2530d6d6dc96296eff8a0bdd991b5ac6419697c6d3f51e4872b7237408ae3adf  php.wasm
++995a77b822edd0e75f9b5f54db9561180caf40523dfd379261fc67812e26d0fa  rust.wasm
++b05509035839331c1e6ad2a2638350b1f7ff7d342c969258f8af1396dc116160  bash.wasm
++b2571b6c957964f962c528eec225f0933de8d643e44e50a0b50f82d08f796e84  java.wasm
++1cdc24701bacd69abec376681e95f9e766b2c6a3f182d38de30fcb6f6259c93a  kotlin.wasm
++b8bd811b9eb6d404a0ef693e38510e8ed794ed50db80c97c5ab25e72a9be8be7  cpp.wasm
++b164192bc9225b5e77b7506920cc897932f5a7bc82d9b54d54f161a69a5c92ff  csharp.wasm
+[binary file changed: internal/astgroup/parsers/bash.wasm]
+diff --git a/internal/astgroup/parsers/build.sh b/internal/astgroup/parsers/build.sh
+index 068793dc..b9062871 100755
+--- a/internal/astgroup/parsers/build.sh
++++ b/internal/astgroup/parsers/build.sh
+@@ -48,12 +48,16 @@ build ts braceparser ts
+ build php braceparser php
+ build rust braceparser rust
+ build bash braceparser bash
++build java braceparser java
++build kotlin braceparser kotlin
++build cpp braceparser cpp
++build csharp braceparser csharp
+ 
+ # Refresh the checksum manifest so the committed binaries stay verifiable from a
+ # committed hash. TestEmbeddedParsersMatchManifest (go test ./...) fails in CI if
+ # the .wasm files and SHA256SUMS drift, catching a tampered or stale binary
+ # without needing a Wasm toolchain in the pipeline. Commit SHA256SUMS with the
+ # regenerated .wasm files.
+-( cd "${here}" && sha256sum go.wasm python.wasm ts.wasm php.wasm rust.wasm bash.wasm > SHA256SUMS )
++( cd "${here}" && sha256sum go.wasm python.wasm ts.wasm php.wasm rust.wasm bash.wasm java.wasm kotlin.wasm cpp.wasm csharp.wasm > SHA256SUMS )
+ echo "wrote SHA256SUMS"
+ echo "done"
+[binary file changed: internal/astgroup/parsers/cpp.wasm]
+[binary file changed: internal/astgroup/parsers/csharp.wasm]
+[binary file changed: internal/astgroup/parsers/go.wasm]
+[binary file changed: internal/astgroup/parsers/java.wasm]
+[binary file changed: internal/astgroup/parsers/kotlin.wasm]
+[binary file changed: internal/astgroup/parsers/php.wasm]
+[binary file changed: internal/astgroup/parsers/python.wasm]
+[binary file changed: internal/astgroup/parsers/rust.wasm]
+diff --git a/internal/astgroup/parsers/src/braceparser/active_cpp.go b/internal/astgroup/parsers/src/braceparser/active_cpp.go
+new file mode 100644
+index 00000000..7680e2c6
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/active_cpp.go
+@@ -0,0 +1,7 @@
++//go:build cpp
++
++package main
++
++// active is the compile-time-selected language table. Built with `-tags cpp` by
++// build.sh to produce cpp.wasm (C and C++).
++var active = cppConfig
+diff --git a/internal/astgroup/parsers/src/braceparser/active_csharp.go b/internal/astgroup/parsers/src/braceparser/active_csharp.go
+new file mode 100644
+index 00000000..9f09cb7b
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/active_csharp.go
+@@ -0,0 +1,7 @@
++//go:build csharp
++
++package main
++
++// active is the compile-time-selected language table. Built with `-tags csharp` by
++// build.sh to produce csharp.wasm.
++var active = csharpConfig
+diff --git a/internal/astgroup/parsers/src/braceparser/active_java.go b/internal/astgroup/parsers/src/braceparser/active_java.go
+new file mode 100644
+index 00000000..a3670598
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/active_java.go
+@@ -0,0 +1,7 @@
++//go:build java
++
++package main
++
++// active is the compile-time-selected language table. Built with `-tags java` by
++// build.sh to produce java.wasm.
++var active = javaConfig
+diff --git a/internal/astgroup/parsers/src/braceparser/active_kotlin.go b/internal/astgroup/parsers/src/braceparser/active_kotlin.go
+new file mode 100644
+index 00000000..b9599f08
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/active_kotlin.go
+@@ -0,0 +1,7 @@
++//go:build kotlin
++
++package main
++
++// active is the compile-time-selected language table. Built with `-tags kotlin` by
++// build.sh to produce kotlin.wasm.
++var active = kotlinConfig
+diff --git a/internal/astgroup/parsers/src/braceparser/configs.go b/internal/astgroup/parsers/src/braceparser/configs.go
+index 1d6fc075..65f15064 100644
+--- a/internal/astgroup/parsers/src/braceparser/configs.go
++++ b/internal/astgroup/parsers/src/braceparser/configs.go
+@@ -113,3 +113,124 @@ var bashConfig = langConfig{
+ 		{word: "function", kind: "func", named: true},
+ 	},
+ }
++
++// javaConfig covers Java (.java). Only " opens a string; ' is a char literal
++// (charLiterals), so '{' / '}' never skew brace depth. Java text blocks """..."""
++// are opaque via tripleQuote. Methods carry modifiers/return types and have no
++// block keyword, so funcParen recovers their trailing-identifier name. class/
++// interface/enum/record map to "class". Signatures with trailing tokens after the
++// parameter list (`... throws IOException`) stay an unnamed but covering block.
++var javaConfig = langConfig{
++	name:         "java",
++	lineComments: []string{"//"},
++	blockOpen:    "/*",
++	blockClose:   "*/",
++	strChars:     "\"",
++	charLiterals: true,
++	tripleQuote:  true,
++	funcParen:    true,
++	keywords: []blockKeyword{
++		{word: "class", kind: "class", named: true},
++		{word: "interface", kind: "class", named: true},
++		{word: "enum", kind: "class", named: true},
++		{word: "record", kind: "class", named: true},
++		{word: "if", kind: "if"},
++		{word: "else", kind: "else"},
++		{word: "for", kind: "for"},
++		{word: "while", kind: "while"},
++		{word: "do", kind: "while"},
++		{word: "switch", kind: "switch"},
++	},
++}
++
++// kotlinConfig covers Kotlin (.kt/.kts). Functions use the `fun` keyword; ' is a
++// char literal (charLiterals). Multiline strings """...""" are opaque via
++// tripleQuote, and $var/${...} interpolation inside a normal "..." string is
++// already opaque via string state. funcParen is on so keyword-less headers such as
++// secondary constructors are still named. `when` maps to "switch"; object/
++// interface/class map to "class".
++var kotlinConfig = langConfig{
++	name:         "kotlin",
++	lineComments: []string{"//"},
++	blockOpen:    "/*",
++	blockClose:   "*/",
++	strChars:     "\"",
++	charLiterals: true,
++	tripleQuote:  true,
++	funcParen:    true,
++	keywords: []blockKeyword{
++		{word: "fun", kind: "func", named: true},
++		{word: "class", kind: "class", named: true},
++		{word: "interface", kind: "class", named: true},
++		{word: "object", kind: "class", named: true},
++		{word: "if", kind: "if"},
++		{word: "else", kind: "else"},
++		{word: "for", kind: "for"},
++		{word: "while", kind: "while"},
++		{word: "do", kind: "while"},
++		{word: "when", kind: "switch"},
++	},
++}
++
++// cppConfig covers C and C++ (.c/.cpp/.cc/.cxx/.h/.hpp). Only " opens a string; '
++// is a char literal (charLiterals), so '{' / '}' and digit separators (1'000)
++// never skew brace depth. `#` is a line comment so single-line preprocessor
++// directives (#include <...>, #define, #ifdef) are skipped (their angle brackets
++// and stray tokens never open a block); multi-line backslash-continued macros and
++// raw strings R"(...)" are out of scope and degrade to proximity. Functions/
++// methods have no block keyword, so funcParen names them (including out-of-line
++// `Foo::bar()` via the trailing identifier). struct/class/union/enum/namespace
++// map to "class".
++var cppConfig = langConfig{
++	name:         "cpp",
++	lineComments: []string{"//", "#"},
++	blockOpen:    "/*",
++	blockClose:   "*/",
++	strChars:     "\"",
++	charLiterals: true,
++	funcParen:    true,
++	keywords: []blockKeyword{
++		{word: "class", kind: "class", named: true},
++		{word: "struct", kind: "class", named: true},
++		{word: "union", kind: "class", named: true},
++		{word: "enum", kind: "class", named: true},
++		{word: "namespace", kind: "class", named: true},
++		{word: "if", kind: "if"},
++		{word: "else", kind: "else"},
++		{word: "for", kind: "for"},
++		{word: "while", kind: "while"},
++		{word: "do", kind: "while"},
++		{word: "switch", kind: "switch"},
++	},
++}
++
++// csharpConfig covers C# (.cs). Only " opens a string; ' is a char literal
++// (charLiterals). Raw string literals """...""" (C# 11+) are opaque via
++// tripleQuote; verbatim strings @"..." (with "" escaping) are out of scope and
++// degrade to proximity. Methods have no block keyword, so funcParen names them.
++// class/struct/interface/enum/record map to "class"; foreach maps to "for".
++var csharpConfig = langConfig{
++	name:         "csharp",
++	lineComments: []string{"//"},
++	blockOpen:    "/*",
++	blockClose:   "*/",
++	strChars:     "\"",
++	charLiterals: true,
++	tripleQuote:  true,
++	funcParen:    true,
++	keywords: []blockKeyword{
++		{word: "class", kind: "class", named: true},
++		{word: "struct", kind: "class", named: true},
++		{word: "interface", kind: "class", named: true},
++		{word: "enum", kind: "class", named: true},
++		{word: "record", kind: "class", named: true},
++		{word: "namespace", kind: "class", named: true},
++		{word: "if", kind: "if"},
++		{word: "else", kind: "else"},
++		{word: "for", kind: "for"},
++		{word: "foreach", kind: "for"},
++		{word: "while", kind: "while"},
++		{word: "do", kind: "while"},
++		{word: "switch", kind: "switch"},
++	},
++}
+diff --git a/internal/astgroup/parsers/src/braceparser/configs_test.go b/internal/astgroup/parsers/src/braceparser/configs_test.go
+index a9f6bda0..1e0c4a3b 100644
+--- a/internal/astgroup/parsers/src/braceparser/configs_test.go
++++ b/internal/astgroup/parsers/src/braceparser/configs_test.go
+@@ -122,16 +122,138 @@ func TestBashConfig_NestedParamExpansion(t *testing.T) {
+ // TestConfigs_AllNamed guards that every config carries its language name so the
+ // build-tag selection and any future per-language assertion can rely on it.
+ func TestConfigs_AllNamed(t *testing.T) {
+-	for _, c := range []langConfig{tsConfig, phpConfig, rustConfig, bashConfig} {
++	for _, c := range []langConfig{tsConfig, phpConfig, rustConfig, bashConfig, javaConfig, kotlinConfig, cppConfig, csharpConfig} {
+ 		if c.name == "" {
+ 			t.Fatalf("config missing name: %+v", c)
+ 		}
+ 		if len(c.keywords) == 0 {
+ 			t.Fatalf("config %q has no keywords", c.name)
+ 		}
+ 	}
+ }
+ 
++func TestJavaConfig_MethodGroupingNamed(t *testing.T) {
++	// A Java method with modifiers + return type must group as a named func via
++	// the trailing-identifier funcParen rule, and its body lines must share it.
++	src := []byte("class Service {\n  public void execute() {\n    int x = 1;\n    int y = 2;\n    use(x, y);\n  }\n}\n")
++	root := parseSource(src, javaConfig)
++	if len(root.Children) != 1 || root.Children[0].Kind != "class" || root.Children[0].Name != "Service" {
++		t.Fatalf("want class Service, got %+v", root.Children)
++	}
++	m, ok := findFunc(root, "execute")
++	if !ok {
++		t.Fatalf("expected func execute in tree: %+v", root)
++	}
++	if m.Kind != "func" {
++		t.Fatalf("execute kind = %q, want func", m.Kind)
++	}
++	a, _ := deepest(root, 3)
++	b, _ := deepest(root, 5)
++	if a.Name != "execute" || a.StartLine != b.StartLine {
++		t.Fatalf("java method body lines should share func execute: %+v / %+v", a, b)
++	}
++}
++
++func TestJavaConfig_TextBlockBracesIgnored(t *testing.T) {
++	// A Java text block """...""" is opaque: its braces must not open a block.
++	src := []byte("class C {\n  void m() {\n    String s = \"\"\"\n      { not a block }\n    \"\"\";\n    next();\n  }\n}\n")
++	root := parseSource(src, javaConfig)
++	m, ok := findFunc(root, "m")
++	if !ok {
++		t.Fatalf("expected func m, got %+v", root.Children)
++	}
++	if len(m.Children) != 0 {
++		t.Fatalf("java text-block braces must not create child blocks: %+v", m.Children)
++	}
++}
++
++func TestJavaConfig_CharLiteralBraceIgnored(t *testing.T) {
++	// A char literal '{' must not skew brace depth.
++	src := []byte("class C {\n  void m() {\n    char open = '{';\n    char close = '}';\n    next();\n  }\n}\n")
++	root := parseSource(src, javaConfig)
++	m, ok := findFunc(root, "m")
++	if !ok || len(m.Children) != 0 {
++		t.Fatalf("java char-literal braces broke structure: %+v", root.Children)
++	}
++}
++
++func TestKotlinConfig_FunAndMultilineString(t *testing.T) {
++	// Kotlin `fun` introduces a named func; a """multiline""" string with an
++	// interpolation brace must be opaque.
++	src := []byte("fun target() {\n  val s = \"\"\"\n    value = ${ a { b } }\n  \"\"\"\n  val x = 1\n  use(s, x)\n}\n")
++	root := parseSource(src, kotlinConfig)
++	fn, ok := findFunc(root, "target")
++	if !ok {
++		t.Fatalf("expected func target, got %+v", root.Children)
++	}
++	if len(fn.Children) != 0 {
++		t.Fatalf("kotlin multiline string braces must not create child blocks: %+v", fn.Children)
++	}
++}
++
++func TestKotlinConfig_WhenIsSwitch(t *testing.T) {
++	src := []byte("fun f(v: Int) {\n  when (v) {\n    1 -> a()\n    else -> b()\n  }\n}\n")
++	root := parseSource(src, kotlinConfig)
++	fn, ok := findFunc(root, "f")
++	if !ok || len(fn.Children) != 1 || fn.Children[0].Kind != "switch" {
++		t.Fatalf("kotlin when should map to a switch block inside f: %+v", root.Children)
++	}
++}
++
++func TestCppConfig_OutOfLineMethodNamed(t *testing.T) {
++	// A C++ out-of-line definition `void Foo::bar()` must name the func bar.
++	src := []byte("void Foo::bar() {\n  int x = 1;\n  step();\n}\n")
++	root := parseSource(src, cppConfig)
++	if _, ok := findFunc(root, "bar"); !ok {
++		t.Fatalf("expected func bar from `void Foo::bar()`, got %+v", root.Children)
++	}
++}
++
++func TestCppConfig_StructAndPreprocessorIgnored(t *testing.T) {
++	// `#include` / `#define` lines are treated as line comments so their angle
++	// brackets and stray tokens never skew structure; a struct maps to class.
++	src := []byte("#include <vector>\n#define N 4\nstruct Point {\n  int x;\n  int y;\n};\n")
++	root := parseSource(src, cppConfig)
++	if len(root.Children) != 1 || root.Children[0].Kind != "class" || root.Children[0].Name != "Point" {
++		t.Fatalf("cpp struct should map to class Point with preprocessor lines ignored: %+v", root.Children)
++	}
++}
++
++func TestCppConfig_CharLiteralBraceIgnored(t *testing.T) {
++	src := []byte("int f() {\n  char a = '{';\n  char b = '}';\n  return 0;\n}\n")
++	root := parseSource(src, cppConfig)
++	fn, ok := findFunc(root, "f")
++	if !ok || len(fn.Children) != 0 {
++		t.Fatalf("cpp char-literal braces broke structure: %+v", root.Children)
++	}
++}
++
++func TestCSharpConfig_MethodAndRawString(t *testing.T) {
++	// A C# method groups as a named func; a """raw string""" is opaque.
++	src := []byte("class C {\n  public void Run() {\n    var s = \"\"\"\n      { not a block }\n    \"\"\";\n    Next();\n  }\n}\n")
++	root := parseSource(src, csharpConfig)
++	if len(root.Children) != 1 || root.Children[0].Kind != "class" || root.Children[0].Name != "C" {
++		t.Fatalf("want class C, got %+v", root.Children)
++	}
++	m, ok := findFunc(root, "Run")
++	if !ok {
++		t.Fatalf("expected func Run, got %+v", root.Children)
++	}
++	if len(m.Children) != 0 {
++		t.Fatalf("csharp raw-string braces must not create child blocks: %+v", m.Children)
++	}
++}
++
++func TestCSharpConfig_ForeachIsFor(t *testing.T) {
++	src := []byte("class C {\n  void m() {\n    foreach (var it in items) {\n      total += it;\n      log(it);\n    }\n  }\n}\n")
++	root := parseSource(src, csharpConfig)
++	a, _ := deepest(root, 4)
++	b, _ := deepest(root, 5)
++	if a.Kind != "for" || a.StartLine != b.StartLine {
++		t.Fatalf("csharp foreach body lines should share a for block: %+v / %+v", a, b)
++	}
++}
++
+ func TestPHPConfig_HeredocBracesIgnored(t *testing.T) {
+ 	// PHP heredoc terminator EOT; (marker + semicolon) must close, so the sibling
+ 	// func `b` is not swallowed, and the braces inside the heredoc create no block.
+diff --git a/internal/astgroup/parsers/src/braceparser/parse_core.go b/internal/astgroup/parsers/src/braceparser/parse_core.go
+index e63a0c02..e1aae000 100644
+--- a/internal/astgroup/parsers/src/braceparser/parse_core.go
++++ b/internal/astgroup/parsers/src/braceparser/parse_core.go
+@@ -43,272 +43,293 @@ type blockKeyword struct {
+ // langConfig is the per-language parameterization of the otherwise language-
+ // agnostic brace scanner. The differences between the four target languages
+ // live entirely in this data, never in the scanner's control flow.
+ type langConfig struct {
+ 	name                string
+ 	lineComments        []string // line-comment introducers, e.g. {"//"} or {"//", "#"} or {"#"}
+ 	blockOpen           string   // block-comment open, e.g. "/*" ("" disables)
+ 	blockClose          string   // block-comment close, e.g. "*/"
+ 	strChars            string   // string delimiters, e.g. "\"'`" (ts) or "\"" (rust)
+ 	rawStrings          bool     // Rust raw strings: r"...", r#"..."#
+ 	charLiterals        bool     // Rust char literals 'x' / '\n' (so ' is not a string/lifetime)
+ 	arrowFunc           bool     // treat => as an (anonymous) function-block introducer (TS/JS)
+ 	funcParen           bool     // treat `ident(...) {` as a named function block (TS methods, Bash name())
+ 	heredocs            bool     // enable heredoc bodies (Bash <<, PHP <<<)
+ 	heredocOp           string   // heredoc operator: "<<" (Bash) or "<<<" (PHP)
+ 	paramExpand         bool     // treat ${...} as opaque (Bash) so its braces never open/close a block
+ 	braceExpand         bool     // treat {a,b} / {1..N} brace expansion as opaque (Bash) so its braces never open/close a block
+ 	commentWordBoundary bool     // a "#" line comment requires a preceding word boundary (Bash: keeps $#, ${#a} out of comments)
+ 	attrHash            bool     // a "#" immediately followed by "[" is a PHP 8 attribute (#[Attr]), not a line comment
++	tripleQuote         bool     // treat """...""" as an opaque string (Kotlin multiline strings, Java text blocks, C# raw string literals) so its braces/quotes never skew block depth
+ 	keywords            []blockKeyword
+ }
+ 
+ // scanner states.
+ const (
+ 	stNormal = iota
+ 	stLineComment
+ 	stBlockComment
+ 	stString
++	stTripleString
+ 	stRawString
+ 	stHeredoc
+ 	stParamExp
+ )
+ 
+ // parseSource scans src under cfg and returns the structural node tree rooted at
+ // a "file" node. It is allocation-light and single-pass; every byte advances the
+ // cursor by at most a small fixed lookahead so line counting stays exact across
+ // every state (comments, strings, heredoc bodies included).
+ func parseSource(src []byte, cfg langConfig) node {
+ 	stack := []node{{Kind: "file", StartLine: 1, EndLine: 1}}
+ 	line := 1
+ 	lineStart := 0
+ 
+ 	var header []byte
+ 	headerLine := 1
+ 	headerStarted := false
+ 	parenDepth := 0 // open '(' run in the current header; a ';' inside it (C-style for) does not end the statement
+ 
+ 	resetHeader := func() {
+ 		header = header[:0]
+ 		headerStarted = false
+ 		parenDepth = 0
+ 	}
+ 	addHeader := func(b byte) {
+ 		if b == '\n' || b == '\r' || b == '\t' {
+ 			b = ' '
+ 		}
+ 		if b == ' ' && !headerStarted {
+ 			return
+ 		}
+ 		if !headerStarted {
+ 			headerStarted = true
+ 			headerLine = line
+ 		}
+ 		header = append(header, b)
+ 	}
+ 	openBlock := func() {
+ 		kind, name := classifyHeader(string(header), cfg)
+ 		start := line
+ 		if headerStarted {
+ 			start = headerLine
+ 		}
+ 		stack = append(stack, node{Kind: kind, Name: name, StartLine: start, EndLine: line})
+ 		resetHeader()
+ 	}
+ 	closeBlock := func() {
+ 		if len(stack) <= 1 {
+ 			resetHeader()
+ 			return
+ 		}
+ 		child := stack[len(stack)-1]
+ 		stack = stack[:len(stack)-1]
+ 		child.EndLine = line
+ 		parent := &stack[len(stack)-1]
+ 		parent.Children = append(parent.Children, child)
+ 		resetHeader()
+ 	}
+ 
+ 	state := stNormal
+ 	var strDelim byte
+ 	escape := false
+ 	rawHashes := 0
+ 	var heredocTag string
+ 	heredocStrip := false
+ 	heredocPending := false
+ 	paramDepth := 0
+ 	var paramQuote byte
+ 	paramEscape := false
+ 	arithDepth := 0 // bash `((...))` / `$((...))` nesting; a `<<` inside is a shift, not a heredoc
+ 
+ 	for i := 0; i < len(src); i++ {
+ 		c := src[i]
+ 
+ 		switch state {
+ 		case stLineComment:
+ 			if c == '\n' {
+ 				state = stNormal
+ 			}
+ 
+ 		case stBlockComment:
+ 			if cfg.blockClose != "" && matchAt(src, i, cfg.blockClose) {
+ 				i += len(cfg.blockClose) - 1
+ 				state = stNormal
+ 			}
+ 
+ 		case stString:
+ 			if escape {
+ 				escape = false
+ 			} else if c == '\\' {
+ 				escape = true
+ 			} else if c == strDelim {
+ 				state = stNormal
+ 			}
+ 
++		case stTripleString:
++			// A """ triple-quoted string (Kotlin/Java text block, C# raw string)
++			// is opaque: only the closing """ returns to normal. Everything in
++			// between — braces, single quotes, interpolation — is ignored, so it
++			// can never open or close a block.
++			if matchAt(src, i, "\"\"\"") {
++				i += 2 // consume the remaining two quotes of the closing """
++				state = stNormal
++			}
++
+ 		case stRawString:
+ 			if c == '"' && hasHashes(src, i+1, rawHashes) {
+ 				i += rawHashes
+ 				state = stNormal
+ 			}
+ 
+ 		case stHeredoc:
+ 			if c == '\n' {
+ 				if heredocLineMatches(src[lineStart:i], heredocTag, heredocStrip) {
+ 					state = stNormal
+ 				}
+ 			}
+ 
+ 		case stParamExp:
+ 			// Inside a ${...} parameter expansion: count nested braces so the
+ 			// matching close returns to normal without ever touching the block
+ 			// stack. Braces inside quoted strings are ignored so that patterns
+ 			// like ${var/"}"/"{"} do not desync the brace depth.
+ 			if paramQuote != 0 {
+ 				if paramEscape {
+ 					paramEscape = false
+ 				} else if c == '\\' {
+ 					paramEscape = true
+ 				} else if c == paramQuote {
+ 					paramQuote = 0
+ 				}
+ 			} else if c == '{' {
+ 				paramDepth++
+ 			} else if c == '}' {
+ 				paramDepth--
+ 				if paramDepth <= 0 {
+ 					state = stNormal
+ 				}
+ 			} else if c == '"' || c == '\'' {
+ 				paramQuote = c
+ 				paramEscape = false
+ 			}
+ 
+ 		default: // stNormal
+ 			switch {
+ 			case cfg.blockOpen != "" && matchAt(src, i, cfg.blockOpen):
+ 				i += len(cfg.blockOpen) - 1
+ 				state = stBlockComment
+ 			case lineCommentStarts(src, i, cfg):
+ 				state = stLineComment
+ 			// NOTE: a bare '/' (neither '//' nor '/*') is intentionally NOT tracked.
+ 			// JS/TS regex literals (/pattern/) have no scanner state, so a '{' or '}'
+ 			// inside a regex desyncs brace depth and degrades that finding to line-
+ 			// proximity grouping (it can never break a reconcile). Regex-vs-division
+ 			// disambiguation is a known-hard, deferred design item; see the technical-
+ 			// debt README (braceparser parse_core.go regex-literal rows).
+ 			case cfg.rawStrings && c == 'r' && rawStringStart(src, i):
+ 				rawHashes = countHashes(src, i+1)
+ 				i += 1 + rawHashes // consume 'r' and the '#' run; the '"' is consumed next iter as part of the body
+ 				state = stRawString
+ 			case cfg.charLiterals && c == '\'':
+ 				if n := charLiteralLen(src, i); n > 0 {
+ 					i += n - 1 // consume whole 'x' / '\n' literal; not a string, not a lifetime
+ 				}
+ 				// else: a lone ' (lifetime / apostrophe) — treat as ordinary text.
+ 			case cfg.paramExpand && c == '$' && i+1 < len(src) && src[i+1] == '{':
+ 				i++ // consume the '{'; depth tracks nested ${...}
+ 				paramDepth = 1
+ 				state = stParamExp
++			case cfg.tripleQuote && matchAt(src, i, "\"\"\""):
++				// Must precede the single-" strChars case: a """ opens an opaque
++				// triple-quoted string, not three single-char strings. Exactly
++				// three quotes are matched; a C# 11 raw string opened with 4+
++				// quotes (used when the body itself contains """) is a known
++				// limitation that degrades to ±3 line proximity — like the
++				// out-of-scope raw/verbatim forms, a misparse never breaks reconcile.
++				i += 2 // consume the opening """; the loop's i++ advances past it
++				state = stTripleString
+ 			case strings.IndexByte(cfg.strChars, c) >= 0:
+ 				state = stString
+ 				strDelim = c
+ 				escape = false
+ 			case cfg.heredocs && arithDepth == 0 && matchAt(src, i, cfg.heredocOp) && isHeredocStart(src, i+len(cfg.heredocOp)):
+ 				tag, strip, consumed := parseHeredoc(src, i+len(cfg.heredocOp), cfg.heredocOp == "<<<")
+ 				heredocTag = tag
+ 				heredocStrip = strip
+ 				heredocPending = true
+ 				i += len(cfg.heredocOp) + consumed - 1
+ 			case cfg.heredocs && cfg.heredocOp == "<<" && c == '(' && i+1 < len(src) && src[i+1] == '(':
+ 				// Bash arithmetic `((...))` / `$((...))`: a `<<` inside is a left-shift,
+ 				// never a heredoc. Track depth so heredoc detection is suppressed within
+ 				// (the `<<` then falls through to header text, which is harmless).
+ 				arithDepth++
+ 				parenDepth += 2
+ 				addHeader('(')
+ 				addHeader('(')
+ 				i++
+ 			case cfg.heredocs && cfg.heredocOp == "<<" && arithDepth > 0 && c == ')' && i+1 < len(src) && src[i+1] == ')':
+ 				arithDepth--
+ 				if parenDepth >= 2 {
+ 					parenDepth -= 2
+ 				} else {
+ 					parenDepth = 0
+ 				}
+ 				addHeader(')')
+ 				addHeader(')')
+ 				i++
+ 			case c == '(':
+ 				parenDepth++
+ 				addHeader(c)
+ 			case c == ')':
+ 				if parenDepth > 0 {
+ 					parenDepth--
+ 				}
+ 				addHeader(c)
+ 			case c == '{':
+ 				if cfg.braceExpand {
+ 					if end := bashBraceExpansionEnd(src, i); end >= 0 {
+ 						i = end // consume the brace expansion; its braces never touch the block stack
+ 						break
+ 					}
+ 				}
+ 				openBlock()
+ 			case c == '}':
+ 				closeBlock()
+ 			case c == ';':
+ 				// A ';' ends the statement (resetting the header) only at paren
+ 				// depth 0. Inside an unclosed '(' run it is part of the header — a
+ 				// C-style `for (i=0; i<n; i++)` keeps its `for` keyword for naming.
+ 				if parenDepth == 0 {
+ 					resetHeader()
+ 				} else {
+ 					addHeader(c)
+ 				}
+ 			default:
+ 				addHeader(c)
+ 			}
+ 		}
+ 
+ 		if c == '\n' {
+ 			line++
+ 			lineStart = i + 1
+ 			if heredocPending {
+ 				heredocPending = false
+ 				state = stHeredoc
+ 			}
+ 		}
+ 	}
+ 
+ 	for len(stack) > 1 {
+ 		closeBlock()
+ 	}
+ 	root := stack[0]
+ 	if line > root.EndLine {
+ 		root.EndLine = line
+ 	}
+ 	return root
+ }
+ 
+ // classifyHeader maps the accumulated header text preceding a '{' to a block
+ // kind and (optional) name, using the nearest preceding block-introducing
+ // keyword. Falls back to an anonymous "block" so object/array literals and other
+ // brace groups never false-merge with real declarations.
+@@ -418,80 +439,104 @@ func skipGenericList(h string, pos int) int {
+ // identAfter returns the identifier starting after pos (skipping spaces and any
+ // generic parameter list). For Rust `impl Trait for Foo` it skips to the name
+ // after `for` so sibling impl blocks hash by the implemented type.
+ func identAfter(h string, pos int) string {
+ 	skipSpaces := func() {
+ 		for pos < len(h) && h[pos] == ' ' {
+ 			pos++
+ 		}
+ 	}
+ 	readIdent := func() string {
+ 		start := pos
+ 		for pos < len(h) && isIdentByte(h[pos]) {
+ 			pos++
+ 		}
+ 		return h[start:pos]
+ 	}
+ 
+ 	skipSpaces()
+ 	pos = skipGenericList(h, pos)
+ 	skipSpaces()
+ 	name := readIdent()
+ 	skipSpaces()
+ 	pos = skipGenericList(h, pos)
+ 	skipSpaces()
+ 	if strings.HasPrefix(h[pos:], "for ") {
+ 		pos += len("for ")
+ 		skipSpaces()
+ 		pos = skipGenericList(h, pos)
+ 		skipSpaces()
+ 		name = readIdent()
+ 	}
+ 	return name
+ }
+ 
+-// funcParenName recognizes a `name(...)` function header (Bash name(), TS
+-// methods): the trimmed header ends in ')', and the identifier immediately
+-// before the first '(' is the name. Leading modifier words (async, public,
+-// static, get, set, etc.) are skipped so TS class methods are named correctly.
++// funcParenName recognizes a `name(...)` function header and returns the trailing
++// identifier run before the parameter list as the name. The trimmed header must
++// end in ')'. This names methods that carry modifiers and/or a return type without
++// a block keyword — `public void execute() {` -> execute, `void Foo::bar() {` ->
++// bar — so they group as named func blocks instead of falling through to an
++// anonymous block. Because classifyHeader checks the keyword table first,
++// keyword-introduced blocks (if/for/while/class/...) never reach here, so the
++// existing TS/PHP/Rust/Bash behavior is unchanged; the only new behavior is naming
++// previously-anonymous keyword-less method headers.
++//
++// The parameter list's '(' is found by matching the trailing ')' via a balanced
++// scan from the end, NOT the first '(' — so an annotation/decorator carrying its
++// own argument list (`@SuppressWarnings("x") public void execute()`,
++// `@HostListener(...) onClick()`) does not steal the name from the real method.
++//
++// A call-shaped header whose name is reached through member access (`foo.bar()`)
++// is NOT a definition: the '.' immediately before the identifier marks a method
++// call, so it is rejected and degrades to an anonymous block. The C++ scope
++// operator `::` (`Foo::bar`) is a definition and is accepted.
+ func funcParenName(h string) (string, bool) {
+ 	t := strings.TrimSpace(h)
+ 	if !strings.HasSuffix(t, ")") {
+ 		return "", false
+ 	}
+-	open := strings.IndexByte(t, '(')
++	// Find the '(' that matches the trailing ')' (balanced scan from the end).
++	depth := 0
++	open := -1
++	for k := len(t) - 1; k >= 0; k-- {
++		switch t[k] {
++		case ')':
++			depth++
++		case '(':
++			depth--
++			if depth == 0 {
++				open = k
++			}
++		}
++		if open >= 0 {
++			break
++		}
++	}
+ 	if open <= 0 {
+ 		return "", false
+ 	}
+ 	prefix := strings.TrimSpace(t[:open])
+ 	// Extract the last identifier token from prefix.
+ 	end := len(prefix)
+ 	for end > 0 && prefix[end-1] == ' ' {
+ 		end--
+ 	}
+ 	start := end
+ 	for start > 0 && isIdentByte(prefix[start-1]) {
+ 		start--
+ 	}
+ 	if start == end {
+ 		return "", false
+ 	}
+ 	name := prefix[start:end]
+ 	// Reserved control words must not be misclassified as function names.
+ 	switch name {
+ 	case "catch", "with", "switch":
+ 		return "", false
+ 	}
+-	// If there is any leading text, it must be only modifier words/whitespace;
+-	// arbitrary expressions like `return foo()` must not become functions.
+-	modifiers := strings.Fields(prefix[:start])
+-	for _, m := range modifiers {
+-		switch m {
+-		case "async", "public", "private", "protected", "static", "get", "set",
+-			"readonly", "abstract", "override":
+-			// allowed modifier
+-		default:
+-			return "", false
+-		}
++	// A '.' immediately before the identifier is member access (a call like
++	// `foo.bar()`), not a declaration — reject so it stays an anonymous block.
++	if start > 0 && prefix[start-1] == '.' {
++		return "", false
+ 	}
+ 	return name, true
+ }
+diff --git a/internal/astgroup/parsers/src/braceparser/parse_core_test.go b/internal/astgroup/parsers/src/braceparser/parse_core_test.go
+index 6237b5a3..2f732a2d 100644
+--- a/internal/astgroup/parsers/src/braceparser/parse_core_test.go
++++ b/internal/astgroup/parsers/src/braceparser/parse_core_test.go
+@@ -292,6 +292,120 @@ func TestParseSource_ArrowFunctionStillFunc(t *testing.T) {
+ 	}
+ }
+ 
++// braceMethodConfig is a minimal brace-language shape (Java/C#/C++-like) used to
++// exercise the trailing-identifier funcParenName rework and the tripleQuote state
++// independently of the per-language tables in configs.go.
++var braceMethodConfig = langConfig{
++	name:         "bracemethod",
++	lineComments: []string{"//"},
++	blockOpen:    "/*",
++	blockClose:   "*/",
++	strChars:     "\"",
++	charLiterals: true,
++	tripleQuote:  true,
++	funcParen:    true,
++	keywords: []blockKeyword{
++		{word: "class", kind: "class", named: true},
++		{word: "if", kind: "if"},
++		{word: "else", kind: "else"},
++		{word: "for", kind: "for"},
++		{word: "while", kind: "while"},
++		{word: "switch", kind: "switch"},
++	},
++}
++
++func TestFuncParenName_ModifierAndReturnTypeNamed(t *testing.T) {
++	// A keyword-less method header carrying modifiers and a return type
++	// (`public void execute() {`) must recover the trailing identifier as the
++	// func name rather than falling through to an anonymous block.
++	src := []byte("class C {\n  public void execute() {\n    work();\n  }\n}\n")
++	root := parseSource(src, braceMethodConfig)
++	m, ok := findFunc(root, "execute")
++	if !ok {
++		t.Fatalf("expected func/execute recovered from `public void execute()`, got %+v", root.Children)
++	}
++	if m.Kind != "func" {
++		t.Fatalf("execute kind = %q, want func", m.Kind)
++	}
++}
++
++func TestFuncParenName_AnnotatedMethodNamed(t *testing.T) {
++	// An annotation/decorator carrying its own argument list before the method
++	// must not steal the name: the '(' that matches the trailing ')' is the
++	// parameter list, so the method identifier (execute) is recovered, not the
++	// annotation (SuppressWarnings).
++	src := []byte("class C {\n  @SuppressWarnings(\"x\") public void execute() {\n    work();\n  }\n}\n")
++	root := parseSource(src, braceMethodConfig)
++	if _, ok := findFunc(root, "execute"); !ok {
++		t.Fatalf("expected func/execute (annotation must not steal the name), got %+v", root.Children)
++	}
++	if _, ok := findFunc(root, "SuppressWarnings"); ok {
++		t.Fatalf("annotation SuppressWarnings must not be named as the method func")
++	}
++}
++
++func TestFuncParenName_ScopeResolutionNamed(t *testing.T) {
++	// A C++ out-of-line definition `void Foo::bar() {` must name the func `bar`
++	// (the `::` scope-resolution operator is not a member-access call).
++	src := []byte("void Foo::bar() {\n  doIt();\n}\n")
++	root := parseSource(src, braceMethodConfig)
++	if _, ok := findFunc(root, "bar"); !ok {
++		t.Fatalf("expected func/bar from `void Foo::bar()`, got %+v", root.Children)
++	}
++}
++
++func TestFuncParenName_MemberAccessCallNotFunc(t *testing.T) {
++	// A keyword-less, call-shaped header `foo.bar() {` must NOT be named as a
++	// function definition: the `.` marks a member-access call. It degrades to an
++	// anonymous block (grouping still works; naming does not false-attribute).
++	src := []byte("foo.bar() {\n  x();\n}\n")
++	root := parseSource(src, braceMethodConfig)
++	if len(root.Children) != 1 {
++		t.Fatalf("want one block, got %+v", root.Children)
++	}
++	if root.Children[0].Kind != "block" || root.Children[0].Name != "" {
++		t.Fatalf("member-access call header must be anonymous block, got %q/%q",
++			root.Children[0].Kind, root.Children[0].Name)
++	}
++}
++
++func TestFuncParenName_BareNameStillFunc(t *testing.T) {
++	// The existing bare-name() form (TS methods, Bash functions) must resolve
++	// identically after the rework.
++	src := []byte("class C {\n  render() {\n    draw();\n  }\n}\n")
++	root := parseSource(src, braceMethodConfig)
++	if _, ok := findFunc(root, "render"); !ok {
++		t.Fatalf("bare name() method should still be func/render, got %+v", root.Children)
++	}
++}
++
++func TestParseSource_TripleQuotedBracesIgnored(t *testing.T) {
++	// A triple-quoted string (Kotlin multiline / Java text block / C# raw string)
++	// is opaque: braces and quotes inside it must never open/close a block.
++	src := []byte("class C {\n  void m() {\n    String s = \"\"\"\n      { not a block } \"still\" text\n    \"\"\";\n    next();\n  }\n}\n")
++	root := parseSource(src, braceMethodConfig)
++	m, ok := findFunc(root, "m")
++	if !ok {
++		t.Fatalf("expected func/m, got %+v", root.Children)
++	}
++	if len(m.Children) != 0 {
++		t.Fatalf("triple-quoted braces must not create child blocks: %+v", m.Children)
++	}
++}
++
++func TestParseSource_TripleQuoteOffKeepsSingleQuote(t *testing.T) {
++	// With tripleQuote disabled, an ordinary "" empty string followed by a quote
++	// must still behave as single-quote string state (no regression for configs
++	// that do not opt into the triple-quote state, e.g. C/C++).
++	cfg := braceMethodConfig
++	cfg.tripleQuote = false
++	src := []byte("void m() {\n  const char* a = \"x\";\n  next();\n}\n")
++	root := parseSource(src, cfg)
++	if _, ok := findFunc(root, "m"); !ok {
++		t.Fatalf("expected func/m with tripleQuote off, got %+v", root.Children)
++	}
++}
++
+ func TestParseSource_TSCatchClauseNotFunc(t *testing.T) {
+ 	// TypeScript catch clauses look like `catch (e) {` and must not be
+ 	// misclassified as a function named catch by funcParenName.
+[binary file changed: internal/astgroup/parsers/ts.wasm]
+diff --git a/internal/astgroup/testdata/corpus.json b/internal/astgroup/testdata/corpus.json
+index 59b92431..81995843 100644
+--- a/internal/astgroup/testdata/corpus.json
++++ b/internal/astgroup/testdata/corpus.json
+@@ -1,386 +1,482 @@
+ [
+   {
+     "name": "go_same_func_small_drift",
+     "file": "a.go",
+     "source": "package p\n\nfunc Target() {\n\tx := 1\n\ty := 2\n\t_ = x + y\n}\n",
+     "a_line": 4,
+     "b_line": 6,
+     "same_block": true
+   },
+   {
+     "name": "go_same_func_large_drift_blank_lines",
+     "file": "a.go",
+     "source": "package p\n\nfunc Target() {\n\tx := 1\n\n\n\n\n\n\ty := 2\n\t_ = x + y\n}\n",
+     "a_line": 4,
+     "b_line": 11,
+     "same_block": true
+   },
+   {
+     "name": "go_same_if_block",
+     "file": "a.go",
+     "source": "package p\n\nfunc F(v int) int {\n\tif v > 0 {\n\t\ta := v\n\t\tb := a * 2\n\t\treturn b\n\t}\n\treturn 0\n}\n",
+     "a_line": 5,
+     "b_line": 7,
+     "same_block": true
+   },
+   {
+     "name": "go_signature_and_body_same_func",
+     "file": "a.go",
+     "source": "package p\n\nfunc Handler() {\n\tdo()\n\tmore()\n}\n\nfunc do() {}\nfunc more() {}\n",
+     "a_line": 3,
+     "b_line": 5,
+     "same_block": true
+   },
+   {
+     "name": "go_same_body_far_apart",
+     "file": "a.go",
+     "source": "package p\n\nfunc Big() {\n\ta := 1\n\tb := 2\n\tc := 3\n\td := 4\n\te := 5\n\t_ = a + b + c + d + e\n}\n",
+     "a_line": 4,
+     "b_line": 9,
+     "same_block": true
+   },
+   {
+     "name": "go_different_funcs_adjacent_lines",
+     "file": "a.go",
+     "source": "package p\n\nfunc A() {\n\tx := 1\n\t_ = x\n}\n\nfunc B() {\n\ty := 2\n\t_ = y\n}\n",
+     "a_line": 5,
+     "b_line": 9,
+     "same_block": false
+   },
+   {
+     "name": "go_different_funcs_far_apart",
+     "file": "a.go",
+     "source": "package p\n\nfunc A() {\n\tx := 1\n}\n\n\n\nfunc B() {\n\ty := 2\n}\n",
+     "a_line": 4,
+     "b_line": 10,
+     "same_block": false
+   },
+   {
+     "name": "go_if_vs_else_adjacent",
+     "file": "a.go",
+     "source": "package p\n\nfunc F(v int) int {\n\tif v > 0 {\n\t\treturn 1\n\t} else {\n\t\treturn 2\n\t}\n}\n",
+     "a_line": 5,
+     "b_line": 7,
+     "same_block": false
+   },
+   {
+     "name": "go_identical_shaped_funcs_separate",
+     "file": "a.go",
+     "source": "package p\n\nfunc A() int {\n\treturn 0\n}\n\nfunc B() int {\n\treturn 0\n}\n",
+     "a_line": 4,
+     "b_line": 8,
+     "same_block": false
+   },
+   {
+     "name": "go_off_by_one_same_func",
+     "file": "a.go",
+     "source": "package p\n\nfunc Calc() {\n\tsum := 0\n\tsum += 1\n\t_ = sum\n}\n",
+     "a_line": 4,
+     "b_line": 5,
+     "same_block": true
+   },
+   {
+     "name": "py_same_def_small_drift",
+     "file": "a.py",
+     "source": "def target():\n    x = 1\n    y = 2\n    return x + y\n",
+     "a_line": 2,
+     "b_line": 4,
+     "same_block": true
+   },
+   {
+     "name": "py_same_def_large_drift_blank_lines",
+     "file": "a.py",
+     "source": "def target():\n    x = 1\n\n\n\n\n    y = 2\n    return x + y\n",
+     "a_line": 2,
+     "b_line": 8,
+     "same_block": true
+   },
+   {
+     "name": "py_same_method_in_class",
+     "file": "a.py",
+     "source": "class C:\n    def m(self):\n        a = 1\n        b = 2\n        return a + b\n",
+     "a_line": 3,
+     "b_line": 5,
+     "same_block": true
+   },
+   {
+     "name": "py_for_loop_body",
+     "file": "a.py",
+     "source": "def loop(items):\n    total = 0\n    for it in items:\n        total += it\n        log(it)\n    return total\n",
+     "a_line": 4,
+     "b_line": 5,
+     "same_block": true
+   },
+   {
+     "name": "py_different_defs_adjacent",
+     "file": "a.py",
+     "source": "def a():\n    x = 1\n    return x\n\ndef b():\n    y = 2\n    return y\n",
+     "a_line": 3,
+     "b_line": 5,
+     "same_block": false
+   },
+   {
+     "name": "py_different_methods_in_class",
+     "file": "a.py",
+     "source": "class C:\n    def m(self):\n        return 1\n    def n(self):\n        return 2\n",
+     "a_line": 3,
+     "b_line": 5,
+     "same_block": false
+   },
+   {
+     "name": "py_off_by_one_same_def",
+     "file": "a.py",
+     "source": "def calc():\n    total = 0\n    total += 1\n    return total\n",
+     "a_line": 2,
+     "b_line": 3,
+     "same_block": true
+   },
+   {
+     "name": "go_same_for_body_drift",
+     "file": "a.go",
+     "source": "package p\n\nfunc Sum(xs []int) int {\n\ttotal := 0\n\tfor _, x := range xs {\n\t\ttotal += x\n\n\n\t\t_ = total\n\t}\n\treturn total\n}\n",
+     "a_line": 6,
+     "b_line": 9,
+     "same_block": true
+   },
+   {
+     "name": "py_nested_if_same_block",
+     "file": "a.py",
+     "source": "def check(v):\n    if v:\n        a = compute()\n        b = a + 1\n        return b\n    return 0\n",
+     "a_line": 3,
+     "b_line": 5,
+     "same_block": true
+   },
+   {
+     "name": "py_docstring_with_fake_def_no_overmerge",
+     "file": "a.py",
+     "source": "def real_a():\n    \"\"\"\n    def fake():\n        pass\n    \"\"\"\n    x = 1\n    return x\n\ndef real_b():\n    y = 2\n    return y\n",
+     "a_line": 6,
+     "b_line": 10,
+     "same_block": false
+   },
+   {
+     "name": "py_docstring_drift_same_def",
+     "file": "a.py",
+     "source": "def handler():\n    \"\"\"Does a thing.\n\n    class NotReal:\n        pass\n    \"\"\"\n    a = compute()\n    b = a + 1\n    return b\n",
+     "a_line": 7,
+     "b_line": 9,
+     "same_block": true
+   },
+   {
+     "name": "go_func_vs_func_off_by_one_boundary",
+     "file": "a.go",
+     "source": "package p\n\nfunc A() {\n\tx := 1\n\t_ = x\n}\nfunc B() {\n\ty := 2\n\t_ = y\n}\n",
+     "a_line": 5,
+     "b_line": 8,
+     "same_block": false
+   },
+   {
+     "name": "ts_same_func_small_drift",
+     "file": "a.ts",
+     "source": "function target() {\n  const x = 1\n  const y = 2\n  return x + y\n}\n",
+     "a_line": 2,
+     "b_line": 4,
+     "same_block": true
+   },
+   {
+     "name": "ts_same_func_large_drift_blank_lines",
+     "file": "a.ts",
+     "source": "function target() {\n  const x = 1\n\n\n\n\n  const y = 2\n  return x + y\n}\n",
+     "a_line": 2,
+     "b_line": 8,
+     "same_block": true
+   },
+   {
+     "name": "ts_same_if_block",
+     "file": "a.ts",
+     "source": "function f(v) {\n  if (v) {\n    const a = v\n    const b = a * 2\n    return b\n  }\n  return 0\n}\n",
+     "a_line": 3,
+     "b_line": 5,
+     "same_block": true
+   },
+   {
+     "name": "ts_different_funcs_adjacent_lines",
+     "file": "a.ts",
+     "source": "function a() {\n  const x = 1\n  return x\n}\nfunction b() {\n  const y = 2\n  return y\n}\n",
+     "a_line": 3,
+     "b_line": 6,
+     "same_block": false
+   },
+   {
+     "name": "ts_different_funcs_far_apart",
+     "file": "a.ts",
+     "source": "function a() {\n  const x = 1\n}\n\n\nfunction b() {\n  const y = 2\n}\n",
+     "a_line": 2,
+     "b_line": 7,
+     "same_block": false
+   },
+   {
+     "name": "ts_off_by_one_same_func",
+     "file": "a.ts",
+     "source": "function calc() {\n  let sum = 0\n  sum += 1\n  return sum\n}\n",
+     "a_line": 2,
+     "b_line": 3,
+     "same_block": true
+   },
+   {
+     "name": "ts_block_comment_drift_same_func",
+     "file": "a.ts",
+     "source": "function handler() {\n  const a = compute()\n  /* a long\n     multi-line\n     comment that\n     drifts lines */\n  const b = a + 1\n  return b\n}\n",
+     "a_line": 2,
+     "b_line": 8,
+     "same_block": true
+   },
+   {
+     "name": "ts_string_brace_no_overmerge",
+     "file": "a.ts",
+     "source": "function ra() {\n  const s = \"} {\"\n  return s\n}\nfunction rb() {\n  const t = 2\n  return t\n}\n",
+     "a_line": 2,
+     "b_line": 6,
+     "same_block": false
+   },
+   {
+     "name": "php_same_func_small_drift",
+     "file": "a.php",
+     "source": "<?php\nfunction target() {\n  $x = 1;\n  $y = 2;\n  return $x + $y;\n}\n",
+     "a_line": 3,
+     "b_line": 5,
+     "same_block": true
+   },
+   {
+     "name": "php_same_method_large_drift",
+     "file": "a.php",
+     "source": "<?php\nclass C {\n  function m() {\n    $a = 1;\n\n\n\n    $b = 2;\n    return $a + $b;\n  }\n}\n",
+     "a_line": 4,
+     "b_line": 9,
+     "same_block": true
+   },
+   {
+     "name": "php_different_methods_adjacent",
+     "file": "a.php",
+     "source": "<?php\nclass C {\n  function m() {\n    return 1;\n  }\n  function n() {\n    return 2;\n  }\n}\n",
+     "a_line": 4,
+     "b_line": 7,
+     "same_block": false
+   },
+   {
+     "name": "php_heredoc_no_overmerge",
+     "file": "a.php",
+     "source": "<?php\nfunction a() {\n  $s = <<<EOT\n  not { a } block\nEOT;\n  return $s;\n}\nfunction b() {\n  return 2;\n}\n",
+     "a_line": 6,
+     "b_line": 9,
+     "same_block": false
+   },
+   {
+     "name": "php_off_by_one_same_func",
+     "file": "a.php",
+     "source": "<?php\nfunction calc() {\n  $sum = 0;\n  $sum += 1;\n  return $sum;\n}\n",
+     "a_line": 3,
+     "b_line": 4,
+     "same_block": true
+   },
+   {
+     "name": "php_foreach_body",
+     "file": "a.php",
+     "source": "<?php\nfunction loop($items) {\n  $total = 0;\n  foreach ($items as $it) {\n    $total += $it;\n    log($it);\n  }\n  return $total;\n}\n",
+     "a_line": 5,
+     "b_line": 6,
+     "same_block": true
+   },
+   {
+     "name": "rust_same_fn_small_drift",
+     "file": "a.rs",
+     "source": "fn target() {\n    let x = 1;\n    let y = 2;\n    let _ = x + y;\n}\n",
+     "a_line": 2,
+     "b_line": 4,
+     "same_block": true
+   },
+   {
+     "name": "rust_same_fn_large_drift_blank_lines",
+     "file": "a.rs",
+     "source": "fn target() {\n    let x = 1;\n\n\n\n\n    let y = 2;\n    let _ = x + y;\n}\n",
+     "a_line": 2,
+     "b_line": 8,
+     "same_block": true
+   },
+   {
+     "name": "rust_impl_method_grouping",
+     "file": "a.rs",
+     "source": "impl Foo {\n    fn bar(&self) {\n        let a = 1;\n        let b = 2;\n        a + b\n    }\n}\n",
+     "a_line": 3,
+     "b_line": 5,
+     "same_block": true
+   },
+   {
+     "name": "rust_different_fns_adjacent",
+     "file": "a.rs",
+     "source": "fn a() {\n    let x = 1;\n}\nfn b() {\n    let y = 2;\n}\n",
+     "a_line": 2,
+     "b_line": 5,
+     "same_block": false
+   },
+   {
+     "name": "rust_char_literal_brace_same_fn",
+     "file": "a.rs",
+     "source": "fn f() {\n    let open = '{';\n\n\n\n    let close = '}';\n    use_it();\n}\n",
+     "a_line": 2,
+     "b_line": 7,
+     "same_block": true
+   },
+   {
+     "name": "rust_raw_string_no_overmerge",
+     "file": "a.rs",
+     "source": "fn ra() {\n    let s = r#\"} {\"#;\n    done();\n}\nfn rb() {\n    let t = 2;\n}\n",
+     "a_line": 2,
+     "b_line": 6,
+     "same_block": false
+   },
+   {
+     "name": "bash_same_func_small_drift",
+     "file": "a.sh",
+     "source": "greet() {\n  local x=1\n  local y=2\n  echo $x $y\n}\n",
+     "a_line": 2,
+     "b_line": 4,
+     "same_block": true
+   },
+   {
+     "name": "bash_same_func_large_drift_blank_lines",
+     "file": "a.sh",
+     "source": "greet() {\n  local x=1\n\n\n\n\n  local y=2\n  echo $x $y\n}\n",
+     "a_line": 2,
+     "b_line": 8,
+     "same_block": true
+   },
+   {
+     "name": "bash_function_keyword_form",
+     "file": "a.bash",
+     "source": "function hello {\n  local a=1\n  local b=2\n  echo done\n}\n",
+     "a_line": 2,
+     "b_line": 4,
+     "same_block": true
+   },
+   {
+     "name": "bash_different_funcs_adjacent",
+     "file": "a.sh",
+     "source": "greet() {\n  echo a\n}\nhi() {\n  echo b\n}\n",
+     "a_line": 2,
+     "b_line": 5,
+     "same_block": false
+   },
+   {
+     "name": "bash_param_expansion_same_func",
+     "file": "a.sh",
+     "source": "greet() {\n  local x=${name}\n\n\n\n  local y=${other:-def}\n  echo $x $y\n}\n",
+     "a_line": 2,
+     "b_line": 7,
+     "same_block": true
+   },
+   {
+     "name": "bash_heredoc_no_overmerge",
+     "file": "a.sh",
+     "source": "greet() {\n  cat <<EOF\n  { not a block }\nEOF\n  echo done\n}\npost() {\n  echo hi\n}\n",
+     "a_line": 5,
+     "b_line": 8,
+     "same_block": false
++  },
++  {
++    "name": "java_same_method_small_drift",
++    "file": "a.java",
++    "source": "class C {\n  void target() {\n    int x = 1;\n    int y = 2;\n    use(x, y);\n  }\n}\n",
++    "a_line": 3,
++    "b_line": 5,
++    "same_block": true
++  },
++  {
++    "name": "java_same_method_large_drift_blank_lines",
++    "file": "a.java",
++    "source": "class C {\n  void target() {\n    int x = 1;\n\n\n\n\n    int y = 2;\n    use(x, y);\n  }\n}\n",
++    "a_line": 3,
++    "b_line": 8,
++    "same_block": true
++  },
++  {
++    "name": "java_different_methods_adjacent",
++    "file": "a.java",
++    "source": "class C {\n  void a() {\n    int x = 1;\n  }\n  void b() {\n    int y = 2;\n  }\n}\n",
++    "a_line": 3,
++    "b_line": 6,
++    "same_block": false
++  },
++  {
++    "name": "kotlin_same_fun_small_drift",
++    "file": "a.kt",
++    "source": "fun target() {\n  val x = 1\n  val y = 2\n  use(x, y)\n}\n",
++    "a_line": 2,
++    "b_line": 4,
++    "same_block": true
++  },
++  {
++    "name": "kotlin_same_fun_large_drift_blank_lines",
++    "file": "a.kt",
++    "source": "fun target() {\n  val x = 1\n\n\n\n\n  val y = 2\n  use(x, y)\n}\n",
++    "a_line": 2,
++    "b_line": 7,
++    "same_block": true
++  },
++  {
++    "name": "kotlin_multiline_string_no_overmerge",
++    "file": "a.kt",
++    "source": "fun ra() {\n  val s = \"\"\"\n  } {\n  \"\"\"\n  done()\n}\nfun rb() {\n  val t = 2\n}\n",
++    "a_line": 5,
++    "b_line": 8,
++    "same_block": false
++  },
++  {
++    "name": "cpp_same_fn_small_drift",
++    "file": "a.cpp",
++    "source": "int target() {\n  int x = 1;\n  int y = 2;\n  return x + y;\n}\n",
++    "a_line": 2,
++    "b_line": 4,
++    "same_block": true
++  },
++  {
++    "name": "cpp_out_of_line_method_large_drift",
++    "file": "a.cpp",
++    "source": "void Foo::bar() {\n  int a = 1;\n\n\n\n  int b = 2;\n  step(a, b);\n}\n",
++    "a_line": 2,
++    "b_line": 6,
++    "same_block": true
++  },
++  {
++    "name": "cpp_preprocessor_different_fns",
++    "file": "a.cpp",
++    "source": "#include <vector>\nint a() {\n  int x = 1;\n}\nint b() {\n  int y = 2;\n}\n",
++    "a_line": 3,
++    "b_line": 6,
++    "same_block": false
++  },
++  {
++    "name": "csharp_same_method_small_drift",
++    "file": "a.cs",
++    "source": "class C {\n  void Target() {\n    int x = 1;\n    int y = 2;\n    Use(x, y);\n  }\n}\n",
++    "a_line": 3,
++    "b_line": 5,
++    "same_block": true
++  },
++  {
++    "name": "csharp_same_method_large_drift_blank_lines",
++    "file": "a.cs",
++    "source": "class C {\n  void Target() {\n    int x = 1;\n\n\n\n\n    int y = 2;\n    Use(x, y);\n  }\n}\n",
++    "a_line": 3,
++    "b_line": 8,
++    "same_block": true
++  },
++  {
++    "name": "csharp_raw_string_no_overmerge",
++    "file": "a.cs",
++    "source": "class C {\n  void Ra() {\n    var s = \"\"\"\n    } {\n    \"\"\";\n    Done();\n  }\n  void Rb() {\n    var t = 2;\n  }\n}\n",
++    "a_line": 6,
++    "b_line": 9,
++    "same_block": false
+   }
+ ]

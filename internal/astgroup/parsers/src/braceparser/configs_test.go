@@ -119,6 +119,18 @@ func TestBashConfig_NestedParamExpansion(t *testing.T) {
 	}
 }
 
+func TestBashConfig_UnbalancedArithmeticDegradesGracefully(t *testing.T) {
+	// A malformed (( span leaves arithmetic tracking imbalanced. This is
+	// self-inflicted by broken input and accepted as a degrade-to-proximity
+	// limitation: parsing must not panic and the enclosing function must still
+	// be recoverable.
+	src := []byte("(( unbalanced\ngreet() {\n  cat <<EOT\n  hello\nEOT\n  echo done\n}\n")
+	root := parseSource(src, bashConfig)
+	if len(root.Children) != 1 || root.Children[0].Name != "greet" {
+		t.Fatalf("expected func greet after unbalanced arithmetic, got %+v", root.Children)
+	}
+}
+
 // TestConfigs_AllNamed guards that every config carries its language name so the
 // build-tag selection and any future per-language assertion can rely on it.
 func TestConfigs_AllNamed(t *testing.T) {
@@ -167,6 +179,37 @@ func TestJavaConfig_TextBlockBracesIgnored(t *testing.T) {
 	}
 }
 
+func TestJavaConfig_TextBlockEscapedTripleQuoteDegradesGracefully(t *testing.T) {
+	// Java text blocks may contain an escaped \"\"\"; the scanner does not track
+	// escapes inside triple strings, so this is accepted as a degrade-to-
+	// proximity limitation. The parse must not panic and the enclosing method
+	// must still be recoverable.
+	src := []byte("class C {\n  void m() {\n    String s = \"\"\"\n      body with \\\"\"\"\"\n      more\n    \"\"\";\n    next();\n  }\n}\n")
+	root := parseSource(src, javaConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func m despite escaped triple quote, got %+v", root.Children)
+	}
+	if m.Kind != "func" || m.Name != "m" {
+		t.Fatalf("want func m, got %+v", m)
+	}
+}
+
+func TestJavaConfig_SynchronizedIsNotFunc(t *testing.T) {
+	// Java synchronized blocks must not be misnamed as functions via funcParenName.
+	src := []byte("class C {\n  void m() {\n    synchronized (lock) {\n      Work();\n    }\n  }\n}\n")
+	root := parseSource(src, javaConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func m, got %+v", root.Children)
+	}
+	for _, c := range m.Children {
+		if c.Kind == "func" && c.Name == "synchronized" {
+			t.Fatalf("synchronized misclassified as func: %+v", c)
+		}
+	}
+}
+
 func TestJavaConfig_CharLiteralBraceIgnored(t *testing.T) {
 	// A char literal '{' must not skew brace depth.
 	src := []byte("class C {\n  void m() {\n    char open = '{';\n    char close = '}';\n    next();\n  }\n}\n")
@@ -197,6 +240,16 @@ func TestKotlinConfig_WhenIsSwitch(t *testing.T) {
 	fn, ok := findFunc(root, "f")
 	if !ok || len(fn.Children) != 1 || fn.Children[0].Kind != "switch" {
 		t.Fatalf("kotlin when should map to a switch block inside f: %+v", root.Children)
+	}
+}
+
+func TestKotlinConfig_ConstructorUsesFuncParen(t *testing.T) {
+	// Keyword-less call-shaped headers such as secondary constructors must be
+	// named via the funcParenName path, not silently dropped.
+	src := []byte("class C {\n  constructor(name: String) {\n    init(name)\n  }\n}\n")
+	root := parseSource(src, kotlinConfig)
+	if _, ok := findFunc(root, "constructor"); !ok {
+		t.Fatalf("expected func constructor from keyword-less header, got %+v", root.Children)
 	}
 }
 
@@ -254,6 +307,37 @@ func TestCSharpConfig_ForeachIsFor(t *testing.T) {
 	}
 }
 
+func TestCSharpConfig_UsingLockAreNotFuncs(t *testing.T) {
+	// Resource/control scopes must not be misnamed as functions via funcParenName.
+	src := []byte("class C {\n  void m() {\n    using (var r = Get()) {\n      Work();\n    }\n    lock (o) {\n      Guard();\n    }\n  }\n}\n")
+	root := parseSource(src, csharpConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func m, got %+v", root.Children)
+	}
+	for _, c := range m.Children {
+		if c.Kind == "func" && (c.Name == "using" || c.Name == "lock") {
+			t.Fatalf("using/lock misclassified as func: %+v", c)
+		}
+	}
+}
+
+func TestCSharpConfig_NestedInterpolationDegradesGracefully(t *testing.T) {
+	// Nested string literals inside interpolation holes are not tracked; the
+	// scanner closes the outer string on the first inner quote. Accept this as a
+	// degrade-to-proximity limitation: the parse must not panic and the enclosing
+	// method must still be recoverable.
+	src := []byte("class C {\n  void m() {\n    var s = $\"{(\"x\")}\";\n    Next();\n  }\n}\n")
+	root := parseSource(src, csharpConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func m despite nested interpolation, got %+v", root.Children)
+	}
+	if m.Kind != "func" || m.Name != "m" {
+		t.Fatalf("want func m, got %+v", m)
+	}
+}
+
 func TestPHPConfig_HeredocBracesIgnored(t *testing.T) {
 	// PHP heredoc terminator EOT; (marker + semicolon) must close, so the sibling
 	// func `b` is not swallowed, and the braces inside the heredoc create no block.
@@ -267,5 +351,66 @@ func TestPHPConfig_HeredocBracesIgnored(t *testing.T) {
 	}
 	if len(root.Children[0].Children) != 0 {
 		t.Fatalf("heredoc body braces must not create blocks: %+v", root.Children[0].Children)
+	}
+}
+
+// hasNode reports whether the tree rooted at n contains a node of the given kind
+// and name. An empty want name matches any name for that kind.
+func hasNode(n node, kind, name string) bool {
+	if n.Kind == kind && (name == "" || n.Name == name) {
+		return true
+	}
+	for _, c := range n.Children {
+		if hasNode(c, kind, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestConfigs_NewLanguageKeywordKinds pins the per-language keyword->kind mappings
+// added by epic 13.6 that previously had zero coverage. A typo'd kind or a missing
+// keyword in one of the new tables (e.g. `namespace` omitted, `record` mismapped)
+// would degrade grouping distinctness for that construct and ship undetected; each
+// case below asserts the recovered Kind (and Name for the named class-family
+// keywords) so such regressions fail the build.
+func TestConfigs_NewLanguageKeywordKinds(t *testing.T) {
+	cases := []struct {
+		name     string
+		cfg      langConfig
+		src      string
+		wantKind string
+		wantName string // "" = assert kind only (do/while have no name)
+	}{
+		// Kotlin: class / object / interface map to named class; do maps to while.
+		{"kotlin_class", kotlinConfig, "class Box {\n  fun m() {\n    use()\n  }\n}\n", "class", "Box"},
+		{"kotlin_object", kotlinConfig, "object Registry {\n  val n = 1\n  use(n)\n}\n", "class", "Registry"},
+		{"kotlin_interface", kotlinConfig, "interface Shape {\n  fun area(): Int\n  fun name(): String\n}\n", "class", "Shape"},
+		{"kotlin_do", kotlinConfig, "fun f() {\n  do {\n    step()\n  } while (run)\n}\n", "while", ""},
+		// Java: enum / record map to named class; do maps to while.
+		{"java_enum", javaConfig, "enum Color {\n  RED,\n  BLUE\n}\n", "class", "Color"},
+		{"java_record", javaConfig, "record Pair(int a, int b) {\n  int sum() {\n    return a + b;\n  }\n}\n", "class", "Pair"},
+		{"java_do", javaConfig, "void f() {\n  do {\n    step();\n  } while (run);\n}\n", "while", ""},
+		// C/C++: class / union / namespace / enum map to named class; do maps to while.
+		{"cpp_class", cppConfig, "class Engine {\n  void run();\n  void stop();\n};\n", "class", "Engine"},
+		{"cpp_union", cppConfig, "union Value {\n  int i;\n  float f;\n};\n", "class", "Value"},
+		{"cpp_namespace", cppConfig, "namespace Net {\n  int sockets;\n  int conns;\n}\n", "class", "Net"},
+		{"cpp_enum", cppConfig, "enum Color {\n  Red,\n  Blue\n};\n", "class", "Color"},
+		{"cpp_do", cppConfig, "int f() {\n  do {\n    step();\n  } while (run);\n}\n", "while", ""},
+		// C#: struct / interface / enum / record / namespace map to named class; do maps to while.
+		{"csharp_struct", csharpConfig, "struct Vec {\n  int X;\n  int Y;\n}\n", "class", "Vec"},
+		{"csharp_interface", csharpConfig, "interface IShape {\n  void Draw();\n  void Hide();\n}\n", "class", "IShape"},
+		{"csharp_enum", csharpConfig, "enum Mode {\n  On,\n  Off\n}\n", "class", "Mode"},
+		{"csharp_record", csharpConfig, "record Point(int X, int Y) {\n  int Sum() {\n    return X + Y;\n  }\n}\n", "class", "Point"},
+		{"csharp_namespace", csharpConfig, "namespace App {\n  int a;\n  int b;\n}\n", "class", "App"},
+		{"csharp_do", csharpConfig, "void m() {\n  do {\n    Step();\n  } while (run);\n}\n", "while", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := parseSource([]byte(c.src), c.cfg)
+			if !hasNode(root, c.wantKind, c.wantName) {
+				t.Fatalf("%s: expected a %q node named %q, got %+v", c.name, c.wantKind, c.wantName, root.Children)
+			}
+		})
 	}
 }
