@@ -533,6 +533,23 @@ func funcParenName(h string) (string, bool) {
 	case "catch", "with", "switch":
 		return "", false
 	}
+	// Statement keywords that prefix an expression statement (`return foo()`,
+	// `throw foo()`, `await foo()`, `yield foo()`) must not leave the trailing
+	// call named as a function definition.
+	prev := start
+	for prev > 0 && prefix[prev-1] == ' ' {
+		prev--
+	}
+	prevStart := prev
+	for prevStart > 0 && isIdentByte(prefix[prevStart-1]) {
+		prevStart--
+	}
+	if prevStart < prev {
+		switch prefix[prevStart:prev] {
+		case "return", "throw", "await", "yield":
+			return "", false
+		}
+	}
 	// A '.' immediately before the identifier is member access (a call like
 	// `foo.bar()`), not a declaration — reject so it stays an anonymous block.
 	if start > 0 && prefix[start-1] == '.' {
