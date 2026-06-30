@@ -395,6 +395,21 @@ func TestFuncParenName_StatementKeywordNotFunc(t *testing.T) {
 	}
 }
 
+func TestFuncParenName_ControlHeadersNotFunc(t *testing.T) {
+	// Parenthesized control headers from Java/C#/C++ must not be named as funcs.
+	for _, kw := range []string{"try", "synchronized", "using", "lock", "fixed"} {
+		src := []byte(kw + " (x) {\n  body();\n}\n")
+		root := parseSource(src, braceMethodConfig)
+		if len(root.Children) != 1 {
+			t.Fatalf("%s: want one block, got %+v", kw, root.Children)
+		}
+		if root.Children[0].Kind != "block" || root.Children[0].Name != "" {
+			t.Fatalf("%s: control header must be anonymous block, got %q/%q",
+				kw, root.Children[0].Kind, root.Children[0].Name)
+		}
+	}
+}
+
 func TestParseSource_TripleQuotedBracesIgnored(t *testing.T) {
 	// A triple-quoted string (Kotlin multiline / Java text block / C# raw string)
 	// is opaque: braces and quotes inside it must never open/close a block.
