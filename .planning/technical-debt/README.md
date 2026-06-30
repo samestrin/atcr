@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 26 | 0 |
-| LOW | 0 | 27 | 0 |
+| LOW | 4 | 27 | 0 |
 
-**Last Modified:** 2026-06-30 | **Open Items:** 0 | **Deferred Items:** 55 | **Resolved Items:** 0 | **Total Items:** 55
+**Last Modified:** 2026-06-30 | **Open Items:** 4 | **Deferred Items:** 55 | **Resolved Items:** 0 | **Total Items:** 59
 
 ## Directory Structure
 
@@ -61,6 +61,15 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
+
+### [2026-06-30] From Sprint: epic-13.6
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/astgroup/parsers/src/braceparser/parse_core.go:476 | A keyword-less statement-prefixed call header like `return foo()` followed by a bare `{` block is now named func "foo" instead of an anonymous block (grouping is unaffected; naming precision only) | If precision matters add a small statement-keyword denylist (return/throw/await/yield) to funcParenName | CORRECTNESS | 15 | execute-epic-stage3 |
+| 1 | [ ] | LOW | internal/astgroup/parsers/src/braceparser/parse_core.go:520 | Dropping the modifier allowlist broadens funcParenName so a keyword-less expression statement ending in a call then a block (`return cb()` then `{...}`) is named func in existing TS/Bash configs (was anonymous block); cosmetic only since the address+blockIdx group key keeps grouping correct | Re-add a lightweight guard rejecting a name whose immediately-preceding word is a statement keyword (return/throw/await/yield), or accept only pure modifier/type prefixes | REGRESSION_RISK | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/astgroup/parsers/src/braceparser/parse_core.go:515 | The funcParenName reserved-word guard (catch/with/switch) omits the new languages' parenthesized control headers, so Java `try (Resource r=...)`/`synchronized (o)` and C# `using (...)`/`lock (...)`/`fixed (...)` classify as func named after the control word (cosmetic given the address-based group key, but wrong kind/name) | Extend the reserved-word set with try/synchronized/using/lock/fixed | CORRECTNESS | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/astgroup/parsers/src/braceparser/parse_core.go:248 | A C# 11 raw string opened with 4+ quotes desyncs (triple state opens on first three quotes; the 4th quote of the closing run re-enters single-quote string state), leaving brace depth opaque to EOF or next quote; degrades to proximity, never breaks reconcile (now documented inline) | Match the longest run of quotes when opening/closing the triple-string state | EDGE_CASES | 45 | execute-epic-independent |
 
 ### [2026-06-29] From Sprint: 13.4_brace_language_parsers
 
