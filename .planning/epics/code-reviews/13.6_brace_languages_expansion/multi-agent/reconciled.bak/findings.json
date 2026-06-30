@@ -1,0 +1,122 @@
+[
+  {
+    "severity": "MEDIUM",
+    "file": "internal/astgroup/host_test.go",
+    "line": 80,
+    "problem": "TestHost_BraceParsersLoadAndParse only asserts a func child exists; does not validate block structure for edge cases (nested blocks, empty bodies, annotations)",
+    "fix": "Add corpus-driven test using testdata/corpus.json entries for new languages",
+    "category": "testing",
+    "est_minutes": 30,
+    "evidence": "Test only checks `hasFunc` boolean; no assertion on child count, block nesting, or name correctness",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/astgroup/parsers/src/braceparser/configs_test.go",
+    "line": 122,
+    "problem": "New language config tests cover happy paths only; no test for malformed input (unclosed triple-quote, unterminated block comment, empty source)",
+    "fix": "Add error-path tests: empty source, unclosed \"\"\" string, unclosed /* comment, file with only braces",
+    "category": "testing",
+    "est_minutes": 20,
+    "evidence": "All new tests use syntactically valid source; no negative cases",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/astgroup/parsers/src/braceparser/parse_core.go",
+    "line": 43,
+    "problem": "New tripleQuote config field has no test proving it interacts correctly with charLiterals/strChars when all are enabled simultaneously",
+    "fix": "Add test with tripleQuote+charLiterals+strChars enabled and source containing \"\"\", ', and \" in close proximity",
+    "category": "testing",
+    "est_minutes": 15,
+    "evidence": "`tripleQuote` added to langConfig; no combinatorial test for feature interaction",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/astgroup/parsers/src/braceparser/parse_core.go",
+    "line": 248,
+    "problem": "C# 11 raw strings with 4+ quotes desync state machine; documented limitation but no test proving graceful degradation",
+    "fix": "Add test with 4-quote raw string asserting parser does not panic and produces a valid (degraded) tree",
+    "category": "testing",
+    "est_minutes": 20,
+    "evidence": "`case cfg.tripleQuote \u0026\u0026 matchAt(src, i, \"\\\"\\\"\\\"\")` matches exactly 3 quotes; comment at line 248-253 documents the gap",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/astgroup/parsers/src/braceparser/parse_core.go",
+    "line": 515,
+    "problem": "funcParenName reserved-word guard omits try/synchronized/using/lock/fixed; Java/C# control headers misclassify as named funcs",
+    "fix": "Extend reserved-word set with try/synchronized/using/lock/fixed and add test for each",
+    "category": "testing",
+    "est_minutes": 15,
+    "evidence": "`switch name { case \"catch\", \"with\", \"switch\":` at line 515-517; no guard for try/synchronized/using/lock/fixed",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/astgroup/embed.go",
+    "line": 4,
+    "problem": "Four new .wasm files added to embed.FS but no test verifies they are actually embedded and loadable",
+    "fix": "Add TestEmbeddedParsersMatchManifest entry for new parsers or extend existing test",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "`parserFS` embed directive lists new files; TestEmbeddedParsersMatchManifest exists but may not cover new entries",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/astgroup/parsers/src/braceparser/configs_test.go",
+    "line": 122,
+    "problem": "No test for C# verbatim strings (@\"...\") which are documented as out-of-scope; regression could silently break",
+    "fix": "Add test proving verbatim string braces degrade to proximity rather than breaking parser",
+    "category": "testing",
+    "est_minutes": 15,
+    "evidence": "`csharpConfig` comment documents verbatim strings as out of scope; no test guarding against regression",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/astgroup/parsers/src/braceparser/parse_core.go",
+    "line": 476,
+    "problem": "funcParenName modifier allowlist removed; keyword-less statement-prefixed calls like `return foo() {` now name func \"foo\"",
+    "fix": "Add test proving `return foo() {` degrades to anonymous block (or document accepted behavior)",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "Modifier allowlist removed at line 476-490; only `.` member-access guard remains",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  }
+]
