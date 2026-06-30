@@ -353,3 +353,64 @@ func TestPHPConfig_HeredocBracesIgnored(t *testing.T) {
 		t.Fatalf("heredoc body braces must not create blocks: %+v", root.Children[0].Children)
 	}
 }
+
+// hasNode reports whether the tree rooted at n contains a node of the given kind
+// and name. An empty want name matches any name for that kind.
+func hasNode(n node, kind, name string) bool {
+	if n.Kind == kind && (name == "" || n.Name == name) {
+		return true
+	}
+	for _, c := range n.Children {
+		if hasNode(c, kind, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestConfigs_NewLanguageKeywordKinds pins the per-language keyword->kind mappings
+// added by epic 13.6 that previously had zero coverage. A typo'd kind or a missing
+// keyword in one of the new tables (e.g. `namespace` omitted, `record` mismapped)
+// would degrade grouping distinctness for that construct and ship undetected; each
+// case below asserts the recovered Kind (and Name for the named class-family
+// keywords) so such regressions fail the build.
+func TestConfigs_NewLanguageKeywordKinds(t *testing.T) {
+	cases := []struct {
+		name     string
+		cfg      langConfig
+		src      string
+		wantKind string
+		wantName string // "" = assert kind only (do/while have no name)
+	}{
+		// Kotlin: class / object / interface map to named class; do maps to while.
+		{"kotlin_class", kotlinConfig, "class Box {\n  fun m() {\n    use()\n  }\n}\n", "class", "Box"},
+		{"kotlin_object", kotlinConfig, "object Registry {\n  val n = 1\n  use(n)\n}\n", "class", "Registry"},
+		{"kotlin_interface", kotlinConfig, "interface Shape {\n  fun area(): Int\n  fun name(): String\n}\n", "class", "Shape"},
+		{"kotlin_do", kotlinConfig, "fun f() {\n  do {\n    step()\n  } while (run)\n}\n", "while", ""},
+		// Java: enum / record map to named class; do maps to while.
+		{"java_enum", javaConfig, "enum Color {\n  RED,\n  BLUE\n}\n", "class", "Color"},
+		{"java_record", javaConfig, "record Pair(int a, int b) {\n  int sum() {\n    return a + b;\n  }\n}\n", "class", "Pair"},
+		{"java_do", javaConfig, "void f() {\n  do {\n    step();\n  } while (run);\n}\n", "while", ""},
+		// C/C++: class / union / namespace / enum map to named class; do maps to while.
+		{"cpp_class", cppConfig, "class Engine {\n  void run();\n  void stop();\n};\n", "class", "Engine"},
+		{"cpp_union", cppConfig, "union Value {\n  int i;\n  float f;\n};\n", "class", "Value"},
+		{"cpp_namespace", cppConfig, "namespace Net {\n  int sockets;\n  int conns;\n}\n", "class", "Net"},
+		{"cpp_enum", cppConfig, "enum Color {\n  Red,\n  Blue\n};\n", "class", "Color"},
+		{"cpp_do", cppConfig, "int f() {\n  do {\n    step();\n  } while (run);\n}\n", "while", ""},
+		// C#: struct / interface / enum / record / namespace map to named class; do maps to while.
+		{"csharp_struct", csharpConfig, "struct Vec {\n  int X;\n  int Y;\n}\n", "class", "Vec"},
+		{"csharp_interface", csharpConfig, "interface IShape {\n  void Draw();\n  void Hide();\n}\n", "class", "IShape"},
+		{"csharp_enum", csharpConfig, "enum Mode {\n  On,\n  Off\n}\n", "class", "Mode"},
+		{"csharp_record", csharpConfig, "record Point(int X, int Y) {\n  int Sum() {\n    return X + Y;\n  }\n}\n", "class", "Point"},
+		{"csharp_namespace", csharpConfig, "namespace App {\n  int a;\n  int b;\n}\n", "class", "App"},
+		{"csharp_do", csharpConfig, "void m() {\n  do {\n    Step();\n  } while (run);\n}\n", "while", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := parseSource([]byte(c.src), c.cfg)
+			if !hasNode(root, c.wantKind, c.wantName) {
+				t.Fatalf("%s: expected a %q node named %q, got %+v", c.name, c.wantKind, c.wantName, root.Children)
+			}
+		})
+	}
+}
