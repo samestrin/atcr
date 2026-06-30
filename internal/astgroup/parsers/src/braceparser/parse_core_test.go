@@ -379,6 +379,22 @@ func TestFuncParenName_BareNameStillFunc(t *testing.T) {
 	}
 }
 
+func TestFuncParenName_StatementKeywordNotFunc(t *testing.T) {
+	// A statement keyword (return/throw/await/yield) followed by a call and then
+	// a bare block must not be misclassified as a function named after the call.
+	for _, kw := range []string{"return", "throw", "await", "yield"} {
+		src := []byte(kw + " foo() {\n  x();\n}\n")
+		root := parseSource(src, braceMethodConfig)
+		if len(root.Children) != 1 {
+			t.Fatalf("%s: want one block, got %+v", kw, root.Children)
+		}
+		if root.Children[0].Kind != "block" || root.Children[0].Name != "" {
+			t.Fatalf("%s: statement-prefixed call header must be anonymous block, got %q/%q",
+				kw, root.Children[0].Kind, root.Children[0].Name)
+		}
+	}
+}
+
 func TestParseSource_TripleQuotedBracesIgnored(t *testing.T) {
 	// A triple-quoted string (Kotlin multiline / Java text block / C# raw string)
 	// is opaque: braces and quotes inside it must never open/close a block.
