@@ -241,7 +241,11 @@ func parseSource(src []byte, cfg langConfig) node {
 				state = stParamExp
 			case cfg.tripleQuote && matchAt(src, i, "\"\"\""):
 				// Must precede the single-" strChars case: a """ opens an opaque
-				// triple-quoted string, not three single-char strings.
+				// triple-quoted string, not three single-char strings. Exactly
+				// three quotes are matched; a C# 11 raw string opened with 4+
+				// quotes (used when the body itself contains """) is a known
+				// limitation that degrades to ±3 line proximity — like the
+				// out-of-scope raw/verbatim forms, a misparse never breaks reconcile.
 				i += 2 // consume the opening """; the loop's i++ advances past it
 				state = stTripleString
 			case strings.IndexByte(cfg.strChars, c) >= 0:
@@ -467,14 +471,19 @@ func identAfter(h string, pos int) string {
 }
 
 // funcParenName recognizes a `name(...)` function header and returns the trailing
-// identifier run before the first '(' as the name. The trimmed header must end in
-// ')'. This names methods that carry modifiers and/or a return type without a
-// block keyword — `public void execute() {` -> execute, `void Foo::bar() {` ->
+// identifier run before the parameter list as the name. The trimmed header must
+// end in ')'. This names methods that carry modifiers and/or a return type without
+// a block keyword — `public void execute() {` -> execute, `void Foo::bar() {` ->
 // bar — so they group as named func blocks instead of falling through to an
 // anonymous block. Because classifyHeader checks the keyword table first,
 // keyword-introduced blocks (if/for/while/class/...) never reach here, so the
 // existing TS/PHP/Rust/Bash behavior is unchanged; the only new behavior is naming
 // previously-anonymous keyword-less method headers.
+//
+// The parameter list's '(' is found by matching the trailing ')' via a balanced
+// scan from the end, NOT the first '(' — so an annotation/decorator carrying its
+// own argument list (`@SuppressWarnings("x") public void execute()`,
+// `@HostListener(...) onClick()`) does not steal the name from the real method.
 //
 // A call-shaped header whose name is reached through member access (`foo.bar()`)
 // is NOT a definition: the '.' immediately before the identifier marks a method
@@ -485,7 +494,23 @@ func funcParenName(h string) (string, bool) {
 	if !strings.HasSuffix(t, ")") {
 		return "", false
 	}
-	open := strings.IndexByte(t, '(')
+	// Find the '(' that matches the trailing ')' (balanced scan from the end).
+	depth := 0
+	open := -1
+	for k := len(t) - 1; k >= 0; k-- {
+		switch t[k] {
+		case ')':
+			depth++
+		case '(':
+			depth--
+			if depth == 0 {
+				open = k
+			}
+		}
+		if open >= 0 {
+			break
+		}
+	}
 	if open <= 0 {
 		return "", false
 	}

@@ -329,6 +329,21 @@ func TestFuncParenName_ModifierAndReturnTypeNamed(t *testing.T) {
 	}
 }
 
+func TestFuncParenName_AnnotatedMethodNamed(t *testing.T) {
+	// An annotation/decorator carrying its own argument list before the method
+	// must not steal the name: the '(' that matches the trailing ')' is the
+	// parameter list, so the method identifier (execute) is recovered, not the
+	// annotation (SuppressWarnings).
+	src := []byte("class C {\n  @SuppressWarnings(\"x\") public void execute() {\n    work();\n  }\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	if _, ok := findFunc(root, "execute"); !ok {
+		t.Fatalf("expected func/execute (annotation must not steal the name), got %+v", root.Children)
+	}
+	if _, ok := findFunc(root, "SuppressWarnings"); ok {
+		t.Fatalf("annotation SuppressWarnings must not be named as the method func")
+	}
+}
+
 func TestFuncParenName_ScopeResolutionNamed(t *testing.T) {
 	// A C++ out-of-line definition `void Foo::bar() {` must name the func `bar`
 	// (the `::` scope-resolution operator is not a member-access call).
