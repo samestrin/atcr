@@ -397,6 +397,32 @@ func TestFuncParenName_TrailingTokensAfterParamsIsAnonymousBlock(t *testing.T) {
 	}
 }
 
+func TestFuncParenName_TernaryExpressionTolerated(t *testing.T) {
+	// A keyword-less ternary call-shaped expression is misnamed as the trailing
+	// identifier; this is an accepted limitation of the keyword-less heuristic.
+	src := []byte("a ? b : c() {\n  x();\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("want one block, got %+v", root.Children)
+	}
+	if root.Children[0].Kind != "func" || root.Children[0].Name != "c" {
+		t.Fatalf("ternary call-shaped header tolerated as func c, got %q/%q", root.Children[0].Kind, root.Children[0].Name)
+	}
+}
+
+func TestFuncParenName_TestMacroTolerated(t *testing.T) {
+	// GoogleTest-style macros reach funcParenName without a keyword and are
+	// misnamed as the macro; this is an accepted limitation of the heuristic.
+	src := []byte("TEST(Suite, Name) {\n  x();\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("want one block, got %+v", root.Children)
+	}
+	if root.Children[0].Kind != "func" || root.Children[0].Name != "TEST" {
+		t.Fatalf("TEST macro header tolerated as func TEST, got %q/%q", root.Children[0].Kind, root.Children[0].Name)
+	}
+}
+
 func TestFuncParenName_BareNameStillFunc(t *testing.T) {
 	// The existing bare-name() form (TS methods, Bash functions) must resolve
 	// identically after the rework.

@@ -502,6 +502,11 @@ func identAfter(h string, pos int) string {
 // is NOT a definition: the '.' immediately before the identifier marks a method
 // call, so it is rejected and degrades to an anonymous block. The C++ scope
 // operator `::` (`Foo::bar`) is a definition and is accepted.
+//
+// Inherent limitation: without a leading keyword, call-shaped EXPRESSION
+// statements also reach here, e.g. `a ? b : c() {` (names "c") or GoogleTest
+// macros `TEST(A,B) {` (names "TEST"). These are tolerated misnames; grouping
+// still works and the risk model treats them as degrade-to-proximity.
 func funcParenName(h string) (string, bool) {
 	t := strings.TrimSpace(h)
 	if !strings.HasSuffix(t, ")") {
