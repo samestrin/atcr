@@ -119,6 +119,18 @@ func TestBashConfig_NestedParamExpansion(t *testing.T) {
 	}
 }
 
+func TestBashConfig_UnbalancedArithmeticDegradesGracefully(t *testing.T) {
+	// A malformed (( span leaves arithmetic tracking imbalanced. This is
+	// self-inflicted by broken input and accepted as a degrade-to-proximity
+	// limitation: parsing must not panic and the enclosing function must still
+	// be recoverable.
+	src := []byte("(( unbalanced\ngreet() {\n  cat <<EOT\n  hello\nEOT\n  echo done\n}\n")
+	root := parseSource(src, bashConfig)
+	if len(root.Children) != 1 || root.Children[0].Name != "greet" {
+		t.Fatalf("expected func greet after unbalanced arithmetic, got %+v", root.Children)
+	}
+}
+
 // TestConfigs_AllNamed guards that every config carries its language name so the
 // build-tag selection and any future per-language assertion can rely on it.
 func TestConfigs_AllNamed(t *testing.T) {

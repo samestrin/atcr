@@ -264,6 +264,9 @@ func parseSource(src []byte, cfg langConfig) node {
 				// Bash arithmetic `((...))` / `$((...))`: a `<<` inside is a left-shift,
 				// never a heredoc. Track depth so heredoc detection is suppressed within
 				// (the `<<` then falls through to header text, which is harmless).
+				// A malformed or single-paren-closed span leaves arithDepth/parenDepth
+				// imbalanced; this is self-inflicted by broken input and accepted as a
+				// degrade-to-proximity limitation rather than adding recovery heuristics.
 				arithDepth++
 				parenDepth += 2
 				addHeader('(')
