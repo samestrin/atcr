@@ -530,7 +530,7 @@ func funcParenName(h string) (string, bool) {
 	name := prefix[start:end]
 	// Reserved control words must not be misclassified as function names.
 	switch name {
-	case "catch", "with", "switch":
+	case "catch", "with", "switch", "try", "synchronized", "using", "lock", "fixed":
 		return "", false
 	}
 	// Statement keywords that prefix an expression statement (`return foo()`,
