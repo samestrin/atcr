@@ -1,5 +1,5 @@
 // Package main is the shared brace-block structural parser. One Go source is
-// compiled once per target language (build tag ts|php|rust|bash) into a wasip1
+// compiled once per target language (build tag ts|php|rust|bash|java|kotlin|cpp|csharp) into a wasip1
 // reactor .wasm loaded by the internal/astgroup wazero host. It recovers block
 // structure for brace-delimited languages by tracking { } depth (plus string,
 // comment, and heredoc state so braces inside literals do not fabricate blocks)
