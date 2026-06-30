@@ -356,6 +356,14 @@ func classifyHeader(h string, cfg langConfig) (kind, name string) {
 			bestKw = blockKeyword{word: "impl", kind: "class", named: true}
 		}
 	}
+	// `} else if (x) {` and similar else-prefixed chains should classify as the
+	// else block, not as the following control keyword, so the else kind stays
+	// reachable.
+	if bestKw.word == "if" || bestKw.word == "while" || bestKw.word == "for" || bestKw.word == "switch" {
+		if idx := lastWholeWord(h, "else"); idx >= 0 && idx < bestIdx {
+			return "else", ""
+		}
+	}
 	if cfg.arrowFunc {
 		if a := strings.LastIndex(h, "=>"); a > bestIdx {
 			// Only honor `=>` as an arrow-function header when it sits at
