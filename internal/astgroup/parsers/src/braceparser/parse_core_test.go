@@ -79,6 +79,19 @@ func TestParseSource_NestedControlFlow(t *testing.T) {
 	}
 }
 
+func TestParseSource_ElseIfPrefersElse(t *testing.T) {
+	// `} else if (x) {` must classify as an else block, not as an if block.
+	src := []byte("function f(v) {\n  if (v) {\n    g()\n  } else if (w) {\n    h()\n  }\n}\n")
+	root := parseSource(src, tsConfig)
+	fn := root.Children[0]
+	if len(fn.Children) != 2 {
+		t.Fatalf("want 2 children of f, got %d: %+v", len(fn.Children), fn.Children)
+	}
+	if fn.Children[1].Kind != "else" {
+		t.Fatalf("else-if should classify as else, got %q", fn.Children[1].Kind)
+	}
+}
+
 func TestParseSource_BraceInStringIgnored(t *testing.T) {
 	src := []byte("function f() {\n  let s = \"a { b } c\"\n  let t = 'x } y {'\n}\n")
 	root := parseSource(src, tsConfig)
@@ -369,6 +382,47 @@ func TestFuncParenName_MemberAccessCallNotFunc(t *testing.T) {
 	}
 }
 
+func TestFuncParenName_TrailingTokensAfterParamsIsAnonymousBlock(t *testing.T) {
+	// A method header with trailing tokens after the parameter list (e.g.
+	// `public void m() throws IOException {`) must not be named as a func; it
+	// degrades to an anonymous block while still covering its body lines.
+	src := []byte("class C {\n  public void m() throws IOException {\n    work();\n  }\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	if len(root.Children) != 1 || root.Children[0].Kind != "class" {
+		t.Fatalf("want one class, got %+v", root.Children)
+	}
+	m, _ := deepest(root, 3)
+	if m.Kind != "block" || m.Name != "" {
+		t.Fatalf("trailing-token header must be anonymous block covering body, got %q/%q", m.Kind, m.Name)
+	}
+}
+
+func TestFuncParenName_TernaryExpressionTolerated(t *testing.T) {
+	// A keyword-less ternary call-shaped expression is misnamed as the trailing
+	// identifier; this is an accepted limitation of the keyword-less heuristic.
+	src := []byte("a ? b : c() {\n  x();\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("want one block, got %+v", root.Children)
+	}
+	if root.Children[0].Kind != "func" || root.Children[0].Name != "c" {
+		t.Fatalf("ternary call-shaped header tolerated as func c, got %q/%q", root.Children[0].Kind, root.Children[0].Name)
+	}
+}
+
+func TestFuncParenName_TestMacroTolerated(t *testing.T) {
+	// GoogleTest-style macros reach funcParenName without a keyword and are
+	// misnamed as the macro; this is an accepted limitation of the heuristic.
+	src := []byte("TEST(Suite, Name) {\n  x();\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("want one block, got %+v", root.Children)
+	}
+	if root.Children[0].Kind != "func" || root.Children[0].Name != "TEST" {
+		t.Fatalf("TEST macro header tolerated as func TEST, got %q/%q", root.Children[0].Kind, root.Children[0].Name)
+	}
+}
+
 func TestFuncParenName_BareNameStillFunc(t *testing.T) {
 	// The existing bare-name() form (TS methods, Bash functions) must resolve
 	// identically after the rework.
@@ -376,6 +430,37 @@ func TestFuncParenName_BareNameStillFunc(t *testing.T) {
 	root := parseSource(src, braceMethodConfig)
 	if _, ok := findFunc(root, "render"); !ok {
 		t.Fatalf("bare name() method should still be func/render, got %+v", root.Children)
+	}
+}
+
+func TestFuncParenName_StatementKeywordNotFunc(t *testing.T) {
+	// A statement keyword (return/throw/await/yield) followed by a call and then
+	// a bare block must not be misclassified as a function named after the call.
+	for _, kw := range []string{"return", "throw", "await", "yield"} {
+		src := []byte(kw + " foo() {\n  x();\n}\n")
+		root := parseSource(src, braceMethodConfig)
+		if len(root.Children) != 1 {
+			t.Fatalf("%s: want one block, got %+v", kw, root.Children)
+		}
+		if root.Children[0].Kind != "block" || root.Children[0].Name != "" {
+			t.Fatalf("%s: statement-prefixed call header must be anonymous block, got %q/%q",
+				kw, root.Children[0].Kind, root.Children[0].Name)
+		}
+	}
+}
+
+func TestFuncParenName_ControlHeadersNotFunc(t *testing.T) {
+	// Parenthesized control headers from Java/C#/C++ must not be named as funcs.
+	for _, kw := range []string{"try", "synchronized", "using", "lock", "fixed"} {
+		src := []byte(kw + " (x) {\n  body();\n}\n")
+		root := parseSource(src, braceMethodConfig)
+		if len(root.Children) != 1 {
+			t.Fatalf("%s: want one block, got %+v", kw, root.Children)
+		}
+		if root.Children[0].Kind != "block" || root.Children[0].Name != "" {
+			t.Fatalf("%s: control header must be anonymous block, got %q/%q",
+				kw, root.Children[0].Kind, root.Children[0].Name)
+		}
 	}
 }
 
@@ -403,6 +488,46 @@ func TestParseSource_TripleQuoteOffKeepsSingleQuote(t *testing.T) {
 	root := parseSource(src, cfg)
 	if _, ok := findFunc(root, "m"); !ok {
 		t.Fatalf("expected func/m with tripleQuote off, got %+v", root.Children)
+	}
+}
+
+func TestParseSource_EmptyTripleQuoteDoesNotDesync(t *testing.T) {
+	// An empty triple-quoted string """""" (three opens immediately closed by
+	// three closes) must not leave the scanner in string state and must not
+	// create spurious child blocks.
+	src := []byte("class C {\n  void m() {\n    String s = \"\"\"\"\"\";\n    next();\n  }\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func/m, got %+v", root.Children)
+	}
+	if len(m.Children) != 0 {
+		t.Fatalf("empty triple-quote must not create child blocks: %+v", m.Children)
+	}
+}
+
+func TestParseSource_UnterminatedTripleQuoteDoesNotPanic(t *testing.T) {
+	// A file ending mid-triple-quote must not panic; the root file block must
+	// still be produced.
+	src := []byte("class C {\n  void m() {\n    String s = \"\"\"\n      unterminated\n")
+	root := parseSource(src, braceMethodConfig)
+	if root.Kind != "file" {
+		t.Fatalf("want root kind file, got %q", root.Kind)
+	}
+}
+
+func TestParseSource_CSharpFourQuoteRawStringDegrades(t *testing.T) {
+	// C# 11 raw strings opened with 4+ quotes are a known limitation: the extra
+	// quote closes the triple-string state early. The parse must not panic and
+	// the enclosing method must still be recoverable.
+	src := []byte("class C {\n  public void m() {\n    var s = \"\"\"\"\n      raw \"\"\" content\n    \"\"\"\";\n    Next();\n  }\n}\n")
+	root := parseSource(src, csharpConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func/m despite 4-quote raw string, got %+v", root.Children)
+	}
+	if m.Kind != "func" || m.Name != "m" {
+		t.Fatalf("want func m, got %+v", m)
 	}
 }
 

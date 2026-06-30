@@ -18,6 +18,19 @@ Expanded AST-isomorphism finding grouping to four more brace-based language fami
 
 - Fixed missing `authority_promoted` count in report output.
 - Hardened `countAuthorityFlips` oracle to mirror the base-confidence flip predicate.
+- Fixed `classifyHeader` else-if chains being misclassified by preferring `else` classification.
+- Fixed control headers (e.g., `if`/`while`/`for`) being misnamed as functions in `parse_core.go`.
+- Rejected statement-keyword prefixed call headers in `funcParenName` so they no longer masquerade as functions.
+- Extended `funcParenName` reserved-word guard to cover `try`, `synchronized`, `using`, `lock`, and `fixed`.
+- Locked control-word `funcParen` guards for C# and Java to prevent false function positives.
+- Pinned triple-quote degrade edges for empty, unterminated, and four-quote literals.
+- Documented and degraded Java escaped triple-quote and C# nested interpolation limitations.
+- Documented `funcParenName` expression-statement false positives and added coverage tests.
+- Added per-language keyword→kind mapping tests and verified tables reach each brace WASM.
+- Added `funcParen` coverage for trailing-token cases and Kotlin constructor configurations.
+- Updated brace parser header comments for all eight supported languages.
+- Made the parser build script portable on macOS.
+- Resolved `.h` / `.hpp` Objective-C note handling in `LanguageForExt`.
 
 ## [13.5.0] - 2026-06-29
 

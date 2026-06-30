@@ -206,8 +206,9 @@ var cppConfig = langConfig{
 
 // csharpConfig covers C# (.cs). Only " opens a string; ' is a char literal
 // (charLiterals). Raw string literals """...""" (C# 11+) are opaque via
-// tripleQuote; verbatim strings @"..." (with "" escaping) are out of scope and
-// degrade to proximity. Methods have no block keyword, so funcParen names them.
+// tripleQuote; verbatim strings @"..." (with "" escaping) and nested string
+// literals inside interpolation holes ($"{("x")}") are out of scope and degrade
+// to proximity. Methods have no block keyword, so funcParen names them.
 // class/struct/interface/enum/record map to "class"; foreach maps to "for".
 var csharpConfig = langConfig{
 	name:         "csharp",

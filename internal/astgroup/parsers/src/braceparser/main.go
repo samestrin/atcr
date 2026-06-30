@@ -4,7 +4,7 @@
 // guest ABI (alloc/free/parse/emit + the pin map) plus the parse wasmexport that
 // drives the language-agnostic scanner in parse_core.go with the build-tag-
 // selected `active` config (active_*.go). Compiled GOOS=wasip1 GOARCH=wasm
-// -buildmode=c-shared, once per language (-tags ts|php|rust|bash), by build.sh.
+// -buildmode=c-shared, once per language (-tags ts|php|rust|bash|java|kotlin|cpp|csharp), by build.sh.
 //
 // Memory protocol (matches the goparser/pyparser plugins and the astgroup host):
 //   - alloc(n) returns a guest pointer to n writable bytes, pinned against GC.

@@ -53,6 +53,7 @@ func LanguageForExt(ext string) string {
 	case ".kt", ".kts":
 		return "kotlin"
 	// C/C++ translation units and headers — one shared brace parser, one language id.
+	// .h is also used by Objective-C; if Objective-C is added, disambiguate by content sniffing.
 	case ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp":
 		return "cpp"
 	case ".cs":
