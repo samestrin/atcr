@@ -169,7 +169,9 @@ func parseSource(src []byte, cfg langConfig) node {
 			// A """ triple-quoted string (Kotlin/Java text block, C# raw string)
 			// is opaque: only the closing """ returns to normal. Everything in
 			// between — braces, single quotes, interpolation — is ignored, so it
-			// can never open or close a block.
+			// can never open or close a block. Java escaped \"\"\" inside a text
+			// block and C# raw strings with 4+ opening quotes are out of scope
+			// and degrade to proximity.
 			if matchAt(src, i, "\"\"\"") {
 				i += 2 // consume the remaining two quotes of the closing """
 				state = stNormal

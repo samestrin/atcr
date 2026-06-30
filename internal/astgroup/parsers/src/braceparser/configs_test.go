@@ -167,6 +167,22 @@ func TestJavaConfig_TextBlockBracesIgnored(t *testing.T) {
 	}
 }
 
+func TestJavaConfig_TextBlockEscapedTripleQuoteDegradesGracefully(t *testing.T) {
+	// Java text blocks may contain an escaped \"\"\"; the scanner does not track
+	// escapes inside triple strings, so this is accepted as a degrade-to-
+	// proximity limitation. The parse must not panic and the enclosing method
+	// must still be recoverable.
+	src := []byte("class C {\n  void m() {\n    String s = \"\"\"\n      body with \\\"\"\"\"\n      more\n    \"\"\";\n    next();\n  }\n}\n")
+	root := parseSource(src, javaConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func m despite escaped triple quote, got %+v", root.Children)
+	}
+	if m.Kind != "func" || m.Name != "m" {
+		t.Fatalf("want func m, got %+v", m)
+	}
+}
+
 func TestJavaConfig_CharLiteralBraceIgnored(t *testing.T) {
 	// A char literal '{' must not skew brace depth.
 	src := []byte("class C {\n  void m() {\n    char open = '{';\n    char close = '}';\n    next();\n  }\n}\n")
