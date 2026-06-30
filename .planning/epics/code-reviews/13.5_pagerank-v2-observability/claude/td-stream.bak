@@ -1,0 +1,10 @@
+# TD_STREAM - Technical Debt Items
+# TARGET_ID: /Users/samestrin/Documents/GitHub/atcr/.planning/epics/completed/13.5_pagerank-v2-observability.md
+# TARGET_TYPE: epic
+# CREATED: 2026-06-30 09:42:08
+# Format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+# EST_MINUTES: estimated fix time
+# EVIDENCE: Code snippet reference with file:line_start-line_end range (e.g., src/auth.ts:45-52)
+# REVIEWER: 'claude' (this prompt), agent name (multi_review pool, e.g. bruce/greta)
+# --- DATA BELOW THIS LINE ---
+

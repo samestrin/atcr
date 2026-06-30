@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "reconcile/pagerank_confidence_test.go",
+      "line": 163,
+      "severity": "MEDIUM",
+      "problem": "countAuthorityFlips oracle assumes single-reviewer HIGH implies authority promotion, missing the edge case where a single reviewer submits a finding with pre-existing HIGH confidence (e.g. from a prior merge or hardcoded severity), causing the test to falsely count it as an authority flip",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    }
+  ]
+}
