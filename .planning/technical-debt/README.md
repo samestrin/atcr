@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 1 | 26 | 0 |
+| MEDIUM | 0 | 26 | 1 |
 | LOW | 0 | 27 | 1 |
 
-**Last Modified:** 2026-06-30 | **Open Items:** 1 | **Deferred Items:** 55 | **Resolved Items:** 1 | **Total Items:** 57
+**Last Modified:** 2026-06-30 | **Open Items:** 0 | **Deferred Items:** 55 | **Resolved Items:** 2 | **Total Items:** 57
 
 ## Directory Structure
 
@@ -66,7 +66,7 @@ table with zero data loss) is proven by the Go test suite in
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| U | [ ] | MEDIUM | reconcile/pagerank_confidence_test.go:163 | countAuthorityFlips oracle assumes single-reviewer HIGH implies authority promotion, missing the edge case where a single reviewer submits a finding with pre-existing HIGH confidence (e.g. from a prior merge or hardcoded severity), causing the test to falsely count it as an authority flip | Update countAuthorityFlips to verify the finding's base confidence was MEDIUM before promotion, or compare against the base Confidence before promoteByAuthority is applied | testing | 15 | code-review | dax | MEDIUM |
+| U | [x] | MEDIUM | reconcile/pagerank_confidence_test.go:163 | countAuthorityFlips oracle assumes single-reviewer HIGH implies authority promotion, missing the edge case where a single reviewer submits a finding with pre-existing HIGH confidence (e.g. from a prior merge or hardcoded severity), causing the test to falsely count it as an authority flip | Update countAuthorityFlips to verify the finding's base confidence was MEDIUM before promotion, or compare against the base Confidence before promoteByAuthority is applied | testing | 15 | code-review | dax | MEDIUM |
 
 ### [2026-06-29] From Sprint: epic-13.5
 
