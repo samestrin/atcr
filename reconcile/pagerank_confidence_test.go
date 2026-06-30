@@ -162,14 +162,20 @@ func TestReconcile_NoAgreementLeavesConfidenceUnchanged(t *testing.T) {
 }
 
 // countAuthorityFlips derives the number of authority-driven MEDIUM→HIGH
-// promotions directly from the findings: a single-reviewer finding is MEDIUM by
-// the vote-count rule (ConfidenceFor(1)==ConfMedium), so the only way it can end
-// HIGH is promoteByAuthority flipping it. This independent recount is the oracle
-// the Summary.AuthorityPromoted counter must match (AC2).
+// promotions directly from the findings by recomputing each finding's vote-count
+// base confidence and mirroring the production flip predicate
+// (reconcile.go: base.Confidence==ConfMedium && final==ConfHigh). A finding's base
+// confidence is ConfidenceFor(len(Reviewers)) — the same rule Merge applies — so a
+// flip is a finding whose vote-count base was MEDIUM but ended HIGH. This is
+// stricter than a bare single-reviewer→HIGH check: a finding that already carries
+// HIGH confidence at its vote count (e.g. a multi-reviewer cluster, or a
+// hypothetical pre-promotion HIGH) is correctly excluded rather than miscounted.
+// This independent recount is the oracle the Summary.AuthorityPromoted counter
+// must match (AC2).
 func countAuthorityFlips(res Result) int {
 	n := 0
 	for _, m := range res.Findings {
-		if len(m.Reviewers) == 1 && m.Confidence == ConfHigh {
+		if ConfidenceFor(len(m.Reviewers)) == ConfMedium && m.Confidence == ConfHigh {
 			n++
 		}
 	}
