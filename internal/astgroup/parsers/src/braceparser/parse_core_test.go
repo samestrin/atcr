@@ -79,6 +79,19 @@ func TestParseSource_NestedControlFlow(t *testing.T) {
 	}
 }
 
+func TestParseSource_ElseIfPrefersElse(t *testing.T) {
+	// `} else if (x) {` must classify as an else block, not as an if block.
+	src := []byte("function f(v) {\n  if (v) {\n    g()\n  } else if (w) {\n    h()\n  }\n}\n")
+	root := parseSource(src, tsConfig)
+	fn := root.Children[0]
+	if len(fn.Children) != 2 {
+		t.Fatalf("want 2 children of f, got %d: %+v", len(fn.Children), fn.Children)
+	}
+	if fn.Children[1].Kind != "else" {
+		t.Fatalf("else-if should classify as else, got %q", fn.Children[1].Kind)
+	}
+}
+
 func TestParseSource_BraceInStringIgnored(t *testing.T) {
 	src := []byte("function f() {\n  let s = \"a { b } c\"\n  let t = 'x } y {'\n}\n")
 	root := parseSource(src, tsConfig)
