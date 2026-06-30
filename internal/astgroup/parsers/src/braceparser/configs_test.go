@@ -200,6 +200,16 @@ func TestKotlinConfig_WhenIsSwitch(t *testing.T) {
 	}
 }
 
+func TestKotlinConfig_ConstructorUsesFuncParen(t *testing.T) {
+	// Keyword-less call-shaped headers such as secondary constructors must be
+	// named via the funcParenName path, not silently dropped.
+	src := []byte("class C {\n  constructor(name: String) {\n    init(name)\n  }\n}\n")
+	root := parseSource(src, kotlinConfig)
+	if _, ok := findFunc(root, "constructor"); !ok {
+		t.Fatalf("expected func constructor from keyword-less header, got %+v", root.Children)
+	}
+}
+
 func TestCppConfig_OutOfLineMethodNamed(t *testing.T) {
 	// A C++ out-of-line definition `void Foo::bar()` must name the func bar.
 	src := []byte("void Foo::bar() {\n  int x = 1;\n  step();\n}\n")
