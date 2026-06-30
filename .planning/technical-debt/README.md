@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 0 | 26 | 0 |
-| LOW | 1 | 27 | 0 |
+| MEDIUM | 1 | 26 | 0 |
+| LOW | 0 | 27 | 1 |
 
-**Last Modified:** 2026-06-29 | **Open Items:** 1 | **Deferred Items:** 55 | **Resolved Items:** 0 | **Total Items:** 56
+**Last Modified:** 2026-06-30 | **Open Items:** 1 | **Deferred Items:** 55 | **Resolved Items:** 1 | **Total Items:** 57
 
 ## Directory Structure
 
@@ -62,11 +62,17 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table â†’ shards â
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+### [2026-06-30] From Sprint: 13.5_pagerank-v2-observability
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| U | [ ] | MEDIUM | reconcile/pagerank_confidence_test.go:163 | countAuthorityFlips oracle assumes single-reviewer HIGH implies authority promotion, missing the edge case where a single reviewer submits a finding with pre-existing HIGH confidence (e.g. from a prior merge or hardcoded severity), causing the test to falsely count it as an authority flip | Update countAuthorityFlips to verify the finding's base confidence was MEDIUM before promotion, or compare against the base Confidence before promoteByAuthority is applied | testing | 15 | code-review | dax | MEDIUM |
+
 ### [2026-06-29] From Sprint: epic-13.5
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | LOW | internal/reconcile/emit.go:444 | authority_promoted summary stat is emitted in JSON but not rendered in the human-readable report.md, so report-only readers cannot see a misfiring promotion the stat was added to surface | Add an "Authority promoted: N" line to the report renderer alongside clusters collapsed and severity disagreements | OBSERVABILITY | 15 | execute-epic-independent |
+| U | [x] | LOW | internal/reconcile/emit.go:444 | authority_promoted summary stat is emitted in JSON but not rendered in the human-readable report.md, so report-only readers cannot see a misfiring promotion the stat was added to surface | Add an "Authority promoted: N" line to the report renderer alongside clusters collapsed and severity disagreements | OBSERVABILITY | 15 | execute-epic-independent |
 
 ### [2026-06-29] From Sprint: 13.4_brace_language_parsers
 
