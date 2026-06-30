@@ -491,6 +491,46 @@ func TestParseSource_TripleQuoteOffKeepsSingleQuote(t *testing.T) {
 	}
 }
 
+func TestParseSource_EmptyTripleQuoteDoesNotDesync(t *testing.T) {
+	// An empty triple-quoted string """""" (three opens immediately closed by
+	// three closes) must not leave the scanner in string state and must not
+	// create spurious child blocks.
+	src := []byte("class C {\n  void m() {\n    String s = \"\"\"\"\"\";\n    next();\n  }\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func/m, got %+v", root.Children)
+	}
+	if len(m.Children) != 0 {
+		t.Fatalf("empty triple-quote must not create child blocks: %+v", m.Children)
+	}
+}
+
+func TestParseSource_UnterminatedTripleQuoteDoesNotPanic(t *testing.T) {
+	// A file ending mid-triple-quote must not panic; the root file block must
+	// still be produced.
+	src := []byte("class C {\n  void m() {\n    String s = \"\"\"\n      unterminated\n")
+	root := parseSource(src, braceMethodConfig)
+	if root.Kind != "file" {
+		t.Fatalf("want root kind file, got %q", root.Kind)
+	}
+}
+
+func TestParseSource_CSharpFourQuoteRawStringDegrades(t *testing.T) {
+	// C# 11 raw strings opened with 4+ quotes are a known limitation: the extra
+	// quote closes the triple-string state early. The parse must not panic and
+	// the enclosing method must still be recoverable.
+	src := []byte("class C {\n  public void m() {\n    var s = \"\"\"\"\n      raw \"\"\" content\n    \"\"\"\";\n    Next();\n  }\n}\n")
+	root := parseSource(src, csharpConfig)
+	m, ok := findFunc(root, "m")
+	if !ok {
+		t.Fatalf("expected func/m despite 4-quote raw string, got %+v", root.Children)
+	}
+	if m.Kind != "func" || m.Name != "m" {
+		t.Fatalf("want func m, got %+v", m)
+	}
+}
+
 func TestParseSource_TSCatchClauseNotFunc(t *testing.T) {
 	// TypeScript catch clauses look like `catch (e) {` and must not be
 	// misclassified as a function named catch by funcParenName.
