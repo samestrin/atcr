@@ -113,3 +113,124 @@ var bashConfig = langConfig{
 		{word: "function", kind: "func", named: true},
 	},
 }
+
+// javaConfig covers Java (.java). Only " opens a string; ' is a char literal
+// (charLiterals), so '{' / '}' never skew brace depth. Java text blocks """..."""
+// are opaque via tripleQuote. Methods carry modifiers/return types and have no
+// block keyword, so funcParen recovers their trailing-identifier name. class/
+// interface/enum/record map to "class". Signatures with trailing tokens after the
+// parameter list (`... throws IOException`) stay an unnamed but covering block.
+var javaConfig = langConfig{
+	name:         "java",
+	lineComments: []string{"//"},
+	blockOpen:    "/*",
+	blockClose:   "*/",
+	strChars:     "\"",
+	charLiterals: true,
+	tripleQuote:  true,
+	funcParen:    true,
+	keywords: []blockKeyword{
+		{word: "class", kind: "class", named: true},
+		{word: "interface", kind: "class", named: true},
+		{word: "enum", kind: "class", named: true},
+		{word: "record", kind: "class", named: true},
+		{word: "if", kind: "if"},
+		{word: "else", kind: "else"},
+		{word: "for", kind: "for"},
+		{word: "while", kind: "while"},
+		{word: "do", kind: "while"},
+		{word: "switch", kind: "switch"},
+	},
+}
+
+// kotlinConfig covers Kotlin (.kt/.kts). Functions use the `fun` keyword; ' is a
+// char literal (charLiterals). Multiline strings """...""" are opaque via
+// tripleQuote, and $var/${...} interpolation inside a normal "..." string is
+// already opaque via string state. funcParen is on so keyword-less headers such as
+// secondary constructors are still named. `when` maps to "switch"; object/
+// interface/class map to "class".
+var kotlinConfig = langConfig{
+	name:         "kotlin",
+	lineComments: []string{"//"},
+	blockOpen:    "/*",
+	blockClose:   "*/",
+	strChars:     "\"",
+	charLiterals: true,
+	tripleQuote:  true,
+	funcParen:    true,
+	keywords: []blockKeyword{
+		{word: "fun", kind: "func", named: true},
+		{word: "class", kind: "class", named: true},
+		{word: "interface", kind: "class", named: true},
+		{word: "object", kind: "class", named: true},
+		{word: "if", kind: "if"},
+		{word: "else", kind: "else"},
+		{word: "for", kind: "for"},
+		{word: "while", kind: "while"},
+		{word: "do", kind: "while"},
+		{word: "when", kind: "switch"},
+	},
+}
+
+// cppConfig covers C and C++ (.c/.cpp/.cc/.cxx/.h/.hpp). Only " opens a string; '
+// is a char literal (charLiterals), so '{' / '}' and digit separators (1'000)
+// never skew brace depth. `#` is a line comment so single-line preprocessor
+// directives (#include <...>, #define, #ifdef) are skipped (their angle brackets
+// and stray tokens never open a block); multi-line backslash-continued macros and
+// raw strings R"(...)" are out of scope and degrade to proximity. Functions/
+// methods have no block keyword, so funcParen names them (including out-of-line
+// `Foo::bar()` via the trailing identifier). struct/class/union/enum/namespace
+// map to "class".
+var cppConfig = langConfig{
+	name:         "cpp",
+	lineComments: []string{"//", "#"},
+	blockOpen:    "/*",
+	blockClose:   "*/",
+	strChars:     "\"",
+	charLiterals: true,
+	funcParen:    true,
+	keywords: []blockKeyword{
+		{word: "class", kind: "class", named: true},
+		{word: "struct", kind: "class", named: true},
+		{word: "union", kind: "class", named: true},
+		{word: "enum", kind: "class", named: true},
+		{word: "namespace", kind: "class", named: true},
+		{word: "if", kind: "if"},
+		{word: "else", kind: "else"},
+		{word: "for", kind: "for"},
+		{word: "while", kind: "while"},
+		{word: "do", kind: "while"},
+		{word: "switch", kind: "switch"},
+	},
+}
+
+// csharpConfig covers C# (.cs). Only " opens a string; ' is a char literal
+// (charLiterals). Raw string literals """...""" (C# 11+) are opaque via
+// tripleQuote; verbatim strings @"..." (with "" escaping) are out of scope and
+// degrade to proximity. Methods have no block keyword, so funcParen names them.
+// class/struct/interface/enum/record map to "class"; foreach maps to "for".
+var csharpConfig = langConfig{
+	name:         "csharp",
+	lineComments: []string{"//"},
+	blockOpen:    "/*",
+	blockClose:   "*/",
+	strChars:     "\"",
+	charLiterals: true,
+	tripleQuote:  true,
+	funcParen:    true,
+	keywords: []blockKeyword{
+		{word: "class", kind: "class", named: true},
+		{word: "struct", kind: "class", named: true},
+		{word: "interface", kind: "class", named: true},
+		{word: "enum", kind: "class", named: true},
+		{word: "record", kind: "class", named: true},
+		{word: "namespace", kind: "class", named: true},
+		{word: "if", kind: "if"},
+		{word: "else", kind: "else"},
+		{word: "for", kind: "for"},
+		{word: "foreach", kind: "for"},
+		{word: "while", kind: "while"},
+		{word: "do", kind: "while"},
+		{word: "switch", kind: "switch"},
+	},
+}
