@@ -1,3 +1,10 @@
+## [Technical Debt] - 2026-06-30
+
+### Fixed
+
+- Fixed missing `authority_promoted` count in report output.
+- Hardened `countAuthorityFlips` oracle to mirror the base-confidence flip predicate.
+
 ## [13.5.0] - 2026-06-29
 
 ### Added

@@ -442,6 +442,12 @@ func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df Dis
 	fmt.Fprintf(&b, "- Sources: %s\n", esc(joinOrNone(summary.SourcesScanned)))
 	fmt.Fprintf(&b, "- Clusters collapsed: %d\n", summary.ClustersCollapsed)
 	fmt.Fprintf(&b, "- Severity disagreements: %d\n", summary.SeverityDisagreements)
+	if summary.AuthorityPromoted > 0 {
+		// Surface PageRank authority promotions (Epic 13.5) to report-only readers
+		// so a misfiring promotion is visible without reading summary.json. Rendered
+		// only when nonzero, keeping report.md byte-identical on the common path.
+		fmt.Fprintf(&b, "- Authority promoted: %d\n", summary.AuthorityPromoted)
+	}
 	if len(outOfScope) > 0 {
 		fmt.Fprintf(&b, "- Out-of-scope findings: %d (annotated, excluded from the gate)\n", len(outOfScope))
 	}

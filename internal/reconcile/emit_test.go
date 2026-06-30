@@ -222,6 +222,23 @@ func TestRenderMarkdown_FlattensNewlineInjection(t *testing.T) {
 	assert.Contains(t, out, "line one ## Forged Heading - forged bullet")
 }
 
+// TestRenderMarkdown_ShowsAuthorityPromotedWhenNonzero pins TD emit.go:444: the
+// authority_promoted summary stat (Epic 13.5) is emitted to summary.json but was
+// invisible in the human-readable report.md, so a report-only reader could not see
+// a misfiring PageRank authority promotion. The Summary line renders only when the
+// count is nonzero, keeping report.md byte-identical on the common no-promotion path.
+func TestRenderMarkdown_ShowsAuthorityPromotedWhenNonzero(t *testing.T) {
+	finding := Merged{Finding: mfL("HIGH", "a.go", 1, "p", "f", "security", 10, "e", "greta")}
+
+	var promoted bytes.Buffer
+	require.NoError(t, RenderMarkdown(&promoted, Result{Findings: []Merged{finding}, Summary: Summary{AuthorityPromoted: 2}}))
+	assert.Contains(t, promoted.String(), "- Authority promoted: 2", "report.md surfaces the authority-promoted count")
+
+	var none bytes.Buffer
+	require.NoError(t, RenderMarkdown(&none, Result{Findings: []Merged{finding}, Summary: Summary{AuthorityPromoted: 0}}))
+	assert.NotContains(t, none.String(), "Authority promoted", "no line when nothing was promoted")
+}
+
 // TestReadReconciledFindings_SharedLoaderContract pins the single shared loader
 // both the CLI report command and the MCP report handler must use (TD
 // report.go:71 dedup): a missing findings.json surfaces the raw os.ErrNotExist
