@@ -1,0 +1,16 @@
+{
+  "agent": "dax",
+  "status": "ok",
+  "findings_count": 1,
+  "duration_ms": 191198,
+  "payload_mode": "blocks",
+  "truncated": false,
+  "files_dropped": [],
+  "fallback_used": true,
+  "fallback_from": "dax",
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0,
+  "model": "llm-large",
+  "tokens_in": 18077,
+  "tokens_out": 136
+}

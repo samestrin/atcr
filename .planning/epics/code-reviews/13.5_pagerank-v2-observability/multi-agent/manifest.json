@@ -1,0 +1,23 @@
+{
+  "base": "907c08785831f46c99c7a116c8c2da9b9a71d739",
+  "head": "7c6b524a9a68aed8140137351333e3ae8943340a",
+  "detection_mode": "merge_commit",
+  "commit_count": 1,
+  "payload_mode": "blocks",
+  "per_agent_payload": {
+    "bruce": "blocks",
+    "dax": "blocks"
+  },
+  "roster": [
+    "bruce",
+    "dax"
+  ],
+  "started_at": "2026-06-30T09:42:55.124516-07:00",
+  "completed_at": "2026-06-30T16:46:06.469311Z",
+  "partial": false,
+  "stages": [
+    "review"
+  ],
+  "max_parallel": 10,
+  "timeout_secs": 600
+}

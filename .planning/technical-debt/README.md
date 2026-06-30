@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 26 | 0 |
-| LOW | 1 | 27 | 0 |
+| LOW | 0 | 27 | 0 |
 
-**Last Modified:** 2026-06-29 | **Open Items:** 1 | **Deferred Items:** 55 | **Resolved Items:** 0 | **Total Items:** 56
+**Last Modified:** 2026-06-30 | **Open Items:** 0 | **Deferred Items:** 55 | **Resolved Items:** 0 | **Total Items:** 55
 
 ## Directory Structure
 
@@ -61,12 +61,6 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
-
-### [2026-06-29] From Sprint: epic-13.5
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | LOW | internal/reconcile/emit.go:444 | authority_promoted summary stat is emitted in JSON but not rendered in the human-readable report.md, so report-only readers cannot see a misfiring promotion the stat was added to surface | Add an "Authority promoted: N" line to the report renderer alongside clusters collapsed and severity disagreements | OBSERVABILITY | 15 | execute-epic-independent |
 
 ### [2026-06-29] From Sprint: 13.4_brace_language_parsers
 

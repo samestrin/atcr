@@ -1,0 +1,627 @@
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index c7516f1f..b87810e9 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,16 +3,16 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 2 | 0 |
+ | MEDIUM | 0 | 26 | 0 |
+-| LOW | 0 | 27 | 0 |
++| LOW | 1 | 27 | 0 |
+ 
+-**Last Modified:** 2026-06-29 | **Open Items:** 0 | **Deferred Items:** 55 | **Resolved Items:** 0 | **Total Items:** 55
++**Last Modified:** 2026-06-29 | **Open Items:** 1 | **Deferred Items:** 55 | **Resolved Items:** 0 | **Total Items:** 56
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -62,207 +62,213 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
++### [2026-06-29] From Sprint: epic-13.5
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| U | [ ] | LOW | internal/reconcile/emit.go:444 | authority_promoted summary stat is emitted in JSON but not rendered in the human-readable report.md, so report-only readers cannot see a misfiring promotion the stat was added to surface | Add an "Authority promoted: N" line to the report renderer alongside clusters collapsed and severity disagreements | OBSERVABILITY | 15 | execute-epic-independent |
++
+ ### [2026-06-29] From Sprint: 13.4_brace_language_parsers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:1 | Wasm ABI (alloc/free/parse/emit/pins) duplicated across three parser modules | Extract shared ABI into common guest package | maintainability | 60 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-28] From Sprint: epic-13.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:20 | The alloc/free/emit/pins guest ABI is duplicated across three parser sources (goparser, pyparser, braceparser); the threshold the existing code documents for extraction (parser count > 2) is now crossed | Extract the shared guest ABI into a package referenced via go.mod replace directives coordinated in build.sh | MAINTAINABILITY | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-28] From Sprint: epic-13.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | u | [/] | LOW | reconcile/pagerank.go:181 | Authority promotion is silent: no counter or Summary stat records that a HIGH came from authority rather than reviewer count, so a misfiring promotion is only derivable as HIGH-with-a-single-reviewer (Deferred: Epic Plan 13.4) | Add a Summary stat (e.g. AuthorityPromoted int) counting authority-promoted findings for observability; out of v1 scope since the clarification fixed the wire schema | OBSERVABILITY | 30 | execute-epic-independent |
+ 
+ ### [2026-06-27] From Sprint: 13.1_ast_plugin_architecture
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | u | [/] | LOW | internal/astgroup/parsers/src/goparser/main.go:39 | The guest pins alloc'd buffers and hands the host int32(uintptr(unsafe.Pointer(&b[0]))) as a stable guest offset, valid only because the current Go GC is non-moving. This is an undocumented runtime invariant, not a language guarantee; a future moving GC makes the packed pointer a dangling offset with no detection. The unsafe alloc/free/emit/node boilerplate is copy-pasted across goparser, pyparser, and the 13.4 brace parsers, so any ABI fix must be applied N times. (Deferred: extraction premature at 2 parsers; epic scope fixed at Go+Python — a future-remedy note is in each parser's ABI section, revisit if parser count grows.) | Extract the shared alloc/free/emit/pins ABI into one internal guest package imported by every parser main.go, and add a build-time note pinning the GC assumption (or switch to an explicitly reserved arena). | maintainability | 120 | code-review | claude | MEDIUM |
+ | u | [/] | MEDIUM | internal/astgroup/parsers/src/pyparser/main.go:112 | scanTripleQuotes and stripComment are quote/escape-unaware. A triple-quote appearing inside a # comment, or a # appearing inside a string literal, flips the multi-line-string state machine the wrong way, so arbitrary spans of real code get classified as string content and dropped from significantLines, silently erasing blocks. The heuristic disclaimer documents the risk but does not bound it: on unusual source the structural hash diverges from the true AST. (Deferred: accepted PoC scope; heuristic limitation already documented at pyparser/main.go:72-78 and 152-156, degrades to proximity grouping.) | Run scanTripleQuotes only over the code portion (skip after an unquoted #) and skip triple-quotes occurring inside single-line strings. Add regression fixtures: a # containing a triple-quote, and a string literal containing #. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-26] From Sprint: 11.0_executing_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/tools/dispatch.go:146 | Tool gating for run_tests/run_script lives only in fanout.wireToolDefs (what the model is TOLD about); Dispatcher.Execute looks up d.handlers[name] with no check that the call was offered to the calling agent, and EnableExecution registers the exec handlers on the single dispatcher shared by the whole pool. The read-only guarantee for non-exec agents is therefore advisory, not structural — if any future caller enables exec non-uniformly across agents sharing one dispatcher, a non-exec agent could invoke run_script by simply naming it. No live exploit today: the sole exec caller, verify, sets exec uniformly for all skeptics. (Deferred: Epic Plan 11.1) | Pass the agent's allowed tool set (or Exec flag) into Execute and reject any call whose name was not offered to this agent, or gate the exec handlers behind a per-call capability rather than a globally-registered handler. Verify with a test where a non-exec agent emits a run_script tool_call and asserts it is refused. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-25] From Sprint: epic-11.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/tools/exec_tools.go:69 | Execution tools are gated per-agent only at the definition level (wireToolDefs); the shared per-run dispatcher will execute a run_tests/run_script call from any agent once EnableExecution is wired. The sandbox isolates every run identically so this is not a containment gap, but a non-designated agent could still incur execution cost. (Deferred: .planning/epics/active/11.1_dispatcher-structural-gating.md — exec_tools.go:69 is a data struct, not a gating point; the offering-layer gate is already structural, and a runtime per-call guard is the multi-file change scoped to Epic 11.1) | Thread agent exec-eligibility into the dispatcher (or add a per-call guard) so only designated agents execute, for precise cost attribution. | SECURITY | 30 | execute-epic-stage3 |
+ 
+ ### [2026-06-23] From Sprint: 8.0_reconciler_library
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | internal/reconcile/discover.go:25 | `internal/reconcile` keeps its discovery `Source` (Name + `[]stream.Finding` + Skipped + SkippedFiles); the library now defines a public `Source` (Name + `[]Finding`) | moved `Reconcile` takes the library `Source`; discovery output (`discover.Source`) is converted to `reconcile.Source` in the adapter/discovery layer | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | MEDIUM | unknown:0 | [Story 01 / Story 06] DoD item not implemented: both CI jobs (root ci.yml + reconcile-module PR-time job) must be marked as REQUIRED status checks on the main branch-protection rule. The CI workflow deliverables they depend on are all present and verified; only the protection-rule toggle is unset. The two story-level [ ] boxes (AC 01-06, AC 06-02) are the same single external action. (intent_note: deferred per sprint-plan Final Phase / dod-completion-summary.md (external repo-admin action)) | Configure branch protection in GitHub repo Settings -> Branches: add the root CI job and the reconcile-module PR-time job as required status checks. External repo-admin UI action (post-merge), not a source-tree change; documented deferred in dod-completion-summary.md. | docs | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: 7.3_github_action_pr_integration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 6 | [/] | MEDIUM | cmd/atcr/github.go:148-167 | Sequential inline comment posting is slow for PRs with many findings (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ | 6 | [/] | LOW | cmd/atcr/github.go:148-167 | Conclusion is computed twice for the same findings/failOn inputs (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: epic-7.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/verify/syntaxguard.go:130 | An unfenced multi-line JSON/config snippet with block braces can still satisfy looksLikeGoCode and be parsed as Go, producing a spurious invalid_syntax flag on non-Go content (residual after heuristic hardening). | Detect obviously non-Go brace content (JSON object / key:value lines) before treating block braces as a Go signal; deferred as a separate design refinement (unfenced non-Go fixes are rare; fenced non-Go is already handled). [Deferred 2026-06-22 to Epic Plan 7.5 syntax-guard-refinements per clarification] | EDGE_CASES | 30 | execute-epic-independent |
+ 
+ ### [2026-06-22] From Sprint: 7.0.1_executor_model_configuration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 7 | [/] | LOW | internal/registry/config.go:524 | Potential prompt injection via system_prompt (Won't-fix: config.go:531–534 explicitly documents that control chars are intentionally NOT rejected in system_prompt; the --- delimiter added at executor.go:225 eliminates the CRLF metadata-forgery surface; otto's fix conflicts with the documented design decision) | Add control character validation to SystemPrompt | security | 15 | code-review | otto | MEDIUM |
+ 
+ ### [2026-06-21] From Sprint: epic-6.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/debate/debate.go:165 | Gray-zone cluster merge/separate rulings are recorded in debate.json but not physically applied to findings.json; clusters still resolve via the existing adjudication path (Deferred: Epic Plan 6.1) | Wire the judge cluster decision into the reconcile adjudication application so unattended runs auto-merge gray-zone clusters inline | INTEGRATION | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-20] From Sprint: epic-5.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/cache/store.go:115 | Eviction does a full ReadDir+Stat of the cache dir on every Put even when under the cap; O(n) per write scales poorly if the cache accumulates thousands of entries (Won't-fix 2026-06-21: scan runs serially under the store mutex and LLM calls dominate latency; no Epic 5.2 perf criterion requires O(1) Put — added state not justified at LOW) | Maintain a running total-size counter and skip the directory scan when it is under the cap, or evict only on a periodic/threshold basis | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-06-20] From Sprint: epic-5.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/report/render.go:317 | The "File not found" warning format string is duplicated across internal/reconcile/emit.go (writeFindingsList) and internal/report/render.go (writePathWarning) in separate packages | Extract a shared constant/helper only if a common low-level rendering package emerges; a cross-package dependency is not justified for one format string today (Won't-fix 2026-06-21: two independent format strings across packages with no shared dependency; the recorded fix confirms extraction is not justified at this scope) | CROSS_CUTTING | 15 | execute-epic-cumulative |
+ | U | [/] | MEDIUM | internal/reconcile/reconcile.go:26 | Validation root is hardcoded to "." at every call site, so "atcr reconcile <path>" for a review of another repo, or running from a non-repo-root CWD, falsely flags every finding as "file not found" | Thread the reviewed repo root explicitly or add a --repo flag, applied consistently with the verify stage which uses the same "." convention (Deferred 2026-06-21: the narrow Root: os.Getwd() variant is a no-op — filepath.Abs(".") already equals the CWD, so it would not fix the non-repo-root / other-repo case; the real fix is to plumb the reviewed-repo path explicitly via a --repo flag threaded through the reconcile and verify call sites, est 60) | EDGE_CASES | 60 | execute-epic-independent |
+ 
+ ### [2026-06-20] From Sprint: 4.7.1_backup-swap-hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:318 | backupExisting() unconditionally RemoveAll's <path>.bak.old and <path>.bak.new at entry, but forceBackupOutputDir() only calls guardForeignBackup(dir+".bak") — the two staging siblings are not guarded. On an arbitrary --output-dir a user who owns <output-dir>.bak.old or <output-dir>.bak.new has it silently deleted by --force, re-opening the Epic 4.7 "never silently delete user data" contract. NOTE: epic clarification Q4 deliberately scoped the guard to .bak only (atcr-internal suffixes); this finding re-raises that decision as worth reconsidering, not a defect against the recorded scope. (intent_note: deferred per epic §Clarifications Q4 — extending guardForeignBackup to .bak.old/.bak.new is out of scope) (Won't-fix 2026-06-20: binding Epic 4.7.1 Q4 — guard stays scoped to .bak; .bak.old/.bak.new are atcr-owned staging names cleared by entry-time RemoveAll; confirmed via /sprint-clarification 95%) | In forceBackupOutputDir() (reviewdir.go:440) extend the guard to guardForeignBackup(dir+".bak.old") and guardForeignBackup(dir+".bak.new") before backupExisting, or refuse if either exists non-empty. Add a test pre-creating a foreign <output-dir>.bak.old with user content and assert --force errors instead of deleting it. | security | 60 | code-review | claude | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:373 | The advertised "an interrupted swap never leaves the user with neither generation" invariant is conditional on a best-effort SILENT restore succeeding. If restorePriorBackup's os.Rename(backupOld,backup) fails (e.g. backup partially recreated, or perms change), the only surviving copy is stranded under .bak.old — which the very next run's entry-time RemoveAll(backupOld) (line 318) then deletes. Same pattern at the copy site swapStagedBackup (atomic.go:159-167) feeding atomic.go:97 RemoveAll(bakOld). (Won't-fix 2026-06-20: observability half done (restore failure now logged); the lone-.bak.old-as-generation redesign is rejected per Epic 4.7.1 Q3 — .bak.old is atcr-owned temp deleted at entry, one-generation contract + TestBackupExisting_CleansStaleStagingStragglers stand; confirmed via /sprint-clarification 95%) | Surface restore failures loudly (log/return) instead of dropping them, and/or do not auto-RemoveAll .bak.old at entry when .bak is absent — treat a lone .bak.old as the surviving generation to recover. Add a test where restore fails and a subsequent run is asserted not to delete the only surviving copy. | correctness | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir.go:388 | backupCrossDevice's inner os.Rename(backupNew,backup) relies on backupNew and backup sharing a filesystem, an invariant that holds only by naming coincidence (both are siblings of path). If anyone later relocates backupNew under path, the inner rename silently becomes cross-device and returns a raw EXDEV to the user. (Won't-fix 2026-06-20: same-fs invariant holds by construction — backup and backupNew are both siblings of path; a runtime guard would be unreachable dead code today and is already documented at reviewdir.go:415-419; confirmed via /sprint-clarification 90%) | Add a test that forces renameFn to return syscall.EXDEV and makes the copy fail (a copy seam, or unreadable src), staging a prior .bak first; assert the prior .bak content is restored intact, the live tree survives, and .bak.new is cleaned up. Cover the copy-failure leg at minimum. | testing | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir_test.go:458 | Test-coverage gaps in the failed-swap/cleanup paths: TestBackupExisting_FailedSwapPreservesPriorBak asserts no .bak.old straggler but not .bak.new; the non-ErrNotExist Lstat(backup) error branch (reviewdir.go:333-335) is untested; the entry-time RemoveAll straggler-cleanup failure legs (reviewdir.go:318-323) are untested. Each is a real error branch a regression could silently break. | Add assert.NoDirExists for src+".bak.new" at reviewdir_test.go:458; add a perms-based test forcing Lstat(backup) to fail with a non-ErrNotExist error; add a test where .bak.old cannot be removed and assert the typed "clearing stale staging backup" error. Skip on root/CI where perms are not enforced. (Partial 2026-06-21: gaps 1 (.bak.new assertion) and 3 (RemoveAll(.bak.old) failure) covered; gap 2 (non-ErrNotExist Lstat(backup)) deferred — needs an lstatFn production seam since the staging siblings share a parent dir so perms cannot isolate it) | testing | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-19] From Sprint: 4.7_idempotency
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:284 | backupExisting() does os.RemoveAll(backup) then os.Rename(path, backup); BackupToDotBak() does os.RemoveAll(bak) then copyTree. If the rename/copy fails (cross-filesystem EXDEV when --output-dir and its .bak sibling are on different mounts, disk-full mid-copy, or SIGKILL), the single prior backup generation is already destroyed while the new backup is absent or partial. The live/original tree is preserved (good), but the one recoverable prior .bak is lost for no benefit — counter to the safe-to-retry goal. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 4.7.1) | Stage the new backup first: copy/rename into <path>.bak.new (or rename old .bak aside to .bak.old), confirm it is complete, then swap and only then remove the old generation. For backupExisting, attempt os.Rename before RemoveAll so a failed rename leaves the old .bak intact; detect EXDEV and fall back to copy+remove. Add a fault-injection test asserting the prior .bak survives a failed swap. | correctness | 120 | code-review | code-reviewer, claude | HIGH |
+ 
+ ### [2026-06-19] From Sprint: 4.5_circuit_breaker
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | MEDIUM | internal/fanout/metrics.go:37 | recordAgentOutcome zeroes apiCalls for any result whose error unwraps to context.DeadlineExceeded/Canceled, assuming no request was made. But a per-agent timeout routinely fires AFTER real HTTP round-trips (and mid tool-loop after several Chat turns already hit the wire), so atcr_api_calls_total undercounts real provider traffic exactly when a provider is degraded. The no-request assumption is only provably safe for CircuitOpenError and pre-first-send cancellation. (Deferred: Epic Plan 4.11) | Use max(1, r.Turns) for the deadline case instead of a flat 0, or thread a real calls-attempted counter out of the client rather than inferring from the terminal error class. Keep the apiCalls=0 path only for CircuitOpenError. | performance | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-18] From Sprint: epic-4.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/validation/validation.go:62 | System-dir denylist covers only /etc, /proc, /sys, leaving /boot, /dev, /root, /var and ~/.ssh writable via --output-dir / --output (deliberate Option-B permissive choice) (Won't-fix: intended Option-B policy per epic 4.3 clarifications 2026-06-18; revisit only on a concrete isolation requirement) | If stronger isolation is later required, switch to an allowlist anchored at the repo/.atcr root instead of a denylist | SECURITY | 30 | execute-epic-independent |
+ | 1 | [/] | LOW | internal/validation/validation.go:86 | Severity and Enum validators are shipped but wired to nothing (ParseSeverity/ValidFormat remain the live paths); they exist only to satisfy AC5/AC7 and future use (Won't-fix: intentionally public for AC5/AC7 per epic 4.3 clarifications; deletion breaks ACs, wire-in out of scope) | Revisit and delete if no caller adopts them within a release, or wire them in where duplication can be removed | OVER_ENGINEERING | 15 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/registry/attribution.go:55 | attribute() recurses and reconstructs the join even for a single-error errors.Join (which still satisfies Unwrap() []error), a small avoidable cost on the load-time validation path | Optionally short-circuit when len(children)==1 if profiling ever flags it (WON'T-FIX 2026-06-18: trigger unmet — error-path only, never hit on normal load; no perf AC in epic 4.2) | INTEGRATION | 5 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.1.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/fanout/review.go:361 | If a server shutdown (or CLI SIGINT) fires after all agents already succeeded but before ExecuteReview's interrupted := errors.Is(ctx.Err(), context.Canceled) check, a fully-completed run is stamped Interrupted=true and status.go:216 overrides RunCompleted to RunInterrupted (a false interrupted; inverse of AC4). Pre-existing in the CLI-shared path, newly reachable via MCP shutdown. | Gate the interrupted marker on at least one agent ending in StatusTimeout/cancelled rather than purely on parent ctx.Err()==Canceled. NOTE: touches CLI-shared review.go (out of scope for epic 4.1.2's MCP-only change); window is microscopic and outcome benign (resume no-ops a complete run) - separate design. (WON'T-FIX 2026-06-18: --resume self-healing via ClearInterrupted (resume.go:220) already recovers a stale interrupted-on-complete; revisit in a backlog sprint if insufficient) | CORRECTNESS | 30 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: epic-4.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:88 | Serve-mode background fan-out runs under context.WithoutCancel(ctx) so a SIGINT to the MCP server never cancels or marks an in-flight detached review interrupted; it is allowed to finish (intended MCP design) but never gets the interrupted marker CLI mode promises. (Deferred: Epic Plan 4.1.2) | Decide whether detached MCP reviews should be marked interrupted on server shutdown; if so, thread a cancellable/interrupt-aware context or post-hoc marker into the background review path — a separate design from this CLI-focused epic. | REGRESSION_RISK | 60 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: 4.0_structured_logging
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/review.go:172 | Both review entry points call `NewRedactor(root)` with ZERO configured secrets — cmd/atcr/review.go:172 and internal/mcp/handlers.go:87 pass only the path root, never the registry API keys. The exact-value secret-scrubbing loop in Redact is therefore dead in production; redaction relies entirely on the `sk-`/`Bearer` regexes, which miss raw provider keys that lack those prefixes (Google `AIzaSy...`, Azure `api-key`, JWTs `eyJ...`). The AC5 "no API key in log output" guarantee holds only for sk-/Bearer-shaped keys; the passing integration test likely uses an sk- key, masking the gap. (Deferred: Epic Plan 4.9 secret-value-redaction) | Thread resolved registry API key values into `NewRedactor(root, keys...)` at both review.go:172 and handlers.go:87 (keys are discoverable from prep.Slots / cfg.Registry). Add an integration test using a non-sk-shaped key (e.g. `AIzaSy...`) asserting it is redacted. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: 3.5_severity-rank-consolidation
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:18 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:30 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestGrayZoneNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:42 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNoDisagreementOnCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: epic-3.5
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/stream/severity.go:20 | The canonical SeverityRank map carries a read-only-after-init invariant in a comment only, with no test guard preventing a future caller from mutating the shared map (which would race across concurrent fan-out agents). (Won't fix: structural guard — reconcile copy-on-init at merge.go:29-31 means no consumer writes stream.SeverityRank directly; grep confirms zero write sites across consumers. Snapshot test trips the over-simplification gate; Rank() accessor cascades to 14+ direct-lookup sites — both out of pure-consolidation scope.) | Add a stream test that snapshots the map and asserts it is unchanged after consumers run, or wrap it behind a Rank(sev) accessor. | OBSERVABILITY | 20 | execute-epic-independent |
+ 
+ ### [2026-06-16] From Sprint: 3.4_scorecard-diagnostics-writer
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:118 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; the diagnostic already routes to the injectable writer, only fmt.Fprintf's own return is dropped; propagating it breaks Emit's never-fail contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:199 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; Append loop already surfaces firstErr; propagating the Fprintf return breaks the best-effort contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:235 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verdictTallies already writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:248 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verification-read-failed diagnostic writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:276 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; orphan-verdict diagnostic routes to injectable w, locked by TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/scorecard_test.go:291 | Epic 3.4 added unit tests proving EmitOpts.Diag / ReadOpts.Writer routing at the scorecard layer, but there is no test asserting the wiring itself — that the MCP handler passes a non-default writer or that the three CLI entry points pass cmd.ErrOrStderr(). This plumbing can silently regress (a future refactor swaps cmd.ErrOrStderr() back to a default and no test fails). (Deferred: Epic Plan 3.6 scorecard-wiring-tests) | Add a CLI-level test that drives a scorecard command against a deliberately-malformed store and asserts the read diagnostic reaches the command's ErrOrStderr buffer; once MCP diagnostics route through e.log, add a handler-level test asserting against a captured logger buffer. | testing | 60 | code-review | claude | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:114 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; over-long-line warning uses injectable w via diagWriter; read continues; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:145 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; decodeRecord writes to injectable w then returns (Record,bool) — no error cascade) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:155 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; schema-version skip writes to injectable w; identical to malformed-record path) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/store.go:194 | Redundant call to diagWriter (Wontfix: FALSE POSITIVE — diagWriter is the required typed-nil guard for the nil-able opts.Writer interface, not redundant; removing it reintroduces the panic fixed by commit 476c6d1) | Remove diagWriter call and use opts.Writer directly since ReadRecords already resolves it | performance | 2 | code-review | otto | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:211 | Error from diagWriter is silently discarded (Wontfix: FALSE POSITIVE — `_, _ = fmt.Fprintf` is the documented best-effort never-panic diagnostics contract at store.go:22-24; returning the write error would regress a successful read on a broken sink and logging is circular; confirmed working as designed via /sprint-clarification 97%) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:220 | The MCP engine carries a structured *slog.Logger (e.log) used for every other diagnostic in handleReconcile (e.g. the require_verified warning at line ~225), but scorecard diagnostics are routed to raw os.Stderr, so MCP-path scorecard write-failures/malformed-record/orphan-verdict warnings emit as unstructured plaintext that bypasses the logger's level filtering, formatting, and sink redirection. NOTE: this was a DELIBERATE, documented epic decision (Clarifications Q2: supply os.Stderr at the call site; adapting e.log to an io.Writer was explicitly OUT of scope), so this is enhancement debt, not a regression. (intent_note: deferred per epic Clarifications Q2 — adapting e.log to an io.Writer is out of scope) (Wontfix: ACCEPTED ENHANCEMENT DEBT — handlers.go:220 is an unconditional EmitOpts{Diag: os.Stderr} call, not deferred logic; all five Epic 3.4 ACs are met and the comment at handlers.go:214-219 satisfies AC4; e.log→io.Writer adaptation is out of scope per Clarifications Q2; confirmed via /sprint-clarification 97%) | If MCP observability is later desired, adapt e.log into an io.Writer shim (slog-backed at Warn level) and pass it as Diag instead of os.Stderr, so MCP-path scorecard diagnostics flow through the same structured pipeline as the rest of the handler. Defer unless/until structured MCP diagnostics are required. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-15] From Sprint: 3.3_per-run_scorecard
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go (FindByRunID adjacent-month notice; ReadRecords malformed-line notice); internal/scorecard/scorecard.go (Emit notices) | Store/emit diagnostics ("skipping malformed record", "run spans adjacent month files", "write failed") are written directly to the process-global `os.Stderr` rather than to a writer threaded from the cobra command (`cmd.ErrOrStderr()`). (Deferred: Epic Plan 3.4) | accept an `io.Writer` (or logger) on the store/emit entry points and have the CLI pass `cmd.ErrOrStderr()`, so warnings are capturable and redirectable. | ops | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-06-14] From Sprint: 3.2_disagreement_radar
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/reconcile/disagree.go:280 | Duplicate writeRadarSection rendering logic risks divergent escaping across packages (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Consolidate radar rendering into report package; reconcile should call report.writeRadarSection | security | 20 | code-review | greta | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/disagree.go:350 | Duplicated radar section rendering logic (Deferred: Epic Plan 7.2) | Extract shared writeRadarSection to a common package | maintainability | 10 | code-review | bruce | MEDIUM |
+ | 4 | [/] | MEDIUM | internal/reconcile/disagree.go:354 | Duplicated radar markdown rendering diverges (Deferred: Epic Plan 7.2) | Extract shared writer or make reconcile use report package's escTrunc | maintainability | 10 | code-review | bruce | MEDIUM |
+ | U | [/] | LOW | internal/reconcile/disagree.go:413 | Redundant implementation of writeRadarSection (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Remove duplicate function from internal/reconcile and use internal/report | maintainability | 15 | code-review | otto | MEDIUM |
+ | 5 | [/] | MEDIUM | internal/report/disagree.go:47 | The radar markup is rendered by two divergent copies: writeRadarSection + formatScore in internal/report/disagree.go and a structurally different copy in internal/reconcile/disagree.go:389. They are intentionally not identical (report copy truncates via escTrunc + uses joinReviewers/reviewerOrUnknown; reconcile copy uses uncapped esc + joinOrNone), so a future markup change (new field, reordered bullets) must be made in both or the live `atcr report` radar and the archival reconciled/report.md silently drift. (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Extract one shared item renderer parameterized by a truncate-vs-verbatim flag and heading prefix; have both call sites delegate. Add a test that diffs the rendered markup of both paths on the same DisagreementsFile asserting the only intended difference is truncation. | correctness | 60 | code-review | bruce, claude | HIGH |
+ 
+ ### [2026-06-14] From Sprint: 2.2_code_review_fanout_hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | MEDIUM | internal/fanout/postprocess.go:14 | The severity-rank rubric {CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1} is independently redefined in fanout/postprocess.go:17, reconcile/merge.go, verify, report, plus a set-form copy reviewSeverities in registry/config.go. postprocess looks up severityRank[strings.ToUpper(...)] while reconcile looks up the raw value, so a future severity change or non-canonical casing silently desyncs fan-out truncation from reconcile merging. The postprocess copy was newly added by Epic 2.2. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 3.5) | Extract a single canonical severity package (or export from internal/stream) exposing the ordered rank map plus normalizeSeverity, and have registry/fanout/reconcile/verify/report consume it. Verify by deleting the local maps and confirming the suite passes with one source of truth. | maintainability | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-14] From Review: llmclient OpenAI-compatible tool handling
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | U | [/] | LOW | internal/llmclient/chat.go:1 | No provider-conformance test matrix for the OpenAI-compatible surface. The client deliberately absorbs real wire divergence (string-encoded vs raw-object tool_call `arguments`, lenient finish_reason) but is exercised only against synthetic fixtures, so a regression against a specific provider's actual tool_call shape (OpenAI, litellm, Ollama, vLLM, Together) would not be caught. This is the robustness the official SDK is assumed to provide, achievable here without adopting it. | Add a recorded-fixture conformance suite: capture a real `tool_calls` response from each target provider and assert the parser (`ToolCallArguments`, `chatToolResponse` decode, finish_reason handling) yields identical engine-facing results. NOTE: scope is a few days, not a quick-win — consider promoting to a standalone test-remediation plan rather than resolving inline. | testing | 480 | review | claude | LOW |
+ 
+ ### [2026-06-14] From Sprint: 3.0_adversarial_verification
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 7 | [/] | LOW | internal/verify/pipeline.go:238 | The rich VerificationResult built in verifyFinding never populates TrippedBudgets (invokeSkeptic folds tripped budgets only into free-text Notes), base.Model is hard-coded to skeptics[0].Config.Model even when another skeptic produced the winning verdict, and the skip-already-verified rebuild (pipeline.go:199) re-synthesizes records from the compact on-disk block losing Model/DurationMs/TrippedBudgets — so verification.json's structured audit fields degrade or misattribute on multi-skeptic and no-op re-runs (extends the model-attribution gap of TD-011). Also: Model is empty on the no_eligible_skeptic / tool_harness_unavailable early-return paths. [intent: deferred per sprint-plan TD-011] | Thread the tripped-budget slice and the winning skeptic's model up from invokeSkeptic into base.TrippedBudgets/base.Model (join models when multiple voters agree, mirroring joinSkeptics), and carry Model/DurationMs/TrippedBudgets forward for skipped findings instead of synthesizing a lossy record. | correctness | 120 | execute-sprint | execute-sprint, claude | HIGH |
+ 
+ ### [2026-06-13] From Sprint: 2.0_tool_using_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 5 | [/] | LOW | internal/tools/snapshot.go | AC 03-02 Scenario 5 and AC 03-03 Scenarios 4-5 require `manifest.json` `stages.review` to record `snapshot_mode` (live/worktree), `head_sha`, and `snapshot_worktree_path`. (intent_note: deferred per sprint-plan §2.5.A (manifest review-stage recording is Phase 5 work); Deferred to Epic Plan 2.1) | when wiring `SnapshotFor` into the agent loop, record `snapshot_mode`/`head_sha`/`snapshot_worktree_path` into `internal/payload/manifest.go` review stage and add the manifest assertion tests from AC 03-02/03-03. | testing | 0 | execute-sprint | execute-sprint | MEDIUM |
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 060dd064..d04524d7 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,76 +1,94 @@
++## [13.5.0] - 2026-06-29
++
++### Added
++
++- Added an `authority_promoted` field to the reconcile run summary
++  (`reconcile-json/v1`) recording how many findings PageRank authority promotion
++  raised from MEDIUM to HIGH confidence in a run — observability for the epic 13.3
++  promotion signal, which was previously silent.
++
++### Changed
++
++- The reconcile summary wire schema gained the additive `authority_promoted` key.
++  This is a v2 wire-schema change (sanctioned by this epic); existing consumers are
++  unaffected unless they decode `reconcile-json/v1` with strict unknown-field
++  rejection.
++
++*Shipped via /execute-epic (epic 13.5)*
++
+ ## [Technical Debt] - 2026-06-29
+ 
+ ### Fixed
+ 
+ - Fixed PHP attributes (`#[...]`) being swallowed as comments in the brace parser.
+ - Corrected typed arrow annotations (`foo<T>() => ...`) being mislabeled as functions.
+ - Stopped Bash arithmetic shifts (`<<` / `>>`) from being misdetected as heredoc starts.
+ - Added handling for Bash brace expansion so it no longer opens spurious blocks.
+ - Fixed heredoc strip-tab logic so PHP `<<<` heredocs no longer incorrectly strip leading tabs.
+ - Fixed multi-byte escape sequences (`\u{7f}`) being dropped due to `charLiteralLen` returning zero.
+ - Relaxed `funcParenName` so TypeScript method modifiers no longer defeat function detection.
+ - Fixed `identAfter` to skip generic parameters after keywords like `impl`, preserving the real identifier name.
+ - Stopped `classifyHeader` from treating `catch (e)` as a function when TypeScript `funcParen` is enabled.
+ - Corrected `classifyHeader` arrow-function detection to consider arrow position rather than just the last `=>` index.
+ - Reduced inefficient string allocation in the brace parser core scanner.
+ - Documented regex-as-unhandled in the brace parser normal state and added a dedicated CI job for the brace parser module.
+ 
+ ## [13.4.0] - 2026-06-28
+ 
+ ### Added
+ 
+ - AST-isomorphism grouping now covers TypeScript/JavaScript (`.ts`/`.tsx`/`.cts`/`.mts`/`.js`/`.jsx`/`.mjs`), PHP (`.php`), Rust (`.rs`), and Bash (`.sh`/`.bash`): duplicate findings in those languages group by their smallest covering block across line drift > 3, instead of falling back to the ±3 line-proximity gate.
+ - A shared brace-block parser (`braceparser`) compiled once per language into a vendored wasip1 `.wasm`, parameterized by a per-language keyword/comment/string/heredoc table — adding the next brace language is a config-table plus corpus change, not new parser code.
+ 
+ *Shipped via /execute-epic (epic 13.4)*
+ 
+ ## [Technical Debt] - 2026-06-28
+ 
+ ### Fixed
+ 
+ - Capped distinct reviewers per agreement group and sorted them deterministically, eliminating an unbounded quadratic loop in `addAgreement`
+ - Stored PageRank edge weights as `float64` to avoid repeated int-to-float conversions
+ - Replaced manual absolute-value delta logic with `math.Abs` for consistent convergence
+ - Precomputed the authority baseline once per reconcile run and added an explicit authority map lookup before promotion
+ - Renamed the `any` variable to `hasAgreement` to avoid shadowing the Go builtin
+ - Preallocated the `allGroups` slice with known capacity
+ - Updated `Confidence` documentation to reflect that `HIGH` can result from authority promotion, not only multiple reviewers
+ - Annotated dangling-mass redistribution as defensive-only for the always-connected agreement graph
+ - Documented the strict authority baseline boundary assumption
+ - Added invariant tests for symmetric K4/K5/cycle graphs, disconnected components, never-agreed isolated findings, and run-twice determinism
+ - Reworded `BenchmarkModelAuthority` to characterize rather than validate the NFR
+ - Fixed undefined `merged` variable and removed dead code in `reconcile/reconcile.go`
+ 
+ ## [13.3.0] - 2026-06-28
+ 
+ ### Added
+ 
+ - Deterministic per-run PageRank "authority" signal over a model-agreement graph (nodes are models, count-weighted edges are cross-model agreements), built once per reconcile run with a damped power iteration (damping 0.85, strict iteration backstop) — fully offline and stdlib-only.
+ 
+ ### Changed
+ 
+ - Confidence scoring now factors model authority: an isolated (single-reviewer) finding is promoted from `MEDIUM` to `HIGH` when its model's run authority exceeds the uniform `1/N` baseline. Promotion is one-directional (authority never lowers confidence), and confidence stays identical to the prior reviewer-count behavior when a run has no cross-model agreement.
+ 
+ *Shipped via /execute-epic (epic 13.3)*
+ 
+ ## [Technical Debt] - 2026-06-28
+ 
+ ### Fixed
+ 
+ - Cached per-cluster relation and similarity matrix once and read it from all three sites in `reconcile/dedupe.go`
+ - Collapsed unattributed findings to one density source so duplicate hallucinations no longer self-corroborate
+ - Namespaced real versus anonymous source keys disjointly to block reviewer spoofing
+ - Capped location clusters at `maxClusterSize`, degrading to singletons to prevent unbounded memory growth
+ - Locked DBSCAN single-pass neighbor invariant and documented why no adjacency cache is needed
+ - Added complete-linkage acceptance to `bipartiteGroups` to prevent merge-strength chain over-merges
+ - Short-circuited `hungarianAssign` single-row/column paths to an O(n) argmin
+ - Added a maximum matrix size guard to the Hungarian algorithm
+ - Added `AmbiguousCount` and `NoiseCount` fields to the reconciler summary
+ - Skipped gray recording for findings that share an AST key
+ - Validated key length in `dedupeCluster`
+ - Deduplicated the DBSCAN seed queue to avoid O(n²) growth
+ - Added a safety iteration limit to the Hungarian algorithm
+ - Derived `noMatchSentinel` from the distance ceiling
+ - Resolved documentation accuracy for bipartite matching
+ 
+ ## [13.2.0] - 2026-06-28
+diff --git a/docs/code-review-backend.md b/docs/code-review-backend.md
+index 6d4ae212..b157100a 100644
+--- a/docs/code-review-backend.md
++++ b/docs/code-review-backend.md
+@@ -85,29 +85,32 @@ together with other sources and compute confidence across the whole set rather
+ than ingesting atcr's pre-collapsed blob.
+ 
+ ## summary.json fields
+ 
+ `reconciled/summary.json` carries the fields a caller usually surfaces:
+ 
+ - `total_findings` — reconciled finding count.
+ - `sources_scanned` / `per_source_counts` — which sources contributed and how
+   many each.
+ - `partial` — `true` if any agent failed or timed out (the run still produced
+   results from the agents that succeeded).
+ - `clusters_collapsed`, `severity_disagreements` — merge diagnostics.
++- `authority_promoted` — count of findings PageRank authority promotion raised
++  from MEDIUM to HIGH confidence in the run (observability for the promotion
++  signal; `0` when no single-reviewer finding was promoted).
+ 
+ ## Behavioral notes for callers
+ 
+ - **Partial runs are normal.** If an agent times out or errors, `partial` is
+   `true` and the surviving agents' findings are still written. A backend
+   pipeline must treat `partial=true` as success-with-fewer-sources, not
+   failure.
+ - **Finding counts differ from other backends.** atcr's deterministic
+   reconciler uses its own clustering/dedupe and confidence logic, so counts
+   will not match a different reviewer backend run over the same range. This is
+   expected; the pipeline must not assert count parity.
+ - **Review scope (temporary).** Reviewers currently scope to diff-touched
+   lines and do not receive external planning context (e.g. a sprint plan).
+   Passing additional review context is **planned for an upcoming epic** that
+   will add a context-injection channel and the corresponding `atcr review`
+   flag; until then, callers should not assume sprint/plan context reaches the
+   reviewers.
+diff --git a/internal/reconcile/testdata/golden/summary.json b/internal/reconcile/testdata/golden/summary.json
+index d78f37b9..edc0469a 100644
+--- a/internal/reconcile/testdata/golden/summary.json
++++ b/internal/reconcile/testdata/golden/summary.json
+@@ -1,21 +1,22 @@
+ {
+   "sources_scanned": [
+     "host",
+     "pool"
+   ],
+   "per_source_counts": {
+     "host": 3,
+     "pool": 5
+   },
+   "clusters_collapsed": 2,
+   "severity_disagreements": 1,
++  "authority_promoted": 0,
+   "partial": false,
+   "skipped_sources": [],
+   "skipped_source_count": 0,
+   "ambiguous_hash": "sha256:22f8673bbb31fb5720148a3991951cb8fc98767ae9ea4f15f78babdd5e8f32d9",
+   "ambiguous_count": 1,
+   "noise_count": 0,
+   "out_of_scope": 1,
+   "total_findings": 6,
+   "reconciled_at": "2023-11-14T22:13:20Z"
+ }
+diff --git a/reconcile/adapter/json/testdata/encode_golden.json b/reconcile/adapter/json/testdata/encode_golden.json
+index 5dc12d37..4216b606 100644
+--- a/reconcile/adapter/json/testdata/encode_golden.json
++++ b/reconcile/adapter/json/testdata/encode_golden.json
+@@ -1 +1 @@
+-{"version":"reconcile-json/v1","reconciled_at":"2026-06-23T17:39:52Z","findings":[{"severity":"high","file":"main.go","line":42,"problem":"nil deref","fix":"add nil check","category":"bug","est_minutes":15,"evidence":"reviewer-a: stack trace","reviewers":["reviewer-a","reviewer-b"],"confidence":"HIGH","disagreement":"medium vs high","verification":{"verdict":"confirmed","skeptic":"skeptic-1","notes":"reproduced locally"}}],"summary":{"sources_scanned":["reviewer-a","reviewer-b"],"per_source_counts":{"reviewer-a":1,"reviewer-b":2,"reviewer-c":3},"clusters_collapsed":0,"severity_disagreements":0,"partial":false,"skipped_sources":null,"skipped_source_count":0,"ambiguous_hash":"","ambiguous_count":0,"noise_count":0,"out_of_scope":0,"total_findings":1,"reconciled_at":""},"ambiguous":[{"id":"amb-1","file":"main.go","line":50,"similarity":0.55,"findings":[{"severity":"low","file":"main.go","line":50,"problem":"maybe dup","fix":"","category":"","est_minutes":0,"evidence":"","reviewer":"reviewer-a"}]}]}
++{"version":"reconcile-json/v1","reconciled_at":"2026-06-23T17:39:52Z","findings":[{"severity":"high","file":"main.go","line":42,"problem":"nil deref","fix":"add nil check","category":"bug","est_minutes":15,"evidence":"reviewer-a: stack trace","reviewers":["reviewer-a","reviewer-b"],"confidence":"HIGH","disagreement":"medium vs high","verification":{"verdict":"confirmed","skeptic":"skeptic-1","notes":"reproduced locally"}}],"summary":{"sources_scanned":["reviewer-a","reviewer-b"],"per_source_counts":{"reviewer-a":1,"reviewer-b":2,"reviewer-c":3},"clusters_collapsed":0,"severity_disagreements":0,"authority_promoted":0,"partial":false,"skipped_sources":null,"skipped_source_count":0,"ambiguous_hash":"","ambiguous_count":0,"noise_count":0,"out_of_scope":0,"total_findings":1,"reconciled_at":""},"ambiguous":[{"id":"amb-1","file":"main.go","line":50,"similarity":0.55,"findings":[{"severity":"low","file":"main.go","line":50,"problem":"maybe dup","fix":"","category":"","est_minutes":0,"evidence":"","reviewer":"reviewer-a"}]}]}
+diff --git a/reconcile/pagerank_confidence_test.go b/reconcile/pagerank_confidence_test.go
+index 7a2399b8..c61389b1 100644
+--- a/reconcile/pagerank_confidence_test.go
++++ b/reconcile/pagerank_confidence_test.go
+@@ -160,3 +160,78 @@ func TestReconcile_NoAgreementLeavesConfidenceUnchanged(t *testing.T) {
+ 		eq(t, m.Confidence, ConfMedium, "isolated finding with no run agreement stays MEDIUM")
+ 	}
+ }
++
++// countAuthorityFlips derives the number of authority-driven MEDIUM→HIGH
++// promotions directly from the findings: a single-reviewer finding is MEDIUM by
++// the vote-count rule (ConfidenceFor(1)==ConfMedium), so the only way it can end
++// HIGH is promoteByAuthority flipping it. This independent recount is the oracle
++// the Summary.AuthorityPromoted counter must match (AC2).
++func countAuthorityFlips(res Result) int {
++	n := 0
++	for _, m := range res.Findings {
++		if len(m.Reviewers) == 1 && m.Confidence == ConfHigh {
++			n++
++		}
++	}
++	return n
++}
++
++// TestReconcile_AuthorityPromotedSummaryCountsFlips is the AC2 behavior: the
++// Summary.AuthorityPromoted counter equals the number of findings
++// promoteByAuthority actually flipped MEDIUM→HIGH in the run. The fixture is the
++// asymmetric multi-reviewer case where exactly one isolated finding (alpha's
++// c.go) is promoted while beta's isolated finding stays MEDIUM, so the counter
++// must read 1 and must agree with the independent recount.
++func TestReconcile_AuthorityPromotedSummaryCountsFlips(t *testing.T) {
++	sources := []Source{
++		{Name: "alpha", Findings: []Finding{
++			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "alpha"),
++			mf("HIGH", "b.go", 20, "shared issue two here", "fix", "security", 15, "e", "alpha"),
++			mf("HIGH", "c.go", 30, "isolated alpha only finding", "fix", "security", 15, "e", "alpha"),
++		}},
++		{Name: "beta", Findings: []Finding{
++			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "beta"),
++			mf("HIGH", "d.go", 40, "isolated beta only finding", "fix", "security", 15, "e", "beta"),
++		}},
++		{Name: "gamma", Findings: []Finding{
++			mf("HIGH", "b.go", 20, "shared issue two here", "fix", "security", 15, "e", "gamma"),
++		}},
++	}
++	res := Reconcile(sources, recAt())
++	eq(t, res.Summary.AuthorityPromoted, 1, "exactly one isolated finding (alpha's c.go) promoted MEDIUM→HIGH")
++	eq(t, res.Summary.AuthorityPromoted, countAuthorityFlips(res), "counter must match independently recounted flips")
++}
++
++// TestReconcile_AuthorityPromotedZeroWhenNoPromotion pins AC4 on the counter
++// itself: a symmetric two-model run promotes nothing, so the counter is 0 (no
++// spurious counting when confidence assignment is unchanged).
++func TestReconcile_AuthorityPromotedZeroWhenNoPromotion(t *testing.T) {
++	sources := []Source{
++		{Name: "alpha", Findings: []Finding{
++			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "alpha"),
++			mf("HIGH", "c.go", 30, "isolated alpha only finding", "fix", "security", 15, "e", "alpha"),
++		}},
++		{Name: "beta", Findings: []Finding{
++			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "beta"),
++		}},
++	}
++	res := Reconcile(sources, recAt())
++	eq(t, res.Summary.AuthorityPromoted, 0, "symmetric authority promotes nothing → counter 0")
++	eq(t, res.Summary.AuthorityPromoted, countAuthorityFlips(res), "counter must match independently recounted flips")
++}
++
++// TestReconcile_AuthorityPromotedZeroWhenNoAgreement is the backward-compat
++// counter invariant: with no cross-model agreement the authority map is empty,
++// promotion is a no-op, and the counter stays 0.
++func TestReconcile_AuthorityPromotedZeroWhenNoAgreement(t *testing.T) {
++	sources := []Source{
++		{Name: "alpha", Findings: []Finding{
++			mf("HIGH", "a.go", 10, "alpha distinct finding alpha", "fix", "security", 15, "e", "alpha"),
++		}},
++		{Name: "beta", Findings: []Finding{
++			mf("HIGH", "b.go", 20, "beta distinct finding beta", "fix", "security", 15, "e", "beta"),
++		}},
++	}
++	res := Reconcile(sources, recAt())
++	eq(t, res.Summary.AuthorityPromoted, 0, "no agreement → empty authority map → counter 0")
++}
+diff --git a/reconcile/reconcile.go b/reconcile/reconcile.go
+index 910225b5..bd307d01 100644
+--- a/reconcile/reconcile.go
++++ b/reconcile/reconcile.go
+@@ -38,115 +38,129 @@ type Result struct {
+ // Summary is the run-stats record.
+ type Summary struct {
+ 	SourcesScanned        []string       `json:"sources_scanned"`
+ 	PerSourceCounts       map[string]int `json:"per_source_counts"`
+ 	ClustersCollapsed     int            `json:"clusters_collapsed"`
+ 	SeverityDisagreements int            `json:"severity_disagreements"`
+-	Partial               bool           `json:"partial"`
++	// AuthorityPromoted counts findings PageRank authority promotion (epic 13.3,
++	// promoteByAuthority) raised from MEDIUM to HIGH confidence in this run. It is
++	// observability only — promotion behavior is unchanged — surfacing a misfiring
++	// promotion that would otherwise be derivable only indirectly as a "HIGH with a
++	// single reviewer."
++	AuthorityPromoted int  `json:"authority_promoted"`
++	Partial           bool `json:"partial"`
+ 	// SkippedSources lists source paths an embedder dropped on a read error or bad
+ 	// header: warn-and-continue degradation is recorded here rather than
+ 	// exit-coded, mirroring the Partial flag's contract. The core library leaves
+ 	// this empty (it reconciles in-memory findings, not files); an embedding I/O
+ 	// layer that discovers sources stamps it after Reconcile returns.
+ 	SkippedSources     []string `json:"skipped_sources"`
+ 	SkippedSourceCount int      `json:"skipped_source_count"`
+ 	// AmbiguousHash digests the emitted ambiguous sidecar bytes; a host copies it
+ 	// verbatim into an adjudication file as the baseline hash.
+ 	AmbiguousHash string `json:"ambiguous_hash"`
+ 	// AmbiguousCount is the total number of entries in the ambiguous sidecar.
+ 	AmbiguousCount int `json:"ambiguous_count"`
+ 	// NoiseCount is the number of single-finding ambiguous entries isolated as
+ 	// DBSCAN noise (as opposed to multi-finding gray pairs).
+ 	NoiseCount int `json:"noise_count"`
+ 	// OutOfScope counts findings annotated out-of-scope: kept in the artifacts but
+ 	// excluded from a severity gate.
+ 	OutOfScope    int    `json:"out_of_scope"`
+ 	TotalFindings int    `json:"total_findings"`
+ 	ReconciledAt  string `json:"reconciled_at"`
+ }
+ 
+ // Reconcile runs the deterministic pipeline: cluster all findings by location,
+ // dedupe each cluster, merge duplicate groups, assign confidence, and collect the
+ // ambiguous sidecar and run summary. Output findings are sorted by severity
+ // (desc), then file, then line, so the same input always yields byte-identical
+ // artifacts.
+ //
+ // When opts.Grouper is set (AST-isomorphism grouping), clustering additionally
+ // depends on the inputs that grouper reads — for the astgroup grouper, the source
+ // tree it parses. Reconcile stays deterministic for a fixed (findings, source
+ // tree) pair; reproducibility therefore holds per checkout, since a review runs
+ // against a fixed working tree. A nil Grouper keeps clustering a pure function of
+ // the findings.
+ func Reconcile(sources []Source, opts Options) Result {
+ 	clusters := ClusterWith(AllFindings(sources), opts.Grouper)
+ 
+ 	// First pass: dedupe every cluster into merge groups. The groups are collected
+ 	// across ALL clusters before any confidence is assigned because authority
+ 	// (epic 13.3) is a run-global property — a model's PageRank depends on every
+ 	// agreement it took part in, not just the ones inside one location cluster.
+ 	allGroups := make([][]Finding, 0, len(clusters))
+ 	ambiguous := []AmbiguousCluster{}
+ 	for _, cl := range clusters {
+ 		groups, amb := dedupeCluster(cl, clusterKeys(cl, opts.Grouper), opts.Merges)
+ 		ambiguous = append(ambiguous, amb...)
+ 		allGroups = append(allGroups, groups...)
+ 	}
+ 
+ 	// Build the run-global model-agreement graph and compute per-model authority.
+ 	// An empty result (no cross-model agreement) disables promotion, keeping
+ 	// confidence byte-identical to the pre-13.3 vote-count behavior.
+ 	authority := modelAuthority(allGroups)
+ 	var baseline float64
+ 	if len(authority) > 0 {
+ 		baseline = 1.0 / float64(len(authority))
+ 	}
+ 
+ 	// Second pass: merge each group and assign authority-aware confidence.
+ 	var merged []Merged
+-	clustersCollapsed, disagreements := 0, 0
++	clustersCollapsed, disagreements, authorityPromoted := 0, 0, 0
+ 	for _, g := range allGroups {
+-		m := promoteByAuthority(Merge(g), authority, baseline)
++		base := Merge(g)
++		m := promoteByAuthority(base, authority, baseline)
++		// Count an actual authority-driven flip: the merged group was MEDIUM by the
++		// vote-count rule and promotion raised it to HIGH. Comparing before/after
++		// keeps the counter exact even if promoteByAuthority's predicate evolves.
++		if base.Confidence == ConfMedium && m.Confidence == ConfHigh {
++			authorityPromoted++
++		}
+ 		if len(g) >= 2 {
+ 			clustersCollapsed++
+ 		}
+ 		if m.Disagreement != "" {
+ 			disagreements++
+ 		}
+ 		merged = append(merged, m)
+ 	}
+ 	sortMerged(merged)
+ 	outOfScope := 0
+ 	for _, m := range merged {
+ 		if m.Category == CategoryOutOfScope {
+ 			outOfScope++
+ 		}
+ 	}
+ 	noiseCount := 0
+ 	for _, c := range ambiguous {
+ 		if len(c.Findings) == 1 {
+ 			noiseCount++
+ 		}
+ 	}
+ 
+ 	return Result{
+ 		Findings:  merged,
+ 		Ambiguous: ambiguous,
+ 		Summary: Summary{
+ 			SourcesScanned:        sourceNames(sources),
+ 			PerSourceCounts:       perSourceCounts(sources),
+ 			ClustersCollapsed:     clustersCollapsed,
+ 			SeverityDisagreements: disagreements,
++			AuthorityPromoted:     authorityPromoted,
+ 			Partial:               opts.Partial,
+ 			SkippedSources:        []string{},
+ 			SkippedSourceCount:    0,
+ 			AmbiguousHash:         AmbiguousHash(ambiguous),
+ 			AmbiguousCount:        len(ambiguous),
+ 			NoiseCount:            noiseCount,
+ 			OutOfScope:            outOfScope,
+ 			TotalFindings:         len(merged),
+ 			ReconciledAt:          opts.ReconciledAt.UTC().Format(time.RFC3339),
+ 		},
+ 	}
+ }
+ 
+ // sortMerged orders findings by severity (most severe first), then file, then
+ // line, then Problem — a strict total order independent of input permutation.
