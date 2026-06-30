@@ -382,6 +382,21 @@ func TestFuncParenName_MemberAccessCallNotFunc(t *testing.T) {
 	}
 }
 
+func TestFuncParenName_TrailingTokensAfterParamsIsAnonymousBlock(t *testing.T) {
+	// A method header with trailing tokens after the parameter list (e.g.
+	// `public void m() throws IOException {`) must not be named as a func; it
+	// degrades to an anonymous block while still covering its body lines.
+	src := []byte("class C {\n  public void m() throws IOException {\n    work();\n  }\n}\n")
+	root := parseSource(src, braceMethodConfig)
+	if len(root.Children) != 1 || root.Children[0].Kind != "class" {
+		t.Fatalf("want one class, got %+v", root.Children)
+	}
+	m, _ := deepest(root, 3)
+	if m.Kind != "block" || m.Name != "" {
+		t.Fatalf("trailing-token header must be anonymous block covering body, got %q/%q", m.Kind, m.Name)
+	}
+}
+
 func TestFuncParenName_BareNameStillFunc(t *testing.T) {
 	// The existing bare-name() form (TS methods, Bash functions) must resolve
 	// identically after the rework.
