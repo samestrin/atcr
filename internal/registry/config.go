@@ -374,6 +374,11 @@ type Registry struct {
 	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
 	FailOn            string `yaml:"fail_on,omitempty"`
+	// ReviewStrategy is the run-wide fan-out strategy (Epic 14.3): "bulk"
+	// (default) or "chunked". A global toggle resolved once per run, mirroring
+	// payload_mode; the per-agent max_context_lines governs each bin's size when
+	// chunking is on.
+	ReviewStrategy string `yaml:"review_strategy,omitempty"`
 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
 	// application in ResolveSettings.
 	MaxParallel *int `yaml:"max_parallel,omitempty"`
@@ -476,6 +481,9 @@ func (r *Registry) validate() error {
 	}
 	if !payloadModeValid(r.PayloadMode) {
 		errs = append(errs, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", r.PayloadMode))
+	}
+	if !reviewStrategyValid(r.ReviewStrategy) {
+		errs = append(errs, fmt.Errorf("invalid review_strategy '%s': must be one of bulk, chunked", r.ReviewStrategy))
 	}
 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
 	// any non-empty value must be a canonical review severity. Error wording lists

@@ -92,6 +92,7 @@ fail_on: HIGH
 | `agents` | (required†) | The parallel-lane roster. Every entry must exist in the registry. †May be empty when `serial_agents` is non-empty — only a roster empty in both lanes is rejected. |
 | `serial_agents` | `[]` | The serial-lane roster (sequential execution, for rate-limited providers). |
 | `payload_mode` | `blocks` | One of `diff`, `blocks`, `files`. |
+| `review_strategy` | `bulk` | Fan-out strategy: `bulk` (default — the whole diff goes to each persona in one prompt, keeping API cost strictly bounded) or `chunked` (each persona's diff is bin-packed into multiple context-limited calls, trading extra requests for smaller per-call context to curb large-diff hallucination). When `chunked`, each bin's size is capped by the agent's `max_context_lines`. Resolves at the registry and project tiers only (no CLI flag). |
 | `timeout_secs` | `600` | Global fan-out timeout. Must be positive and `≤ 86400`; an explicit `0` is rejected (not silently defaulted). |
 | `payload_byte_budget` | `524288` | Per-payload byte budget (512 KiB ≈ 128k tokens). Files are dropped largest-first when a payload exceeds it, recorded per agent in `status.json`. `0` = unlimited; negative is rejected. CLI override: `atcr review --byte-budget N`. **Context sizing:** models with context limits below 128k will time out or fail on the default; set to `163840` (160 KiB ≈ 40k tokens) for rosters that include smaller-context models (e.g. 49k-limit). |
 | `max_parallel` | `10` | Cap on concurrent parallel-lane agent calls. Bounds the fan-out so a large roster cannot burst every provider call at once. When `serial_agents` is non-empty, the serial lane runs concurrently with the parallel lane in its own goroutine — peak provider concurrency is therefore `max_parallel + 1`, not `max_parallel`. `0` = unbounded; negative is rejected. CLI override: `atcr review --max-parallel N`. |
@@ -133,7 +134,7 @@ atcr trust --all           # authorize every project provider
 
 ## Precedence
 
-The shared review settings (`payload_mode`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, `cache_max_bytes`, `fail_on`) resolve **per field, independently**, in this order:
+The shared review settings (`payload_mode`, `review_strategy`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, `cache_max_bytes`, `fail_on`) resolve **per field, independently**, in this order:
 
 ```
 CLI flag  >  .atcr/config.yaml  >  registry.yaml  >  embedded default
