@@ -561,6 +561,14 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 
 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
 
+	// Chunked strategy (Epic 14.3): a persona fanned out into N chunk-slots comes
+	// back as N results under the same Agent name; collapse them into one result
+	// per persona BEFORE any downstream step so stage classification, the summary
+	// tallies, and writePool (which rejects duplicate agent dirs) all see a single
+	// logical source with Reviewer=<persona>. In bulk strategy names are unique, so
+	// this is a no-op.
+	results = mergeChunkResults(results)
+
 	// Classify the run into the manifest's review-stage entry and stamp the
 	// snapshot provenance (nil when no agent ran with tools).
 	stage := reviewStageFor(results)
@@ -786,13 +794,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	perAgentMode := map[string]string{}
 	var slots []Slot
 
-	add := func(name string, serial bool) error {
-		primary, mode, err := buildAgent(cfg, name, payloads, rng, forceMode, scopeConstraint)
-		if err != nil {
-			return err
-		}
-		perAgentMode[name] = mode
-
+	// buildChain resolves the fallback chain for a primary. Extracted so both the
+	// bulk one-slot path and the chunked per-chunk path attach identical chains
+	// (a fallback reviews the same persona prompt/payload as its primary — here,
+	// the same chunk).
+	buildChain := func(name string, primary Agent) ([]Agent, error) {
 		var fbs []Agent
 		seen := map[string]bool{name: true}
 		for fb := cfg.Registry.Agents[name].Fallback; fb != ""; fb = cfg.Registry.Agents[fb].Fallback {
@@ -802,9 +808,73 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			seen[fb] = true
 			agent, err := buildFallbackAgent(cfg, primary, fb)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			fbs = append(fbs, agent)
+		}
+		return fbs, nil
+	}
+
+	add := func(name string, serial bool) error {
+		ac, ok := cfg.Registry.Agents[name]
+		if !ok {
+			return fmt.Errorf("agent %q not found in registry", name)
+		}
+		mode := forceMode
+		if mode == "" {
+			mode = ac.EffectivePayloadMode(cfg.Settings)
+		}
+		mp, ok := payloads[mode]
+		if !ok {
+			return fmt.Errorf("agent %q: no payload built for mode %q", name, mode)
+		}
+		perAgentMode[name] = mode
+
+		// Chunked strategy (Epic 14.3): bin-pack this persona's diff into multiple
+		// context-limited calls, one Slot per chunk. Every chunk-slot keeps the
+		// SAME persona name, so mergeChunkResults collapses their results into one
+		// raw/agent/<persona>/ source with Reviewer=<persona> (AC4) — the 14.2
+		// consensus filter still counts the persona once. A run that yields a
+		// single chunk (small diff, or one file) falls through to the bulk path so
+		// there is nothing to merge.
+		if cfg.Settings.ReviewStrategy == reviewStrategyChunked {
+			chunks := chunkDiff(mp.Text, ac.EffectiveMaxContextLines())
+			// Warn on any chunk that is a lone file exceeding the budget (it could
+			// not be split). This runs over EVERY chunk — not just multi-chunk
+			// fan-outs — so a diff that is a single oversized file (which chunkDiff
+			// returns as one chunk) still surfaces the documented warning before
+			// falling through to the one-slot path.
+			ml := ac.EffectiveMaxContextLines()
+			for _, ct := range chunks {
+				if countDiffFiles(ct) <= 1 && countLines(ct) > ml {
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines) exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, countLines(ct), ml)
+				}
+			}
+			if len(chunks) > 1 {
+				for _, ct := range chunks {
+					primary, err := renderAgent(cfg, name, ac, mode, ct, countDiffFiles(ct), mp.Truncation, rng, scopeConstraint)
+					if err != nil {
+						return err
+					}
+					fbs, err := buildChain(name, primary)
+					if err != nil {
+						return err
+					}
+					slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial})
+				}
+				return nil
+			}
+		}
+
+		// Bulk path (or a chunked run that produced a single chunk): one slot over
+		// the whole payload.
+		primary, err := renderAgent(cfg, name, ac, mode, mp.Text, mp.FileCount, mp.Truncation, rng, scopeConstraint)
+		if err != nil {
+			return err
+		}
+		fbs, err := buildChain(name, primary)
+		if err != nil {
+			return err
 		}
 		slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial})
 		return nil
@@ -889,9 +959,24 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		return Agent{}, "", fmt.Errorf("agent %q: no payload built for mode %q", name, mode)
 	}
 
-	persona, err := registry.ResolvePersona(name, ac.Persona, nil, cfg.PersonaDirs)
+	agent, err := renderAgent(cfg, name, ac, mode, mp.Text, mp.FileCount, mp.Truncation, rng, scopeConstraint)
 	if err != nil {
 		return Agent{}, "", err
+	}
+	return agent, mode, nil
+}
+
+// renderAgent builds a fully-rendered review Agent for `name` over an explicit
+// payload text and its file-count/truncation metadata. buildAgent uses it for
+// the whole-diff (bulk) payload; the chunked strategy (Epic 14.3) calls it once
+// per bin-packed chunk so every chunk-slot carries the SAME persona identity but
+// a different diff subset. Passing the payload text in (rather than reading a
+// modePayload) is the seam that lets a chunk render its own slice of the diff
+// and report its own file count in the prompt.
+func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, payloadText string, fileCount int, trunc payload.Truncation, rng ReviewRange, scopeConstraint string) (Agent, error) {
+	persona, err := registry.ResolvePersona(name, ac.Persona, nil, cfg.PersonaDirs)
+	if err != nil {
+		return Agent{}, err
 	}
 	// Sprint-plan SCOPE CONSTRAINT (Epic 12.2): prepend the formatted constraint
 	// to the payload so it lands in EVERY persona — every reviewer renders
@@ -906,13 +991,13 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		BaseRef:      rng.Base,
 		HeadRef:      rng.Head,
 		PayloadMode:  mode,
-		FileCount:    mp.FileCount,
-		Payload:      scopeConstraint + mp.Text,
+		FileCount:    fileCount,
+		Payload:      scopeConstraint + payloadText,
 		ScopeRule:    payload.ScopeRule(payload.PayloadMode(mode)),
 		ToolsEnabled: ac.Tools,
 	})
 	if err != nil {
-		return Agent{}, "", fmt.Errorf("agent %q: %w", name, err)
+		return Agent{}, fmt.Errorf("agent %q: %w", name, err)
 	}
 	// Soft per-agent scope focus (Epic 2.2): appended after the persona template
 	// renders so it lands in every persona regardless of its template, and feeds
@@ -921,14 +1006,14 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 	prompt += payload.ScopeFocus(ac.Scope)
 	prov, ok := cfg.Registry.Providers[ac.Provider]
 	if !ok {
-		return Agent{}, "", fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
+		return Agent{}, fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
 	}
 	return Agent{
 		Name:             name,
 		Provider:         ac.Provider,
 		Prompt:           prompt,
 		PayloadMode:      mode,
-		Truncation:       mp.Truncation,
+		Truncation:       trunc,
 		TimeoutSecs:      ac.EffectiveTimeoutSecs(cfg.Settings),
 		MaxRetries:       ac.EffectiveMaxRetries(cfg.Settings),
 		InitialBackoffMs: ac.EffectiveInitialBackoffMs(cfg.Settings),
@@ -941,7 +1026,8 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
 		// + temperature (see diffCacheKey). Tool agents carry a key too but the
 		// engine never caches them (they read live code), so setting it
-		// unconditionally is safe.
+		// unconditionally is safe. A chunked run keys each chunk independently
+		// because its prompt (and thus this hash) differs per chunk.
 		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
@@ -951,7 +1037,7 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 			MaxTokens:   maxTokensPtr(),
 			Prompt:      prompt,
 		},
-	}, mode, nil
+	}, nil
 }
 
 // derefMaxTurns resolves the agent's MaxTurns pointer to a value. Registry load

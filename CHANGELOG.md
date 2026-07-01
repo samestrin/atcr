@@ -1,3 +1,18 @@
+## [14.3.0] - 2026-07-01
+
+Added an opt-in context-aware diff chunking strategy so large reviews can be split into smaller, attention-friendly chunks per reviewer without inflating API cost by default.
+
+### Added
+
+- `review_strategy` setting (`bulk` | `chunked`, default `bulk`): `chunked` bin-packs each reviewer persona's diff into multiple context-limited calls to curb the attention-degradation hallucination that large single-prompt diffs trigger, while `bulk` keeps the whole diff in one prompt per persona to bound API cost. Resolves once per run across the registry and project config tiers.
+- Per-agent `max_context_lines` (default 1500) capping a single chunk's diff line count, letting each model use a context window tuned to its capabilities and cost profile. Bin packing groups multiple files per call to minimize request duplication; a file larger than the cap is sent as its own chunk (never split) with a warning.
+
+### Changed
+
+- In `chunked` mode, all of a persona's chunk findings merge into a single reviewer source, so a multi-chunk review attributes to one persona and the consensus filter counts it as one voter rather than many.
+
+*Shipped via /execute-epic (epic 14.3)*
+
 ## [Technical Debt] - 2026-07-01
 
 ### Fixed
