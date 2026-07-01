@@ -78,6 +78,21 @@ func TestSkill_AdversarialClause(t *testing.T) {
 	assert.Regexp(t, regexp.MustCompile(`(?i)problems the author would prefer`), SkillMD)
 }
 
+// TestSkill_GroundingClause enforces Epic 14.2 AC1: the host prompt must instruct
+// the host to aggressively reject findings not grounded in the payload (anti-
+// hallucination), in both the review clause and the adjudication (reconciliation
+// gatekeeper) section.
+func TestSkill_GroundingClause(t *testing.T) {
+	// Host review clause must demand payload-grounded findings and false-positive filtering.
+	assert.Regexp(t, regexp.MustCompile(`(?i)ground every finding|filter out false positives`), SkillMD,
+		"host review clause must require grounding findings in the payload")
+	assert.Regexp(t, regexp.MustCompile(`(?i)do not report it|never invent`), SkillMD,
+		"host review clause must forbid reporting unsupported findings")
+	// Adjudication section must frame the host as a gatekeeper against false positives.
+	assert.Regexp(t, regexp.MustCompile(`(?i)gatekeeper against false positives`), SkillMD,
+		"adjudication section must frame the host as an anti-hallucination gatekeeper")
+}
+
 func TestSkill_AdjudicationDocumented(t *testing.T) {
 	assert.Contains(t, SkillMD, "ambiguous.json")
 	assert.Contains(t, SkillMD, "adjudication.json")

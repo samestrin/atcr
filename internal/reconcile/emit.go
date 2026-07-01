@@ -448,6 +448,12 @@ func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df Dis
 		// only when nonzero, keeping report.md byte-identical on the common path.
 		fmt.Fprintf(&b, "- Authority promoted: %d\n", summary.AuthorityPromoted)
 	}
+	if summary.ConsensusFiltered > 0 {
+		// Surface epic-14.2 consensus filtering to report-only readers: uncorroborated
+		// singletons routed to the ambiguous sidecar. Rendered only when nonzero so
+		// report.md stays byte-identical on the common (small-panel) path.
+		fmt.Fprintf(&b, "- Consensus filtered: %d (uncorroborated singletons routed to the ambiguous sidecar)\n", summary.ConsensusFiltered)
+	}
 	if len(outOfScope) > 0 {
 		fmt.Fprintf(&b, "- Out-of-scope findings: %d (annotated, excluded from the gate)\n", len(outOfScope))
 	}
