@@ -170,13 +170,20 @@ result safely.
 - **Confidence — v2 tiers `VERIFIED > HIGH > MEDIUM > LOW`.** Confidence is
   derived from the count of distinct reviewers who agree, and is promoted to
   `VERIFIED` when an adversarial verdict confirms the finding.
-- **Ambiguity sidecar.** Two kinds of cluster surface in `Result.Ambiguous` as
+- **Ambiguity sidecar.** Three kinds of cluster surface in `Result.Ambiguous` as
   `AmbiguousCluster` values, neither silently merged nor dropped: **gray-zone
   pairs** (0.4–0.7) a host can adjudicate (and force a merge via
-  `Options.Merges`); and **DBSCAN-isolated noise** — a single uncorroborated
+  `Options.Merges`); **DBSCAN-isolated noise** — a single uncorroborated
   finding standing alone amid a corroborated cluster (a likely single-model
   hallucination), carried as a one-finding cluster and removed from the merged
-  output so the consensus findings stay trustworthy.
+  output so the consensus findings stay trustworthy; and **consensus-filtered
+  singletons** — on a panel of at least three sources, any uncorroborated
+  singleton (a single-reviewer, `MEDIUM`-confidence finding) is routed to the
+  sidecar rather than promoted, UNLESS it is security-related, `HIGH`/`CRITICAL`
+  severity, out-of-scope, or independently confirmed. The `Summary.ConsensusFiltered`
+  count records how many were routed this way; a two-source panel (the host + 1
+  pool workflow) leaves the filter inert so real findings are never dropped
+  wholesale.
 
 ## JSON format adapter
 
