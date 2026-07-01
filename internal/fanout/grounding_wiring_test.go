@@ -45,7 +45,7 @@ func TestWritePool_NoGroundingKeepsAll(t *testing.T) {
 	content := "MEDIUM|auth.go:42|a|f|correctness|10|x\n" +
 		"HIGH|ghost.go:999|b|f|correctness|10|y\n"
 	pool := filepath.Join(dir, "pool")
-	_, err := WritePool(pool, []Result{okResult("greta", content)})
+	_, err := WritePool(pool, []Result{okResult("greta", content)}, nil)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(pool, findingsFile))

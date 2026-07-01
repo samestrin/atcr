@@ -437,7 +437,7 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 // it never actually invoked because the parent ctx was cancelled first) is
 // skipped so a previously-failed agent's original error message is preserved
 // rather than overwritten with a generic "context canceled" timeout.
-func writeResumedAgents(poolDir string, results []Result, changed ...payload.ChangedLines) error {
+func writeResumedAgents(poolDir string, results []Result, changed payload.ChangedLines) error {
 	for _, r := range results {
 		// Detect a synthesized timeout: the engine never invoked this agent
 		// (no content produced) and the error is a pure context cancellation
@@ -450,7 +450,7 @@ func writeResumedAgents(poolDir string, results []Result, changed ...payload.Cha
 		if err != nil {
 			return err
 		}
-		fr := findingsFor(r, changed...)
+		fr := findingsFor(r, changed)
 		if err := writeAgentArtifacts(poolDir, dir, r, fr); err != nil {
 			return err
 		}
