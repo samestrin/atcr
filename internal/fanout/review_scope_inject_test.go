@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// buildAgent must inject an agent's scope categories into its persona prompt as
-// a soft focus instruction (Epic 2.2), so a scoped agent sees them and an
-// unscoped agent's prompt is unchanged.
+// Slot resolution must inject an agent's scope categories into its persona
+// prompt as a soft focus instruction (Epic 2.2), so a scoped agent sees them and
+// an unscoped agent's prompt is unchanged.
 func TestBuildAgent_InjectsScopeFocus(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	scoped := cfg.Registry.Agents["greta"]
@@ -19,14 +19,14 @@ func TestBuildAgent_InjectsScopeFocus(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Text: "some diff", FileCount: 1}}
 	rng := ReviewRange{Base: "a", Head: "b"}
 
-	gretaAgent, _, err := buildAgent(cfg, "greta", payloads, rng, "", "")
+	gretaAgent, _, err := buildOneAgent(cfg, "greta", payloads, rng, "", "")
 	require.NoError(t, err)
 	require.Contains(t, gretaAgent.Prompt, "performance", "scoped agent prompt must mention its scope categories")
 	require.Contains(t, gretaAgent.Prompt, "efficiency")
 	// The invocation prompt the model actually receives must carry it too.
 	require.Contains(t, gretaAgent.Invocation.Prompt, "performance")
 
-	kaiAgent, _, err := buildAgent(cfg, "kai", payloads, rng, "", "")
+	kaiAgent, _, err := buildOneAgent(cfg, "kai", payloads, rng, "", "")
 	require.NoError(t, err)
 	require.NotContains(t, kaiAgent.Prompt, "Review Focus", "unscoped agent prompt must be unchanged")
 	// Lock the invocation prompt too — the model actually receives this, so an
@@ -34,10 +34,10 @@ func TestBuildAgent_InjectsScopeFocus(t *testing.T) {
 	require.NotContains(t, kaiAgent.Invocation.Prompt, "Review Focus", "unscoped agent invocation prompt must be unchanged")
 }
 
-// buildAgent must prepend the sprint-plan SCOPE CONSTRAINT to an agent's payload,
-// so the constraint lands in EVERY persona (it renders {{.Payload}}) and appears
-// immediately before the diff text (Epic 12.2 AC4). An empty constraint leaves
-// the prompt unchanged.
+// Slot resolution must prepend the sprint-plan SCOPE CONSTRAINT to an agent's
+// payload, so the constraint lands in EVERY persona (it renders {{.Payload}}) and
+// appears immediately before the diff text (Epic 12.2 AC4). An empty constraint
+// leaves the prompt unchanged.
 func TestBuildAgent_PrependsScopeConstraint(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	const diffToken = "UNIQUE_DIFF_TOKEN_98765"
@@ -45,7 +45,7 @@ func TestBuildAgent_PrependsScopeConstraint(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Text: diffToken, FileCount: 1}}
 	rng := ReviewRange{Base: "a", Head: "b"}
 
-	agent, _, err := buildAgent(cfg, "greta", payloads, rng, "", constraint)
+	agent, _, err := buildOneAgent(cfg, "greta", payloads, rng, "", constraint)
 	require.NoError(t, err)
 	require.Contains(t, agent.Prompt, "SENTINEL SCOPE CONSTRAINT", "constrained agent prompt must carry the scope constraint")
 	// The constraint must sit BEFORE the diff text — that placement is the NFR
@@ -59,7 +59,7 @@ func TestBuildAgent_PrependsScopeConstraint(t *testing.T) {
 	require.Contains(t, agent.Invocation.Prompt, "SENTINEL SCOPE CONSTRAINT")
 
 	// An empty constraint leaves the prompt unchanged (diff-wide review default).
-	plain, _, err := buildAgent(cfg, "greta", payloads, rng, "", "")
+	plain, _, err := buildOneAgent(cfg, "greta", payloads, rng, "", "")
 	require.NoError(t, err)
 	require.NotContains(t, plain.Prompt, "SENTINEL SCOPE CONSTRAINT", "empty constraint must not alter the prompt")
 }

@@ -86,7 +86,7 @@ type Agent struct {
 	TimeoutSecs int
 
 	// Retry/backoff (Epic 4.6): the agent's effective retry budget and base
-	// delay (ms), resolved by buildAgent from the per-agent override layered over
+	// delay (ms), resolved by renderAgent from the per-agent override layered over
 	// the global Settings. invokeAgent threads them onto the call context so the
 	// shared client's dispatch honors them. InitialBackoffMs > 0 is the
 	// "configured" sentinel: a bare Agent (doctor/direct construction) leaves it
@@ -99,7 +99,7 @@ type Agent struct {
 	// loop; when false the agent runs single-shot exactly as in 1.x. MaxTurns
 	// caps Chat-with-tools turns (default 10 applied at registry load when
 	// Tools is true); ToolBudgetBytes caps cumulative tool-result bytes (0 =
-	// unlimited). These are threaded from the resolved AgentConfig by buildAgent.
+	// unlimited). These are threaded from the resolved AgentConfig by renderAgent.
 	Tools           bool
 	MaxTurns        int
 	ToolBudgetBytes int64
@@ -116,7 +116,7 @@ type Agent struct {
 	Exec bool
 
 	// Review-constraint guardrails (Epic 2.2), threaded from the resolved
-	// AgentConfig by buildAgent and carried onto the Result so findingsFor can
+	// AgentConfig by renderAgent and carried onto the Result so findingsFor can
 	// enforce them. Scope is applied earlier (as soft prompt injection) and is
 	// not carried here. A fallback inherits these from its primary (the
 	// constraint follows the slot, like the persona prompt).
@@ -124,7 +124,7 @@ type Agent struct {
 	MaxFindings *int
 
 	// CacheKey is the diff-cache key (Epic 5.2) for this agent's review call,
-	// derived by buildAgent/buildFallbackAgent from the FULL rendered prompt
+	// derived by renderAgent/buildFallbackAgent from the FULL rendered prompt
 	// (which subsumes payload, persona, the per-agent scope focus, and the
 	// base/head refs — every text input to the model), the model id, and the
 	// temperature. The engine uses it to look up / store this agent's raw review
@@ -161,7 +161,7 @@ type Result struct {
 	Truncation   payload.Truncation
 
 	// Review-constraint guardrails (Epic 2.2), threaded from the resolved
-	// AgentConfig by buildAgent so findingsFor can enforce them per source.
+	// AgentConfig by renderAgent so findingsFor can enforce them per source.
 	// MinSeverity drops findings below the floor; MaxFindings caps the count
 	// (severity-sorted). Both empty/nil mean "no constraint".
 	MinSeverity string
@@ -526,7 +526,7 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	// — single-shot, tool loop, and degraded paths all run under this ctx, so the
 	// shared client's dispatch picks it up via WithRetryOverride. The InitialBackoffMs>0
 	// sentinel makes this a deliberate three-state contract:
-	//   - both fields set (buildAgent-resolved): the override applies.
+	//   - both fields set (renderAgent-resolved): the override applies.
 	//   - both fields 0 (bare Agent — doctor/direct construction): the override is
 	//     skipped and the client's own default budget governs.
 	//   - MaxRetries set but InitialBackoffMs still 0: the override is ALSO skipped,
