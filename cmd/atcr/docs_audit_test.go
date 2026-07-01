@@ -8,6 +8,7 @@ package main
 // docs/ as its single source of truth.
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -68,8 +69,21 @@ func auditedMarkdown(t *testing.T) map[string]string {
 // Anchoring to the start of a span/line keeps ordinary prose (e.g. the sentence
 // "atcr is local-first") and cross-line adjacencies from registering as bogus
 // references. Both ``` and ~~~ GFM fences are recognized.
-func atcrInvocations(md string) [][]string {
+//
+// cmds is the set of real command names from the compiled tree; it is used to
+// filter fenced-block lines so that prose ("atcr is ...") is not misread as a
+// command reference. Fenced lines are captured only when they begin with a
+// shell prompt or when the first token after "atcr" is a known command or flag.
+func atcrInvocations(md string, cmds map[string]bool) [][]string {
 	var out [][]string
+	isCommandLike := func(s string) bool {
+		fields := strings.Fields(s)
+		if len(fields) < 2 {
+			return false
+		}
+		first := fields[1]
+		return strings.HasPrefix(first, "-") || cmds[first]
+	}
 	capture := func(s string) {
 		s = strings.TrimSpace(s)
 		s = strings.TrimSpace(strings.TrimPrefix(s, "$ "))
@@ -91,7 +105,12 @@ func atcrInvocations(md string) [][]string {
 			continue
 		}
 		if inFence {
-			capture(ln)
+			// Fenced prose (e.g. "atcr is local-first") should not register as a
+			// command reference. Only capture shell-prompt lines or lines whose
+			// first token after "atcr" is a real command or flag.
+			if strings.HasPrefix(trimmed, "$ ") || isCommandLike(trimmed) {
+				capture(ln)
+			}
 		}
 	}
 	return out
@@ -157,6 +176,33 @@ func canonicalFlags() map[string]bool {
 	return flags
 }
 
+// validateInvocationTokens checks a single `atcr ...` token sequence against the
+// compiled command tree and returns any human-readable error messages.
+func validateInvocationTokens(tokens []string, path string, cmds map[string]bool, groups map[string]map[string]bool, flags map[string]bool) []string {
+	var errs []string
+	reFlag := regexp.MustCompile(`^--([a-z][a-z-]+)`)
+	isWord := regexp.MustCompile(`^[a-z][a-z-]+$`).MatchString
+	name0 := tokens[0]
+	switch {
+	case reFlag.MatchString(name0):
+		// e.g. `atcr --version`: a root flag, validated in the flag loop below.
+	case !cmds[name0]:
+		errs = append(errs, fmt.Sprintf("%s references `atcr %s` but %q is not a real command", path, name0, name0))
+	default:
+		if children, isGroup := groups[name0]; isGroup && len(tokens) > 1 {
+			if next := tokens[1]; isWord(next) && !children[next] {
+				errs = append(errs, fmt.Sprintf("%s references `atcr %s %s` but %q is not a subcommand of %q", path, name0, next, next, name0))
+			}
+		}
+	}
+	for _, tok := range tokens {
+		if m := reFlag.FindStringSubmatch(tok); m != nil && !flags[m[1]] {
+			errs = append(errs, fmt.Sprintf("%s references `--%s` on an `atcr %s` command, but no such flag exists", path, m[1], name0))
+		}
+	}
+	return errs
+}
+
 // TestDocsReferenceOnlyRealCommands asserts, for every `atcr ...` invocation in
 // the audited docs, that (a) the first token is a real command, (b) when that
 // command is a group its next bare-word token is a real subcommand, and (c) every
@@ -167,29 +213,31 @@ func TestDocsReferenceOnlyRealCommands(t *testing.T) {
 	cmds := canonicalCommands()
 	groups := commandGroups()
 	flags := canonicalFlags()
-	reFlag := regexp.MustCompile(`^--([a-z][a-z-]+)`)
-	isWord := regexp.MustCompile(`^[a-z][a-z-]+$`).MatchString
 	for path, content := range auditedMarkdown(t) {
-		for _, tokens := range atcrInvocations(content) {
-			name0 := tokens[0]
-			switch {
-			case reFlag.MatchString(name0):
-				// e.g. `atcr --version`: a root flag, validated in the flag loop below.
-			case !cmds[name0]:
-				t.Errorf("%s references `atcr %s` but %q is not a real command", path, name0, name0)
-			default:
-				if children, isGroup := groups[name0]; isGroup && len(tokens) > 1 {
-					if next := tokens[1]; isWord(next) && !children[next] {
-						t.Errorf("%s references `atcr %s %s` but %q is not a subcommand of %q", path, name0, next, next, name0)
-					}
-				}
-			}
-			for _, tok := range tokens {
-				if m := reFlag.FindStringSubmatch(tok); m != nil && !flags[m[1]] {
-					t.Errorf("%s references `--%s` on an `atcr %s` command, but no such flag exists", path, m[1], name0)
-				}
+		for _, tokens := range atcrInvocations(content, cmds) {
+			for _, err := range validateInvocationTokens(tokens, path, cmds, groups, flags) {
+				t.Errorf("%s", err)
 			}
 		}
+	}
+}
+
+// TestSubcommandValidationSkipsFlags asserts that a bogus subcommand placed
+// after a flag is still rejected (e.g. `atcr benchmark --json frobnicate`).
+func TestSubcommandValidationSkipsFlags(t *testing.T) {
+	cmds := canonicalCommands()
+	groups := commandGroups()
+	flags := canonicalFlags()
+	errs := validateInvocationTokens([]string{"benchmark", "--json", "frobnicate"}, "fixture", cmds, groups, flags)
+	found := false
+	for _, err := range errs {
+		if strings.Contains(err, "frobnicate") && strings.Contains(err, "not a subcommand") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected validation to reject bogus subcommand `frobnicate` after flag, got errors: %v", errs)
 	}
 }
 
@@ -313,6 +361,22 @@ func TestArchitectureDocDescribesReconciler(t *testing.T) {
 		if !strings.Contains(lower, term) {
 			t.Errorf("docs/architecture.md does not describe the %q stage/concept of the reconciler", term)
 		}
+	}
+}
+
+// TestAtcrInvocationsSkipsFencedProse guards against fenced code blocks that
+// contain prose about atcr (e.g. "atcr is local-first") being misread as command
+// references. Only lines that look like real invocations — shell-prompt lines or
+// lines whose first token after "atcr" is a known command or flag — are captured.
+func TestAtcrInvocationsSkipsFencedProse(t *testing.T) {
+	cmds := canonicalCommands()
+	md := "```\natcr is local-first and not a real command\natcr benchmark run\n```"
+	got := atcrInvocations(md, cmds)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 invocation, got %d: %v", len(got), got)
+	}
+	if len(got[0]) != 2 || got[0][0] != "benchmark" || got[0][1] != "run" {
+		t.Errorf("expected [[benchmark run]], got %v", got)
 	}
 }
 
