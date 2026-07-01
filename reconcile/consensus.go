@@ -12,10 +12,22 @@ import "strings"
 // than a rare true positive.
 const consensusMinReviewers = 3
 
-// categorySecurity is the finding category exempt from the consensus filter. It is
-// compared case-insensitively (lower+trim) to mirror ModalCategory's
-// canonicalization, so "Security"/"SECURITY" all match.
+// categorySecurity is the literal finding category exempt from the consensus filter.
+// securityRelated recognizes synonyms and substrings as well, so a single reviewer
+// labeling a genuine vulnerability "vulnerability", "auth", or "injection" is not
+// silently dropped because the exemption predicate was overly literal.
 const categorySecurity = "security"
+
+// securityRelated reports whether a category signals a security concern after
+// ModalCategory-style canonicalization (lower+trim). It matches the literal token
+// "security" plus common synonyms/substrings reviewers actually emit.
+func securityRelated(category string) bool {
+	c := strings.ToLower(strings.TrimSpace(category))
+	if c == categorySecurity {
+		return true
+	}
+	return strings.Contains(c, "vuln") || strings.Contains(c, "auth") || strings.Contains(c, "inject")
+}
 
 // panelReviewers counts the distinct non-empty reviewers that contributed findings
 // across all sources — the true panel size the consensus filter gates on. It is
@@ -62,8 +74,8 @@ func consensusSingleton(m Merged) bool {
 // as a defensive, forward-looking guard so the predicate stays correct if a caller
 // ever filters over already-verified findings; it is unit-tested directly.
 func consensusExempt(f Finding) bool {
-	switch strings.ToLower(strings.TrimSpace(f.Category)) {
-	case categorySecurity, CategoryOutOfScope:
+	cat := strings.ToLower(strings.TrimSpace(f.Category))
+	if securityRelated(cat) || cat == CategoryOutOfScope {
 		return true
 	}
 	switch NormalizeSeverity(f.Severity) {
@@ -79,13 +91,8 @@ func consensusExempt(f Finding) bool {
 // consensusNoiseCluster wraps a consensus-filtered singleton as a single-finding
 // ambiguous cluster — the same shape DBSCAN noise takes, so it is inert in the
 // debate and adjudication workflows (both act only on 2-finding gray pairs) yet
-// stays in the audit trail and remains recoverable. Similarity is 0 (no
-// corroboration), and the id is the stable single-problem content handle.
+// stays in the audit trail and remains recoverable. It shares the helper that
+// normalizes merged findings back to the raw per-source wire shape.
 func consensusNoiseCluster(f Finding) AmbiguousCluster {
-	return AmbiguousCluster{
-		ID:       AmbiguousID(f.File, f.Line, f.Problem, f.Problem),
-		File:     f.File,
-		Line:     f.Line,
-		Findings: []Finding{f},
-	}
+	return singletonAmbiguousCluster(f)
 }

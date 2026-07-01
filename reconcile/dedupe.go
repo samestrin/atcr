@@ -43,6 +43,24 @@ type AmbiguousCluster struct {
 	Findings   []Finding `json:"findings"`
 }
 
+// singletonAmbiguousCluster wraps a single isolated finding as a one-finding
+// ambiguous cluster. It normalizes a merged finding back to the raw per-source
+// shape (Reviewer set, Reviewers/Confidence cleared) so DBSCAN-isolated noise
+// and consensus-filtered singletons produce the same ambiguous.json wire shape.
+func singletonAmbiguousCluster(f Finding) AmbiguousCluster {
+	if f.Reviewer == "" && len(f.Reviewers) == 1 {
+		f.Reviewer = f.Reviewers[0]
+		f.Reviewers = nil
+		f.Confidence = ""
+	}
+	return AmbiguousCluster{
+		ID:       AmbiguousID(f.File, f.Line, f.Problem, f.Problem),
+		File:     f.File,
+		Line:     f.Line,
+		Findings: []Finding{f},
+	}
+}
+
 // DedupeCluster partitions one location cluster into merge groups and records
 // ambiguous pairs, with no adjudication and no AST grouping applied. See
 // dedupeCluster.
@@ -262,15 +280,7 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 				continue
 			}
 			noiseIdx[i] = true
-			noise = append(noise, AmbiguousCluster{
-				// A single-finding cluster: same-problem id keeps it stable and
-				// distinct from any two-problem gray-pair id; Similarity stays 0
-				// (no corroboration). debate skips clusters with < 2 findings.
-				ID:       AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[i].Problem),
-				File:     cluster[i].File,
-				Line:     cluster[i].Line,
-				Findings: []Finding{cluster[i]},
-			})
+			noise = append(noise, singletonAmbiguousCluster(cluster[i]))
 		}
 	}
 

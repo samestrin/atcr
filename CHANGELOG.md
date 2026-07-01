@@ -1,3 +1,11 @@
+## [Technical Debt] - 2026-07-01
+
+### Fixed
+
+- Broadened the consensus-filter security exemption to recognize common security synonyms (`vulnerability`, `auth`, `injection`) so genuine security singletons are not dropped as uncorroborated noise.
+- Normalized the ambiguous sidecar wire shape for isolated findings so DBSCAN-isolated noise and consensus-filtered singletons both emit a raw per-source finding with `Reviewer` set and `Reviewers`/`Confidence` cleared.
+- Added a regression test confirming PageRank authority-promoted singletons survive the consensus filter.
+
 ## [14.2.0] - 2026-06-30
 
 Made the reconciliation layer a strict gatekeeper against hallucinated technical-debt items by filtering uncorroborated singleton findings and hardening the host review prompt.
