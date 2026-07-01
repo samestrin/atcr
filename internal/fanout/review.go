@@ -254,7 +254,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if scopeWarn != "" {
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint)
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint, true)
 	if err != nil {
 		return nil, err
 	}
@@ -488,7 +488,7 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if scopeWarn != "" {
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode, scopeConstraint)
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode, scopeConstraint, true)
 	if err != nil {
 		return nil, err
 	}
@@ -777,7 +777,7 @@ func resolveScopeConstraint(req ReviewRequest) (constraint, warning string) {
 // aborts the whole run fail-fast: these are configuration errors the user must
 // fix, not transient per-agent outcomes, so there is nothing useful to preserve
 // — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
-func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) ([]Slot, map[string]string, error) {
+func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool) ([]Slot, map[string]string, error) {
 	// Budget-aware plan content cap: scopeConstraint is prepended uncounted in
 	// buildAgent (Payload: scopeConstraint + mp.Text), so a small PayloadByteBudget
 	// causes the constraint alone to inflate the rendered prompt past the budget.
@@ -854,12 +854,16 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// not be split). This runs over EVERY chunk — not just multi-chunk
 			// fan-outs — so a diff that is a single oversized file (which chunkDiff
 			// returns as one chunk) still surfaces the documented warning before
-			// falling through to the one-slot path.
-			for _, ct := range chunks {
-				fileCount := countDiffFiles(ct)
-				lineCount := countLines(ct)
-				if fileCount <= 1 && lineCount > ml {
-					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines) exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, lineCount, ml)
+			// falling through to the one-slot path. The warning is suppressed on the
+			// resume rebuild path because PrepareResume reconstructs pending slots and
+			// the operator was already notified during the original preparation.
+			if warnOversized {
+				for _, ct := range chunks {
+					fileCount := countDiffFiles(ct)
+					lineCount := countLines(ct)
+					if fileCount <= 1 && lineCount > ml {
+						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines) exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, lineCount, ml)
+					}
 				}
 			}
 			if len(chunks) > 1 {
