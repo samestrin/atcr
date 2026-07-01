@@ -93,7 +93,7 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 // is forced true (a skeptic is meant to investigate via the tool loop), but
 // SupportsFC is forwarded from the AgentConfig so a model that genuinely lacks
 // function calling degrades to single-shot in the engine rather than failing every
-// call — mirroring fanout.buildAgent. Per-finding budgets are forwarded from the
+// call — mirroring fanout.renderAgent. Per-finding budgets are forwarded from the
 // AgentConfig; a nil budget pointer becomes 0, which the engine reads as "use the
 // default" (MaxTurns→10), "unlimited" (ToolBudgetBytes→0), or "parent deadline
 // only" (TimeoutSecs→0). The provider's BaseURL/APIKeyEnv are threaded onto the

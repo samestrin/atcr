@@ -779,7 +779,7 @@ func resolveScopeConstraint(req ReviewRequest) (constraint, warning string) {
 // — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
 func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool) ([]Slot, map[string]string, error) {
 	// Budget-aware plan content cap: scopeConstraint is prepended uncounted in
-	// buildAgent (Payload: scopeConstraint + mp.Text), so a small PayloadByteBudget
+	// renderAgent (Payload: scopeConstraint + payloadText), so a small PayloadByteBudget
 	// causes the constraint alone to inflate the rendered prompt past the budget.
 	// Truncate only the plan body (between the BEGIN/END markers) to
 	// min(MaxSprintPlanBytes, budget/8), preserving the wrapper instruction text.
@@ -977,41 +977,11 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64) string {
 	return cache.Key(cache.HashText(prompt), model, tuning)
 }
 
-// buildAgent resolves an agent's persona, renders its prompt against the payload
-// it sees, and assembles the invocation. It returns the agent and its mode.
-func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) (Agent, string, error) {
-	ac, ok := cfg.Registry.Agents[name]
-	if !ok {
-		return Agent{}, "", fmt.Errorf("agent %q not found in registry", name)
-	}
-	// forceMode (non-empty) overrides the agent's configured payload mode. The
-	// diff-file ingestion path sets it to "diff" because the ingested diff is the
-	// only available representation, so every agent reviews it regardless of its
-	// effective mode; the git-range path passes "" to keep per-agent modes.
-	mode := forceMode
-	if mode == "" {
-		mode = ac.EffectivePayloadMode(cfg.Settings)
-	}
-	mp, ok := payloads[mode]
-	if !ok {
-		// Defensive: payloads is built by neededModes over the same roster, so a
-		// miss means the two derivations diverged — fail loudly rather than
-		// invoking the agent with an empty payload and a vacuous review.
-		return Agent{}, "", fmt.Errorf("agent %q: no payload built for mode %q", name, mode)
-	}
-
-	agent, err := renderAgent(cfg, name, ac, mode, mp.Text, mp.FileCount, mp.Truncation, rng, scopeConstraint)
-	if err != nil {
-		return Agent{}, "", err
-	}
-	return agent, mode, nil
-}
-
 // renderAgent builds a fully-rendered review Agent for `name` over an explicit
-// payload text and its file-count/truncation metadata. buildAgent uses it for
-// the whole-diff (bulk) payload; the chunked strategy (Epic 14.3) calls it once
-// per bin-packed chunk so every chunk-slot carries the SAME persona identity but
-// a different diff subset. Passing the payload text in (rather than reading a
+// payload text and its file-count/truncation metadata. buildSlots' bulk path
+// uses it for the whole-diff (bulk) payload; the chunked strategy (Epic 14.3)
+// calls it once per bin-packed chunk so every chunk-slot carries the SAME persona
+// identity but a different diff subset. Passing the payload text in (rather than reading a
 // modePayload) is the seam that lets a chunk render its own slice of the diff
 // and report its own file count in the prompt.
 func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, payloadText string, fileCount int, trunc payload.Truncation, rng ReviewRange, scopeConstraint string) (Agent, error) {

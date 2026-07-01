@@ -1,3 +1,17 @@
+## [14.4.0] - 2026-07-01
+
+Removed the orphaned `buildAgent` helper and consolidated fan-out reviewer mode/payload resolution to a single production seam, eliminating divergent duplicate logic.
+
+### Changed
+
+- Fan-out agent mode/payload resolution now lives solely in `buildSlots`' slot-build path (via `renderAgent`); its tests were retargeted at that production seam, so future payload-mode or error-message changes only need updating in one place.
+
+### Removed
+
+- Dead `buildAgent` function in `internal/fanout/review.go`, which had no production caller after epic 14.3 inlined resolution into `buildSlots`.
+
+*Shipped via /execute-epic (epic 14.4)*
+
 ## [14.3.0] - 2026-07-01
 
 Added an opt-in context-aware diff chunking strategy so large reviews can be split into smaller, attention-friendly chunks per reviewer without inflating API cost by default.

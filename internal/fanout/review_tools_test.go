@@ -38,7 +38,7 @@ func TestBuildAgent_PropagatesToolFields(t *testing.T) {
 	cfg := toolCfg()
 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 
-	a, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	a, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 	assert.True(t, a.Tools)
 	assert.Equal(t, 5, a.MaxTurns)
@@ -101,7 +101,7 @@ func TestBuildAgent_PropagatesSupportsFC(t *testing.T) {
 	cfg := toolCfg()
 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 
-	a, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	a, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 	assert.True(t, a.SupportsFC, "greta declares supports_function_calling=true")
 }

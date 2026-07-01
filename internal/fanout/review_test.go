@@ -27,6 +27,25 @@ import (
 
 func ptrF(f float64) *float64 { return &f }
 
+// buildOneAgent drives the production buildSlots resolution seam for a single
+// primary agent and returns its rendered Agent plus resolved payload mode — the
+// (Agent, mode, error) shape these tests need. It restricts the roster to `name`
+// so buildSlots emits exactly one primary slot, exercising the real add-closure
+// resolution (EffectivePayloadMode, payloads[mode] lookup, scope injection,
+// renderAgent) — the single production resolution site — rather than a duplicate.
+func buildOneAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) (Agent, string, error) {
+	scoped := *cfg
+	proj := *cfg.Project
+	proj.Agents = []string{name}
+	proj.SerialAgents = nil
+	scoped.Project = &proj
+	slots, modes, err := buildSlots(&scoped, payloads, rng, forceMode, scopeConstraint, false)
+	if err != nil {
+		return Agent{}, "", err
+	}
+	return slots[0].Primary, modes[name], nil
+}
+
 // initRepo creates a temp git repo with a base and head commit that change a Go
 // file, returning the dir and the two SHAs.
 func initRepo(t *testing.T) (dir, base, head string) {
@@ -559,7 +578,7 @@ func TestPrepareReview_RejectsSystemOutputDir(t *testing.T) {
 // silently empty payload that produces a plausible-looking vacuous review.
 func TestBuildAgent_MissingPayloadModeErrors(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
-	_, _, err := buildAgent(cfg, "greta", map[string]modePayload{}, ReviewRange{Base: "a", Head: "b"}, "", "")
+	_, _, err := buildOneAgent(cfg, "greta", map[string]modePayload{}, ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "greta")
 	assert.Contains(t, err.Error(), "blocks")
