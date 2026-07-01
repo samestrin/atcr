@@ -18,11 +18,20 @@ const reviewStrategyChunked = "chunked"
 // coupling (epic Technical Constraints).
 const diffFileMarker = "diff --git "
 
-// countLines returns the diff line count of s, measured by newline count
-// (strings.Count per the epic constraint). It is the unit the bin-packer budgets
-// against; a trailing partial line is not counted, which is fine — the budget is
-// a soft attention-window guard, not a byte-exact accountant.
-func countLines(s string) int { return strings.Count(s, "\n") }
+// countLines returns the diff line count of s. It counts newline characters and
+// adds one when the string is non-empty and does not end in a newline, so a
+// trailing partial line is included. This keeps the bin-packer and the oversize
+// warning aligned with the actual number of visible lines.
+func countLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	n := strings.Count(s, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
+}
 
 // countDiffFiles reports how many per-file segments a diff contains, i.e. the
 // number of column-0 `diff --git a/` markers. Used to stamp a chunk's FileCount
