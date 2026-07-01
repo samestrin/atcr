@@ -113,6 +113,14 @@ func TestCountDiffFiles(t *testing.T) {
 	assert.Equal(t, 2, countDiffFiles(fileSeg("a.go", 1)+fileSeg("b.go", 1)))
 }
 
+func TestCountLinesTrailingPartialLine(t *testing.T) {
+	assert.Equal(t, 0, countLines(""))
+	assert.Equal(t, 1, countLines("a\n"))
+	assert.Equal(t, 2, countLines("a\nb"), "final line without trailing newline must be counted")
+	assert.Equal(t, 2, countLines("a\nb\n"))
+	assert.Equal(t, 1, countLines("a"), "single line without newline is one line")
+}
+
 // noPrefixSeg builds a minimal diff segment produced by `git diff --no-prefix`
 // (or diff.noprefix=true), where the header omits the a/ and b/ prefixes.
 func noPrefixSeg(path string, body int) string {
