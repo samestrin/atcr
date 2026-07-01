@@ -12,12 +12,19 @@ import (
 // against the resolved Settings string without importing the registry enum.
 const reviewStrategyChunked = "chunked"
 
-// diffFileMarker is the column-0 boundary git writes before each file's hunk in
-// a unified diff (`diff --git a/<old> b/<new>`). Epic 14.3's chunker splits on
-// it directly rather than importing internal/payload (a package-private split),
-// keeping this a self-contained ~20-line utility and avoiding cross-package
-// coupling (epic Technical Constraints).
-const diffFileMarker = "diff --git "
+// isDiffFileMarker reports whether ln is a column-0 file-boundary marker that
+// starts a new per-file segment. The chunker recognizes unified-diff headers
+// (`diff --git a/<old> b/<new>` and the `--no-prefix` variant) and
+// combined/merge-diff headers (`diff --cc <path>` / `diff --combined <path>`)
+// so merge-commit payloads are split instead of silently degrading to a single
+// bulk chunk. It splits on these markers directly rather than importing
+// internal/payload (a package-private split), keeping this a self-contained
+// utility and avoiding cross-package coupling (epic Technical Constraints).
+func isDiffFileMarker(ln string) bool {
+	return strings.HasPrefix(ln, "diff --git ") ||
+		strings.HasPrefix(ln, "diff --cc ") ||
+		strings.HasPrefix(ln, "diff --combined ")
+}
 
 // countLines returns the diff line count of s. It counts newline characters and
 // adds one when the string is non-empty and does not end in a newline, so a
@@ -35,27 +42,26 @@ func countLines(s string) int {
 }
 
 // countDiffFiles reports how many per-file segments a diff contains, i.e. the
-// number of column-0 `diff --git a/` markers. Used to stamp a chunk's FileCount
-// in the rendered prompt.
+// number of column-0 diff-file markers. Used to stamp a chunk's FileCount in
+// the rendered prompt.
 func countDiffFiles(diff string) int {
 	if diff == "" {
 		return 0
 	}
 	n := 0
 	for _, ln := range strings.SplitAfter(diff, "\n") {
-		if strings.HasPrefix(ln, diffFileMarker) {
+		if isDiffFileMarker(ln) {
 			n++
 		}
 	}
 	return n
 }
 
-// splitDiffFiles splits a unified diff into per-file segments on column-0
-// `diff --git a/` boundaries. Any preamble before the first marker (rare) is
-// attached to the first segment so no bytes are lost, and a diff carrying no
-// marker at all comes back as a single segment. Concatenating the segments
-// reproduces the input exactly (SplitAfter preserves newlines). Returns nil for
-// empty input.
+// splitDiffFiles splits a diff into per-file segments on column-0 diff-file
+// boundaries. Any preamble before the first marker (rare) is attached to the
+// first segment so no bytes are lost, and a diff carrying no marker at all comes
+// back as a single segment. Concatenating the segments reproduces the input
+// exactly (SplitAfter preserves newlines). Returns nil for empty input.
 func splitDiffFiles(diff string) []string {
 	if diff == "" {
 		return nil
@@ -64,11 +70,11 @@ func splitDiffFiles(diff string) []string {
 	var cur strings.Builder
 	started := false
 	for _, ln := range strings.SplitAfter(diff, "\n") {
-		if strings.HasPrefix(ln, diffFileMarker) && started {
+		if isDiffFileMarker(ln) && started {
 			segments = append(segments, cur.String())
 			cur.Reset()
 		}
-		if strings.HasPrefix(ln, diffFileMarker) {
+		if isDiffFileMarker(ln) {
 			started = true
 		}
 		cur.WriteString(ln)
