@@ -87,6 +87,11 @@ func isGrounded(f stream.Finding, changed payload.ChangedLines) bool {
 // It strips diff-artifact prefixes (a/, b/, ./, a leading /) only when the
 // unstripped key is absent AND the stripped key is present, so a real repo path
 // that happens to start with "a/" or "b/" is not falsely normalized away.
+//
+// Known limitation: the changed map is keyed by head-side (new) path only, so a
+// finding that cites a RENAMED file's OLD (base-side) path — as it appears in a
+// diff header — does not resolve here and is dropped as ungrounded. Old-to-new
+// rename aliasing is intentionally out of scope (epic 14.1 is reuse-only).
 func normalizeFindingPath(file string, changed payload.ChangedLines) string {
 	p := strings.TrimSpace(file)
 	p = strings.TrimPrefix(p, "./")
