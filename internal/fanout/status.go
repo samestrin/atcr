@@ -328,6 +328,14 @@ type AgentStatus struct {
 	// to the pre-5.2 shape; only a cached replay records cache_hit:true, making a
 	// stale-serve auditable in the artifacts rather than invisible.
 	CacheHit bool `json:"cache_hit,omitempty"`
+
+	// UnreviewedChunks is the count of a chunked persona's bins that failed so
+	// their files went unreviewed even though the persona reports OK (Epic 14.3
+	// partial coverage). omitempty so a full-coverage or bulk run keeps
+	// status.json/summary.json byte-identical to the pre-field shape; statusFor
+	// sets it only when the merged result recorded partial coverage, making an
+	// otherwise-green (but incomplete) CI gate auditable.
+	UnreviewedChunks int `json:"unreviewed_chunks,omitempty"`
 }
 
 // WriteStatus serializes s to path as indented JSON, writing atomically (temp

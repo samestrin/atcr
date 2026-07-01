@@ -189,6 +189,14 @@ type Result struct {
 	// reflect that no provider round-trip happened.
 	CacheHit bool
 
+	// UnreviewedChunks is the number of a chunked persona's bins (Epic 14.3) that
+	// failed so their files went unreviewed, while the persona still reports
+	// StatusOK because at least one chunk succeeded. Zero for the common
+	// full-coverage and bulk-strategy cases. mergeResultGroup sets it; statusFor
+	// surfaces it in status.json/summary.json so a CI gate can react to partial
+	// coverage instead of trusting a green status that hid unreviewed files.
+	UnreviewedChunks int
+
 	// Per-agent usage accounting (Epic 3.3 scorecard). Model is the configured
 	// model id; TokensIn/TokensOut are the provider-reported token counts,
 	// accumulated across every Chat() turn on the tool-loop path and taken from

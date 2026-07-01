@@ -122,6 +122,13 @@ func TestProjectConfig_ByteBudgetNegativeRejectedAtLoad(t *testing.T) {
 	assert.Contains(t, err.Error(), "payload_byte_budget")
 }
 
+func TestProjectConfig_ReviewStrategyRejectedAtLoad(t *testing.T) {
+	_, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nreview_strategy: invalid\n"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid review_strategy")
+	assert.Contains(t, err.Error(), "config.yaml")
+}
+
 func TestProjectConfig_TrailingDocumentSeparatorTolerated(t *testing.T) {
 	cfg, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n---\n"))
 	require.NoError(t, err, "a trailing --- is a single logical document, not a second one")

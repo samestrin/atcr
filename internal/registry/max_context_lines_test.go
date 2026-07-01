@@ -23,6 +23,16 @@ func TestMaxContextLines_ExplicitValue(t *testing.T) {
 	assert.Equal(t, 800, ac.EffectiveMaxContextLines())
 }
 
+func TestMaxContextLines_ClampsNonPositiveDirectlyConstructed(t *testing.T) {
+	zero := 0
+	ac := AgentConfig{MaxContextLines: &zero}
+	assert.Equal(t, DefaultMaxContextLines, ac.EffectiveMaxContextLines(), "directly-constructed zero must fall back to default")
+
+	neg := -10
+	ac = AgentConfig{MaxContextLines: &neg}
+	assert.Equal(t, DefaultMaxContextLines, ac.EffectiveMaxContextLines(), "directly-constructed negative must fall back to default")
+}
+
 func TestMaxContextLines_ParsedFromYAML(t *testing.T) {
 	reg, err := LoadRegistry(writeRegistry(t, `
 providers:

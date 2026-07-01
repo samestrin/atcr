@@ -254,7 +254,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if scopeWarn != "" {
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint)
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint, true)
 	if err != nil {
 		return nil, err
 	}
@@ -488,7 +488,7 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if scopeWarn != "" {
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode, scopeConstraint)
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode, scopeConstraint, true)
 	if err != nil {
 		return nil, err
 	}
@@ -567,7 +567,17 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	// tallies, and writePool (which rejects duplicate agent dirs) all see a single
 	// logical source with Reviewer=<persona>. In bulk strategy names are unique, so
 	// this is a no-op.
-	results = mergeChunkResults(results)
+	//
+	// Serial-lane personas run their chunk-slots sequentially, so their true
+	// wall-clock duration is the sum of chunk durations; parallel-lane personas
+	// take the maximum. Pass the serial set so mergeChunkResults can distinguish.
+	serialAgents := make(map[string]bool, len(p.Slots))
+	for _, s := range p.Slots {
+		if s.Serial {
+			serialAgents[s.Primary.Name] = true
+		}
+	}
+	results = mergeChunkResults(results, serialAgents)
 
 	// Classify the run into the manifest's review-stage entry and stamp the
 	// snapshot provenance (nil when no agent ran with tools).
@@ -767,7 +777,7 @@ func resolveScopeConstraint(req ReviewRequest) (constraint, warning string) {
 // aborts the whole run fail-fast: these are configuration errors the user must
 // fix, not transient per-agent outcomes, so there is nothing useful to preserve
 // — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
-func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) ([]Slot, map[string]string, error) {
+func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool) ([]Slot, map[string]string, error) {
 	// Budget-aware plan content cap: scopeConstraint is prepended uncounted in
 	// buildAgent (Payload: scopeConstraint + mp.Text), so a small PayloadByteBudget
 	// causes the constraint alone to inflate the rendered prompt past the budget.
@@ -793,6 +803,10 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	}
 	perAgentMode := map[string]string{}
 	var slots []Slot
+	// Fires at most once per run: set when the chunked strategy is requested over a
+	// non-diff payload (no `diff --git` markers), where chunkDiff cannot split and
+	// the strategy silently degrades to a single bulk chunk.
+	warnedChunkedNoop := false
 
 	// buildChain resolves the fallback chain for a primary. Extracted so both the
 	// bulk one-slot path and the chunked per-chunk path attach identical chains
@@ -838,21 +852,48 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// single chunk (small diff, or one file) falls through to the bulk path so
 		// there is nothing to merge.
 		if cfg.Settings.ReviewStrategy == reviewStrategyChunked {
-			chunks := chunkDiff(mp.Text, ac.EffectiveMaxContextLines())
+			// A non-diff payload (files/blocks mode) carries no `diff --git` markers,
+			// so chunkDiff returns a single chunk and the chunked strategy is a silent
+			// no-op. Warn once so the operator knows the strategy had no effect for
+			// this payload mode rather than assuming the diff was bin-packed. Gated by
+			// warnOversized so the resume rebuild path stays quiet (already notified).
+			if warnOversized && !warnedChunkedNoop && countDiffFiles(mp.Text) == 0 && mp.FileCount > 1 {
+				fmt.Fprintf(os.Stderr, "atcr: warning: review_strategy=chunked has no effect for payload mode %q (no diff --git markers to split on); the whole payload is sent as one chunk\n", mode)
+				warnedChunkedNoop = true
+			}
+			ml := ac.EffectiveMaxContextLines()
+			chunks := chunkDiff(mp.Text, ml)
 			// Warn on any chunk that is a lone file exceeding the budget (it could
 			// not be split). This runs over EVERY chunk — not just multi-chunk
 			// fan-outs — so a diff that is a single oversized file (which chunkDiff
 			// returns as one chunk) still surfaces the documented warning before
-			// falling through to the one-slot path.
-			ml := ac.EffectiveMaxContextLines()
-			for _, ct := range chunks {
-				if countDiffFiles(ct) <= 1 && countLines(ct) > ml {
-					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines) exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, countLines(ct), ml)
+			// falling through to the one-slot path. The warning is suppressed on the
+			// resume rebuild path because PrepareResume reconstructs pending slots and
+			// the operator was already notified during the original preparation.
+			if warnOversized {
+				for _, ct := range chunks {
+					fileCount := countDiffFiles(ct)
+					lineCount := countLines(ct)
+					// == 1 (not <= 1): a chunk with zero diff-file markers is a non-diff
+					// payload, not a single oversized file — labeling it "a single file's
+					// diff" would mislabel a whole multi-file files/blocks payload as one
+					// file. Only a genuine single-file diff (exactly one marker) qualifies.
+					if fileCount == 1 && lineCount > ml {
+						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines) exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, lineCount, ml)
+					}
 				}
 			}
 			if len(chunks) > 1 {
 				for _, ct := range chunks {
-					primary, err := renderAgent(cfg, name, ac, mode, ct, countDiffFiles(ct), mp.Truncation, rng, scopeConstraint)
+					fileCount := countDiffFiles(ct)
+					// Truncation is a diff-wide event decided by buildPayloads, not a
+					// per-chunk property. Passing the whole-payload truncation into every
+					// chunk would make each chunk's prompt/status claim the same dropped
+					// files were truncated, which is misleading because the dropped files
+					// may not even appear in this chunk. Use a neutral truncation for
+					// individual chunks; the single-chunk/bulk path below still carries
+					// the real diff-wide truncation.
+					primary, err := renderAgent(cfg, name, ac, mode, ct, fileCount, payload.Truncation{}, rng, scopeConstraint)
 					if err != nil {
 						return err
 					}
