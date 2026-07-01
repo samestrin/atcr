@@ -402,6 +402,10 @@ func computeGroundingData(ctx context.Context, req ReviewRequest) payload.Change
 		log.FromContext(ctx).Warn("grounding disabled: could not compute changed lines", "err", err)
 		return nil
 	}
+	if len(cl) == 0 {
+		log.FromContext(ctx).Warn("grounding disabled: empty changed lines map")
+		return nil
+	}
 	return cl
 }
 
