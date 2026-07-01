@@ -1,3 +1,19 @@
+## [15.0.0] - 2026-07-01
+
+Audited the documentation against the current engine and eliminated the drift found, so `docs/` is a trustworthy single source of truth for the upcoming website build.
+
+### Added
+
+- `docs/architecture.md` — an architecture overview of the multi-model reviewer panel and the deterministic reconcile → verify → debate pipeline.
+- `docs/README.md` — a documentation index that links every doc, establishing `docs/` as the single source of truth.
+- Documentation-audit regression tests that assert the docs reference only real CLI commands, subcommands, and flags, and that the docs index covers every doc.
+
+### Fixed
+
+- Corrected the persona-resolution chain in `docs/registry.md` to stop documenting a non-existent `--task-message` CLI flag; that override is an internal resolution seam, not a flag.
+
+*Shipped via /execute-epic (epic 15.0)*
+
 ## [Technical Debt] - 2026-07-01
 
 ### Fixed
