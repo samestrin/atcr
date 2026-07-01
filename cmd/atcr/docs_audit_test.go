@@ -178,6 +178,72 @@ func TestReconcilerConfigSurfaceDocumented(t *testing.T) {
 	}
 }
 
+// TestDocsIndexCoversEveryDoc asserts that docs/README.md is the single
+// source-of-truth index the website build consumes: it must link to every other
+// docs/*.md file exactly, with no dangling links and no missing entries (T4). A
+// new doc that is never linked, or a link to a doc that was deleted/renamed,
+// fails this test.
+func TestDocsIndexCoversEveryDoc(t *testing.T) {
+	root := repoRootDir(t)
+	docsDir := filepath.Join(root, "docs")
+
+	all, err := filepath.Glob(filepath.Join(docsDir, "*.md"))
+	if err != nil {
+		t.Fatalf("glob docs: %v", err)
+	}
+	expected := map[string]bool{}
+	for _, p := range all {
+		base := filepath.Base(p)
+		if base == "README.md" {
+			continue // the index does not link itself
+		}
+		expected[base] = true
+	}
+
+	indexPath := filepath.Join(docsDir, "README.md")
+	b, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("docs/README.md index must exist (T4): %v", err)
+	}
+
+	// Extract relative markdown link targets that point at a .md file, stripping
+	// any #anchor and ./ prefix. External (http) and non-.md links are ignored.
+	linked := map[string]bool{}
+	re := regexp.MustCompile(`\]\(([^)]+)\)`)
+	for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+		target := m[1]
+		if strings.Contains(target, "://") {
+			continue
+		}
+		target = strings.SplitN(target, "#", 2)[0]
+		target = strings.TrimPrefix(target, "./")
+		if !strings.HasSuffix(target, ".md") || strings.Contains(target, "/") {
+			continue // only same-directory doc links count toward the index
+		}
+		base := filepath.Base(target)
+		if base == "README.md" {
+			continue
+		}
+		// Dangling-link guard: every linked doc must exist on disk.
+		if _, err := os.Stat(filepath.Join(docsDir, base)); err != nil {
+			t.Errorf("docs/README.md links %q but that file does not exist", base)
+			continue
+		}
+		linked[base] = true
+	}
+
+	for doc := range expected {
+		if !linked[doc] {
+			t.Errorf("docs/README.md index does not link docs/%s", doc)
+		}
+	}
+	for doc := range linked {
+		if !expected[doc] {
+			t.Errorf("docs/README.md links docs/%s which is not an expected doc", doc)
+		}
+	}
+}
+
 // TestArchitectureDocDescribesReconciler asserts that docs/architecture.md
 // exists and faithfully names the stages and concepts of the real multi-model
 // reconciler pipeline (AC3). The required tokens are the actual pipeline stages
