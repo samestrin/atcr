@@ -57,7 +57,7 @@ func isGrounded(f stream.Finding, changed payload.ChangedLines) bool {
 	if strings.EqualFold(strings.TrimSpace(f.Category), reclib.CategoryOutOfScope) {
 		return true
 	}
-	fc, ok := changed[normalizeFindingPath(f.File)]
+	fc, ok := changed[normalizeFindingPath(f.File, changed)]
 	if !ok {
 		return false // file not in the patch: ungrounded
 	}
@@ -73,18 +73,24 @@ func isGrounded(f stream.Finding, changed payload.ChangedLines) bool {
 	return evidenceMatches(f.Evidence, fc.ChangedText)
 }
 
-// normalizeFindingPath strips the diff-artifact prefixes a model sometimes copies
-// into a FILE column (a/, b/, ./, a leading /) so a cited path matches the
-// repo-root-relative head-path keys of the changed map. Best-effort: a form it
-// cannot normalize (an absolute path elsewhere) simply misses the map, and the
-// finding is treated as ungrounded.
-func normalizeFindingPath(file string) string {
+// normalizeFindingPath resolves a cited FILE path to a key in the changed map.
+// It strips diff-artifact prefixes (a/, b/, ./, a leading /) only when the
+// unstripped key is absent AND the stripped key is present, so a real repo path
+// that happens to start with "a/" or "b/" is not falsely normalized away.
+func normalizeFindingPath(file string, changed payload.ChangedLines) string {
 	p := strings.TrimSpace(file)
 	p = strings.TrimPrefix(p, "./")
-	if strings.HasPrefix(p, "a/") || strings.HasPrefix(p, "b/") {
-		p = p[2:]
+	p = strings.TrimPrefix(p, "/")
+	if _, ok := changed[p]; ok {
+		return p
 	}
-	return strings.TrimPrefix(p, "/")
+	if strings.HasPrefix(p, "a/") || strings.HasPrefix(p, "b/") {
+		stripped := p[2:]
+		if _, ok := changed[stripped]; ok {
+			return stripped
+		}
+	}
+	return p
 }
 
 // lineInRanges reports whether a 1-based line falls within any changed range
