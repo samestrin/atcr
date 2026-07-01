@@ -10,10 +10,12 @@ import (
 )
 
 const (
-	// groundingTolerance mirrors the reconciler's lineProximity (reconcile/cluster.go):
-	// a cited line within this many lines of a changed range is treated as
-	// grounded, absorbing the small line-number drift reviewers routinely introduce.
-	groundingTolerance = 3
+	// groundingTolerance binds to the reconciler's exported reclib.LineProximity
+	// (reconcile/cluster.go): a cited line within this many lines of a changed range
+	// is treated as grounded, absorbing the small line-number drift reviewers
+	// routinely introduce. Referencing the constant instead of a copied literal keeps
+	// the gate and the reconciler's clustering distance in lockstep at compile time.
+	groundingTolerance = reclib.LineProximity
 	// evidenceMinMatch is the minimum normalized rune length a substring match
 	// must span before the evidence fallback trusts it. Set above the length of
 	// ubiquitous Go boilerplate ("if err != nil {" is 15 runes) so such a line
