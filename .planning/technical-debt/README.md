@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 29 | 0 |
-| LOW | 2 | 28 | 0 |
+| LOW | 0 | 28 | 2 |
 
-**Last Modified:** 2026-07-01 | **Open Items:** 2 | **Deferred Items:** 59 | **Resolved Items:** 0 | **Total Items:** 61
+**Last Modified:** 2026-07-01 | **Open Items:** 0 | **Deferred Items:** 59 | **Resolved Items:** 2 | **Total Items:** 61
 
 ## Directory Structure
 
@@ -66,8 +66,8 @@ table with zero data loss) is proven by the Go test suite in
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | LOW | internal/fanout/review_test.go:242 | buildOneAgent returns slots[0].Primary with no length guard; safe for current single non-chunked callers but a chunked-strategy cfg would return the first chunk's partial-payload agent (silently wrong) and an empty roster would panic | Assert len(slots)==1 via require before indexing, or document the helper only supports non-chunked single-agent configs | EDGE_CASES | 15 | execute-epic-independent |
-| U | [ ] | LOW | internal/fanout/review_scope_inject_test.go:14 | Test function names remain TestBuildAgent_* across the 4 fanout test files although buildAgent is deleted, so names reference a nonexistent function and mildly mislead readers about which seam is under test | Rename affected tests to TestBuildOneAgent_* or TestSlotResolution_* to match the new production seam | REGRESSION_RISK | 15 | execute-epic-independent |
+| U | [x] | LOW | internal/fanout/review_test.go:242 | buildOneAgent returns slots[0].Primary with no length guard; safe for current single non-chunked callers but a chunked-strategy cfg would return the first chunk's partial-payload agent (silently wrong) and an empty roster would panic | Assert len(slots)==1 via require before indexing, or document the helper only supports non-chunked single-agent configs | EDGE_CASES | 15 | execute-epic-independent |
+| U | [x] | LOW | internal/fanout/review_scope_inject_test.go:14 | Test function names remain TestBuildAgent_* across the 4 fanout test files although buildAgent is deleted, so names reference a nonexistent function and mildly mislead readers about which seam is under test | Rename affected tests to TestBuildOneAgent_* or TestSlotResolution_* to match the new production seam | REGRESSION_RISK | 15 | execute-epic-independent |
 
 ### [2026-07-01] From Sprint: 14.3_diff_chunking_context
 
