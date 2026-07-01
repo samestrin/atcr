@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -56,7 +57,7 @@ type PoolSummary struct {
 // placed at the pool root, above the per-agent raw/ files, so leaf-preference
 // discovery treats the raw files as the inputs and never double-counts the
 // merged aggregate.
-func WritePool(poolDir string, results []Result) (Summary, error) {
+func WritePool(poolDir string, results []Result, changed ...payload.ChangedLines) (Summary, error) {
 	if err := os.MkdirAll(poolDir, 0o755); err != nil {
 		return Summary{}, fmt.Errorf("creating pool dir: %w", err)
 	}
@@ -78,7 +79,7 @@ func WritePool(poolDir string, results []Result) (Summary, error) {
 		}
 		seen[dir] = true
 
-		fr := findingsFor(r)
+		fr := findingsFor(r, changed...)
 		merged = append(merged, fr.Findings...)
 
 		if err := writeAgentArtifacts(poolDir, dir, r, fr); err != nil {
@@ -163,7 +164,7 @@ type findingsResult struct {
 	Truncated int
 }
 
-func findingsFor(r Result) findingsResult {
+func findingsFor(r Result, changed ...payload.ChangedLines) findingsResult {
 	if r.Content == "" {
 		return findingsResult{}
 	}
