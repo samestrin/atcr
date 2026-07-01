@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/require"
 )
@@ -140,4 +141,26 @@ func TestMergeChunkResults_SerialAgentSumsDuration(t *testing.T) {
 	merged := mergeChunkResults(results, serialAgents)
 	require.Len(t, merged, 1)
 	require.Equal(t, int64(250), merged[0].DurationMS, "serial-lane chunks run sequentially so wall-clock is the sum")
+}
+
+func TestBuildSlots_ChunkedUsesNeutralTruncationPerChunk(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	mcl := 5
+	g := cfg.Registry.Agents["greta"]
+	g.MaxContextLines = &mcl
+	cfg.Registry.Agents["greta"] = g
+
+	diff := fileSeg("a.go", 6) + fileSeg("b.go", 6)
+	trunc := payload.Truncation{Truncated: true, FilesDropped: []string{"big.go"}}
+	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 2, Truncation: trunc}}
+
+	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	require.NoError(t, err)
+	require.Len(t, slots, 2, "two chunk slots")
+	for _, s := range slots {
+		require.False(t, s.Primary.Truncation.Truncated, "individual chunks must not inherit whole-payload truncation")
+		require.Empty(t, s.Primary.Truncation.FilesDropped)
+	}
 }
