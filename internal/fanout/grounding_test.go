@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -113,5 +114,82 @@ func TestGroundFindings_NilDataKeepsAll(t *testing.T) {
 	out, dropped := groundFindings(in, nil)
 	if len(out) != 1 || dropped != 0 {
 		t.Fatalf("nil data: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
+	}
+}
+
+func TestGroundFindings_EmptyMapKeepsAll(t *testing.T) {
+	// A non-nil but empty ChangedLines map is a derivation-empty success path;
+	// the gate must fail open exactly like nil data, not treat it as an active
+	// empty patch that drops every finding.
+	in := []stream.Finding{{File: "auth.go", Line: 999, Category: "correctness"}}
+	out, dropped := groundFindings(in, payload.ChangedLines{})
+	if len(out) != 1 || dropped != 0 {
+		t.Fatalf("empty map: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
+	}
+}
+
+func TestGroundFindings_PrefersExactKeyOverDiffPrefix(t *testing.T) {
+	// A real top-level directory named "a" or "b" must not be stripped away when
+	// the exact key is present in the changed map.
+	changed := payload.ChangedLines{
+		"a/main.go": {Ranges: []payload.LineRange{{Start: 1, End: 5}}},
+	}
+	in := []stream.Finding{{File: "a/main.go", Line: 2, Category: "correctness"}}
+	out, dropped := groundFindings(in, changed)
+	if len(out) != 1 || dropped != 0 {
+		t.Fatalf("exact key with a/ prefix: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
+	}
+}
+
+func TestGroundFindings_EvidenceCapTruncates(t *testing.T) {
+	// Evidence is truncated to a bounded length before matching, so a model that
+	// emits a huge blob cannot force unbounded work, and text beyond the cap is
+	// ignored rather than used to fabricate a fuzzy match.
+	const evidenceCap = 4096
+	target := "return validate(token)"
+	padding := strings.Repeat("x", evidenceCap)
+	in := []stream.Finding{{File: "auth.go", Line: 999, Category: "correctness", Evidence: padding + target}}
+	out, dropped := groundFindings(in, changedFixture())
+	if len(out) != 0 || dropped != 1 {
+		t.Fatalf("evidence beyond cap: kept=%d dropped=%d, want kept=0 dropped=1", len(out), dropped)
+	}
+}
+
+func TestGroundFindings_DropsBoilerplateEvidence(t *testing.T) {
+	// "if err != nil {" (15 chars) is ubiquitous Go boilerplate. Even when it is a
+	// genuinely changed line, an out-of-range finding whose EVIDENCE is only that
+	// boilerplate must NOT ground: the evidence floor sits above it. A distinctive
+	// 22-char quote on the same file still grounds via the evidence fallback.
+	changed := payload.ChangedLines{
+		"auth.go": {
+			Ranges:      []payload.LineRange{{Start: 40, End: 45}},
+			ChangedText: []string{"if err != nil {", "return validate(token)"},
+		},
+	}
+	boiler := []stream.Finding{{File: "auth.go", Line: 999, Category: "correctness", Evidence: "if err != nil {"}}
+	if out, dropped := groundFindings(boiler, changed); len(out) != 0 || dropped != 1 {
+		t.Fatalf("boilerplate evidence: kept=%d dropped=%d, want kept=0 dropped=1", len(out), dropped)
+	}
+	distinct := []stream.Finding{{File: "auth.go", Line: 999, Category: "correctness", Evidence: "return validate(token)"}}
+	if out, dropped := groundFindings(distinct, changed); len(out) != 1 || dropped != 0 {
+		t.Fatalf("distinctive evidence: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
+	}
+}
+
+func TestGroundFindings_EvidenceFloorCountsRunesNotBytes(t *testing.T) {
+	// A 6-rune multibyte quote is 18 bytes: len() would count it at the byte floor
+	// and let a short hallucinated multibyte snippet clear the gate, so the floor
+	// must count runes. Six hiragana (3 bytes each) is well under the rune floor
+	// and must be dropped, not grounded by its inflated byte length.
+	multibyte := "あいうえおか" // 6 runes, 18 bytes
+	changed := payload.ChangedLines{
+		"auth.go": {
+			Ranges:      []payload.LineRange{{Start: 40, End: 45}},
+			ChangedText: []string{multibyte},
+		},
+	}
+	in := []stream.Finding{{File: "auth.go", Line: 999, Category: "correctness", Evidence: multibyte}}
+	if out, dropped := groundFindings(in, changed); len(out) != 0 || dropped != 1 {
+		t.Fatalf("multibyte evidence: kept=%d dropped=%d, want kept=0 dropped=1", len(out), dropped)
 	}
 }

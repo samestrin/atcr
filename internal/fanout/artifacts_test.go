@@ -23,7 +23,7 @@ func TestWritePool_PerAgentArtifactsWritten(t *testing.T) {
 	pool := filepath.Join(t.TempDir(), "sources", "pool")
 	results := []Result{okResult("greta", findingsBody)}
 
-	sum, err := WritePool(pool, results)
+	sum, err := WritePool(pool, results, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, sum.Succeeded)
 
@@ -40,7 +40,7 @@ func TestWritePool_EngineSetsReviewerFromAgentName(t *testing.T) {
 	pool := filepath.Join(t.TempDir(), "pool")
 	// Model tries to self-attribute via an 8th column; engine must override it.
 	content := `HIGH|a.go:1|prob|fix|security|10|ev|forged-name`
-	_, err := WritePool(pool, []Result{okResult("greta", content)})
+	_, err := WritePool(pool, []Result{okResult("greta", content)}, nil)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(pool, "raw", "agent", "greta", "findings.txt"))
@@ -55,7 +55,7 @@ func TestWritePool_StatusJSONRecordsOutcome(t *testing.T) {
 	pool := filepath.Join(t.TempDir(), "pool")
 	r := okResult("greta", findingsBody)
 	r.Truncation = payload.Truncation{Truncated: true, FilesDropped: []string{"big.go"}}
-	_, err := WritePool(pool, []Result{r})
+	_, err := WritePool(pool, []Result{r}, nil)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(pool, "raw", "agent", "greta", "status.json"))
@@ -77,7 +77,7 @@ func TestWritePool_FailedAgentStillWritesStatus(t *testing.T) {
 	results := []Result{
 		{Agent: "greta", Status: StatusFailed, Err: assertErr("connection refused"), PayloadMode: "blocks"},
 	}
-	_, err := WritePool(pool, results)
+	_, err := WritePool(pool, results, nil)
 	require.NoError(t, err, "a failed agent must not abort artifact writing")
 
 	data, err := os.ReadFile(filepath.Join(pool, "raw", "agent", "greta", "status.json"))
@@ -96,7 +96,7 @@ func TestWritePool_MergedFindingsAndSummary(t *testing.T) {
 		okResult("kai", `HIGH|main.go:88|Goroutine leak|Add wg|concurrency|30|ev`),
 		{Agent: "mira", Status: StatusFailed, Err: assertErr("timeout"), PayloadMode: "diff"},
 	}
-	sum, err := WritePool(pool, results)
+	sum, err := WritePool(pool, results, nil)
 	require.NoError(t, err)
 	assert.True(t, sum.Partial, "one failure among successes is partial")
 
@@ -126,7 +126,7 @@ func TestWritePool_MergedFindingsAndSummary(t *testing.T) {
 func TestWritePool_SanitizesAgentDirName(t *testing.T) {
 	pool := filepath.Join(t.TempDir(), "pool")
 	// A traversal-shaped name must be reduced to a base name; nothing escapes pool.
-	_, err := WritePool(pool, []Result{okResult("../escape", findingsBody)})
+	_, err := WritePool(pool, []Result{okResult("../escape", findingsBody)}, nil)
 	require.NoError(t, err)
 	assert.DirExists(t, filepath.Join(pool, "raw", "agent", "escape"))
 	assert.NoFileExists(t, filepath.Join(filepath.Dir(pool), "escape"))
@@ -135,7 +135,7 @@ func TestWritePool_SanitizesAgentDirName(t *testing.T) {
 func TestWritePool_RejectsTraversalAgentNames(t *testing.T) {
 	for _, name := range []string{"..", ".", ""} {
 		pool := filepath.Join(t.TempDir(), "pool")
-		_, err := WritePool(pool, []Result{okResult(name, findingsBody)})
+		_, err := WritePool(pool, []Result{okResult(name, findingsBody)}, nil)
 		require.Error(t, err, "agent name %q must be rejected", name)
 		assert.Contains(t, err.Error(), "invalid agent name")
 	}
@@ -144,14 +144,14 @@ func TestWritePool_RejectsTraversalAgentNames(t *testing.T) {
 func TestWritePool_RejectsDuplicateAgentDirs(t *testing.T) {
 	pool := filepath.Join(t.TempDir(), "pool")
 	// Distinct names that collapse to the same base must not silently clobber.
-	_, err := WritePool(pool, []Result{okResult("a/greta", findingsBody), okResult("b/greta", findingsBody)})
+	_, err := WritePool(pool, []Result{okResult("a/greta", findingsBody), okResult("b/greta", findingsBody)}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "duplicate agent directory")
 }
 
 func TestWritePool_ArtifactFileModeIs0644(t *testing.T) {
 	pool := filepath.Join(t.TempDir(), "pool")
-	_, err := WritePool(pool, []Result{okResult("greta", findingsBody)})
+	_, err := WritePool(pool, []Result{okResult("greta", findingsBody)}, nil)
 	require.NoError(t, err)
 	info, err := os.Stat(filepath.Join(pool, "raw", "agent", "greta", "status.json"))
 	require.NoError(t, err)
@@ -218,7 +218,7 @@ func TestWritePool_ConstrainedAgentPersistsDroppedCounts(t *testing.T) {
 	r := Result{Agent: "greta", Content: content, Status: StatusOK,
 		MinSeverity: "MEDIUM", DurationMS: 100, PayloadMode: "blocks"}
 	r.Truncation = payload.Truncation{FilesDropped: []string{}}
-	_, err := WritePool(pool, []Result{r})
+	_, err := WritePool(pool, []Result{r}, nil)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(pool, "raw", "agent", "greta", "status.json"))
