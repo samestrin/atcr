@@ -396,9 +396,9 @@ type Registry struct {
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
 	FailOn            string `yaml:"fail_on,omitempty"`
 	// ReviewStrategy is the run-wide fan-out strategy (Epic 14.3): "bulk"
-	// (default) or "chunked". A global toggle resolved once per run, mirroring
-	// payload_mode; the per-agent max_context_lines governs each bin's size when
-	// chunking is on.
+	// (default) or "chunked". A global toggle resolved once per run at the
+	// registry and project tiers (there is intentionally no CLI override); the
+	// per-agent max_context_lines governs each bin's size when chunking is on.
 	ReviewStrategy string `yaml:"review_strategy,omitempty"`
 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
 	// application in ResolveSettings.
