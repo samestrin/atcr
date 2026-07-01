@@ -981,8 +981,7 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64) string {
 // payload text and its file-count/truncation metadata. buildSlots' bulk path
 // uses it for the whole-diff (bulk) payload; the chunked strategy (Epic 14.3)
 // calls it once per bin-packed chunk so every chunk-slot carries the SAME persona
-// identity but
-// a different diff subset. Passing the payload text in (rather than reading a
+// identity but a different diff subset. Passing the payload text in (rather than reading a
 // modePayload) is the seam that lets a chunk render its own slice of the diff
 // and report its own file count in the prompt.
 func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, payloadText string, fileCount int, trunc payload.Truncation, rng ReviewRange, scopeConstraint string) (Agent, error) {
