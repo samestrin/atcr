@@ -2,6 +2,7 @@ package fanout
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/stream"
@@ -17,6 +18,10 @@ const (
 	// span before the evidence fallback trusts it, so ubiquitous boilerplate
 	// ("if err != nil {") cannot ground an arbitrary hallucinated finding.
 	evidenceMinMatch = 12
+	// evidenceMaxRunes bounds the model-controlled evidence string before
+	// case-folding and substring matching, preventing CPU/allocation amplification
+	// from a degenerate multi-rune evidence payload.
+	evidenceMaxRunes = 4096
 )
 
 // groundFindings drops findings that cannot be located in the patch's changed
@@ -112,8 +117,10 @@ func lineInRanges(line int, ranges []payload.LineRange) bool {
 // out of range: it keeps the finding when its EVIDENCE and a changed line contain
 // one another (case-folded, whitespace-collapsed) over at least evidenceMinMatch
 // characters, so a real quote grounds the finding while short boilerplate cannot.
+// Evidence is truncated to evidenceMaxRunes first to bound model-controlled work.
 func evidenceMatches(evidence string, changed []string) bool {
-	ev := collapseSpaces(strings.ToLower(strings.TrimSpace(evidence)))
+	evidence = truncateRunes(strings.TrimSpace(evidence), evidenceMaxRunes)
+	ev := collapseSpaces(strings.ToLower(evidence))
 	if len(ev) < evidenceMinMatch || len(changed) == 0 {
 		return false
 	}
@@ -133,4 +140,12 @@ func evidenceMatches(evidence string, changed []string) bool {
 // ends, so a quote and its diff line match despite indentation differences.
 func collapseSpaces(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// truncateRunes returns s truncated to at most max runes.
+func truncateRunes(s string, max int) string {
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	return string([]rune(s)[:max])
 }
