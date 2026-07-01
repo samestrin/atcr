@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -42,6 +43,14 @@ func buildOneAgent(cfg *ReviewConfig, name string, payloads map[string]modePaylo
 	slots, modes, err := buildSlots(&scoped, payloads, rng, forceMode, scopeConstraint, false)
 	if err != nil {
 		return Agent{}, "", err
+	}
+	// Guard the single-slot assumption: restricting the roster to one non-chunked
+	// agent must yield exactly one primary slot. A chunked-strategy cfg would emit
+	// one slot per chunk (returning the first chunk's partial-payload agent —
+	// silently wrong), and an empty roster would panic on slots[0]. Fail loudly
+	// instead so callers see an error rather than a misleading agent or a crash.
+	if len(slots) != 1 {
+		return Agent{}, "", fmt.Errorf("buildOneAgent: expected exactly 1 slot for %q, got %d (chunked or empty roster is unsupported)", name, len(slots))
 	}
 	return slots[0].Primary, modes[name], nil
 }
@@ -576,7 +585,7 @@ func TestPrepareReview_RejectsSystemOutputDir(t *testing.T) {
 // A payloads map missing the agent's effective mode must be an explicit build
 // error (like the adjacent unknown-agent/unknown-provider lookups), never a
 // silently empty payload that produces a plausible-looking vacuous review.
-func TestBuildAgent_MissingPayloadModeErrors(t *testing.T) {
+func TestBuildOneAgent_MissingPayloadModeErrors(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	_, _, err := buildOneAgent(cfg, "greta", map[string]modePayload{}, ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.Error(t, err)

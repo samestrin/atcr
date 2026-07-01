@@ -34,7 +34,7 @@ func toolCfg() *ReviewConfig {
 }
 
 // AC 01-02 Scenario 4: Agent struct populated from AgentConfig tool fields.
-func TestBuildAgent_PropagatesToolFields(t *testing.T) {
+func TestBuildOneAgent_PropagatesToolFields(t *testing.T) {
 	cfg := toolCfg()
 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 
@@ -97,7 +97,7 @@ func TestBuildFallbackAgent_CapableFallbackKeepsCapability(t *testing.T) {
 }
 
 // AC 04-02 S4: primary build threads SupportsFC from the agent's own config.
-func TestBuildAgent_PropagatesSupportsFC(t *testing.T) {
+func TestBuildOneAgent_PropagatesSupportsFC(t *testing.T) {
 	cfg := toolCfg()
 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 

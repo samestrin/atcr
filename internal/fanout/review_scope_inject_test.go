@@ -10,7 +10,7 @@ import (
 // Slot resolution must inject an agent's scope categories into its persona
 // prompt as a soft focus instruction (Epic 2.2), so a scoped agent sees them and
 // an unscoped agent's prompt is unchanged.
-func TestBuildAgent_InjectsScopeFocus(t *testing.T) {
+func TestBuildOneAgent_InjectsScopeFocus(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	scoped := cfg.Registry.Agents["greta"]
 	scoped.Scope = []string{"performance", "efficiency"}
@@ -38,7 +38,7 @@ func TestBuildAgent_InjectsScopeFocus(t *testing.T) {
 // payload, so the constraint lands in EVERY persona (it renders {{.Payload}}) and
 // appears immediately before the diff text (Epic 12.2 AC4). An empty constraint
 // leaves the prompt unchanged.
-func TestBuildAgent_PrependsScopeConstraint(t *testing.T) {
+func TestBuildOneAgent_PrependsScopeConstraint(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	const diffToken = "UNIQUE_DIFF_TOKEN_98765"
 	const constraint = "## SENTINEL SCOPE CONSTRAINT\nplan body\n\n"
