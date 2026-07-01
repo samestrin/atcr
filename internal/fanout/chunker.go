@@ -264,6 +264,13 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	// non-fatal-degradation channel findingsFor uses for grounding drops) so an
 	// operator knows part of the diff was not covered.
 	if okCount > 0 && okCount < len(g) {
+		// Record the machine-readable partial-coverage signal alongside the stderr
+		// warning: the persona reports StatusOK (it contributed findings) but this
+		// many chunks failed, so their files went unreviewed. statusFor surfaces it
+		// in summary.json/status.json so a CI gate can react instead of trusting the
+		// green status. Set only in the partial case — a wholly-failed persona
+		// (okCount==0) is already signaled by a non-OK Status.
+		out.UnreviewedChunks = len(g) - okCount
 		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: %d of %d chunk(s) failed; that portion of the diff was not reviewed\n", out.Agent, len(g)-okCount, len(g))
 	}
 	switch {
