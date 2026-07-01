@@ -803,6 +803,10 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	}
 	perAgentMode := map[string]string{}
 	var slots []Slot
+	// Fires at most once per run: set when the chunked strategy is requested over a
+	// non-diff payload (no `diff --git` markers), where chunkDiff cannot split and
+	// the strategy silently degrades to a single bulk chunk.
+	warnedChunkedNoop := false
 
 	// buildChain resolves the fallback chain for a primary. Extracted so both the
 	// bulk one-slot path and the chunked per-chunk path attach identical chains
@@ -848,6 +852,15 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// single chunk (small diff, or one file) falls through to the bulk path so
 		// there is nothing to merge.
 		if cfg.Settings.ReviewStrategy == reviewStrategyChunked {
+			// A non-diff payload (files/blocks mode) carries no `diff --git` markers,
+			// so chunkDiff returns a single chunk and the chunked strategy is a silent
+			// no-op. Warn once so the operator knows the strategy had no effect for
+			// this payload mode rather than assuming the diff was bin-packed. Gated by
+			// warnOversized so the resume rebuild path stays quiet (already notified).
+			if warnOversized && !warnedChunkedNoop && countDiffFiles(mp.Text) == 0 && mp.FileCount > 1 {
+				fmt.Fprintf(os.Stderr, "atcr: warning: review_strategy=chunked has no effect for payload mode %q (no diff --git markers to split on); the whole payload is sent as one chunk\n", mode)
+				warnedChunkedNoop = true
+			}
 			ml := ac.EffectiveMaxContextLines()
 			chunks := chunkDiff(mp.Text, ml)
 			// Warn on any chunk that is a lone file exceeding the budget (it could
@@ -861,7 +874,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				for _, ct := range chunks {
 					fileCount := countDiffFiles(ct)
 					lineCount := countLines(ct)
-					if fileCount <= 1 && lineCount > ml {
+					// == 1 (not <= 1): a chunk with zero diff-file markers is a non-diff
+					// payload, not a single oversized file — labeling it "a single file's
+					// diff" would mislabel a whole multi-file files/blocks payload as one
+					// file. Only a genuine single-file diff (exactly one marker) qualifies.
+					if fileCount == 1 && lineCount > ml {
 						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines) exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, lineCount, ml)
 					}
 				}
