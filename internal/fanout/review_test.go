@@ -585,7 +585,7 @@ func TestPrepareReview_RejectsSystemOutputDir(t *testing.T) {
 // A payloads map missing the agent's effective mode must be an explicit build
 // error (like the adjacent unknown-agent/unknown-provider lookups), never a
 // silently empty payload that produces a plausible-looking vacuous review.
-func TestBuildAgent_MissingPayloadModeErrors(t *testing.T) {
+func TestBuildOneAgent_MissingPayloadModeErrors(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	_, _, err := buildOneAgent(cfg, "greta", map[string]modePayload{}, ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.Error(t, err)
