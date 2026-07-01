@@ -381,20 +381,28 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// run's agents; ExecuteReview hands it to the engine.
 	revCache := cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes)
 	// Epic 14.1 grounding data: compute the per-file changed line ranges for the
-	// range so WritePool can drop findings not anchored in the patch. Only the
-	// git-range path carries a base/head; the diff-ingestion path leaves them
-	// empty, disabling the gate. A git failure disables the gate (fail open)
-	// rather than aborting the review — grounding is a filter, not a correctness
-	// gate.
-	var changed payload.ChangedLines
-	if req.Range.Base != "" && req.Range.Head != "" {
-		if cl, cerr := payload.BuildChangedLines(ctx, req.Repo, req.Range.Base, req.Range.Head); cerr != nil {
-			log.FromContext(ctx).Warn("grounding disabled: could not compute changed lines", "err", cerr)
-		} else {
-			changed = cl
-		}
+	// range so WritePool can drop findings not anchored in the patch (see
+	// computeGroundingData for the fail-open contract).
+	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: computeGroundingData(ctx, req), manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+}
+
+// computeGroundingData builds the per-file patch grounding data for the request's
+// range (Epic 14.1). Only the git-range path carries a base/head; a range-less
+// request (the diff-ingestion path) returns nil, disabling the grounding gate. A
+// git failure disables the gate (fail open, logged) rather than aborting the
+// review — grounding is a filter, not a correctness gate. It is shared by the
+// fresh-review (finalizePreparedReview) and resume (PrepareResume) paths so a
+// resumed agent's fresh output is grounded identically to a first-run agent's.
+func computeGroundingData(ctx context.Context, req ReviewRequest) payload.ChangedLines {
+	if req.Range.Base == "" || req.Range.Head == "" {
+		return nil
 	}
-	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+	cl, err := payload.BuildChangedLines(ctx, req.Repo, req.Range.Base, req.Range.Head)
+	if err != nil {
+		log.FromContext(ctx).Warn("grounding disabled: could not compute changed lines", "err", err)
+		return nil
+	}
+	return cl
 }
 
 // PrepareReviewFromDiff is the diff-file ingestion counterpart of PrepareReview:

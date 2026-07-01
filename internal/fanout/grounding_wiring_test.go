@@ -54,3 +54,28 @@ func TestWritePool_NoGroundingKeepsAll(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, parsed.Findings, 2, "no grounding data means keep everything")
 }
+
+// TestWriteResumedAgents_DropsUngrounded guards the Epic 14.1 consistency gap:
+// a resumed agent's fresh output must be grounded identically to a first-run
+// agent's, so re-running a failed agent cannot reintroduce a hallucination a
+// normal run would have dropped.
+func TestWriteResumedAgents_DropsUngrounded(t *testing.T) {
+	dir := t.TempDir()
+	content := "MEDIUM|auth.go:42|real bug|f|correctness|10|token := parseToken(r)\n" +
+		"HIGH|auth.go:999|hallucinated|f|correctness|10|invented unrelated snippet\n"
+	changed := payload.ChangedLines{
+		"auth.go": {
+			Ranges:      []payload.LineRange{{Start: 40, End: 45}},
+			ChangedText: []string{"token := parseToken(r)"},
+		},
+	}
+	pool := filepath.Join(dir, "pool")
+	require.NoError(t, writeResumedAgents(pool, []Result{okResult("greta", content)}, changed))
+
+	data, err := os.ReadFile(filepath.Join(pool, poolRawAgentDir, "greta", findingsFile))
+	require.NoError(t, err)
+	parsed, err := stream.ParseSource(data)
+	require.NoError(t, err)
+	require.Len(t, parsed.Findings, 1, "resumed agent's ungrounded finding must be dropped")
+	assert.Equal(t, 42, parsed.Findings[0].Line)
+}
