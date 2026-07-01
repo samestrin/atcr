@@ -176,6 +176,36 @@ func canonicalFlags() map[string]bool {
 	return flags
 }
 
+// validateSubcommandChain recursively validates that bare-word tokens following
+// a command group are real subcommands, skipping any --flags that appear before
+// the next subcommand. It reports at most one error per level.
+func validateSubcommandChain(tokens []string, idx int, groups map[string]map[string]bool, isWord func(string) bool, reFlag *regexp.Regexp, path string, errs *[]string) {
+	name := tokens[idx]
+	children, isGroup := groups[name]
+	if !isGroup || len(tokens) <= idx+1 {
+		return
+	}
+	nextIdx := -1
+	for i := idx + 1; i < len(tokens); i++ {
+		if reFlag.MatchString(tokens[i]) {
+			continue
+		}
+		if isWord(tokens[i]) {
+			nextIdx = i
+			break
+		}
+	}
+	if nextIdx == -1 {
+		return
+	}
+	next := tokens[nextIdx]
+	if !children[next] {
+		*errs = append(*errs, fmt.Sprintf("%s references `atcr %s %s` but %q is not a subcommand of %q", path, name, next, next, name))
+		return
+	}
+	validateSubcommandChain(tokens, nextIdx, groups, isWord, reFlag, path, errs)
+}
+
 // validateInvocationTokens checks a single `atcr ...` token sequence against the
 // compiled command tree and returns any human-readable error messages.
 func validateInvocationTokens(tokens []string, path string, cmds map[string]bool, groups map[string]map[string]bool, flags map[string]bool) []string {
@@ -189,11 +219,7 @@ func validateInvocationTokens(tokens []string, path string, cmds map[string]bool
 	case !cmds[name0]:
 		errs = append(errs, fmt.Sprintf("%s references `atcr %s` but %q is not a real command", path, name0, name0))
 	default:
-		if children, isGroup := groups[name0]; isGroup && len(tokens) > 1 {
-			if next := tokens[1]; isWord(next) && !children[next] {
-				errs = append(errs, fmt.Sprintf("%s references `atcr %s %s` but %q is not a subcommand of %q", path, name0, next, next, name0))
-			}
-		}
+		validateSubcommandChain(tokens, 0, groups, isWord, reFlag, path, &errs)
 	}
 	for _, tok := range tokens {
 		if m := reFlag.FindStringSubmatch(tok); m != nil && !flags[m[1]] {
