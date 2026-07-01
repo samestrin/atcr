@@ -62,18 +62,22 @@ func auditedMarkdown(t *testing.T) map[string]string {
 	return out
 }
 
-// docCommandTokens extracts subcommand tokens from command invocations that
-// actually begin with `atcr ` — inline code spans that start with atcr, and
-// fenced-block lines that start with atcr (optionally behind a `$ ` shell
-// prompt). Anchoring to the start of a span/line keeps ordinary prose (e.g. the
-// sentence "atcr is local-first") and cross-line adjacencies from registering as
-// bogus command references.
-func docCommandTokens(md string) []string {
-	var toks []string
-	reCmd := regexp.MustCompile(`^atcr ([a-z][a-z-]+)`)
+// atcrInvocations returns the token lists (the words following "atcr") for every
+// `atcr ...` invocation appearing inside an inline code span or a fenced code
+// block whose content begins with atcr (optionally behind a `$ ` shell prompt).
+// Anchoring to the start of a span/line keeps ordinary prose (e.g. the sentence
+// "atcr is local-first") and cross-line adjacencies from registering as bogus
+// references. Both ``` and ~~~ GFM fences are recognized.
+func atcrInvocations(md string) [][]string {
+	var out [][]string
 	capture := func(s string) {
-		if m := reCmd.FindStringSubmatch(strings.TrimSpace(s)); m != nil {
-			toks = append(toks, m[1])
+		s = strings.TrimSpace(s)
+		s = strings.TrimSpace(strings.TrimPrefix(s, "$ "))
+		if !strings.HasPrefix(s, "atcr ") {
+			return
+		}
+		if fields := strings.Fields(s); len(fields) > 1 {
+			out = append(out, fields[1:]) // drop the leading "atcr"
 		}
 	}
 	for _, m := range regexp.MustCompile("`([^`\n]+)`").FindAllStringSubmatch(md, -1) {
@@ -81,16 +85,16 @@ func docCommandTokens(md string) []string {
 	}
 	inFence := false
 	for _, ln := range strings.Split(md, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(ln), "```") {
+		trimmed := strings.TrimSpace(ln)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
 			inFence = !inFence
 			continue
 		}
-		if !inFence {
-			continue
+		if inFence {
+			capture(ln)
 		}
-		capture(strings.TrimPrefix(strings.TrimSpace(ln), "$ "))
 	}
-	return toks
+	return out
 }
 
 // canonicalCommands walks the whole command tree and returns every command name
@@ -108,10 +112,36 @@ func canonicalCommands() map[string]bool {
 	return names
 }
 
+// commandGroups maps each command that owns subcommands to the set of its direct
+// child command names, so a nested verb (e.g. the "run" in `atcr benchmark run`)
+// can be validated rather than only the first token.
+func commandGroups() map[string]map[string]bool {
+	groups := map[string]map[string]bool{}
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		children := c.Commands()
+		if len(children) > 0 {
+			set := map[string]bool{}
+			for _, sub := range children {
+				set[sub.Name()] = true
+			}
+			groups[c.Name()] = set
+		}
+		for _, sub := range children {
+			walk(sub)
+		}
+	}
+	walk(newRootCmd())
+	return groups
+}
+
 // canonicalFlags walks the whole command tree and returns every long flag name
 // registered on any command (local + persistent).
 func canonicalFlags() map[string]bool {
-	flags := map[string]bool{}
+	// help (every command) and version (root) are cobra-managed universal flags
+	// added lazily during Execute, so they never appear in the static flag sets
+	// walked below; seed them explicitly.
+	flags := map[string]bool{"help": true, "version": true}
 	add := func(fs *pflag.FlagSet) {
 		fs.VisitAll(func(f *pflag.Flag) { flags[f.Name] = true })
 	}
@@ -127,15 +157,37 @@ func canonicalFlags() map[string]bool {
 	return flags
 }
 
-// TestDocsReferenceOnlyRealCommands asserts that every `atcr <subcommand>` token
-// appearing inside a code span or fenced block in the audited docs names a real
-// command in the compiled tree (AC1).
+// TestDocsReferenceOnlyRealCommands asserts, for every `atcr ...` invocation in
+// the audited docs, that (a) the first token is a real command, (b) when that
+// command is a group its next bare-word token is a real subcommand, and (c) every
+// --flag on the line is a real flag somewhere in the compiled tree (AC1). Flags
+// are validated only when attached to an atcr invocation, so unrelated docker/git
+// flags in the same docs are not misread as atcr flags.
 func TestDocsReferenceOnlyRealCommands(t *testing.T) {
 	cmds := canonicalCommands()
+	groups := commandGroups()
+	flags := canonicalFlags()
+	reFlag := regexp.MustCompile(`^--([a-z][a-z-]+)`)
+	isWord := regexp.MustCompile(`^[a-z][a-z-]+$`).MatchString
 	for path, content := range auditedMarkdown(t) {
-		for _, tok := range docCommandTokens(content) {
-			if !cmds[tok] {
-				t.Errorf("%s references `atcr %s` but %q is not a real command", path, tok, tok)
+		for _, tokens := range atcrInvocations(content) {
+			name0 := tokens[0]
+			switch {
+			case reFlag.MatchString(name0):
+				// e.g. `atcr --version`: a root flag, validated in the flag loop below.
+			case !cmds[name0]:
+				t.Errorf("%s references `atcr %s` but %q is not a real command", path, name0, name0)
+			default:
+				if children, isGroup := groups[name0]; isGroup && len(tokens) > 1 {
+					if next := tokens[1]; isWord(next) && !children[next] {
+						t.Errorf("%s references `atcr %s %s` but %q is not a subcommand of %q", path, name0, next, next, name0)
+					}
+				}
+			}
+			for _, tok := range tokens {
+				if m := reFlag.FindStringSubmatch(tok); m != nil && !flags[m[1]] {
+					t.Errorf("%s references `--%s` on an `atcr %s` command, but no such flag exists", path, m[1], name0)
+				}
 			}
 		}
 	}
