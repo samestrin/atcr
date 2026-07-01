@@ -1,3 +1,10 @@
+## [Technical Debt] - 2026-07-01
+
+### Fixed
+
+- Hardened the `buildOneAgent` fan-out review test helper to return an explicit error when its single-slot roster assumption is violated (empty or chunked config) instead of panicking on `slots[0]` or silently returning a partial-payload agent.
+- Renamed the stale `TestBuildAgent_*` fan-out tests to `TestBuildOneAgent_*` to match the actual `buildOneAgent` helper seam after `buildAgent` was removed in epic 14.4.
+
 ## [14.4.0] - 2026-07-01
 
 Removed the orphaned `buildAgent` helper and consolidated fan-out reviewer mode/payload resolution to a single production seam, eliminating divergent duplicate logic.
