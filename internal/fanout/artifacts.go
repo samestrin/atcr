@@ -176,8 +176,12 @@ func findingsFor(r Result, changed payload.ChangedLines) findingsResult {
 	// the patch (hallucinations) before per-source constraints apply, so the
 	// max_findings cap ranks only real findings. Runs only when review-level
 	// grounding data was supplied; a nil/absent map disables the gate (fail open).
-	// The per-agent drop count is logged to stderr — observable, matching the
-	// enforceConstraints min_severity/max_findings precedent, never truly silent.
+	// The per-agent drop count is logged to stderr. Unlike the enforceConstraints
+	// min_severity/max_findings drops — which are ALSO persisted to status.json as
+	// DroppedByMinSeverity/TruncatedByMaxFindings — grounding drops are surfaced on
+	// stderr only, not in status.json or summary.json. This is deliberate: the epic
+	// 14.1 clarification accepted the per-agent stderr count as the observable
+	// mechanism, so the count is visible but intentionally not persisted.
 	grounded, ungrounded := groundFindings(findings, changed)
 	if ungrounded > 0 {
 		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: dropped %d ungrounded finding(s) not present in the patch\n", r.Agent, ungrounded)
