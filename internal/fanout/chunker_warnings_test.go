@@ -2,6 +2,7 @@ package fanout
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/registry"
@@ -54,6 +55,40 @@ func TestBuildSlots_ChunkedSuppressesOversizeWarning(t *testing.T) {
 		require.NoError(t, err)
 	})
 	require.NotContains(t, out, "exceeds max_context_lines", "the oversized-file warning must be suppressed on the resume rebuild path")
+}
+
+// A chunked run over a NON-diff, multi-file payload (files mode: sentinel-
+// delimited content with no `diff --git` markers) must not (a) mislabel the whole
+// payload as "a single file's diff" when it exceeds max_context_lines, nor
+// (b) silently pretend the chunked strategy applied — chunkDiff cannot split a
+// payload without diff markers, so it is a no-op that the operator should see.
+func TestBuildSlots_ChunkedFilesModeNoMisleadingWarning(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	mcl := 5
+	g := cfg.Registry.Agents["greta"]
+	g.MaxContextLines = &mcl
+	cfg.Registry.Agents["greta"] = g
+
+	// Three "files", no diff --git markers, ~15 lines total (>> mcl=5).
+	var b strings.Builder
+	for _, f := range []string{"a.go", "b.go", "c.go"} {
+		b.WriteString("=== FILE: " + f + " ===\n")
+		for i := 0; i < 4; i++ {
+			b.WriteString("+content\n")
+		}
+	}
+	payloads := map[string]modePayload{"blocks": {Text: b.String(), FileCount: 3}}
+
+	out := captureStderr(t, func() {
+		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		require.NoError(t, err)
+	})
+	require.NotContains(t, out, "exceeds max_context_lines",
+		"a multi-file non-diff payload must not be mislabeled as a single oversized file")
+	require.Contains(t, out, "no effect",
+		"chunked strategy on a non-diff payload must warn it had no effect")
 }
 
 // Independent-review MEDIUM #2: a persona whose chunks partially failed reports
