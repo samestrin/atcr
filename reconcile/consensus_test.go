@@ -207,6 +207,43 @@ func TestConsensusFilter_AuthorityPromotedSingletonSurvives(t *testing.T) {
 	}
 }
 
+func TestConsensusFilter_AmbiguousSingletonShapeMatchesDBSCANNoise(t *testing.T) {
+	// A 3-reviewer panel produces two different single-finding sidecar paths:
+	//  - DBSCAN noise: an isolated finding in a location cluster with corroboration.
+	//  - Consensus filter: an uncorroborated singleton moved from merged findings.
+	// Both paths must emit the same wire shape: Reviewer set, Reviewers/Confidence
+	// empty, so consumers of ambiguous.json do not see two schemas.
+	sources := []Source{
+		{Name: "host", Findings: []Finding{
+			cf("MEDIUM", "foo.go", 10, "token never expires unchecked here", "correctness", "alice"),
+			cf("MEDIUM", "baz.go", 30, "unused import lingers in this file", "style", "alice"),
+		}},
+		{Name: "pool", Findings: []Finding{
+			cf("MEDIUM", "foo.go", 10, "token never expires unchecked here", "correctness", "bob"),
+		}},
+		{Name: "extra", Findings: []Finding{
+			// Distinct enough from the alice/bob issue to be DBSCAN noise in foo.go.
+			cf("MEDIUM", "foo.go", 20, "deprecated widget factory api usage", "style", "carol"),
+			// A lone singleton in a separate file, filtered by consensus.
+			cf("MEDIUM", "bar.go", 40, "magic number used for timeout", "style", "carol"),
+		}},
+	}
+	res := Reconcile(sources, Options{})
+
+	var singletonCount int
+	for _, c := range res.Ambiguous {
+		if len(c.Findings) != 1 {
+			continue
+		}
+		singletonCount++
+		f := c.Findings[0]
+		isTrue(t, f.Reviewer != "", "single-finding sidecar entry has Reviewer set")
+		isTrue(t, len(f.Reviewers) == 0, "single-finding sidecar entry has no Reviewers")
+		eq(t, f.Confidence, "", "single-finding sidecar entry has no Confidence")
+	}
+	eq(t, singletonCount, 2, "one DBSCAN-noise singleton and one consensus-filtered singleton")
+}
+
 // TestConsensusExempt_Predicate unit-tests the pure exemption predicate directly,
 // including the confirmed-verdict branch that cannot fire through Reconcile (Merge
 // nils input Verification), so the branch is exercised and documented.
