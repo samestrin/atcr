@@ -20,6 +20,21 @@ Added an opt-in context-aware diff chunking strategy so large reviews can be spl
 - Broadened the consensus-filter security exemption to recognize common security synonyms (`vulnerability`, `auth`, `injection`) so genuine security singletons are not dropped as uncorroborated noise.
 - Normalized the ambiguous sidecar wire shape for isolated findings so DBSCAN-isolated noise and consensus-filtered singletons both emit a raw per-source finding with `Reviewer` set and `Reviewers`/`Confidence` cleared.
 - Added a regression test confirming PageRank authority-promoted singletons survive the consensus filter.
+- Recorded partial chunk coverage as `UnreviewedChunks` in `summary.json`.
+- Gated the oversize-file warning on single-file diffs and warned when chunked reviews produced no actionable files.
+- Bounded per-agent chunk count via `maxChunksPerAgent`.
+- Applied neutral truncation to individual chunks instead of copying whole-payload truncation into every chunk.
+- Suppressed oversized-file warning on resume rebuilds.
+- Hoisted redundant chunk scans in `internal/fanout/review.go`.
+- Recognized combined-diff boundary markers in the chunker.
+- Validated `review_strategy` values during project-config loading.
+- Fixed `FallbackFrom` being overwritten during chunk fallback.
+- Fixed serial chunked `DurationMS` under-counting.
+- Clamped non-positive `EffectiveMaxContextLines` to the default value.
+- Fixed trailing partial-line undercount in chunk boundaries.
+- Fixed no-prefix diff chunking.
+- Clarified that `review_strategy` has no CLI tier.
+- Corrected a misleading `max_context_lines` comment in `internal/registry/config.go`.
 
 ## [14.2.0] - 2026-06-30
 

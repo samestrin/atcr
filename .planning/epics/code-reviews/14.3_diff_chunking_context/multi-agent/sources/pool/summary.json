@@ -1,0 +1,37 @@
+{
+  "agents": [
+    {
+      "agent": "bruce",
+      "status": "ok",
+      "findings_count": 0,
+      "duration_ms": 90208,
+      "payload_mode": "blocks",
+      "truncated": false,
+      "files_dropped": [],
+      "dropped_by_min_severity": 0,
+      "truncated_by_max_findings": 0,
+      "model": "minimax-m3-mira",
+      "tokens_in": 40215,
+      "tokens_out": 8192
+    },
+    {
+      "agent": "dax",
+      "status": "failed",
+      "findings_count": 0,
+      "duration_ms": 191059,
+      "payload_mode": "blocks",
+      "truncated": false,
+      "files_dropped": [],
+      "fallback_used": true,
+      "fallback_from": "dax",
+      "error": "provider returned HTTP 400: {\"error\":{\"message\":\"litellm.ContextWindowExceededError: litellm.BadRequestError: ContextWindowExceededError: OpenAIException - This model's maximum context length is 32768 tokens. However, you requested 8192 output tokens and your prompt contains at least 24577 input tokens, for a total of at least 32769 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value=24577)\\nmodel=llm-large. context_window_fallbacks=None. fallbacks=[{'kimi-code': ['kimi-k2.6']}].\\n\\nSet 'context_window_fallback' - https://docs.litellm.ai/docs/routing#fallbacksNo fallback model group found for original model_group=llm-large. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=llm-large\\nAvailable Model Group Fallbacks=None\\nError doing the fallback: litellm.ContextWindowExceededError: litellm.BadRequestError: ContextWindowExceededError: OpenAIException - This model's maximum context length is 32768 tokens. However, you requested 8192 output tokens and your prompt contains at least 24577 input tokens, for a total of at least 32769 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value=24577)\\nmodel=llm-large. context_window_fallbacks=None. fallbacks=[{'kimi-code': ['kimi-k2.6']}].\\n\\nSet 'context_window_fallback' - https://docs.litellm.ai/docs/routing#fallbacksNo fallback model group found for original model_group=llm-large. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times\",\"type\":null,\"param\":null,\"code\":\"400\"}}",
+      "dropped_by_min_severity": 0,
+      "truncated_by_max_findings": 0
+    }
+  ],
+  "total": 2,
+  "succeeded": 1,
+  "failed": 1,
+  "partial": true,
+  "total_findings": 0
+}
