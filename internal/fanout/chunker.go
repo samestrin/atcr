@@ -16,7 +16,7 @@ const reviewStrategyChunked = "chunked"
 // it directly rather than importing internal/payload (a package-private split),
 // keeping this a self-contained ~20-line utility and avoiding cross-package
 // coupling (epic Technical Constraints).
-const diffFileMarker = "diff --git a/"
+const diffFileMarker = "diff --git "
 
 // countLines returns the diff line count of s, measured by newline count
 // (strings.Count per the epic constraint). It is the unit the bin-packer budgets
