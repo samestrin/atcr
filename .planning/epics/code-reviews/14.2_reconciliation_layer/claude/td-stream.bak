@@ -1,0 +1,13 @@
+# TD_STREAM - Technical Debt Items
+# TARGET_ID: /Users/samestrin/Documents/GitHub/atcr/.planning/epics/completed/14.2_reconciliation_layer.md
+# TARGET_TYPE: epic
+# CREATED: 2026-07-01 07:36:24
+# Format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+# EST_MINUTES: estimated fix time
+# EVIDENCE: Code snippet reference with file:line_start-line_end range (e.g., src/auth.ts:45-52)
+# REVIEWER: 'claude' (this prompt), agent name (multi_review pool, e.g. bruce/greta)
+# --- DATA BELOW THIS LINE ---
+
+MEDIUM|reconcile/consensus.go:49|consensusSingleton keys on Confidence<HIGH and the whole design rests on the claim that an authority-promoted (epic 13.3) single-reviewer finding is HIGH and survives the filter, but no test exercises this interaction. A refactor keying the filter on len(Reviewers)==1 would silently drop promoted singletons with no failing test.|Add a test in reconcile/consensus_test.go: sources where reviewers A and B corroborate finding X (building A's PageRank authority) and A also raises a lone MEDIUM finding Y at another location; assert Y is promoted to HIGH and stays in res.Findings (ConsensusFiltered excludes Y). Confirm it fails if consensusSingleton is changed to test len(m.Reviewers).|testing|30|reconcile/consensus.go:42-51|claude
+LOW|reconcile/consensus.go:84|consensusNoiseCluster wraps the MERGED finding (Reviewer empty, Reviewers set, Confidence=MEDIUM) while DBSCAN noise wraps the RAW finding (Reviewer set, Reviewers/Confidence empty). Both become single-finding ambiguous.json entries via toAmbiguousWire, so the sidecar now has two shapes for one isolated finding; a tool reading finding.reviewer on a consensus entry gets an empty string.|Normalize both isolated-finding paths through one helper (or wrap the raw pre-merge finding in the consensus path) so the wire shape is identical. Assert reviewer/reviewers/confidence match between a DBSCAN-noise and a consensus-filtered entry in ambiguous.json.|maintainability|30|reconcile/consensus.go:84-91|claude
+LOW|reconcile/consensus.go:65|The singleton exemption matches category exactly "security"/"out-of-scope" (or HIGH/CRITICAL severity). A genuine MEDIUM vulnerability a single model labels "vulnerability"/"auth"/"injection" is not exempt and gets routed to the sidecar — the "too costly to drop" case the exemption exists to prevent. Protection depends on reviewers emitting the literal token security.|Broaden the category test to a security-synonym set or substring match (security/vuln/auth/inject) after canonicalization, and/or document the required category taxonomy reviewers must emit. Verify a MEDIUM vulnerability-category singleton on a >=3 panel stays in res.Findings.|correctness|15|reconcile/consensus.go:64-77|claude

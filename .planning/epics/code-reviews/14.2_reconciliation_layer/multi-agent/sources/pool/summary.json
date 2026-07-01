@@ -1,0 +1,37 @@
+{
+  "agents": [
+    {
+      "agent": "bruce",
+      "status": "ok",
+      "findings_count": 0,
+      "duration_ms": 88311,
+      "payload_mode": "blocks",
+      "truncated": false,
+      "files_dropped": [],
+      "dropped_by_min_severity": 0,
+      "truncated_by_max_findings": 0,
+      "model": "minimax-m3-mira",
+      "tokens_in": 26624,
+      "tokens_out": 8192
+    },
+    {
+      "agent": "dax",
+      "status": "ok",
+      "findings_count": 6,
+      "duration_ms": 50705,
+      "payload_mode": "blocks",
+      "truncated": false,
+      "files_dropped": [],
+      "dropped_by_min_severity": 0,
+      "truncated_by_max_findings": 0,
+      "model": "deepseek-4",
+      "tokens_in": 27611,
+      "tokens_out": 903
+    }
+  ],
+  "total": 2,
+  "succeeded": 2,
+  "failed": 0,
+  "partial": false,
+  "total_findings": 6
+}

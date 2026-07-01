@@ -1,0 +1,92 @@
+[
+  {
+    "severity": "HIGH",
+    "file": "internal/reconcile/consensus_filter_test.go",
+    "line": 1,
+    "problem": "No test exercises the `panelReviewers` path when a source has findings but all have empty Reviewer strings",
+    "fix": "Add a test case where a source with findings carries only `Reviewer: \"\"` and assert `panelReviewers` returns 0",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "`panelReviewers` ignores empty reviewers but no test proves it; `TestConsensusSingleton_And_PanelReviewers` only tests the unattributed finding mixed with attributed ones",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "reconcile/consensus.go",
+    "line": 52,
+    "problem": "`consensusExempt` dead-code branch for `Verification.Verdict == VerdictConfirmed` is exercised only by a direct unit test, never through `Reconcile`",
+    "fix": "Keep the forward-looking guard but add a comment that `TestConsensusExempt_Predicate` is the sole coverage",
+    "category": "testing",
+    "est_minutes": 5,
+    "evidence": "`consensusExempt` confirmed-verdict branch cannot fire through `Reconcile` (Merge nils input Verification); only `TestConsensusExempt_Predicate` hits it",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "reconcile/consensus.go",
+    "line": 91,
+    "problem": "`consensusNoiseCluster` sets `Similarity` to 0 but no test asserts the field value",
+    "fix": "Assert `Similarity == 0` in any test that inspects the sidecar cluster produced by the filter",
+    "category": "testing",
+    "est_minutes": 5,
+    "evidence": "`consensusNoiseCluster` returns `AmbiguousCluster` with zero-value `Similarity`; `inAmbiguousSingleton` only checks `File` and `len(Findings)`",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "reconcile/consensus_test.go",
+    "line": 1,
+    "problem": "No test for `consensusSingleton` on a `ConfVerified` merged finding",
+    "fix": "Add a case: `consensusSingleton(Merged{Finding{Confidence: ConfVerified}})` must be `false`",
+    "category": "testing",
+    "est_minutes": 5,
+    "evidence": "`consensusSingleton` keys on `!ConfidenceAtOrAbove(_, ConfHigh)`, which covers `ConfVerified` transitively, but no explicit case guards against a regression that reorders the confidence enum",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "reconcile/consensus.go",
+    "line": 1,
+    "problem": "`categorySecurity` constant is exported implicitly (lowercase) but `CategoryOutOfScope` is used directly in the same switch; inconsistency may confuse future readers",
+    "fix": "Add a comment that `categorySecurity` is unexported because it's internal to the filter, while `CategoryOutOfScope` is the canonical public constant",
+    "category": "style",
+    "est_minutes": 5,
+    "evidence": "`consensusExempt` switches on `categorySecurity` (local const) and `CategoryOutOfScope` (exported); no comment explains the asymmetry",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "reconcile/reconcile_test.go",
+    "line": 25,
+    "problem": "The sort-order test comment explains the reviewer-sharing fix but the test still uses `recAt()` which sets a fixed time — the comment doesn't mention that `recAt()` is irrelevant to the fix",
+    "fix": "Remove the `recAt()` call or note that it's orthogonal to the reviewer-sharing fix",
+    "category": "style",
+    "est_minutes": 2,
+    "evidence": "`TestReconcile_SortedBySeverityThenLocation` calls `recAt()` but the comment only explains the reviewer-sharing change",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  }
+]

@@ -149,6 +149,100 @@ func TestConsensusFilter_ExemptsSecurityAndHighSeverity(t *testing.T) {
 	eq(t, res.Summary.ConsensusFiltered, 1, "only the stylistic singleton was filtered")
 }
 
+func TestConsensusFilter_ExemptsSecuritySynonyms(t *testing.T) {
+	// 3-source panel with singletons only. The security-synonym categories must be
+	// exempt from the consensus filter even though they do not match the literal
+	// token "security".
+	sources := []Source{
+		{Name: "a", Findings: []Finding{
+			cf("MEDIUM", "style.go", 20, "unused import lingers in this file", "style", "a"),
+		}},
+		{Name: "b", Findings: []Finding{
+			cf("MEDIUM", "vuln.go", 30, "request path is not authorization checked", "vulnerability", "b"),
+			cf("MEDIUM", "auth.go", 40, "missing mfa on privileged endpoint", "auth", "b"),
+		}},
+		{Name: "c", Findings: []Finding{
+			cf("MEDIUM", "inject.go", 50, "sql injection in the query builder path", "injection", "c"),
+		}},
+	}
+	res := Reconcile(sources, Options{})
+
+	isTrue(t, !hasFinding(res, "style.go"), "the stylistic singleton is dropped")
+	isTrue(t, hasFinding(res, "vuln.go"), "a vulnerability singleton is exempt")
+	isTrue(t, hasFinding(res, "auth.go"), "an auth singleton is exempt")
+	isTrue(t, hasFinding(res, "inject.go"), "an injection singleton is exempt")
+	eq(t, res.Summary.ConsensusFiltered, 1, "only the stylistic singleton was filtered")
+}
+
+func TestConsensusFilter_AuthorityPromotedSingletonSurvives(t *testing.T) {
+	// Three distinct reviewers. A corroborates with B on one issue and with C on
+	// another, giving A run-global PageRank authority above the uniform baseline.
+	// A also reports a lone MEDIUM finding Y. The epic-14.2 consensus filter keys
+	// on confidence (not len(Reviewers)), so the authority-promoted singleton is
+	// HIGH and survives; a regression to len(Reviewers)==1 would silently drop it.
+	sources := []Source{
+		{Name: "host", Findings: []Finding{
+			cf("MEDIUM", "foo.go", 10, "token never expires unchecked here", "correctness", "alice"),
+			cf("MEDIUM", "baz.go", 10, "request body is not validated", "correctness", "alice"),
+			cf("MEDIUM", "bar.go", 20, "unused import lingers in this file", "style", "alice"),
+		}},
+		{Name: "pool", Findings: []Finding{
+			cf("MEDIUM", "foo.go", 10, "token never expires unchecked here", "correctness", "bob"),
+		}},
+		{Name: "extra", Findings: []Finding{
+			cf("MEDIUM", "baz.go", 10, "request body is not validated", "correctness", "carol"),
+		}},
+	}
+	res := Reconcile(sources, Options{})
+
+	isTrue(t, hasFinding(res, "bar.go"), "authority-promoted singleton Y stays in findings")
+	isTrue(t, !inAmbiguousSingleton(res, "bar.go"), "promoted singleton is not routed to the sidecar")
+	eq(t, res.Summary.ConsensusFiltered, 0, "promoted singleton is excluded from consensus filter")
+	eq(t, res.Summary.AuthorityPromoted, 1, "alice's lone finding was promoted by authority")
+	for _, m := range res.Findings {
+		if m.File == "bar.go" {
+			eq(t, m.Confidence, ConfHigh, "promoted singleton confidence is HIGH")
+			deepEq(t, m.Reviewers, []string{"alice"}, "promoted singleton still has one reviewer")
+		}
+	}
+}
+
+func TestConsensusFilter_AmbiguousSingletonShapeMatchesDBSCANNoise(t *testing.T) {
+	// A 3-reviewer panel produces two different single-finding sidecar paths:
+	//  - DBSCAN noise: an isolated finding in a location cluster with corroboration.
+	//  - Consensus filter: an uncorroborated singleton moved from merged findings.
+	// Both paths must emit the same wire shape: Reviewer set, Reviewers/Confidence
+	// empty, so consumers of ambiguous.json do not see two schemas.
+	sources := []Source{
+		{Name: "host", Findings: []Finding{
+			cf("MEDIUM", "foo.go", 10, "token never expires unchecked here", "correctness", "alice"),
+		}},
+		{Name: "pool", Findings: []Finding{
+			cf("MEDIUM", "foo.go", 10, "token never expires unchecked here", "correctness", "bob"),
+		}},
+		{Name: "extra", Findings: []Finding{
+			// Distinct enough from the alice/bob issue to be DBSCAN noise in foo.go.
+			cf("MEDIUM", "foo.go", 20, "deprecated widget factory api usage", "style", "carol"),
+			// A lone singleton in a separate file, filtered by consensus.
+			cf("MEDIUM", "bar.go", 40, "magic number used for timeout", "style", "carol"),
+		}},
+	}
+	res := Reconcile(sources, Options{})
+
+	var singletonCount int
+	for _, c := range res.Ambiguous {
+		if len(c.Findings) != 1 {
+			continue
+		}
+		singletonCount++
+		f := c.Findings[0]
+		isTrue(t, f.Reviewer != "", "single-finding sidecar entry has Reviewer set")
+		isTrue(t, len(f.Reviewers) == 0, "single-finding sidecar entry has no Reviewers")
+		eq(t, f.Confidence, "", "single-finding sidecar entry has no Confidence")
+	}
+	eq(t, singletonCount, 2, "one DBSCAN-noise singleton and one consensus-filtered singleton")
+}
+
 // TestConsensusExempt_Predicate unit-tests the pure exemption predicate directly,
 // including the confirmed-verdict branch that cannot fire through Reconcile (Merge
 // nils input Verification), so the branch is exercised and documented.
