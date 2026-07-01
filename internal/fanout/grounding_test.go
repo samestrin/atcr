@@ -154,3 +154,42 @@ func TestGroundFindings_EvidenceCapTruncates(t *testing.T) {
 		t.Fatalf("evidence beyond cap: kept=%d dropped=%d, want kept=0 dropped=1", len(out), dropped)
 	}
 }
+
+func TestGroundFindings_DropsBoilerplateEvidence(t *testing.T) {
+	// "if err != nil {" (15 chars) is ubiquitous Go boilerplate. Even when it is a
+	// genuinely changed line, an out-of-range finding whose EVIDENCE is only that
+	// boilerplate must NOT ground: the evidence floor sits above it. A distinctive
+	// 22-char quote on the same file still grounds via the evidence fallback.
+	changed := payload.ChangedLines{
+		"auth.go": {
+			Ranges:      []payload.LineRange{{Start: 40, End: 45}},
+			ChangedText: []string{"if err != nil {", "return validate(token)"},
+		},
+	}
+	boiler := []stream.Finding{{File: "auth.go", Line: 999, Category: "correctness", Evidence: "if err != nil {"}}
+	if out, dropped := groundFindings(boiler, changed); len(out) != 0 || dropped != 1 {
+		t.Fatalf("boilerplate evidence: kept=%d dropped=%d, want kept=0 dropped=1", len(out), dropped)
+	}
+	distinct := []stream.Finding{{File: "auth.go", Line: 999, Category: "correctness", Evidence: "return validate(token)"}}
+	if out, dropped := groundFindings(distinct, changed); len(out) != 1 || dropped != 0 {
+		t.Fatalf("distinctive evidence: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
+	}
+}
+
+func TestGroundFindings_EvidenceFloorCountsRunesNotBytes(t *testing.T) {
+	// A 6-rune multibyte quote is 18 bytes: len() would count it at the byte floor
+	// and let a short hallucinated multibyte snippet clear the gate, so the floor
+	// must count runes. Six hiragana (3 bytes each) is well under the rune floor
+	// and must be dropped, not grounded by its inflated byte length.
+	multibyte := "あいうえおか" // 6 runes, 18 bytes
+	changed := payload.ChangedLines{
+		"auth.go": {
+			Ranges:      []payload.LineRange{{Start: 40, End: 45}},
+			ChangedText: []string{multibyte},
+		},
+	}
+	in := []stream.Finding{{File: "auth.go", Line: 999, Category: "correctness", Evidence: multibyte}}
+	if out, dropped := groundFindings(in, changed); len(out) != 0 || dropped != 1 {
+		t.Fatalf("multibyte evidence: kept=%d dropped=%d, want kept=0 dropped=1", len(out), dropped)
+	}
+}
