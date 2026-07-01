@@ -1,3 +1,17 @@
+## [14.2.0] - 2026-06-30
+
+Made the reconciliation layer a strict gatekeeper against hallucinated technical-debt items by filtering uncorroborated singleton findings and hardening the host review prompt.
+
+### Added
+
+- The reconciler now applies a consensus filter: on a panel of at least three distinct reviewers, a finding raised by only a single reviewer (below `HIGH` confidence) is routed to the ambiguous sidecar instead of the promoted `findings.json` and the CI gate — unless it is security-related, `HIGH`/`CRITICAL` severity, out-of-scope, or independently confirmed. A `consensus_filtered` count in `summary.json` and the report records how many were routed. The filter is inert below three reviewers, so the single-API-key (host + 1 pool persona) workflow is untouched. Reviewer count is measured across findings, not source directories, so it fires correctly even though pool personas are flattened into one `pool` source.
+
+### Changed
+
+- The host review prompt now instructs the host to aggressively reject any finding it cannot ground in the diff, and frames ambiguity adjudication as a strict gatekeeper against false positives — never merging an ungrounded finding into a real one.
+
+*Shipped via /execute-epic (epic 14.2)*
+
 ## [Technical Debt] - 2026-06-30
 
 ### Fixed
