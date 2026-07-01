@@ -48,7 +48,7 @@ func TestChunkedReview_EndToEnd_SingleSourcePerPersona(t *testing.T) {
 	diff := fileSeg("a.go", 6) + fileSeg("b.go", 6)
 	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 2}}
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.Len(t, slots, 2, "one persona bin-packs into two chunk slots")
 

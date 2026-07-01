@@ -1,0 +1,2227 @@
+diff --git a/.planning/epics/active/14.3_diff_chunking_context.md b/.planning/epics/active/14.3_diff_chunking_context.md
+index e4ba8bb7..a709d7ae 100644
+--- a/.planning/epics/active/14.3_diff_chunking_context.md
++++ b/.planning/epics/active/14.3_diff_chunking_context.md
+@@ -56,40 +56,68 @@ This section records findings from `/refine-epic` run on June 29, 2026 07:10:58A
+ No mechanical corrections were needed.
+ 
+ ### Items needing user confirmation (4)
+ 
+ ⏸️ **[1] Schema location mismatch** — `max_context_lines` field cited as going into `.atcr/personas/*.yaml`, but persona YAML files are community-fetched system prompts, not config parameter files. The per-agent config parameters (model, temperature, timeout_secs, max_findings, etc.) live in `AgentConfig` in `internal/registry/config.go` (surfaced via `~/.config/atcr/registry.yaml`). The `max_context_lines` field should be added to `AgentConfig` there, not to persona files. The `.atcr/personas/` directory does not currently exist — no project-level personas are installed.
+ 
+ ⏸️ **[2] Missing component: `internal/payload/`** — The bin-packing algorithm in T3 must consume per-file diff chunks produced by `splitDiffByFile()` and `diffChunks()` in `internal/payload/diff.go`. This package is not listed in COMPONENTS_TOUCHED. A minor modification (or a line-count accessor) is needed here to expose per-file line counts for bin assignment. Adding `internal/payload/` pushes the derived component count to ≥3.
+ 
+ ⏸️ **[3] Component count likely exceeds /execute-epic's ≤2 limit** — The work touches at minimum three distinct Go packages: `internal/registry` (config schema), `internal/fanout` (dispatcher + bin-packing), and `internal/reconcile` + `reconcile/` (Reconciler merge). Adding `internal/payload/` makes four. The plan's header claims 2 components. With ≥3 confirmed, this plan is outside `/execute-epic`'s scope guard and should run through `/init-plan` for a full sprint pipeline.
+ 
+ ⏸️ **[4] Epic 14.2 / 14.3 Reconciler interaction** — Epic 14.2 (active, same milestone) implements a Two-Persona Consensus Rule that drops TD items seen by only one persona. Epic 14.3 AC4 must merge multi-chunk findings from the same persona into a single logical source so they count as ONE persona vote, not N. If chunks from persona X land under separate source directory names and the Reconciler hasn't been patched for chunk normalization, 14.2's consensus filter will treat them as N distinct voters — inflating false consensus. The plan should specify either: (a) that 14.3 must be merged before 14.2 executes, or (b) the exact chunk-source naming convention so both epics are compatible.
+ 
+ ### Advisory observations (5)
+ 
+ ℹ️ **[A] `docs/registry.md` needs updating** — Semantic search surfaced `docs/registry.md` (score 0.948) as highly related to OBJECTIVE. It documents the `AgentConfig` fields. When `max_context_lines` and a `review_strategy` flag are added to `AgentConfig`, this doc must be updated. Consider adding it to the task list.
+ 
+ ℹ️ **[B] Rate-limit / backoff already implemented** — Epic 4.6 (completed, `internal/llmclient/`) provides exponential backoff with jitter and `Retry-After` header handling for 429 responses. The plan's NFR about "concurrency controls and backoff" is already satisfied by existing infrastructure — no new retry/backoff code is needed for this epic.
+ 
+ ℹ️ **[C] Primary integration point: `buildSlots()` at `internal/fanout/review.go:720`** — This function assembles all `Slot` objects dispatched to the fan-out engine. The chunked strategy would extend it to emit multiple `Slot`s per agent (one per bin) instead of one. The `Slot.Primary.Name` would need to encode the chunk index (e.g., `bruce:chunk-0`, `bruce:chunk-1`) to produce unique result directories while preserving the base agent name for Reconciler attribution (AC4).
+ 
+ ℹ️ **[D] Reusable building blocks exist for bin-packing** — `splitDiffByFile()` in `internal/payload/diff.go` already produces per-file diff chunks (a `map[string]string`). Line count per chunk can be derived with `strings.Count(chunk, "\n")`. The `ApplyByteBudget()` function in `internal/payload/builder.go` provides the truncate-and-warn pattern to follow for the per-bin line-budget enforcement.
+ 
+ ℹ️ **[E] Test patterns** — Go standard test framework with testify assertions, table-driven `t.Run` subtests, `*_test.go` files next to source. Relevant existing examples: `internal/fanout/engine_test.go`, `internal/fanout/review_test.go`, `reconcile/dedupe_test.go`.
+ 
+ ### Verification context
+ 
+ - Refinement depth: deep
+ - Derived TASK_COUNT: 4 (limit: 6)
+ - Derived COMPONENT_COUNT: ≥3 (limit: 2) — see finding [3]
+ - COMPONENTS_TOUCHED (plan claims): fan-out dispatcher, Reconciler (2)
+ - COMPONENTS_TOUCHED (derived): `internal/registry`, `internal/fanout`, `internal/payload`, `internal/reconcile` + `reconcile/` (≥3)
+ - VISUAL_SURFACE: false
+ - HAS_GATED_WORK: false
+ - HAS_CROSS_SYSTEM: false
+ - Cited references checked: 1 (`.atcr/personas/*.yaml` glob)
+ - Codebase search queries (spot-check): "chunk|bulk|strategy", "context.limit|max_context|PayloadByte", "merge.*source|source.*merge"
+ - Deep discovery method: semantic
+ - Deep discovery queries: context-aware diff chunking strategy for LLM review; bin packing file grouping context limit per agent; per-agent configuration max context lines token budget; fanout dispatcher payload build agent review; reconciler source uniqueness persona attribution merge findings; rate limiting backoff concurrency API requests
+ - Deep discovery match count: 15
+ - Deep discovery snapshot: /Users/samestrin/Documents/GitHub/atcr/.planning/.temp/refine-epic/codebase-discovery.json (temp-only — not committed)
++
++## Clarifications
++
++### Recorded 2026-07-01 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- Chunk attribution uses **Option A (aggregate-at-source)**: in chunked mode the fan-out engine loops a persona's N bin-packed chunk calls internally and merges their raw outputs into the single `raw/agent/<persona>/` artifact directory with `Reviewer=<persona>` stamped once, before the artifact-write step. This requires zero change to the already-merged Epic 14.2 reconciler. Option B (per-chunk subdirs) is rejected — `internal/fanout/artifacts.go` (writePool) hard-errors on duplicate agent directories and `agentDirName()` only produces flat single-segment names.
++- `max_context_lines` default = **1500** diff lines per chunk (≈22k–27k tokens; under the 128k `DefaultPayloadByteBudget` and the documented 40k-token conservative floor).
++- The strategy toggle is a **run-wide** `review_strategy: bulk|chunked` on Settings/Registry (default `bulk`), resolved once per run like `PayloadMode`/`MaxParallel`/`PayloadByteBudget`. The global flag only decides *whether* to bin-pack; each bin's size is governed by the individual agent's own `max_context_lines`.
++- Epic 14.2 is already merged; its ordering clause (line 33) is stale/inverted. Build 14.3 for compatibility with the live 14.2 reconciler and do NOT modify, relax, or touch 14.2's consensus-counting logic. `reconcile/consensus.go` counts distinct `Finding.Reviewer` values, so it is resilient to chunk fan-out as long as each finding's `Reviewer` is the plain persona name.
++
++**Scope Boundaries:**
++- IN scope: registry schema (`max_context_lines` on `AgentConfig`, `review_strategy` on Settings), the chunker + chunked dispatch path, same-persona chunk aggregation in the fan-out engine, `docs/registry.md` update.
++- OUT of scope: touching `internal/payload/` (chunker implements its own `diff --git a/`-boundary split per line 32); changing bulk-mode behavior; modifying Epic 14.2 consensus logic; cross-file context recovery within a chunk (accepted tradeoff).
++
++**Technical Approach:**
++- `internal/fanout/chunker.go` splits the raw diff on `diff --git a/` boundaries, counts lines via `strings.Count`, and bin-packs into bins ≤ the persona's `max_context_lines` using **greedy next-fit in original file order** (files accumulate into the current bin until the next file would overflow it, then a new bin opens). Next-fit is chosen over first-fit-decreasing because it matches the epic prose ("group multiple files together into a single chunk until it hits the persona's specific context limit") and preserves the diff's presentation order; both satisfy AC3 and the Cost-Efficiency NFR. A single file exceeding the limit becomes its own oversized chunk with a warning.
++- Retry/backoff/concurrency for the extra chunk calls is already provided by Epic 4.6 (`internal/llmclient`) — no new backoff code.
++
++**Original Questions and Answers:**
++1. Q: Chunk attribution architecture — Option A (aggregate-at-source) or Option B (per-chunk subdirs)?
++   A: Option A. Engine loops N chunk calls per persona and merges into one `raw/agent/<persona>/` dir with `Reviewer=<persona>` before artifact write; zero reconciler change. Option B collides with writePool's duplicate-dir guard and the flat single-segment `agentDirName()`.
++2. Q: Accept `max_context_lines` default of 1500?
++   A: Accept 1500 (≈22k–27k tokens/chunk, under the 128k default budget and 40k conservative floor).
++3. Q: `review_strategy` run-wide on Settings, or per-agent?
++   A: Run-wide on Settings/Registry (matches `PayloadMode`/`MaxParallel` precedent). Global flag decides whether to bin-pack; per-agent `max_context_lines` governs bin size.
++4. Q: 14.2/14.3 ordering — plan says 14.3 first, but 14.2 is already merged?
++   A: Confirmed stale/inverted. Build 14.3 compatible with the live merged 14.2 reconciler; do not touch 14.2 consensus logic. `reconcile/consensus.go` counts distinct `Finding.Reviewer` values, so it is already resilient as long as each finding's `Reviewer` is the plain persona name.
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index 0b243520..cd51411e 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,16 +3,16 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 2 | 0 |
+ | MEDIUM | 0 | 28 | 0 |
+-| LOW | 0 | 28 | 0 |
++| LOW | 4 | 28 | 0 |
+ 
+-**Last Modified:** 2026-07-01 | **Open Items:** 0 | **Deferred Items:** 58 | **Resolved Items:** 0 | **Total Items:** 58
++**Last Modified:** 2026-07-01 | **Open Items:** 4 | **Deferred Items:** 58 | **Resolved Items:** 0 | **Total Items:** 62
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -62,215 +62,224 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
++### [2026-07-01] From Sprint: epic-14.3
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| 1 | [ ] | LOW | internal/fanout/chunker.go:180 | mergeResultGroup reports max DurationMS across chunks but serial-lane (rate_limited) personas run chunks sequentially so their true wall-clock is the sum; serial chunked timings under-count | Sum DurationMS across chunks for serial-lane personas (or track lane type) so serial chunked timings are accurate | OBSERVABILITY | 30 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/fanout/chunker.go:15 | The file-boundary marker is hardcoded to 'diff --git a/' so combined/merge-format diffs (diff --cc / diff --combined) never split and silently degrade to a single bulk chunk under chunked strategy | Recognize combined-diff markers as file boundaries or document that combined diffs are not chunked | EDGE_CASES | 30 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/fanout/review.go:850 | The oversized-file warning is emitted at slot-build time so PrepareResume (which rebuilds all pending slots) re-emits the same warning on every resume of a run containing an oversized file | Emit the oversized warning once at review-preparation time or suppress it on the resume rebuild path | OBSERVABILITY | 15 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/fanout/review.go:846 | Each chunk-slot is rendered with the whole-payload Truncation metadata so every chunk's prompt claims the same byte-budget-dropped files were truncated even though truncation is a diff-wide event unrelated to the chunk | Pass neutral truncation to individual chunks or annotate that truncation applies to the whole review not the chunk | CORRECTNESS | 15 | execute-epic-independent |
++
+ ### [2026-06-30] From Sprint: epic-14.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/fanout/grounding.go:54 | out-of-scope category is a blanket grounding-gate exemption in all modes, so an adversarial or hallucinating model can launder a fabricated finding past AC2 by tagging category=out-of-scope in diff/blocks mode | Restrict the out-of-scope exemption to files mode (or require the cited FILE:LINE/EVIDENCE to anchor before honoring it in diff/blocks) — DEFERRED: conflicts with clarification Q2 which chose blanket exemption because out-of-scope is annotated-not-promoted by the reconciler downstream | correctness | 30 | execute-epic-independent |
+ | 1 | [/] | MEDIUM | internal/fanout/grounding.go:47 | groundFindings ignores Result.Tools and Result.PayloadMode, so a tool-enabled or files-mode agent citing a real line it legitimately read outside the changed range is dropped unless it tags out-of-scope or quotes a changed line in EVIDENCE | Thread Tools/PayloadMode into the gate and relax the range/evidence requirement for tool/files agents — DEFERRED: the out-of-scope prompt convention already instructs such agents to tag read-but-unchanged citations, which the gate exempts | correctness | 45 | execute-epic-independent |
+ | 1 | [/] | LOW | internal/fanout/review.go:470 | computeGroundingData builds a fresh gitRunner and re-runs validateRange + --name-status + --unified=0 for a range the payload builder already diffed, duplicating ~4 git subprocesses per review and per resume | Reuse the payload builder's memoized rangeChunks/gitRunner for the same base..head instead of recomputing the zero-context diff | performance | 45 | execute-epic-independent |
+ 
+ ### [2026-06-29] From Sprint: 13.4_brace_language_parsers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:1 | Wasm ABI (alloc/free/parse/emit/pins) duplicated across three parser modules | Extract shared ABI into common guest package | maintainability | 60 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-28] From Sprint: epic-13.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:20 | The alloc/free/emit/pins guest ABI is duplicated across three parser sources (goparser, pyparser, braceparser); the threshold the existing code documents for extraction (parser count > 2) is now crossed | Extract the shared guest ABI into a package referenced via go.mod replace directives coordinated in build.sh | MAINTAINABILITY | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-28] From Sprint: epic-13.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | u | [/] | LOW | reconcile/pagerank.go:181 | Authority promotion is silent: no counter or Summary stat records that a HIGH came from authority rather than reviewer count, so a misfiring promotion is only derivable as HIGH-with-a-single-reviewer (Deferred: Epic Plan 13.4) | Add a Summary stat (e.g. AuthorityPromoted int) counting authority-promoted findings for observability; out of v1 scope since the clarification fixed the wire schema | OBSERVABILITY | 30 | execute-epic-independent |
+ 
+ ### [2026-06-27] From Sprint: 13.1_ast_plugin_architecture
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | u | [/] | LOW | internal/astgroup/parsers/src/goparser/main.go:39 | The guest pins alloc'd buffers and hands the host int32(uintptr(unsafe.Pointer(&b[0]))) as a stable guest offset, valid only because the current Go GC is non-moving. This is an undocumented runtime invariant, not a language guarantee; a future moving GC makes the packed pointer a dangling offset with no detection. The unsafe alloc/free/emit/node boilerplate is copy-pasted across goparser, pyparser, and the 13.4 brace parsers, so any ABI fix must be applied N times. (Deferred: extraction premature at 2 parsers; epic scope fixed at Go+Python — a future-remedy note is in each parser's ABI section, revisit if parser count grows.) | Extract the shared alloc/free/emit/pins ABI into one internal guest package imported by every parser main.go, and add a build-time note pinning the GC assumption (or switch to an explicitly reserved arena). | maintainability | 120 | code-review | claude | MEDIUM |
+ | u | [/] | MEDIUM | internal/astgroup/parsers/src/pyparser/main.go:112 | scanTripleQuotes and stripComment are quote/escape-unaware. A triple-quote appearing inside a # comment, or a # appearing inside a string literal, flips the multi-line-string state machine the wrong way, so arbitrary spans of real code get classified as string content and dropped from significantLines, silently erasing blocks. The heuristic disclaimer documents the risk but does not bound it: on unusual source the structural hash diverges from the true AST. (Deferred: accepted PoC scope; heuristic limitation already documented at pyparser/main.go:72-78 and 152-156, degrades to proximity grouping.) | Run scanTripleQuotes only over the code portion (skip after an unquoted #) and skip triple-quotes occurring inside single-line strings. Add regression fixtures: a # containing a triple-quote, and a string literal containing #. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-26] From Sprint: 11.0_executing_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/tools/dispatch.go:146 | Tool gating for run_tests/run_script lives only in fanout.wireToolDefs (what the model is TOLD about); Dispatcher.Execute looks up d.handlers[name] with no check that the call was offered to the calling agent, and EnableExecution registers the exec handlers on the single dispatcher shared by the whole pool. The read-only guarantee for non-exec agents is therefore advisory, not structural — if any future caller enables exec non-uniformly across agents sharing one dispatcher, a non-exec agent could invoke run_script by simply naming it. No live exploit today: the sole exec caller, verify, sets exec uniformly for all skeptics. (Deferred: Epic Plan 11.1) | Pass the agent's allowed tool set (or Exec flag) into Execute and reject any call whose name was not offered to this agent, or gate the exec handlers behind a per-call capability rather than a globally-registered handler. Verify with a test where a non-exec agent emits a run_script tool_call and asserts it is refused. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-25] From Sprint: epic-11.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/tools/exec_tools.go:69 | Execution tools are gated per-agent only at the definition level (wireToolDefs); the shared per-run dispatcher will execute a run_tests/run_script call from any agent once EnableExecution is wired. The sandbox isolates every run identically so this is not a containment gap, but a non-designated agent could still incur execution cost. (Deferred: .planning/epics/active/11.1_dispatcher-structural-gating.md — exec_tools.go:69 is a data struct, not a gating point; the offering-layer gate is already structural, and a runtime per-call guard is the multi-file change scoped to Epic 11.1) | Thread agent exec-eligibility into the dispatcher (or add a per-call guard) so only designated agents execute, for precise cost attribution. | SECURITY | 30 | execute-epic-stage3 |
+ 
+ ### [2026-06-23] From Sprint: 8.0_reconciler_library
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | internal/reconcile/discover.go:25 | `internal/reconcile` keeps its discovery `Source` (Name + `[]stream.Finding` + Skipped + SkippedFiles); the library now defines a public `Source` (Name + `[]Finding`) | moved `Reconcile` takes the library `Source`; discovery output (`discover.Source`) is converted to `reconcile.Source` in the adapter/discovery layer | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | MEDIUM | unknown:0 | [Story 01 / Story 06] DoD item not implemented: both CI jobs (root ci.yml + reconcile-module PR-time job) must be marked as REQUIRED status checks on the main branch-protection rule. The CI workflow deliverables they depend on are all present and verified; only the protection-rule toggle is unset. The two story-level [ ] boxes (AC 01-06, AC 06-02) are the same single external action. (intent_note: deferred per sprint-plan Final Phase / dod-completion-summary.md (external repo-admin action)) | Configure branch protection in GitHub repo Settings -> Branches: add the root CI job and the reconcile-module PR-time job as required status checks. External repo-admin UI action (post-merge), not a source-tree change; documented deferred in dod-completion-summary.md. | docs | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: 7.3_github_action_pr_integration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 6 | [/] | MEDIUM | cmd/atcr/github.go:148-167 | Sequential inline comment posting is slow for PRs with many findings (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ | 6 | [/] | LOW | cmd/atcr/github.go:148-167 | Conclusion is computed twice for the same findings/failOn inputs (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: epic-7.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/verify/syntaxguard.go:130 | An unfenced multi-line JSON/config snippet with block braces can still satisfy looksLikeGoCode and be parsed as Go, producing a spurious invalid_syntax flag on non-Go content (residual after heuristic hardening). | Detect obviously non-Go brace content (JSON object / key:value lines) before treating block braces as a Go signal; deferred as a separate design refinement (unfenced non-Go fixes are rare; fenced non-Go is already handled). [Deferred 2026-06-22 to Epic Plan 7.5 syntax-guard-refinements per clarification] | EDGE_CASES | 30 | execute-epic-independent |
+ 
+ ### [2026-06-22] From Sprint: 7.0.1_executor_model_configuration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 7 | [/] | LOW | internal/registry/config.go:524 | Potential prompt injection via system_prompt (Won't-fix: config.go:531–534 explicitly documents that control chars are intentionally NOT rejected in system_prompt; the --- delimiter added at executor.go:225 eliminates the CRLF metadata-forgery surface; otto's fix conflicts with the documented design decision) | Add control character validation to SystemPrompt | security | 15 | code-review | otto | MEDIUM |
+ 
+ ### [2026-06-21] From Sprint: epic-6.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/debate/debate.go:165 | Gray-zone cluster merge/separate rulings are recorded in debate.json but not physically applied to findings.json; clusters still resolve via the existing adjudication path (Deferred: Epic Plan 6.1) | Wire the judge cluster decision into the reconcile adjudication application so unattended runs auto-merge gray-zone clusters inline | INTEGRATION | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-20] From Sprint: epic-5.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/cache/store.go:115 | Eviction does a full ReadDir+Stat of the cache dir on every Put even when under the cap; O(n) per write scales poorly if the cache accumulates thousands of entries (Won't-fix 2026-06-21: scan runs serially under the store mutex and LLM calls dominate latency; no Epic 5.2 perf criterion requires O(1) Put — added state not justified at LOW) | Maintain a running total-size counter and skip the directory scan when it is under the cap, or evict only on a periodic/threshold basis | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-06-20] From Sprint: epic-5.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/report/render.go:317 | The "File not found" warning format string is duplicated across internal/reconcile/emit.go (writeFindingsList) and internal/report/render.go (writePathWarning) in separate packages | Extract a shared constant/helper only if a common low-level rendering package emerges; a cross-package dependency is not justified for one format string today (Won't-fix 2026-06-21: two independent format strings across packages with no shared dependency; the recorded fix confirms extraction is not justified at this scope) | CROSS_CUTTING | 15 | execute-epic-cumulative |
+ | U | [/] | MEDIUM | internal/reconcile/reconcile.go:26 | Validation root is hardcoded to "." at every call site, so "atcr reconcile <path>" for a review of another repo, or running from a non-repo-root CWD, falsely flags every finding as "file not found" | Thread the reviewed repo root explicitly or add a --repo flag, applied consistently with the verify stage which uses the same "." convention (Deferred 2026-06-21: the narrow Root: os.Getwd() variant is a no-op — filepath.Abs(".") already equals the CWD, so it would not fix the non-repo-root / other-repo case; the real fix is to plumb the reviewed-repo path explicitly via a --repo flag threaded through the reconcile and verify call sites, est 60) | EDGE_CASES | 60 | execute-epic-independent |
+ 
+ ### [2026-06-20] From Sprint: 4.7.1_backup-swap-hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:318 | backupExisting() unconditionally RemoveAll's <path>.bak.old and <path>.bak.new at entry, but forceBackupOutputDir() only calls guardForeignBackup(dir+".bak") — the two staging siblings are not guarded. On an arbitrary --output-dir a user who owns <output-dir>.bak.old or <output-dir>.bak.new has it silently deleted by --force, re-opening the Epic 4.7 "never silently delete user data" contract. NOTE: epic clarification Q4 deliberately scoped the guard to .bak only (atcr-internal suffixes); this finding re-raises that decision as worth reconsidering, not a defect against the recorded scope. (intent_note: deferred per epic §Clarifications Q4 — extending guardForeignBackup to .bak.old/.bak.new is out of scope) (Won't-fix 2026-06-20: binding Epic 4.7.1 Q4 — guard stays scoped to .bak; .bak.old/.bak.new are atcr-owned staging names cleared by entry-time RemoveAll; confirmed via /sprint-clarification 95%) | In forceBackupOutputDir() (reviewdir.go:440) extend the guard to guardForeignBackup(dir+".bak.old") and guardForeignBackup(dir+".bak.new") before backupExisting, or refuse if either exists non-empty. Add a test pre-creating a foreign <output-dir>.bak.old with user content and assert --force errors instead of deleting it. | security | 60 | code-review | claude | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:373 | The advertised "an interrupted swap never leaves the user with neither generation" invariant is conditional on a best-effort SILENT restore succeeding. If restorePriorBackup's os.Rename(backupOld,backup) fails (e.g. backup partially recreated, or perms change), the only surviving copy is stranded under .bak.old — which the very next run's entry-time RemoveAll(backupOld) (line 318) then deletes. Same pattern at the copy site swapStagedBackup (atomic.go:159-167) feeding atomic.go:97 RemoveAll(bakOld). (Won't-fix 2026-06-20: observability half done (restore failure now logged); the lone-.bak.old-as-generation redesign is rejected per Epic 4.7.1 Q3 — .bak.old is atcr-owned temp deleted at entry, one-generation contract + TestBackupExisting_CleansStaleStagingStragglers stand; confirmed via /sprint-clarification 95%) | Surface restore failures loudly (log/return) instead of dropping them, and/or do not auto-RemoveAll .bak.old at entry when .bak is absent — treat a lone .bak.old as the surviving generation to recover. Add a test where restore fails and a subsequent run is asserted not to delete the only surviving copy. | correctness | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir.go:388 | backupCrossDevice's inner os.Rename(backupNew,backup) relies on backupNew and backup sharing a filesystem, an invariant that holds only by naming coincidence (both are siblings of path). If anyone later relocates backupNew under path, the inner rename silently becomes cross-device and returns a raw EXDEV to the user. (Won't-fix 2026-06-20: same-fs invariant holds by construction — backup and backupNew are both siblings of path; a runtime guard would be unreachable dead code today and is already documented at reviewdir.go:415-419; confirmed via /sprint-clarification 90%) | Add a test that forces renameFn to return syscall.EXDEV and makes the copy fail (a copy seam, or unreadable src), staging a prior .bak first; assert the prior .bak content is restored intact, the live tree survives, and .bak.new is cleaned up. Cover the copy-failure leg at minimum. | testing | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir_test.go:458 | Test-coverage gaps in the failed-swap/cleanup paths: TestBackupExisting_FailedSwapPreservesPriorBak asserts no .bak.old straggler but not .bak.new; the non-ErrNotExist Lstat(backup) error branch (reviewdir.go:333-335) is untested; the entry-time RemoveAll straggler-cleanup failure legs (reviewdir.go:318-323) are untested. Each is a real error branch a regression could silently break. | Add assert.NoDirExists for src+".bak.new" at reviewdir_test.go:458; add a perms-based test forcing Lstat(backup) to fail with a non-ErrNotExist error; add a test where .bak.old cannot be removed and assert the typed "clearing stale staging backup" error. Skip on root/CI where perms are not enforced. (Partial 2026-06-21: gaps 1 (.bak.new assertion) and 3 (RemoveAll(.bak.old) failure) covered; gap 2 (non-ErrNotExist Lstat(backup)) deferred — needs an lstatFn production seam since the staging siblings share a parent dir so perms cannot isolate it) | testing | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-19] From Sprint: 4.7_idempotency
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:284 | backupExisting() does os.RemoveAll(backup) then os.Rename(path, backup); BackupToDotBak() does os.RemoveAll(bak) then copyTree. If the rename/copy fails (cross-filesystem EXDEV when --output-dir and its .bak sibling are on different mounts, disk-full mid-copy, or SIGKILL), the single prior backup generation is already destroyed while the new backup is absent or partial. The live/original tree is preserved (good), but the one recoverable prior .bak is lost for no benefit — counter to the safe-to-retry goal. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 4.7.1) | Stage the new backup first: copy/rename into <path>.bak.new (or rename old .bak aside to .bak.old), confirm it is complete, then swap and only then remove the old generation. For backupExisting, attempt os.Rename before RemoveAll so a failed rename leaves the old .bak intact; detect EXDEV and fall back to copy+remove. Add a fault-injection test asserting the prior .bak survives a failed swap. | correctness | 120 | code-review | code-reviewer, claude | HIGH |
+ 
+ ### [2026-06-19] From Sprint: 4.5_circuit_breaker
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | MEDIUM | internal/fanout/metrics.go:37 | recordAgentOutcome zeroes apiCalls for any result whose error unwraps to context.DeadlineExceeded/Canceled, assuming no request was made. But a per-agent timeout routinely fires AFTER real HTTP round-trips (and mid tool-loop after several Chat turns already hit the wire), so atcr_api_calls_total undercounts real provider traffic exactly when a provider is degraded. The no-request assumption is only provably safe for CircuitOpenError and pre-first-send cancellation. (Deferred: Epic Plan 4.11) | Use max(1, r.Turns) for the deadline case instead of a flat 0, or thread a real calls-attempted counter out of the client rather than inferring from the terminal error class. Keep the apiCalls=0 path only for CircuitOpenError. | performance | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-18] From Sprint: epic-4.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/validation/validation.go:62 | System-dir denylist covers only /etc, /proc, /sys, leaving /boot, /dev, /root, /var and ~/.ssh writable via --output-dir / --output (deliberate Option-B permissive choice) (Won't-fix: intended Option-B policy per epic 4.3 clarifications 2026-06-18; revisit only on a concrete isolation requirement) | If stronger isolation is later required, switch to an allowlist anchored at the repo/.atcr root instead of a denylist | SECURITY | 30 | execute-epic-independent |
+ | 1 | [/] | LOW | internal/validation/validation.go:86 | Severity and Enum validators are shipped but wired to nothing (ParseSeverity/ValidFormat remain the live paths); they exist only to satisfy AC5/AC7 and future use (Won't-fix: intentionally public for AC5/AC7 per epic 4.3 clarifications; deletion breaks ACs, wire-in out of scope) | Revisit and delete if no caller adopts them within a release, or wire them in where duplication can be removed | OVER_ENGINEERING | 15 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/registry/attribution.go:55 | attribute() recurses and reconstructs the join even for a single-error errors.Join (which still satisfies Unwrap() []error), a small avoidable cost on the load-time validation path | Optionally short-circuit when len(children)==1 if profiling ever flags it (WON'T-FIX 2026-06-18: trigger unmet — error-path only, never hit on normal load; no perf AC in epic 4.2) | INTEGRATION | 5 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.1.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/fanout/review.go:361 | If a server shutdown (or CLI SIGINT) fires after all agents already succeeded but before ExecuteReview's interrupted := errors.Is(ctx.Err(), context.Canceled) check, a fully-completed run is stamped Interrupted=true and status.go:216 overrides RunCompleted to RunInterrupted (a false interrupted; inverse of AC4). Pre-existing in the CLI-shared path, newly reachable via MCP shutdown. | Gate the interrupted marker on at least one agent ending in StatusTimeout/cancelled rather than purely on parent ctx.Err()==Canceled. NOTE: touches CLI-shared review.go (out of scope for epic 4.1.2's MCP-only change); window is microscopic and outcome benign (resume no-ops a complete run) - separate design. (WON'T-FIX 2026-06-18: --resume self-healing via ClearInterrupted (resume.go:220) already recovers a stale interrupted-on-complete; revisit in a backlog sprint if insufficient) | CORRECTNESS | 30 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: epic-4.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:88 | Serve-mode background fan-out runs under context.WithoutCancel(ctx) so a SIGINT to the MCP server never cancels or marks an in-flight detached review interrupted; it is allowed to finish (intended MCP design) but never gets the interrupted marker CLI mode promises. (Deferred: Epic Plan 4.1.2) | Decide whether detached MCP reviews should be marked interrupted on server shutdown; if so, thread a cancellable/interrupt-aware context or post-hoc marker into the background review path — a separate design from this CLI-focused epic. | REGRESSION_RISK | 60 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: 4.0_structured_logging
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/review.go:172 | Both review entry points call `NewRedactor(root)` with ZERO configured secrets — cmd/atcr/review.go:172 and internal/mcp/handlers.go:87 pass only the path root, never the registry API keys. The exact-value secret-scrubbing loop in Redact is therefore dead in production; redaction relies entirely on the `sk-`/`Bearer` regexes, which miss raw provider keys that lack those prefixes (Google `AIzaSy...`, Azure `api-key`, JWTs `eyJ...`). The AC5 "no API key in log output" guarantee holds only for sk-/Bearer-shaped keys; the passing integration test likely uses an sk- key, masking the gap. (Deferred: Epic Plan 4.9 secret-value-redaction) | Thread resolved registry API key values into `NewRedactor(root, keys...)` at both review.go:172 and handlers.go:87 (keys are discoverable from prep.Slots / cfg.Registry). Add an integration test using a non-sk-shaped key (e.g. `AIzaSy...`) asserting it is redacted. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: 3.5_severity-rank-consolidation
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:18 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:30 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestGrayZoneNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:42 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNoDisagreementOnCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: epic-3.5
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/stream/severity.go:20 | The canonical SeverityRank map carries a read-only-after-init invariant in a comment only, with no test guard preventing a future caller from mutating the shared map (which would race across concurrent fan-out agents). (Won't fix: structural guard — reconcile copy-on-init at merge.go:29-31 means no consumer writes stream.SeverityRank directly; grep confirms zero write sites across consumers. Snapshot test trips the over-simplification gate; Rank() accessor cascades to 14+ direct-lookup sites — both out of pure-consolidation scope.) | Add a stream test that snapshots the map and asserts it is unchanged after consumers run, or wrap it behind a Rank(sev) accessor. | OBSERVABILITY | 20 | execute-epic-independent |
+ 
+ ### [2026-06-16] From Sprint: 3.4_scorecard-diagnostics-writer
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:118 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; the diagnostic already routes to the injectable writer, only fmt.Fprintf's own return is dropped; propagating it breaks Emit's never-fail contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:199 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; Append loop already surfaces firstErr; propagating the Fprintf return breaks the best-effort contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:235 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verdictTallies already writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:248 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verification-read-failed diagnostic writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:276 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; orphan-verdict diagnostic routes to injectable w, locked by TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/scorecard_test.go:291 | Epic 3.4 added unit tests proving EmitOpts.Diag / ReadOpts.Writer routing at the scorecard layer, but there is no test asserting the wiring itself — that the MCP handler passes a non-default writer or that the three CLI entry points pass cmd.ErrOrStderr(). This plumbing can silently regress (a future refactor swaps cmd.ErrOrStderr() back to a default and no test fails). (Deferred: Epic Plan 3.6 scorecard-wiring-tests) | Add a CLI-level test that drives a scorecard command against a deliberately-malformed store and asserts the read diagnostic reaches the command's ErrOrStderr buffer; once MCP diagnostics route through e.log, add a handler-level test asserting against a captured logger buffer. | testing | 60 | code-review | claude | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:114 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; over-long-line warning uses injectable w via diagWriter; read continues; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:145 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; decodeRecord writes to injectable w then returns (Record,bool) — no error cascade) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:155 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; schema-version skip writes to injectable w; identical to malformed-record path) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/store.go:194 | Redundant call to diagWriter (Wontfix: FALSE POSITIVE — diagWriter is the required typed-nil guard for the nil-able opts.Writer interface, not redundant; removing it reintroduces the panic fixed by commit 476c6d1) | Remove diagWriter call and use opts.Writer directly since ReadRecords already resolves it | performance | 2 | code-review | otto | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:211 | Error from diagWriter is silently discarded (Wontfix: FALSE POSITIVE — `_, _ = fmt.Fprintf` is the documented best-effort never-panic diagnostics contract at store.go:22-24; returning the write error would regress a successful read on a broken sink and logging is circular; confirmed working as designed via /sprint-clarification 97%) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:220 | The MCP engine carries a structured *slog.Logger (e.log) used for every other diagnostic in handleReconcile (e.g. the require_verified warning at line ~225), but scorecard diagnostics are routed to raw os.Stderr, so MCP-path scorecard write-failures/malformed-record/orphan-verdict warnings emit as unstructured plaintext that bypasses the logger's level filtering, formatting, and sink redirection. NOTE: this was a DELIBERATE, documented epic decision (Clarifications Q2: supply os.Stderr at the call site; adapting e.log to an io.Writer was explicitly OUT of scope), so this is enhancement debt, not a regression. (intent_note: deferred per epic Clarifications Q2 — adapting e.log to an io.Writer is out of scope) (Wontfix: ACCEPTED ENHANCEMENT DEBT — handlers.go:220 is an unconditional EmitOpts{Diag: os.Stderr} call, not deferred logic; all five Epic 3.4 ACs are met and the comment at handlers.go:214-219 satisfies AC4; e.log→io.Writer adaptation is out of scope per Clarifications Q2; confirmed via /sprint-clarification 97%) | If MCP observability is later desired, adapt e.log into an io.Writer shim (slog-backed at Warn level) and pass it as Diag instead of os.Stderr, so MCP-path scorecard diagnostics flow through the same structured pipeline as the rest of the handler. Defer unless/until structured MCP diagnostics are required. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-15] From Sprint: 3.3_per-run_scorecard
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go (FindByRunID adjacent-month notice; ReadRecords malformed-line notice); internal/scorecard/scorecard.go (Emit notices) | Store/emit diagnostics ("skipping malformed record", "run spans adjacent month files", "write failed") are written directly to the process-global `os.Stderr` rather than to a writer threaded from the cobra command (`cmd.ErrOrStderr()`). (Deferred: Epic Plan 3.4) | accept an `io.Writer` (or logger) on the store/emit entry points and have the CLI pass `cmd.ErrOrStderr()`, so warnings are capturable and redirectable. | ops | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-06-14] From Sprint: 3.2_disagreement_radar
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/reconcile/disagree.go:280 | Duplicate writeRadarSection rendering logic risks divergent escaping across packages (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Consolidate radar rendering into report package; reconcile should call report.writeRadarSection | security | 20 | code-review | greta | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/disagree.go:350 | Duplicated radar section rendering logic (Deferred: Epic Plan 7.2) | Extract shared writeRadarSection to a common package | maintainability | 10 | code-review | bruce | MEDIUM |
+ | 4 | [/] | MEDIUM | internal/reconcile/disagree.go:354 | Duplicated radar markdown rendering diverges (Deferred: Epic Plan 7.2) | Extract shared writer or make reconcile use report package's escTrunc | maintainability | 10 | code-review | bruce | MEDIUM |
+ | U | [/] | LOW | internal/reconcile/disagree.go:413 | Redundant implementation of writeRadarSection (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Remove duplicate function from internal/reconcile and use internal/report | maintainability | 15 | code-review | otto | MEDIUM |
+ | 5 | [/] | MEDIUM | internal/report/disagree.go:47 | The radar markup is rendered by two divergent copies: writeRadarSection + formatScore in internal/report/disagree.go and a structurally different copy in internal/reconcile/disagree.go:389. They are intentionally not identical (report copy truncates via escTrunc + uses joinReviewers/reviewerOrUnknown; reconcile copy uses uncapped esc + joinOrNone), so a future markup change (new field, reordered bullets) must be made in both or the live `atcr report` radar and the archival reconciled/report.md silently drift. (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Extract one shared item renderer parameterized by a truncate-vs-verbatim flag and heading prefix; have both call sites delegate. Add a test that diffs the rendered markup of both paths on the same DisagreementsFile asserting the only intended difference is truncation. | correctness | 60 | code-review | bruce, claude | HIGH |
+ 
+ ### [2026-06-14] From Sprint: 2.2_code_review_fanout_hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | MEDIUM | internal/fanout/postprocess.go:14 | The severity-rank rubric {CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1} is independently redefined in fanout/postprocess.go:17, reconcile/merge.go, verify, report, plus a set-form copy reviewSeverities in registry/config.go. postprocess looks up severityRank[strings.ToUpper(...)] while reconcile looks up the raw value, so a future severity change or non-canonical casing silently desyncs fan-out truncation from reconcile merging. The postprocess copy was newly added by Epic 2.2. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 3.5) | Extract a single canonical severity package (or export from internal/stream) exposing the ordered rank map plus normalizeSeverity, and have registry/fanout/reconcile/verify/report consume it. Verify by deleting the local maps and confirming the suite passes with one source of truth. | maintainability | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-14] From Review: llmclient OpenAI-compatible tool handling
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | U | [/] | LOW | internal/llmclient/chat.go:1 | No provider-conformance test matrix for the OpenAI-compatible surface. The client deliberately absorbs real wire divergence (string-encoded vs raw-object tool_call `arguments`, lenient finish_reason) but is exercised only against synthetic fixtures, so a regression against a specific provider's actual tool_call shape (OpenAI, litellm, Ollama, vLLM, Together) would not be caught. This is the robustness the official SDK is assumed to provide, achievable here without adopting it. | Add a recorded-fixture conformance suite: capture a real `tool_calls` response from each target provider and assert the parser (`ToolCallArguments`, `chatToolResponse` decode, finish_reason handling) yields identical engine-facing results. NOTE: scope is a few days, not a quick-win — consider promoting to a standalone test-remediation plan rather than resolving inline. | testing | 480 | review | claude | LOW |
+ 
+ ### [2026-06-14] From Sprint: 3.0_adversarial_verification
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 7 | [/] | LOW | internal/verify/pipeline.go:238 | The rich VerificationResult built in verifyFinding never populates TrippedBudgets (invokeSkeptic folds tripped budgets only into free-text Notes), base.Model is hard-coded to skeptics[0].Config.Model even when another skeptic produced the winning verdict, and the skip-already-verified rebuild (pipeline.go:199) re-synthesizes records from the compact on-disk block losing Model/DurationMs/TrippedBudgets — so verification.json's structured audit fields degrade or misattribute on multi-skeptic and no-op re-runs (extends the model-attribution gap of TD-011). Also: Model is empty on the no_eligible_skeptic / tool_harness_unavailable early-return paths. [intent: deferred per sprint-plan TD-011] | Thread the tripped-budget slice and the winning skeptic's model up from invokeSkeptic into base.TrippedBudgets/base.Model (join models when multiple voters agree, mirroring joinSkeptics), and carry Model/DurationMs/TrippedBudgets forward for skipped findings instead of synthesizing a lossy record. | correctness | 120 | execute-sprint | execute-sprint, claude | HIGH |
+ 
+ ### [2026-06-13] From Sprint: 2.0_tool_using_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 5 | [/] | LOW | internal/tools/snapshot.go | AC 03-02 Scenario 5 and AC 03-03 Scenarios 4-5 require `manifest.json` `stages.review` to record `snapshot_mode` (live/worktree), `head_sha`, and `snapshot_worktree_path`. (intent_note: deferred per sprint-plan §2.5.A (manifest review-stage recording is Phase 5 work); Deferred to Epic Plan 2.1) | when wiring `SnapshotFor` into the agent loop, record `snapshot_mode`/`head_sha`/`snapshot_worktree_path` into `internal/payload/manifest.go` review stage and add the manifest assertion tests from AC 03-02/03-03. | testing | 0 | execute-sprint | execute-sprint | MEDIUM |
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 612a1dbe..c96c9df8 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,9 +1,24 @@
++## [14.3.0] - 2026-07-01
++
++Added an opt-in context-aware diff chunking strategy so large reviews can be split into smaller, attention-friendly chunks per reviewer without inflating API cost by default.
++
++### Added
++
++- `review_strategy` setting (`bulk` | `chunked`, default `bulk`): `chunked` bin-packs each reviewer persona's diff into multiple context-limited calls to curb the attention-degradation hallucination that large single-prompt diffs trigger, while `bulk` keeps the whole diff in one prompt per persona to bound API cost. Resolves once per run across the registry and project config tiers.
++- Per-agent `max_context_lines` (default 1500) capping a single chunk's diff line count, letting each model use a context window tuned to its capabilities and cost profile. Bin packing groups multiple files per call to minimize request duplication; a file larger than the cap is sent as its own chunk (never split) with a warning.
++
++### Changed
++
++- In `chunked` mode, all of a persona's chunk findings merge into a single reviewer source, so a multi-chunk review attributes to one persona and the consensus filter counts it as one voter rather than many.
++
++*Shipped via /execute-epic (epic 14.3)*
++
+ ## [Technical Debt] - 2026-07-01
+ 
+ ### Fixed
+ 
+ - Broadened the consensus-filter security exemption to recognize common security synonyms (`vulnerability`, `auth`, `injection`) so genuine security singletons are not dropped as uncorroborated noise.
+ - Normalized the ambiguous sidecar wire shape for isolated findings so DBSCAN-isolated noise and consensus-filtered singletons both emit a raw per-source finding with `Reviewer` set and `Reviewers`/`Confidence` cleared.
+ - Added a regression test confirming PageRank authority-promoted singletons survive the consensus filter.
+ 
+ ## [14.2.0] - 2026-06-30
+diff --git a/docs/registry.md b/docs/registry.md
+index 5f14b097..1d6a9750 100644
+--- a/docs/registry.md
++++ b/docs/registry.md
+@@ -48,29 +48,30 @@ max_retries: 5
+ initial_backoff_ms: 500
+ ```
+ 
+ ### Provider fields
+ 
+ | Field | Required | Notes |
+ |-------|----------|-------|
+ | `api_key_env` | yes | Name of the environment variable holding the key. Must be a valid POSIX env var name (`^[A-Za-z_][A-Za-z0-9_]*$`). The key is **never stored in config** — it is resolved from the environment at invoke time. |
+ | `base_url` | no | An `http`/`https` URL. Must not embed credentials (userinfo). |
+ 
+ ### Agent fields
+ 
+ | Field | Default | Notes |
+ |-------|---------|-------|
+ | `provider` | (required) | Must name a provider defined above. |
+ | `model` | (required) | Model id at that provider. |
+ | `persona` | agent name | Selects the prompt; resolution chain below. |
+ | `temperature` | 0.7 | Must be within `[0, 2]`. |
+ | `timeout_secs` | inherited | Covers the whole invocation. When unset, the agent inherits the resolved shared timeout (precedence chain); set it to override per agent. Must be within `1..86400`. |
+ | `rate_limited` | false | `true` places the agent in the serial lane. |
+ | `fallback` | — | Another agent name, tried when this one fails. Chains are validated at load (dangling refs and cycles fail fast). |
+ | `payload` | inherited | Per-agent payload mode override (`diff`, `blocks`, `files`). When unset, inherits the resolved shared payload mode. See [payload-modes.md](payload-modes.md). |
++| `max_context_lines` | `1500` | Per-agent cap on a single chunk's diff line count, used **only** when `review_strategy: chunked` (ignored in `bulk`). The fan-out bin-packs the persona's diff into chunks no larger than this and sends one call per chunk, so a lower value means smaller, more focused context (and more requests); a higher value packs more per call. When unset, inherits the `1500`-line default. Must be within `1..1000000`. A single file larger than this cap is sent as its own oversized chunk with a warning (a file is never split). |
+ | `max_retries` | inherited | Per-agent retry budget for rate-limit/transient failures (429, 5xx, transport). When unset, inherits the resolved shared budget (default `5`); set it to override per agent. Must be within `0..10` (`0` = a single attempt, no retry). The `Retry-After` header is always honored regardless of this value. |
+ | `initial_backoff_ms` | inherited | Per-agent base delay (ms) between retries when no server `Retry-After` is present; the schedule grows exponentially from here (×1.5, capped at 30s). When unset, inherits the resolved shared delay (default `500`). Must be within `1..30000`. |
+ 
+ ## `.atcr/config.yaml` (project level)
+ 
+ ```yaml
+ # Roster entries must match agent names in ~/.config/atcr/registry.yaml.
+@@ -87,13 +88,14 @@ cache_max_bytes: 52428800
+ fail_on: HIGH
+ ```
+ 
+ | Field | Default | Notes |
+ |-------|---------|-------|
+ | `agents` | (required†) | The parallel-lane roster. Every entry must exist in the registry. †May be empty when `serial_agents` is non-empty — only a roster empty in both lanes is rejected. |
+ | `serial_agents` | `[]` | The serial-lane roster (sequential execution, for rate-limited providers). |
+ | `payload_mode` | `blocks` | One of `diff`, `blocks`, `files`. |
++| `review_strategy` | `bulk` | Fan-out strategy: `bulk` (default — the whole diff goes to each persona in one prompt, keeping API cost strictly bounded) or `chunked` (each persona's diff is bin-packed into multiple context-limited calls, trading extra requests for smaller per-call context to curb large-diff hallucination). When `chunked`, each bin's size is capped by the agent's `max_context_lines`. Resolves at the registry and project tiers only (no CLI flag). **Chunking splits on `diff --git a/` file boundaries**, so it applies to the `diff` and `blocks` payload modes (both carry those headers); under `payload_mode: files` — which emits full-file bodies with no diff headers — a `chunked` run finds no boundaries and degrades to a single bulk chunk. |
+ | `timeout_secs` | `600` | Global fan-out timeout. Must be positive and `≤ 86400`; an explicit `0` is rejected (not silently defaulted). |
+ | `payload_byte_budget` | `524288` | Per-payload byte budget (512 KiB ≈ 128k tokens). Files are dropped largest-first when a payload exceeds it, recorded per agent in `status.json`. `0` = unlimited; negative is rejected. CLI override: `atcr review --byte-budget N`. **Context sizing:** models with context limits below 128k will time out or fail on the default; set to `163840` (160 KiB ≈ 40k tokens) for rosters that include smaller-context models (e.g. 49k-limit). |
+ | `max_parallel` | `10` | Cap on concurrent parallel-lane agent calls. Bounds the fan-out so a large roster cannot burst every provider call at once. When `serial_agents` is non-empty, the serial lane runs concurrently with the parallel lane in its own goroutine — peak provider concurrency is therefore `max_parallel + 1`, not `max_parallel`. `0` = unbounded; negative is rejected. CLI override: `atcr review --max-parallel N`. |
+ | `cache_max_bytes` | `52428800` | Total-size cap (bytes, 50 MiB default) for the diff cache under `.atcr/cache`. A re-run over an unchanged diff replays each reviewer's prior output and skips the LLM call; cache keys combine the payload digest, model id, and persona digest. Least-recently-used entries are evicted once the cap is exceeded. `0` = unbounded; negative is rejected. Bypass a single run's cache reads with `atcr review --no-cache` (fresh results are still written back). Only the review fan-out is cached — tool-enabled agents (live code reads) and the verification stage are not. |
+ | `fail_on` | `HIGH` (template only) | CI gate threshold (see [ci-integration.md](ci-integration.md)). The `HIGH` value is seeded into the config `atcr init` generates; the gate itself is opt-in — an unconfigured project does not gate. |
+@@ -133,7 +135,7 @@ atcr trust --all           # authorize every project provider
+ 
+ ## Precedence
+ 
+-The shared review settings (`payload_mode`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, `cache_max_bytes`, `fail_on`) resolve **per field, independently**, in this order:
++The shared review settings (`payload_mode`, `review_strategy`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, `cache_max_bytes`, `fail_on`) resolve **per field, independently**, in this order:
+ 
+ ```
+ CLI flag  >  .atcr/config.yaml  >  registry.yaml  >  embedded default
+diff --git a/internal/fanout/chunked_review_e2e_test.go b/internal/fanout/chunked_review_e2e_test.go
+new file mode 100644
+index 00000000..289db918
+--- /dev/null
++++ b/internal/fanout/chunked_review_e2e_test.go
+@@ -0,0 +1,93 @@
++package fanout
++
++import (
++	"context"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/registry"
++	"github.com/samestrin/atcr/internal/stream"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// promptRoutingCompleter returns a distinct finding per chunk, keyed on which
++// file's diff the chunk prompt carries — so each of a persona's chunk calls
++// yields its own finding and the end-to-end merge can be checked for
++// completeness (no chunk's findings are lost) and attribution.
++type promptRoutingCompleter struct{}
++
++func (promptRoutingCompleter) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
++	switch {
++	case strings.Contains(inv.Prompt, "a/a.go"):
++		return "HIGH|a.go:1|problem A|fix A|security|10|evidence A", nil
++	case strings.Contains(inv.Prompt, "a/b.go"):
++		return "MEDIUM|b.go:2|problem B|fix B|security|10|evidence B", nil
++	default:
++		return "", nil
++	}
++}
++
++// Epic 14.3 (AC4): a persona fanned out into multiple chunks must reach the
++// reconciler as ONE source — a single raw/agent/<persona>/ directory whose every
++// finding is attributed to Reviewer=<persona> (the plain name the merged 14.2
++// consensus filter counts), with no finding lost across chunk boundaries.
++func TestChunkedReview_EndToEnd_SingleSourcePerPersona(t *testing.T) {
++	cfg := twoAgentConfig("http://unused")
++	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
++	cfg.Settings.ReviewStrategy = "chunked"
++	mcl := 5 // tiny budget so the two-file diff splits into two chunks
++	g := cfg.Registry.Agents["greta"]
++	g.MaxContextLines = &mcl
++	cfg.Registry.Agents["greta"] = g
++
++	diff := fileSeg("a.go", 6) + fileSeg("b.go", 6)
++	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 2}}
++
++	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
++	require.NoError(t, err)
++	require.Len(t, slots, 2, "one persona bin-packs into two chunk slots")
++
++	raw := NewEngine(promptRoutingCompleter{}).Run(context.Background(), slots)
++	require.Len(t, raw, 2, "engine returns one result per chunk slot, both named greta")
++
++	// The merge is load-bearing: without it the two same-named results collide on
++	// the persona's on-disk dir — WritePool's duplicate-dir guard proves it.
++	_, dupErr := WritePool(filepath.Join(t.TempDir(), "pool"), raw, nil)
++	require.Error(t, dupErr)
++	require.Contains(t, dupErr.Error(), "duplicate agent directory")
++
++	merged := mergeChunkResults(raw)
++	require.Len(t, merged, 1, "chunks collapse to a single persona source")
++
++	pool := filepath.Join(t.TempDir(), "sources", "pool")
++	sum, err := WritePool(pool, merged, nil)
++	require.NoError(t, err)
++	assert.Equal(t, 1, sum.Total, "one logical reviewer, not two")
++	assert.Equal(t, 1, sum.Succeeded)
++
++	// Exactly one agent directory — no per-chunk dirs leaked.
++	entries, err := os.ReadDir(filepath.Join(pool, "raw", "agent"))
++	require.NoError(t, err)
++	require.Len(t, entries, 1)
++	assert.Equal(t, "greta", entries[0].Name())
++
++	// Both chunks' findings survive and are attributed to the plain persona name.
++	data, err := os.ReadFile(filepath.Join(pool, "findings.txt"))
++	require.NoError(t, err)
++	res, err := stream.ParseSource(data)
++	require.NoError(t, err)
++	require.Len(t, res.Findings, 2, "no chunk's findings are lost in the merge")
++	for _, f := range res.Findings {
++		assert.Equal(t, "greta", f.Reviewer, "chunk findings attribute to the persona, never a chunk id")
++	}
++	locs := []string{
++		fmt.Sprintf("%s:%d", res.Findings[0].File, res.Findings[0].Line),
++		fmt.Sprintf("%s:%d", res.Findings[1].File, res.Findings[1].Line),
++	}
++	assert.ElementsMatch(t, []string{"a.go:1", "b.go:2"}, locs)
++}
+diff --git a/internal/fanout/chunker.go b/internal/fanout/chunker.go
+new file mode 100644
+index 00000000..cbfa19f1
+--- /dev/null
++++ b/internal/fanout/chunker.go
+@@ -0,0 +1,226 @@
++package fanout
++
++import (
++	"fmt"
++	"os"
++	"strings"
++)
++
++// reviewStrategyChunked is the review_strategy value (Epic 14.3) that enables
++// per-persona diff bin-packing. Kept as a local constant so the fan-out compares
++// against the resolved Settings string without importing the registry enum.
++const reviewStrategyChunked = "chunked"
++
++// diffFileMarker is the column-0 boundary git writes before each file's hunk in
++// a unified diff (`diff --git a/<old> b/<new>`). Epic 14.3's chunker splits on
++// it directly rather than importing internal/payload (a package-private split),
++// keeping this a self-contained ~20-line utility and avoiding cross-package
++// coupling (epic Technical Constraints).
++const diffFileMarker = "diff --git a/"
++
++// countLines returns the diff line count of s, measured by newline count
++// (strings.Count per the epic constraint). It is the unit the bin-packer budgets
++// against; a trailing partial line is not counted, which is fine — the budget is
++// a soft attention-window guard, not a byte-exact accountant.
++func countLines(s string) int { return strings.Count(s, "\n") }
++
++// countDiffFiles reports how many per-file segments a diff contains, i.e. the
++// number of column-0 `diff --git a/` markers. Used to stamp a chunk's FileCount
++// in the rendered prompt.
++func countDiffFiles(diff string) int {
++	if diff == "" {
++		return 0
++	}
++	n := 0
++	for _, ln := range strings.SplitAfter(diff, "\n") {
++		if strings.HasPrefix(ln, diffFileMarker) {
++			n++
++		}
++	}
++	return n
++}
++
++// splitDiffFiles splits a unified diff into per-file segments on column-0
++// `diff --git a/` boundaries. Any preamble before the first marker (rare) is
++// attached to the first segment so no bytes are lost, and a diff carrying no
++// marker at all comes back as a single segment. Concatenating the segments
++// reproduces the input exactly (SplitAfter preserves newlines). Returns nil for
++// empty input.
++func splitDiffFiles(diff string) []string {
++	if diff == "" {
++		return nil
++	}
++	var segments []string
++	var cur strings.Builder
++	started := false
++	for _, ln := range strings.SplitAfter(diff, "\n") {
++		if strings.HasPrefix(ln, diffFileMarker) && started {
++			segments = append(segments, cur.String())
++			cur.Reset()
++		}
++		if strings.HasPrefix(ln, diffFileMarker) {
++			started = true
++		}
++		cur.WriteString(ln)
++	}
++	if cur.Len() > 0 {
++		segments = append(segments, cur.String())
++	}
++	return segments
++}
++
++// chunkDiff bin-packs a unified diff into chunks whose line counts do not exceed
++// maxLines, splitting only on file boundaries — a single file is never split
++// across chunks (epic Technical Constraint). Packing is greedy next-fit in
++// original file order: files accumulate into the current chunk until adding the
++// next one would exceed maxLines, then a new chunk opens. This groups multiple
++// files per request (fewer API calls than naive per-file chunking, the Cost
++// Efficiency NFR) while keeping presentation order stable. A single file larger
++// than maxLines becomes its own oversized chunk — the caller may warn, but it is
++// preserved whole. maxLines <= 0 disables chunking and returns the whole diff as
++// one chunk. Returns nil for empty input.
++func chunkDiff(diff string, maxLines int) []string {
++	if diff == "" {
++		return nil
++	}
++	files := splitDiffFiles(diff)
++	if maxLines <= 0 || len(files) <= 1 {
++		return []string{diff}
++	}
++	var chunks []string
++	var cur strings.Builder
++	curLines := 0
++	for _, f := range files {
++		fl := countLines(f)
++		// Close the current chunk before adding a file that would overflow it, but
++		// only when the chunk already holds something — an empty chunk must accept
++		// even an oversized file (it cannot be split) so it lands in its own chunk.
++		if cur.Len() > 0 && curLines+fl > maxLines {
++			chunks = append(chunks, cur.String())
++			cur.Reset()
++			curLines = 0
++		}
++		cur.WriteString(f)
++		curLines += fl
++	}
++	if cur.Len() > 0 {
++		chunks = append(chunks, cur.String())
++	}
++	return chunks
++}
++
++// mergeChunkResults collapses results that share an Agent name into one result
++// per persona (Epic 14.3, AC4). The chunked strategy emits one slot per
++// bin-packed chunk, all under the persona's name, so Run returns N results for a
++// single persona; merging them before the artifact-write step yields one
++// raw/agent/<persona>/ dir with Reviewer=<persona> — satisfying writePool's
++// duplicate-dir guard and keeping the already-merged 14.2 consensus filter
++// (which counts distinct Reviewer values) treating the persona as ONE voter. In
++// bulk strategy every Agent name is unique, so every group has size one and this
++// is a no-op. First-appearance order is preserved so the slot ordering the
++// manifest and summary observe is stable.
++func mergeChunkResults(results []Result) []Result {
++	order := make([]string, 0, len(results))
++	groups := make(map[string][]Result, len(results))
++	for _, r := range results {
++		if _, seen := groups[r.Agent]; !seen {
++			order = append(order, r.Agent)
++		}
++		groups[r.Agent] = append(groups[r.Agent], r)
++	}
++	merged := make([]Result, 0, len(order))
++	for _, name := range order {
++		g := groups[name]
++		if len(g) == 1 {
++			merged = append(merged, g[0])
++			continue
++		}
++		merged = append(merged, mergeResultGroup(g))
++	}
++	return merged
++}
++
++// mergeResultGroup folds N chunk results for one persona into a single result.
++// Content is the newline-joined non-empty chunk outputs — ParseModelOutput is
++// line-based, so this is exactly the union of every chunk's findings. Status is
++// OK when ANY chunk succeeded (the persona produced findings from at least one
++// bin — a partial-success the reviewer legitimately contributes); otherwise it
++// is Timeout when any chunk timed out, else Failed, carrying the first error.
++// Token/turn usage and per-call telemetry accumulate across chunks so cost and
++// call-count metrics reflect every request the chunked fan-out actually made.
++func mergeResultGroup(g []Result) Result {
++	out := g[0] // inherit stable per-slot identity (Agent, Model, PayloadMode, constraints)
++	out.Err = nil
++	out.DurationMS = 0
++	out.TokensIn, out.TokensOut = 0, 0
++	out.Turns, out.ToolCalls, out.ToolBytes = 0, 0, 0
++	out.CallRecords = nil
++	out.TrippedBudgets = nil
++	out.FallbackUsed = false
++	out.FallbackFrom = ""
++
++	var contents []string
++	var firstErr error
++	okCount := 0
++	anyOK, sawTimeout, allCacheHit := false, false, true
++	for _, r := range g {
++		if strings.TrimSpace(r.Content) != "" {
++			contents = append(contents, r.Content)
++		}
++		out.TokensIn += r.TokensIn
++		out.TokensOut += r.TokensOut
++		out.Turns += r.Turns
++		out.ToolCalls += r.ToolCalls
++		out.ToolBytes += r.ToolBytes
++		out.CallRecords = append(out.CallRecords, r.CallRecords...)
++		out.TrippedBudgets = append(out.TrippedBudgets, r.TrippedBudgets...)
++		if r.DurationMS > out.DurationMS {
++			// Chunks run as independent parallel-lane slots, so the persona's
++			// wall-clock is the slowest chunk, not the sum.
++			out.DurationMS = r.DurationMS
++		}
++		if r.FallbackUsed {
++			out.FallbackUsed = true
++			out.FallbackFrom = r.FallbackFrom
++		}
++		out.Tools = out.Tools || r.Tools
++		out.ToolsRequested = out.ToolsRequested || r.ToolsRequested
++		out.ToolsDegraded = out.ToolsDegraded || r.ToolsDegraded
++		allCacheHit = allCacheHit && r.CacheHit
++		switch r.Status {
++		case StatusOK:
++			anyOK = true
++			okCount++
++		case StatusTimeout:
++			sawTimeout = true
++			if firstErr == nil {
++				firstErr = r.Err
++			}
++		default:
++			if firstErr == nil {
++				firstErr = r.Err
++			}
++		}
++	}
++	out.Content = strings.Join(contents, "\n")
++	out.CacheHit = allCacheHit
++	// A persona with a mix of succeeded and failed chunks still reports OK (it
++	// contributed findings), but the failed chunks' files went unreviewed — a
++	// silent completeness gap for a review tool. Surface it on stderr (the same
++	// non-fatal-degradation channel findingsFor uses for grounding drops) so an
++	// operator knows part of the diff was not covered.
++	if okCount > 0 && okCount < len(g) {
++		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: %d of %d chunk(s) failed; that portion of the diff was not reviewed\n", out.Agent, len(g)-okCount, len(g))
++	}
++	switch {
++	case anyOK:
++		out.Status = StatusOK
++	case sawTimeout:
++		out.Status = StatusTimeout
++		out.Err = firstErr
++	default:
++		out.Status = StatusFailed
++		out.Err = firstErr
++	}
++	return out
++}
+diff --git a/internal/fanout/chunker_dispatch_test.go b/internal/fanout/chunker_dispatch_test.go
+new file mode 100644
+index 00000000..6a6e9998
+--- /dev/null
++++ b/internal/fanout/chunker_dispatch_test.go
+@@ -0,0 +1,122 @@
++package fanout
++
++import (
++	"errors"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/registry"
++	"github.com/stretchr/testify/require"
++)
++
++// Epic 14.3 (AC3): the chunked strategy expands one persona into one slot per
++// bin-packed chunk, each carrying a different slice of the diff but the SAME
++// persona name (so results merge back to a single source).
++
++func TestBuildSlots_ChunkedExpandsPersonaIntoPerChunkSlots(t *testing.T) {
++	cfg := twoAgentConfig("http://unused")
++	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
++	cfg.Settings.ReviewStrategy = "chunked"
++	mcl := 5 // tiny budget so a two-file diff (≈10 lines each) splits
++	g := cfg.Registry.Agents["greta"]
++	g.MaxContextLines = &mcl
++	cfg.Registry.Agents["greta"] = g
++
++	diff := fileSeg("a.go", 6) + fileSeg("b.go", 6)
++	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 2}}
++
++	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
++	require.NoError(t, err)
++	require.Len(t, slots, 2, "one persona bin-packs into two chunk slots")
++	require.Equal(t, "greta", slots[0].Primary.Name)
++	require.Equal(t, "greta", slots[1].Primary.Name, "chunk slots keep the persona name for single-source attribution (AC4)")
++	// Each chunk sees exactly one of the two files.
++	require.Contains(t, slots[0].Primary.Invocation.Prompt, "a/a.go")
++	require.NotContains(t, slots[0].Primary.Invocation.Prompt, "a/b.go")
++	require.Contains(t, slots[1].Primary.Invocation.Prompt, "a/b.go")
++	require.NotContains(t, slots[1].Primary.Invocation.Prompt, "a/a.go")
++	// Distinct diffs must produce distinct cache keys so chunks are cached apart.
++	require.NotEqual(t, slots[0].Primary.CacheKey, slots[1].Primary.CacheKey)
++}
++
++func TestBuildSlots_BulkEmitsOneSlotPerAgent(t *testing.T) {
++	cfg := twoAgentConfig("http://unused") // ReviewStrategy "" => bulk
++	diff := fileSeg("a.go", 50) + fileSeg("b.go", 50)
++	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 2}}
++
++	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
++	require.NoError(t, err)
++	require.Len(t, slots, 2, "bulk: one slot for greta, one for kai — no chunk expansion")
++	require.Equal(t, "greta", slots[0].Primary.Name)
++	require.Equal(t, "kai", slots[1].Primary.Name)
++}
++
++func TestBuildSlots_ChunkedSingleChunkStaysOneSlot(t *testing.T) {
++	cfg := twoAgentConfig("http://unused")
++	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
++	cfg.Settings.ReviewStrategy = "chunked"
++	// Default max_context_lines (1500) dwarfs this tiny diff => a single chunk.
++	diff := fileSeg("a.go", 3) + fileSeg("b.go", 3)
++	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 2}}
++
++	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
++	require.NoError(t, err)
++	require.Len(t, slots, 1, "chunked but a single chunk => one slot, nothing to merge")
++	require.Equal(t, "greta", slots[0].Primary.Name)
++}
++
++// Epic 14.3 (AC4): N chunk results for one persona merge into a single source
++// with every finding attributed to Reviewer=<persona> — the plain persona name
++// the 14.2 consensus filter counts, NOT a per-chunk id.
++
++func TestMergeChunkResults_SinglePersonaSingleReviewer(t *testing.T) {
++	results := []Result{
++		{Agent: "greta", Status: StatusOK, Content: "HIGH|a.go:1|problem A|fix A|CORRECTNESS", TokensIn: 10, TokensOut: 5},
++		{Agent: "greta", Status: StatusOK, Content: "MEDIUM|b.go:2|problem B|fix B|CORRECTNESS", TokensIn: 20, TokensOut: 7},
++	}
++	merged := mergeChunkResults(results)
++	require.Len(t, merged, 1, "two chunks of one persona collapse to a single source")
++	require.Equal(t, "greta", merged[0].Agent)
++	require.Equal(t, StatusOK, merged[0].Status)
++	require.Equal(t, 30, merged[0].TokensIn, "token usage accumulates across chunks")
++	require.Equal(t, 12, merged[0].TokensOut)
++
++	fr := findingsFor(merged[0], nil) // nil changed => grounding disabled, keep all
++	require.Len(t, fr.Findings, 2, "findings from BOTH chunks survive the merge")
++	for _, f := range fr.Findings {
++		require.Equal(t, "greta", f.Reviewer, "every chunk finding is attributed to the persona, not a chunk id")
++	}
++}
++
++func TestMergeChunkResults_BulkIsNoOp(t *testing.T) {
++	results := []Result{
++		{Agent: "greta", Status: StatusOK, Content: "HIGH|a.go:1|p|f|CORRECTNESS"},
++		{Agent: "kai", Status: StatusOK, Content: "LOW|b.go:2|p|f|CORRECTNESS"},
++	}
++	merged := mergeChunkResults(results)
++	require.Len(t, merged, 2, "distinct persona names are left untouched")
++	require.Equal(t, "greta", merged[0].Agent)
++	require.Equal(t, "kai", merged[1].Agent)
++}
++
++func TestMergeChunkResults_PartialSuccessIsOK(t *testing.T) {
++	results := []Result{
++		{Agent: "greta", Status: StatusOK, Content: "HIGH|a.go:1|p|f|CORRECTNESS"},
++		{Agent: "greta", Status: StatusFailed, Err: errors.New("boom")},
++	}
++	merged := mergeChunkResults(results)
++	require.Len(t, merged, 1)
++	require.Equal(t, StatusOK, merged[0].Status, "a persona that produced findings from >=1 chunk is a success")
++	fr := findingsFor(merged[0], nil)
++	require.Len(t, fr.Findings, 1)
++}
++
++func TestMergeChunkResults_AllFailedStaysFailed(t *testing.T) {
++	results := []Result{
++		{Agent: "greta", Status: StatusFailed, Err: errors.New("first")},
++		{Agent: "greta", Status: StatusTimeout, Err: errors.New("second")},
++	}
++	merged := mergeChunkResults(results)
++	require.Len(t, merged, 1)
++	require.NotEqual(t, StatusOK, merged[0].Status, "no OK chunk => not a success")
++	require.Error(t, merged[0].Err)
++}
+diff --git a/internal/fanout/chunker_test.go b/internal/fanout/chunker_test.go
+new file mode 100644
+index 00000000..05f8dfb8
+--- /dev/null
++++ b/internal/fanout/chunker_test.go
+@@ -0,0 +1,114 @@
++package fanout
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// fileSeg builds a minimal per-file diff segment for `path` with `body` content
++// lines, mirroring the shape splitDiffFiles keys on (a column-0 `diff --git a/`
++// header). Every segment ends in a newline so concatenation is lossless.
++func fileSeg(path string, body int) string {
++	var b strings.Builder
++	b.WriteString("diff --git a/" + path + " b/" + path + "\n")
++	b.WriteString("--- a/" + path + "\n")
++	b.WriteString("+++ b/" + path + "\n")
++	b.WriteString("@@ -1," + itoa(body) + " +1," + itoa(body) + " @@\n")
++	for i := 0; i < body; i++ {
++		b.WriteString("+line\n")
++	}
++	return b.String()
++}
++
++func itoa(n int) string {
++	if n == 0 {
++		return "0"
++	}
++	var digits []byte
++	for n > 0 {
++		digits = append([]byte{byte('0' + n%10)}, digits...)
++		n /= 10
++	}
++	return string(digits)
++}
++
++func TestSplitDiffFiles(t *testing.T) {
++	t.Run("empty returns nil", func(t *testing.T) {
++		assert.Nil(t, splitDiffFiles(""))
++	})
++	t.Run("splits on file boundaries", func(t *testing.T) {
++		diff := fileSeg("a.go", 2) + fileSeg("b.go", 3)
++		segs := splitDiffFiles(diff)
++		require.Len(t, segs, 2)
++		assert.True(t, strings.HasPrefix(segs[0], "diff --git a/a.go"))
++		assert.True(t, strings.HasPrefix(segs[1], "diff --git a/b.go"))
++		assert.Equal(t, diff, strings.Join(segs, ""), "split is lossless")
++	})
++	t.Run("preamble attaches to first segment", func(t *testing.T) {
++		diff := "warning: preamble line\n" + fileSeg("a.go", 1)
++		segs := splitDiffFiles(diff)
++		require.Len(t, segs, 1)
++		assert.Equal(t, diff, segs[0])
++	})
++}
++
++func TestChunkDiff(t *testing.T) {
++	t.Run("empty returns nil", func(t *testing.T) {
++		assert.Nil(t, chunkDiff("", 100))
++	})
++	t.Run("maxLines<=0 disables chunking", func(t *testing.T) {
++		diff := fileSeg("a.go", 5) + fileSeg("b.go", 5)
++		got := chunkDiff(diff, 0)
++		require.Len(t, got, 1)
++		assert.Equal(t, diff, got[0])
++	})
++	t.Run("single file under limit is one chunk", func(t *testing.T) {
++		diff := fileSeg("a.go", 3)
++		got := chunkDiff(diff, 100)
++		require.Len(t, got, 1)
++		assert.Equal(t, diff, got[0])
++	})
++	t.Run("bin-packs multiple small files into fewer chunks", func(t *testing.T) {
++		// 3 files, each ~7 lines; a 50-line budget fits all three in one chunk —
++		// demonstrably fewer requests than naive per-file (3) chunking.
++		diff := fileSeg("a.go", 3) + fileSeg("b.go", 3) + fileSeg("c.go", 3)
++		got := chunkDiff(diff, 50)
++		require.Len(t, got, 1, "bin packing reduces request count vs per-file")
++		assert.Equal(t, diff, strings.Join(got, ""), "lossless")
++	})
++	t.Run("starts a new chunk when the next file would exceed the budget", func(t *testing.T) {
++		a := fileSeg("a.go", 4) // ~8 lines
++		b := fileSeg("b.go", 4) // ~8 lines
++		// Budget fits one file (~8) but not two (~16).
++		got := chunkDiff(a+b, 10)
++		require.Len(t, got, 2)
++		assert.Equal(t, a, got[0])
++		assert.Equal(t, b, got[1])
++	})
++	t.Run("oversized single file becomes its own chunk", func(t *testing.T) {
++		small := fileSeg("a.go", 2)   // ~6 lines
++		huge := fileSeg("big.go", 50) // ~54 lines, exceeds budget alone
++		got := chunkDiff(small+huge, 10)
++		require.Len(t, got, 2)
++		assert.Equal(t, small, got[0])
++		assert.Equal(t, huge, got[1], "a file larger than the budget is never split")
++		assert.Greater(t, countLines(got[1]), 10, "oversized chunk is preserved whole")
++	})
++	t.Run("all chunks concatenate back to the original diff", func(t *testing.T) {
++		diff := fileSeg("a.go", 9) + fileSeg("b.go", 2) + fileSeg("c.go", 20) + fileSeg("d.go", 1)
++		got := chunkDiff(diff, 15)
++		assert.Equal(t, diff, strings.Join(got, ""))
++		for _, c := range got {
++			assert.NotEmpty(t, c)
++		}
++	})
++}
++
++func TestCountDiffFiles(t *testing.T) {
++	assert.Equal(t, 0, countDiffFiles(""))
++	assert.Equal(t, 1, countDiffFiles(fileSeg("a.go", 1)))
++	assert.Equal(t, 2, countDiffFiles(fileSeg("a.go", 1)+fileSeg("b.go", 1)))
++}
+diff --git a/internal/fanout/chunker_warnings_test.go b/internal/fanout/chunker_warnings_test.go
+new file mode 100644
+index 00000000..a2bf5cde
+--- /dev/null
++++ b/internal/fanout/chunker_warnings_test.go
+@@ -0,0 +1,67 @@
++package fanout
++
++import (
++	"errors"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/registry"
++	"github.com/stretchr/testify/require"
++)
++
++// captureStderr (defined in engine_degrade_test.go) redirects os.Stderr; it is
++// not parallel-safe, so these tests must not call t.Parallel().
++
++// Independent-review MEDIUM #1: a chunked run whose diff is a SINGLE oversized
++// file must still emit the oversized-file warning, even though chunkDiff returns
++// it as one chunk and it falls through to the one-slot path.
++func TestBuildSlots_ChunkedWarnsOnLoneOversizedFile(t *testing.T) {
++	cfg := twoAgentConfig("http://unused")
++	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
++	cfg.Settings.ReviewStrategy = "chunked"
++	mcl := 5
++	g := cfg.Registry.Agents["greta"]
++	g.MaxContextLines = &mcl
++	cfg.Registry.Agents["greta"] = g
++
++	diff := fileSeg("big.go", 40) // one file, ~44 lines >> 5
++	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 1}}
++
++	var slots []Slot
++	out := captureStderr(t, func() {
++		var err error
++		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
++		require.NoError(t, err)
++	})
++	require.Len(t, slots, 1, "a lone oversized file is one slot (cannot be split)")
++	require.Contains(t, out, "exceeds max_context_lines", "the oversized-file warning must fire for a lone huge file")
++	require.Contains(t, out, "greta")
++}
++
++// Independent-review MEDIUM #2: a persona whose chunks partially failed reports
++// OK (it contributed findings) but must surface the unreviewed portion.
++func TestMergeChunkResults_PartialFailureWarns(t *testing.T) {
++	results := []Result{
++		{Agent: "greta", Status: StatusOK, Content: "HIGH|a.go:1|p|f|CORRECTNESS"},
++		{Agent: "greta", Status: StatusFailed, Err: errors.New("boom")},
++	}
++	var merged []Result
++	out := captureStderr(t, func() {
++		merged = mergeChunkResults(results)
++	})
++	require.Len(t, merged, 1)
++	require.Equal(t, StatusOK, merged[0].Status)
++	require.Contains(t, out, "chunk(s) failed", "partial chunk failure must be surfaced")
++	require.Contains(t, out, "not reviewed")
++}
++
++// A fully-successful chunked persona must NOT emit the partial-failure warning.
++func TestMergeChunkResults_AllSuccessNoWarning(t *testing.T) {
++	results := []Result{
++		{Agent: "greta", Status: StatusOK, Content: "HIGH|a.go:1|p|f|CORRECTNESS"},
++		{Agent: "greta", Status: StatusOK, Content: "LOW|b.go:2|p|f|CORRECTNESS"},
++	}
++	out := captureStderr(t, func() {
++		_ = mergeChunkResults(results)
++	})
++	require.NotContains(t, out, "not reviewed", "no warning when every chunk succeeded")
++}
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index b8f5da71..75079d81 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -498,93 +498,101 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
+ // runEngine wires the optional read-only tool harness for p's tool-enabled slots
+ // (a head snapshot → path jail → dispatcher, shared across the run, plus a
+ // per-agent transcript writer under poolDir), runs the fan-out under p's timeout,
+ // and returns the per-agent results together with the manifest review-stage entry
+ // (snapshot provenance already stamped). Best-effort harness setup: a snapshot or
+ // jail failure logs and degrades tool agents to single-shot rather than failing
+ // the review. Extracted from ExecuteReview so ExecuteResume runs the identical
+ // engine setup; the two differ only in how they persist the results.
+ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, poolDir string) ([]Result, *payload.ReviewStage) {
+ 	runCtx := ctx
+ 	if p.TimeoutSec > 0 {
+ 		var cancel context.CancelFunc
+ 		runCtx, cancel = context.WithTimeout(ctx, time.Duration(p.TimeoutSec)*time.Second)
+ 		defer cancel()
+ 	}
+ 
+ 	// Snapshot provenance for the manifest review stage (AC 03-02 / 03-03). Zero
+ 	// unless a snapshot actually runs and succeeds below.
+ 	var snapMode, snapHeadSHA, snapWorktreePath string
+ 	// Seed the engine with the review_id-correlated context logger so every agent
+ 	// log line is greppable by review (AC9 + AC10). FromContext returns a never-nil
+ 	// discard logger if none is set.
+ 	opts := []EngineOption{WithMaxParallel(p.MaxParallel), WithLogger(log.FromContext(ctx))}
+ 	// Hand the diff cache to the engine (Epic 5.2). Non-tool agents whose
+ 	// payload+model+persona key already has a stored result replay it instead of
+ 	// calling the provider; nil cache (direct construction) leaves caching off.
+ 	if p.cache != nil {
+ 		opts = append(opts, WithCache(p.cache, p.cacheNoRead))
+ 	}
+ 	if anyToolAgent(p.Slots) && p.Head != "" {
+ 		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
+ 			log.FromContext(ctx).Warn("tool harness disabled (snapshot); tool agents degrade to single-shot", "head", p.Head, "err", err)
+ 			snapMode = "failed" // snapshot attempted but failed; distinguishable from no-snapshot-attempted
+ 		} else {
+ 			defer cleanup()
+ 			// A successful SnapshotFor call fixes the mode/head/path the tool harness
+ 			// reviewed at (AC 03-02 Scenario 5), recorded even if the jail below fails.
+ 			// Resolve the head to a full SHA for the manifest even if the caller passed
+ 			// a symbolic ref or short SHA (e.g., tests constructing PreparedReview directly).
+ 			// A resolution failure is logged but does not abort the review; the original
+ 			// value is preserved as a best-effort fallback.
+ 			headSHA := p.Head
+ 			if resolved, err := resolveHeadSHA(p.Repo, p.Head); err == nil {
+ 				headSHA = resolved
+ 			} else {
+ 				log.FromContext(ctx).Warn("could not resolve head SHA for manifest", "err", err)
+ 			}
+ 			snapMode, snapHeadSHA, snapWorktreePath = snapshotManifestFields(root, p.Repo, headSHA)
+ 			if jail, jerr := tools.NewJail(root); jerr != nil {
+ 				log.FromContext(ctx).Warn("tool harness disabled (jail); tool agents degrade to single-shot", "err", jerr)
+ 			} else {
+ 				disp := tools.NewDispatcher(jail, tools.DefaultLimits())
+ 				rawBase := filepath.Join(poolDir, poolRawAgentDir)
+ 				opts = append(opts, WithDispatcher(disp), WithTranscript(func(agent string) *tools.Transcript {
+ 					dir := filepath.Join(rawBase, transcriptAgentDir(agent))
+ 					if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+ 						log.FromContext(ctx).Warn("transcript dir creation failed", "agent", agent, "err", mkErr)
+ 					}
+ 					return tools.OpenTranscript(filepath.Join(dir, "transcript.jsonl"), agent)
+ 				}))
+ 			}
+ 		}
+ 	}
+ 
+ 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
+ 
++	// Chunked strategy (Epic 14.3): a persona fanned out into N chunk-slots comes
++	// back as N results under the same Agent name; collapse them into one result
++	// per persona BEFORE any downstream step so stage classification, the summary
++	// tallies, and writePool (which rejects duplicate agent dirs) all see a single
++	// logical source with Reviewer=<persona>. In bulk strategy names are unique, so
++	// this is a no-op.
++	results = mergeChunkResults(results)
++
+ 	// Classify the run into the manifest's review-stage entry and stamp the
+ 	// snapshot provenance (nil when no agent ran with tools).
+ 	stage := reviewStageFor(results)
+ 	if stage != nil {
+ 		stage.SnapshotMode = snapMode
+ 		stage.HeadSHA = snapHeadSHA
+ 		stage.SnapshotWorktreePath = snapWorktreePath
+ 	}
+ 	return results, stage
+ }
+ 
+ // ExecuteReview runs phase two: fan out the prepared roster under the global
+ // timeout, then write per-agent artifacts, the merged pool, summary.json, and
+ // the finalized manifest (Partial reflecting the outcome). The completer is
+ // injected so the CLI uses the real HTTP client and tests use a fake/httptest.
+ //
+ // Artifacts are always persisted, even when every agent fails; in that case the
+ // populated *ReviewResult is still returned alongside the wrapped
+ // ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
+ // remains for inspection. The background MCP path discards the error (status is
+ // read from disk) while the CLI maps it to the process exit code.
+ //
+ // Graceful-shutdown note: cooperative shutdown preserves agents that finished
+ // before the signal; in-flight agents share the cancelled parent ctx and are cut
+ // off (classified as timeout). Truly completing in-flight work would require
+ // running them on an uncancelled child ctx — a deliberate engine change out of
+ // scope here.
+@@ -756,76 +764,138 @@ func resolveScopeConstraint(req ReviewRequest) (constraint, warning string) {
+ // buildSlots assembles the roster into ordered slots (parallel lane first, then
+ // serial) and returns the per-agent payload-mode map for the manifest. A
+ // build-time failure (unknown agent/provider, persona resolution, prompt render)
+ // aborts the whole run fail-fast: these are configuration errors the user must
+ // fix, not transient per-agent outcomes, so there is nothing useful to preserve
+ // — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
+ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) ([]Slot, map[string]string, error) {
+ 	// Budget-aware plan content cap: scopeConstraint is prepended uncounted in
+ 	// buildAgent (Payload: scopeConstraint + mp.Text), so a small PayloadByteBudget
+ 	// causes the constraint alone to inflate the rendered prompt past the budget.
+ 	// Truncate only the plan body (between the BEGIN/END markers) to
+ 	// min(MaxSprintPlanBytes, budget/8), preserving the wrapper instruction text.
+ 	if budget := cfg.Settings.PayloadByteBudget; budget > 0 && len(scopeConstraint) > 0 {
+ 		const beginMark = "----- BEGIN SPRINT PLAN -----\n"
+ 		const endMark = "\n----- END SPRINT PLAN -----"
+ 		if bs := strings.Index(scopeConstraint, beginMark); bs >= 0 {
+ 			planStart := bs + len(beginMark)
+ 			if rest := strings.Index(scopeConstraint[planStart:], endMark); rest >= 0 {
+ 				planEnd := planStart + rest
+ 				maxPlan := int(min(payload.MaxSprintPlanBytes, budget/8))
+ 				if planEnd-planStart > maxPlan {
+ 					cut := planStart + maxPlan
+ 					for cut > planStart && scopeConstraint[cut]&0xC0 == 0x80 {
+ 						cut--
+ 					}
+ 					scopeConstraint = scopeConstraint[:cut] + scopeConstraint[planEnd:]
+ 				}
+ 			}
+ 		}
+ 	}
+ 	perAgentMode := map[string]string{}
+ 	var slots []Slot
+ 
+-	add := func(name string, serial bool) error {
+-		primary, mode, err := buildAgent(cfg, name, payloads, rng, forceMode, scopeConstraint)
+-		if err != nil {
+-			return err
+-		}
+-		perAgentMode[name] = mode
+-
++	// buildChain resolves the fallback chain for a primary. Extracted so both the
++	// bulk one-slot path and the chunked per-chunk path attach identical chains
++	// (a fallback reviews the same persona prompt/payload as its primary — here,
++	// the same chunk).
++	buildChain := func(name string, primary Agent) ([]Agent, error) {
+ 		var fbs []Agent
+ 		seen := map[string]bool{name: true}
+ 		for fb := cfg.Registry.Agents[name].Fallback; fb != ""; fb = cfg.Registry.Agents[fb].Fallback {
+ 			if seen[fb] {
+ 				break // registry validation guarantees acyclic; defensive stop
+ 			}
+ 			seen[fb] = true
+ 			agent, err := buildFallbackAgent(cfg, primary, fb)
+ 			if err != nil {
+-				return err
++				return nil, err
+ 			}
+ 			fbs = append(fbs, agent)
+ 		}
++		return fbs, nil
++	}
++
++	add := func(name string, serial bool) error {
++		ac, ok := cfg.Registry.Agents[name]
++		if !ok {
++			return fmt.Errorf("agent %q not found in registry", name)
++		}
++		mode := forceMode
++		if mode == "" {
++			mode = ac.EffectivePayloadMode(cfg.Settings)
++		}
++		mp, ok := payloads[mode]
++		if !ok {
++			return fmt.Errorf("agent %q: no payload built for mode %q", name, mode)
++		}
++		perAgentMode[name] = mode
++
++		// Chunked strategy (Epic 14.3): bin-pack this persona's diff into multiple
++		// context-limited calls, one Slot per chunk. Every chunk-slot keeps the
++		// SAME persona name, so mergeChunkResults collapses their results into one
++		// raw/agent/<persona>/ source with Reviewer=<persona> (AC4) — the 14.2
++		// consensus filter still counts the persona once. A run that yields a
++		// single chunk (small diff, or one file) falls through to the bulk path so
++		// there is nothing to merge.
++		if cfg.Settings.ReviewStrategy == reviewStrategyChunked {
++			chunks := chunkDiff(mp.Text, ac.EffectiveMaxContextLines())
++			// Warn on any chunk that is a lone file exceeding the budget (it could
++			// not be split). This runs over EVERY chunk — not just multi-chunk
++			// fan-outs — so a diff that is a single oversized file (which chunkDiff
++			// returns as one chunk) still surfaces the documented warning before
++			// falling through to the one-slot path.
++			ml := ac.EffectiveMaxContextLines()
++			for _, ct := range chunks {
++				if countDiffFiles(ct) <= 1 && countLines(ct) > ml {
++					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines) exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, countLines(ct), ml)
++				}
++			}
++			if len(chunks) > 1 {
++				for _, ct := range chunks {
++					primary, err := renderAgent(cfg, name, ac, mode, ct, countDiffFiles(ct), mp.Truncation, rng, scopeConstraint)
++					if err != nil {
++						return err
++					}
++					fbs, err := buildChain(name, primary)
++					if err != nil {
++						return err
++					}
++					slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial})
++				}
++				return nil
++			}
++		}
++
++		// Bulk path (or a chunked run that produced a single chunk): one slot over
++		// the whole payload.
++		primary, err := renderAgent(cfg, name, ac, mode, mp.Text, mp.FileCount, mp.Truncation, rng, scopeConstraint)
++		if err != nil {
++			return err
++		}
++		fbs, err := buildChain(name, primary)
++		if err != nil {
++			return err
++		}
+ 		slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial})
+ 		return nil
+ 	}
+ 
+ 	for _, name := range cfg.Project.Agents {
+ 		if err := add(name, false); err != nil {
+ 			return nil, nil, err
+ 		}
+ 	}
+ 	for _, name := range cfg.Project.SerialAgents {
+ 		if err := add(name, true); err != nil {
+ 			return nil, nil, err
+ 		}
+ 	}
+ 	return slots, perAgentMode, nil
+ }
+ 
+ // defaultMaxTokens is the output-token cap applied to every reviewer call.
+ // Generous on purpose: reasoning/thinking models spend output budget on
+ // chain-of-thought before emitting visible content, so a tight cap makes them
+ // finish mid-reasoning and return an empty review (the doctor self-test warns of
+ // exactly this). The empty-content case is still caught by the reasoning_content
+ // fallback in llmclient; this headroom lets the clean Content path win first.
+@@ -869,92 +939,108 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64) string {
+ // buildAgent resolves an agent's persona, renders its prompt against the payload
+ // it sees, and assembles the invocation. It returns the agent and its mode.
+ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) (Agent, string, error) {
+ 	ac, ok := cfg.Registry.Agents[name]
+ 	if !ok {
+ 		return Agent{}, "", fmt.Errorf("agent %q not found in registry", name)
+ 	}
+ 	// forceMode (non-empty) overrides the agent's configured payload mode. The
+ 	// diff-file ingestion path sets it to "diff" because the ingested diff is the
+ 	// only available representation, so every agent reviews it regardless of its
+ 	// effective mode; the git-range path passes "" to keep per-agent modes.
+ 	mode := forceMode
+ 	if mode == "" {
+ 		mode = ac.EffectivePayloadMode(cfg.Settings)
+ 	}
+ 	mp, ok := payloads[mode]
+ 	if !ok {
+ 		// Defensive: payloads is built by neededModes over the same roster, so a
+ 		// miss means the two derivations diverged — fail loudly rather than
+ 		// invoking the agent with an empty payload and a vacuous review.
+ 		return Agent{}, "", fmt.Errorf("agent %q: no payload built for mode %q", name, mode)
+ 	}
+ 
+-	persona, err := registry.ResolvePersona(name, ac.Persona, nil, cfg.PersonaDirs)
++	agent, err := renderAgent(cfg, name, ac, mode, mp.Text, mp.FileCount, mp.Truncation, rng, scopeConstraint)
+ 	if err != nil {
+ 		return Agent{}, "", err
+ 	}
++	return agent, mode, nil
++}
++
++// renderAgent builds a fully-rendered review Agent for `name` over an explicit
++// payload text and its file-count/truncation metadata. buildAgent uses it for
++// the whole-diff (bulk) payload; the chunked strategy (Epic 14.3) calls it once
++// per bin-packed chunk so every chunk-slot carries the SAME persona identity but
++// a different diff subset. Passing the payload text in (rather than reading a
++// modePayload) is the seam that lets a chunk render its own slice of the diff
++// and report its own file count in the prompt.
++func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, payloadText string, fileCount int, trunc payload.Truncation, rng ReviewRange, scopeConstraint string) (Agent, error) {
++	persona, err := registry.ResolvePersona(name, ac.Persona, nil, cfg.PersonaDirs)
++	if err != nil {
++		return Agent{}, err
++	}
+ 	// Sprint-plan SCOPE CONSTRAINT (Epic 12.2): prepend the formatted constraint
+ 	// to the payload so it lands in EVERY persona — every reviewer renders
+ 	// {{.Payload}} (it carries the diff), so prepending guarantees delivery
+ 	// regardless of the persona template, and places the constraint immediately
+ 	// before the diff (the NFR). Empty when no --sprint-plan was given, leaving the
+ 	// payload unchanged for a diff-wide review. Because the constraint becomes part
+ 	// of the rendered prompt, the diff-cache key (which hashes the full prompt)
+ 	// invalidates correctly when the plan changes (AC5).
+ 	prompt, err := payload.RenderPrompt(persona.Text, payload.PayloadContext{
+ 		AgentName:    name,
+ 		BaseRef:      rng.Base,
+ 		HeadRef:      rng.Head,
+ 		PayloadMode:  mode,
+-		FileCount:    mp.FileCount,
+-		Payload:      scopeConstraint + mp.Text,
++		FileCount:    fileCount,
++		Payload:      scopeConstraint + payloadText,
+ 		ScopeRule:    payload.ScopeRule(payload.PayloadMode(mode)),
+ 		ToolsEnabled: ac.Tools,
+ 	})
+ 	if err != nil {
+-		return Agent{}, "", fmt.Errorf("agent %q: %w", name, err)
++		return Agent{}, fmt.Errorf("agent %q: %w", name, err)
+ 	}
+ 	// Soft per-agent scope focus (Epic 2.2): appended after the persona template
+ 	// renders so it lands in every persona regardless of its template, and feeds
+ 	// both Agent.Prompt and Invocation.Prompt below (a fallback reuses the
+ 	// primary's prompt, so it inherits the focus too). No-op when scope is unset.
+ 	prompt += payload.ScopeFocus(ac.Scope)
+ 	prov, ok := cfg.Registry.Providers[ac.Provider]
+ 	if !ok {
+-		return Agent{}, "", fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
++		return Agent{}, fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
+ 	}
+ 	return Agent{
+ 		Name:             name,
+ 		Provider:         ac.Provider,
+ 		Prompt:           prompt,
+ 		PayloadMode:      mode,
+-		Truncation:       mp.Truncation,
++		Truncation:       trunc,
+ 		TimeoutSecs:      ac.EffectiveTimeoutSecs(cfg.Settings),
+ 		MaxRetries:       ac.EffectiveMaxRetries(cfg.Settings),
+ 		InitialBackoffMs: ac.EffectiveInitialBackoffMs(cfg.Settings),
+ 		Tools:            ac.Tools,
+ 		SupportsFC:       ac.SupportsFC,
+ 		MaxTurns:         derefMaxTurns(ac.MaxTurns),
+ 		ToolBudgetBytes:  derefInt64(ac.ToolBudgetBytes),
+ 		MinSeverity:      ac.MinSeverity,
+ 		MaxFindings:      ac.MaxFindings,
+ 		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
+ 		// + temperature (see diffCacheKey). Tool agents carry a key too but the
+ 		// engine never caches them (they read live code), so setting it
+-		// unconditionally is safe.
++		// unconditionally is safe. A chunked run keys each chunk independently
++		// because its prompt (and thus this hash) differs per chunk.
+ 		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature),
+ 		Invocation: llmclient.Invocation{
+ 			BaseURL:     prov.BaseURL,
+ 			APIKeyEnv:   prov.APIKeyEnv,
+ 			Model:       ac.Model,
+ 			Temperature: ac.Temperature,
+ 			MaxTokens:   maxTokensPtr(),
+ 			Prompt:      prompt,
+ 		},
+-	}, mode, nil
++	}, nil
+ }
+ 
+ // derefMaxTurns resolves the agent's MaxTurns pointer to a value. Registry load
+ // applies the default (10) when tools=true and it was unset, so a tool agent
+ // arrives here with a non-nil pointer; a nil pointer (non-tool agent, or direct
+ // construction) yields 0, which the engine treats as "use the default".
+diff --git a/internal/registry/config.go b/internal/registry/config.go
+index f0e796f3..9c1c054b 100644
+--- a/internal/registry/config.go
++++ b/internal/registry/config.go
+@@ -17,17 +17,29 @@ import (
+ // DefaultTemperature fills an agent's temperature when unset (applied at
+ // load time — temperature is purely agent-level).
+ //
+ // DefaultTimeoutSecs is the embedded-tier floor of the shared-settings
+ // precedence chain (see ResolveSettings). Agent-level timeout and payload
+ // deliberately stay unset at load so agents inherit the resolved settings.
+ const (
+ 	DefaultTemperature = 0.7
+ 	DefaultTimeoutSecs = 600
+ 	// MaxFindingsCap is the ceiling for per-agent max_findings; consistent with
+ 	// MaxTimeoutSecs/MaxAgentTurns/MaxToolBudgetBytes which each have documented
+ 	// upper bounds. nil = unlimited (unset); any explicit value must be within
+ 	// 1..MaxFindingsCap.
+ 	MaxFindingsCap = 10000
++	// DefaultMaxContextLines is the per-chunk diff line budget used when an agent
++	// omits max_context_lines (Epic 14.3). 1500 lines ≈ 22k–27k tokens — under
++	// the 128k DefaultPayloadByteBudget and the documented 40k-token conservative
++	// floor for smaller-context models, while small enough to curb the
++	// attention-degradation hallucination large single-prompt diffs trigger.
++	DefaultMaxContextLines = 1500
++	// MaxContextLinesCap is a generous sanity ceiling on max_context_lines: it
++	// rejects garbage/overflow values without constraining legitimate
++	// large-context rosters (a 200k-token model can take well over 10k diff
++	// lines). nil = unset (inherit the default); any explicit value must be
++	// within 1..MaxContextLinesCap.
++	MaxContextLinesCap = 1000000
+ )
+ 
+ // envVarName matches valid POSIX environment variable names.
+@@ -252,79 +264,88 @@ func (e ExecutorConfig) EffectiveExecutorTemperature() float64 {
+ // AgentConfig binds a provider+model to a reviewer persona. Temperature and
+ // TimeoutSecs are pointers so an explicit zero survives default application.
+ //
+ // Tools, MaxTurns, ToolBudgetBytes, and SupportsFC are ACTIVE in Epic 2.0: the
+ // engine drives the multi-turn tool loop from them and applyDefaults sets
+ // max_turns=10 when tools=true. They were reserved (parsed + validated but
+ // inert) in 1.1/1.x; a 1.x config that set them keeps loading and the values now
+ // take effect. Role is still reserved for the agentic stages (Epics 3.0/4.0) —
+ // parsed and validated, but no code path acts on it yet. MaxTurns and
+ // ToolBudgetBytes are pointers so an explicit value is distinguishable from unset
+ // (the same reason TimeoutSecs is a pointer). Tools is a value bool because its
+ // default is false and nothing needs to distinguish "explicitly false" from
+ // "unset". Defaults (tools=false, max_turns=10, tool_budget_bytes=0/unlimited,
+ // supports_function_calling=false, role=reviewer) are documented in
+ // docs/registry.md.
+ type AgentConfig struct {
+ 	Provider    string   `yaml:"provider"`
+ 	Model       string   `yaml:"model"`
+ 	Persona     string   `yaml:"persona,omitempty"`
+ 	Temperature *float64 `yaml:"temperature,omitempty"`
+ 	TimeoutSecs *int     `yaml:"timeout_secs,omitempty"`
+ 	RateLimited bool     `yaml:"rate_limited,omitempty"`
+ 	Fallback    string   `yaml:"fallback,omitempty"`
+ 	Payload     string   `yaml:"payload,omitempty"`
+ 
+ 	// Active in Epic 2.0 — the engine acts on these (tool loop + budgets).
+ 	Tools           bool   `yaml:"tools"`             // enables the multi-turn tool loop
+ 	MaxTurns        *int   `yaml:"max_turns"`         // agent-loop turn cap (default 10 when tools=true)
+ 	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes"` // cumulative tool-result budget (0 = unlimited, matches PayloadByteBudget)
+ 	// Reserved for the agentic stages — parsed + validated, inert in 2.0.
+ 	Role string `yaml:"role"` // Stage 3/4 — reviewer | skeptic | judge
+ 
+ 	// SupportsFC declares whether this agent's model supports OpenAI-style
+ 	// function calling. Active in Epic 2.0 (Phase 4): the engine consults it
+ 	// before starting a tool loop. Default false (a value bool — no stage needs
+ 	// to distinguish "explicitly false" from "unset"), so a model is assumed
+ 	// non-tool-capable unless explicitly declared, and a tools:true agent on an
+ 	// undeclared model degrades safely to single-shot.
+ 	SupportsFC bool `yaml:"supports_function_calling"` // Stage 2 — model function-calling capability
+ 
+ 	// Review-constraint guardrails (Epic 2.2). All optional and
+ 	// backward-compatible: an unset field imposes no constraint, so a 1.x/2.0
+ 	// config keeps loading unchanged. Scope is a SOFT prompt-injection focus hint
+ 	// (categories the agent should prioritize) — injected into the persona prompt
+ 	// by the fan-out, it never hard-drops findings. MinSeverity drops findings
+ 	// below the floor and MaxFindings truncates (severity-sorted) the agent's
+ 	// findings to a hard cap; both are enforced deterministically in the fan-out
+ 	// per-source path (internal/fanout), never in the reconciler. MinSeverity is
+ 	// normalized to canonical upper-case at load so enforcement comparisons are
+ 	// stable. MaxFindings is a pointer so an absent cap (nil = unlimited) is
+ 	// distinguishable from any explicit value.
+ 	Scope       []string `yaml:"scope,omitempty"`        // soft focus categories injected into the prompt
+ 	MinSeverity string   `yaml:"min_severity,omitempty"` // drop findings below this floor (CRITICAL|HIGH|MEDIUM|LOW)
+ 	MaxFindings *int     `yaml:"max_findings,omitempty"` // cap on findings (severity-sorted truncate); nil = unlimited
+ 
+ 	// Language declares the file extensions this agent specializes in, enabling
+ 	// language-aware skeptic routing (Epic 9.0): when a finding's file extension
+ 	// matches one of these, the agent is preferred over an unscoped skeptic in
+ 	// SelectEligibleSkeptics. Optional and backward-compatible — nil/empty means
+ 	// no constraint, so a pre-9.0 registry loads unchanged. Entries are
+ 	// canonicalized at load (trim → strip a single leading dot → lowercase) via
+ 	// NormalizeLanguageToken so "go"/".go"/" .GO " all store as "go" and compare
+ 	// against a finding's normalized extension in one form. validateAgent rejects
+ 	// empty entries and control characters (mirroring the Scope guard); it does
+ 	// NOT enforce a known-language allow-list, so third-party persona authors stay
+ 	// free to declare any extension.
+ 	Language []string `yaml:"language,omitempty"` // file extensions this agent specializes in (routing)
+ 
+ 	// Retry/backoff tunables (Epic 4.6) — the per-agent tier, overriding the
+ 	// resolved global settings via EffectiveMaxRetries/EffectiveInitialBackoffMs.
+ 	// Pointers so an explicit 0 max_retries survives and an unset field inherits
+ 	// the resolved setting (same shape as TimeoutSecs).
+ 	MaxRetries       *int `yaml:"max_retries,omitempty"`        // per-agent retry budget (0 = single attempt); nil = inherit
+ 	InitialBackoffMs *int `yaml:"initial_backoff_ms,omitempty"` // per-agent base retry delay (ms); nil = inherit
++
++	// MaxContextLines is the per-agent cap on a single chunk's diff line count
++	// (Epic 14.3), consulted only when the run's review_strategy is "chunked":
++	// the fan-out bin-packs the persona's diff into chunks no larger than this
++	// before dispatching one call per chunk. Optional and backward-compatible — a
++	// pointer so an unset field (nil) inherits DefaultMaxContextLines while any
++	// explicit value survives, distinguishing "use the default" from a real
++	// override. Ignored entirely in bulk mode.
++	MaxContextLines *int `yaml:"max_context_lines,omitempty"`
+ }
+ 
+ // reviewSeverities is the canonical finding-severity rubric (personas/_base.md),
+ // used to validate min_severity. Kept as a set here so the registry validates
+ // without depending on the fan-out or reconcile packages.
+@@ -365,53 +386,58 @@ func debateTriggerValid(t string) bool {
+ // Registry is the user-level configuration from ~/.config/atcr/registry.yaml:
+ // providers, agents, and optional user-level defaults for the shared review
+ // settings (the tier between project config and embedded defaults in the
+ // precedence chain). Personas live as .md files next to it, not in YAML.
+ type Registry struct {
+ 	Providers map[string]Provider    `yaml:"providers"`
+ 	Agents    map[string]AgentConfig `yaml:"agents"`
+ 
+ 	PayloadMode       string `yaml:"payload_mode,omitempty"`
+ 	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
+ 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
+ 	FailOn            string `yaml:"fail_on,omitempty"`
++	// ReviewStrategy is the run-wide fan-out strategy (Epic 14.3): "bulk"
++	// (default) or "chunked". A global toggle resolved once per run, mirroring
++	// payload_mode; the per-agent max_context_lines governs each bin's size when
++	// chunking is on.
++	ReviewStrategy string `yaml:"review_strategy,omitempty"`
+ 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
+ 	// application in ResolveSettings.
+ 	MaxParallel *int `yaml:"max_parallel,omitempty"`
+ 	// CacheMaxBytes is the user-level (global) tier of the diff-cache size cap
+ 	// (Epic 5.2); a pointer so an explicit 0 (unbounded) survives default
+ 	// application. The project tier overrides it; unset falls through to the
+ 	// embedded DefaultCacheMaxBytes.
+ 	CacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty"`
+ 
+ 	// Retry/backoff tunables (Epic 4.6) — the user-level (global) tier of the
+ 	// precedence chain, mirroring TimeoutSecs. Pointers so an explicit 0
+ 	// max_retries (single attempt, no retry) survives default application in
+ 	// ResolveSettings. An unset value falls through to the embedded default.
+ 	MaxRetries       *int `yaml:"max_retries,omitempty"`
+ 	InitialBackoffMs *int `yaml:"initial_backoff_ms,omitempty"`
+ 
+ 	// Verify is the optional adversarial-verification block (Epic 3.0). Defaults
+ 	// (min_severity=MEDIUM, votes=1) are applied at load, so a registry without a
+ 	// verify block still yields the resolved defaults.
+ 	Verify VerifyConfig `yaml:"verify,omitempty"`
+ 
+ 	// Debate is the optional cross-examination block (Epic 6.0). Triggers are
+ 	// defaulted to all three kinds at load; max_items and allow_single_model are
+ 	// resolved at the debate stage (see internal/debate.ResolveConfig). A registry
+ 	// without a debate block still yields the resolved defaults.
+ 	Debate DebateConfig `yaml:"debate,omitempty"`
+ 
+ 	// Executor is the optional fix-generation model (Epic 7.0). A pointer so an
+ 	// absent block (nil) — the backward-compatible default — is distinguishable
+ 	// from a configured one; nil means no fix generation runs.
+ 	Executor *ExecutorConfig `yaml:"executor,omitempty"`
+ 
+ 	// ProviderSource and AgentSource record the tier (and defining file) each
+ 	// effective entry came from after the project overlay merge — user or
+ 	// project. Not serialized (yaml:"-"); populated by stampSource (user) and
+ 	// mergeProject (project). An entry absent from the map is treated as user.
+ 	ProviderSource map[string]EntrySource `yaml:"-"`
+ 	AgentSource    map[string]EntrySource `yaml:"-"`
+ }
+ 
+ // DefaultRegistryPath returns ~/.config/atcr/registry.yaml.
+@@ -450,75 +476,78 @@ func LoadRegistry(path string) (*Registry, error) {
+ // validate checks required fields and reference integrity. It accumulates every
+ // fault and reports them together via errors.Join (Epic 4.2 / AC6) rather than
+ // short-circuiting on the first, so a user fixes all config mistakes in one
+ // edit. Providers and agents are walked in sorted-name order so the joined
+ // message is deterministic despite randomized map iteration. errors.Join
+ // returns nil when no faults were collected, preserving the valid-config path.
+ func (r *Registry) validate() error {
+ 	var errs []error
+ 
+ 	// Settings-level checks, in fixed source order.
+ 	if r.TimeoutSecs != nil && (*r.TimeoutSecs <= 0 || *r.TimeoutSecs > MaxTimeoutSecs) {
+ 		errs = append(errs, fmt.Errorf("timeout_secs must be within 1..%d", MaxTimeoutSecs))
+ 	}
+ 	if r.PayloadByteBudget != nil && *r.PayloadByteBudget < 0 {
+ 		errs = append(errs, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", *r.PayloadByteBudget))
+ 	}
+ 	if r.MaxParallel != nil && *r.MaxParallel < 0 {
+ 		errs = append(errs, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel))
+ 	}
+ 	if r.CacheMaxBytes != nil && *r.CacheMaxBytes < 0 {
+ 		errs = append(errs, fmt.Errorf("cache_max_bytes must be >= 0 (0 = unbounded), got %d", *r.CacheMaxBytes))
+ 	}
+ 	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
+ 	// delay must be positive so the exponential schedule has a starting point.
+ 	for _, m := range validateRetryBounds(r.MaxRetries, r.InitialBackoffMs) {
+ 		errs = append(errs, errors.New(m))
+ 	}
+ 	if !payloadModeValid(r.PayloadMode) {
+ 		errs = append(errs, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", r.PayloadMode))
+ 	}
++	if !reviewStrategyValid(r.ReviewStrategy) {
++		errs = append(errs, fmt.Errorf("invalid review_strategy '%s': must be one of bulk, chunked", r.ReviewStrategy))
++	}
+ 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
+ 	// any non-empty value must be a canonical review severity. Error wording lists
+ 	// the levels low→high so a typo (e.g. "BLOCKER") is corrected quickly.
+ 	if normalized := reclib.NormalizeSeverity(r.Verify.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
+ 		errs = append(errs, fmt.Errorf("invalid verify.min_severity %q: must be LOW, MEDIUM, HIGH, or CRITICAL", r.Verify.MinSeverity))
+ 	}
+ 	if r.Verify.Votes < 0 {
+ 		errs = append(errs, fmt.Errorf("verify.votes must be >= 0 (0 = default), got %d", r.Verify.Votes))
+ 	}
+ 	if r.Verify.MaxParallel < 0 {
+ 		errs = append(errs, fmt.Errorf("verify.max_parallel must be >= 0 (0 = default 4), got %d", r.Verify.MaxParallel))
+ 	}
+ 	// debate.* (Epic 6.0): every trigger must name a known disagreement kind, and
+ 	// max_items must be non-negative (0 = unlimited). Defaults (all three triggers)
+ 	// are applied at load in applyDefaults; an explicit max_items stays as written
+ 	// so 0/unlimited is distinguishable from unset.
+ 	for _, t := range r.Debate.Triggers {
+ 		if !debateTriggerValid(t) {
+ 			errs = append(errs, fmt.Errorf("invalid debate.triggers entry %q: must be one of severity_split, gray_zone, verification_disagreement", t))
+ 		}
+ 	}
+ 	if r.Debate.MaxItems != nil && *r.Debate.MaxItems < 0 {
+ 		errs = append(errs, fmt.Errorf("debate.max_items must be >= 0 (0 = unlimited), got %d", *r.Debate.MaxItems))
+ 	}
+ 	if r.Debate.MaxParallel < 0 {
+ 		errs = append(errs, fmt.Errorf("debate.max_parallel must be >= 0 (0 = default 4), got %d", r.Debate.MaxParallel))
+ 	}
+ 
+ 	for _, name := range sortedKeys(r.Providers) {
+ 		errs = append(errs, validateProvider(name, r.Providers[name])...)
+ 	}
+ 	for _, name := range sortedKeys(r.Agents) {
+ 		errs = append(errs, r.validateAgent(name, r.Agents[name])...)
+ 	}
+ 	errs = append(errs, r.validateExecutor()...)
+ 
+ 	return errors.Join(errs...)
+ }
+ 
+ // validateExecutor returns every fault found in the optional executor block (Epic
+ // 7.0). A nil block (no fix generation) is valid and yields no faults. Like the
+ // agent checks it accumulates rather than short-circuits (Epic 4.2 / AC6): the
+ // provider must be present and reference a defined provider, the model is
+ // required, role (if set) must be "executor", min_severity_for_fix (if set) must
+ // be a canonical review severity, and fix_timeout must be within bounds.
+@@ -634,96 +663,103 @@ func validateProvider(name string, p Provider) []error {
+ // validateAgent returns every fault found in a single agent entry (Epic 4.2 /
+ // AC6 — accumulate rather than short-circuit). The unknown-provider reference
+ // check is suppressed when provider is empty so a missing-provider agent reports
+ // only the "required field" fault, not a spurious "references unknown provider "".
+ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
+ 	var errs []error
+ 	if strings.TrimSpace(name) == "" {
+ 		errs = append(errs, agentErrf(name, "agent '%s': agent name must not be empty", name))
+ 	}
+ 	if a.Provider == "" {
+ 		errs = append(errs, agentErrf(name, "agent '%s': required field 'provider' is missing", name))
+ 	} else if _, ok := r.Providers[a.Provider]; !ok {
+ 		errs = append(errs, agentErrf(name, "agent '%s' references unknown provider '%s'", name, a.Provider))
+ 	}
+ 	if a.Model == "" {
+ 		errs = append(errs, agentErrf(name, "agent '%s': required field 'model' is missing", name))
+ 	}
+ 	if a.TimeoutSecs != nil && (*a.TimeoutSecs <= 0 || *a.TimeoutSecs > MaxTimeoutSecs) {
+ 		errs = append(errs, agentErrf(name, "agent '%s': timeout_secs must be within 1..%d", name, MaxTimeoutSecs))
+ 	}
+ 	if a.Temperature != nil && (*a.Temperature < 0 || *a.Temperature > 2 || math.IsNaN(*a.Temperature) || math.IsInf(*a.Temperature, 0)) {
+ 		errs = append(errs, agentErrf(name, "agent '%s': temperature must be within [0, 2]", name))
+ 	}
+ 	if !payloadModeValid(a.Payload) {
+ 		errs = append(errs, agentErrf(name, "agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, a.Payload))
+ 	}
+ 	// role is still reserved (Stage 3/4) but validated at load; max_turns and
+ 	// tool_budget_bytes are active in 2.0 and bound the tool loop.
+ 	if !roleValid(a.Role) {
+ 		errs = append(errs, agentErrf(name, "agent '%s': role must be one of reviewer, skeptic, judge", name))
+ 	}
+ 	if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
+ 		errs = append(errs, agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns))
+ 	}
+ 	if a.ToolBudgetBytes != nil && (*a.ToolBudgetBytes < 0 || *a.ToolBudgetBytes > MaxToolBudgetBytes) {
+ 		errs = append(errs, agentErrf(name, "agent '%s': tool_budget_bytes must be within 0..%d (0 = unlimited)", name, MaxToolBudgetBytes))
+ 	}
+ 	// Review-constraint guardrails (Epic 2.2). All optional; an unset field is
+ 	// not validated. min_severity is checked case-insensitively against the
+ 	// rubric, max_findings must be a positive cap, and every scope entry must
+ 	// be a non-empty category (a blank entry is a YAML typo, not "all").
+ 	if normalized := reclib.NormalizeSeverity(a.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
+ 		errs = append(errs, agentErrf(name, "agent '%s': min_severity must be one of CRITICAL, HIGH, MEDIUM, LOW", name))
+ 	}
+ 	if a.MaxFindings != nil && (*a.MaxFindings <= 0 || *a.MaxFindings > MaxFindingsCap) {
+ 		errs = append(errs, agentErrf(name, "agent '%s': max_findings must be within 1..%d", name, MaxFindingsCap))
+ 	}
++	// max_context_lines (Epic 14.3): an unset field inherits the default; any
++	// explicit value must be a positive line budget within the sanity ceiling. A
++	// zero or negative cap would make bin-packing degenerate (every file its own
++	// chunk, or worse).
++	if a.MaxContextLines != nil && (*a.MaxContextLines <= 0 || *a.MaxContextLines > MaxContextLinesCap) {
++		errs = append(errs, agentErrf(name, "agent '%s': max_context_lines must be within 1..%d", name, MaxContextLinesCap))
++	}
+ 	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
+ 	// delay must be positive. Same range as the registry tier.
+ 	for _, m := range validateRetryBounds(a.MaxRetries, a.InitialBackoffMs) {
+ 		errs = append(errs, agentErrf(name, "agent '%s': %s", name, m))
+ 	}
+ 	for _, s := range a.Scope {
+ 		if strings.TrimSpace(s) == "" {
+ 			errs = append(errs, agentErrf(name, "agent '%s': scope entries must not be empty", name))
+ 		} else if strings.IndexFunc(s, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) >= 0 {
+ 			errs = append(errs, agentErrf(name, "agent '%s': scope entries must not contain control characters", name))
+ 		}
+ 	}
+ 	// Language entries (Epic 9.0) follow the Scope guard: reject blank entries (a
+ 	// YAML typo, not "no constraint" \u2014 that is an absent field) and entries with
+ 	// control characters. The empty check runs on the CANONICAL form
+ 	// (NormalizeLanguageToken), not the raw value, because validate() runs before
+ 	// applyDefaults: an entry like "." or " . " is non-empty raw but canonicalizes
+ 	// to "" (the leading dot is stripped), which would otherwise leak a blank token
+ 	// that routing-matches every extensionless finding. Checking the canonical form
+ 	// rejects "", whitespace-only, ".", and " . " in one guard. The control-char
+ 	// check stays on the raw value (canonicalization never adds/removes control
+ 	// runes). No known-language allow-list \u2014 third-party authors may declare any ext.
+ 	for i, s := range a.Language {
+ 		if NormalizeLanguageToken(s) == "" {
+ 			errs = append(errs, agentErrf(name, "agent '%s': language entry at index %d must not be empty", name, i))
+ 		} else if strings.IndexFunc(s, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) >= 0 {
+ 			errs = append(errs, agentErrf(name, "agent '%s': language entry '%s' contains invalid characters", name, s))
+ 		}
+ 	}
+ 	// AgentConfig.Persona names the reviewer prompt template — fanout passes it to
+ 	// ResolvePersona, whose validateName already rejects path traversal. Reject
+ 	// control characters and cap the length here too, mirroring the executor
+ 	// persona guard and the Scope/Language guards, so a malformed community
+ 	// persona fails fast at load rather than at runtime resolution. (Persona is a
+ 	// template selector, not verbatim prompt text, so this is defense-in-depth and
+ 	// a clearer load-time error — it closes the last unguarded prompt/fs-adjacent
+ 	// agent string rather than an active interpolation-injection path.)
+ 	if strings.IndexFunc(a.Persona, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) >= 0 {
+ 		errs = append(errs, agentErrf(name, "agent '%s': persona must not contain control characters", name))
+ 	}
+ 	if len(a.Persona) > MaxExecutorPersonaLen {
+ 		errs = append(errs, agentErrf(name, "agent '%s': persona must be at most %d characters", name, MaxExecutorPersonaLen))
+ 	}
+ 	return errs
+ }
+ 
+ // sortedKeys returns a map's string keys in ascending order, so validation walks
+ // providers and agents deterministically regardless of Go's randomized map
+ // iteration.
+@@ -892,12 +928,24 @@ func (a AgentConfig) EffectiveMaxRetries(s Settings) int {
+ // EffectiveInitialBackoffMs returns the agent's own base retry delay (ms) when
+ // set, otherwise the resolved shared delay (Epic 4.6).
+ func (a AgentConfig) EffectiveInitialBackoffMs(s Settings) int {
+ 	if a.InitialBackoffMs != nil {
+ 		return *a.InitialBackoffMs
+ 	}
+ 	return s.InitialBackoffMs
+ }
+ 
++// EffectiveMaxContextLines returns the agent's own per-chunk diff line budget
++// when set (Epic 14.3), otherwise DefaultMaxContextLines. Unlike the other
++// Effective* accessors there is no global settings tier — max_context_lines is
++// per-agent only, so the fallback is the embedded default constant. A caller
++// uses this only when the run's review_strategy is "chunked".
++func (a AgentConfig) EffectiveMaxContextLines() int {
++	if a.MaxContextLines != nil {
++		return *a.MaxContextLines
++	}
++	return DefaultMaxContextLines
++}
++
+ // EffectivePayloadMode returns the agent's own payload override when set,
+ // otherwise the resolved shared payload mode. (Enum validation of payload
+ // values is the payload-configuration stage's concern.)
+diff --git a/internal/registry/max_context_lines_test.go b/internal/registry/max_context_lines_test.go
+new file mode 100644
+index 00000000..3381d717
+--- /dev/null
++++ b/internal/registry/max_context_lines_test.go
+@@ -0,0 +1,70 @@
++package registry
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// Epic 14.3 (AC2): max_context_lines is a per-agent cap on a single chunk's
++// diff line count, consulted only in the chunked strategy. Unset falls back to
++// a package default so a pre-14.3 registry keeps loading unchanged.
++
++func TestMaxContextLines_DefaultWhenUnset(t *testing.T) {
++	ac := AgentConfig{}
++	assert.Equal(t, DefaultMaxContextLines, ac.EffectiveMaxContextLines())
++	assert.Equal(t, 1500, ac.EffectiveMaxContextLines(), "the epic's confirmed default")
++}
++
++func TestMaxContextLines_ExplicitValue(t *testing.T) {
++	n := 800
++	ac := AgentConfig{MaxContextLines: &n}
++	assert.Equal(t, 800, ac.EffectiveMaxContextLines())
++}
++
++func TestMaxContextLines_ParsedFromYAML(t *testing.T) {
++	reg, err := LoadRegistry(writeRegistry(t, `
++providers:
++  p:
++    api_key_env: KEY
++agents:
++  bruce:
++    provider: p
++    model: m
++    max_context_lines: 1200
++`))
++	require.NoError(t, err)
++	require.NotNil(t, reg.Agents["bruce"].MaxContextLines)
++	assert.Equal(t, 1200, *reg.Agents["bruce"].MaxContextLines)
++}
++
++func TestMaxContextLines_RejectsNonPositiveAtLoad(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, `
++providers:
++  p:
++    api_key_env: KEY
++agents:
++  bruce:
++    provider: p
++    model: m
++    max_context_lines: 0
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "max_context_lines")
++}
++
++func TestMaxContextLines_RejectsOverCapAtLoad(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, `
++providers:
++  p:
++    api_key_env: KEY
++agents:
++  bruce:
++    provider: p
++    model: m
++    max_context_lines: 99999999
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "max_context_lines")
++}
+diff --git a/internal/registry/precedence.go b/internal/registry/precedence.go
+index 6d7f632b..e81dbfb9 100644
+--- a/internal/registry/precedence.go
++++ b/internal/registry/precedence.go
+@@ -78,32 +78,36 @@ func validateRetryBounds(maxRetries, backoffMs *int) []string {
+ // Settings are the effective shared review settings after precedence
+ // resolution: CLI flag > project config > registry > embedded default.
+ // Each field resolves independently; a tier participates only where it
+ // explicitly sets a value.
+ //
+ // fail_on is deliberately absent: the CI gate is opt-in (no embedded
+ // default), so gate resolution lives in ResolveGateThreshold with its own
+ // tier-specific error semantics. DefaultFailOn seeds only the config
+ // template `atcr init` generates.
+ type Settings struct {
+ 	PayloadMode string
+-	TimeoutSecs int
++	// ReviewStrategy is the resolved run-wide fan-out strategy (Epic 14.3):
++	// "bulk" (whole diff in one prompt per persona) or "chunked" (bin-packed
++	// per-persona calls capped by each agent's max_context_lines).
++	ReviewStrategy string
++	TimeoutSecs    int
+ 	// PayloadByteBudget is the per-payload byte budget fed to
+ 	// payload.ApplyByteBudget; 0 is the documented unlimited escape hatch
+ 	// (AC 06-03).
+ 	PayloadByteBudget int64
+ 	// MaxParallel bounds concurrent parallel-lane agent calls in the fan-out
+ 	// engine; 0 is the documented unbounded escape hatch.
+ 	MaxParallel int
+ 	// CacheMaxBytes is the resolved total-size cap for the diff cache (Epic 5.2)
+ 	// passed to cache.NewStore; 0 is the documented unbounded escape hatch.
+ 	CacheMaxBytes int64
+ 	// MaxRetries is the resolved retry budget passed to the llmclient per call
+ 	// (Epic 4.6); 0 means a single attempt with no retry.
+ 	MaxRetries int
+ 	// InitialBackoffMs is the resolved base delay (ms) between retries when no
+ 	// server Retry-After header is present (Epic 4.6).
+ 	InitialBackoffMs int
+ }
+ 
+ // CLIOverrides carries explicitly-set CLI flag values (nil = flag not set).
+ // A set-but-empty string is treated as unset rather than as an override.
+@@ -117,121 +121,137 @@ type CLIOverrides struct {
+ // ResolveSettings applies the precedence chain. proj and reg may be nil;
+ // absent tiers simply fall through to the next one. CLI values are validated
+ // here because they bypass the load-time checks the file tiers go through.
+ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Settings, error) {
+ 	s := Settings{
+ 		PayloadMode:       DefaultPayloadMode,
++		ReviewStrategy:    DefaultReviewStrategy,
+ 		TimeoutSecs:       DefaultTimeoutSecs,
+ 		PayloadByteBudget: DefaultPayloadByteBudget,
+ 		MaxParallel:       DefaultMaxParallel,
+ 		CacheMaxBytes:     DefaultCacheMaxBytes,
+ 		MaxRetries:        DefaultMaxRetries,
+ 		InitialBackoffMs:  DefaultInitialBackoffMs,
+ 	}
+ 
+ 	if reg != nil {
+ 		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.PayloadByteBudget, reg.MaxParallel)
+ 		// CacheMaxBytes lives at the registry (global) and project tiers only,
+ 		// like the retry tunables — overlaid here, not through applyTier's fixed
+ 		// four-field signature. A pointer means an explicit 0 (unbounded) survives.
+ 		if reg.CacheMaxBytes != nil {
+ 			s.CacheMaxBytes = *reg.CacheMaxBytes
+ 		}
+ 		// Retry tunables live only at the registry (global) tier and the agent
+ 		// tier (Epic 4.6) — the project tier intentionally does not carry them,
+ 		// so they are overlaid here rather than through applyTier.
+ 		if reg.MaxRetries != nil {
+ 			s.MaxRetries = *reg.MaxRetries
+ 		}
+ 		if reg.InitialBackoffMs != nil {
+ 			s.InitialBackoffMs = *reg.InitialBackoffMs
+ 		}
++		// ReviewStrategy lives at the registry (global) and project tiers only —
++		// overlaid explicitly rather than through applyTier's fixed signature.
++		// Empty/whitespace is "unset" and falls through to the next tier.
++		if v := strings.TrimSpace(reg.ReviewStrategy); v != "" {
++			s.ReviewStrategy = v
++		}
+ 	}
+ 	if proj != nil {
+ 		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
+ 		if proj.CacheMaxBytes != nil {
+ 			s.CacheMaxBytes = *proj.CacheMaxBytes
+ 		}
++		if v := strings.TrimSpace(proj.ReviewStrategy); v != "" {
++			s.ReviewStrategy = v
++		}
+ 	}
+ 
+ 	if cli.PayloadByteBudget != nil {
+ 		// Same rule payload.ValidateBudget enforces (the package boundary
+ 		// forbids importing it here): zero is valid and means unlimited.
+ 		if *cli.PayloadByteBudget < 0 {
+ 			return Settings{}, fmt.Errorf("byte budget must be >= 0, got %d", *cli.PayloadByteBudget)
+ 		}
+ 		s.PayloadByteBudget = *cli.PayloadByteBudget
+ 	}
+ 	if cli.TimeoutSecs != nil {
+ 		if *cli.TimeoutSecs <= 0 || *cli.TimeoutSecs > MaxTimeoutSecs {
+ 			return Settings{}, fmt.Errorf("timeout must be within 1..%d seconds", MaxTimeoutSecs)
+ 		}
+ 		s.TimeoutSecs = *cli.TimeoutSecs
+ 	}
+ 	if cli.MaxParallel != nil {
+ 		// The CLI tier bypasses the file-load checks; validate here. 0 is the
+ 		// unbounded escape hatch (parallels payload_byte_budget), only negative
+ 		// is rejected.
+ 		if *cli.MaxParallel < 0 {
+ 			return Settings{}, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *cli.MaxParallel)
+ 		}
+ 		s.MaxParallel = *cli.MaxParallel
+ 	}
+ 	if v := deref(cli.PayloadMode); v != "" {
+ 		// The CLI tier bypasses the file-load enum checks, so validate here:
+ 		// an invalid --payload value must fail before any review work, not
+ 		// surface deep inside payload.Build.
+ 		if !payloadModeValid(v) {
+ 			return Settings{}, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", v)
+ 		}
+ 		s.PayloadMode = v
+ 	}
+ 	// Post-resolution sanity: a directly-constructed proj/reg (bypassing the
+ 	// file loader) can carry out-of-range values. Catch them here so the engine
+ 	// never receives them.
+ 	//
+ 	// MaxParallel: n<=0 is the unbounded escape hatch; only negative is invalid.
+ 	if s.MaxParallel < 0 {
+ 		return Settings{}, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", s.MaxParallel)
+ 	}
+ 	// TimeoutSecs: review.go's `p.TimeoutSec > 0` guard silently skips the
+ 	// timeout on <=0 values (no timeout applied — inverse of intent).
+ 	if s.TimeoutSecs <= 0 || s.TimeoutSecs > MaxTimeoutSecs {
+ 		return Settings{}, fmt.Errorf("timeout_secs must be within 1..%d, got %d", MaxTimeoutSecs, s.TimeoutSecs)
+ 	}
+ 	// PayloadByteBudget: 0 = unlimited (valid); negative is always invalid.
+ 	if s.PayloadByteBudget < 0 {
+ 		return Settings{}, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", s.PayloadByteBudget)
+ 	}
+ 	// CacheMaxBytes: 0 = unbounded (valid); negative is always invalid. A
+ 	// directly-constructed proj/reg (bypassing the file loader) could carry one.
+ 	if s.CacheMaxBytes < 0 {
+ 		return Settings{}, fmt.Errorf("cache_max_bytes must be >= 0 (0 = unbounded), got %d", s.CacheMaxBytes)
+ 	}
++	// ReviewStrategy (Epic 14.3): the file tiers are checked at load, but the
++	// project tier and a directly-constructed proj/reg bypass that — re-check the
++	// resolved value so the engine never receives an unknown strategy.
++	if !reviewStrategyValid(s.ReviewStrategy) {
++		return Settings{}, fmt.Errorf("invalid review_strategy '%s': must be one of bulk, chunked", s.ReviewStrategy)
++	}
+ 	// Retry tunables (Epic 4.6): a directly-constructed reg (bypassing the file
+ 	// loader) can carry out-of-range values; catch them so the engine never
+ 	// receives them. 0 retries is valid (single attempt); the base delay must be
+ 	// positive so the exponential schedule has a non-zero starting point.
+ 	if msgs := validateRetryBounds(&s.MaxRetries, &s.InitialBackoffMs); len(msgs) > 0 {
+ 		return Settings{}, errors.New(msgs[0])
+ 	}
+ 	// Per-agent retry overrides are read directly by EffectiveMaxRetries /
+ 	// EffectiveInitialBackoffMs, bypassing the global resolution above, so a
+ 	// directly-constructed reg (skipping LoadRegistry's validateAgent) could
+ 	// otherwise smuggle out-of-range per-agent values straight to the engine.
+ 	// Re-check them here for the same defense-in-depth reason as the global tier,
+ 	// walking in sorted order so the error is deterministic.
+ 	if reg != nil {
+ 		for _, name := range sortedKeys(reg.Agents) {
+ 			a := reg.Agents[name]
+ 			if msgs := validateRetryBounds(a.MaxRetries, a.InitialBackoffMs); len(msgs) > 0 {
+ 				return Settings{}, fmt.Errorf("agent '%s': %s", name, msgs[0])
+ 			}
+ 		}
+ 	}
+ 	return s, nil
+ }
+ 
+ // applyTier overlays one configuration tier's explicitly-set values onto s.
+ // Whitespace-only strings count as unset. byteBudget and maxParallel are
+ // pointers so an explicit 0 (the unlimited/unbounded escape hatch) survives
+ // default application.
+diff --git a/internal/registry/project.go b/internal/registry/project.go
+index 82633ab9..dc7d7ddb 100644
+--- a/internal/registry/project.go
++++ b/internal/registry/project.go
+@@ -11,48 +11,55 @@ import (
+ // Embedded defaults for project-level settings (the lowest precedence tier).
+ // DefaultFailOn seeds ONLY the config template `atcr init` generates — it
+ // never participates in gate resolution, which is opt-in (see
+ // ResolveGateThreshold and the reconcile gate).
+ const (
+ 	DefaultPayloadMode = "blocks"
+ 	DefaultFailOn      = "HIGH"
++	// DefaultReviewStrategy is the embedded fan-out strategy (Epic 14.3). "bulk"
++	// sends the whole diff in one prompt per persona, keeping API cost strictly
++	// bounded; users opt into "chunked" for higher accuracy on large PRs.
++	DefaultReviewStrategy = "bulk"
+ 	// DefaultPayloadByteBudget is the embedded per-payload byte budget:
+ 	// 512 KiB ≈ 128k tokens at ~4 bytes/token, fitting the dominant
+ 	// 128k-context model tier with prompt headroom. 0 is the documented
+ 	// unlimited escape hatch (AC 06-03).
+ 	// Context-sizing: models with context limits below 128k will fail on this
+ 	// default — reduce payload_byte_budget to ~163840 (160 KiB ≈ 40k tokens)
+ 	// in .atcr/config.yaml for rosters that include smaller-context models.
+ 	DefaultPayloadByteBudget int64 = 524288
+ 	// DefaultCacheMaxBytes is the embedded total-size cap for the diff cache
+ 	// (Epic 5.2): 50 MiB of reviewer outputs under .atcr/cache before
+ 	// least-recently-used eviction kicks in. 0 is the documented unbounded
+ 	// escape hatch (parity with payload_byte_budget / max_parallel).
+ 	DefaultCacheMaxBytes int64 = 50 * 1024 * 1024
+ )
+ 
+ // ProjectConfig is the project-level configuration from .atcr/config.yaml:
+ // the agent roster, payload mode, global timeout, and CI gate threshold.
+ // TimeoutSecs is a pointer so an explicit zero is caught by validation
+ // instead of being silently replaced by the default.
+ type ProjectConfig struct {
+ 	Agents       []string `yaml:"agents"`
+ 	SerialAgents []string `yaml:"serial_agents,omitempty"`
+ 	PayloadMode  string   `yaml:"payload_mode,omitempty"`
+-	TimeoutSecs  *int     `yaml:"timeout_secs,omitempty"`
++	// ReviewStrategy overrides the run-wide fan-out strategy (Epic 14.3): "bulk"
++	// or "chunked". Empty inherits the registry tier or the embedded default.
++	ReviewStrategy string `yaml:"review_strategy,omitempty"`
++	TimeoutSecs    *int   `yaml:"timeout_secs,omitempty"`
+ 	// PayloadByteBudget is a pointer so an explicit 0 (unlimited) survives
+ 	// default application.
+ 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
+ 	FailOn            string `yaml:"fail_on,omitempty"`
+ 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
+ 	// application in ResolveSettings.
+ 	MaxParallel *int `yaml:"max_parallel,omitempty"`
+ 	// CacheMaxBytes overrides the diff-cache total-size cap (Epic 5.2). A pointer
+ 	// so an explicit 0 (unbounded) survives default application; unset inherits
+ 	// the registry tier or the embedded DefaultCacheMaxBytes.
+ 	CacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty"`
+ 	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
+ 	// nil means execution is unconfigured and `--exec` is refused.
+ 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
+ }
+ 
+ // DefaultProjectConfigPath returns .atcr/config.yaml under root.
+diff --git a/internal/registry/review_strategy.go b/internal/registry/review_strategy.go
+new file mode 100644
+index 00000000..3d2c1da4
+--- /dev/null
++++ b/internal/registry/review_strategy.go
+@@ -0,0 +1,18 @@
++package registry
++
++import "strings"
++
++// validReviewStrategies is the Epic 14.3 fan-out strategy enum. "bulk" (the
++// default) sends the whole diff in one prompt per persona, keeping API cost
++// strictly bounded; "chunked" bin-packs each persona's diff into multiple calls
++// each capped by that agent's max_context_lines, trading extra requests for
++// smaller per-call context (fewer large-diff hallucinations).
++var validReviewStrategies = map[string]bool{"bulk": true, "chunked": true}
++
++// reviewStrategyValid reports whether a configured review_strategy is acceptable
++// at load. Empty or whitespace-only is treated as unset (valid — it falls
++// through to the next precedence tier), mirroring payloadModeValid.
++func reviewStrategyValid(value string) bool {
++	v := strings.TrimSpace(value)
++	return v == "" || validReviewStrategies[v]
++}
+diff --git a/internal/registry/review_strategy_test.go b/internal/registry/review_strategy_test.go
+new file mode 100644
+index 00000000..e7822ad1
+--- /dev/null
++++ b/internal/registry/review_strategy_test.go
+@@ -0,0 +1,59 @@
++package registry
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// Epic 14.3 (AC1): review_strategy toggles bulk (default) vs chunked fan-out.
++// It resolves once per run through the same precedence chain as payload_mode.
++
++func TestReviewStrategy_DefaultsToBulk(t *testing.T) {
++	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n"))
++	require.NoError(t, err)
++
++	s := resolve(t, CLIOverrides{}, proj, nil)
++	assert.Equal(t, DefaultReviewStrategy, s.ReviewStrategy)
++	assert.Equal(t, "bulk", s.ReviewStrategy, "the embedded default keeps API cost bounded")
++}
++
++func TestReviewStrategy_RegistryOverride(t *testing.T) {
++	reg := loadRegistryWith(t, "review_strategy: chunked\n")
++	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n"))
++	require.NoError(t, err)
++
++	s := resolve(t, CLIOverrides{}, proj, reg)
++	assert.Equal(t, "chunked", s.ReviewStrategy, "registry global wins over embedded default")
++}
++
++func TestReviewStrategy_ProjectOverridesRegistry(t *testing.T) {
++	reg := loadRegistryWith(t, "review_strategy: chunked\n")
++	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nreview_strategy: bulk\n"))
++	require.NoError(t, err)
++
++	s := resolve(t, CLIOverrides{}, proj, reg)
++	assert.Equal(t, "bulk", s.ReviewStrategy, "project config wins over registry")
++}
++
++func TestReviewStrategy_InvalidRejectedAtResolve(t *testing.T) {
++	// The project tier and a directly-constructed proj bypass the load-time
++	// check, so ResolveSettings must re-reject an unknown strategy.
++	_, err := ResolveSettings(CLIOverrides{}, &ProjectConfig{ReviewStrategy: "turbo"}, nil)
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "review_strategy")
++}
++
++func TestReviewStrategy_InvalidRejectedAtLoad(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, `
++providers:
++  p:
++    api_key_env: KEY
++agents:
++  bruce: {provider: p, model: m}
++review_strategy: turbo
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "review_strategy")
++}

@@ -396,9 +396,9 @@ type Registry struct {
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
 	FailOn            string `yaml:"fail_on,omitempty"`
 	// ReviewStrategy is the run-wide fan-out strategy (Epic 14.3): "bulk"
-	// (default) or "chunked". A global toggle resolved once per run, mirroring
-	// payload_mode; the per-agent max_context_lines governs each bin's size when
-	// chunking is on.
+	// (default) or "chunked". A global toggle resolved once per run at the
+	// registry and project tiers (there is intentionally no CLI override); the
+	// per-agent max_context_lines governs each bin's size when chunking is on.
 	ReviewStrategy string `yaml:"review_strategy,omitempty"`
 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
 	// application in ResolveSettings.
@@ -709,8 +709,9 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	}
 	// max_context_lines (Epic 14.3): an unset field inherits the default; any
 	// explicit value must be a positive line budget within the sanity ceiling. A
-	// zero or negative cap would make bin-packing degenerate (every file its own
-	// chunk, or worse).
+	// non-positive value is rejected because it collides with the chunker's <=0
+	// 'disable chunking' sentinel (a misconfigured 0 would silently fall back to
+	// bulk-like behavior for that persona).
 	if a.MaxContextLines != nil && (*a.MaxContextLines <= 0 || *a.MaxContextLines > MaxContextLinesCap) {
 		errs = append(errs, agentErrf(name, "agent '%s': max_context_lines must be within 1..%d", name, MaxContextLinesCap))
 	}
@@ -939,8 +940,13 @@ func (a AgentConfig) EffectiveInitialBackoffMs(s Settings) int {
 // Effective* accessors there is no global settings tier — max_context_lines is
 // per-agent only, so the fallback is the embedded default constant. A caller
 // uses this only when the run's review_strategy is "chunked".
+//
+// A non-positive value is clamped to DefaultMaxContextLines as defense-in-depth
+// for directly-constructed AgentConfig values that bypass validateAgent; this
+// prevents the chunker's <=0 "disable chunking" sentinel from silently turning
+// a chunked strategy into bulk-like behavior.
 func (a AgentConfig) EffectiveMaxContextLines() int {
-	if a.MaxContextLines != nil {
+	if a.MaxContextLines != nil && *a.MaxContextLines > 0 {
 		return *a.MaxContextLines
 	}
 	return DefaultMaxContextLines

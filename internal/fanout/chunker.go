@@ -3,6 +3,7 @@ package fanout
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -11,41 +12,56 @@ import (
 // against the resolved Settings string without importing the registry enum.
 const reviewStrategyChunked = "chunked"
 
-// diffFileMarker is the column-0 boundary git writes before each file's hunk in
-// a unified diff (`diff --git a/<old> b/<new>`). Epic 14.3's chunker splits on
-// it directly rather than importing internal/payload (a package-private split),
-// keeping this a self-contained ~20-line utility and avoiding cross-package
-// coupling (epic Technical Constraints).
-const diffFileMarker = "diff --git a/"
+// isDiffFileMarker reports whether ln is a column-0 file-boundary marker that
+// starts a new per-file segment. The chunker recognizes unified-diff headers
+// (`diff --git a/<old> b/<new>` and the `--no-prefix` variant) and
+// combined/merge-diff headers (`diff --cc <path>` / `diff --combined <path>`)
+// so merge-commit payloads are split instead of silently degrading to a single
+// bulk chunk. It splits on these markers directly rather than importing
+// internal/payload (a package-private split), keeping this a self-contained
+// utility and avoiding cross-package coupling (epic Technical Constraints).
+func isDiffFileMarker(ln string) bool {
+	return strings.HasPrefix(ln, "diff --git ") ||
+		strings.HasPrefix(ln, "diff --cc ") ||
+		strings.HasPrefix(ln, "diff --combined ")
+}
 
-// countLines returns the diff line count of s, measured by newline count
-// (strings.Count per the epic constraint). It is the unit the bin-packer budgets
-// against; a trailing partial line is not counted, which is fine — the budget is
-// a soft attention-window guard, not a byte-exact accountant.
-func countLines(s string) int { return strings.Count(s, "\n") }
+// countLines returns the diff line count of s. It counts newline characters and
+// adds one when the string is non-empty and does not end in a newline, so a
+// trailing partial line is included. This keeps the bin-packer and the oversize
+// warning aligned with the actual number of visible lines.
+func countLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	n := strings.Count(s, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
+}
 
 // countDiffFiles reports how many per-file segments a diff contains, i.e. the
-// number of column-0 `diff --git a/` markers. Used to stamp a chunk's FileCount
-// in the rendered prompt.
+// number of column-0 diff-file markers. Used to stamp a chunk's FileCount in
+// the rendered prompt.
 func countDiffFiles(diff string) int {
 	if diff == "" {
 		return 0
 	}
 	n := 0
 	for _, ln := range strings.SplitAfter(diff, "\n") {
-		if strings.HasPrefix(ln, diffFileMarker) {
+		if isDiffFileMarker(ln) {
 			n++
 		}
 	}
 	return n
 }
 
-// splitDiffFiles splits a unified diff into per-file segments on column-0
-// `diff --git a/` boundaries. Any preamble before the first marker (rare) is
-// attached to the first segment so no bytes are lost, and a diff carrying no
-// marker at all comes back as a single segment. Concatenating the segments
-// reproduces the input exactly (SplitAfter preserves newlines). Returns nil for
-// empty input.
+// splitDiffFiles splits a diff into per-file segments on column-0 diff-file
+// boundaries. Any preamble before the first marker (rare) is attached to the
+// first segment so no bytes are lost, and a diff carrying no marker at all comes
+// back as a single segment. Concatenating the segments reproduces the input
+// exactly (SplitAfter preserves newlines). Returns nil for empty input.
 func splitDiffFiles(diff string) []string {
 	if diff == "" {
 		return nil
@@ -54,11 +70,11 @@ func splitDiffFiles(diff string) []string {
 	var cur strings.Builder
 	started := false
 	for _, ln := range strings.SplitAfter(diff, "\n") {
-		if strings.HasPrefix(ln, diffFileMarker) && started {
+		if isDiffFileMarker(ln) && started {
 			segments = append(segments, cur.String())
 			cur.Reset()
 		}
-		if strings.HasPrefix(ln, diffFileMarker) {
+		if isDiffFileMarker(ln) {
 			started = true
 		}
 		cur.WriteString(ln)
@@ -68,6 +84,19 @@ func splitDiffFiles(diff string) []string {
 	}
 	return segments
 }
+
+// maxChunksPerAgent bounds how many chunks — and thus review Slots, goroutines,
+// and provider calls — a single persona's diff may fan out into. Without a
+// ceiling chunkDiff's chunk count grows with diff size (~= totalLines/maxLines);
+// with payload_byte_budget=0 (the documented "unlimited" escape hatch) an
+// adversarially large diff would spawn an unbounded number of Slots, since
+// Engine.Run eagerly starts one goroutine per non-serial slot (the semaphore
+// bounds concurrency, not goroutine/API-call count) — a cost/DoS vector on the
+// exact feature meant to control cost. Once this many chunks are sealed, chunkDiff
+// stops opening new ones and packs every remaining file into the final chunk
+// (which may exceed maxLines), so the slot count never exceeds this ceiling while
+// the diff is still delivered whole.
+const maxChunksPerAgent = 64
 
 // chunkDiff bin-packs a unified diff into chunks whose line counts do not exceed
 // maxLines, splitting only on file boundaries — a single file is never split
@@ -95,7 +124,10 @@ func chunkDiff(diff string, maxLines int) []string {
 		// Close the current chunk before adding a file that would overflow it, but
 		// only when the chunk already holds something — an empty chunk must accept
 		// even an oversized file (it cannot be split) so it lands in its own chunk.
-		if cur.Len() > 0 && curLines+fl > maxLines {
+		// Once maxChunksPerAgent-1 chunks are already sealed, stop opening new ones:
+		// the current chunk becomes the last and absorbs every remaining file, so the
+		// total slot count never exceeds maxChunksPerAgent regardless of diff size.
+		if cur.Len() > 0 && curLines+fl > maxLines && len(chunks) < maxChunksPerAgent-1 {
 			chunks = append(chunks, cur.String())
 			cur.Reset()
 			curLines = 0
@@ -119,7 +151,12 @@ func chunkDiff(diff string, maxLines int) []string {
 // bulk strategy every Agent name is unique, so every group has size one and this
 // is a no-op. First-appearance order is preserved so the slot ordering the
 // manifest and summary observe is stable.
-func mergeChunkResults(results []Result) []Result {
+func mergeChunkResults(results []Result, serialAgents ...map[string]bool) []Result {
+	serialSet := map[string]bool{}
+	if len(serialAgents) > 0 {
+		serialSet = serialAgents[0]
+	}
+
 	order := make([]string, 0, len(results))
 	groups := make(map[string][]Result, len(results))
 	for _, r := range results {
@@ -135,7 +172,7 @@ func mergeChunkResults(results []Result) []Result {
 			merged = append(merged, g[0])
 			continue
 		}
-		merged = append(merged, mergeResultGroup(g))
+		merged = append(merged, mergeResultGroup(g, serialSet))
 	}
 	return merged
 }
@@ -148,7 +185,7 @@ func mergeChunkResults(results []Result) []Result {
 // is Timeout when any chunk timed out, else Failed, carrying the first error.
 // Token/turn usage and per-call telemetry accumulate across chunks so cost and
 // call-count metrics reflect every request the chunked fan-out actually made.
-func mergeResultGroup(g []Result) Result {
+func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out := g[0] // inherit stable per-slot identity (Agent, Model, PayloadMode, constraints)
 	out.Err = nil
 	out.DurationMS = 0
@@ -159,10 +196,13 @@ func mergeResultGroup(g []Result) Result {
 	out.FallbackUsed = false
 	out.FallbackFrom = ""
 
+	isSerial := serialSet[out.Agent]
+
 	var contents []string
 	var firstErr error
 	okCount := 0
 	anyOK, sawTimeout, allCacheHit := false, false, true
+	fallbackFromSet := make(map[string]struct{})
 	for _, r := range g {
 		if strings.TrimSpace(r.Content) != "" {
 			contents = append(contents, r.Content)
@@ -174,14 +214,20 @@ func mergeResultGroup(g []Result) Result {
 		out.ToolBytes += r.ToolBytes
 		out.CallRecords = append(out.CallRecords, r.CallRecords...)
 		out.TrippedBudgets = append(out.TrippedBudgets, r.TrippedBudgets...)
-		if r.DurationMS > out.DurationMS {
-			// Chunks run as independent parallel-lane slots, so the persona's
-			// wall-clock is the slowest chunk, not the sum.
+		if isSerial {
+			// Serial-lane chunks run sequentially, so the persona's wall-clock is the
+			// sum of individual chunk durations.
+			out.DurationMS += r.DurationMS
+		} else if r.DurationMS > out.DurationMS {
+			// Parallel-lane chunks run concurrently, so the persona's wall-clock is
+			// the slowest chunk, not the sum.
 			out.DurationMS = r.DurationMS
 		}
 		if r.FallbackUsed {
 			out.FallbackUsed = true
-			out.FallbackFrom = r.FallbackFrom
+			if r.FallbackFrom != "" {
+				fallbackFromSet[r.FallbackFrom] = struct{}{}
+			}
 		}
 		out.Tools = out.Tools || r.Tools
 		out.ToolsRequested = out.ToolsRequested || r.ToolsRequested
@@ -204,12 +250,27 @@ func mergeResultGroup(g []Result) Result {
 	}
 	out.Content = strings.Join(contents, "\n")
 	out.CacheHit = allCacheHit
+	if len(fallbackFromSet) > 0 {
+		fallbacks := make([]string, 0, len(fallbackFromSet))
+		for fb := range fallbackFromSet {
+			fallbacks = append(fallbacks, fb)
+		}
+		sort.Strings(fallbacks)
+		out.FallbackFrom = strings.Join(fallbacks, ",")
+	}
 	// A persona with a mix of succeeded and failed chunks still reports OK (it
 	// contributed findings), but the failed chunks' files went unreviewed — a
 	// silent completeness gap for a review tool. Surface it on stderr (the same
 	// non-fatal-degradation channel findingsFor uses for grounding drops) so an
 	// operator knows part of the diff was not covered.
 	if okCount > 0 && okCount < len(g) {
+		// Record the machine-readable partial-coverage signal alongside the stderr
+		// warning: the persona reports StatusOK (it contributed findings) but this
+		// many chunks failed, so their files went unreviewed. statusFor surfaces it
+		// in summary.json/status.json so a CI gate can react instead of trusting the
+		// green status. Set only in the partial case — a wholly-failed persona
+		// (okCount==0) is already signaled by a non-OK Status.
+		out.UnreviewedChunks = len(g) - okCount
 		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: %d of %d chunk(s) failed; that portion of the diff was not reviewed\n", out.Agent, len(g)-okCount, len(g))
 	}
 	switch {
