@@ -15,9 +15,10 @@ import (
 	"github.com/samestrin/atcr/internal/registry"
 )
 
-// Epic 4.6: buildAgent resolves each agent's effective retry budget from the
-// per-agent override layered over the resolved global Settings, and invokeAgent
-// threads it onto the call context so the shared client's dispatch honors it.
+// Epic 4.6: slot resolution (buildSlots → renderAgent) resolves each agent's
+// effective retry budget from the per-agent override layered over the resolved
+// global Settings, and invokeAgent threads it onto the call context so the
+// shared client's dispatch honors it.
 
 func retryCfg() *ReviewConfig {
 	return &ReviewConfig{
@@ -39,12 +40,12 @@ func TestBuildAgent_PropagatesRetryFields(t *testing.T) {
 	cfg := retryCfg()
 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 
-	greta, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	greta, _, err := buildAgentViaSlots(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, 5, greta.MaxRetries, "unset agent inherits resolved global max_retries")
 	assert.Equal(t, 500, greta.InitialBackoffMs, "unset agent inherits resolved global initial_backoff_ms")
 
-	kai, _, err := buildAgent(cfg, "kai", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	kai, _, err := buildAgentViaSlots(cfg, "kai", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, 9, kai.MaxRetries, "per-agent max_retries override wins")
 	assert.Equal(t, 500, kai.InitialBackoffMs, "inherits global initial_backoff_ms when not overridden")
