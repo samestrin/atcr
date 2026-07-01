@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -137,5 +138,19 @@ func TestGroundFindings_PrefersExactKeyOverDiffPrefix(t *testing.T) {
 	out, dropped := groundFindings(in, changed)
 	if len(out) != 1 || dropped != 0 {
 		t.Fatalf("exact key with a/ prefix: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
+	}
+}
+
+func TestGroundFindings_EvidenceCapTruncates(t *testing.T) {
+	// Evidence is truncated to a bounded length before matching, so a model that
+	// emits a huge blob cannot force unbounded work, and text beyond the cap is
+	// ignored rather than used to fabricate a fuzzy match.
+	const evidenceCap = 4096
+	target := "return validate(token)"
+	padding := strings.Repeat("x", evidenceCap)
+	in := []stream.Finding{{File: "auth.go", Line: 999, Category: "correctness", Evidence: padding + target}}
+	out, dropped := groundFindings(in, changedFixture())
+	if len(out) != 0 || dropped != 1 {
+		t.Fatalf("evidence beyond cap: kept=%d dropped=%d, want kept=0 dropped=1", len(out), dropped)
 	}
 }
