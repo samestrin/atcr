@@ -126,3 +126,16 @@ func TestGroundFindings_EmptyMapKeepsAll(t *testing.T) {
 		t.Fatalf("empty map: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
 	}
 }
+
+func TestGroundFindings_PrefersExactKeyOverDiffPrefix(t *testing.T) {
+	// A real top-level directory named "a" or "b" must not be stripped away when
+	// the exact key is present in the changed map.
+	changed := payload.ChangedLines{
+		"a/main.go": {Ranges: []payload.LineRange{{Start: 1, End: 5}}},
+	}
+	in := []stream.Finding{{File: "a/main.go", Line: 2, Category: "correctness"}}
+	out, dropped := groundFindings(in, changed)
+	if len(out) != 1 || dropped != 0 {
+		t.Fatalf("exact key with a/ prefix: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
+	}
+}
