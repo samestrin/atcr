@@ -28,7 +28,8 @@ func TestEmitForReconcile_BridgesPoolSummaryAndFindings(t *testing.T) {
 	_, err := fanout.WritePool(pool, []fanout.Result{
 		{Agent: "bruce", Status: fanout.StatusOK, Content: "x", Model: "claude-sonnet-4-6", TokensIn: 14200, TokensOut: 4000, DurationMS: 9100},
 		{Agent: "greta", Status: fanout.StatusOK, Content: "x", Model: "claude-haiku-4-5", TokensIn: 8000, TokensOut: 2000, DurationMS: 5000},
-	})
+	}, nil)
+
 	require.NoError(t, err)
 
 	res := reconcile.Result{

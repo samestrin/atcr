@@ -64,7 +64,7 @@ func parseFileChange(chunk string) FileChange {
 	}
 	inHunk := false
 	for _, line := range strings.Split(chunk, "\n") {
-		if strings.HasPrefix(line, "@@") {
+		if hunkHeaderRe.MatchString(line) {
 			inHunk = true
 			continue
 		}

@@ -44,6 +44,17 @@ type PoolSummary struct {
 	// partial. omitempty keeps it absent from real summaries, so older readers
 	// correctly see the zero value (false).
 	FailureMarker bool `json:"failure_marker,omitempty"`
+	// GroundingEnabled records whether the Epic 14.1 grounding gate was active for
+	// this run (true) or disabled/fail-open (false) — the audit signal that a git
+	// failure or a range-less diff-ingestion run let findings through without the
+	// anti-hallucination check. A pointer so a rebuilt summary (RebuildPool cannot
+	// know the run's grounding state from on-disk artifacts) and pre-14.1 readers
+	// omit it rather than falsely asserting false.
+	GroundingEnabled *bool `json:"grounding_enabled,omitempty"`
+	// GroundingDisabledReason explains WHY grounding was off (a git failure vs.
+	// intentional diff ingestion) when GroundingEnabled is false; empty when the
+	// gate was enabled, so omitempty keeps it absent from grounded runs.
+	GroundingDisabledReason string `json:"grounding_disabled_reason,omitempty"`
 }
 
 // WritePool persists every agent's artifacts under poolDir, the merged pool
@@ -57,7 +68,15 @@ type PoolSummary struct {
 // placed at the pool root, above the per-agent raw/ files, so leaf-preference
 // discovery treats the raw files as the inputs and never double-counts the
 // merged aggregate.
-func WritePool(poolDir string, results []Result, changed ...payload.ChangedLines) (Summary, error) {
+func WritePool(poolDir string, results []Result, changed payload.ChangedLines) (Summary, error) {
+	return writePool(poolDir, results, changed, "")
+}
+
+// writePool is WritePool with the grounding audit reason threaded in (empty when
+// the gate was enabled or no reason was supplied). ExecuteReview calls it directly
+// so summary.json records why grounding was disabled (a git failure vs. range-less
+// diff ingestion); every other caller uses the WritePool wrapper.
+func writePool(poolDir string, results []Result, changed payload.ChangedLines, groundingDisabledReason string) (Summary, error) {
 	if err := os.MkdirAll(poolDir, 0o755); err != nil {
 		return Summary{}, fmt.Errorf("creating pool dir: %w", err)
 	}
@@ -79,7 +98,7 @@ func WritePool(poolDir string, results []Result, changed ...payload.ChangedLines
 		}
 		seen[dir] = true
 
-		fr := findingsFor(r, changed...)
+		fr := findingsFor(r, changed)
 		merged = append(merged, fr.Findings...)
 
 		if err := writeAgentArtifacts(poolDir, dir, r, fr); err != nil {
@@ -98,13 +117,16 @@ func WritePool(poolDir string, results []Result, changed ...payload.ChangedLines
 	}
 
 	sum := summarize(results)
+	groundingEnabled := len(changed) > 0
 	ps := PoolSummary{
-		Agents:        statuses,
-		Total:         sum.Total,
-		Succeeded:     sum.Succeeded,
-		Failed:        sum.Failed,
-		Partial:       sum.Partial,
-		TotalFindings: len(merged),
+		Agents:                  statuses,
+		Total:                   sum.Total,
+		Succeeded:               sum.Succeeded,
+		Failed:                  sum.Failed,
+		Partial:                 sum.Partial,
+		TotalFindings:           len(merged),
+		GroundingEnabled:        &groundingEnabled,
+		GroundingDisabledReason: groundingDisabledReason,
 	}
 	if err := writeJSON(filepath.Join(poolDir, summaryFile), ps); err != nil {
 		return Summary{}, err
@@ -164,7 +186,7 @@ type findingsResult struct {
 	Truncated int
 }
 
-func findingsFor(r Result, changed ...payload.ChangedLines) findingsResult {
+func findingsFor(r Result, changed payload.ChangedLines) findingsResult {
 	if r.Content == "" {
 		return findingsResult{}
 	}
@@ -176,13 +198,13 @@ func findingsFor(r Result, changed ...payload.ChangedLines) findingsResult {
 	// the patch (hallucinations) before per-source constraints apply, so the
 	// max_findings cap ranks only real findings. Runs only when review-level
 	// grounding data was supplied; a nil/absent map disables the gate (fail open).
-	// The per-agent drop count is logged to stderr — observable, matching the
-	// enforceConstraints min_severity/max_findings precedent, never truly silent.
-	var cl payload.ChangedLines
-	if len(changed) > 0 {
-		cl = changed[0]
-	}
-	grounded, ungrounded := groundFindings(findings, cl)
+	// The per-agent drop count is logged to stderr. Unlike the enforceConstraints
+	// min_severity/max_findings drops — which are ALSO persisted to status.json as
+	// DroppedByMinSeverity/TruncatedByMaxFindings — grounding drops are surfaced on
+	// stderr only, not in status.json or summary.json. This is deliberate: the epic
+	// 14.1 clarification accepted the per-agent stderr count as the observable
+	// mechanism, so the count is visible but intentionally not persisted.
+	grounded, ungrounded := groundFindings(findings, changed)
 	if ungrounded > 0 {
 		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: dropped %d ungrounded finding(s) not present in the patch\n", r.Agent, ungrounded)
 	}

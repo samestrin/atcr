@@ -24,7 +24,7 @@ func TestWritePoolRecordsFindingMetrics(t *testing.T) {
 		okResult("greta", "CRITICAL|auth.go:42|Token|Fix|security|15|ev\nHIGH|main.go:88|Leak|Fix|concurrency|30|ev"),
 		okResult("kai", "HIGH|x.go:1|p|f|cat|10|ev"),
 	}
-	_, err := WritePool(pool, results)
+	_, err := WritePool(pool, results, nil)
 	require.NoError(t, err)
 
 	check := func(name string, want int64) {

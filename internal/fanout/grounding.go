@@ -2,6 +2,7 @@ package fanout
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/stream"
@@ -9,14 +10,23 @@ import (
 )
 
 const (
-	// groundingTolerance mirrors the reconciler's lineProximity (reconcile/cluster.go):
-	// a cited line within this many lines of a changed range is treated as
-	// grounded, absorbing the small line-number drift reviewers routinely introduce.
-	groundingTolerance = 3
-	// evidenceMinMatch is the minimum normalized length a substring match must
-	// span before the evidence fallback trusts it, so ubiquitous boilerplate
-	// ("if err != nil {") cannot ground an arbitrary hallucinated finding.
-	evidenceMinMatch = 12
+	// groundingTolerance binds to the reconciler's exported reclib.LineProximity
+	// (reconcile/cluster.go): a cited line within this many lines of a changed range
+	// is treated as grounded, absorbing the small line-number drift reviewers
+	// routinely introduce. Referencing the constant instead of a copied literal keeps
+	// the gate and the reconciler's clustering distance in lockstep at compile time.
+	groundingTolerance = reclib.LineProximity
+	// evidenceMinMatch is the minimum normalized rune length a substring match
+	// must span before the evidence fallback trusts it. Set above the length of
+	// ubiquitous Go boilerplate ("if err != nil {" is 15 runes) so such a line
+	// cannot ground an arbitrary hallucinated finding, while a distinctive quote
+	// ("return validate(token)" is 22 runes) still clears it. Runes, not bytes,
+	// so a short multibyte snippet cannot clear the floor on inflated byte length.
+	evidenceMinMatch = 18
+	// evidenceMaxRunes bounds the model-controlled evidence string before
+	// case-folding and substring matching, preventing CPU/allocation amplification
+	// from a degenerate multi-rune evidence payload.
+	evidenceMaxRunes = 4096
 )
 
 // groundFindings drops findings that cannot be located in the patch's changed
@@ -26,7 +36,7 @@ const (
 // ungrounded ones are dropped. Kept findings retain their original order; the
 // drop count is returned for the per-agent stderr tally.
 func groundFindings(findings []stream.Finding, changed payload.ChangedLines) ([]stream.Finding, int) {
-	if changed == nil || len(findings) == 0 {
+	if len(changed) == 0 || len(findings) == 0 {
 		return findings, 0
 	}
 	kept := make([]stream.Finding, 0, len(findings))
@@ -57,7 +67,7 @@ func isGrounded(f stream.Finding, changed payload.ChangedLines) bool {
 	if strings.EqualFold(strings.TrimSpace(f.Category), reclib.CategoryOutOfScope) {
 		return true
 	}
-	fc, ok := changed[normalizeFindingPath(f.File)]
+	fc, ok := changed[normalizeFindingPath(f.File, changed)]
 	if !ok {
 		return false // file not in the patch: ungrounded
 	}
@@ -73,18 +83,29 @@ func isGrounded(f stream.Finding, changed payload.ChangedLines) bool {
 	return evidenceMatches(f.Evidence, fc.ChangedText)
 }
 
-// normalizeFindingPath strips the diff-artifact prefixes a model sometimes copies
-// into a FILE column (a/, b/, ./, a leading /) so a cited path matches the
-// repo-root-relative head-path keys of the changed map. Best-effort: a form it
-// cannot normalize (an absolute path elsewhere) simply misses the map, and the
-// finding is treated as ungrounded.
-func normalizeFindingPath(file string) string {
+// normalizeFindingPath resolves a cited FILE path to a key in the changed map.
+// It strips diff-artifact prefixes (a/, b/, ./, a leading /) only when the
+// unstripped key is absent AND the stripped key is present, so a real repo path
+// that happens to start with "a/" or "b/" is not falsely normalized away.
+//
+// Known limitation: the changed map is keyed by head-side (new) path only, so a
+// finding that cites a RENAMED file's OLD (base-side) path — as it appears in a
+// diff header — does not resolve here and is dropped as ungrounded. Old-to-new
+// rename aliasing is intentionally out of scope (epic 14.1 is reuse-only).
+func normalizeFindingPath(file string, changed payload.ChangedLines) string {
 	p := strings.TrimSpace(file)
 	p = strings.TrimPrefix(p, "./")
-	if strings.HasPrefix(p, "a/") || strings.HasPrefix(p, "b/") {
-		p = p[2:]
+	p = strings.TrimPrefix(p, "/")
+	if _, ok := changed[p]; ok {
+		return p
 	}
-	return strings.TrimPrefix(p, "/")
+	if strings.HasPrefix(p, "a/") || strings.HasPrefix(p, "b/") {
+		stripped := p[2:]
+		if _, ok := changed[stripped]; ok {
+			return stripped
+		}
+	}
+	return p
 }
 
 // lineInRanges reports whether a 1-based line falls within any changed range
@@ -105,15 +126,19 @@ func lineInRanges(line int, ranges []payload.LineRange) bool {
 // evidenceMatches is the fuzzy fallback for a finding whose cited line drifted
 // out of range: it keeps the finding when its EVIDENCE and a changed line contain
 // one another (case-folded, whitespace-collapsed) over at least evidenceMinMatch
-// characters, so a real quote grounds the finding while short boilerplate cannot.
+// runes, so a real quote grounds the finding while short boilerplate cannot.
+// Lengths are measured in runes (not bytes) so a short multibyte snippet cannot
+// clear the floor on inflated byte length. Evidence is truncated to
+// evidenceMaxRunes first to bound model-controlled work.
 func evidenceMatches(evidence string, changed []string) bool {
-	ev := collapseSpaces(strings.ToLower(strings.TrimSpace(evidence)))
-	if len(ev) < evidenceMinMatch || len(changed) == 0 {
+	evidence = truncateRunes(strings.TrimSpace(evidence), evidenceMaxRunes)
+	ev := collapseSpaces(strings.ToLower(evidence))
+	if utf8.RuneCountInString(ev) < evidenceMinMatch || len(changed) == 0 {
 		return false
 	}
 	for _, c := range changed {
 		cl := collapseSpaces(strings.ToLower(c))
-		if len(cl) < evidenceMinMatch {
+		if utf8.RuneCountInString(cl) < evidenceMinMatch {
 			continue
 		}
 		if strings.Contains(ev, cl) || strings.Contains(cl, ev) {
@@ -127,4 +152,12 @@ func evidenceMatches(evidence string, changed []string) bool {
 // ends, so a quote and its diff line match despite indentation differences.
 func collapseSpaces(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// truncateRunes returns s truncated to at most max runes.
+func truncateRunes(s string, max int) string {
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	return string([]rune(s)[:max])
 }

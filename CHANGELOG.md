@@ -1,3 +1,20 @@
+## [Technical Debt] - 2026-06-30
+
+### Fixed
+
+- Recorded `grounding_enabled` and its disabled reason in pool `summary.json`.
+- Documented that renamed-file old-path citations are dropped as ungrounded.
+- Corrected grounding-drop comment to stop claiming `status.json` parity with `enforceConstraints`.
+- Exported `reconcile.LineProximity` and bound grounding tolerance to it.
+- Raised grounding evidence floor to 18 and counted runes instead of bytes so boilerplate/multibyte evidence no longer grounds.
+- Made `changed` a required nil-able parameter for `WritePool`/`findingsFor`/`writeResumedAgents`.
+- Capped evidence length to prevent amplification in grounding.
+- Resolved `a/` `b/` prefix over-normalization in grounding.
+- Resolved empty `ChangedLines` map fail-open bug in grounding.
+- Stated hard-drop rule in `scopeFiles` for out-of-range findings.
+- Qualified `scopeChangedOnly` discard clause by grounding condition.
+- Reused `hunkHeaderRe` in `parseFileChange` for consistent hunk detection.
+
 ## [14.1.0] - 2026-06-30
 
 Grounded multi-agent review findings in the actual diff so reviewer models can no longer report hallucinated technical-debt items.

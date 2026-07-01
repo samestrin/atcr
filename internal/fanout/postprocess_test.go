@@ -142,7 +142,7 @@ func TestFindingsFor_AppliesConstraints(t *testing.T) {
 		"LOW|a.go:2|nit|fix|style|5|ev\n" +
 		"MEDIUM|a.go:3|gap|fix|correctness|5|ev\n"
 	r := Result{Agent: "bruce-backup", Content: content, Status: StatusOK, MinSeverity: "MEDIUM", MaxFindings: intp(1)}
-	fr := findingsFor(r)
+	fr := findingsFor(r, nil)
 	if len(fr.Findings) != 1 {
 		t.Fatalf("got %d findings, want 1 (LOW dropped, capped to 1)", len(fr.Findings))
 	}

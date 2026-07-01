@@ -59,6 +59,29 @@ func TestParseFileChange_CommentPrefixedContent(t *testing.T) {
 	}
 }
 
+func TestParseFileChange_MalformedHunkHeaderIgnored(t *testing.T) {
+	// A malformed or combined hunk header ("@@@") must not be treated as a hunk
+	// boundary by parseFileChange, because parseHeadRanges uses the strict
+	// ^@@ -\d+ ... @@ regex and will contribute zero Ranges for it. If
+	// parseFileChange flipped inHunk on the loose HasPrefix("@@") test, the
+	// subsequent +/- lines would be harvested as ChangedText with no matching
+	// Ranges, producing weak-evidence-only grounding.
+	chunk := "diff --git a/foo.go b/foo.go\n" +
+		"index 111..222 100644\n" +
+		"--- a/foo.go\n" +
+		"+++ b/foo.go\n" +
+		"@@@ -4,2 -4,2 +4,3 @@@\n" +
+		"-\treturn 1\n" +
+		"+\treturn 2\n"
+	fc := parseFileChange(chunk)
+	if len(fc.Ranges) != 0 {
+		t.Errorf("malformed hunk produced ranges %+v, want none", fc.Ranges)
+	}
+	if len(fc.ChangedText) != 0 {
+		t.Errorf("malformed hunk harvested changed text %v, want none", fc.ChangedText)
+	}
+}
+
 func TestBuildChangedLines_Integration(t *testing.T) {
 	dir := initRepo(t)
 	write(t, dir, "foo.go", "package p\n\nfunc Foo() int {\n\treturn 1\n}\n")

@@ -38,14 +38,17 @@ func ScopeFocus(scope []string) string {
 const (
 	scopeChangedOnly = "Review only the changed regions. The payload shows you the change in context, " +
 		"but a finding whose FILE:LINE falls outside the changed lines will be discarded before it " +
-		"reaches the report — it is not enough for the code to merely be visible in the surrounding " +
-		"context. If you must flag a genuine pre-existing issue in unchanged code, give it CATEGORY " +
-		"out-of-scope so the reconciler annotates rather than discards it. Stay on the diff."
+		"reaches the report when grounding is active (git-range reviews) — it is not enough for the " +
+		"code to merely be visible in the surrounding context. If you must flag a genuine pre-existing " +
+		"issue in unchanged code, give it CATEGORY out-of-scope so the reconciler annotates rather than " +
+		"discards it. Stay on the diff."
 
 	scopeFiles = "Full head-version content of each changed file is provided, so pre-existing issues " +
-		"in unchanged regions may be visible. Focus your findings on the changed regions. You may note " +
-		"a pre-existing issue separately, but give it CATEGORY `out-of-scope` so the reconciler annotates " +
-		"rather than promotes it."
+		"in unchanged regions may be visible. Focus your findings on the changed regions. A finding whose " +
+		"FILE:LINE falls outside the changed lines will be discarded before it reaches the report when " +
+		"grounding is active (git-range reviews) — it is not enough for the code to merely be visible in " +
+		"the surrounding context. You may note a pre-existing issue separately, but give it CATEGORY " +
+		"`out-of-scope` so the reconciler annotates rather than promotes it."
 )
 
 // ScopeRule returns the scope instruction for a payload mode. diff and blocks

@@ -2,13 +2,15 @@ package reconcile
 
 import "sort"
 
-// lineProximity is the inclusive line distance that clusters two findings on the
-// same file (N and N+3 share a cluster, N and N+4 do not).
-const lineProximity = 3
+// LineProximity is the inclusive line distance that clusters two findings on the
+// same file (N and N+3 share a cluster, N and N+4 do not). Exported so the
+// grounding gate (internal/fanout) can bind its tolerance to this exact value
+// instead of duplicating the literal, keeping the two constants in lockstep.
+const LineProximity = 3
 
 // Cluster groups findings into location clusters. Findings on the same file are
 // clustered by single-linkage on line number: sorted ascending, a gap of more
-// than lineProximity from the PREVIOUS finding starts a new cluster. This
+// than LineProximity from the PREVIOUS finding starts a new cluster. This
 // satisfies the pairwise boundary (two findings at N and N+3 cluster; N and N+4
 // do not) without the adjacent-line split a fixed line/3 bucket suffers.
 //

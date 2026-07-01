@@ -11,7 +11,7 @@ import "sort"
 // belong in the same comparison cluster regardless of their line distance. An
 // empty string means "no structural key available for this finding" (e.g. no
 // parser for its language, an unparseable file, or a file-level finding); such
-// findings fall back to ±lineProximity grouping. A key is expected to be
+// findings fall back to ±LineProximity grouping. A key is expected to be
 // file-scoped so findings in different files never collide.
 type Grouper interface {
 	GroupKey(f Finding) string
@@ -80,7 +80,7 @@ func ClusterWith(findings []Finding, g Grouper) [][]Finding {
 }
 
 // proximityClusters groups already-line-sorted findings by single-linkage on line
-// number (a gap greater than lineProximity starts a new cluster). It is the
+// number (a gap greater than LineProximity starts a new cluster). It is the
 // shared core of Cluster and the ClusterWith fallback.
 func proximityClusters(lined []Finding) [][]Finding {
 	var clusters [][]Finding
@@ -90,7 +90,7 @@ func proximityClusters(lined []Finding) [][]Finding {
 		switch {
 		case len(cur) == 0:
 			cur = []Finding{f}
-		case f.Line-prevLine <= lineProximity:
+		case f.Line-prevLine <= LineProximity:
 			cur = append(cur, f)
 		default:
 			clusters = append(clusters, cur)
