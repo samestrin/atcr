@@ -107,8 +107,131 @@ func TestChunkDiff(t *testing.T) {
 	})
 }
 
+func TestChunkDiffBoundsChunkCount(t *testing.T) {
+	// A synthetic multi-thousand-file diff with a tiny per-chunk budget would,
+	// absent a ceiling, produce ~one chunk per file — thousands of slots,
+	// goroutines, and provider calls (a cost/DoS vector on the exact feature meant
+	// to control cost). chunkDiff must cap the slot count at maxChunksPerAgent,
+	// coalescing the overflow into the final chunk while staying lossless.
+	var b strings.Builder
+	const files = 5000
+	for i := 0; i < files; i++ {
+		b.WriteString(fileSeg("f"+itoa(i)+".go", 1))
+	}
+	diff := b.String()
+	// maxLines=1 forces a new chunk per file were there no cap. 64 is the
+	// maxChunksPerAgent ceiling GREEN introduces; current (uncapped) code returns
+	// ~5000 chunks and fails this bound.
+	got := chunkDiff(diff, 1)
+	assert.LessOrEqual(t, len(got), 64, "chunk count must be bounded regardless of diff size")
+	assert.Equal(t, diff, strings.Join(got, ""), "coalescing the overflow is still lossless")
+}
+
 func TestCountDiffFiles(t *testing.T) {
 	assert.Equal(t, 0, countDiffFiles(""))
 	assert.Equal(t, 1, countDiffFiles(fileSeg("a.go", 1)))
 	assert.Equal(t, 2, countDiffFiles(fileSeg("a.go", 1)+fileSeg("b.go", 1)))
+}
+
+func TestCountLinesTrailingPartialLine(t *testing.T) {
+	assert.Equal(t, 0, countLines(""))
+	assert.Equal(t, 1, countLines("a\n"))
+	assert.Equal(t, 2, countLines("a\nb"), "final line without trailing newline must be counted")
+	assert.Equal(t, 2, countLines("a\nb\n"))
+	assert.Equal(t, 1, countLines("a"), "single line without newline is one line")
+}
+
+// noPrefixSeg builds a minimal diff segment produced by `git diff --no-prefix`
+// (or diff.noprefix=true), where the header omits the a/ and b/ prefixes.
+func noPrefixSeg(path string, body int) string {
+	var b strings.Builder
+	b.WriteString("diff --git " + path + " " + path + "\n")
+	b.WriteString("--- " + path + "\n")
+	b.WriteString("+++ " + path + "\n")
+	b.WriteString("@@ -1," + itoa(body) + " +1," + itoa(body) + " @@\n")
+	for i := 0; i < body; i++ {
+		b.WriteString("+line\n")
+	}
+	return b.String()
+}
+
+func TestNoPrefixDiff(t *testing.T) {
+	diff := noPrefixSeg("a.go", 1) + noPrefixSeg("b.go", 1)
+	assert.Equal(t, 2, countDiffFiles(diff), "no-prefix headers should be counted")
+	segs := splitDiffFiles(diff)
+	require.Len(t, segs, 2)
+	assert.True(t, strings.HasPrefix(segs[0], "diff --git a.go"))
+	assert.True(t, strings.HasPrefix(segs[1], "diff --git b.go"))
+	assert.Equal(t, diff, strings.Join(segs, ""), "split is lossless")
+	// Verify chunkDiff also respects the no-prefix boundary.
+	chunks := chunkDiff(diff, 50)
+	require.Len(t, chunks, 1)
+	assert.Equal(t, diff, chunks[0])
+}
+
+// combinedSeg builds a minimal combined-diff segment (`diff --cc <path>`) as
+// produced by merge commits. Combined/merge-format diffs use a different header
+// prefix than unified diffs but still mark per-file boundaries at column 0.
+func combinedSeg(path string, body int) string {
+	var b strings.Builder
+	b.WriteString("diff --cc " + path + "\n")
+	b.WriteString("--- a/" + path + "\n")
+	b.WriteString("+++ b/" + path + "\n")
+	b.WriteString("@@@ -1,1 -1,1 +1,1 @@@\n")
+	for i := 0; i < body; i++ {
+		b.WriteString("+line\n")
+	}
+	return b.String()
+}
+
+// combinedLongSeg builds a minimal `diff --combined <path>` segment, the long
+// form of the combined-diff header.
+func combinedLongSeg(path string, body int) string {
+	var b strings.Builder
+	b.WriteString("diff --combined " + path + "\n")
+	b.WriteString("--- a/" + path + "\n")
+	b.WriteString("+++ b/" + path + "\n")
+	b.WriteString("@@@ -1,1 -1,1 +1,1 @@@\n")
+	for i := 0; i < body; i++ {
+		b.WriteString("+line\n")
+	}
+	return b.String()
+}
+
+func TestCombinedDiffMarkers(t *testing.T) {
+	t.Run("short form --cc", func(t *testing.T) {
+		diff := combinedSeg("a.go", 1) + combinedSeg("b.go", 1)
+		assert.Equal(t, 2, countDiffFiles(diff), "diff --cc headers should be counted")
+		segs := splitDiffFiles(diff)
+		require.Len(t, segs, 2)
+		assert.True(t, strings.HasPrefix(segs[0], "diff --cc a.go"))
+		assert.True(t, strings.HasPrefix(segs[1], "diff --cc b.go"))
+		assert.Equal(t, diff, strings.Join(segs, ""), "split is lossless")
+	})
+	t.Run("long form --combined", func(t *testing.T) {
+		diff := combinedLongSeg("a.go", 1) + combinedLongSeg("b.go", 1)
+		assert.Equal(t, 2, countDiffFiles(diff), "diff --combined headers should be counted")
+		segs := splitDiffFiles(diff)
+		require.Len(t, segs, 2)
+		assert.True(t, strings.HasPrefix(segs[0], "diff --combined a.go"))
+		assert.True(t, strings.HasPrefix(segs[1], "diff --combined b.go"))
+		assert.Equal(t, diff, strings.Join(segs, ""), "split is lossless")
+	})
+	t.Run("chunkDiff respects combined boundaries", func(t *testing.T) {
+		diff := combinedSeg("a.go", 1) + combinedSeg("b.go", 1)
+		chunks := chunkDiff(diff, 50)
+		require.Len(t, chunks, 1)
+		assert.Equal(t, diff, chunks[0])
+	})
+}
+
+func TestMergeResultGroupFallbackFromDistinct(t *testing.T) {
+	g := []Result{
+		{Agent: "reviewer", Status: StatusOK, FallbackUsed: true, FallbackFrom: "primary-a"},
+		{Agent: "reviewer", Status: StatusOK, FallbackUsed: true, FallbackFrom: "primary-b"},
+	}
+	merged := mergeResultGroup(g, nil)
+	assert.True(t, merged.FallbackUsed)
+	assert.Contains(t, merged.FallbackFrom, "primary-a", "first fallback source should be recorded")
+	assert.Contains(t, merged.FallbackFrom, "primary-b", "second fallback source should be recorded")
 }
