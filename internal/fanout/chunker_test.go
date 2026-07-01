@@ -112,3 +112,31 @@ func TestCountDiffFiles(t *testing.T) {
 	assert.Equal(t, 1, countDiffFiles(fileSeg("a.go", 1)))
 	assert.Equal(t, 2, countDiffFiles(fileSeg("a.go", 1)+fileSeg("b.go", 1)))
 }
+
+// noPrefixSeg builds a minimal diff segment produced by `git diff --no-prefix`
+// (or diff.noprefix=true), where the header omits the a/ and b/ prefixes.
+func noPrefixSeg(path string, body int) string {
+	var b strings.Builder
+	b.WriteString("diff --git " + path + " " + path + "\n")
+	b.WriteString("--- " + path + "\n")
+	b.WriteString("+++ " + path + "\n")
+	b.WriteString("@@ -1," + itoa(body) + " +1," + itoa(body) + " @@\n")
+	for i := 0; i < body; i++ {
+		b.WriteString("+line\n")
+	}
+	return b.String()
+}
+
+func TestNoPrefixDiff(t *testing.T) {
+	diff := noPrefixSeg("a.go", 1) + noPrefixSeg("b.go", 1)
+	assert.Equal(t, 2, countDiffFiles(diff), "no-prefix headers should be counted")
+	segs := splitDiffFiles(diff)
+	require.Len(t, segs, 2)
+	assert.True(t, strings.HasPrefix(segs[0], "diff --git a.go"))
+	assert.True(t, strings.HasPrefix(segs[1], "diff --git b.go"))
+	assert.Equal(t, diff, strings.Join(segs, ""), "split is lossless")
+	// Verify chunkDiff also respects the no-prefix boundary.
+	chunks := chunkDiff(diff, 50)
+	require.Len(t, chunks, 1)
+	assert.Equal(t, diff, chunks[0])
+}
