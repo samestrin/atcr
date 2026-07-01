@@ -119,3 +119,37 @@ func TestMergeChunkResults_AllSuccessNoWarning(t *testing.T) {
 	})
 	require.NotContains(t, out, "not reviewed", "no warning when every chunk succeeded")
 }
+
+// TD 14.3: a partial-coverage persona reports StatusOK but must record a
+// MACHINE-READABLE signal of the unreviewed portion, so a CI gate reading
+// summary.json can react instead of trusting the green status. The stderr warning
+// alone is not enough (nothing downstream parses stderr).
+func TestMergeChunkResults_PartialFailureRecordsUnreviewedChunks(t *testing.T) {
+	results := []Result{
+		{Agent: "greta", Status: StatusOK, Content: "HIGH|a.go:1|p|f|CORRECTNESS"},
+		{Agent: "greta", Status: StatusFailed, Err: errors.New("boom")},
+		{Agent: "greta", Status: StatusFailed, Err: errors.New("boom2")},
+	}
+	merged := mergeChunkResults(results)
+	require.Len(t, merged, 1)
+	require.Equal(t, StatusOK, merged[0].Status, "a partial persona still reports OK (it contributed findings)")
+	require.Equal(t, 2, merged[0].UnreviewedChunks, "the two failed chunks must be recorded as unreviewed")
+}
+
+// A fully-successful chunked persona records zero unreviewed chunks so omitempty
+// keeps summary.json byte-identical to the pre-field shape.
+func TestMergeChunkResults_FullSuccessNoUnreviewedChunks(t *testing.T) {
+	results := []Result{
+		{Agent: "greta", Status: StatusOK, Content: "HIGH|a.go:1|p|f|CORRECTNESS"},
+		{Agent: "greta", Status: StatusOK, Content: "LOW|b.go:2|p|f|CORRECTNESS"},
+	}
+	merged := mergeChunkResults(results)
+	require.Equal(t, 0, merged[0].UnreviewedChunks, "full coverage records zero unreviewed chunks")
+}
+
+// statusFor must thread UnreviewedChunks from the merged Result onto AgentStatus
+// so it lands in summary.json (PoolSummary.Agents) and per-agent status.json.
+func TestStatusFor_SurfacesUnreviewedChunks(t *testing.T) {
+	st := statusFor(Result{Agent: "greta", Status: StatusOK, UnreviewedChunks: 2}, findingsResult{})
+	require.Equal(t, 2, st.UnreviewedChunks, "partial-coverage count must surface in AgentStatus")
+}
