@@ -31,6 +31,34 @@ func TestParseFileChange_RangesAndText(t *testing.T) {
 	}
 }
 
+func TestParseFileChange_CommentPrefixedContent(t *testing.T) {
+	// A removed comment "-- old" renders as the diff line "--- old"; an added
+	// "++ new" renders as "+++ new". Both are content within the hunk, not file
+	// headers, and must land in ChangedText (regression: a prefix test on ---/+++
+	// wrongly discarded them, breaking evidence matching for SQL/Lua/Haskell).
+	chunk := "diff --git a/q.sql b/q.sql\n" +
+		"index 111..222 100644\n" +
+		"--- a/q.sql\n" +
+		"+++ b/q.sql\n" +
+		"@@ -1 +1 @@\n" +
+		"--- old comment line here\n" +
+		"+++ new comment line here\n"
+	fc := parseFileChange(chunk)
+	joined := strings.Join(fc.ChangedText, "|")
+	if !strings.Contains(joined, "-- old comment line here") {
+		t.Errorf("removed comment content missing from %v", fc.ChangedText)
+	}
+	if !strings.Contains(joined, "++ new comment line here") {
+		t.Errorf("added comment content missing from %v", fc.ChangedText)
+	}
+	// The pre-hunk file headers must NOT leak into ChangedText.
+	for _, c := range fc.ChangedText {
+		if strings.Contains(c, "a/q.sql") || strings.Contains(c, "b/q.sql") {
+			t.Errorf("file header leaked into changed text: %q", c)
+		}
+	}
+}
+
 func TestBuildChangedLines_Integration(t *testing.T) {
 	dir := initRepo(t)
 	write(t, dir, "foo.go", "package p\n\nfunc Foo() int {\n\treturn 1\n}\n")
