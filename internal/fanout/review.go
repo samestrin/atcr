@@ -567,7 +567,17 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	// tallies, and writePool (which rejects duplicate agent dirs) all see a single
 	// logical source with Reviewer=<persona>. In bulk strategy names are unique, so
 	// this is a no-op.
-	results = mergeChunkResults(results)
+	//
+	// Serial-lane personas run their chunk-slots sequentially, so their true
+	// wall-clock duration is the sum of chunk durations; parallel-lane personas
+	// take the maximum. Pass the serial set so mergeChunkResults can distinguish.
+	serialAgents := make(map[string]bool, len(p.Slots))
+	for _, s := range p.Slots {
+		if s.Serial {
+			serialAgents[s.Primary.Name] = true
+		}
+	}
+	results = mergeChunkResults(results, serialAgents)
 
 	// Classify the run into the manifest's review-stage entry and stamp the
 	// snapshot provenance (nil when no agent ran with tools).

@@ -148,3 +148,14 @@ func TestNoPrefixDiff(t *testing.T) {
 	require.Len(t, chunks, 1)
 	assert.Equal(t, diff, chunks[0])
 }
+
+func TestMergeResultGroupFallbackFromDistinct(t *testing.T) {
+	g := []Result{
+		{Agent: "reviewer", Status: StatusOK, FallbackUsed: true, FallbackFrom: "primary-a"},
+		{Agent: "reviewer", Status: StatusOK, FallbackUsed: true, FallbackFrom: "primary-b"},
+	}
+	merged := mergeResultGroup(g, nil)
+	assert.True(t, merged.FallbackUsed)
+	assert.Contains(t, merged.FallbackFrom, "primary-a", "first fallback source should be recorded")
+	assert.Contains(t, merged.FallbackFrom, "primary-b", "second fallback source should be recorded")
+}

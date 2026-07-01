@@ -128,7 +128,12 @@ func chunkDiff(diff string, maxLines int) []string {
 // bulk strategy every Agent name is unique, so every group has size one and this
 // is a no-op. First-appearance order is preserved so the slot ordering the
 // manifest and summary observe is stable.
-func mergeChunkResults(results []Result) []Result {
+func mergeChunkResults(results []Result, serialAgents ...map[string]bool) []Result {
+	serialSet := map[string]bool{}
+	if len(serialAgents) > 0 {
+		serialSet = serialAgents[0]
+	}
+
 	order := make([]string, 0, len(results))
 	groups := make(map[string][]Result, len(results))
 	for _, r := range results {
@@ -144,7 +149,7 @@ func mergeChunkResults(results []Result) []Result {
 			merged = append(merged, g[0])
 			continue
 		}
-		merged = append(merged, mergeResultGroup(g))
+		merged = append(merged, mergeResultGroup(g, serialSet))
 	}
 	return merged
 }
@@ -157,7 +162,7 @@ func mergeChunkResults(results []Result) []Result {
 // is Timeout when any chunk timed out, else Failed, carrying the first error.
 // Token/turn usage and per-call telemetry accumulate across chunks so cost and
 // call-count metrics reflect every request the chunked fan-out actually made.
-func mergeResultGroup(g []Result) Result {
+func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out := g[0] // inherit stable per-slot identity (Agent, Model, PayloadMode, constraints)
 	out.Err = nil
 	out.DurationMS = 0
@@ -167,6 +172,8 @@ func mergeResultGroup(g []Result) Result {
 	out.TrippedBudgets = nil
 	out.FallbackUsed = false
 	out.FallbackFrom = ""
+
+	isSerial := serialSet[out.Agent]
 
 	var contents []string
 	var firstErr error
@@ -183,9 +190,13 @@ func mergeResultGroup(g []Result) Result {
 		out.ToolBytes += r.ToolBytes
 		out.CallRecords = append(out.CallRecords, r.CallRecords...)
 		out.TrippedBudgets = append(out.TrippedBudgets, r.TrippedBudgets...)
-		if r.DurationMS > out.DurationMS {
-			// Chunks run as independent parallel-lane slots, so the persona's
-			// wall-clock is the slowest chunk, not the sum.
+		if isSerial {
+			// Serial-lane chunks run sequentially, so the persona's wall-clock is the
+			// sum of individual chunk durations.
+			out.DurationMS += r.DurationMS
+		} else if r.DurationMS > out.DurationMS {
+			// Parallel-lane chunks run concurrently, so the persona's wall-clock is
+			// the slowest chunk, not the sum.
 			out.DurationMS = r.DurationMS
 		}
 		if r.FallbackUsed {
