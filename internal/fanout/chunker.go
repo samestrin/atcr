@@ -3,6 +3,7 @@ package fanout
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -179,6 +180,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	var firstErr error
 	okCount := 0
 	anyOK, sawTimeout, allCacheHit := false, false, true
+	fallbackFromSet := make(map[string]struct{})
 	for _, r := range g {
 		if strings.TrimSpace(r.Content) != "" {
 			contents = append(contents, r.Content)
@@ -201,7 +203,9 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		}
 		if r.FallbackUsed {
 			out.FallbackUsed = true
-			out.FallbackFrom = r.FallbackFrom
+			if r.FallbackFrom != "" {
+				fallbackFromSet[r.FallbackFrom] = struct{}{}
+			}
 		}
 		out.Tools = out.Tools || r.Tools
 		out.ToolsRequested = out.ToolsRequested || r.ToolsRequested
@@ -224,6 +228,14 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	}
 	out.Content = strings.Join(contents, "\n")
 	out.CacheHit = allCacheHit
+	if len(fallbackFromSet) > 0 {
+		fallbacks := make([]string, 0, len(fallbackFromSet))
+		for fb := range fallbackFromSet {
+			fallbacks = append(fallbacks, fb)
+		}
+		sort.Strings(fallbacks)
+		out.FallbackFrom = strings.Join(fallbacks, ",")
+	}
 	// A persona with a mix of succeeded and failed chunks still reports OK (it
 	// contributed findings), but the failed chunks' files went unreviewed — a
 	// silent completeness gap for a review tool. Surface it on stderr (the same
