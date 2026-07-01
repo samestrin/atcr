@@ -85,6 +85,19 @@ func splitDiffFiles(diff string) []string {
 	return segments
 }
 
+// maxChunksPerAgent bounds how many chunks — and thus review Slots, goroutines,
+// and provider calls — a single persona's diff may fan out into. Without a
+// ceiling chunkDiff's chunk count grows with diff size (~= totalLines/maxLines);
+// with payload_byte_budget=0 (the documented "unlimited" escape hatch) an
+// adversarially large diff would spawn an unbounded number of Slots, since
+// Engine.Run eagerly starts one goroutine per non-serial slot (the semaphore
+// bounds concurrency, not goroutine/API-call count) — a cost/DoS vector on the
+// exact feature meant to control cost. Once this many chunks are sealed, chunkDiff
+// stops opening new ones and packs every remaining file into the final chunk
+// (which may exceed maxLines), so the slot count never exceeds this ceiling while
+// the diff is still delivered whole.
+const maxChunksPerAgent = 64
+
 // chunkDiff bin-packs a unified diff into chunks whose line counts do not exceed
 // maxLines, splitting only on file boundaries — a single file is never split
 // across chunks (epic Technical Constraint). Packing is greedy next-fit in
@@ -111,7 +124,10 @@ func chunkDiff(diff string, maxLines int) []string {
 		// Close the current chunk before adding a file that would overflow it, but
 		// only when the chunk already holds something — an empty chunk must accept
 		// even an oversized file (it cannot be split) so it lands in its own chunk.
-		if cur.Len() > 0 && curLines+fl > maxLines {
+		// Once maxChunksPerAgent-1 chunks are already sealed, stop opening new ones:
+		// the current chunk becomes the last and absorbs every remaining file, so the
+		// total slot count never exceeds maxChunksPerAgent regardless of diff size.
+		if cur.Len() > 0 && curLines+fl > maxLines && len(chunks) < maxChunksPerAgent-1 {
 			chunks = append(chunks, cur.String())
 			cur.Reset()
 			curLines = 0
