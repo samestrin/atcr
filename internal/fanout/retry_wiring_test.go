@@ -36,7 +36,7 @@ func retryCfg() *ReviewConfig {
 	}
 }
 
-func TestBuildAgent_PropagatesRetryFields(t *testing.T) {
+func TestBuildOneAgent_PropagatesRetryFields(t *testing.T) {
 	cfg := retryCfg()
 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 
