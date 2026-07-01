@@ -141,6 +141,43 @@ func TestDocsReferenceOnlyRealCommands(t *testing.T) {
 	}
 }
 
+// TestConfigDocsUseRealConfigFilenameAndReconcilerName guards against the two
+// drift tokens epic 15.0 was chartered to eliminate: the fictional `atcr.yaml`
+// config filename (the real project config is `.atcr/config.yaml`) and the
+// non-existent feature name "Reconciler v2" (the shipped feature is simply the
+// multi-model reconciler). Neither may appear in any audited doc (AC2).
+func TestConfigDocsUseRealConfigFilenameAndReconcilerName(t *testing.T) {
+	reFilename := regexp.MustCompile(`\batcr\.yaml\b`)
+	reReconciler := regexp.MustCompile(`(?i)reconciler v2`)
+	for path, content := range auditedMarkdown(t) {
+		if reFilename.MatchString(content) {
+			t.Errorf("%s references `atcr.yaml`; the real project config is `.atcr/config.yaml`", path)
+		}
+		if reReconciler.MatchString(content) {
+			t.Errorf("%s references \"Reconciler v2\", which is not a real feature name", path)
+		}
+	}
+}
+
+// TestReconcilerConfigSurfaceDocumented asserts that the user-facing config
+// blocks that tune the multi-model reconciler pipeline — persona plus the
+// debate/verify/executor sections — are all present in the configuration
+// reference (AC2). Dedup is deliberately excluded: it is fixed internal behavior
+// (hardcoded cutoffs in reconcile/dedupe.go), not a configurable surface.
+func TestReconcilerConfigSurfaceDocumented(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "registry.md"))
+	if err != nil {
+		t.Fatalf("read registry.md: %v", err)
+	}
+	ref := string(b)
+	for _, block := range []string{"persona:", "debate:", "verify:", "executor:"} {
+		if !strings.Contains(ref, block) {
+			t.Errorf("docs/registry.md does not document the `%s` config block", block)
+		}
+	}
+}
+
 // TestDocsClaimedFlagsAreReal asserts that every flag the docs explicitly call a
 // "flag" via the “ `--x` flag “ idiom is a real flag on some command in the
 // compiled tree (AC1). This catches prose that documents a CLI flag which does
