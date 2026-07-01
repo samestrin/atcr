@@ -1,6 +1,10 @@
 package fanout
 
-import "strings"
+import (
+	"fmt"
+	"os"
+	"strings"
+)
 
 // reviewStrategyChunked is the review_strategy value (Epic 14.3) that enables
 // per-persona diff bin-packing. Kept as a local constant so the fan-out compares
@@ -157,6 +161,7 @@ func mergeResultGroup(g []Result) Result {
 
 	var contents []string
 	var firstErr error
+	okCount := 0
 	anyOK, sawTimeout, allCacheHit := false, false, true
 	for _, r := range g {
 		if strings.TrimSpace(r.Content) != "" {
@@ -185,6 +190,7 @@ func mergeResultGroup(g []Result) Result {
 		switch r.Status {
 		case StatusOK:
 			anyOK = true
+			okCount++
 		case StatusTimeout:
 			sawTimeout = true
 			if firstErr == nil {
@@ -198,6 +204,14 @@ func mergeResultGroup(g []Result) Result {
 	}
 	out.Content = strings.Join(contents, "\n")
 	out.CacheHit = allCacheHit
+	// A persona with a mix of succeeded and failed chunks still reports OK (it
+	// contributed findings), but the failed chunks' files went unreviewed — a
+	// silent completeness gap for a review tool. Surface it on stderr (the same
+	// non-fatal-degradation channel findingsFor uses for grounding drops) so an
+	// operator knows part of the diff was not covered.
+	if okCount > 0 && okCount < len(g) {
+		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: %d of %d chunk(s) failed; that portion of the diff was not reviewed\n", out.Agent, len(g)-okCount, len(g))
+	}
 	switch {
 	case anyOK:
 		out.Status = StatusOK

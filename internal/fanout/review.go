@@ -838,14 +838,23 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// single chunk (small diff, or one file) falls through to the bulk path so
 		// there is nothing to merge.
 		if cfg.Settings.ReviewStrategy == reviewStrategyChunked {
-			if chunks := chunkDiff(mp.Text, ac.EffectiveMaxContextLines()); len(chunks) > 1 {
+			chunks := chunkDiff(mp.Text, ac.EffectiveMaxContextLines())
+			// Warn on any chunk that is a lone file exceeding the budget (it could
+			// not be split). This runs over EVERY chunk — not just multi-chunk
+			// fan-outs — so a diff that is a single oversized file (which chunkDiff
+			// returns as one chunk) still surfaces the documented warning before
+			// falling through to the one-slot path.
+			ml := ac.EffectiveMaxContextLines()
+			for _, ct := range chunks {
+				if countDiffFiles(ct) <= 1 && countLines(ct) > ml {
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines) exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, countLines(ct), ml)
+				}
+			}
+			if len(chunks) > 1 {
 				for _, ct := range chunks {
 					primary, err := renderAgent(cfg, name, ac, mode, ct, countDiffFiles(ct), mp.Truncation, rng, scopeConstraint)
 					if err != nil {
 						return err
-					}
-					if ml := ac.EffectiveMaxContextLines(); countDiffFiles(ct) <= 1 && countLines(ct) > ml {
-						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines) exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, countLines(ct), ml)
 					}
 					fbs, err := buildChain(name, primary)
 					if err != nil {
