@@ -172,7 +172,21 @@ func findingsFor(r Result, changed ...payload.ChangedLines) findingsResult {
 	for i := range findings {
 		findings[i].Reviewer = r.Agent
 	}
-	f, dropped, truncated := enforceConstraints(findings, r.Agent, r.MinSeverity, r.MaxFindings)
+	// Epic 14.1 grounding gate: drop findings whose FILE:LINE is not anchored in
+	// the patch (hallucinations) before per-source constraints apply, so the
+	// max_findings cap ranks only real findings. Runs only when review-level
+	// grounding data was supplied; a nil/absent map disables the gate (fail open).
+	// The per-agent drop count is logged to stderr — observable, matching the
+	// enforceConstraints min_severity/max_findings precedent, never truly silent.
+	var cl payload.ChangedLines
+	if len(changed) > 0 {
+		cl = changed[0]
+	}
+	grounded, ungrounded := groundFindings(findings, cl)
+	if ungrounded > 0 {
+		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: dropped %d ungrounded finding(s) not present in the patch\n", r.Agent, ungrounded)
+	}
+	f, dropped, truncated := enforceConstraints(grounded, r.Agent, r.MinSeverity, r.MaxFindings)
 	return findingsResult{Findings: f, Dropped: dropped, Truncated: truncated}
 }
 
