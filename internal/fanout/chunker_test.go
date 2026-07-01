@@ -107,6 +107,26 @@ func TestChunkDiff(t *testing.T) {
 	})
 }
 
+func TestChunkDiffBoundsChunkCount(t *testing.T) {
+	// A synthetic multi-thousand-file diff with a tiny per-chunk budget would,
+	// absent a ceiling, produce ~one chunk per file — thousands of slots,
+	// goroutines, and provider calls (a cost/DoS vector on the exact feature meant
+	// to control cost). chunkDiff must cap the slot count at maxChunksPerAgent,
+	// coalescing the overflow into the final chunk while staying lossless.
+	var b strings.Builder
+	const files = 5000
+	for i := 0; i < files; i++ {
+		b.WriteString(fileSeg("f"+itoa(i)+".go", 1))
+	}
+	diff := b.String()
+	// maxLines=1 forces a new chunk per file were there no cap. 64 is the
+	// maxChunksPerAgent ceiling GREEN introduces; current (uncapped) code returns
+	// ~5000 chunks and fails this bound.
+	got := chunkDiff(diff, 1)
+	assert.LessOrEqual(t, len(got), 64, "chunk count must be bounded regardless of diff size")
+	assert.Equal(t, diff, strings.Join(got, ""), "coalescing the overflow is still lossless")
+}
+
 func TestCountDiffFiles(t *testing.T) {
 	assert.Equal(t, 0, countDiffFiles(""))
 	assert.Equal(t, 1, countDiffFiles(fileSeg("a.go", 1)))
