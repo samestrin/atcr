@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 29 | 0 |
-| LOW | 0 | 28 | 0 |
+| LOW | 6 | 28 | 0 |
 
-**Last Modified:** 2026-07-01 | **Open Items:** 0 | **Deferred Items:** 59 | **Resolved Items:** 0 | **Total Items:** 59
+**Last Modified:** 2026-07-01 | **Open Items:** 6 | **Deferred Items:** 59 | **Resolved Items:** 0 | **Total Items:** 65
 
 ## Directory Structure
 
@@ -61,6 +61,17 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
+
+### [2026-07-01] From Sprint: epic-15.0
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:71 | docCommandTokens flags any fenced-block line beginning "atcr <word>", so prose accidentally placed inside a code fence (e.g. "atcr is ...") could register as a bogus command reference | Restrict fenced-line matching to shell-prompt ($) lines or require a following flag/argument token | EDGE_CASES | 15 | execute-epic-stage3 |
+| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:216 | TestDocsIndexCoversEveryDoc link regex treats a titled markdown link `](x.md "title")` as target `x.md "title"`, which fails the .md suffix check and would false-fail if a future index link adds a title | Strip a trailing quoted title from the captured target before the .md/anchor checks | EDGE_CASES | 15 | execute-epic-stage3 |
+| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:262 | TestArchitectureDocDescribesReconciler comment claims a fictional-architecture stub would fail, but it only checks 8 substrings exist anywhere, so a buzzword-sprinkled stub passes | Reword the comment to a keyword-presence check, or strengthen it to assert stage ordering/structure | CORRECTNESS | 10 | execute-epic-independent |
+| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:176 | TestReconcilerConfigSurfaceDocumented uses strings.Contains for persona:/debate:/verify:/executor:, matching those tokens in prose as readily as in a real yaml block | Anchor the check to fenced-yaml lines or a start-of-line block pattern rather than a bare substring | EDGE_CASES | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:53 | Root README.md is folded into the atcr.yaml/Reconciler-v2/command/flag audit, so an unrelated future README edit could fail CI in a docs-audit test and surprise contributors | Document this coupling in the test header, or scope the drift-token checks to docs/ only | REGRESSION_RISK | 10 | execute-epic-independent |
+| U | [ ] | LOW | internal/registry/persona.go:33 | Stale in-code comment still calls taskMessage the --task-message flag, now contradicting the corrected docs/registry.md line (no such CLI flag is registered) | Update the persona.go:33 comment to match the corrected doc so code and docs agree | INTEGRATION | 5 | execute-epic-independent |
 
 ### [2026-07-01] From Sprint: 14.3_diff_chunking_context
 
