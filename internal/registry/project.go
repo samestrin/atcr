@@ -144,6 +144,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	if !payloadModeValid(cfg.PayloadMode) {
 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))
 	}
+	if !reviewStrategyValid(cfg.ReviewStrategy) {
+		return nil, fmt.Errorf("%s: invalid review_strategy '%s': must be one of bulk, chunked", base, strings.TrimSpace(cfg.ReviewStrategy))
+	}
 	if err := cfg.Sandbox.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}
