@@ -1,0 +1,149 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/grounding.go",
+      "line": 88,
+      "severity": "HIGH",
+      "problem": "Evidence-snippet fallback uses bidirectional substring match with 4-char floor, over-retaining short fabricated evidence",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/grounding.go",
+      "line": 47,
+      "severity": "MEDIUM",
+      "problem": "groundFindings ignores Result.Tools and Result.PayloadMode, dropping tool/files agents' legitimate citations outside changed range",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/grounding.go",
+      "line": 54,
+      "severity": "MEDIUM",
+      "problem": "out-of-scope blanket exemption allows fabricated finding with category=out-of-scope to bypass AC2 in diff/blocks mode",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/grounding.go",
+      "line": 130,
+      "severity": "MEDIUM",
+      "problem": "collapseSpaces uses strings.Fields which treats non-breaking spaces and other Unicode whitespace as fields; evidence with Unicode whitespace may not match",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/grounding_test.go",
+      "line": 1,
+      "severity": "MEDIUM",
+      "problem": "No test for evidence fallback with short boilerplate that should be rejected",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/grounding_test.go",
+      "line": 1,
+      "severity": "MEDIUM",
+      "problem": "No test for evidence fallback with whitespace/case normalization edge cases",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/grounding_wiring_test.go",
+      "line": 1,
+      "severity": "MEDIUM",
+      "problem": "TestWritePool_DropsUngrounded only asserts one grounded finding survives; does not assert the ungrounded one is absent by count",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/artifacts.go",
+      "line": 59,
+      "severity": "LOW",
+      "problem": "WritePool/findingsFor/writeResumedAgents accept grounding data via variadic changed ...payload.ChangedLines, allowing silent omission",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/grounding_wiring_test.go",
+      "line": 1,
+      "severity": "LOW",
+      "problem": "No test for WritePool with grounding data where all findings are ungrounded (empty pool)",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/payload/grounding.go",
+      "line": 1,
+      "severity": "LOW",
+      "problem": "No test for BuildChangedLines error path (validateRange failure, diffChunks failure)",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/payload/grounding_test.go",
+      "line": 1,
+      "severity": "LOW",
+      "problem": "parseFileChange tests use synthetic chunks; no test with real git diff output for edge cases",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    }
+  ]
+}

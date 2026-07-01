@@ -1,0 +1,72 @@
+# Code Review Report: 14.1_verification_grounding
+
+## 1. Executive Summary
+- **Overall Result:** Pass
+- **Items Checked:** 3 / 3
+- **Approval Status:** Approved
+- **Review Date:** June 30, 2026
+- **Review Mode:** Epic (Acceptance Criteria + Adversarial + Tests)
+
+## 2. Acceptance Criteria Verified
+- **AC1 — Persona prompts strictly require file and line** → VERIFIED
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `personas/_base.md:17`, `personas/_base.md:42`
+- **AC2 — A validation step drops any TD item whose file:line cannot be found in the diff** → VERIFIED
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `internal/payload/grounding.go:36`, `internal/fanout/grounding.go:28,56,62`, `internal/fanout/artifacts.go:185`, `internal/fanout/review.go:386,604`, `internal/fanout/resume.go:326,370`
+- **AC3 — Prompts explicitly reject analyzing code not part of the + or - lines** → VERIFIED
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `personas/_base.md:17`, `internal/payload/scope.go:40`
+
+## 3. Evidence Map
+- **AC1:** The shared base persona mandates an exact, in-diff FILE:LINE per finding (`personas/_base.md:17` Grounding section; `:42` output-format rule). Every reviewer inherits `_base.md`.
+- **AC2:** `BuildChangedLines` parses the patch into per-file changed ranges + text; `groundFindings`/`isGrounded` drop findings not anchored in the patch; `findingsFor` applies the gate in the fan-out stage (before the reconciler) on both fresh and resumed reviews, logging the per-agent drop count to stderr.
+- **AC3:** Both the base persona and the injected per-mode scope rule (`scopeChangedOnly`) forbid out-of-patch commentary, with `CATEGORY out-of-scope` the sole sanctioned escape hatch.
+
+## 4. Remaining Unchecked Items
+No remaining unchecked items — all 3 acceptance criteria verified.
+
+## 5. Manual Review Status
+- **Code Reviewed and Approved:** Checked
+- **Rationale:** All acceptance criteria implemented with `file:line` evidence in the merged code; full test suite green; lint/types/format clean; two independent hostile-reviewer passes confirmed the wiring is correct (grounding on both fresh + resume paths, correct ordering, before the reconciler). The 12 adversarial findings are precision/observability/edge-case hardening of an already-shipped, fail-safe gate — none are release-blockers.
+
+## 6. Coverage Analysis
+- **Coverage (epic packages):** internal/fanout 86.4%, internal/payload 90.2%
+- **Baseline:** 80%
+- **Status:** PASSING
+- **Note:** The root `personas` package (75.6%) is pre-existing and unrelated to this epic's code (this epic added only an embedded prompt-text change + a test there, which raises rather than lowers coverage).
+
+## 7. Quality Checks
+| Check | Status | Command |
+|-------|--------|---------|
+| Lint | PASSING | golangci-lint run |
+| Types | PASSING | go vet ./... |
+| Format | PASSING | gofmt -l (clean) |
+| Tests | PASSING | go test ./... (35 packages, 0 failures) |
+
+## 8. Adversarial Analysis
+- **Files Reviewed:** 6
+- **Issues Found:** 12 (Critical: 0, High: 0, Medium: 4, Low: 8)
+- **Mode:** Discovery (no sprint-design risk profile — epic)
+
+### Medium
+1. `internal/fanout/grounding.go:110` — evidence-fallback floor (12) too low; `if err != nil {` (15 chars) grounds a finding, and the comment overstates the protection; byte- not rune-counted.
+2. `internal/payload/scope.go:43` — `scopeFiles` (files mode) does not warn reviewers that out-of-range findings are hard-dropped unless tagged `out-of-scope`.
+3. `internal/fanout/artifacts.go:186` — grounding drops are stderr-only, not persisted to status.json (comment falsely claims `enforceConstraints` parity); no audit trail.
+4. `internal/fanout/grounding.go:29` — an empty-but-non-nil changed map drops all findings run-wide; should fail open like nil.
+
+### Low
+5. `internal/fanout/artifacts.go:60` — variadic `changed` param silently disables the gate if omitted.
+6. `internal/fanout/grounding.go:84` — `normalizeFindingPath` strips real top-level `a/`/`b/` dirs → false-drop.
+7. `internal/fanout/grounding.go:114` — unbounded model EVIDENCE → O(N·M) scan / allocation amplification.
+8. `internal/fanout/grounding.go:15` — `groundingTolerance` / `lineProximity` duplicated cross-package, comment-coupled only.
+9. `internal/payload/grounding.go:67` — loose `@@` hunk detection diverges from the strict range regex.
+10. `internal/fanout/review.go:401` — transient git failure disables the gate run-wide with no summary/manifest signal.
+11. `internal/fanout/grounding.go:60` — renamed-file old-path citation dropped as fabricated.
+12. `internal/payload/scope.go:39` — diff-ingestion path: `scopeChangedOnly` promises a discard that does not run there.
+
+## 9. Follow-ups
+- Run `/reconcile-code-review @.planning/epics/completed/14.1_verification_grounding.md` to merge these 12 findings into the technical-debt README (they will cluster with the 5 items already captured during `/execute-epic`), then `/resolve-td` to address the MEDIUM precision/observability gaps.
+
+---
+*Generated by /execute-code-review on June 30, 2026 06:28:12PM*

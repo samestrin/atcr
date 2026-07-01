@@ -1,0 +1,1655 @@
+diff --git a/.planning/epics/active/14.1_verification_grounding.md b/.planning/epics/active/14.1_verification_grounding.md
+index 33c2d464..27fbba6a 100644
+--- a/.planning/epics/active/14.1_verification_grounding.md
++++ b/.planning/epics/active/14.1_verification_grounding.md
+@@ -17,41 +17,70 @@ A user recently received 523 TD items, of which 513 were complete hallucinations
+ Implement a robust grounding mechanism that prevents an LLM from successfully submitting a hallucinated TD item. 
+ 
+ 1. **Require Exact Quotes/Snippets**: Update the persona prompts to mandate that every TD item cite the exact line numbers or the exact code snippet from the diff.
+ 2. **Programmatic Validation**: Implement a new Go function that runs before passing the persona's findings to the reconciler. This function will check if the referenced snippet/lines actually exist in the git patch. If not, the TD item is silently dropped.
+ 3. **Limit Scope to Patch**: Update the prompt constraints so the LLMs are explicitly forbidden from commenting on code outside the "added" or "modified" lines of the diff.
+ 
+ ## User Personas
+ 
+ ### Primary: Software Engineer
+ - Wants actionable, real feedback on their PRs.
+ - Has zero tolerance for reviewing 500+ hallucinated items.
+ 
+ ## User Journeys
+ 
+ ### Code Review execution
+ 1. User runs `atcr review`.
+ 2. The fanned-out personas generate TD items and cite exact line numbers.
+ 3. The programmatic validator parses the response, cross-references it with the patch, and drops hallucinations.
+ 4. Only grounded, real TD items are passed to the Reconciler.
+ 
+ ## Acceptance Criteria
+ 
+ - [ ] AC1: Persona prompts are updated to strictly require `file` and `line` properties (or equivalent).
+ - [ ] AC2: A validation step drops any TD item whose `file:line` reference cannot be found in the diff.
+ - [ ] AC3: Prompts are updated to explicitly reject analyzing code that is not part of the `+` or `-` lines in the patch.
+ 
+ ## Technical Constraints
+ 
+ - Must intercept the review items before they hit the reconciler pipeline.
+ - Must accurately map line numbers from the LLM response to the actual git patch line numbers.
+ 
+ ## Non-Functional Requirements
+ 
+ ### Performance
+ - The patch-validation step should add negligible overhead (<500ms) to the pipeline.
+ 
+ ## Risks
+ 
+ | Risk | Likelihood | Impact | Mitigation |
+ |------|------------|--------|------------|
+ | LLMs provide "approximate" lines | High | High | Use fuzzy matching or snippet text matching if line numbers are slightly off, to avoid dropping real issues. |
++
++## Clarifications
++
++### Recorded 2026-06-30 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- Ungrounded TD items are HARD-DROPPED in the fan-out stage (per AC2), but every drop is observable via a per-agent stderr count, following the existing `enforceConstraints` precedent (`internal/fanout/postprocess.go`) — not truly silent.
++- Findings tagged `category=out-of-scope` are EXEMPT from the grounding drop. Out-of-scope is a deliberate, AC-traced (AC 06-04) feature (`internal/payload/scope.go`, `internal/reconcile/gate.go`, `internal/reconcile/merge.go`) — annotated, not promoted — and must survive untouched.
++- Grounding match: keep a finding if its cited line falls within a changed head range expanded by ±3 lines (matching the existing `lineProximity = 3` dedupe constant in `internal/reconcile/cluster.go`); if the line misses, fall back to matching the finding's EVIDENCE snippet against the patch's added/modified text; drop only when BOTH fail.
++- The validator runs in the FAN-OUT phase only — per-file changed line ranges are threaded from `PrepareReview` into `WritePool`/`findingsFor` (`internal/fanout/review.go`, `internal/fanout/artifacts.go`). This is the only point with live base/head diff access and matches the Technical Constraint to intercept before the reconciler.
++
++**Scope Boundaries:**
++- IN scope: `personas/_base.md` grounding rules (AC1, AC3); a new pure-Go patch-line validator reusing the existing `lineRange` machinery from `internal/payload/diff.go`; wiring it into the fan-out phase before the reconciler (AC2).
++- OUT of scope: the reconciler core / dedupe / merge logic; the existing Epic 5.0/5.4 path-EXISTENCE validation (a separate, flag-only concern); grounding at reconcile time (`atcr reconcile <dir>` has no live diff — documented, accepted gap).
++
++**Technical Approach:**
++- Reuse existing head-side changed-range computation (`changedHeadRanges`/`parseHeadRanges`/`lineRange`, `internal/payload/diff.go`) rather than re-parsing diffs.
++- Non-git / binary / no-range cases fail OPEN (keep the finding) to avoid dropping real issues, matching the codebase's conservative path-validation degradation.
++- Pure deletions (no head line) rely on the EVIDENCE-snippet fallback; a finding citing only deleted code with no evidence match is dropped.
++
++**Original Questions and Answers:**
++1. Q: Hard-drop ungrounded items, or extend the existing flag-and-filter (Epic 5.0/5.4) approach?
++   A: Hard-drop in fan-out (per AC2), but observable via per-agent stderr count following the `enforceConstraints` precedent. Epic 5.0/5.4 flag-only behavior is a deliberate exception for path-existence checks, not a project-wide anti-drop policy.
++2. Q: Drop `out-of-scope` findings uniformly, or exempt them?
++   A: Exempt them (option b). Out-of-scope is a deliberate, AC-traced (AC 06-04), gate-integrated feature; dropping it would silently delete existing tested behavior outside this epic's scope.
++3. Q: Is ±3 the right tolerance, and enable the evidence-snippet fallback?
++   A: Yes to both. ±3 matches the existing `lineProximity = 3` constant; the evidence-snippet fallback is the epic's own named Risk-table mitigation and reuses the existing `Evidence` field with no schema change.
++4. Q: Validator in fan-out only, or also at reconcile time?
++   A: Fan-out only. It is the only point with live base/head diff access and matches the epic's Technical Constraint; `atcr reconcile <dir>` has no live diff — an accepted, documented gap.
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index 1671755b..937aa4b1 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,16 +3,16 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 2 | 0 |
+-| MEDIUM | 0 | 26 | 0 |
+-| LOW | 0 | 27 | 0 |
++| MEDIUM | 2 | 26 | 0 |
++| LOW | 3 | 27 | 0 |
+ 
+-**Last Modified:** 2026-06-30 | **Open Items:** 0 | **Deferred Items:** 55 | **Resolved Items:** 0 | **Total Items:** 55
++**Last Modified:** 2026-06-30 | **Open Items:** 5 | **Deferred Items:** 55 | **Resolved Items:** 0 | **Total Items:** 60
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -62,207 +62,217 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
++### [2026-06-30] From Sprint: epic-14.1
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| 1 | [ ] | LOW | internal/fanout/grounding.go:88 | Evidence-snippet fallback uses a bidirectional substring match with a 4-char floor, which can over-retain a hallucinated finding whose fabricated evidence coincidentally contains a short real changed line | Consider token-set Jaccard (like the reconcile dedupe) or a higher length floor for the evidence fallback to tighten false-keep rate | correctness | 30 | execute-epic-stage3 |
++| 1 | [ ] | MEDIUM | internal/fanout/grounding.go:54 | out-of-scope category is a blanket grounding-gate exemption in all modes, so an adversarial or hallucinating model can launder a fabricated finding past AC2 by tagging category=out-of-scope in diff/blocks mode | Restrict the out-of-scope exemption to files mode (or require the cited FILE:LINE/EVIDENCE to anchor before honoring it in diff/blocks) — DEFERRED: conflicts with clarification Q2 which chose blanket exemption because out-of-scope is annotated-not-promoted by the reconciler downstream | correctness | 30 | execute-epic-independent |
++| 1 | [ ] | MEDIUM | internal/fanout/grounding.go:47 | groundFindings ignores Result.Tools and Result.PayloadMode, so a tool-enabled or files-mode agent citing a real line it legitimately read outside the changed range is dropped unless it tags out-of-scope or quotes a changed line in EVIDENCE | Thread Tools/PayloadMode into the gate and relax the range/evidence requirement for tool/files agents — DEFERRED: the out-of-scope prompt convention already instructs such agents to tag read-but-unchanged citations, which the gate exempts | correctness | 45 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/fanout/artifacts.go:59 | WritePool/findingsFor/writeResumedAgents accept grounding data via a variadic changed ...payload.ChangedLines purely to preserve existing call sites, so a future caller can silently omit it and disable the gate without a compile error | Make Changed an explicit single nil-able parameter and update the call sites so grounding is a visible required argument | maintainability | 30 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/fanout/review.go:470 | computeGroundingData builds a fresh gitRunner and re-runs validateRange + --name-status + --unified=0 for a range the payload builder already diffed, duplicating ~4 git subprocesses per review and per resume | Reuse the payload builder's memoized rangeChunks/gitRunner for the same base..head instead of recomputing the zero-context diff | performance | 45 | execute-epic-independent |
++
+ ### [2026-06-29] From Sprint: 13.4_brace_language_parsers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:1 | Wasm ABI (alloc/free/parse/emit/pins) duplicated across three parser modules | Extract shared ABI into common guest package | maintainability | 60 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-28] From Sprint: epic-13.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:20 | The alloc/free/emit/pins guest ABI is duplicated across three parser sources (goparser, pyparser, braceparser); the threshold the existing code documents for extraction (parser count > 2) is now crossed | Extract the shared guest ABI into a package referenced via go.mod replace directives coordinated in build.sh | MAINTAINABILITY | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-28] From Sprint: epic-13.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | u | [/] | LOW | reconcile/pagerank.go:181 | Authority promotion is silent: no counter or Summary stat records that a HIGH came from authority rather than reviewer count, so a misfiring promotion is only derivable as HIGH-with-a-single-reviewer (Deferred: Epic Plan 13.4) | Add a Summary stat (e.g. AuthorityPromoted int) counting authority-promoted findings for observability; out of v1 scope since the clarification fixed the wire schema | OBSERVABILITY | 30 | execute-epic-independent |
+ 
+ ### [2026-06-27] From Sprint: 13.1_ast_plugin_architecture
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | u | [/] | LOW | internal/astgroup/parsers/src/goparser/main.go:39 | The guest pins alloc'd buffers and hands the host int32(uintptr(unsafe.Pointer(&b[0]))) as a stable guest offset, valid only because the current Go GC is non-moving. This is an undocumented runtime invariant, not a language guarantee; a future moving GC makes the packed pointer a dangling offset with no detection. The unsafe alloc/free/emit/node boilerplate is copy-pasted across goparser, pyparser, and the 13.4 brace parsers, so any ABI fix must be applied N times. (Deferred: extraction premature at 2 parsers; epic scope fixed at Go+Python — a future-remedy note is in each parser's ABI section, revisit if parser count grows.) | Extract the shared alloc/free/emit/pins ABI into one internal guest package imported by every parser main.go, and add a build-time note pinning the GC assumption (or switch to an explicitly reserved arena). | maintainability | 120 | code-review | claude | MEDIUM |
+ | u | [/] | MEDIUM | internal/astgroup/parsers/src/pyparser/main.go:112 | scanTripleQuotes and stripComment are quote/escape-unaware. A triple-quote appearing inside a # comment, or a # appearing inside a string literal, flips the multi-line-string state machine the wrong way, so arbitrary spans of real code get classified as string content and dropped from significantLines, silently erasing blocks. The heuristic disclaimer documents the risk but does not bound it: on unusual source the structural hash diverges from the true AST. (Deferred: accepted PoC scope; heuristic limitation already documented at pyparser/main.go:72-78 and 152-156, degrades to proximity grouping.) | Run scanTripleQuotes only over the code portion (skip after an unquoted #) and skip triple-quotes occurring inside single-line strings. Add regression fixtures: a # containing a triple-quote, and a string literal containing #. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-26] From Sprint: 11.0_executing_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/tools/dispatch.go:146 | Tool gating for run_tests/run_script lives only in fanout.wireToolDefs (what the model is TOLD about); Dispatcher.Execute looks up d.handlers[name] with no check that the call was offered to the calling agent, and EnableExecution registers the exec handlers on the single dispatcher shared by the whole pool. The read-only guarantee for non-exec agents is therefore advisory, not structural — if any future caller enables exec non-uniformly across agents sharing one dispatcher, a non-exec agent could invoke run_script by simply naming it. No live exploit today: the sole exec caller, verify, sets exec uniformly for all skeptics. (Deferred: Epic Plan 11.1) | Pass the agent's allowed tool set (or Exec flag) into Execute and reject any call whose name was not offered to this agent, or gate the exec handlers behind a per-call capability rather than a globally-registered handler. Verify with a test where a non-exec agent emits a run_script tool_call and asserts it is refused. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-25] From Sprint: epic-11.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/tools/exec_tools.go:69 | Execution tools are gated per-agent only at the definition level (wireToolDefs); the shared per-run dispatcher will execute a run_tests/run_script call from any agent once EnableExecution is wired. The sandbox isolates every run identically so this is not a containment gap, but a non-designated agent could still incur execution cost. (Deferred: .planning/epics/active/11.1_dispatcher-structural-gating.md — exec_tools.go:69 is a data struct, not a gating point; the offering-layer gate is already structural, and a runtime per-call guard is the multi-file change scoped to Epic 11.1) | Thread agent exec-eligibility into the dispatcher (or add a per-call guard) so only designated agents execute, for precise cost attribution. | SECURITY | 30 | execute-epic-stage3 |
+ 
+ ### [2026-06-23] From Sprint: 8.0_reconciler_library
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | internal/reconcile/discover.go:25 | `internal/reconcile` keeps its discovery `Source` (Name + `[]stream.Finding` + Skipped + SkippedFiles); the library now defines a public `Source` (Name + `[]Finding`) | moved `Reconcile` takes the library `Source`; discovery output (`discover.Source`) is converted to `reconcile.Source` in the adapter/discovery layer | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | MEDIUM | unknown:0 | [Story 01 / Story 06] DoD item not implemented: both CI jobs (root ci.yml + reconcile-module PR-time job) must be marked as REQUIRED status checks on the main branch-protection rule. The CI workflow deliverables they depend on are all present and verified; only the protection-rule toggle is unset. The two story-level [ ] boxes (AC 01-06, AC 06-02) are the same single external action. (intent_note: deferred per sprint-plan Final Phase / dod-completion-summary.md (external repo-admin action)) | Configure branch protection in GitHub repo Settings -> Branches: add the root CI job and the reconcile-module PR-time job as required status checks. External repo-admin UI action (post-merge), not a source-tree change; documented deferred in dod-completion-summary.md. | docs | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: 7.3_github_action_pr_integration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 6 | [/] | MEDIUM | cmd/atcr/github.go:148-167 | Sequential inline comment posting is slow for PRs with many findings (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ | 6 | [/] | LOW | cmd/atcr/github.go:148-167 | Conclusion is computed twice for the same findings/failOn inputs (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: epic-7.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/verify/syntaxguard.go:130 | An unfenced multi-line JSON/config snippet with block braces can still satisfy looksLikeGoCode and be parsed as Go, producing a spurious invalid_syntax flag on non-Go content (residual after heuristic hardening). | Detect obviously non-Go brace content (JSON object / key:value lines) before treating block braces as a Go signal; deferred as a separate design refinement (unfenced non-Go fixes are rare; fenced non-Go is already handled). [Deferred 2026-06-22 to Epic Plan 7.5 syntax-guard-refinements per clarification] | EDGE_CASES | 30 | execute-epic-independent |
+ 
+ ### [2026-06-22] From Sprint: 7.0.1_executor_model_configuration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 7 | [/] | LOW | internal/registry/config.go:524 | Potential prompt injection via system_prompt (Won't-fix: config.go:531–534 explicitly documents that control chars are intentionally NOT rejected in system_prompt; the --- delimiter added at executor.go:225 eliminates the CRLF metadata-forgery surface; otto's fix conflicts with the documented design decision) | Add control character validation to SystemPrompt | security | 15 | code-review | otto | MEDIUM |
+ 
+ ### [2026-06-21] From Sprint: epic-6.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/debate/debate.go:165 | Gray-zone cluster merge/separate rulings are recorded in debate.json but not physically applied to findings.json; clusters still resolve via the existing adjudication path (Deferred: Epic Plan 6.1) | Wire the judge cluster decision into the reconcile adjudication application so unattended runs auto-merge gray-zone clusters inline | INTEGRATION | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-20] From Sprint: epic-5.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/cache/store.go:115 | Eviction does a full ReadDir+Stat of the cache dir on every Put even when under the cap; O(n) per write scales poorly if the cache accumulates thousands of entries (Won't-fix 2026-06-21: scan runs serially under the store mutex and LLM calls dominate latency; no Epic 5.2 perf criterion requires O(1) Put — added state not justified at LOW) | Maintain a running total-size counter and skip the directory scan when it is under the cap, or evict only on a periodic/threshold basis | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-06-20] From Sprint: epic-5.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/report/render.go:317 | The "File not found" warning format string is duplicated across internal/reconcile/emit.go (writeFindingsList) and internal/report/render.go (writePathWarning) in separate packages | Extract a shared constant/helper only if a common low-level rendering package emerges; a cross-package dependency is not justified for one format string today (Won't-fix 2026-06-21: two independent format strings across packages with no shared dependency; the recorded fix confirms extraction is not justified at this scope) | CROSS_CUTTING | 15 | execute-epic-cumulative |
+ | U | [/] | MEDIUM | internal/reconcile/reconcile.go:26 | Validation root is hardcoded to "." at every call site, so "atcr reconcile <path>" for a review of another repo, or running from a non-repo-root CWD, falsely flags every finding as "file not found" | Thread the reviewed repo root explicitly or add a --repo flag, applied consistently with the verify stage which uses the same "." convention (Deferred 2026-06-21: the narrow Root: os.Getwd() variant is a no-op — filepath.Abs(".") already equals the CWD, so it would not fix the non-repo-root / other-repo case; the real fix is to plumb the reviewed-repo path explicitly via a --repo flag threaded through the reconcile and verify call sites, est 60) | EDGE_CASES | 60 | execute-epic-independent |
+ 
+ ### [2026-06-20] From Sprint: 4.7.1_backup-swap-hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:318 | backupExisting() unconditionally RemoveAll's <path>.bak.old and <path>.bak.new at entry, but forceBackupOutputDir() only calls guardForeignBackup(dir+".bak") — the two staging siblings are not guarded. On an arbitrary --output-dir a user who owns <output-dir>.bak.old or <output-dir>.bak.new has it silently deleted by --force, re-opening the Epic 4.7 "never silently delete user data" contract. NOTE: epic clarification Q4 deliberately scoped the guard to .bak only (atcr-internal suffixes); this finding re-raises that decision as worth reconsidering, not a defect against the recorded scope. (intent_note: deferred per epic §Clarifications Q4 — extending guardForeignBackup to .bak.old/.bak.new is out of scope) (Won't-fix 2026-06-20: binding Epic 4.7.1 Q4 — guard stays scoped to .bak; .bak.old/.bak.new are atcr-owned staging names cleared by entry-time RemoveAll; confirmed via /sprint-clarification 95%) | In forceBackupOutputDir() (reviewdir.go:440) extend the guard to guardForeignBackup(dir+".bak.old") and guardForeignBackup(dir+".bak.new") before backupExisting, or refuse if either exists non-empty. Add a test pre-creating a foreign <output-dir>.bak.old with user content and assert --force errors instead of deleting it. | security | 60 | code-review | claude | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:373 | The advertised "an interrupted swap never leaves the user with neither generation" invariant is conditional on a best-effort SILENT restore succeeding. If restorePriorBackup's os.Rename(backupOld,backup) fails (e.g. backup partially recreated, or perms change), the only surviving copy is stranded under .bak.old — which the very next run's entry-time RemoveAll(backupOld) (line 318) then deletes. Same pattern at the copy site swapStagedBackup (atomic.go:159-167) feeding atomic.go:97 RemoveAll(bakOld). (Won't-fix 2026-06-20: observability half done (restore failure now logged); the lone-.bak.old-as-generation redesign is rejected per Epic 4.7.1 Q3 — .bak.old is atcr-owned temp deleted at entry, one-generation contract + TestBackupExisting_CleansStaleStagingStragglers stand; confirmed via /sprint-clarification 95%) | Surface restore failures loudly (log/return) instead of dropping them, and/or do not auto-RemoveAll .bak.old at entry when .bak is absent — treat a lone .bak.old as the surviving generation to recover. Add a test where restore fails and a subsequent run is asserted not to delete the only surviving copy. | correctness | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir.go:388 | backupCrossDevice's inner os.Rename(backupNew,backup) relies on backupNew and backup sharing a filesystem, an invariant that holds only by naming coincidence (both are siblings of path). If anyone later relocates backupNew under path, the inner rename silently becomes cross-device and returns a raw EXDEV to the user. (Won't-fix 2026-06-20: same-fs invariant holds by construction — backup and backupNew are both siblings of path; a runtime guard would be unreachable dead code today and is already documented at reviewdir.go:415-419; confirmed via /sprint-clarification 90%) | Add a test that forces renameFn to return syscall.EXDEV and makes the copy fail (a copy seam, or unreadable src), staging a prior .bak first; assert the prior .bak content is restored intact, the live tree survives, and .bak.new is cleaned up. Cover the copy-failure leg at minimum. | testing | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir_test.go:458 | Test-coverage gaps in the failed-swap/cleanup paths: TestBackupExisting_FailedSwapPreservesPriorBak asserts no .bak.old straggler but not .bak.new; the non-ErrNotExist Lstat(backup) error branch (reviewdir.go:333-335) is untested; the entry-time RemoveAll straggler-cleanup failure legs (reviewdir.go:318-323) are untested. Each is a real error branch a regression could silently break. | Add assert.NoDirExists for src+".bak.new" at reviewdir_test.go:458; add a perms-based test forcing Lstat(backup) to fail with a non-ErrNotExist error; add a test where .bak.old cannot be removed and assert the typed "clearing stale staging backup" error. Skip on root/CI where perms are not enforced. (Partial 2026-06-21: gaps 1 (.bak.new assertion) and 3 (RemoveAll(.bak.old) failure) covered; gap 2 (non-ErrNotExist Lstat(backup)) deferred — needs an lstatFn production seam since the staging siblings share a parent dir so perms cannot isolate it) | testing | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-19] From Sprint: 4.7_idempotency
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:284 | backupExisting() does os.RemoveAll(backup) then os.Rename(path, backup); BackupToDotBak() does os.RemoveAll(bak) then copyTree. If the rename/copy fails (cross-filesystem EXDEV when --output-dir and its .bak sibling are on different mounts, disk-full mid-copy, or SIGKILL), the single prior backup generation is already destroyed while the new backup is absent or partial. The live/original tree is preserved (good), but the one recoverable prior .bak is lost for no benefit — counter to the safe-to-retry goal. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 4.7.1) | Stage the new backup first: copy/rename into <path>.bak.new (or rename old .bak aside to .bak.old), confirm it is complete, then swap and only then remove the old generation. For backupExisting, attempt os.Rename before RemoveAll so a failed rename leaves the old .bak intact; detect EXDEV and fall back to copy+remove. Add a fault-injection test asserting the prior .bak survives a failed swap. | correctness | 120 | code-review | code-reviewer, claude | HIGH |
+ 
+ ### [2026-06-19] From Sprint: 4.5_circuit_breaker
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | MEDIUM | internal/fanout/metrics.go:37 | recordAgentOutcome zeroes apiCalls for any result whose error unwraps to context.DeadlineExceeded/Canceled, assuming no request was made. But a per-agent timeout routinely fires AFTER real HTTP round-trips (and mid tool-loop after several Chat turns already hit the wire), so atcr_api_calls_total undercounts real provider traffic exactly when a provider is degraded. The no-request assumption is only provably safe for CircuitOpenError and pre-first-send cancellation. (Deferred: Epic Plan 4.11) | Use max(1, r.Turns) for the deadline case instead of a flat 0, or thread a real calls-attempted counter out of the client rather than inferring from the terminal error class. Keep the apiCalls=0 path only for CircuitOpenError. | performance | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-18] From Sprint: epic-4.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/validation/validation.go:62 | System-dir denylist covers only /etc, /proc, /sys, leaving /boot, /dev, /root, /var and ~/.ssh writable via --output-dir / --output (deliberate Option-B permissive choice) (Won't-fix: intended Option-B policy per epic 4.3 clarifications 2026-06-18; revisit only on a concrete isolation requirement) | If stronger isolation is later required, switch to an allowlist anchored at the repo/.atcr root instead of a denylist | SECURITY | 30 | execute-epic-independent |
+ | 1 | [/] | LOW | internal/validation/validation.go:86 | Severity and Enum validators are shipped but wired to nothing (ParseSeverity/ValidFormat remain the live paths); they exist only to satisfy AC5/AC7 and future use (Won't-fix: intentionally public for AC5/AC7 per epic 4.3 clarifications; deletion breaks ACs, wire-in out of scope) | Revisit and delete if no caller adopts them within a release, or wire them in where duplication can be removed | OVER_ENGINEERING | 15 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/registry/attribution.go:55 | attribute() recurses and reconstructs the join even for a single-error errors.Join (which still satisfies Unwrap() []error), a small avoidable cost on the load-time validation path | Optionally short-circuit when len(children)==1 if profiling ever flags it (WON'T-FIX 2026-06-18: trigger unmet — error-path only, never hit on normal load; no perf AC in epic 4.2) | INTEGRATION | 5 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.1.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/fanout/review.go:361 | If a server shutdown (or CLI SIGINT) fires after all agents already succeeded but before ExecuteReview's interrupted := errors.Is(ctx.Err(), context.Canceled) check, a fully-completed run is stamped Interrupted=true and status.go:216 overrides RunCompleted to RunInterrupted (a false interrupted; inverse of AC4). Pre-existing in the CLI-shared path, newly reachable via MCP shutdown. | Gate the interrupted marker on at least one agent ending in StatusTimeout/cancelled rather than purely on parent ctx.Err()==Canceled. NOTE: touches CLI-shared review.go (out of scope for epic 4.1.2's MCP-only change); window is microscopic and outcome benign (resume no-ops a complete run) - separate design. (WON'T-FIX 2026-06-18: --resume self-healing via ClearInterrupted (resume.go:220) already recovers a stale interrupted-on-complete; revisit in a backlog sprint if insufficient) | CORRECTNESS | 30 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: epic-4.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:88 | Serve-mode background fan-out runs under context.WithoutCancel(ctx) so a SIGINT to the MCP server never cancels or marks an in-flight detached review interrupted; it is allowed to finish (intended MCP design) but never gets the interrupted marker CLI mode promises. (Deferred: Epic Plan 4.1.2) | Decide whether detached MCP reviews should be marked interrupted on server shutdown; if so, thread a cancellable/interrupt-aware context or post-hoc marker into the background review path — a separate design from this CLI-focused epic. | REGRESSION_RISK | 60 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: 4.0_structured_logging
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/review.go:172 | Both review entry points call `NewRedactor(root)` with ZERO configured secrets — cmd/atcr/review.go:172 and internal/mcp/handlers.go:87 pass only the path root, never the registry API keys. The exact-value secret-scrubbing loop in Redact is therefore dead in production; redaction relies entirely on the `sk-`/`Bearer` regexes, which miss raw provider keys that lack those prefixes (Google `AIzaSy...`, Azure `api-key`, JWTs `eyJ...`). The AC5 "no API key in log output" guarantee holds only for sk-/Bearer-shaped keys; the passing integration test likely uses an sk- key, masking the gap. (Deferred: Epic Plan 4.9 secret-value-redaction) | Thread resolved registry API key values into `NewRedactor(root, keys...)` at both review.go:172 and handlers.go:87 (keys are discoverable from prep.Slots / cfg.Registry). Add an integration test using a non-sk-shaped key (e.g. `AIzaSy...`) asserting it is redacted. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: 3.5_severity-rank-consolidation
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:18 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:30 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestGrayZoneNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:42 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNoDisagreementOnCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: epic-3.5
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/stream/severity.go:20 | The canonical SeverityRank map carries a read-only-after-init invariant in a comment only, with no test guard preventing a future caller from mutating the shared map (which would race across concurrent fan-out agents). (Won't fix: structural guard — reconcile copy-on-init at merge.go:29-31 means no consumer writes stream.SeverityRank directly; grep confirms zero write sites across consumers. Snapshot test trips the over-simplification gate; Rank() accessor cascades to 14+ direct-lookup sites — both out of pure-consolidation scope.) | Add a stream test that snapshots the map and asserts it is unchanged after consumers run, or wrap it behind a Rank(sev) accessor. | OBSERVABILITY | 20 | execute-epic-independent |
+ 
+ ### [2026-06-16] From Sprint: 3.4_scorecard-diagnostics-writer
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:118 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; the diagnostic already routes to the injectable writer, only fmt.Fprintf's own return is dropped; propagating it breaks Emit's never-fail contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:199 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; Append loop already surfaces firstErr; propagating the Fprintf return breaks the best-effort contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:235 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verdictTallies already writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:248 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verification-read-failed diagnostic writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:276 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; orphan-verdict diagnostic routes to injectable w, locked by TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/scorecard_test.go:291 | Epic 3.4 added unit tests proving EmitOpts.Diag / ReadOpts.Writer routing at the scorecard layer, but there is no test asserting the wiring itself — that the MCP handler passes a non-default writer or that the three CLI entry points pass cmd.ErrOrStderr(). This plumbing can silently regress (a future refactor swaps cmd.ErrOrStderr() back to a default and no test fails). (Deferred: Epic Plan 3.6 scorecard-wiring-tests) | Add a CLI-level test that drives a scorecard command against a deliberately-malformed store and asserts the read diagnostic reaches the command's ErrOrStderr buffer; once MCP diagnostics route through e.log, add a handler-level test asserting against a captured logger buffer. | testing | 60 | code-review | claude | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:114 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; over-long-line warning uses injectable w via diagWriter; read continues; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:145 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; decodeRecord writes to injectable w then returns (Record,bool) — no error cascade) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:155 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; schema-version skip writes to injectable w; identical to malformed-record path) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/store.go:194 | Redundant call to diagWriter (Wontfix: FALSE POSITIVE — diagWriter is the required typed-nil guard for the nil-able opts.Writer interface, not redundant; removing it reintroduces the panic fixed by commit 476c6d1) | Remove diagWriter call and use opts.Writer directly since ReadRecords already resolves it | performance | 2 | code-review | otto | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:211 | Error from diagWriter is silently discarded (Wontfix: FALSE POSITIVE — `_, _ = fmt.Fprintf` is the documented best-effort never-panic diagnostics contract at store.go:22-24; returning the write error would regress a successful read on a broken sink and logging is circular; confirmed working as designed via /sprint-clarification 97%) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:220 | The MCP engine carries a structured *slog.Logger (e.log) used for every other diagnostic in handleReconcile (e.g. the require_verified warning at line ~225), but scorecard diagnostics are routed to raw os.Stderr, so MCP-path scorecard write-failures/malformed-record/orphan-verdict warnings emit as unstructured plaintext that bypasses the logger's level filtering, formatting, and sink redirection. NOTE: this was a DELIBERATE, documented epic decision (Clarifications Q2: supply os.Stderr at the call site; adapting e.log to an io.Writer was explicitly OUT of scope), so this is enhancement debt, not a regression. (intent_note: deferred per epic Clarifications Q2 — adapting e.log to an io.Writer is out of scope) (Wontfix: ACCEPTED ENHANCEMENT DEBT — handlers.go:220 is an unconditional EmitOpts{Diag: os.Stderr} call, not deferred logic; all five Epic 3.4 ACs are met and the comment at handlers.go:214-219 satisfies AC4; e.log→io.Writer adaptation is out of scope per Clarifications Q2; confirmed via /sprint-clarification 97%) | If MCP observability is later desired, adapt e.log into an io.Writer shim (slog-backed at Warn level) and pass it as Diag instead of os.Stderr, so MCP-path scorecard diagnostics flow through the same structured pipeline as the rest of the handler. Defer unless/until structured MCP diagnostics are required. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-15] From Sprint: 3.3_per-run_scorecard
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go (FindByRunID adjacent-month notice; ReadRecords malformed-line notice); internal/scorecard/scorecard.go (Emit notices) | Store/emit diagnostics ("skipping malformed record", "run spans adjacent month files", "write failed") are written directly to the process-global `os.Stderr` rather than to a writer threaded from the cobra command (`cmd.ErrOrStderr()`). (Deferred: Epic Plan 3.4) | accept an `io.Writer` (or logger) on the store/emit entry points and have the CLI pass `cmd.ErrOrStderr()`, so warnings are capturable and redirectable. | ops | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-06-14] From Sprint: 3.2_disagreement_radar
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/reconcile/disagree.go:280 | Duplicate writeRadarSection rendering logic risks divergent escaping across packages (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Consolidate radar rendering into report package; reconcile should call report.writeRadarSection | security | 20 | code-review | greta | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/disagree.go:350 | Duplicated radar section rendering logic (Deferred: Epic Plan 7.2) | Extract shared writeRadarSection to a common package | maintainability | 10 | code-review | bruce | MEDIUM |
+ | 4 | [/] | MEDIUM | internal/reconcile/disagree.go:354 | Duplicated radar markdown rendering diverges (Deferred: Epic Plan 7.2) | Extract shared writer or make reconcile use report package's escTrunc | maintainability | 10 | code-review | bruce | MEDIUM |
+ | U | [/] | LOW | internal/reconcile/disagree.go:413 | Redundant implementation of writeRadarSection (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Remove duplicate function from internal/reconcile and use internal/report | maintainability | 15 | code-review | otto | MEDIUM |
+ | 5 | [/] | MEDIUM | internal/report/disagree.go:47 | The radar markup is rendered by two divergent copies: writeRadarSection + formatScore in internal/report/disagree.go and a structurally different copy in internal/reconcile/disagree.go:389. They are intentionally not identical (report copy truncates via escTrunc + uses joinReviewers/reviewerOrUnknown; reconcile copy uses uncapped esc + joinOrNone), so a future markup change (new field, reordered bullets) must be made in both or the live `atcr report` radar and the archival reconciled/report.md silently drift. (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Extract one shared item renderer parameterized by a truncate-vs-verbatim flag and heading prefix; have both call sites delegate. Add a test that diffs the rendered markup of both paths on the same DisagreementsFile asserting the only intended difference is truncation. | correctness | 60 | code-review | bruce, claude | HIGH |
+ 
+ ### [2026-06-14] From Sprint: 2.2_code_review_fanout_hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | MEDIUM | internal/fanout/postprocess.go:14 | The severity-rank rubric {CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1} is independently redefined in fanout/postprocess.go:17, reconcile/merge.go, verify, report, plus a set-form copy reviewSeverities in registry/config.go. postprocess looks up severityRank[strings.ToUpper(...)] while reconcile looks up the raw value, so a future severity change or non-canonical casing silently desyncs fan-out truncation from reconcile merging. The postprocess copy was newly added by Epic 2.2. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 3.5) | Extract a single canonical severity package (or export from internal/stream) exposing the ordered rank map plus normalizeSeverity, and have registry/fanout/reconcile/verify/report consume it. Verify by deleting the local maps and confirming the suite passes with one source of truth. | maintainability | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-14] From Review: llmclient OpenAI-compatible tool handling
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | U | [/] | LOW | internal/llmclient/chat.go:1 | No provider-conformance test matrix for the OpenAI-compatible surface. The client deliberately absorbs real wire divergence (string-encoded vs raw-object tool_call `arguments`, lenient finish_reason) but is exercised only against synthetic fixtures, so a regression against a specific provider's actual tool_call shape (OpenAI, litellm, Ollama, vLLM, Together) would not be caught. This is the robustness the official SDK is assumed to provide, achievable here without adopting it. | Add a recorded-fixture conformance suite: capture a real `tool_calls` response from each target provider and assert the parser (`ToolCallArguments`, `chatToolResponse` decode, finish_reason handling) yields identical engine-facing results. NOTE: scope is a few days, not a quick-win — consider promoting to a standalone test-remediation plan rather than resolving inline. | testing | 480 | review | claude | LOW |
+ 
+ ### [2026-06-14] From Sprint: 3.0_adversarial_verification
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 7 | [/] | LOW | internal/verify/pipeline.go:238 | The rich VerificationResult built in verifyFinding never populates TrippedBudgets (invokeSkeptic folds tripped budgets only into free-text Notes), base.Model is hard-coded to skeptics[0].Config.Model even when another skeptic produced the winning verdict, and the skip-already-verified rebuild (pipeline.go:199) re-synthesizes records from the compact on-disk block losing Model/DurationMs/TrippedBudgets — so verification.json's structured audit fields degrade or misattribute on multi-skeptic and no-op re-runs (extends the model-attribution gap of TD-011). Also: Model is empty on the no_eligible_skeptic / tool_harness_unavailable early-return paths. [intent: deferred per sprint-plan TD-011] | Thread the tripped-budget slice and the winning skeptic's model up from invokeSkeptic into base.TrippedBudgets/base.Model (join models when multiple voters agree, mirroring joinSkeptics), and carry Model/DurationMs/TrippedBudgets forward for skipped findings instead of synthesizing a lossy record. | correctness | 120 | execute-sprint | execute-sprint, claude | HIGH |
+ 
+ ### [2026-06-13] From Sprint: 2.0_tool_using_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 5 | [/] | LOW | internal/tools/snapshot.go | AC 03-02 Scenario 5 and AC 03-03 Scenarios 4-5 require `manifest.json` `stages.review` to record `snapshot_mode` (live/worktree), `head_sha`, and `snapshot_worktree_path`. (intent_note: deferred per sprint-plan §2.5.A (manifest review-stage recording is Phase 5 work); Deferred to Epic Plan 2.1) | when wiring `SnapshotFor` into the agent loop, record `snapshot_mode`/`head_sha`/`snapshot_worktree_path` into `internal/payload/manifest.go` review stage and add the manifest assertion tests from AC 03-02/03-03. | testing | 0 | execute-sprint | execute-sprint | MEDIUM |
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 1340b6fa..3e8aaf73 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,17 @@
++## [14.1.0] - 2026-06-30
++
++Grounded multi-agent review findings in the actual diff so reviewer models can no longer report hallucinated technical-debt items.
++
++### Added
++
++- `atcr review` now runs a grounding gate that drops any finding whose cited `FILE:LINE` is not anchored in the reviewed patch — the fabricated-file and invented-line hallucinations that flooded large reviews — before findings reach the reconciler. A finding is kept when its line falls within a changed range (with a ±3-line tolerance for reviewer drift), when its evidence quotes a changed line, or when it is tagged `CATEGORY out-of-scope`; the per-agent drop count is logged to stderr. The gate covers both fresh and resumed reviews and is disabled only for the range-less `atcr reconcile <dir>` path, which has no diff to check against.
++
++### Changed
++
++- Reviewer persona prompts now require every finding to cite an exact `FILE:LINE` drawn from the diff and forbid reporting code outside the changed lines, with `CATEGORY out-of-scope` the sole sanctioned way to raise a genuine pre-existing issue in unchanged code.
++
++*Shipped via /execute-epic (epic 14.1)*
++
+ ## [13.6.0] - 2026-06-30
+ 
+ Expanded AST-isomorphism finding grouping to four more brace-based language families.
+diff --git a/docs/payload-modes.md b/docs/payload-modes.md
+index d20a773f..159a2533 100644
+--- a/docs/payload-modes.md
++++ b/docs/payload-modes.md
+@@ -64,8 +64,12 @@ Special files are represented by one-line markers instead of full content:
+ Each persona prompt carries a scope rule matched to the payload mode:
+ 
+ - **`diff` and `blocks`** constrain findings to the changed regions. Function-context expansion shows surrounding code for context but does **not** widen the review scope.
+ - **`files`** intentionally widens visibility. Reviewers may notice pre-existing issues in unchanged regions; the prompt instructs them to focus on the change but to tag any pre-existing issue with `CATEGORY` `out-of-scope`, so the reconciler **annotates** rather than promotes it. Consumers can then filter out-of-scope findings.
+ 
++### Grounding gate
++
++The scope rule is enforced, not merely requested. After a persona returns its findings — and before they reach the reconciler — atcr drops any finding whose cited `FILE:LINE` is not anchored in the patch's changed lines. A finding is kept when its line falls within a changed range (with a small ±3-line tolerance for reviewer drift), when its `EVIDENCE` text matches a changed line, or when it is tagged `CATEGORY` `out-of-scope` (which stays exempt so the annotate-don't-promote path above is unaffected). Ungrounded findings — the hallucinations a model invents for code it never saw change — are discarded and the per-agent drop count is logged to stderr. The gate needs the live diff, so it applies to `atcr review`; it is disabled for the range-less `atcr reconcile <dir>` path, which has no patch to check against.
++
+ ## Tool agents (payload as starting point)
+ 
+ For an agent with `tools: true` (see [registry.md](registry.md)), the payload above is the **starting point** of the review, not the whole universe of context. Rather than reasoning only over what the payload contains, a tool agent can look things up during the review: it may read additional files with `read_file`, search the tree with `grep`, and list directories with `list_files`, all within a **read-only, path-jailed snapshot** of the repository at the resolved `head`. There are no write tools, no shell, and no network — a reviewer can never mutate the repo or reach beyond the snapshot.
+diff --git a/internal/fanout/artifacts.go b/internal/fanout/artifacts.go
+index 9f3cdf54..cf97a094 100644
+--- a/internal/fanout/artifacts.go
++++ b/internal/fanout/artifacts.go
+@@ -3,16 +3,17 @@ package fanout
+ import (
+ 	"bytes"
+ 	"encoding/json"
+ 	"fmt"
+ 	"os"
+ 	"path/filepath"
+ 
++	"github.com/samestrin/atcr/internal/payload"
+ 	"github.com/samestrin/atcr/internal/stream"
+ )
+ 
+ // Pool artifact layout under <reviewDir>/sources/pool (AC 01-03/04/05):
+ //
+ //	pool/
+ //	  raw/agent/<agent>/{review.md, findings.txt, status.json}  # per-agent
+ //	  findings.txt                                              # merged (REVIEWER per row)
+ //	  summary.json                                              # run stats
+@@ -48,71 +49,71 @@ type PoolSummary struct {
+ // WritePool persists every agent's artifacts under poolDir, the merged pool
+ // findings.txt, and summary.json, returning the aggregate Summary. It writes a
+ // full set even when every agent failed (artifacts are preserved on disk for
+ // inspection, AC 03-02); the all-agents-failed gate is the caller's via Outcome.
+ // Each file is written atomically (temp + rename) so a crash never leaves a
+ // half-written artifact; pool-level writing is not transactional, so an I/O
+ // failure mid-run surfaces as an error with whatever per-agent files already
+ // landed left intact for inspection. The merged findings.txt is intentionally
+ // placed at the pool root, above the per-agent raw/ files, so leaf-preference
+ // discovery treats the raw files as the inputs and never double-counts the
+ // merged aggregate.
+-func WritePool(poolDir string, results []Result) (Summary, error) {
++func WritePool(poolDir string, results []Result, changed ...payload.ChangedLines) (Summary, error) {
+ 	if err := os.MkdirAll(poolDir, 0o755); err != nil {
+ 		return Summary{}, fmt.Errorf("creating pool dir: %w", err)
+ 	}
+ 
+ 	var merged []stream.Finding
+ 	statuses := make([]AgentStatus, 0, len(results))
+ 	seen := make(map[string]bool, len(results))
+ 
+ 	for _, r := range results {
+ 		dir, err := agentDirName(r.Agent)
+ 		if err != nil {
+ 			return Summary{}, err
+ 		}
+ 		// Two agents collapsing to the same on-disk dir would clobber each other
+ 		// silently; reject rather than lose artifacts. Roster validation makes
+ 		// names unique upstream, but the writer does not rely on that.
+ 		if seen[dir] {
+ 			return Summary{}, fmt.Errorf("duplicate agent directory %q (from agent %q)", dir, r.Agent)
+ 		}
+ 		seen[dir] = true
+ 
+-		fr := findingsFor(r)
++		fr := findingsFor(r, changed...)
+ 		merged = append(merged, fr.Findings...)
+ 
+ 		if err := writeAgentArtifacts(poolDir, dir, r, fr); err != nil {
+ 			return Summary{}, err
+ 		}
+ 		statuses = append(statuses, statusFor(r, fr))
+ 	}
+ 
+ 	// Findings metrics (Epic 4.4): count the raw findings the agents emitted, in
+ 	// total and by severity, before they are merged to disk.
+ 	recordFindingMetrics(merged)
+ 
+ 	// Merged pool findings (8-col, REVIEWER per row) for downstream convenience.
+ 	if err := writeFindings(filepath.Join(poolDir, findingsFile), merged); err != nil {
+ 		return Summary{}, err
+ 	}
+ 
+ 	sum := summarize(results)
+ 	ps := PoolSummary{
+ 		Agents:        statuses,
+ 		Total:         sum.Total,
+ 		Succeeded:     sum.Succeeded,
+ 		Failed:        sum.Failed,
+ 		Partial:       sum.Partial,
+ 		TotalFindings: len(merged),
+ 	}
+ 	if err := writeJSON(filepath.Join(poolDir, summaryFile), ps); err != nil {
+ 		return Summary{}, err
+ 	}
+ 	return sum, nil
+ }
+ 
+ // ReadPoolSummary loads <reviewDir>/sources/pool/summary.json — the run record
+ // carrying every agent's AgentStatus (model, token usage, latency). The
+ // reconcile-time scorecard emitter reads it to source per-reviewer metadata. A
+ // missing file returns the raw os error (callers degrade to no usage data); a
+ // present-but-unparseable file is a parse error.
+@@ -163,19 +164,33 @@ type findingsResult struct {
+ 	Truncated int
+ }
+ 
+-func findingsFor(r Result) findingsResult {
++func findingsFor(r Result, changed ...payload.ChangedLines) findingsResult {
+ 	if r.Content == "" {
+ 		return findingsResult{}
+ 	}
+ 	findings := stream.ParseModelOutput([]byte(r.Content))
+ 	for i := range findings {
+ 		findings[i].Reviewer = r.Agent
+ 	}
+-	f, dropped, truncated := enforceConstraints(findings, r.Agent, r.MinSeverity, r.MaxFindings)
++	// Epic 14.1 grounding gate: drop findings whose FILE:LINE is not anchored in
++	// the patch (hallucinations) before per-source constraints apply, so the
++	// max_findings cap ranks only real findings. Runs only when review-level
++	// grounding data was supplied; a nil/absent map disables the gate (fail open).
++	// The per-agent drop count is logged to stderr — observable, matching the
++	// enforceConstraints min_severity/max_findings precedent, never truly silent.
++	var cl payload.ChangedLines
++	if len(changed) > 0 {
++		cl = changed[0]
++	}
++	grounded, ungrounded := groundFindings(findings, cl)
++	if ungrounded > 0 {
++		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: dropped %d ungrounded finding(s) not present in the patch\n", r.Agent, ungrounded)
++	}
++	f, dropped, truncated := enforceConstraints(grounded, r.Agent, r.MinSeverity, r.MaxFindings)
+ 	return findingsResult{Findings: f, Dropped: dropped, Truncated: truncated}
+ }
+ 
+ // agentDirName reduces an agent name to a safe single path segment and rejects
+ // names that would escape or alias the pool: filepath.Base leaves "..", ".", and
+ // "" intact (Base("..")=="..", Base("")=="."), so those are rejected explicitly
+ // rather than silently writing one level up or into the shared raw/agent dir.
+diff --git a/internal/fanout/grounding.go b/internal/fanout/grounding.go
+new file mode 100644
+index 00000000..d110d139
+--- /dev/null
++++ b/internal/fanout/grounding.go
+@@ -0,0 +1,130 @@
++package fanout
++
++import (
++	"strings"
++
++	"github.com/samestrin/atcr/internal/payload"
++	"github.com/samestrin/atcr/internal/stream"
++	reclib "github.com/samestrin/atcr/reconcile"
++)
++
++const (
++	// groundingTolerance mirrors the reconciler's lineProximity (reconcile/cluster.go):
++	// a cited line within this many lines of a changed range is treated as
++	// grounded, absorbing the small line-number drift reviewers routinely introduce.
++	groundingTolerance = 3
++	// evidenceMinMatch is the minimum normalized length a substring match must
++	// span before the evidence fallback trusts it, so ubiquitous boilerplate
++	// ("if err != nil {") cannot ground an arbitrary hallucinated finding.
++	evidenceMinMatch = 12
++)
++
++// groundFindings drops findings that cannot be located in the patch's changed
++// lines — the Epic 14.1 anti-hallucination gate. A nil changed map (the
++// ingestion / non-git path, which has no live diff) disables the gate entirely
++// (keep all). With a non-nil map, each finding is judged by isGrounded and the
++// ungrounded ones are dropped. Kept findings retain their original order; the
++// drop count is returned for the per-agent stderr tally.
++func groundFindings(findings []stream.Finding, changed payload.ChangedLines) ([]stream.Finding, int) {
++	if changed == nil || len(findings) == 0 {
++		return findings, 0
++	}
++	kept := make([]stream.Finding, 0, len(findings))
++	dropped := 0
++	for _, f := range findings {
++		if isGrounded(f, changed) {
++			kept = append(kept, f)
++		} else {
++			dropped++
++		}
++	}
++	return kept, dropped
++}
++
++// isGrounded reports whether a finding is anchored in the patch. Precedence:
++//   - CATEGORY out-of-scope is exempt (a deliberate annotated-not-promoted
++//     feature; the reconciler segregates these, never promotes them).
++//   - A file the patch did NOT touch is ungrounded and dropped — this is the
++//     fabricated-file hallucination class (a model inventing a path it never saw
++//     change), the primary vector Epic 14.1 targets.
++//   - A file changed only in binary/mode (no line data) fails open: there is
++//     nothing to check the finding against, so it cannot be proven ungrounded.
++//   - A file-level finding (no specific line) on a changed file is kept: the file
++//     itself is in scope.
++//   - Otherwise the cited line must fall within a changed range ±groundingTolerance,
++//     or the EVIDENCE must match a changed line.
++func isGrounded(f stream.Finding, changed payload.ChangedLines) bool {
++	if strings.EqualFold(strings.TrimSpace(f.Category), reclib.CategoryOutOfScope) {
++		return true
++	}
++	fc, ok := changed[normalizeFindingPath(f.File)]
++	if !ok {
++		return false // file not in the patch: ungrounded
++	}
++	if len(fc.Ranges) == 0 && len(fc.ChangedText) == 0 {
++		return true // binary/mode-only change: no lines to check, fail open
++	}
++	if f.Line <= 0 {
++		return true // file-level finding on a file the patch changed
++	}
++	if lineInRanges(f.Line, fc.Ranges) {
++		return true
++	}
++	return evidenceMatches(f.Evidence, fc.ChangedText)
++}
++
++// normalizeFindingPath strips the diff-artifact prefixes a model sometimes copies
++// into a FILE column (a/, b/, ./, a leading /) so a cited path matches the
++// repo-root-relative head-path keys of the changed map. Best-effort: a form it
++// cannot normalize (an absolute path elsewhere) simply misses the map, and the
++// finding is treated as ungrounded.
++func normalizeFindingPath(file string) string {
++	p := strings.TrimSpace(file)
++	p = strings.TrimPrefix(p, "./")
++	if strings.HasPrefix(p, "a/") || strings.HasPrefix(p, "b/") {
++		p = p[2:]
++	}
++	return strings.TrimPrefix(p, "/")
++}
++
++// lineInRanges reports whether a 1-based line falls within any changed range
++// expanded by groundingTolerance on both ends. A non-positive line is never in
++// range (handled as a file-level finding by the caller).
++func lineInRanges(line int, ranges []payload.LineRange) bool {
++	if line <= 0 {
++		return false
++	}
++	for _, r := range ranges {
++		if line >= r.Start-groundingTolerance && line <= r.End+groundingTolerance {
++			return true
++		}
++	}
++	return false
++}
++
++// evidenceMatches is the fuzzy fallback for a finding whose cited line drifted
++// out of range: it keeps the finding when its EVIDENCE and a changed line contain
++// one another (case-folded, whitespace-collapsed) over at least evidenceMinMatch
++// characters, so a real quote grounds the finding while short boilerplate cannot.
++func evidenceMatches(evidence string, changed []string) bool {
++	ev := collapseSpaces(strings.ToLower(strings.TrimSpace(evidence)))
++	if len(ev) < evidenceMinMatch || len(changed) == 0 {
++		return false
++	}
++	for _, c := range changed {
++		cl := collapseSpaces(strings.ToLower(c))
++		if len(cl) < evidenceMinMatch {
++			continue
++		}
++		if strings.Contains(ev, cl) || strings.Contains(cl, ev) {
++			return true
++		}
++	}
++	return false
++}
++
++// collapseSpaces folds every run of whitespace to a single space and trims the
++// ends, so a quote and its diff line match despite indentation differences.
++func collapseSpaces(s string) string {
++	return strings.Join(strings.Fields(s), " ")
++}
+diff --git a/internal/fanout/grounding_test.go b/internal/fanout/grounding_test.go
+new file mode 100644
+index 00000000..e6c78fec
+--- /dev/null
++++ b/internal/fanout/grounding_test.go
+@@ -0,0 +1,117 @@
++package fanout
++
++import (
++	"testing"
++
++	"github.com/samestrin/atcr/internal/payload"
++	"github.com/samestrin/atcr/internal/stream"
++)
++
++func changedFixture() payload.ChangedLines {
++	return payload.ChangedLines{
++		"auth.go": {
++			Ranges:      []payload.LineRange{{Start: 40, End: 45}},
++			ChangedText: []string{"token := parseToken(r)", "return validate(token)"},
++		},
++	}
++}
++
++func TestGroundFindings_KeepsInRange(t *testing.T) {
++	in := []stream.Finding{{File: "auth.go", Line: 42, Category: "security", Evidence: "x"}}
++	out, dropped := groundFindings(in, changedFixture())
++	if len(out) != 1 || dropped != 0 {
++		t.Fatalf("in-range: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
++	}
++}
++
++func TestGroundFindings_KeepsWithinTolerance(t *testing.T) {
++	// line 47 is 2 past range end 45 -> within ±3
++	in := []stream.Finding{{File: "auth.go", Line: 47, Category: "correctness"}}
++	out, dropped := groundFindings(in, changedFixture())
++	if len(out) != 1 || dropped != 0 {
++		t.Fatalf("tolerance: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
++	}
++}
++
++func TestGroundFindings_DropsUngrounded(t *testing.T) {
++	in := []stream.Finding{{File: "auth.go", Line: 200, Category: "correctness", Evidence: "totally unrelated prose"}}
++	out, dropped := groundFindings(in, changedFixture())
++	if len(out) != 0 || dropped != 1 {
++		t.Fatalf("ungrounded: kept=%d dropped=%d, want kept=0 dropped=1", len(out), dropped)
++	}
++}
++
++func TestGroundFindings_KeepsViaEvidence(t *testing.T) {
++	// wrong line, but EVIDENCE quotes a changed line -> fuzzy keep
++	in := []stream.Finding{{File: "auth.go", Line: 999, Category: "security", Evidence: "return validate(token)"}}
++	out, dropped := groundFindings(in, changedFixture())
++	if len(out) != 1 || dropped != 0 {
++		t.Fatalf("evidence: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
++	}
++}
++
++func TestGroundFindings_ExemptsOutOfScope(t *testing.T) {
++	in := []stream.Finding{{File: "auth.go", Line: 999, Category: "out-of-scope", Evidence: "pre-existing"}}
++	out, dropped := groundFindings(in, changedFixture())
++	if len(out) != 1 || dropped != 0 {
++		t.Fatalf("out-of-scope: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
++	}
++}
++
++func TestGroundFindings_DropsUnknownFile(t *testing.T) {
++	// A file the patch never touched is the fabricated-file hallucination class:
++	// it must be dropped, not kept (AC2, clarification Q1 hard-drop).
++	in := []stream.Finding{{File: "ghost.go", Line: 5, Category: "correctness", Evidence: "invented"}}
++	out, dropped := groundFindings(in, changedFixture())
++	if len(out) != 0 || dropped != 1 {
++		t.Fatalf("unknown file: kept=%d dropped=%d, want kept=0 dropped=1", len(out), dropped)
++	}
++}
++
++func TestGroundFindings_KeepsFileLevelOnChangedFile(t *testing.T) {
++	// A file-level finding (line 0) on a file the patch changed is kept.
++	in := []stream.Finding{{File: "auth.go", Line: 0, Category: "correctness"}}
++	out, dropped := groundFindings(in, changedFixture())
++	if len(out) != 1 || dropped != 0 {
++		t.Fatalf("file-level: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
++	}
++}
++
++func TestGroundFindings_KeepsBinaryFile(t *testing.T) {
++	// A present-but-empty FileChange (binary/mode-only) has no lines to check, so
++	// the finding cannot be proven ungrounded — fail open.
++	changed := payload.ChangedLines{"logo.png": {}}
++	in := []stream.Finding{{File: "logo.png", Line: 3, Category: "correctness"}}
++	out, dropped := groundFindings(in, changed)
++	if len(out) != 1 || dropped != 0 {
++		t.Fatalf("binary: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
++	}
++}
++
++func TestGroundFindings_NormalizesPathPrefix(t *testing.T) {
++	// A model citing the diff-side "b/auth.go" must match the bare head-path key,
++	// so path-form drift does not cause a false drop under the unknown-file rule.
++	in := []stream.Finding{{File: "b/auth.go", Line: 42, Category: "correctness"}}
++	out, dropped := groundFindings(in, changedFixture())
++	if len(out) != 1 || dropped != 0 {
++		t.Fatalf("path normalize: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
++	}
++}
++
++func TestGroundFindings_OutOfScopeExemptOnUnknownFile(t *testing.T) {
++	// out-of-scope stays exempt even for a file not in the patch (clarification Q2:
++	// out-of-scope is annotated-not-promoted downstream, so it is never dropped here).
++	in := []stream.Finding{{File: "ghost.go", Line: 5, Category: "out-of-scope", Evidence: "pre-existing"}}
++	out, dropped := groundFindings(in, changedFixture())
++	if len(out) != 1 || dropped != 0 {
++		t.Fatalf("out-of-scope unknown file: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
++	}
++}
++
++func TestGroundFindings_NilDataKeepsAll(t *testing.T) {
++	in := []stream.Finding{{File: "auth.go", Line: 999, Category: "correctness"}}
++	out, dropped := groundFindings(in, nil)
++	if len(out) != 1 || dropped != 0 {
++		t.Fatalf("nil data: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
++	}
++}
+diff --git a/internal/fanout/grounding_wiring_test.go b/internal/fanout/grounding_wiring_test.go
+new file mode 100644
+index 00000000..82421984
+--- /dev/null
++++ b/internal/fanout/grounding_wiring_test.go
+@@ -0,0 +1,81 @@
++package fanout
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/payload"
++	"github.com/samestrin/atcr/internal/stream"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// TestWritePool_DropsUngrounded is the Epic 14.1 AC2 integration point: WritePool
++// drops a finding whose FILE:LINE is not anchored in the patch grounding data
++// before it reaches the merged pool findings, while keeping a grounded one.
++func TestWritePool_DropsUngrounded(t *testing.T) {
++	dir := t.TempDir()
++	content := "MEDIUM|auth.go:42|real bug in changed line|guard it|correctness|10|token := parseToken(r)\n" +
++		"HIGH|auth.go:999|hallucinated issue far from any change|n/a|correctness|10|invented unrelated snippet\n"
++	changed := payload.ChangedLines{
++		"auth.go": {
++			Ranges:      []payload.LineRange{{Start: 40, End: 45}},
++			ChangedText: []string{"token := parseToken(r)"},
++		},
++	}
++	pool := filepath.Join(dir, "pool")
++	_, err := WritePool(pool, []Result{okResult("greta", content)}, changed)
++	require.NoError(t, err)
++
++	data, err := os.ReadFile(filepath.Join(pool, findingsFile))
++	require.NoError(t, err)
++	parsed, err := stream.ParseSource(data)
++	require.NoError(t, err)
++	require.Len(t, parsed.Findings, 1, "the ungrounded auth.go:999 finding must be dropped")
++	assert.Equal(t, 42, parsed.Findings[0].Line)
++}
++
++// TestWritePool_NoGroundingKeepsAll confirms the gate is opt-in: with no
++// ChangedLines passed (the existing call shape used across the suite), every
++// finding is preserved so unrelated tests and the diff-ingestion path are
++// unaffected.
++func TestWritePool_NoGroundingKeepsAll(t *testing.T) {
++	dir := t.TempDir()
++	content := "MEDIUM|auth.go:42|a|f|correctness|10|x\n" +
++		"HIGH|ghost.go:999|b|f|correctness|10|y\n"
++	pool := filepath.Join(dir, "pool")
++	_, err := WritePool(pool, []Result{okResult("greta", content)})
++	require.NoError(t, err)
++
++	data, err := os.ReadFile(filepath.Join(pool, findingsFile))
++	require.NoError(t, err)
++	parsed, err := stream.ParseSource(data)
++	require.NoError(t, err)
++	require.Len(t, parsed.Findings, 2, "no grounding data means keep everything")
++}
++
++// TestWriteResumedAgents_DropsUngrounded guards the Epic 14.1 consistency gap:
++// a resumed agent's fresh output must be grounded identically to a first-run
++// agent's, so re-running a failed agent cannot reintroduce a hallucination a
++// normal run would have dropped.
++func TestWriteResumedAgents_DropsUngrounded(t *testing.T) {
++	dir := t.TempDir()
++	content := "MEDIUM|auth.go:42|real bug|f|correctness|10|token := parseToken(r)\n" +
++		"HIGH|auth.go:999|hallucinated|f|correctness|10|invented unrelated snippet\n"
++	changed := payload.ChangedLines{
++		"auth.go": {
++			Ranges:      []payload.LineRange{{Start: 40, End: 45}},
++			ChangedText: []string{"token := parseToken(r)"},
++		},
++	}
++	pool := filepath.Join(dir, "pool")
++	require.NoError(t, writeResumedAgents(pool, []Result{okResult("greta", content)}, changed))
++
++	data, err := os.ReadFile(filepath.Join(pool, poolRawAgentDir, "greta", findingsFile))
++	require.NoError(t, err)
++	parsed, err := stream.ParseSource(data)
++	require.NoError(t, err)
++	require.Len(t, parsed.Findings, 1, "resumed agent's ungrounded finding must be dropped")
++	assert.Equal(t, 42, parsed.Findings[0].Line)
++}
+diff --git a/internal/fanout/resume.go b/internal/fanout/resume.go
+index 25e86f91..1b524d48 100644
+--- a/internal/fanout/resume.go
++++ b/internal/fanout/resume.go
+@@ -260,80 +260,84 @@ func filterPendingSlots(slots []Slot, done map[string]bool) []Slot {
+ // PrepareResume validates an existing review directory against the current
+ // working tree and configured roster, then assembles a PreparedReview whose Dir
+ // is that existing directory and whose Slots are only the pending agents. The
+ // range and roster are locked: a changed git range (ErrRangeChanged) or a
+ // changed roster set (ErrRosterChanged) aborts before any agent runs, so a resume
+ // can never mix inconsistent contexts or silently run a different panel. Payloads
+ // are rebuilt from the (validated-identical) recorded range so pending agents see
+ // exactly what the completed agents reviewed. The returned ResumeInfo reports the
+ // completed/pending split; when AllComplete is true the Slots are empty and the
+ // caller reconciles without a fan-out.
+ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req ReviewRequest) (*PreparedReview, *ResumeInfo, error) {
+ 	m, err := ReadManifest(reviewDir)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 	if err := ValidateResumeRange(m, req.Range); err != nil {
+ 		return nil, nil, err
+ 	}
+ 	configured := rosterNames(cfg.Project)
+ 	if err := ValidateResumeRoster(m, configured); err != nil {
+ 		return nil, nil, err
+ 	}
+ 
+ 	payloads, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 	// Recover the SCOPE CONSTRAINT from the review's persisted artifact rather than
+ 	// re-deriving it from req.SprintPlanPath: the resume entry point does not thread
+ 	// that flag, so the scope is locked to on-disk review state exactly as the range
+ 	// and roster are — guaranteeing pending agents review under the same constraint
+ 	// the completed agents did (Epic 12.2 AC4.3).
+ 	scopeConstraint, err := readScopeConstraintArtifact(reviewDir)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 	slots, _, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 
+ 	done, err := CompletedAgents(reviewDir)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 
+ 	info := &ResumeInfo{}
+ 	for _, name := range configured {
+ 		if done[name] {
+ 			info.Completed = append(info.Completed, name)
+ 		} else {
+ 			info.Pending = append(info.Pending, name)
+ 		}
+ 	}
+ 
+ 	p := &PreparedReview{
+ 		ID:          filepath.Base(reviewDir),
+ 		Dir:         reviewDir,
+ 		Slots:       filterPendingSlots(slots, done),
+ 		TimeoutSec:  cfg.Settings.TimeoutSecs,
+ 		MaxParallel: cfg.Settings.MaxParallel,
+ 		Repo:        req.Repo,
+ 		Head:        req.Range.Head,
+-		manifest:    m,
++		// Epic 14.1: ground a resumed agent's fresh output identically to a
++		// first-run agent's, so a re-run agent cannot reintroduce hallucinations a
++		// normal run would have dropped. Same fail-open contract as the fresh path.
++		Changed:  computeGroundingData(ctx, req),
++		manifest: m,
+ 		// Wire the diff cache for resumed agents too (Epic 5.2): a resumed agent's
+ 		// fresh output is written back so a later full run benefits — matching the
+ 		// "fresh results are always written" contract — rather than being re-called.
+ 		cache:       cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes),
+ 		cacheNoRead: req.NoCache,
+ 	}
+ 	return p, info, nil
+ }
+ 
+ // readScopeConstraintArtifact recovers the SCOPE CONSTRAINT block a scoped review
+ // (Epic 12.2) persisted to payload/scope-constraint.txt, so a resumed run injects
+ // the same scope the completed agents reviewed under. A diff-wide review writes no
+ // artifact, so a missing file yields ("", nil): the resume proceeds diff-wide,
+ // matching the original run. Any other read error is surfaced so a resume fails
+ // closed (exit 2 at the caller) rather than silently dropping the scope the
+ // completed agents had — the exact regression this guards against.
+@@ -351,109 +355,109 @@ func readScopeConstraintArtifact(reviewDir string) (string, error) {
+ // ExecuteResume runs the pending slots, persists their per-agent artifacts (the
+ // already-completed agents' artifacts on disk are untouched), then rebuilds
+ // summary.json and the merged findings.txt over the FULL on-disk union so the
+ // aggregate reflects the whole roster — not just the re-run subset. The manifest
+ // is finalized with the union's partial flag and the interrupt marker: if the
+ // resume is itself interrupted (AC7), whatever pending agents completed are
+ // preserved and the run stays interrupted. The all-agents-failed gate is judged
+ // over the union, so a resume whose pending agents all fail again still returns
+ // success when an earlier completed agent succeeded.
+ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
+ 	poolDir := filepath.Join(p.Dir, "sources", "pool")
+ 
+ 	results, resumedStage := runEngine(ctx, completer, p, poolDir)
+ 	interrupted := errors.Is(ctx.Err(), context.Canceled)
+ 
+-	if err := writeResumedAgents(poolDir, results); err != nil {
++	if err := writeResumedAgents(poolDir, results, p.Changed); err != nil {
+ 		return nil, err
+ 	}
+ 
+ 	sum, statuses, err := RebuildPool(poolDir, p.manifest.Roster)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 
+ 	// Recompute the Review stage from the union of on-disk statuses so the
+ 	// manifest reflects the current state — not the original run's verbatim
+ 	// stage. A tool agent that degraded in the original run but succeeded with
+ 	// full tools on resume must not stay recorded as degraded.
+ 	reviewStage := reviewStageFromStatuses(statuses)
+ 	if reviewStage != nil {
+ 		// Carry snapshot provenance (AC 03-02 / 03-03): prefer the resumed run's
+ 		// values when the resume attempted a snapshot; otherwise preserve the
+ 		// original manifest's snapshot fields (they're still authoritative for
+ 		// the roster).
+ 		if resumedStage != nil && resumedStage.SnapshotMode != "" {
+ 			reviewStage.SnapshotMode = resumedStage.SnapshotMode
+ 			reviewStage.HeadSHA = resumedStage.HeadSHA
+ 			reviewStage.SnapshotWorktreePath = resumedStage.SnapshotWorktreePath
+ 		} else if p.manifest.Review != nil {
+ 			reviewStage.SnapshotMode = p.manifest.Review.SnapshotMode
+ 			reviewStage.HeadSHA = p.manifest.Review.HeadSHA
+ 			reviewStage.SnapshotWorktreePath = p.manifest.Review.SnapshotWorktreePath
+ 		}
+ 	} else if p.manifest.Review != nil {
+ 		// No tool agents in the union: preserve the original stage (the roster
+ 		// is locked and the original stage's membership is still authoritative).
+ 		reviewStage = p.manifest.Review
+ 	}
+ 
+ 	// Finalize the manifest into a local copy (only adopted on a successful write).
+ 	m := *p.manifest
+ 	m.Partial = sum.Partial
+ 	m.CompletedAt = time.Now().UTC()
+ 	m.Interrupted = interrupted
+ 	m.Review = reviewStage
+ 	if err := WriteManifest(p.Dir, &m); err != nil {
+ 		// Best-effort: stamp Interrupted on the existing manifest so the run is
+ 		// not stuck in_progress when a resume is itself interrupted (AC7). Mirrors
+ 		// the analogous fallback in ExecuteReview.
+ 		if interrupted {
+ 			p.manifest.Interrupted = true
+ 			_ = WriteManifest(p.Dir, p.manifest)
+ 		}
+ 		return nil, err
+ 	}
+ 	p.manifest = &m
+ 
+ 	res := &ReviewResult{ID: p.ID, Dir: p.Dir, Summary: sum}
+ 	if sum.Total == 0 {
+ 		return res, ErrEmptyRoster
+ 	}
+ 	if sum.Succeeded == 0 {
+ 		return res, fmt.Errorf("%w: %s", ErrAllAgentsFailed, formatStatusFailures(statuses))
+ 	}
+ 	return res, nil
+ }
+ 
+ // writeResumedAgents persists the per-agent artifacts (review.md, findings.txt,
+ // status.json) for each re-run result. A re-run agent's prior (failed/timeout)
+ // artifacts are overwritten in place; completed agents are not in results, so
+ // their artifacts on disk are left untouched. A result whose error is a
+ // synthesized context cancellation/deadline (the engine stamps these for slots
+ // it never actually invoked because the parent ctx was cancelled first) is
+ // skipped so a previously-failed agent's original error message is preserved
+ // rather than overwritten with a generic "context canceled" timeout.
+-func writeResumedAgents(poolDir string, results []Result) error {
++func writeResumedAgents(poolDir string, results []Result, changed ...payload.ChangedLines) error {
+ 	for _, r := range results {
+ 		// Detect a synthesized timeout: the engine never invoked this agent
+ 		// (no content produced) and the error is a pure context cancellation
+ 		// or deadline. These results exist only to satisfy the per-slot Result
+ 		// contract; writing them would clobber a prior real failure's status.
+ 		if r.Content == "" && (errors.Is(r.Err, context.Canceled) || errors.Is(r.Err, context.DeadlineExceeded)) {
+ 			continue
+ 		}
+ 		dir, err := agentDirName(r.Agent)
+ 		if err != nil {
+ 			return err
+ 		}
+-		fr := findingsFor(r)
++		fr := findingsFor(r, changed...)
+ 		if err := writeAgentArtifacts(poolDir, dir, r, fr); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	return nil
+ }
+ 
+ // maxAgentFileBytes caps a single per-agent findings.txt read during pool
+ // rebuild so a corrupt or pathologically large artifact cannot exhaust memory.
+ // It is a var (not const) so tests can shrink it.
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index 2d17827e..dec55a33 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -159,31 +159,38 @@ func LoadReviewConfig(root string, cli registry.CLIOverrides) (*ReviewConfig, er
+ // PreparedReview is a scaffolded-but-not-yet-executed review: the review
+ // directory exists with its payload artifacts, manifest (Partial=false,
+ // finalized by ExecuteReview), and .atcr/latest pointer written, and the roster
+ // is assembled into runnable slots. It is the handoff between the two review
+ // phases so the MCP server can scaffold synchronously (returning the id/dir/
+ // agent-count to the client immediately) and run the fan-out in the background,
+ // while the CLI runs both phases inline. The fields the executor needs are
+ // exported; manifest is finalized in place by ExecuteReview.
+ type PreparedReview struct {
+ 	ID          string
+ 	Dir         string
+ 	Slots       []Slot
+ 	TimeoutSec  int
+ 	MaxParallel int
+ 	// Repo and Head locate the read-only snapshot the tool harness reads (Epic
+ 	// 2.0). Set from the request; ExecuteReview builds the snapshot→jail→dispatcher
+ 	// only when a slot is tool-enabled. An empty Head leaves the harness unwired,
+ 	// so a tool agent degrades to single-shot.
+-	Repo     string
+-	Head     string
++	Repo string
++	Head string
++	// Changed carries the per-file patch grounding data (Epic 14.1): the
++	// head-side changed line ranges and changed-line texts for base..head.
++	// WritePool uses it to drop findings whose FILE:LINE is not in the patch
++	// before they reach the reconciler. nil on the diff-ingestion path (no live
++	// base/head) or when the diff could not be computed, which disables the gate
++	// (fail open).
++	Changed  payload.ChangedLines
+ 	manifest *payload.Manifest
+ 	// cache is the diff cache for this review (Epic 5.2), rooted at
+ 	// <root>/.atcr/cache and sized by the resolved cache_max_bytes. nil only if
+ 	// caching could not be set up; ExecuteReview wires it into the engine when
+ 	// non-nil. cacheNoRead carries the --no-cache request (bypass reads, still
+ 	// write).
+ 	cache       reviewCache
+ 	cacheNoRead bool
+ }
+ 
+ // AgentCount is the number of reviewer slots the prepared review will run.
+@@ -253,140 +260,162 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
+ // finalizePreparedReview is the shared scaffold-and-assemble tail of the two
+ // review-preparation entry points (PrepareReview's git-range path and
+ // PrepareReviewFromDiff's ingestion path): it derives the review id, claims the
+ // review directory (honoring --output-dir/--id/--force), writes the payload
+ // artifacts, an in-progress manifest, and the .atcr/latest pointer, and wires the
+ // diff cache. payloadMode is recorded as the manifest's PayloadMode (the
+ // configured mode for the git path, "diff" for the ingestion path); the range
+ // provenance comes from req.Range, which the ingestion caller leaves empty.
+ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, payloads map[string]modePayload, perAgentMode map[string]string, slots []Slot, payloadMode string) (*PreparedReview, error) {
+ 	// Derive the id unconditionally: for --output-dir the id is provenance-only
+ 	// (written to the manifest and PreparedReview.ID but not used for the path),
+ 	// while for --id and the default derived case the id IS the path component.
+ 	id, err := ReviewID(req.IDOverride, req.Branch, req.Date, req.TimeSuffix, nil)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	var dir string
+ 	switch {
+ 	case req.OutputDir != "":
+ 		// --output-dir redirects the whole tree to an explicit path. The id is
+ 		// still derived above (for provenance/output) but never used for the
+ 		// path, and .atcr/latest is left untouched below.
+ 		if err = validateOutputDirRoot(req.OutputDir, req.Root); err != nil {
+ 			return nil, err
+ 		}
+ 		// Defense-in-depth: reject system-directory output paths (/etc, /proc, /sys)
+ 		// in the engine, not only the CLI flag parser. PrepareReview is public API
+ 		// reachable by the MCP handler and direct callers; enforcing here means a
+ 		// caller that sets OutputDir to a system path with Force=true is rejected
+ 		// before forceBackupOutputDir performs any destructive backup. The CLI keeps
+ 		// its own check too (exit 2), so this is additive, not a relocation.
+ 		if err = validation.FilePath(req.OutputDir); err != nil {
+ 			return nil, err
+ 		}
+ 		// --force backs up a non-empty target to <dir>.bak before scaffolding;
+ 		// without it, ScaffoldOutputDir rejects a non-empty dir (Epic 4.7 AC2).
+ 		if req.Force {
+ 			backupPath, err := forceBackupOutputDir(ctx, req.OutputDir)
+ 			if err != nil {
+ 				return nil, err
+ 			}
+ 			if backupPath != "" {
+ 				fmt.Fprintf(os.Stderr, "backed up prior review to %s\n", backupPath)
+ 			}
+ 		}
+ 		dir, err = ScaffoldOutputDir(req.OutputDir)
+ 	case req.IDOverride != "":
+ 		// Explicit overrides keep their exact id, but the scaffold is exclusive:
+ 		// a pre-existing directory (e.g. a client retrying atcr_review with the
+ 		// same id while the first run is in flight) is rejected rather than
+ 		// scaffolded into, so two fan-outs never share one review dir. --force
+ 		// instead backs up the existing tree to <dir>.bak and scaffolds fresh
+ 		// (Epic 4.7 AC2).
+ 		if req.Force {
+ 			backupPath, err := forceBackupReviewDir(ctx, req.Root, id)
+ 			if err != nil {
+ 				return nil, err
+ 			}
+ 			if backupPath != "" {
+ 				fmt.Fprintf(os.Stderr, "backed up prior review to %s\n", backupPath)
+ 			}
+ 		}
+ 		dir, err = ScaffoldReviewDir(req.Root, id)
+ 	default:
+ 		// Derived ids claim their directory atomically: creation is the
+ 		// collision check, so two reviews of the same branch in the same second
+ 		// get distinct dirs instead of interleaving writes in one.
+ 		if req.Force {
+ 			fmt.Fprintf(os.Stderr, "--force has no effect without --id or --output-dir; a new review directory was created\n")
+ 		}
+ 		id, dir, err = claimReviewDir(req.Root, id, req.TimeSuffix)
+ 	}
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	if err := writePayloadArtifacts(dir, payloads); err != nil {
+ 		return nil, err
+ 	}
+ 	// Epic 12.2 provenance: write the resolved scope constraint to
+ 	// payload/scope-constraint.txt so the on-disk artifact reflects what
+ 	// each reviewer received. resolveScopeConstraint is called again here
+ 	// (second read) rather than threading the result through the function
+ 	// signature of finalizePreparedReview.
+ 	if req.SprintPlanPath != "" {
+ 		if sc, _ := resolveScopeConstraint(req); sc != "" {
+ 			if err := atomicWriteFile(filepath.Join(dir, "payload", "scope-constraint.txt"), []byte(sc)); err != nil {
+ 				return nil, fmt.Errorf("writing scope constraint artifact: %w", err)
+ 			}
+ 		}
+ 	}
+ 
+ 	m := &payload.Manifest{
+ 		Base:            req.Range.Base,
+ 		Head:            req.Range.Head,
+ 		DetectionMode:   req.Range.DetectionMode,
+ 		DefaultBranch:   req.Range.DefaultBranch,
+ 		CommitCount:     req.Range.CommitCount,
+ 		PayloadMode:     payloadMode,
+ 		MaxParallel:     cfg.Settings.MaxParallel,
+ 		TimeoutSecs:     cfg.Settings.TimeoutSecs,
+ 		PerAgentPayload: perAgentMode,
+ 		Roster:          rosterNames(cfg.Project),
+ 		StartedAt:       req.StartedAt,
+ 		Partial:         false,              // finalized by ExecuteReview once outcomes are known
+ 		Stages:          []string{"review"}, // 1.x runs only the review stage (Epic 1.1 reserved field)
+ 	}
+ 	if err := WriteManifest(dir, m); err != nil {
+ 		return nil, err
+ 	}
+ 	// Point .atcr/latest at the review before fan-out so `atcr status` can find an
+ 	// in-progress run started by the non-blocking MCP handler. Skipped for
+ 	// --output-dir: the pointer tracks interactive runs under .atcr/reviews/, and
+ 	// an external orchestrator owns (and already knows) its output path.
+ 	if req.OutputDir == "" {
+ 		if err := WriteLatest(req.Root, id); err != nil {
+ 			return nil, err
+ 		}
+ 	}
+ 	// Wire the diff cache (Epic 5.2): reviewer outputs are content-addressed
+ 	// under <root>/.atcr/cache (sibling of reviews/, already excluded from git)
+ 	// and capped at the resolved cache_max_bytes. The store is shared across the
+ 	// run's agents; ExecuteReview hands it to the engine.
+ 	revCache := cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes)
+-	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
++	// Epic 14.1 grounding data: compute the per-file changed line ranges for the
++	// range so WritePool can drop findings not anchored in the patch (see
++	// computeGroundingData for the fail-open contract).
++	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: computeGroundingData(ctx, req), manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
++}
++
++// computeGroundingData builds the per-file patch grounding data for the request's
++// range (Epic 14.1). Only the git-range path carries a base/head; a range-less
++// request (the diff-ingestion path) returns nil, disabling the grounding gate. A
++// git failure disables the gate (fail open, logged) rather than aborting the
++// review — grounding is a filter, not a correctness gate. It is shared by the
++// fresh-review (finalizePreparedReview) and resume (PrepareResume) paths so a
++// resumed agent's fresh output is grounded identically to a first-run agent's.
++func computeGroundingData(ctx context.Context, req ReviewRequest) payload.ChangedLines {
++	if req.Range.Base == "" || req.Range.Head == "" {
++		return nil
++	}
++	cl, err := payload.BuildChangedLines(ctx, req.Repo, req.Range.Base, req.Range.Head)
++	if err != nil {
++		log.FromContext(ctx).Warn("grounding disabled: could not compute changed lines", "err", err)
++		return nil
++	}
++	return cl
+ }
+ 
+ // PrepareReviewFromDiff is the diff-file ingestion counterpart of PrepareReview:
+ // it builds the payload from a standalone unified diff (via the payload package's
+ // diff-file primitive) instead of from a git range, then scaffolds the review on
+ // the exact same path. Because a bare diff is the only available representation,
+ // every agent reviews it regardless of its configured payload mode — the payloads
+ // map is keyed solely to "diff" and buildSlots is forced to "diff", so a roster
+ // whose default mode is blocks/files still resolves cleanly. The resulting
+ // PreparedReview is accepted unchanged by ExecuteReview (same Slots/modePayload
+ // wiring); with no repo snapshot, Head is empty so any tool-enabled agent degrades
+ // to single-shot.
+ //
+ // req.Range is provenance-only here and may be left zero (a range-less diff has no
+ // base/head); req.OutputDir/IDOverride/Force are honored identically to
+ // PrepareReview, so callers (e.g. a benchmark run) can redirect output.
+@@ -533,99 +562,99 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
+ // ExecuteReview runs phase two: fan out the prepared roster under the global
+ // timeout, then write per-agent artifacts, the merged pool, summary.json, and
+ // the finalized manifest (Partial reflecting the outcome). The completer is
+ // injected so the CLI uses the real HTTP client and tests use a fake/httptest.
+ //
+ // Artifacts are always persisted, even when every agent fails; in that case the
+ // populated *ReviewResult is still returned alongside the wrapped
+ // ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
+ // remains for inspection. The background MCP path discards the error (status is
+ // read from disk) while the CLI maps it to the process exit code.
+ //
+ // Graceful-shutdown note: cooperative shutdown preserves agents that finished
+ // before the signal; in-flight agents share the cancelled parent ctx and are cut
+ // off (classified as timeout). Truly completing in-flight work would require
+ // running them on an uncancelled child ctx — a deliberate engine change out of
+ // scope here.
+ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
+ 	// Review metrics (Epic 4.4): count this review and time the whole execution
+ 	// (fan-out + artifact persistence). The deferred Observe fires on every exit;
+ 	// the terminal succeeded/failed/interrupted classification is recorded at each
+ 	// return below. Instrumented here (not in the CLI) so the MCP server's
+ 	// background reviews are counted identically.
+ 	metrics.Counter(metrics.NameReviewsTotal).Inc()
+ 	reviewStart := time.Now()
+ 	defer func() {
+ 		metrics.Histogram(metrics.NameReviewDurationSeconds).Observe(time.Since(reviewStart).Seconds())
+ 	}()
+ 
+ 	poolDir := filepath.Join(p.Dir, "sources", "pool")
+ 
+ 	results, stage := runEngine(ctx, completer, p, poolDir)
+ 
+ 	// Detect an external interrupt (SIGINT/SIGTERM cancelled the root context) so
+ 	// the manifest can record it. The check is on the PARENT ctx, not runCtx: a
+ 	// review timeout cancels only the child runCtx (DeadlineExceeded), while a
+ 	// signal cancels the parent (Canceled). The engine has already collapsed both
+ 	// into StatusTimeout per-agent, so the parent ctx is the only signal that still
+ 	// distinguishes a user interrupt from an exhausted time budget.
+ 	// Contract: callers must cancel the parent ctx only via a signal handler;
+ 	// any other cancellation would be misreported as interrupted in the manifest.
+ 	interrupted := errors.Is(ctx.Err(), context.Canceled)
+ 
+-	sum, err := WritePool(poolDir, results)
++	sum, err := WritePool(poolDir, results, p.Changed)
+ 	if err != nil {
+ 		// Persistence failed after the fan-out ran. Write a best-effort failure
+ 		// marker so the status reader reports `failed` rather than leaving the
+ 		// review stuck in_progress forever (Epic 1.5); if even this cannot be
+ 		// written, stale inference covers it once the timeout elapses.
+ 		writeFailureSummary(poolDir, results)
+ 		// Stamp CompletedAt so the manifest is distinguishable from an unfinished
+ 		// scaffold on disk; the failure-marker summary.json is the authoritative
+ 		// outcome signal, but a zero CompletedAt left duration/partial-deriving
+ 		// tools unable to tell a failed review from one still in flight.
+ 		// Nil guard: PreparedReview may be constructed directly in tests without a manifest.
+ 		if p.manifest != nil {
+ 			p.manifest.CompletedAt = time.Now().UTC()
+ 			p.manifest.Interrupted = interrupted
+ 			_ = WriteManifest(p.Dir, p.manifest) // best-effort; stale inference covers the `failed` outcome but manifest.Interrupted is lost if this write also fails
+ 		}
+ 		recordReviewOutcome(interrupted, true)
+ 		return nil, err
+ 	}
+ 
+ 	// Finalize the manifest into a local copy. p.manifest is only updated on a
+ 	// successful write so a caller that retries with the same PreparedReview does
+ 	// not observe stale completion data from a previous failed attempt.
+ 	m := *p.manifest
+ 	m.Partial = sum.Partial
+ 	m.CompletedAt = time.Now().UTC()
+ 	m.Interrupted = interrupted
+ 	// Record the review-stage entry listing the tool-using agents (Epic 2.0, AC
+ 	// 05-04), with snapshot provenance already stamped by runEngine. nil when no
+ 	// agent ran with tools, so a pure 1.x roster's manifest is unchanged.
+ 	m.Review = stage
+ 	if err := WriteManifest(p.Dir, &m); err != nil {
+ 		recordReviewOutcome(interrupted, true)
+ 		return nil, err
+ 	}
+ 	p.manifest = &m
+ 
+ 	res := &ReviewResult{ID: p.ID, Dir: p.Dir, Summary: sum}
+ 	// The all-agents-failed gate runs after artifacts are on disk; the result is
+ 	// returned regardless so the caller knows where to look.
+ 	if _, outErr := Outcome(results); outErr != nil {
+ 		recordReviewOutcome(interrupted, true)
+ 		return res, outErr
+ 	}
+ 	recordReviewOutcome(interrupted, false)
+ 	return res, nil
+ }
+ 
+ // RunReview is the full synchronous review flow used by the CLI: prepare the
+ // review directory then execute the fan-out inline. The completer is injected so
+ // the CLI uses the real HTTP client and tests use a fake/httptest.
+ //
+ // Artifacts are always persisted, even when every agent fails; in that case the
+ // populated *ReviewResult is still returned alongside the wrapped
+ // ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
+ // remains for inspection.
+diff --git a/internal/payload/grounding.go b/internal/payload/grounding.go
+new file mode 100644
+index 00000000..2e7204a9
+--- /dev/null
++++ b/internal/payload/grounding.go
+@@ -0,0 +1,82 @@
++package payload
++
++import (
++	"context"
++	"strings"
++
++	"github.com/samestrin/atcr/internal/log"
++)
++
++// LineRange is an inclusive, 1-based line span in the head file — the exported
++// view of the internal lineRange used by the diff splitter.
++type LineRange struct {
++	Start int
++	End   int
++}
++
++// FileChange holds the grounding data for one changed file: the head-side
++// changed line ranges (added or modified lines) and the trimmed text of every
++// changed line (added or removed) for evidence-based matching.
++type FileChange struct {
++	Ranges      []LineRange
++	ChangedText []string
++}
++
++// ChangedLines maps each changed head-side path to its FileChange grounding data.
++type ChangedLines map[string]FileChange
++
++// BuildChangedLines returns the per-file grounding data for base..head: the
++// head-side changed line ranges and the changed-line texts, parsed from a single
++// zero-context git diff. It is the data source for the fan-out grounding gate
++// (Epic 14.1), which drops findings whose FILE:LINE is not within the patch. A
++// binary or pure-mode-change file yields an empty FileChange (no ranges, no
++// text), which the gate treats as "changed but no lines to check" and keeps (fail
++// open); a file absent from the map was not changed by the patch, so the gate
++// drops findings that cite it (the fabricated-file hallucination class).
++func BuildChangedLines(ctx context.Context, repo, base, head string) (ChangedLines, error) {
++	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
++	if err := validateRange(g, base, head); err != nil {
++		return nil, err
++	}
++	chunks, err := g.diffChunks(base, head, "--unified=0")
++	if err != nil {
++		return nil, err
++	}
++	out := make(ChangedLines, len(chunks))
++	for path, chunk := range chunks {
++		out[path] = parseFileChange(chunk)
++	}
++	return out, nil
++}
++
++// parseFileChange parses one zero-context per-file diff chunk into its changed
++// head ranges (from the @@ hunk headers, reusing parseHeadRanges) and the trimmed
++// text of every added ('+') and removed ('-') line. Only lines AFTER the first @@
++// hunk header are collected as content, so the per-file diff headers (diff --git,
++// index, --- a/…, +++ b/…) are excluded structurally — not by a ---/+++ prefix
++// test, which would wrongly discard genuine content whose text begins with "--"
++// or "++" (a removed SQL/Lua "-- comment" renders as a "--- comment" diff line).
++// Blank changed lines are skipped so they never match arbitrary evidence.
++func parseFileChange(chunk string) FileChange {
++	var fc FileChange
++	for _, r := range parseHeadRanges(chunk) {
++		fc.Ranges = append(fc.Ranges, LineRange{Start: r.start, End: r.end})
++	}
++	inHunk := false
++	for _, line := range strings.Split(chunk, "\n") {
++		if strings.HasPrefix(line, "@@") {
++			inHunk = true
++			continue
++		}
++		if !inHunk || len(line) == 0 {
++			continue
++		}
++		if line[0] != '+' && line[0] != '-' {
++			continue
++		}
++		if t := strings.TrimSpace(line[1:]); t != "" {
++			fc.ChangedText = append(fc.ChangedText, t)
++		}
++	}
++	return fc
++}
+diff --git a/internal/payload/grounding_test.go b/internal/payload/grounding_test.go
+new file mode 100644
+index 00000000..239100c1
+--- /dev/null
++++ b/internal/payload/grounding_test.go
+@@ -0,0 +1,90 @@
++package payload
++
++import (
++	"context"
++	"strings"
++	"testing"
++)
++
++func TestParseFileChange_RangesAndText(t *testing.T) {
++	chunk := "diff --git a/foo.go b/foo.go\n" +
++		"index 111..222 100644\n" +
++		"--- a/foo.go\n" +
++		"+++ b/foo.go\n" +
++		"@@ -4,2 +4,3 @@ func Foo() int {\n" +
++		"-\treturn 1\n" +
++		"+\treturn 2\n" +
++		"+\t// added comment\n" +
++		"+\tx := 5\n"
++	fc := parseFileChange(chunk)
++	if len(fc.Ranges) != 1 || fc.Ranges[0] != (LineRange{Start: 4, End: 6}) {
++		t.Fatalf("ranges = %+v, want [{4 6}]", fc.Ranges)
++	}
++	want := map[string]bool{"return 1": true, "return 2": true, "// added comment": true, "x := 5": true}
++	if len(fc.ChangedText) != len(want) {
++		t.Fatalf("changed text = %v, want %d entries", fc.ChangedText, len(want))
++	}
++	for _, c := range fc.ChangedText {
++		if !want[c] {
++			t.Errorf("unexpected changed text %q", c)
++		}
++	}
++}
++
++func TestParseFileChange_CommentPrefixedContent(t *testing.T) {
++	// A removed comment "-- old" renders as the diff line "--- old"; an added
++	// "++ new" renders as "+++ new". Both are content within the hunk, not file
++	// headers, and must land in ChangedText (regression: a prefix test on ---/+++
++	// wrongly discarded them, breaking evidence matching for SQL/Lua/Haskell).
++	chunk := "diff --git a/q.sql b/q.sql\n" +
++		"index 111..222 100644\n" +
++		"--- a/q.sql\n" +
++		"+++ b/q.sql\n" +
++		"@@ -1 +1 @@\n" +
++		"--- old comment line here\n" +
++		"+++ new comment line here\n"
++	fc := parseFileChange(chunk)
++	joined := strings.Join(fc.ChangedText, "|")
++	if !strings.Contains(joined, "-- old comment line here") {
++		t.Errorf("removed comment content missing from %v", fc.ChangedText)
++	}
++	if !strings.Contains(joined, "++ new comment line here") {
++		t.Errorf("added comment content missing from %v", fc.ChangedText)
++	}
++	// The pre-hunk file headers must NOT leak into ChangedText.
++	for _, c := range fc.ChangedText {
++		if strings.Contains(c, "a/q.sql") || strings.Contains(c, "b/q.sql") {
++			t.Errorf("file header leaked into changed text: %q", c)
++		}
++	}
++}
++
++func TestBuildChangedLines_Integration(t *testing.T) {
++	dir := initRepo(t)
++	write(t, dir, "foo.go", "package p\n\nfunc Foo() int {\n\treturn 1\n}\n")
++	base := commitAll(t, dir, "v1")
++	write(t, dir, "foo.go", "package p\n\nfunc Foo() int {\n\treturn 2\n}\n")
++	head := commitAll(t, dir, "v2")
++
++	cl, err := BuildChangedLines(context.Background(), dir, base, head)
++	if err != nil {
++		t.Fatalf("BuildChangedLines: %v", err)
++	}
++	fc, ok := cl["foo.go"]
++	if !ok {
++		t.Fatalf("foo.go not present in changed lines: %+v", cl)
++	}
++	found := false
++	for _, r := range fc.Ranges {
++		if 4 >= r.Start && 4 <= r.End {
++			found = true
++		}
++	}
++	if !found {
++		t.Errorf("head line 4 (return 2) not covered by ranges %+v", fc.Ranges)
++	}
++	joined := strings.Join(fc.ChangedText, "|")
++	if !strings.Contains(joined, "return 2") || !strings.Contains(joined, "return 1") {
++		t.Errorf("changed text missing return 1/return 2: %v", fc.ChangedText)
++	}
++}
+diff --git a/internal/payload/scope.go b/internal/payload/scope.go
+index dcf8ebbe..5e686fb2 100644
+--- a/internal/payload/scope.go
++++ b/internal/payload/scope.go
+@@ -34,19 +34,21 @@ func ScopeFocus(scope []string) string {
+ // Per-payload-mode scope rules injected into persona prompts as {{.ScopeRule}}.
+ // diff and blocks constrain findings to the changed regions; files mode widens
+ // visibility to whole files and routes pre-existing issues to the out-of-scope
+ // category so the reconciler annotates rather than promotes them.
+ const (
+ 	scopeChangedOnly = "Review only the changed regions. The payload shows you the change in context, " +
+-		"but findings on lines outside the changed range are out of scope and will be flagged " +
+-		"during reconciliation. Stay on the diff."
++		"but a finding whose FILE:LINE falls outside the changed lines will be discarded before it " +
++		"reaches the report — it is not enough for the code to merely be visible in the surrounding " +
++		"context. If you must flag a genuine pre-existing issue in unchanged code, give it CATEGORY " +
++		"out-of-scope so the reconciler annotates rather than discards it. Stay on the diff."
+ 
+ 	scopeFiles = "Full head-version content of each changed file is provided, so pre-existing issues " +
+ 		"in unchanged regions may be visible. Focus your findings on the changed regions. You may note " +
+ 		"a pre-existing issue separately, but give it CATEGORY `out-of-scope` so the reconciler annotates " +
+ 		"rather than promotes it."
+ )
+ 
+ // ScopeRule returns the scope instruction for a payload mode. diff and blocks
+ // share the changed-only rule (function-context expansion does not widen the
+ // review scope); files mode uses the wider rule. An unknown mode falls back to
+ // the conservative changed-only rule.
+diff --git a/internal/payload/scope_grounding_test.go b/internal/payload/scope_grounding_test.go
+new file mode 100644
+index 00000000..498fecf1
+--- /dev/null
++++ b/internal/payload/scope_grounding_test.go
+@@ -0,0 +1,26 @@
++package payload
++
++import (
++	"strings"
++	"testing"
++)
++
++// TestScopeRule_DiffDiscardsUngrounded pins Epic 14.1 AC3 onto the changed-only
++// scope rule: the reviewer is told that a finding outside the changed lines is
++// discarded (the new hard-drop grounding, not the old "flagged during
++// reconciliation" soft signal) and that out-of-scope is the sanctioned escape
++// hatch. The pre-existing "changed regions" / "Stay on the diff" phrasing that
++// other tests depend on must survive.
++func TestScopeRule_DiffDiscardsUngrounded(t *testing.T) {
++	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
++		r := ScopeRule(mode)
++		for _, want := range []string{"discarded", "out-of-scope"} {
++			if !strings.Contains(r, want) {
++				t.Errorf("ScopeRule(%s) missing grounding substring %q; got %q", mode, want, r)
++			}
++		}
++		if !strings.Contains(r, "changed regions") || !strings.Contains(r, "Stay on the diff") {
++			t.Errorf("ScopeRule(%s) lost pre-existing phrasing: %q", mode, r)
++		}
++	}
++}
+diff --git a/personas/_base.md b/personas/_base.md
+index bd5b756d..3bc17bfe 100644
+--- a/personas/_base.md
++++ b/personas/_base.md
+@@ -3,16 +3,19 @@
+ ## Role
+ You are {{.AgentName}}, an adversarial code reviewer on a multi-model review panel. Your job is to find problems the author would prefer you didn't. Do not flatter, do not praise, do not summarize the change, do not hedge. If the code is fine, say nothing about it — emit findings only where something is genuinely wrong or risky.
+ 
+ ## Focus
+ 1. Correctness: logic errors, off-by-one, wrong conditions, broken contracts
+ 2. Error handling: swallowed errors, missing checks, failure paths that lose data
+ 3. Security: injection, traversal, secrets exposure, unsafe input handling
+ 4. Edge cases: empty/null inputs, boundaries, concurrency, resource cleanup
+ 5. Maintainability: misleading names, dead code, duplication that will rot
+ 
+ ## Scope
+ {{.ScopeRule}}
+ 
++## Grounding (mandatory)
++Every finding MUST cite an exact FILE:LINE that appears in the diff below, and that location MUST be one of the changed lines (an added or modified line). This is enforced mechanically: a finding whose FILE:LINE is not within the patch's changed lines — or whose EVIDENCE cannot be matched to the changed code — is DISCARDED before it reaches the report, not merely flagged. Do not report, speculate about, or analyze code that is not part of the changed lines. The ONLY sanctioned way to raise a genuine pre-existing issue in unchanged code is to give the finding CATEGORY `out-of-scope`; such findings are annotated, never promoted, and are exempt from the discard.
++
+ {{if .ToolsEnabled}}## Tool-Assisted Review
+ You may use read_file, grep, and list_files to explore the repository beyond the payload. The payload is the starting point of this review, not the whole picture: read the enclosing file, grep for callers, and check adjacent code to confirm a suspicion before you report it. Spend tool calls to verify, not to browse.
+ 
+@@ -34,8 +37,9 @@ SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+ Rules:
+ - SEVERITY is one of CRITICAL, HIGH, MEDIUM, LOW — nothing else starts a finding line
+ - Replace any literal | inside a field with /
+ - CATEGORY is a single lowercase word (security, correctness, performance, testing, style, docs)
+ - EST_MINUTES is an integer estimate to fix
++- FILE:LINE must be a real, exact location copied from the diff — never approximate, guess, or invent it
+ - EVIDENCE quotes or paraphrases the code that proves the problem
+ - No prose, no headers, no markdown around findings; if there are no findings, emit nothing
+ 
+diff --git a/personas/grounding_test.go b/personas/grounding_test.go
+new file mode 100644
+index 00000000..7e1a34b1
+--- /dev/null
++++ b/personas/grounding_test.go
+@@ -0,0 +1,24 @@
++package personas
++
++import (
++	"strings"
++	"testing"
++)
++
++// TestBase_GroundingDirective pins Epic 14.1 AC1/AC3 into the shared base
++// persona: every finding must cite an exact FILE:LINE drawn from the diff, code
++// outside the changed lines must not be reported, and an ungrounded finding is
++// discarded rather than merely flagged. The out-of-scope category is the only
++// sanctioned escape hatch for a pre-existing issue in unchanged code.
++func TestBase_GroundingDirective(t *testing.T) {
++	base, err := Base()
++	if err != nil {
++		t.Fatalf("Base(): %v", err)
++	}
++	low := strings.ToLower(base)
++	for _, want := range []string{"discarded", "changed lines", "out-of-scope"} {
++		if !strings.Contains(low, want) {
++			t.Errorf("base persona template missing grounding directive substring %q", want)
++		}
++	}
++}
