@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "internal/reconcile/consensus_filter_test.go",
+      "line": 1,
+      "severity": "HIGH",
+      "problem": "No test exercises the `panelReviewers` path when a source has findings but all have empty Reviewer strings",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "reconcile/consensus.go",
+      "line": 52,
+      "severity": "MEDIUM",
+      "problem": "`consensusExempt` dead-code branch for `Verification.Verdict == VerdictConfirmed` is exercised only by a direct unit test, never through `Reconcile`",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "reconcile/consensus.go",
+      "line": 91,
+      "severity": "MEDIUM",
+      "problem": "`consensusNoiseCluster` sets `Similarity` to 0 but no test asserts the field value",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "reconcile/consensus_test.go",
+      "line": 1,
+      "severity": "MEDIUM",
+      "problem": "No test for `consensusSingleton` on a `ConfVerified` merged finding",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "reconcile/consensus.go",
+      "line": 1,
+      "severity": "LOW",
+      "problem": "`categorySecurity` constant is exported implicitly (lowercase) but `CategoryOutOfScope` is used directly in the same switch; inconsistency may confuse future readers",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "reconcile/reconcile_test.go",
+      "line": 25,
+      "severity": "LOW",
+      "problem": "The sort-order test comment explains the reviewer-sharing fix but the test still uses `recAt()` which sets a fixed time — the comment doesn't mention that `recAt()` is irrelevant to the fix",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    }
+  ]
+}
