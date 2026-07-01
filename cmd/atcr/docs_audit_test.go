@@ -178,6 +178,26 @@ func TestReconcilerConfigSurfaceDocumented(t *testing.T) {
 	}
 }
 
+// TestArchitectureDocDescribesReconciler asserts that docs/architecture.md
+// exists and faithfully names the stages and concepts of the real multi-model
+// reconciler pipeline (AC3). The required tokens are the actual pipeline stages
+// (review → reconcile → verify → debate) and the reconciler's core operations
+// (cluster, dedupe, confidence), so a stub or a doc describing a fictional
+// architecture fails.
+func TestArchitectureDocDescribesReconciler(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "architecture.md"))
+	if err != nil {
+		t.Fatalf("docs/architecture.md must exist (AC3): %v", err)
+	}
+	lower := strings.ToLower(string(b))
+	for _, term := range []string{"review", "reconcile", "cluster", "dedupe", "confidence", "verify", "debate", "persona"} {
+		if !strings.Contains(lower, term) {
+			t.Errorf("docs/architecture.md does not describe the %q stage/concept of the reconciler", term)
+		}
+	}
+}
+
 // TestDocsClaimedFlagsAreReal asserts that every flag the docs explicitly call a
 // "flag" via the “ `--x` flag “ idiom is a real flag on some command in the
 // compiled tree (AC1). This catches prose that documents a CLI flag which does
