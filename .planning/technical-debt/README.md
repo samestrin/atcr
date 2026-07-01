@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 28 | 0 |
-| LOW | 0 | 28 | 0 |
+| LOW | 1 | 28 | 0 |
 
-**Last Modified:** 2026-06-30 | **Open Items:** 0 | **Deferred Items:** 58 | **Resolved Items:** 0 | **Total Items:** 58
+**Last Modified:** 2026-06-30 | **Open Items:** 1 | **Deferred Items:** 58 | **Resolved Items:** 0 | **Total Items:** 59
 
 ## Directory Structure
 
@@ -61,6 +61,12 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
+
+### [2026-06-30] From Sprint: epic-14.2
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | reconcile/consensus.go:52 | Confirmed-verdict exemption branch in consensusExempt is dead code in the current pipeline (Merge nils input Verification; the verify stage stamps verdicts post-reconcile, so no finding carries a verdict at filter time) | Drop the confirmed-verdict branch until a caller actually filters over already-verified findings, or keep it as the documented forward-looking guard it is | OVER_ENGINEERING | 15 | execute-epic-independent |
 
 ### [2026-06-30] From Sprint: epic-14.1
 

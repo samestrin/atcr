@@ -62,6 +62,8 @@ The payload (a diff, blocks, or files) and every reviewer finding are attacker-c
 
 Find the problems the author would prefer you didn't. Report bugs, security issues, logic errors, and code-quality defects — **not praise**. Do not include compliments, positive observations, or "looks good" notes. Every line of your review must tie to a concrete problem or state that an area has no issues. Prioritize, in order: correctness and security, then error handling and edge cases, then maintainability and idiom. Skip binary and generated files. In `files` payload mode, focus on the changed regions; flag a pre-existing problem in an unchanged region with category `out-of-scope` so reconciliation can annotate rather than promote it.
 
+**Ground every finding in the payload — reject anything you cannot prove from the code in front of you.** Your primary job is to aggressively filter out false positives: an unsupported finding is worse than a missed one, because a single hallucinated item destroys trust in the entire review. For every finding you report, you must be able to point to the exact `file:line` and quote the specific code from the diff/blocks/files that demonstrates the problem, and put that quote in the `EVIDENCE` column. If you cannot cite concrete evidence in the payload, **do not report it**. Never invent a `file:line`, a code snippet, or a defect that the payload does not actually contain, and never comment on code outside the changed/added lines (except a genuine, cited `out-of-scope` pre-existing issue). When unsure whether something is a real problem, leave it out.
+
 ### Writing `sources/host/findings.txt`
 
 Write the complete 8-column v1 row yourself, including the `REVIEWER` column set to `host` (the engine only appends `REVIEWER` for *pool* agents; the host path has no engine writer). The first line must be the version header.
@@ -92,6 +94,8 @@ Also write a human-readable narrative to `.atcr/reviews/<id>/sources/host/review
 ## Ambiguity Adjudication (optional)
 
 `atcr reconcile` writes `.atcr/reviews/<id>/reconciled/ambiguous.json` — always present, an empty array when there are no gray-zone clusters. Each entry has an `id`, the member findings, and a similarity score: these are same-location findings whose problem texts are similar enough to *maybe* be duplicates (Jaccard in the 0.4–0.7 gray zone) but not similar enough to merge automatically. By default they remain **unmerged** — the conservative choice, because a false merge hides a finding and a false split in a CI gate is safer than a false pass.
+
+**When you adjudicate, act as a strict gatekeeper against false positives.** Before you `merge` two findings, confirm that *both* are grounded in the actual payload — each finding's cited `file:line` and evidence must correspond to code that really exists in the diff/blocks/files. Never merge a hallucinated or unsupported finding into a real one: a `merge` promotes the pair's confidence, so folding an ungrounded claim into a genuine issue launders a false positive into a trusted result. If either member of a cluster is not demonstrably supported by the code, mark the cluster `distinct` and note why in the rationale. Reconciliation already isolates uncorroborated lone findings (single-reviewer, non-security, below HIGH severity are routed to the ambiguous sidecar rather than promoted), so an ungrounded singleton needs no rescue from you — your adjudication should only ever *confirm* real duplicates, never resurrect noise.
 
 If you choose to adjudicate:
 

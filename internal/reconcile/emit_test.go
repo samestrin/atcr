@@ -35,10 +35,13 @@ func TestReconcile_TwoReviewersAgreeHighConfidence(t *testing.T) {
 }
 
 func TestReconcile_SortedBySeverityThenLocation(t *testing.T) {
+	// All findings share one reviewer so the panel stays below the consensus-filter
+	// floor (consensusMinReviewers): this test isolates sort order, so the epic-14.2
+	// singleton filter must not fire and drop the LOW/MEDIUM findings under test.
 	sources := []Source{{Name: "pool", Findings: []stream.Finding{
 		mf("LOW", "z.go", 5, "p1", "f", "style", 1, "e", "a"),
-		mf("CRITICAL", "a.go", 1, "p2", "f", "sec", 9, "e", "b"),
-		mf("MEDIUM", "m.go", 3, "p3", "f", "test", 4, "e", "c"),
+		mf("CRITICAL", "a.go", 1, "p2", "f", "sec", 9, "e", "a"),
+		mf("MEDIUM", "m.go", 3, "p3", "f", "test", 4, "e", "a"),
 	}}}
 	res := Reconcile(sources, recAt())
 	require.Len(t, res.Findings, 3)
