@@ -1,3 +1,17 @@
+## [14.1.0] - 2026-06-30
+
+Grounded multi-agent review findings in the actual diff so reviewer models can no longer report hallucinated technical-debt items.
+
+### Added
+
+- `atcr review` now runs a grounding gate that drops any finding whose cited `FILE:LINE` is not anchored in the reviewed patch — the fabricated-file and invented-line hallucinations that flooded large reviews — before findings reach the reconciler. A finding is kept when its line falls within a changed range (with a ±3-line tolerance for reviewer drift), when its evidence quotes a changed line, or when it is tagged `CATEGORY out-of-scope`; the per-agent drop count is logged to stderr. The gate covers both fresh and resumed reviews and is disabled only for the range-less `atcr reconcile <dir>` path, which has no diff to check against.
+
+### Changed
+
+- Reviewer persona prompts now require every finding to cite an exact `FILE:LINE` drawn from the diff and forbid reporting code outside the changed lines, with `CATEGORY out-of-scope` the sole sanctioned way to raise a genuine pre-existing issue in unchanged code.
+
+*Shipped via /execute-epic (epic 14.1)*
+
 ## [13.6.0] - 2026-06-30
 
 Expanded AST-isomorphism finding grouping to four more brace-based language families.

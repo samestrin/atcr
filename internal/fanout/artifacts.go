@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -56,7 +57,7 @@ type PoolSummary struct {
 // placed at the pool root, above the per-agent raw/ files, so leaf-preference
 // discovery treats the raw files as the inputs and never double-counts the
 // merged aggregate.
-func WritePool(poolDir string, results []Result) (Summary, error) {
+func WritePool(poolDir string, results []Result, changed ...payload.ChangedLines) (Summary, error) {
 	if err := os.MkdirAll(poolDir, 0o755); err != nil {
 		return Summary{}, fmt.Errorf("creating pool dir: %w", err)
 	}
@@ -78,7 +79,7 @@ func WritePool(poolDir string, results []Result) (Summary, error) {
 		}
 		seen[dir] = true
 
-		fr := findingsFor(r)
+		fr := findingsFor(r, changed...)
 		merged = append(merged, fr.Findings...)
 
 		if err := writeAgentArtifacts(poolDir, dir, r, fr); err != nil {
@@ -163,7 +164,7 @@ type findingsResult struct {
 	Truncated int
 }
 
-func findingsFor(r Result) findingsResult {
+func findingsFor(r Result, changed ...payload.ChangedLines) findingsResult {
 	if r.Content == "" {
 		return findingsResult{}
 	}
@@ -171,7 +172,21 @@ func findingsFor(r Result) findingsResult {
 	for i := range findings {
 		findings[i].Reviewer = r.Agent
 	}
-	f, dropped, truncated := enforceConstraints(findings, r.Agent, r.MinSeverity, r.MaxFindings)
+	// Epic 14.1 grounding gate: drop findings whose FILE:LINE is not anchored in
+	// the patch (hallucinations) before per-source constraints apply, so the
+	// max_findings cap ranks only real findings. Runs only when review-level
+	// grounding data was supplied; a nil/absent map disables the gate (fail open).
+	// The per-agent drop count is logged to stderr — observable, matching the
+	// enforceConstraints min_severity/max_findings precedent, never truly silent.
+	var cl payload.ChangedLines
+	if len(changed) > 0 {
+		cl = changed[0]
+	}
+	grounded, ungrounded := groundFindings(findings, cl)
+	if ungrounded > 0 {
+		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: dropped %d ungrounded finding(s) not present in the patch\n", r.Agent, ungrounded)
+	}
+	f, dropped, truncated := enforceConstraints(grounded, r.Agent, r.MinSeverity, r.MaxFindings)
 	return findingsResult{Findings: f, Dropped: dropped, Truncated: truncated}
 }
 

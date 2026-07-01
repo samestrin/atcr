@@ -174,8 +174,15 @@ type PreparedReview struct {
 	// 2.0). Set from the request; ExecuteReview builds the snapshot→jail→dispatcher
 	// only when a slot is tool-enabled. An empty Head leaves the harness unwired,
 	// so a tool agent degrades to single-shot.
-	Repo     string
-	Head     string
+	Repo string
+	Head string
+	// Changed carries the per-file patch grounding data (Epic 14.1): the
+	// head-side changed line ranges and changed-line texts for base..head.
+	// WritePool uses it to drop findings whose FILE:LINE is not in the patch
+	// before they reach the reconciler. nil on the diff-ingestion path (no live
+	// base/head) or when the diff could not be computed, which disables the gate
+	// (fail open).
+	Changed  payload.ChangedLines
 	manifest *payload.Manifest
 	// cache is the diff cache for this review (Epic 5.2), rooted at
 	// <root>/.atcr/cache and sized by the resolved cache_max_bytes. nil only if
@@ -373,7 +380,29 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// and capped at the resolved cache_max_bytes. The store is shared across the
 	// run's agents; ExecuteReview hands it to the engine.
 	revCache := cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes)
-	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+	// Epic 14.1 grounding data: compute the per-file changed line ranges for the
+	// range so WritePool can drop findings not anchored in the patch (see
+	// computeGroundingData for the fail-open contract).
+	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: computeGroundingData(ctx, req), manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+}
+
+// computeGroundingData builds the per-file patch grounding data for the request's
+// range (Epic 14.1). Only the git-range path carries a base/head; a range-less
+// request (the diff-ingestion path) returns nil, disabling the grounding gate. A
+// git failure disables the gate (fail open, logged) rather than aborting the
+// review — grounding is a filter, not a correctness gate. It is shared by the
+// fresh-review (finalizePreparedReview) and resume (PrepareResume) paths so a
+// resumed agent's fresh output is grounded identically to a first-run agent's.
+func computeGroundingData(ctx context.Context, req ReviewRequest) payload.ChangedLines {
+	if req.Range.Base == "" || req.Range.Head == "" {
+		return nil
+	}
+	cl, err := payload.BuildChangedLines(ctx, req.Repo, req.Range.Base, req.Range.Head)
+	if err != nil {
+		log.FromContext(ctx).Warn("grounding disabled: could not compute changed lines", "err", err)
+		return nil
+	}
+	return cl
 }
 
 // PrepareReviewFromDiff is the diff-file ingestion counterpart of PrepareReview:
@@ -572,7 +601,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// any other cancellation would be misreported as interrupted in the manifest.
 	interrupted := errors.Is(ctx.Err(), context.Canceled)
 
-	sum, err := WritePool(poolDir, results)
+	sum, err := WritePool(poolDir, results, p.Changed)
 	if err != nil {
 		// Persistence failed after the fan-out ran. Write a best-effort failure
 		// marker so the status reader reports `failed` rather than leaving the

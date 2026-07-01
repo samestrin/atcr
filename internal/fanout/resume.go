@@ -320,7 +320,11 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		MaxParallel: cfg.Settings.MaxParallel,
 		Repo:        req.Repo,
 		Head:        req.Range.Head,
-		manifest:    m,
+		// Epic 14.1: ground a resumed agent's fresh output identically to a
+		// first-run agent's, so a re-run agent cannot reintroduce hallucinations a
+		// normal run would have dropped. Same fail-open contract as the fresh path.
+		Changed:  computeGroundingData(ctx, req),
+		manifest: m,
 		// Wire the diff cache for resumed agents too (Epic 5.2): a resumed agent's
 		// fresh output is written back so a later full run benefits — matching the
 		// "fresh results are always written" contract — rather than being re-called.
@@ -363,7 +367,7 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 	results, resumedStage := runEngine(ctx, completer, p, poolDir)
 	interrupted := errors.Is(ctx.Err(), context.Canceled)
 
-	if err := writeResumedAgents(poolDir, results); err != nil {
+	if err := writeResumedAgents(poolDir, results, p.Changed); err != nil {
 		return nil, err
 	}
 
@@ -433,7 +437,7 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 // it never actually invoked because the parent ctx was cancelled first) is
 // skipped so a previously-failed agent's original error message is preserved
 // rather than overwritten with a generic "context canceled" timeout.
-func writeResumedAgents(poolDir string, results []Result) error {
+func writeResumedAgents(poolDir string, results []Result, changed ...payload.ChangedLines) error {
 	for _, r := range results {
 		// Detect a synthesized timeout: the engine never invoked this agent
 		// (no content produced) and the error is a pure context cancellation
@@ -446,7 +450,7 @@ func writeResumedAgents(poolDir string, results []Result) error {
 		if err != nil {
 			return err
 		}
-		fr := findingsFor(r)
+		fr := findingsFor(r, changed...)
 		if err := writeAgentArtifacts(poolDir, dir, r, fr); err != nil {
 			return err
 		}
