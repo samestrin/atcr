@@ -115,3 +115,14 @@ func TestGroundFindings_NilDataKeepsAll(t *testing.T) {
 		t.Fatalf("nil data: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
 	}
 }
+
+func TestGroundFindings_EmptyMapKeepsAll(t *testing.T) {
+	// A non-nil but empty ChangedLines map is a derivation-empty success path;
+	// the gate must fail open exactly like nil data, not treat it as an active
+	// empty patch that drops every finding.
+	in := []stream.Finding{{File: "auth.go", Line: 999, Category: "correctness"}}
+	out, dropped := groundFindings(in, payload.ChangedLines{})
+	if len(out) != 1 || dropped != 0 {
+		t.Fatalf("empty map: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
+	}
+}
