@@ -120,3 +120,24 @@ func TestMergeChunkResults_AllFailedStaysFailed(t *testing.T) {
 	require.NotEqual(t, StatusOK, merged[0].Status, "no OK chunk => not a success")
 	require.Error(t, merged[0].Err)
 }
+
+func TestMergeChunkResults_ParallelAgentTakesMaxDuration(t *testing.T) {
+	results := []Result{
+		{Agent: "kai", Status: StatusOK, Content: "HIGH|a.go:1|p|f|CORRECTNESS", DurationMS: 100},
+		{Agent: "kai", Status: StatusOK, Content: "MEDIUM|b.go:2|p|f|CORRECTNESS", DurationMS: 150},
+	}
+	merged := mergeChunkResults(results) // no serial agents => parallel lane
+	require.Len(t, merged, 1)
+	require.Equal(t, int64(150), merged[0].DurationMS, "parallel-lane chunks run concurrently so wall-clock is the max")
+}
+
+func TestMergeChunkResults_SerialAgentSumsDuration(t *testing.T) {
+	results := []Result{
+		{Agent: "greta", Status: StatusOK, Content: "HIGH|a.go:1|p|f|CORRECTNESS", DurationMS: 100},
+		{Agent: "greta", Status: StatusOK, Content: "MEDIUM|b.go:2|p|f|CORRECTNESS", DurationMS: 150},
+	}
+	serialAgents := map[string]bool{"greta": true}
+	merged := mergeChunkResults(results, serialAgents)
+	require.Len(t, merged, 1)
+	require.Equal(t, int64(250), merged[0].DurationMS, "serial-lane chunks run sequentially so wall-clock is the sum")
+}
