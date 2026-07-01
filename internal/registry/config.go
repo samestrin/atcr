@@ -709,8 +709,9 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	}
 	// max_context_lines (Epic 14.3): an unset field inherits the default; any
 	// explicit value must be a positive line budget within the sanity ceiling. A
-	// zero or negative cap would make bin-packing degenerate (every file its own
-	// chunk, or worse).
+	// non-positive value is rejected because it collides with the chunker's <=0
+	// 'disable chunking' sentinel (a misconfigured 0 would silently fall back to
+	// bulk-like behavior for that persona).
 	if a.MaxContextLines != nil && (*a.MaxContextLines <= 0 || *a.MaxContextLines > MaxContextLinesCap) {
 		errs = append(errs, agentErrf(name, "agent '%s': max_context_lines must be within 1..%d", name, MaxContextLinesCap))
 	}
