@@ -67,6 +67,7 @@ initial_backoff_ms: 500
 | `rate_limited` | false | `true` places the agent in the serial lane. |
 | `fallback` | — | Another agent name, tried when this one fails. Chains are validated at load (dangling refs and cycles fail fast). |
 | `payload` | inherited | Per-agent payload mode override (`diff`, `blocks`, `files`). When unset, inherits the resolved shared payload mode. See [payload-modes.md](payload-modes.md). |
+| `max_context_lines` | `1500` | Per-agent cap on a single chunk's diff line count, used **only** when `review_strategy: chunked` (ignored in `bulk`). The fan-out bin-packs the persona's diff into chunks no larger than this and sends one call per chunk, so a lower value means smaller, more focused context (and more requests); a higher value packs more per call. When unset, inherits the `1500`-line default. Must be within `1..1000000`. A single file larger than this cap is sent as its own oversized chunk with a warning (a file is never split). |
 | `max_retries` | inherited | Per-agent retry budget for rate-limit/transient failures (429, 5xx, transport). When unset, inherits the resolved shared budget (default `5`); set it to override per agent. Must be within `0..10` (`0` = a single attempt, no retry). The `Retry-After` header is always honored regardless of this value. |
 | `initial_backoff_ms` | inherited | Per-agent base delay (ms) between retries when no server `Retry-After` is present; the schedule grows exponentially from here (×1.5, capped at 30s). When unset, inherits the resolved shared delay (default `500`). Must be within `1..30000`. |
 
@@ -92,6 +93,7 @@ fail_on: HIGH
 | `agents` | (required†) | The parallel-lane roster. Every entry must exist in the registry. †May be empty when `serial_agents` is non-empty — only a roster empty in both lanes is rejected. |
 | `serial_agents` | `[]` | The serial-lane roster (sequential execution, for rate-limited providers). |
 | `payload_mode` | `blocks` | One of `diff`, `blocks`, `files`. |
+| `review_strategy` | `bulk` | Fan-out strategy: `bulk` (default — the whole diff goes to each persona in one prompt, keeping API cost strictly bounded) or `chunked` (each persona's diff is bin-packed into multiple context-limited calls, trading extra requests for smaller per-call context to curb large-diff hallucination). When `chunked`, each bin's size is capped by the agent's `max_context_lines`. Resolves at the registry and project tiers only (no CLI flag). **Chunking splits on `diff --git a/` file boundaries**, so it applies to the `diff` and `blocks` payload modes (both carry those headers); under `payload_mode: files` — which emits full-file bodies with no diff headers — a `chunked` run finds no boundaries and degrades to a single bulk chunk. |
 | `timeout_secs` | `600` | Global fan-out timeout. Must be positive and `≤ 86400`; an explicit `0` is rejected (not silently defaulted). |
 | `payload_byte_budget` | `524288` | Per-payload byte budget (512 KiB ≈ 128k tokens). Files are dropped largest-first when a payload exceeds it, recorded per agent in `status.json`. `0` = unlimited; negative is rejected. CLI override: `atcr review --byte-budget N`. **Context sizing:** models with context limits below 128k will time out or fail on the default; set to `163840` (160 KiB ≈ 40k tokens) for rosters that include smaller-context models (e.g. 49k-limit). |
 | `max_parallel` | `10` | Cap on concurrent parallel-lane agent calls. Bounds the fan-out so a large roster cannot burst every provider call at once. When `serial_agents` is non-empty, the serial lane runs concurrently with the parallel lane in its own goroutine — peak provider concurrency is therefore `max_parallel + 1`, not `max_parallel`. `0` = unbounded; negative is rejected. CLI override: `atcr review --max-parallel N`. |
@@ -133,7 +135,7 @@ atcr trust --all           # authorize every project provider
 
 ## Precedence
 
-The shared review settings (`payload_mode`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, `cache_max_bytes`, `fail_on`) resolve **per field, independently**, in this order:
+The shared review settings (`payload_mode`, `review_strategy`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, `cache_max_bytes`, `fail_on`) resolve **per field, independently**, in this order:
 
 ```
 CLI flag  >  .atcr/config.yaml  >  registry.yaml  >  embedded default

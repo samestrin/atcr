@@ -86,7 +86,11 @@ func validateRetryBounds(maxRetries, backoffMs *int) []string {
 // template `atcr init` generates.
 type Settings struct {
 	PayloadMode string
-	TimeoutSecs int
+	// ReviewStrategy is the resolved run-wide fan-out strategy (Epic 14.3):
+	// "bulk" (whole diff in one prompt per persona) or "chunked" (bin-packed
+	// per-persona calls capped by each agent's max_context_lines).
+	ReviewStrategy string
+	TimeoutSecs    int
 	// PayloadByteBudget is the per-payload byte budget fed to
 	// payload.ApplyByteBudget; 0 is the documented unlimited escape hatch
 	// (AC 06-03).
@@ -120,6 +124,7 @@ type CLIOverrides struct {
 func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Settings, error) {
 	s := Settings{
 		PayloadMode:       DefaultPayloadMode,
+		ReviewStrategy:    DefaultReviewStrategy,
 		TimeoutSecs:       DefaultTimeoutSecs,
 		PayloadByteBudget: DefaultPayloadByteBudget,
 		MaxParallel:       DefaultMaxParallel,
@@ -145,11 +150,20 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		if reg.InitialBackoffMs != nil {
 			s.InitialBackoffMs = *reg.InitialBackoffMs
 		}
+		// ReviewStrategy lives at the registry (global) and project tiers only —
+		// overlaid explicitly rather than through applyTier's fixed signature.
+		// Empty/whitespace is "unset" and falls through to the next tier.
+		if v := strings.TrimSpace(reg.ReviewStrategy); v != "" {
+			s.ReviewStrategy = v
+		}
 	}
 	if proj != nil {
 		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
 		if proj.CacheMaxBytes != nil {
 			s.CacheMaxBytes = *proj.CacheMaxBytes
+		}
+		if v := strings.TrimSpace(proj.ReviewStrategy); v != "" {
+			s.ReviewStrategy = v
 		}
 	}
 
@@ -206,6 +220,12 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	// directly-constructed proj/reg (bypassing the file loader) could carry one.
 	if s.CacheMaxBytes < 0 {
 		return Settings{}, fmt.Errorf("cache_max_bytes must be >= 0 (0 = unbounded), got %d", s.CacheMaxBytes)
+	}
+	// ReviewStrategy (Epic 14.3): the file tiers are checked at load, but the
+	// project tier and a directly-constructed proj/reg bypass that — re-check the
+	// resolved value so the engine never receives an unknown strategy.
+	if !reviewStrategyValid(s.ReviewStrategy) {
+		return Settings{}, fmt.Errorf("invalid review_strategy '%s': must be one of bulk, chunked", s.ReviewStrategy)
 	}
 	// Retry tunables (Epic 4.6): a directly-constructed reg (bypassing the file
 	// loader) can carry out-of-range values; catch them so the engine never
