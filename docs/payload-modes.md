@@ -66,6 +66,10 @@ Each persona prompt carries a scope rule matched to the payload mode:
 - **`diff` and `blocks`** constrain findings to the changed regions. Function-context expansion shows surrounding code for context but does **not** widen the review scope.
 - **`files`** intentionally widens visibility. Reviewers may notice pre-existing issues in unchanged regions; the prompt instructs them to focus on the change but to tag any pre-existing issue with `CATEGORY` `out-of-scope`, so the reconciler **annotates** rather than promotes it. Consumers can then filter out-of-scope findings.
 
+### Grounding gate
+
+The scope rule is enforced, not merely requested. After a persona returns its findings — and before they reach the reconciler — atcr drops any finding whose cited `FILE:LINE` is not anchored in the patch's changed lines. A finding is kept when its line falls within a changed range (with a small ±3-line tolerance for reviewer drift), when its `EVIDENCE` text matches a changed line, or when it is tagged `CATEGORY` `out-of-scope` (which stays exempt so the annotate-don't-promote path above is unaffected). Ungrounded findings — the hallucinations a model invents for code it never saw change — are discarded and the per-agent drop count is logged to stderr. The gate needs the live diff, so it applies to `atcr review`; it is disabled for the range-less `atcr reconcile <dir>` path, which has no patch to check against.
+
 ## Tool agents (payload as starting point)
 
 For an agent with `tools: true` (see [registry.md](registry.md)), the payload above is the **starting point** of the review, not the whole universe of context. Rather than reasoning only over what the payload contains, a tool agent can look things up during the review: it may read additional files with `read_file`, search the tree with `grep`, and list directories with `list_files`, all within a **read-only, path-jailed snapshot** of the repository at the resolved `head`. There are no write tools, no shell, and no network — a reviewer can never mutate the repo or reach beyond the snapshot.
