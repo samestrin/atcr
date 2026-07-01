@@ -177,13 +177,14 @@ result safely.
   finding standing alone amid a corroborated cluster (a likely single-model
   hallucination), carried as a one-finding cluster and removed from the merged
   output so the consensus findings stay trustworthy; and **consensus-filtered
-  singletons** — on a panel of at least three sources, any uncorroborated
-  singleton (a single-reviewer, `MEDIUM`-confidence finding) is routed to the
-  sidecar rather than promoted, UNLESS it is security-related, `HIGH`/`CRITICAL`
-  severity, out-of-scope, or independently confirmed. The `Summary.ConsensusFiltered`
-  count records how many were routed this way; a two-source panel (the host + 1
-  pool workflow) leaves the filter inert so real findings are never dropped
-  wholesale.
+  singletons** — on a panel of at least three **distinct reviewers** (counted
+  across findings, not source directories, since discovery flattens every pool
+  persona into one `pool` source), any uncorroborated singleton (a below-`HIGH`
+  confidence finding) is routed to the sidecar rather than promoted, UNLESS it is
+  security-related, `HIGH`/`CRITICAL` severity, out-of-scope, or independently
+  confirmed. The `Summary.ConsensusFiltered` count records how many were routed
+  this way; a two-reviewer panel (the host + 1 pool persona workflow) leaves the
+  filter inert so real findings are never dropped wholesale.
 
 ## JSON format adapter
 

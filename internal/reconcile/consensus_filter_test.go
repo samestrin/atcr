@@ -51,6 +51,29 @@ func TestConsensusFilter_EndToEnd(t *testing.T) {
 		"report.md surfaces the consensus-filtered count")
 }
 
+// TestConsensusFilter_FlattenedPoolEndToEnd mirrors production discovery, where all
+// pool personas land in ONE "pool" source distinguished only by REVIEWER. The filter
+// must still activate off the distinct-reviewer count (3 here) even though there is a
+// single source directory — the scenario a len(sources) gate would wrongly skip.
+func TestConsensusFilter_FlattenedPoolEndToEnd(t *testing.T) {
+	sources := []Source{
+		{Name: "pool", Findings: []stream.Finding{
+			mf("HIGH", "foo.go", 10, "token never expires unchecked here", "guard it", "correctness", 15, "bruce saw it", "bruce"),
+			mf("HIGH", "foo.go", 10, "token never expires unchecked here", "guard it", "correctness", 15, "greta saw it", "greta"),
+			mf("LOW", "bar.go", 20, "unused import lingers in this file", "remove it", "style", 5, "kai only", "kai"),
+		}},
+	}
+	res := Reconcile(sources, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
+	require.Equal(t, 1, res.Summary.ConsensusFiltered, "filter activates on 3 distinct reviewers in one source")
+
+	dir := t.TempDir()
+	require.NoError(t, Emit(dir, res))
+	b, err := os.ReadFile(filepath.Join(dir, FindingsJSON))
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "unused import lingers",
+		"the singleton is dropped from a single flattened pool source")
+}
+
 // TestConsensusFilter_TwoSourcePanelUnfiltered guards the panel-size floor at the
 // emit boundary: with only two sources the filter is inert, matching the documented
 // single-API-key (host + 1 pool) workflow.

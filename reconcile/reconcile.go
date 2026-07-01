@@ -64,10 +64,11 @@ type Summary struct {
 	// DBSCAN noise (as opposed to multi-finding gray pairs).
 	NoiseCount int `json:"noise_count"`
 	// ConsensusFiltered is the number of uncorroborated singletons the epic-14.2
-	// consensus filter routed to the ambiguous sidecar (single-reviewer, MEDIUM
-	// confidence, not exempt) when the panel had at least consensusMinSources
-	// sources. Zero when the panel was too small for the filter to run or nothing
-	// was dropped. Observability only — the dropped findings live in the sidecar.
+	// consensus filter routed to the ambiguous sidecar (single-reviewer, below-HIGH
+	// confidence, not exempt) when the panel had at least consensusMinReviewers
+	// distinct reviewers. Zero when the panel was too small for the filter to run or
+	// nothing was dropped. Observability only — the dropped findings live in the
+	// sidecar.
 	ConsensusFiltered int `json:"consensus_filtered"`
 	// OutOfScope counts findings annotated out-of-scope: kept in the artifacts but
 	// excluded from a severity gate.
@@ -144,18 +145,20 @@ func Reconcile(sources []Source, opts Options) Result {
 	}
 
 	// Consensus filter (epic 14.2): once the panel is large enough that a real issue
-	// is likely to be caught by more than one reviewer (>= consensusMinSources), an
-	// uncorroborated singleton is more plausibly a hallucination than a rare true
-	// positive, so route it to the ambiguous sidecar instead of promoting it to
-	// findings.json — UNLESS a false negative would be too costly (consensusExempt).
-	// This runs after DBSCAN clustering (first pass) and the merge/authority passes,
-	// so consensusSingleton sees each finding's final confidence (authority-promoted
-	// singletons are HIGH and never dropped). The panel-size gate preserves the
-	// documented single-API-key workflow (host + 1 pool agent = 2 sources), where
-	// nearly every finding is a singleton. Filtered findings stay sorted-order-stable
-	// (kept preserves order) and recoverable from the sidecar for adjudication.
+	// is likely to be caught by more than one reviewer (>= consensusMinReviewers
+	// DISTINCT reviewers — see panelReviewers, NOT len(sources), because discovery
+	// flattens every pool persona into one "pool" source), an uncorroborated singleton
+	// is more plausibly a hallucination than a rare true positive, so route it to the
+	// ambiguous sidecar instead of promoting it to findings.json — UNLESS a false
+	// negative would be too costly (consensusExempt). This runs after DBSCAN clustering
+	// (first pass) and the merge/authority passes, so consensusSingleton sees each
+	// finding's final confidence (authority-promoted singletons are HIGH and never
+	// dropped). The reviewer-count gate preserves the documented single-API-key
+	// workflow (host + 1 pool persona = 2 reviewers), where nearly every finding is a
+	// singleton. Filtered findings stay sorted-order-stable (kept preserves order) and
+	// recoverable from the sidecar for adjudication.
 	consensusFiltered := 0
-	if len(sources) >= consensusMinSources {
+	if panelReviewers(sources) >= consensusMinReviewers {
 		kept := merged[:0]
 		for _, m := range merged {
 			if consensusSingleton(m) && !consensusExempt(m.Finding) {

@@ -62,9 +62,30 @@ func TestConsensusFilter_DropsStylisticSingletonWithFullPanel(t *testing.T) {
 	eq(t, res.Summary.ConsensusFiltered, 1, "one singleton was consensus-filtered")
 }
 
-func TestConsensusFilter_InactiveBelowThreeSources(t *testing.T) {
-	// A 2-source panel (the documented host + 1 pool workflow). The stylistic
-	// singleton must NOT be dropped — requiring consensus here would gut real output.
+func TestConsensusFilter_ActivatesOnFlattenedPoolSource(t *testing.T) {
+	// Production discovery flattens every pool persona into ONE "pool" source,
+	// distinguished only by the per-finding Reviewer. The filter must gate on the
+	// distinct-reviewer count, not len(sources): here a single source carries three
+	// reviewers, so an uncorroborated singleton among them is filtered even though
+	// len(sources)==1. This is the exact multi-persona scenario the epic targets.
+	sources := []Source{
+		{Name: "pool", Findings: []Finding{
+			cf("HIGH", "foo.go", 10, "token never expires unchecked here", "correctness", "bruce"),
+			cf("HIGH", "foo.go", 10, "token never expires unchecked here", "correctness", "greta"),
+			cf("LOW", "bar.go", 20, "unused import lingers in this file", "style", "kai"),
+		}},
+	}
+	res := Reconcile(sources, Options{})
+
+	isTrue(t, hasFinding(res, "foo.go"), "the corroborated consensus finding stays")
+	isTrue(t, !hasFinding(res, "bar.go"), "the singleton is dropped even from a single flattened pool source")
+	eq(t, res.Summary.ConsensusFiltered, 1, "the filter activated on distinct-reviewer count, not source count")
+}
+
+func TestConsensusFilter_InactiveBelowThreeReviewers(t *testing.T) {
+	// A 2-reviewer panel (the documented host + 1 pool persona workflow). The
+	// stylistic singleton must NOT be dropped — requiring consensus here would gut
+	// real output.
 	sources := []Source{
 		{Name: "a", Findings: []Finding{
 			cf("HIGH", "foo.go", 10, "token never expires unchecked here", "correctness", "a"),
@@ -76,8 +97,29 @@ func TestConsensusFilter_InactiveBelowThreeSources(t *testing.T) {
 	}
 	res := Reconcile(sources, Options{})
 
-	isTrue(t, hasFinding(res, "bar.go"), "singleton stays when the panel is below 3 sources")
-	eq(t, res.Summary.ConsensusFiltered, 0, "the filter is inert below the panel-size floor")
+	isTrue(t, hasFinding(res, "bar.go"), "singleton stays when the panel is below 3 reviewers")
+	eq(t, res.Summary.ConsensusFiltered, 0, "the filter is inert below the reviewer-count floor")
+}
+
+func TestConsensusSingleton_And_PanelReviewers(t *testing.T) {
+	// consensusSingleton keys on confidence below HIGH (MEDIUM or the reserved LOW),
+	// so an authority/verify-promoted HIGH is kept and a ConfLow untrusted singleton
+	// is dropped.
+	isTrue(t, consensusSingleton(Merged{Finding{Confidence: ConfMedium}}), "medium is a singleton")
+	isTrue(t, consensusSingleton(Merged{Finding{Confidence: ConfLow}}), "low is a singleton")
+	isTrue(t, !consensusSingleton(Merged{Finding{Confidence: ConfHigh}}), "high is corroborated, not a singleton")
+
+	// panelReviewers counts distinct non-empty reviewers across all sources, not
+	// source directories, and ignores unattributed findings.
+	eq(t, panelReviewers([]Source{
+		{Name: "pool", Findings: []Finding{
+			cf("LOW", "a.go", 1, "p", "style", "bruce"),
+			cf("LOW", "b.go", 2, "p", "style", "greta"),
+			cf("LOW", "c.go", 3, "p", "style", "bruce"), // duplicate reviewer
+			cf("LOW", "d.go", 4, "p", "style", ""),      // unattributed, ignored
+		}},
+	}), 2, "two distinct reviewers in one flattened source")
+	eq(t, panelReviewers([]Source{{Name: "empty"}}), 0, "a source with no findings contributes no reviewers")
 }
 
 func TestConsensusFilter_ExemptsSecurityAndHighSeverity(t *testing.T) {

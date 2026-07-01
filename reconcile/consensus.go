@@ -2,28 +2,52 @@ package reconcile
 
 import "strings"
 
-// consensusMinSources is the panel-size floor for the epic-14.2 consensus filter.
-// Below it the filter is inert: a 2-source panel (the documented single-API-key
-// host + 1 pool agent workflow) makes almost every finding a singleton, so
-// requiring corroboration there would drop real issues wholesale. At or above it a
-// genuine problem is likely to be caught by more than one reviewer, so an
-// uncorroborated singleton is more plausibly a hallucination than a rare true
-// positive.
-const consensusMinSources = 3
+// consensusMinReviewers is the panel-size floor for the epic-14.2 consensus filter,
+// measured in DISTINCT REVIEWERS that contributed findings (see panelReviewers) —
+// NOT the number of source directories. Below it the filter is inert: a 2-reviewer
+// panel (the documented single-API-key host + 1 pool persona workflow) makes almost
+// every finding a singleton, so requiring corroboration there would drop real issues
+// wholesale. At or above it a genuine problem is likely to be caught by more than
+// one reviewer, so an uncorroborated singleton is more plausibly a hallucination
+// than a rare true positive.
+const consensusMinReviewers = 3
 
 // categorySecurity is the finding category exempt from the consensus filter. It is
 // compared case-insensitively (lower+trim) to mirror ModalCategory's
 // canonicalization, so "Security"/"SECURITY" all match.
 const categorySecurity = "security"
 
+// panelReviewers counts the distinct non-empty reviewers that contributed findings
+// across all sources — the true panel size the consensus filter gates on. It is
+// deliberately NOT len(sources): ATCR's discovery flattens every pool persona into a
+// single "pool" source (sources/pool/raw/agent/<name>/findings.txt), distinguishing
+// personas only by the per-finding Reviewer column, so a full multi-persona panel is
+// just two source directories (host + pool) but many reviewers. Gating on len(sources)
+// would leave the filter permanently inert for the exact multi-persona pool the epic
+// targets; gating on the distinct-reviewer count is what makes it fire. Reviewers
+// that produced no findings (an empty/skipped source) do not count, so a degraded or
+// dead source cannot inflate the panel to the threshold.
+func panelReviewers(sources []Source) int {
+	seen := map[string]struct{}{}
+	for _, s := range sources {
+		for _, f := range s.Findings {
+			if f.Reviewer != "" {
+				seen[f.Reviewer] = struct{}{}
+			}
+		}
+	}
+	return len(seen)
+}
+
 // consensusSingleton reports whether a reconciled finding is an uncorroborated
-// singleton — the drop candidate for the consensus filter. Confidence == ConfMedium
-// is exactly "fewer than two distinct reviewers AND not authority-promoted" (epic
-// 13.3): a single-reviewer finding the authority graph raised to HIGH is NOT a
-// singleton and is never dropped. Keying on Confidence rather than len(Reviewers)
-// therefore preserves authority promotion for free.
+// singleton — the drop candidate for the consensus filter. "Uncorroborated" is
+// confidence below HIGH: ConfidenceFor gives MEDIUM to a finding with fewer than two
+// distinct reviewers, and any finding the authority graph (epic 13.3) or the verify
+// stage promoted to HIGH/VERIFIED is corroborated and never dropped. Keying on
+// confidence rather than len(Reviewers) preserves authority promotion for free and
+// also drops a (reserved, currently unused) ConfLow untrusted-source singleton.
 func consensusSingleton(m Merged) bool {
-	return m.Confidence == ConfMedium
+	return !ConfidenceAtOrAbove(m.Confidence, ConfHigh)
 }
 
 // consensusExempt reports whether a singleton is too costly to drop as a probable
