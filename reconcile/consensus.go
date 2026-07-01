@@ -12,10 +12,22 @@ import "strings"
 // than a rare true positive.
 const consensusMinReviewers = 3
 
-// categorySecurity is the finding category exempt from the consensus filter. It is
-// compared case-insensitively (lower+trim) to mirror ModalCategory's
-// canonicalization, so "Security"/"SECURITY" all match.
+// categorySecurity is the literal finding category exempt from the consensus filter.
+// securityRelated recognizes synonyms and substrings as well, so a single reviewer
+// labeling a genuine vulnerability "vulnerability", "auth", or "injection" is not
+// silently dropped because the exemption predicate was overly literal.
 const categorySecurity = "security"
+
+// securityRelated reports whether a category signals a security concern after
+// ModalCategory-style canonicalization (lower+trim). It matches the literal token
+// "security" plus common synonyms/substrings reviewers actually emit.
+func securityRelated(category string) bool {
+	c := strings.ToLower(strings.TrimSpace(category))
+	if c == categorySecurity {
+		return true
+	}
+	return strings.Contains(c, "vuln") || strings.Contains(c, "auth") || strings.Contains(c, "inject")
+}
 
 // panelReviewers counts the distinct non-empty reviewers that contributed findings
 // across all sources — the true panel size the consensus filter gates on. It is
@@ -62,8 +74,8 @@ func consensusSingleton(m Merged) bool {
 // as a defensive, forward-looking guard so the predicate stays correct if a caller
 // ever filters over already-verified findings; it is unit-tested directly.
 func consensusExempt(f Finding) bool {
-	switch strings.ToLower(strings.TrimSpace(f.Category)) {
-	case categorySecurity, CategoryOutOfScope:
+	cat := strings.ToLower(strings.TrimSpace(f.Category))
+	if securityRelated(cat) || cat == CategoryOutOfScope {
 		return true
 	}
 	switch NormalizeSeverity(f.Severity) {
