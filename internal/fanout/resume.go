@@ -312,6 +312,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		}
 	}
 
+	changed, groundingDisabledReason := computeGroundingData(ctx, req)
 	p := &PreparedReview{
 		ID:          filepath.Base(reviewDir),
 		Dir:         reviewDir,
@@ -323,8 +324,9 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		// Epic 14.1: ground a resumed agent's fresh output identically to a
 		// first-run agent's, so a re-run agent cannot reintroduce hallucinations a
 		// normal run would have dropped. Same fail-open contract as the fresh path.
-		Changed:  computeGroundingData(ctx, req),
-		manifest: m,
+		Changed:                 changed,
+		GroundingDisabledReason: groundingDisabledReason,
+		manifest:                m,
 		// Wire the diff cache for resumed agents too (Epic 5.2): a resumed agent's
 		// fresh output is written back so a later full run benefits — matching the
 		// "fresh results are always written" contract — rather than being re-called.
