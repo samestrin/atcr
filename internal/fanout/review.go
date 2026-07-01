@@ -869,7 +869,14 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			if len(chunks) > 1 {
 				for _, ct := range chunks {
 					fileCount := countDiffFiles(ct)
-					primary, err := renderAgent(cfg, name, ac, mode, ct, fileCount, mp.Truncation, rng, scopeConstraint)
+					// Truncation is a diff-wide event decided by buildPayloads, not a
+					// per-chunk property. Passing the whole-payload truncation into every
+					// chunk would make each chunk's prompt/status claim the same dropped
+					// files were truncated, which is misleading because the dropped files
+					// may not even appear in this chunk. Use a neutral truncation for
+					// individual chunks; the single-chunk/bulk path below still carries
+					// the real diff-wide truncation.
+					primary, err := renderAgent(cfg, name, ac, mode, ct, fileCount, payload.Truncation{}, rng, scopeConstraint)
 					if err != nil {
 						return err
 					}
