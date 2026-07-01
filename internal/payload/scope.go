@@ -37,8 +37,10 @@ func ScopeFocus(scope []string) string {
 // category so the reconciler annotates rather than promotes them.
 const (
 	scopeChangedOnly = "Review only the changed regions. The payload shows you the change in context, " +
-		"but findings on lines outside the changed range are out of scope and will be flagged " +
-		"during reconciliation. Stay on the diff."
+		"but a finding whose FILE:LINE falls outside the changed lines will be discarded before it " +
+		"reaches the report — it is not enough for the code to merely be visible in the surrounding " +
+		"context. If you must flag a genuine pre-existing issue in unchanged code, give it CATEGORY " +
+		"out-of-scope so the reconciler annotates rather than discards it. Stay on the diff."
 
 	scopeFiles = "Full head-version content of each changed file is provided, so pre-existing issues " +
 		"in unchanged regions may be visible. Focus your findings on the changed regions. You may note " +
