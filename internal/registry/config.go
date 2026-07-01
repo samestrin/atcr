@@ -28,6 +28,18 @@ const (
 	// upper bounds. nil = unlimited (unset); any explicit value must be within
 	// 1..MaxFindingsCap.
 	MaxFindingsCap = 10000
+	// DefaultMaxContextLines is the per-chunk diff line budget used when an agent
+	// omits max_context_lines (Epic 14.3). 1500 lines ≈ 22k–27k tokens — under
+	// the 128k DefaultPayloadByteBudget and the documented 40k-token conservative
+	// floor for smaller-context models, while small enough to curb the
+	// attention-degradation hallucination large single-prompt diffs trigger.
+	DefaultMaxContextLines = 1500
+	// MaxContextLinesCap is a generous sanity ceiling on max_context_lines: it
+	// rejects garbage/overflow values without constraining legitimate
+	// large-context rosters (a 200k-token model can take well over 10k diff
+	// lines). nil = unset (inherit the default); any explicit value must be
+	// within 1..MaxContextLinesCap.
+	MaxContextLinesCap = 1000000
 )
 
 // envVarName matches valid POSIX environment variable names.
@@ -323,6 +335,15 @@ type AgentConfig struct {
 	// the resolved setting (same shape as TimeoutSecs).
 	MaxRetries       *int `yaml:"max_retries,omitempty"`        // per-agent retry budget (0 = single attempt); nil = inherit
 	InitialBackoffMs *int `yaml:"initial_backoff_ms,omitempty"` // per-agent base retry delay (ms); nil = inherit
+
+	// MaxContextLines is the per-agent cap on a single chunk's diff line count
+	// (Epic 14.3), consulted only when the run's review_strategy is "chunked":
+	// the fan-out bin-packs the persona's diff into chunks no larger than this
+	// before dispatching one call per chunk. Optional and backward-compatible — a
+	// pointer so an unset field (nil) inherits DefaultMaxContextLines while any
+	// explicit value survives, distinguishing "use the default" from a real
+	// override. Ignored entirely in bulk mode.
+	MaxContextLines *int `yaml:"max_context_lines,omitempty"`
 }
 
 // reviewSeverities is the canonical finding-severity rubric (personas/_base.md),
@@ -374,6 +395,11 @@ type Registry struct {
 	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
 	FailOn            string `yaml:"fail_on,omitempty"`
+	// ReviewStrategy is the run-wide fan-out strategy (Epic 14.3): "bulk"
+	// (default) or "chunked". A global toggle resolved once per run, mirroring
+	// payload_mode; the per-agent max_context_lines governs each bin's size when
+	// chunking is on.
+	ReviewStrategy string `yaml:"review_strategy,omitempty"`
 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
 	// application in ResolveSettings.
 	MaxParallel *int `yaml:"max_parallel,omitempty"`
@@ -476,6 +502,9 @@ func (r *Registry) validate() error {
 	}
 	if !payloadModeValid(r.PayloadMode) {
 		errs = append(errs, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", r.PayloadMode))
+	}
+	if !reviewStrategyValid(r.ReviewStrategy) {
+		errs = append(errs, fmt.Errorf("invalid review_strategy '%s': must be one of bulk, chunked", r.ReviewStrategy))
 	}
 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
 	// any non-empty value must be a canonical review severity. Error wording lists
@@ -677,6 +706,13 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	}
 	if a.MaxFindings != nil && (*a.MaxFindings <= 0 || *a.MaxFindings > MaxFindingsCap) {
 		errs = append(errs, agentErrf(name, "agent '%s': max_findings must be within 1..%d", name, MaxFindingsCap))
+	}
+	// max_context_lines (Epic 14.3): an unset field inherits the default; any
+	// explicit value must be a positive line budget within the sanity ceiling. A
+	// zero or negative cap would make bin-packing degenerate (every file its own
+	// chunk, or worse).
+	if a.MaxContextLines != nil && (*a.MaxContextLines <= 0 || *a.MaxContextLines > MaxContextLinesCap) {
+		errs = append(errs, agentErrf(name, "agent '%s': max_context_lines must be within 1..%d", name, MaxContextLinesCap))
 	}
 	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
 	// delay must be positive. Same range as the registry tier.
@@ -896,6 +932,18 @@ func (a AgentConfig) EffectiveInitialBackoffMs(s Settings) int {
 		return *a.InitialBackoffMs
 	}
 	return s.InitialBackoffMs
+}
+
+// EffectiveMaxContextLines returns the agent's own per-chunk diff line budget
+// when set (Epic 14.3), otherwise DefaultMaxContextLines. Unlike the other
+// Effective* accessors there is no global settings tier — max_context_lines is
+// per-agent only, so the fallback is the embedded default constant. A caller
+// uses this only when the run's review_strategy is "chunked".
+func (a AgentConfig) EffectiveMaxContextLines() int {
+	if a.MaxContextLines != nil {
+		return *a.MaxContextLines
+	}
+	return DefaultMaxContextLines
 }
 
 // EffectivePayloadMode returns the agent's own payload override when set,

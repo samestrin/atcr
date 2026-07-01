@@ -15,6 +15,10 @@ import (
 const (
 	DefaultPayloadMode = "blocks"
 	DefaultFailOn      = "HIGH"
+	// DefaultReviewStrategy is the embedded fan-out strategy (Epic 14.3). "bulk"
+	// sends the whole diff in one prompt per persona, keeping API cost strictly
+	// bounded; users opt into "chunked" for higher accuracy on large PRs.
+	DefaultReviewStrategy = "bulk"
 	// DefaultPayloadByteBudget is the embedded per-payload byte budget:
 	// 512 KiB ≈ 128k tokens at ~4 bytes/token, fitting the dominant
 	// 128k-context model tier with prompt headroom. 0 is the documented
@@ -38,7 +42,10 @@ type ProjectConfig struct {
 	Agents       []string `yaml:"agents"`
 	SerialAgents []string `yaml:"serial_agents,omitempty"`
 	PayloadMode  string   `yaml:"payload_mode,omitempty"`
-	TimeoutSecs  *int     `yaml:"timeout_secs,omitempty"`
+	// ReviewStrategy overrides the run-wide fan-out strategy (Epic 14.3): "bulk"
+	// or "chunked". Empty inherits the registry tier or the embedded default.
+	ReviewStrategy string `yaml:"review_strategy,omitempty"`
+	TimeoutSecs    *int   `yaml:"timeout_secs,omitempty"`
 	// PayloadByteBudget is a pointer so an explicit 0 (unlimited) survives
 	// default application.
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
