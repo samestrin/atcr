@@ -29,12 +29,31 @@ func TestBuildSlots_ChunkedWarnsOnLoneOversizedFile(t *testing.T) {
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	require.Len(t, slots, 1, "a lone oversized file is one slot (cannot be split)")
 	require.Contains(t, out, "exceeds max_context_lines", "the oversized-file warning must fire for a lone huge file")
 	require.Contains(t, out, "greta")
+}
+
+func TestBuildSlots_ChunkedSuppressesOversizeWarning(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	mcl := 5
+	g := cfg.Registry.Agents["greta"]
+	g.MaxContextLines = &mcl
+	cfg.Registry.Agents["greta"] = g
+
+	diff := fileSeg("big.go", 40) // one file, ~44 lines >> 5
+	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 1}}
+
+	out := captureStderr(t, func() {
+		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
+		require.NoError(t, err)
+	})
+	require.NotContains(t, out, "exceeds max_context_lines", "the oversized-file warning must be suppressed on the resume rebuild path")
 }
 
 // Independent-review MEDIUM #2: a persona whose chunks partially failed reports
