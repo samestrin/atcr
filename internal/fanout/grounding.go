@@ -36,7 +36,7 @@ const (
 // ungrounded ones are dropped. Kept findings retain their original order; the
 // drop count is returned for the per-agent stderr tally.
 func groundFindings(findings []stream.Finding, changed payload.ChangedLines) ([]stream.Finding, int) {
-	if changed == nil || len(changed) == 0 || len(findings) == 0 {
+	if len(changed) == 0 || len(findings) == 0 {
 		return findings, 0
 	}
 	kept := make([]stream.Finding, 0, len(findings))
