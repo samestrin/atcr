@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 28 | 0 |
-| LOW | 0 | 28 | 0 |
+| LOW | 4 | 28 | 0 |
 
-**Last Modified:** 2026-07-01 | **Open Items:** 0 | **Deferred Items:** 58 | **Resolved Items:** 0 | **Total Items:** 58
+**Last Modified:** 2026-07-01 | **Open Items:** 4 | **Deferred Items:** 58 | **Resolved Items:** 0 | **Total Items:** 62
 
 ## Directory Structure
 
@@ -61,6 +61,15 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
+
+### [2026-07-01] From Sprint: epic-14.3
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/fanout/chunker.go:180 | mergeResultGroup reports max DurationMS across chunks but serial-lane (rate_limited) personas run chunks sequentially so their true wall-clock is the sum; serial chunked timings under-count | Sum DurationMS across chunks for serial-lane personas (or track lane type) so serial chunked timings are accurate | OBSERVABILITY | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/chunker.go:15 | The file-boundary marker is hardcoded to 'diff --git a/' so combined/merge-format diffs (diff --cc / diff --combined) never split and silently degrade to a single bulk chunk under chunked strategy | Recognize combined-diff markers as file boundaries or document that combined diffs are not chunked | EDGE_CASES | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/review.go:850 | The oversized-file warning is emitted at slot-build time so PrepareResume (which rebuilds all pending slots) re-emits the same warning on every resume of a run containing an oversized file | Emit the oversized warning once at review-preparation time or suppress it on the resume rebuild path | OBSERVABILITY | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/review.go:846 | Each chunk-slot is rendered with the whole-payload Truncation metadata so every chunk's prompt claims the same byte-budget-dropped files were truncated even though truncation is a diff-wide event unrelated to the chunk | Pass neutral truncation to individual chunks or annotate that truncation applies to the whole review not the chunk | CORRECTNESS | 15 | execute-epic-independent |
 
 ### [2026-06-30] From Sprint: epic-14.1
 
