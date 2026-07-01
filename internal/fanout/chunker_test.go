@@ -149,6 +149,62 @@ func TestNoPrefixDiff(t *testing.T) {
 	assert.Equal(t, diff, chunks[0])
 }
 
+// combinedSeg builds a minimal combined-diff segment (`diff --cc <path>`) as
+// produced by merge commits. Combined/merge-format diffs use a different header
+// prefix than unified diffs but still mark per-file boundaries at column 0.
+func combinedSeg(path string, body int) string {
+	var b strings.Builder
+	b.WriteString("diff --cc " + path + "\n")
+	b.WriteString("--- a/" + path + "\n")
+	b.WriteString("+++ b/" + path + "\n")
+	b.WriteString("@@@ -1,1 -1,1 +1,1 @@@\n")
+	for i := 0; i < body; i++ {
+		b.WriteString("+line\n")
+	}
+	return b.String()
+}
+
+// combinedLongSeg builds a minimal `diff --combined <path>` segment, the long
+// form of the combined-diff header.
+func combinedLongSeg(path string, body int) string {
+	var b strings.Builder
+	b.WriteString("diff --combined " + path + "\n")
+	b.WriteString("--- a/" + path + "\n")
+	b.WriteString("+++ b/" + path + "\n")
+	b.WriteString("@@@ -1,1 -1,1 +1,1 @@@\n")
+	for i := 0; i < body; i++ {
+		b.WriteString("+line\n")
+	}
+	return b.String()
+}
+
+func TestCombinedDiffMarkers(t *testing.T) {
+	t.Run("short form --cc", func(t *testing.T) {
+		diff := combinedSeg("a.go", 1) + combinedSeg("b.go", 1)
+		assert.Equal(t, 2, countDiffFiles(diff), "diff --cc headers should be counted")
+		segs := splitDiffFiles(diff)
+		require.Len(t, segs, 2)
+		assert.True(t, strings.HasPrefix(segs[0], "diff --cc a.go"))
+		assert.True(t, strings.HasPrefix(segs[1], "diff --cc b.go"))
+		assert.Equal(t, diff, strings.Join(segs, ""), "split is lossless")
+	})
+	t.Run("long form --combined", func(t *testing.T) {
+		diff := combinedLongSeg("a.go", 1) + combinedLongSeg("b.go", 1)
+		assert.Equal(t, 2, countDiffFiles(diff), "diff --combined headers should be counted")
+		segs := splitDiffFiles(diff)
+		require.Len(t, segs, 2)
+		assert.True(t, strings.HasPrefix(segs[0], "diff --combined a.go"))
+		assert.True(t, strings.HasPrefix(segs[1], "diff --combined b.go"))
+		assert.Equal(t, diff, strings.Join(segs, ""), "split is lossless")
+	})
+	t.Run("chunkDiff respects combined boundaries", func(t *testing.T) {
+		diff := combinedSeg("a.go", 1) + combinedSeg("b.go", 1)
+		chunks := chunkDiff(diff, 50)
+		require.Len(t, chunks, 1)
+		assert.Equal(t, diff, chunks[0])
+	})
+}
+
 func TestMergeResultGroupFallbackFromDistinct(t *testing.T) {
 	g := []Result{
 		{Agent: "reviewer", Status: StatusOK, FallbackUsed: true, FallbackFrom: "primary-a"},
