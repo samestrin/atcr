@@ -14,10 +14,13 @@ const (
 	// a cited line within this many lines of a changed range is treated as
 	// grounded, absorbing the small line-number drift reviewers routinely introduce.
 	groundingTolerance = 3
-	// evidenceMinMatch is the minimum normalized length a substring match must
-	// span before the evidence fallback trusts it, so ubiquitous boilerplate
-	// ("if err != nil {") cannot ground an arbitrary hallucinated finding.
-	evidenceMinMatch = 12
+	// evidenceMinMatch is the minimum normalized rune length a substring match
+	// must span before the evidence fallback trusts it. Set above the length of
+	// ubiquitous Go boilerplate ("if err != nil {" is 15 runes) so such a line
+	// cannot ground an arbitrary hallucinated finding, while a distinctive quote
+	// ("return validate(token)" is 22 runes) still clears it. Runes, not bytes,
+	// so a short multibyte snippet cannot clear the floor on inflated byte length.
+	evidenceMinMatch = 18
 	// evidenceMaxRunes bounds the model-controlled evidence string before
 	// case-folding and substring matching, preventing CPU/allocation amplification
 	// from a degenerate multi-rune evidence payload.
@@ -116,17 +119,19 @@ func lineInRanges(line int, ranges []payload.LineRange) bool {
 // evidenceMatches is the fuzzy fallback for a finding whose cited line drifted
 // out of range: it keeps the finding when its EVIDENCE and a changed line contain
 // one another (case-folded, whitespace-collapsed) over at least evidenceMinMatch
-// characters, so a real quote grounds the finding while short boilerplate cannot.
-// Evidence is truncated to evidenceMaxRunes first to bound model-controlled work.
+// runes, so a real quote grounds the finding while short boilerplate cannot.
+// Lengths are measured in runes (not bytes) so a short multibyte snippet cannot
+// clear the floor on inflated byte length. Evidence is truncated to
+// evidenceMaxRunes first to bound model-controlled work.
 func evidenceMatches(evidence string, changed []string) bool {
 	evidence = truncateRunes(strings.TrimSpace(evidence), evidenceMaxRunes)
 	ev := collapseSpaces(strings.ToLower(evidence))
-	if len(ev) < evidenceMinMatch || len(changed) == 0 {
+	if utf8.RuneCountInString(ev) < evidenceMinMatch || len(changed) == 0 {
 		return false
 	}
 	for _, c := range changed {
 		cl := collapseSpaces(strings.ToLower(c))
-		if len(cl) < evidenceMinMatch {
+		if utf8.RuneCountInString(cl) < evidenceMinMatch {
 			continue
 		}
 		if strings.Contains(ev, cl) || strings.Contains(cl, ev) {
