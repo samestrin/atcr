@@ -159,7 +159,7 @@ Settings resolve per field (above); personas resolve per file (`.atcr/personas/`
 
 For each agent, the prompt is resolved by walking six levels in order, first hit wins:
 
-1. **`--task-message` flag** — if provided it wins outright (even when empty: an explicit "no system prompt").
+1. **Programmatic task-message override** — an internal resolution seam (the `taskMessage` argument to persona resolution) that, when set, wins outright even when empty (an explicit "no system prompt"). It is **not** exposed as a CLI flag, so ordinary CLI and MCP runs pass nothing here and resolution effectively begins at level 2.
 2. **`<persona>.md` in the project personas dir** (`.atcr/personas/`).
 3. **`<persona>.md` in the registry personas dir** (`~/.config/atcr/personas/`).
 4. **`_base.md`** in the project dir, then the registry dir.
