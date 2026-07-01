@@ -96,7 +96,7 @@ func TestReadPoolSummary_RoundTrip(t *testing.T) {
 	results := []Result{
 		{Agent: "bruce", Status: StatusOK, Content: "x", Model: "claude-sonnet-4-6", TokensIn: 1200, TokensOut: 340, DurationMS: 900},
 	}
-	_, err := WritePool(pool, results)
+	_, err := WritePool(pool, results, nil)
 	require.NoError(t, err)
 
 	ps, err := ReadPoolSummary(dir)

@@ -182,8 +182,12 @@ type PreparedReview struct {
 	// before they reach the reconciler. nil on the diff-ingestion path (no live
 	// base/head) or when the diff could not be computed, which disables the gate
 	// (fail open).
-	Changed  payload.ChangedLines
-	manifest *payload.Manifest
+	Changed payload.ChangedLines
+	// GroundingDisabledReason is the human-readable reason the grounding gate was
+	// off for this run (empty when enabled), threaded from computeGroundingData into
+	// summary.json so a git-failure or diff-ingestion skip is auditable (Epic 14.1).
+	GroundingDisabledReason string
+	manifest                *payload.Manifest
 	// cache is the diff cache for this review (Epic 5.2), rooted at
 	// <root>/.atcr/cache and sized by the resolved cache_max_bytes. nil only if
 	// caching could not be set up; ExecuteReview wires it into the engine when
@@ -382,8 +386,10 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	revCache := cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes)
 	// Epic 14.1 grounding data: compute the per-file changed line ranges for the
 	// range so WritePool can drop findings not anchored in the patch (see
-	// computeGroundingData for the fail-open contract).
-	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: computeGroundingData(ctx, req), manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+	// computeGroundingData for the fail-open contract). The reason string records
+	// WHY the gate is off (git failure vs. diff ingestion) in summary.json.
+	changed, groundingDisabledReason := computeGroundingData(ctx, req)
+	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, GroundingDisabledReason: groundingDisabledReason, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
 }
 
 // computeGroundingData builds the per-file patch grounding data for the request's
@@ -393,16 +399,23 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 // review — grounding is a filter, not a correctness gate. It is shared by the
 // fresh-review (finalizePreparedReview) and resume (PrepareResume) paths so a
 // resumed agent's fresh output is grounded identically to a first-run agent's.
-func computeGroundingData(ctx context.Context, req ReviewRequest) payload.ChangedLines {
+//
+// It also returns a human-readable reason the gate is off (empty when enabled),
+// recorded in summary.json so a git-failure or diff-ingestion skip is auditable.
+func computeGroundingData(ctx context.Context, req ReviewRequest) (payload.ChangedLines, string) {
 	if req.Range.Base == "" || req.Range.Head == "" {
-		return nil
+		return nil, "range-less request (diff ingestion): grounding not applicable"
 	}
 	cl, err := payload.BuildChangedLines(ctx, req.Repo, req.Range.Base, req.Range.Head)
 	if err != nil {
 		log.FromContext(ctx).Warn("grounding disabled: could not compute changed lines", "err", err)
-		return nil
+		return nil, "changed-lines computation failed: " + err.Error()
 	}
-	return cl
+	if len(cl) == 0 {
+		log.FromContext(ctx).Warn("grounding disabled: empty changed lines map")
+		return nil, "empty changed-lines map (no reviewable changed lines)"
+	}
+	return cl, ""
 }
 
 // PrepareReviewFromDiff is the diff-file ingestion counterpart of PrepareReview:
@@ -601,7 +614,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// any other cancellation would be misreported as interrupted in the manifest.
 	interrupted := errors.Is(ctx.Err(), context.Canceled)
 
-	sum, err := WritePool(poolDir, results, p.Changed)
+	sum, err := writePool(poolDir, results, p.Changed, p.GroundingDisabledReason)
 	if err != nil {
 		// Persistence failed after the fan-out ran. Write a best-effort failure
 		// marker so the status reader reports `failed` rather than leaving the
