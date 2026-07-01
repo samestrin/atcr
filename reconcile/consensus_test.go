@@ -149,6 +149,31 @@ func TestConsensusFilter_ExemptsSecurityAndHighSeverity(t *testing.T) {
 	eq(t, res.Summary.ConsensusFiltered, 1, "only the stylistic singleton was filtered")
 }
 
+func TestConsensusFilter_ExemptsSecuritySynonyms(t *testing.T) {
+	// 3-source panel with singletons only. The security-synonym categories must be
+	// exempt from the consensus filter even though they do not match the literal
+	// token "security".
+	sources := []Source{
+		{Name: "a", Findings: []Finding{
+			cf("MEDIUM", "style.go", 20, "unused import lingers in this file", "style", "a"),
+		}},
+		{Name: "b", Findings: []Finding{
+			cf("MEDIUM", "vuln.go", 30, "request path is not authorization checked", "vulnerability", "b"),
+			cf("MEDIUM", "auth.go", 40, "missing mfa on privileged endpoint", "auth", "b"),
+		}},
+		{Name: "c", Findings: []Finding{
+			cf("MEDIUM", "inject.go", 50, "sql injection in the query builder path", "injection", "c"),
+		}},
+	}
+	res := Reconcile(sources, Options{})
+
+	isTrue(t, !hasFinding(res, "style.go"), "the stylistic singleton is dropped")
+	isTrue(t, hasFinding(res, "vuln.go"), "a vulnerability singleton is exempt")
+	isTrue(t, hasFinding(res, "auth.go"), "an auth singleton is exempt")
+	isTrue(t, hasFinding(res, "inject.go"), "an injection singleton is exempt")
+	eq(t, res.Summary.ConsensusFiltered, 1, "only the stylistic singleton was filtered")
+}
+
 func TestConsensusFilter_AuthorityPromotedSingletonSurvives(t *testing.T) {
 	// Three distinct reviewers. A corroborates with B on one issue and with C on
 	// another, giving A run-global PageRank authority above the uniform baseline.
