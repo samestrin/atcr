@@ -91,13 +91,8 @@ func consensusExempt(f Finding) bool {
 // consensusNoiseCluster wraps a consensus-filtered singleton as a single-finding
 // ambiguous cluster — the same shape DBSCAN noise takes, so it is inert in the
 // debate and adjudication workflows (both act only on 2-finding gray pairs) yet
-// stays in the audit trail and remains recoverable. Similarity is 0 (no
-// corroboration), and the id is the stable single-problem content handle.
+// stays in the audit trail and remains recoverable. It shares the helper that
+// normalizes merged findings back to the raw per-source wire shape.
 func consensusNoiseCluster(f Finding) AmbiguousCluster {
-	return AmbiguousCluster{
-		ID:       AmbiguousID(f.File, f.Line, f.Problem, f.Problem),
-		File:     f.File,
-		Line:     f.Line,
-		Findings: []Finding{f},
-	}
+	return singletonAmbiguousCluster(f)
 }
