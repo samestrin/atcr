@@ -27,14 +27,13 @@ import (
 
 func ptrF(f float64) *float64 { return &f }
 
-// buildAgentViaSlots drives the production buildSlots resolution seam for a
-// single primary agent and returns its rendered Agent plus resolved payload
-// mode — the (Agent, mode, error) shape tests need. It restricts the roster to
-// `name` so buildSlots emits exactly one primary slot, exercising the real
-// add-closure resolution (EffectivePayloadMode, payloads[mode] lookup, scope
-// injection, renderAgent) rather than a duplicate. This is the seam that
-// replaced the removed buildAgent helper, keeping one resolution site.
-func buildAgentViaSlots(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) (Agent, string, error) {
+// buildOneAgent drives the production buildSlots resolution seam for a single
+// primary agent and returns its rendered Agent plus resolved payload mode — the
+// (Agent, mode, error) shape these tests need. It restricts the roster to `name`
+// so buildSlots emits exactly one primary slot, exercising the real add-closure
+// resolution (EffectivePayloadMode, payloads[mode] lookup, scope injection,
+// renderAgent) — the single production resolution site — rather than a duplicate.
+func buildOneAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) (Agent, string, error) {
 	scoped := *cfg
 	proj := *cfg.Project
 	proj.Agents = []string{name}
@@ -579,7 +578,7 @@ func TestPrepareReview_RejectsSystemOutputDir(t *testing.T) {
 // silently empty payload that produces a plausible-looking vacuous review.
 func TestBuildAgent_MissingPayloadModeErrors(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
-	_, _, err := buildAgentViaSlots(cfg, "greta", map[string]modePayload{}, ReviewRange{Base: "a", Head: "b"}, "", "")
+	_, _, err := buildOneAgent(cfg, "greta", map[string]modePayload{}, ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "greta")
 	assert.Contains(t, err.Error(), "blocks")

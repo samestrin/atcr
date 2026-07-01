@@ -40,12 +40,12 @@ func TestBuildAgent_PropagatesRetryFields(t *testing.T) {
 	cfg := retryCfg()
 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 
-	greta, _, err := buildAgentViaSlots(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	greta, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, 5, greta.MaxRetries, "unset agent inherits resolved global max_retries")
 	assert.Equal(t, 500, greta.InitialBackoffMs, "unset agent inherits resolved global initial_backoff_ms")
 
-	kai, _, err := buildAgentViaSlots(cfg, "kai", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	kai, _, err := buildOneAgent(cfg, "kai", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, 9, kai.MaxRetries, "per-agent max_retries override wins")
 	assert.Equal(t, 500, kai.InitialBackoffMs, "inherits global initial_backoff_ms when not overridden")
