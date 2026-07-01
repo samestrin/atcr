@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 0 | 26 | 0 |
-| LOW | 0 | 27 | 0 |
+| MEDIUM | 2 | 26 | 0 |
+| LOW | 3 | 27 | 0 |
 
-**Last Modified:** 2026-06-30 | **Open Items:** 0 | **Deferred Items:** 55 | **Resolved Items:** 0 | **Total Items:** 55
+**Last Modified:** 2026-06-30 | **Open Items:** 5 | **Deferred Items:** 55 | **Resolved Items:** 0 | **Total Items:** 60
 
 ## Directory Structure
 
@@ -61,6 +61,16 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
+
+### [2026-06-30] From Sprint: epic-14.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/fanout/grounding.go:88 | Evidence-snippet fallback uses a bidirectional substring match with a 4-char floor, which can over-retain a hallucinated finding whose fabricated evidence coincidentally contains a short real changed line | Consider token-set Jaccard (like the reconcile dedupe) or a higher length floor for the evidence fallback to tighten false-keep rate | correctness | 30 | execute-epic-stage3 |
+| 1 | [ ] | MEDIUM | internal/fanout/grounding.go:54 | out-of-scope category is a blanket grounding-gate exemption in all modes, so an adversarial or hallucinating model can launder a fabricated finding past AC2 by tagging category=out-of-scope in diff/blocks mode | Restrict the out-of-scope exemption to files mode (or require the cited FILE:LINE/EVIDENCE to anchor before honoring it in diff/blocks) — DEFERRED: conflicts with clarification Q2 which chose blanket exemption because out-of-scope is annotated-not-promoted by the reconciler downstream | correctness | 30 | execute-epic-independent |
+| 1 | [ ] | MEDIUM | internal/fanout/grounding.go:47 | groundFindings ignores Result.Tools and Result.PayloadMode, so a tool-enabled or files-mode agent citing a real line it legitimately read outside the changed range is dropped unless it tags out-of-scope or quotes a changed line in EVIDENCE | Thread Tools/PayloadMode into the gate and relax the range/evidence requirement for tool/files agents — DEFERRED: the out-of-scope prompt convention already instructs such agents to tag read-but-unchanged citations, which the gate exempts | correctness | 45 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/artifacts.go:59 | WritePool/findingsFor/writeResumedAgents accept grounding data via a variadic changed ...payload.ChangedLines purely to preserve existing call sites, so a future caller can silently omit it and disable the gate without a compile error | Make Changed an explicit single nil-able parameter and update the call sites so grounding is a visible required argument | maintainability | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/review.go:470 | computeGroundingData builds a fresh gitRunner and re-runs validateRange + --name-status + --unified=0 for a range the payload builder already diffed, duplicating ~4 git subprocesses per review and per resume | Reuse the payload builder's memoized rangeChunks/gitRunner for the same base..head instead of recomputing the zero-context diff | performance | 45 | execute-epic-independent |
 
 ### [2026-06-29] From Sprint: 13.4_brace_language_parsers
 
