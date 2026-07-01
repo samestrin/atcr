@@ -940,8 +940,13 @@ func (a AgentConfig) EffectiveInitialBackoffMs(s Settings) int {
 // Effective* accessors there is no global settings tier — max_context_lines is
 // per-agent only, so the fallback is the embedded default constant. A caller
 // uses this only when the run's review_strategy is "chunked".
+//
+// A non-positive value is clamped to DefaultMaxContextLines as defense-in-depth
+// for directly-constructed AgentConfig values that bypass validateAgent; this
+// prevents the chunker's <=0 "disable chunking" sentinel from silently turning
+// a chunked strategy into bulk-like behavior.
 func (a AgentConfig) EffectiveMaxContextLines() int {
-	if a.MaxContextLines != nil {
+	if a.MaxContextLines != nil && *a.MaxContextLines > 0 {
 		return *a.MaxContextLines
 	}
 	return DefaultMaxContextLines
