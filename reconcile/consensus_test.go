@@ -216,7 +216,6 @@ func TestConsensusFilter_AmbiguousSingletonShapeMatchesDBSCANNoise(t *testing.T)
 	sources := []Source{
 		{Name: "host", Findings: []Finding{
 			cf("MEDIUM", "foo.go", 10, "token never expires unchecked here", "correctness", "alice"),
-			cf("MEDIUM", "baz.go", 30, "unused import lingers in this file", "style", "alice"),
 		}},
 		{Name: "pool", Findings: []Finding{
 			cf("MEDIUM", "foo.go", 10, "token never expires unchecked here", "correctness", "bob"),
