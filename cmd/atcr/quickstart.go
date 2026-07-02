@@ -88,6 +88,36 @@ func runQuickstart(o quickstartOpts) error {
 	if err := keyEnvFlow(o, manifest); err != nil {
 		return err
 	}
+
+	if err := scaffoldWorkflow(o, manifest); err != nil {
+		return err
+	}
+	return nil
+}
+
+// scaffoldWorkflow writes .github/workflows/atcr.yml under the target dir. The
+// guard is per-file: an existing workflow is never overwritten without --force,
+// and a skip only skips this file — it never aborts the wizard (the .atcr and
+// registry setup already ran). A genuine write/stat error is returned.
+func scaffoldWorkflow(o quickstartOpts, m *quickstart.Manifest) error {
+	wfPath := filepath.Join(o.dir, ".github", "workflows", "atcr.yml")
+
+	_, statErr := os.Lstat(wfPath)
+	switch {
+	case statErr == nil && !o.force:
+		_, _ = fmt.Fprintf(o.errOut, "\nA workflow already exists at %s — not overwriting it (use --force to replace).\n", wfPath)
+		return nil
+	case statErr != nil && !errors.Is(statErr, fs.ErrNotExist):
+		return fmt.Errorf("cannot check %s: %w", wfPath, statErr)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(wfPath), 0o755); err != nil {
+		return fmt.Errorf("cannot create %s: %w", filepath.Dir(wfPath), err)
+	}
+	if err := os.WriteFile(wfPath, []byte(quickstart.WorkflowYAML(m)), 0o644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", wfPath, err)
+	}
+	_, _ = fmt.Fprintf(o.out, "  created %s\n", wfPath)
 	return nil
 }
 

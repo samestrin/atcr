@@ -15,7 +15,9 @@ func TestWorkflowYAML_ReviewOnlySynthetic(t *testing.T) {
 	assert.Contains(t, out, "atcr review")
 	// atcr needs full history to resolve the merge-base.
 	assert.Contains(t, out, "fetch-depth: 0")
-	// Intentionally review-only: no reconcile/github PR-gate steps.
-	assert.NotContains(t, out, "atcr github")
-	assert.NotContains(t, out, "atcr reconcile")
+	// Intentionally review-only: no reconcile/github PR-gate RUN steps (the
+	// explanatory header may still name them).
+	assert.NotContains(t, out, "run: atcr github")
+	assert.NotContains(t, out, "run: atcr reconcile")
+	assert.NotContains(t, out, "atcr reconcile &&")
 }
