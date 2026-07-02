@@ -304,6 +304,25 @@ func TestReconcilerConfigSurfaceDocumented(t *testing.T) {
 	}
 }
 
+// extractIndexLinkTarget normalizes a raw markdown link destination from
+// docs/README.md: it strips any #anchor, removes a ./ prefix, and removes a
+// trailing quoted title (e.g. `x.md "title"` → `x.md`).
+func extractIndexLinkTarget(raw string) string {
+	raw = strings.SplitN(raw, "#", 2)[0]
+	raw = strings.TrimPrefix(raw, "./")
+	return raw
+}
+
+// TestExtractIndexLinkTargetStripsTitle guards against markdown links that
+// include a quoted title (e.g. `](x.md "title")`). The captured target must have
+// the title stripped before the .md/anchor checks run.
+func TestExtractIndexLinkTargetStripsTitle(t *testing.T) {
+	got := extractIndexLinkTarget(`architecture.md "Architecture overview"`)
+	if got != "architecture.md" {
+		t.Errorf("expected 'architecture.md', got %q", got)
+	}
+}
+
 // TestDocsIndexCoversEveryDoc asserts that docs/README.md is the single
 // source-of-truth index the website build consumes: it must link to every other
 // docs/*.md file exactly, with no dangling links and no missing entries (T4). A
