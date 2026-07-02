@@ -26,10 +26,12 @@ const SubmissionSchema = 1
 // PublicRecord is one aggregated reviewer row of the public submission schema,
 // matching the Epic 10.0 spec JSON exactly. It is an allowlist: only these fields
 // are ever emitted, so anything not here (run_id, paths, hostnames, keys, raw
-// token/cost/count internals) cannot leak. SurvivedSkepticRate is the sole
-// omitempty field — a nil pointer omits the key, which distinguishes "no
-// verification ran for this group" (key absent) from "verification ran and every
-// finding was refuted" (key present with value 0.0).
+// token/cost/count internals) cannot leak. SurvivedSkepticRate and
+// CostPerCorroboratedFindingUSD are omitempty fields — a nil pointer omits the
+// key, which distinguishes "no verification ran for this group" / "cost-per is
+// undefined because nothing corroborated" (key absent) from a real value that
+// happens to be 0.0 (key present, e.g. "every finding was refuted" or "reviewer
+// was genuinely free").
 type PublicRecord struct {
 	Model                         string   `json:"model"`
 	Persona                       string   `json:"persona"`
@@ -37,7 +39,7 @@ type PublicRecord struct {
 	FindingsRaisedAvg             float64  `json:"findings_raised_avg"`
 	CorroborationRate             float64  `json:"corroboration_rate"`
 	SurvivedSkepticRate           *float64 `json:"survived_skeptic_rate,omitempty"`
-	CostPerCorroboratedFindingUSD float64  `json:"cost_per_corroborated_finding_usd"`
+	CostPerCorroboratedFindingUSD *float64 `json:"cost_per_corroborated_finding_usd,omitempty"`
 	LatencyP50MS                  int64    `json:"latency_p50_ms"`
 }
 
@@ -97,14 +99,14 @@ func (a *reviewerAcc) add(r Record) {
 
 func (a *reviewerAcc) finalize() PublicRecord {
 	pr := PublicRecord{
-		Model:                         a.model,
-		Persona:                       a.persona,
-		Runs:                          a.runs,
-		FindingsRaisedAvg:             avgPerRun(a.raisedTotal, a.runs),
-		CorroborationRate:             clampRate(ratio(a.corroborated, a.raisedTotal)),
-		CostPerCorroboratedFindingUSD: costPer(a.costTotal, a.corroborated),
-		LatencyP50MS:                  medianInt64(a.latencies),
+		Model:             a.model,
+		Persona:           a.persona,
+		Runs:              a.runs,
+		FindingsRaisedAvg: avgPerRun(a.raisedTotal, a.runs),
+		CorroborationRate: clampRate(ratio(a.corroborated, a.raisedTotal)),
+		LatencyP50MS:      medianInt64(a.latencies),
 	}
+	pr.CostPerCorroboratedFindingUSD = costPer(a.costTotal, a.corroborated)
 	// Emit the rate ONLY when real verdict data backs it. hasVerification merely
 	// records that some verification pointer was present; a degenerate record can
 	// carry zero counts AND no stored rate (verified+refuted==0, storedRates empty),
@@ -265,14 +267,17 @@ func avgPerRun(total, runs int) float64 {
 	return float64(total) / float64(runs)
 }
 
-// costPer returns total cost divided by the corroborated-finding count, or 0.0
-// when there are no corroborated findings (the metric is undefined; 0 is the
-// documented sentinel, never Inf/NaN).
-func costPer(totalCost float64, corroborated int) float64 {
+// costPer returns total cost divided by the corroborated-finding count, or nil
+// when there are no corroborated findings — the metric is undefined in that case
+// (paid-but-uncorroborated vs genuinely-free are otherwise indistinguishable),
+// so the caller omits the JSON key rather than emitting a misleading 0.0. A
+// non-nil result is never Inf/NaN (corroborated > 0 is guaranteed by the guard).
+func costPer(totalCost float64, corroborated int) *float64 {
 	if corroborated <= 0 {
-		return 0
+		return nil
 	}
-	return totalCost / float64(corroborated)
+	v := totalCost / float64(corroborated)
+	return &v
 }
 
 // medianInt64 returns the p50 (median) of the latencies: the middle element for

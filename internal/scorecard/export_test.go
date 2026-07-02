@@ -103,22 +103,43 @@ func TestExport_FindingsRaisedAvgIsPerRun(t *testing.T) {
 }
 
 func TestExport_CostPerCorroboratedFinding(t *testing.T) {
-	// One run: cost 0.04, corroborated 7 => 0.04/7.
+	// One run: cost 0.04, corroborated 7 => 0.04/7, key present (real value).
 	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
 		FilterOpts{Since: "30d"}, fixedExportNow)
 	require.NoError(t, err)
 	r := parseEnvelope(t, data).Reviewers[0]
-	assert.InDelta(t, 0.04/7.0, r.CostPerCorroboratedFindingUSD, 1e-9)
+	require.NotNil(t, r.CostPerCorroboratedFindingUSD, "corroborated findings exist => key must be present")
+	assert.InDelta(t, 0.04/7.0, *r.CostPerCorroboratedFindingUSD, 1e-9)
 }
 
-func TestExport_CostPerCorroboratedZeroWhenNoCorroboration(t *testing.T) {
+func TestExport_CostPerCorroboratedAbsentWhenNoCorroboration(t *testing.T) {
+	// Paid but zero corroborated findings: the metric is undefined, so the key
+	// must be OMITTED (nil pointer) — never a 0.0 that reads identically to a
+	// genuinely free reviewer.
 	rec := exportRec("bruce", "m", 1)
 	rec.FindingsCorroborated = 0
 	rec.CostUSD = 0.5
 	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
 	require.NoError(t, err)
+	s := string(data)
+	assert.NotContains(t, s, `"cost_per_corroborated_finding_usd"`, "omitempty must drop the key when undefined")
 	r := parseEnvelope(t, data).Reviewers[0]
-	assert.Equal(t, 0.0, r.CostPerCorroboratedFindingUSD, "no corroborated findings => 0, never Inf/NaN")
+	assert.Nil(t, r.CostPerCorroboratedFindingUSD, "no corroborated findings => key absent, not 0.0")
+}
+
+func TestExport_CostPerCorroboratedPresentAndZeroWhenGenuinelyFree(t *testing.T) {
+	// A genuinely free reviewer (cost 0) WITH corroborated findings must still
+	// carry the key, with value 0.0 — this is the disambiguating case the epic
+	// exists for: present-and-zero (free) vs absent (paid, uncorroborated).
+	rec := exportRec("bruce", "m", 1)
+	rec.CostUSD = 0
+	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	s := string(data)
+	assert.Contains(t, s, `"cost_per_corroborated_finding_usd"`, "genuinely free reviewer still carries the key")
+	r := parseEnvelope(t, data).Reviewers[0]
+	require.NotNil(t, r.CostPerCorroboratedFindingUSD)
+	assert.Equal(t, 0.0, *r.CostPerCorroboratedFindingUSD)
 }
 
 func TestExport_LatencyP50IsMedian(t *testing.T) {
@@ -363,7 +384,9 @@ func TestExport_ClampsNegativeMetrics(t *testing.T) {
 	require.NoError(t, err)
 	r := parseEnvelope(t, data).Reviewers[0]
 	assert.GreaterOrEqual(t, r.FindingsRaisedAvg, 0.0)
-	assert.GreaterOrEqual(t, r.CostPerCorroboratedFindingUSD, 0.0)
+	if r.CostPerCorroboratedFindingUSD != nil {
+		assert.GreaterOrEqual(t, *r.CostPerCorroboratedFindingUSD, 0.0)
+	}
 	assert.GreaterOrEqual(t, r.LatencyP50MS, int64(0))
 	assert.GreaterOrEqual(t, r.CorroborationRate, 0.0)
 	assert.LessOrEqual(t, r.CorroborationRate, 1.0)
@@ -474,7 +497,8 @@ func TestAnonymizeRecord_SingleRunDerivedFields(t *testing.T) {
 	assert.Equal(t, 1, pr.Runs, "a single record anonymizes to runs=1")
 	assert.InDelta(t, 120.0, pr.FindingsRaisedAvg, 1e-9, "single run: avg == raised")
 	assert.InDelta(t, ratio(80, 120), pr.CorroborationRate, 1e-9)
-	assert.InDelta(t, 0.60/80.0, pr.CostPerCorroboratedFindingUSD, 1e-9)
+	require.NotNil(t, pr.CostPerCorroboratedFindingUSD)
+	assert.InDelta(t, 0.60/80.0, *pr.CostPerCorroboratedFindingUSD, 1e-9)
 	assert.Equal(t, int64(9100), pr.LatencyP50MS)
 	require.NotNil(t, pr.SurvivedSkepticRate)
 	assert.InDelta(t, 0.8, *pr.SurvivedSkepticRate, 1e-9)
