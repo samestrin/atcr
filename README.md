@@ -56,6 +56,8 @@ atcr review && atcr reconcile
 atcr report --format md
 ```
 
+New to atcr? `atcr quickstart` runs steps 2–3 interactively: it scaffolds `.atcr/`, sets up the synthetic provider, walks you through the API-key environment variable (the key is never written to atcr's config), and scaffolds a `.github/workflows/atcr.yml` — so you reach your first review without hand-editing `registry.yaml`.
+
 `atcr doctor` is the recommended post-`atcr init` verification step: it invokes every configured model endpoint once with a trivial prompt and reports any misconfigured provider, model, key, or base URL — so a bad config is caught in seconds instead of mid-review. See [Commands](#commands) for its flags and exit codes.
 
 `atcr review` resolves the range against the default branch, fans the change out to the roster, and records the review id in `.atcr/latest`. Every later command takes an id or path as its single anchor argument and defaults to `latest`, so the two-command pipeline above just works on a feature branch.
@@ -72,6 +74,7 @@ atcr report --format md
 | `atcr range` | Pre-flight base..head resolution only; prints resolution JSON |
 | `atcr status` | Print a review's fan-out progress as JSON (roster + per-agent state) |
 | `atcr init` | Write `.atcr/config.yaml` and the six default personas (editable) |
+| `atcr quickstart` | Interactive onboarding: scaffold `.atcr/` (reusing `init`), set up the synthetic provider + API-key env var, and scaffold a CI workflow (`--open`, `--force`) |
 | `atcr serve` | Run the MCP stdio server over the same engine |
 | `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column |
 | `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
