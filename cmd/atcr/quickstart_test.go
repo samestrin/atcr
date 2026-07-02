@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -51,4 +52,73 @@ func TestQuickstart_ReusesInitWriters(t *testing.T) {
 	assert.NotEmpty(t, cfg.Agents, "roster is populated by the reused init writer")
 	assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", "bruce.md"))
 	assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", "_base.md"))
+}
+
+func TestQuickstart_WritesSyntheticRegistry(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:    dir,
+		in:     strings.NewReader(quickstartInput),
+		out:    &bytes.Buffer{},
+		errOut: &bytes.Buffer{},
+	}))
+
+	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
+	reg, err := registry.LoadRegistry(regPath)
+	require.NoError(t, err, "quickstart writes a valid registry.yaml")
+	_, ok := reg.Providers["synthetic"]
+	assert.True(t, ok, "synthetic provider is defined")
+
+	// Every roster entry in the generated project config must resolve against
+	// the generated registry — otherwise the first review would fail.
+	cfg, err := registry.LoadProjectConfig(filepath.Join(dir, ".atcr", "config.yaml"))
+	require.NoError(t, err)
+	assert.NoError(t, cfg.ValidateAgainst(reg), "roster resolves against synthetic registry")
+}
+
+func TestQuickstart_RegistryGuard_SkipsExistingWithoutForce(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(regPath), 0o755))
+	require.NoError(t, os.WriteFile(regPath, []byte("# user's own registry\n"), 0o644))
+
+	out := &bytes.Buffer{}
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:    dir,
+		in:     strings.NewReader(quickstartInput),
+		out:    out,
+		errOut: &bytes.Buffer{},
+	}))
+
+	// The existing registry must be untouched (no clobber).
+	data, err := os.ReadFile(regPath)
+	require.NoError(t, err)
+	assert.Equal(t, "# user's own registry\n", string(data), "existing registry left intact")
+	assert.Contains(t, out.String(), "registry.yaml", "user is told the snippet was not applied")
+}
+
+func TestQuickstart_RegistryGuard_ForceOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(regPath), 0o755))
+	require.NoError(t, os.WriteFile(regPath, []byte("# user's own registry\n"), 0o644))
+
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:    dir,
+		force:  true,
+		in:     strings.NewReader(quickstartInput),
+		out:    &bytes.Buffer{},
+		errOut: &bytes.Buffer{},
+	}))
+
+	reg, err := registry.LoadRegistry(regPath)
+	require.NoError(t, err, "force overwrites with a valid synthetic registry")
+	_, ok := reg.Providers["synthetic"]
+	assert.True(t, ok, "synthetic provider present after force overwrite")
 }
