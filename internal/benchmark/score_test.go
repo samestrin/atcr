@@ -154,6 +154,24 @@ func TestScore_StableOnIdentityTie(t *testing.T) {
 	assert.Equal(t, first, second, "repeated scoring is byte-identical")
 }
 
+// A case with empty Expected contributes nothing to recall and must not count
+// in the CorroborationRate denominator — it would silently drag the rate down.
+// Runs and FindingsRaisedAvg still reflect total case volume.
+func TestScore_EmptyExpectedExcludedFromCorroborationRate(t *testing.T) {
+	got := Score([]ReviewerScore{{
+		Model:   "m",
+		Persona: "p",
+		Cases: []CaseScore{
+			{Expected: []string{"correctness"}, Raised: []string{"correctness"}}, // recall 1.0
+			{Expected: []string{}, Raised: []string{"security"}},                 // empty expected
+		},
+	}})
+	require.Len(t, got, 1)
+	assert.InDelta(t, 1.0, got[0].CorroborationRate, 1e-9, "empty-expected case should not drag down rate")
+	assert.Equal(t, 2, got[0].Runs, "Runs counts all cases")
+	assert.InDelta(t, 1.0, got[0].FindingsRaisedAvg, 1e-9, "FindingsRaisedAvg counts all cases")
+}
+
 // Records are sorted deterministically by (model, persona) so the same input
 // always yields byte-identical output, and identity fields are re-scrubbed via
 // scorecard.ScrubPublicRecord (PII in an identity string is removed).
