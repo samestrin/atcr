@@ -1,0 +1,2 @@
+# atcr-findings/v1
+LOW|.planning/technical-debt/README.md:67|TD item for `internal/scorecard/export_test.go:381` is listed as `LOW` but describes a dead-code/test-gap scenario that could mask regressions in clamping logic|Update severity to MEDIUM or refine the "Problem" to emphasize the risk of missing regressions|style|5|`TestExport_ClampsNegativeMetrics` sets FindingsCorroborated=-2 which clamps to 0... assertion on that field dead code`|otto

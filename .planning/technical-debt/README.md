@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 29 | 0 |
-| LOW | 1 | 28 | 0 |
+| LOW | 0 | 29 | 0 |
 
-**Last Modified:** 2026-07-02 | **Open Items:** 1 | **Deferred Items:** 59 | **Resolved Items:** 0 | **Total Items:** 60
+**Last Modified:** 2026-07-02 | **Open Items:** 0 | **Deferred Items:** 60 | **Resolved Items:** 0 | **Total Items:** 60
 
 ## Directory Structure
 
@@ -62,11 +62,11 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table â†’ shards â
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
-### [2026-07-02] From Sprint: epic-15.1
+### [2026-07-02] From Sprint: 15.1_leaderboard-cost-na-rendering
 
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | LOW | internal/scorecard/export_test.go:381 | TestExport_ClampsNegativeMetrics sets FindingsCorroborated=-2 which clamps to 0 at ingestion, so CostPerCorroboratedFindingUSD is always nil in this scenario and the nil-guard makes the GreaterOrEqual(0.0) assertion on that field dead code, never exercising negative-CostUSD clamping through the non-nil pointer path. | Add a second case (or separate test) with a positive FindingsCorroborated and negative CostUSD so the clamp is actually exercised through the non-nil pointer branch. | EDGE_CASES | 15 | execute-epic-independent |
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| 2 | [/] | LOW | internal/scorecard/export.go:275-281 | Export groups records by the scrubbed persona/model, and scrubField's absolute-path regexes can reduce an entirely path-like input string to empty. Two genuinely distinct reviewer identities that both happen to be path-like scrub to the same empty string and silently merge into one aggregated group, blending the costPer/SurvivedSkepticRate/FindingsRaisedAvg values this epic's change is meant to make trustworthy. Adjacent to, not caused by, this epic, but feeds the same grouping key costPer's group totals depend on. (Won't fix: by-design -- scrubField intentionally merges identities that scrub-equal, locked in by TestExport_DistinctIdentitiesMergeWhenTheyScrubEqual, export_test.go:296) | By-design behavior, not a bug: grouping keys off the scrubbed identity is deliberate (scrubField strips PII/paths/secrets before export), and TestExport_DistinctIdentitiesMergeWhenTheyScrubEqual locks the merge-on-equal-scrub as an anti-regression invariant. No source change. | error-handling | 60 | code-review | claude | MEDIUM |
 
 ### [2026-07-01] From Sprint: 14.3_diff_chunking_context
 
