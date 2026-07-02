@@ -302,14 +302,11 @@ func TestExecuteBenchmarkRun_ResumeReportsReplayedCount(t *testing.T) {
 }
 
 // TestExecuteBenchmarkRun_ResumeRestoresStderrOnError guards against the leak in
-// TestExecuteBenchmarkRun_ResumeReportsReplayedCount: os.Stderr is swapped for a pipe
-// before the resumed executeBenchmarkRun call, but only restored after a
-// require.NoError(t, err) that assumes success. If a resumed run ever errors, that
-// assertion aborts the goroutine before the restore runs, leaving os.Stderr pointed at
-// a dangling pipe for every later test in the process. Reproduced here via a subtest:
-// the subtest's own restore never runs because require.NoError(t, err) is expected to
-// fail (the resumed call is forced to error), so the parent test observes os.Stderr
-// still swapped once the subtest goroutine exits.
+// TestExecuteBenchmarkRun_ResumeReportsReplayedCount: os.Stderr was swapped for a pipe
+// before the resumed executeBenchmarkRun call, then restored by a plain statement
+// placed after that call — reached only on the happy path. attemptResume below
+// encodes that same naive pattern (restore on success, early return on error) to prove
+// it leaves os.Stderr un-restored when the resumed run errors.
 func TestExecuteBenchmarkRun_ResumeRestoresStderrOnError(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
@@ -321,26 +318,22 @@ func TestExecuteBenchmarkRun_ResumeRestoresStderrOnError(t *testing.T) {
 
 	oldStderr := os.Stderr
 
-	t.Run("resume_fails", func(t *testing.T) {
+	// Only case 1 remains; forcing its single agent call to error mirrors an
+	// operational failure mid-resume.
+	attemptResume := func() {
 		r, w, pipeErr := os.Pipe()
 		require.NoError(t, pipeErr)
 		os.Stderr = w
+		defer func() { _ = r.Close() }()
 
-		done := make(chan struct{})
-		go func() {
-			_, _ = io.Copy(io.Discard, r)
-			close(done)
-		}()
-
-		// Only case 1 remains; forcing its single agent call to error mirrors an
-		// operational failure mid-resume.
 		_, err := executeBenchmarkRun(context.Background(), cfg, &failAfterCompleter{ok: 0}, suiteValidPath, gen, path)
-		require.NoError(t, err)
-
-		require.NoError(t, w.Close())
-		<-done
+		if err != nil {
+			return
+		}
 		os.Stderr = oldStderr
-	})
+		_ = w.Close()
+	}
+	attemptResume()
 
 	assert.Equal(t, oldStderr, os.Stderr, "os.Stderr must be restored even when the resumed run errors")
 }
