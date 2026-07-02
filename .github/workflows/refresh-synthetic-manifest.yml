@@ -43,7 +43,12 @@ jobs:
           set -euo pipefail
           curl -sSf https://api.synthetic.new/openai/v1/models \
             -H "Authorization: Bearer ${LLM_SYNTHETIC_API_KEY}" > models.json
-          go run ./cmd/refresh-manifest < models.json > internal/quickstart/synthetic.json
+          # Write to a temp file, THEN move into place. Redirecting straight onto
+          # synthetic.json would truncate it before `go run` compiles the package
+          # that //go:embeds it, so the refresh would embed (and re-emit) an empty
+          # manifest and fail on every run.
+          go run ./cmd/refresh-manifest < models.json > synthetic.json.tmp
+          mv synthetic.json.tmp internal/quickstart/synthetic.json
           rm -f models.json
 
       - name: Open PR on change

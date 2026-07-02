@@ -213,6 +213,61 @@ func TestQuickstart_NoKey_PrintsInstructions(t *testing.T) {
 		"instructions to set the env var later are shown when no key is pasted")
 }
 
+func TestQuickstart_LayersOntoExistingAtcr(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	// Simulate a prior `atcr init` with an edited persona.
+	require.NoError(t, runInit(dir, false, &bytes.Buffer{}, &bytes.Buffer{}))
+	persona := filepath.Join(dir, ".atcr", "personas", "bruce.md")
+	require.NoError(t, os.WriteFile(persona, []byte("EDITED BY USER"), 0o644))
+
+	// quickstart (no --force) must NOT abort and must NOT clobber the edited persona.
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: dir, in: strings.NewReader(quickstartInput), out: &bytes.Buffer{}, errOut: &bytes.Buffer{},
+	}))
+
+	data, err := os.ReadFile(persona)
+	require.NoError(t, err)
+	assert.Equal(t, "EDITED BY USER", string(data), "existing edited persona preserved")
+	// Provider setup still ran (registry written into the throwaway home).
+	assert.FileExists(t, filepath.Join(os.Getenv("HOME"), ".config", "atcr", "registry.yaml"))
+}
+
+func TestQuickstart_RegistryGuard_WarnsRosterWontResolve(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(regPath), 0o755))
+	require.NoError(t, os.WriteFile(regPath, []byte("# user's own registry\n"), 0o644))
+
+	errOut := &bytes.Buffer{}
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: dir, in: strings.NewReader(quickstartInput), out: &bytes.Buffer{}, errOut: errOut,
+	}))
+	assert.Contains(t, errOut.String(), "atcr review` will fail",
+		"user is warned the roster will not resolve until they merge the block")
+}
+
+func TestQuickstart_KeyEntry_RefusesAtcrOwnedProfilePath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	atcrCfg := filepath.Join(dir, ".atcr", "config.yaml")
+
+	errOut := &bytes.Buffer{}
+	// User pastes a key, then (foolishly) names an atcr-owned file as the profile.
+	in := strings.NewReader("MYSECRETKEY\n" + atcrCfg + "\n")
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: dir, in: in, out: &bytes.Buffer{}, errOut: errOut,
+	}))
+
+	assert.Contains(t, errOut.String(), "Refusing to write the key")
+	// INVARIANT: the key value must not have been appended to the atcr config.
+	cfg, err := os.ReadFile(atcrCfg)
+	require.NoError(t, err)
+	assert.NotContains(t, string(cfg), "MYSECRETKEY", "key never written into an atcr-owned file")
+}
+
 func TestQuickstart_RegistryGuard_ForceOverwrites(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()

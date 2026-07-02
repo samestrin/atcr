@@ -70,7 +70,16 @@ func newQuickstartCmd() *cobra.Command {
 // steps) sets up the synthetic provider, guides the user through the API-key env
 // var, and scaffolds a CI workflow.
 func runQuickstart(o quickstartOpts) error {
-	if err := runInit(o.dir, o.force, o.out, o.errOut); err != nil {
+	// Layer onto an existing .atcr rather than aborting: `atcr init`'s writers are
+	// all-or-nothing (any existing target is a hard error without --force), which
+	// would block a returning user — and --force would clobber their edited
+	// personas. So when a config already exists and force is off, skip the init
+	// step and continue with provider/key/workflow setup (mirroring the per-file
+	// skip guards used for the registry and workflow below).
+	cfgPath := registry.DefaultProjectConfigPath(o.dir)
+	if _, statErr := os.Lstat(cfgPath); statErr == nil && !o.force {
+		_, _ = fmt.Fprintf(o.errOut, "Using existing workspace at %s (run with --force to regenerate config + personas).\n", filepath.Dir(cfgPath))
+	} else if err := runInit(o.dir, o.force, o.out, o.errOut); err != nil {
 		return err
 	}
 
@@ -162,6 +171,12 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 	if profile == "" {
 		return nil
 	}
+	// Guard the invariant: the key must never land in a file atcr owns, even if
+	// the user names one at this prompt.
+	if profileIsAtcrOwned(profile, o.dir) {
+		_, _ = fmt.Fprintf(o.errOut, "Refusing to write the key into an atcr-owned file (%s) — choose a shell profile like ~/.zshrc instead.\n", profile)
+		return nil
+	}
 	if err := appendExport(profile, env, key); err != nil {
 		_, _ = fmt.Fprintf(o.errOut, "could not append to %s: %v\n", profile, err)
 		return nil
@@ -189,6 +204,43 @@ func appendExport(profile, env, key string) error {
 	defer func() { _ = f.Close() }()
 	_, err = fmt.Fprintf(f, "\n# added by atcr quickstart\nexport %s=%s\n", env, shellSingleQuote(key))
 	return err
+}
+
+// profileIsAtcrOwned reports whether the shell-profile path the user named would
+// resolve inside the .atcr/ workspace or to the user registry — the files whose
+// key-free posture the wizard must preserve. It is the enforcement point behind
+// the "key never in an atcr-owned file" invariant at the profile prompt.
+func profileIsAtcrOwned(profile, dir string) bool {
+	abs := resolveProfilePath(profile)
+	if abs == "" {
+		return false
+	}
+	if atcr, err := filepath.Abs(filepath.Join(dir, ".atcr")); err == nil {
+		if abs == atcr || strings.HasPrefix(abs, atcr+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	if reg, err := registry.DefaultRegistryPath(); err == nil {
+		if regAbs, err := filepath.Abs(reg); err == nil && abs == regAbs {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveProfilePath expands a leading ~/ and returns the absolute form of a
+// user-supplied profile path, or "" if it cannot be resolved.
+func resolveProfilePath(profile string) string {
+	if strings.HasPrefix(profile, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			profile = filepath.Join(home, profile[2:])
+		}
+	}
+	abs, err := filepath.Abs(profile)
+	if err != nil {
+		return ""
+	}
+	return abs
 }
 
 // shellSingleQuote wraps s in single quotes safe for POSIX shells, escaping any
@@ -233,10 +285,13 @@ func writeSyntheticRegistry(o quickstartOpts, m *quickstart.Manifest, roster []s
 	_, statErr := os.Lstat(regPath)
 	switch {
 	case statErr == nil && !o.force:
-		// Exists and no force: do not touch it. Show the block to merge.
+		// Exists and no force: do not touch it. Show the block to merge, and warn
+		// that the roster just written to .atcr/config.yaml references these agents
+		// — until they are merged, `atcr review` will fail to resolve the roster.
 		_, _ = fmt.Fprintf(o.errOut, "\nA registry already exists at %s — not overwriting it (use --force to replace).\n", regPath)
 		_, _ = fmt.Fprintln(o.errOut, "Add the following synthetic provider + agents to it manually:")
 		_, _ = fmt.Fprintf(o.out, "\n%s\n", content)
+		_, _ = fmt.Fprintf(o.errOut, "Until you merge these, `atcr review` will fail: .atcr/config.yaml lists agents (%s) your registry does not define yet.\n", strings.Join(roster, ", "))
 		return nil
 	case statErr != nil && !errors.Is(statErr, fs.ErrNotExist):
 		return fmt.Errorf("cannot check %s: %w", regPath, statErr)
