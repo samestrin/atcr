@@ -425,6 +425,22 @@ func TestExport_ClampsNegativeMetrics(t *testing.T) {
 	assert.LessOrEqual(t, r.CorroborationRate, 1.0)
 }
 
+// TestExport_ClampsNegativeMetrics leaves FindingsCorroborated at -2, which clamps
+// to 0 at ingestion, so CostPerCorroboratedFindingUSD is always nil there and its
+// nil-guarded assertion never exercises the non-nil pointer branch. This test uses a
+// positive FindingsCorroborated alongside a negative CostUSD so the clamp is actually
+// checked through that branch.
+func TestExport_ClampsNegativeCostThroughNonNilCostPer(t *testing.T) {
+	rec := exportRec("bruce", "m", 1)
+	rec.FindingsCorroborated = 3
+	rec.CostUSD = -5.0
+	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	r := parseEnvelope(t, data).Reviewers[0]
+	require.NotNil(t, r.CostPerCorroboratedFindingUSD, "positive FindingsCorroborated keeps cost-per non-nil")
+	assert.GreaterOrEqual(t, *r.CostPerCorroboratedFindingUSD, 0.0, "negative CostUSD must clamp to non-negative through the non-nil pointer branch")
+}
+
 func TestExport_CostPerCorroboratedFinding_ClampsOverflowingTotal(t *testing.T) {
 	r1 := exportRec("bruce", "m", 1)
 	r1.CostUSD = math.MaxFloat64
