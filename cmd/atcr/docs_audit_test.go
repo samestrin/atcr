@@ -386,7 +386,30 @@ func TestConfigDocsUseRealConfigFilenameAndReconcilerName(t *testing.T) {
 // section heading whose text names the block. This rejects bare substring matches
 // in prose or incidental YAML.
 func configBlockDocumented(ref, block string) bool {
-	return strings.Contains(ref, block)
+	name := strings.TrimSuffix(block, ":")
+	// A section heading that names the block counts as documentation.
+	reHeading := regexp.MustCompile("(?im)^#{2,3}\\s+.*\\b" + regexp.QuoteMeta(name) + "\\b")
+	if reHeading.MatchString(ref) {
+		return true
+	}
+	// A fenced YAML block containing the key at column 0 counts as documentation.
+	reKey := regexp.MustCompile("(?m)^" + regexp.QuoteMeta(block))
+	inFence := false
+	for _, ln := range strings.Split(ref, "\n") {
+		trimmed := strings.TrimSpace(ln)
+		if strings.HasPrefix(trimmed, "```yaml") || strings.HasPrefix(trimmed, "```yml") {
+			inFence = true
+			continue
+		}
+		if trimmed == "```" {
+			inFence = false
+			continue
+		}
+		if inFence && reKey.MatchString(ln) {
+			return true
+		}
+	}
+	return false
 }
 
 // TestConfigBlockDocumentedRejectsProseOnly guards against config-block tokens
