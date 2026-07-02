@@ -58,6 +58,14 @@ func TestBuildManifestFromModels_RegeneratedManifestLoads(t *testing.T) {
 	assert.NoError(t, m.validate())
 }
 
+func TestBuildManifestFromModels_RejectsControlCharInId(t *testing.T) {
+	// A newline in a model id would forge YAML lines in the generated
+	// registry.yaml — a hostile /models response must be refused.
+	resp := []byte(`{"data":[{"id":"ok"},{"id":"evil\n    injected: true"}]}`)
+	_, err := BuildManifestFromModels(resp, baseManifest())
+	assert.Error(t, err)
+}
+
 func TestRunRefresh_Success(t *testing.T) {
 	in := strings.NewReader(`{"data":[{"id":"x"},{"id":"y"}]}`)
 	out := &bytes.Buffer{}

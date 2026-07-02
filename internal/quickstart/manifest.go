@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode"
 )
 
 // syntheticManifest is the bundled default provider/model set. It is regenerated
@@ -69,6 +70,13 @@ func (m *Manifest) validate() error {
 	for i, model := range m.Models {
 		if strings.TrimSpace(model) == "" {
 			return fmt.Errorf("synthetic manifest: models[%d] is empty", i)
+		}
+		// Model ids are emitted verbatim as `model: <id>` lines in the generated
+		// registry.yaml. A control character (esp. a newline) in an id sourced from
+		// the live /models endpoint could forge YAML structure, so reject them at
+		// the load boundary — defense-in-depth against a hostile refresh response.
+		if strings.IndexFunc(model, func(r rune) bool { return unicode.IsControl(r) }) >= 0 {
+			return fmt.Errorf("synthetic manifest: models[%d] contains a control character", i)
 		}
 	}
 	return nil
