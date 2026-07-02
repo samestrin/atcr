@@ -390,11 +390,11 @@ func TestDocsIndexCoversEveryDoc(t *testing.T) {
 }
 
 // TestArchitectureDocDescribesReconciler asserts that docs/architecture.md
-// exists and faithfully names the stages and concepts of the real multi-model
-// reconciler pipeline (AC3). The required tokens are the actual pipeline stages
-// (review → reconcile → verify → debate) and the reconciler's core operations
-// (cluster, dedupe, confidence), so a stub or a doc describing a fictional
-// architecture fails.
+// contains the key terms of the real multi-model reconciler pipeline (AC3). The
+// required tokens are the pipeline stages (review, reconcile, verify, debate)
+// and the reconciler's core operations (cluster, dedupe, confidence, persona).
+// This is a keyword-presence guard, not a structural guarantee: a stub that
+// sprinkles these terms could pass, but a doc that omits any of them fails.
 func TestArchitectureDocDescribesReconciler(t *testing.T) {
 	root := repoRootDir(t)
 	b, err := os.ReadFile(filepath.Join(root, "docs", "architecture.md"))
