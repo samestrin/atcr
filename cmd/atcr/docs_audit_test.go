@@ -310,6 +310,7 @@ func TestReconcilerConfigSurfaceDocumented(t *testing.T) {
 func extractIndexLinkTarget(raw string) string {
 	raw = strings.SplitN(raw, "#", 2)[0]
 	raw = strings.TrimPrefix(raw, "./")
+	raw = strings.TrimSpace(regexp.MustCompile(`\s+["'][^"']*["']$`).ReplaceAllString(raw, ""))
 	return raw
 }
 
@@ -360,8 +361,7 @@ func TestDocsIndexCoversEveryDoc(t *testing.T) {
 		if strings.Contains(target, "://") {
 			continue
 		}
-		target = strings.SplitN(target, "#", 2)[0]
-		target = strings.TrimPrefix(target, "./")
+		target = extractIndexLinkTarget(target)
 		if !strings.HasSuffix(target, ".md") || strings.Contains(target, "/") {
 			continue // only same-directory doc links count toward the index
 		}
