@@ -86,7 +86,7 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 		return pr
 	}
 
-	var totalFindings, matchedFindings int
+	var totalFindings, matchedFindings, ratedCases int
 	var recallSum float64
 	for _, c := range r.Cases {
 		expected, _ := normalizeSet(c.Expected)
@@ -94,6 +94,7 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 		totalFindings += len(c.Raised)
 
 		if len(expected) > 0 {
+			ratedCases++
 			hit := 0
 			for cat := range expected {
 				if raised[cat] {
@@ -113,7 +114,9 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 	}
 
 	pr.FindingsRaisedAvg = float64(totalFindings) / float64(len(r.Cases))
-	pr.CorroborationRate = clamp01(recallSum / float64(len(r.Cases)))
+	if ratedCases > 0 {
+		pr.CorroborationRate = clamp01(recallSum / float64(ratedCases))
+	}
 	// matchedFindings == 0 leaves the field nil: cost-per-corroborated is
 	// undefined (a priced reviewer that matched nothing must not read the same
 	// as a genuinely free reviewer), so omitempty drops the key entirely. A
