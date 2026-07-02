@@ -112,8 +112,14 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 
 	pr.FindingsRaisedAvg = float64(totalFindings) / float64(len(r.Cases))
 	pr.CorroborationRate = clamp01(recallSum / float64(len(r.Cases)))
+	// matchedFindings == 0 leaves the field nil: cost-per-corroborated is
+	// undefined (a priced reviewer that matched nothing must not read the same
+	// as a genuinely free reviewer), so omitempty drops the key entirely. A
+	// non-nil value (including a real 0.0, e.g. a free reviewer with matches)
+	// mirrors the production export path in scorecard.costPer.
 	if matchedFindings > 0 {
-		pr.CostPerCorroboratedFindingUSD = r.CostUSD / float64(matchedFindings)
+		v := r.CostUSD / float64(matchedFindings)
+		pr.CostPerCorroboratedFindingUSD = &v
 	}
 	return pr
 }
