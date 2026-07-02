@@ -36,9 +36,9 @@ type ReviewerScore struct {
 // (defense in depth — the same pass BuildSubmission applies — so identity PII can
 // never reach a public submission even from a non-conforming producer).
 //
-// Every CaseScore.Expected must be non-empty: a case with no expected categories
-// contributes zero recall while still counting in the macro-average denominator,
-// silently lowering the reported CorroborationRate.
+// A case with no expected categories contributes zero recall and is excluded
+// from the CorroborationRate denominator so it cannot silently drag the rate
+// down. Runs and FindingsRaisedAvg still reflect total case volume.
 //
 // CorroborationRate carries CATEGORY RECALL: the macro-average across the
 // reviewer's cases of (distinct expected categories the reviewer surfaced at least
