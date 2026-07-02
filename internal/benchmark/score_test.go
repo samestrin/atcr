@@ -1,6 +1,7 @@
 package benchmark
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -89,6 +90,34 @@ func TestScore_CostPerCorroboratedNilWhenPaidButUnmatched(t *testing.T) {
 	}})
 	require.Len(t, got, 1)
 	assert.Nil(t, got[0].CostPerCorroboratedFindingUSD, "paid but zero matched findings -> key must be absent, not 0.0")
+}
+
+// Invalid CostUSD values (negative, NaN, +Inf) must not propagate into the
+// public record; the field is omitted instead of emitting garbage that breaks
+// JSON export.
+func TestScore_CostUSDInvalid(t *testing.T) {
+	cases := []struct {
+		name    string
+		costUSD float64
+	}{
+		{name: "negative", costUSD: -1.0},
+		{name: "NaN", costUSD: math.NaN()},
+		{name: "positive infinity", costUSD: math.Inf(1)},
+		{name: "negative infinity", costUSD: math.Inf(-1)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Score([]ReviewerScore{{
+				Model:   "m",
+				Persona: "p",
+				CostUSD: tc.costUSD,
+				Cases:   []CaseScore{{Expected: []string{"correctness"}, Raised: []string{"correctness"}}},
+			}})
+			require.Len(t, got, 1)
+			assert.Nil(t, got[0].CostPerCorroboratedFindingUSD, "invalid cost -> field omitted")
+		})
+	}
 }
 
 // A reviewer that raised nothing scores recall 0 without dividing by zero, and a
