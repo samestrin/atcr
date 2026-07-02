@@ -239,7 +239,7 @@ echoed** (they would leak query parameters about your local dataset):
 | `findings_raised_avg` | float | always | Mean findings raised **per run** (not the total). |
 | `corroboration_rate` | float | always | Corroborated / raised across the group (clamped to `[0,1]`). |
 | `survived_skeptic_rate` | float | **omitempty** | Verified / (verified + refuted). **Omitted entirely** when no verification ran for the group; present as `0.0` only when verification ran and every finding was refuted. The omission is the disambiguator. |
-| `cost_per_corroborated_finding_usd` | float | always | Total cost ÷ corroborated findings (`0.0` when none corroborated; never Inf/NaN). |
+| `cost_per_corroborated_finding_usd` | float | **omitempty** | Total cost ÷ corroborated findings. **Omitted entirely** when there are zero corroborated findings (the metric is undefined — this is what distinguishes a paid-but-ineffective reviewer from a genuinely free one); present as `0.0` only when corroborated findings exist AND the reviewer's cost was genuinely zero. Never Inf/NaN when present. |
 | `latency_p50_ms` | int | always | Median (p50) of per-run latencies — not the mean. |
 
 Reviewers are aggregated by `(persona, model)` (role is dropped from the public
