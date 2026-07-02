@@ -30,8 +30,10 @@ var ErrPersonaNotFound = errors.New("persona not found")
 
 // ResolvePersona walks the six-level resolution chain:
 //
-//  1. taskMessage (the --task-message flag): if non-nil it wins outright, even
-//     when empty (an explicit "no system prompt").
+//  1. taskMessage (programmatic override): an internal resolution seam; if
+//     non-nil it wins outright, even when empty (an explicit "no system prompt").
+//     It is not exposed as a CLI flag, so ordinary CLI and MCP runs pass nothing
+//     here and resolution effectively begins at level 2.
 //  2. <persona>.md in the project personas dir.
 //  3. <persona>.md in the registry personas dir.
 //  4. _base.md in the project dir, then the registry dir.
