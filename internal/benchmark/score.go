@@ -89,8 +89,8 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 	var totalFindings, matchedFindings int
 	var recallSum float64
 	for _, c := range r.Cases {
-		expected := normalizeSet(c.Expected)
-		raised := normalizeSet(c.Raised)
+		expected, _ := normalizeSet(c.Expected)
+		raised, normalizedRaised := normalizeSet(c.Raised)
 		totalFindings += len(c.Raised)
 
 		if len(expected) > 0 {
@@ -104,8 +104,9 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 		}
 		// Cost-per-corroborated denominator: every finding whose category matched
 		// an expected (planted) category. Counts findings, not distinct categories.
-		for _, cat := range c.Raised {
-			if expected[normalize(cat)] {
+		// Drive the count off normalizedRaised so normalize() runs once per finding.
+		for _, cat := range normalizedRaised {
+			if expected[cat] {
 				matchedFindings++
 			}
 		}
@@ -129,15 +130,20 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 // whitespace-insensitive, mirroring reconcile.ModalCategory.
 func normalize(cat string) string { return strings.ToLower(strings.TrimSpace(cat)) }
 
-// normalizeSet returns the distinct non-empty normalized categories in cats.
-func normalizeSet(cats []string) map[string]bool {
+// normalizeSet returns the distinct non-empty normalized categories in cats
+// and a parallel slice of every normalized value (preserving order, including
+// empty entries) so callers can iterate findings without re-normalizing.
+func normalizeSet(cats []string) (map[string]bool, []string) {
 	set := make(map[string]bool, len(cats))
-	for _, c := range cats {
-		if n := normalize(c); n != "" {
+	normalized := make([]string, len(cats))
+	for i, c := range cats {
+		n := normalize(c)
+		normalized[i] = n
+		if n != "" {
 			set[n] = true
 		}
 	}
-	return set
+	return set, normalized
 }
 
 // clamp01 bounds a rate to [0,1]; a well-formed recall is already in range, this
