@@ -1,3 +1,18 @@
+## [16.0.0] - 2026-07-02
+
+Added `atcr quickstart`, an interactive onboarding wizard that scaffolds a working synthetic-provider setup so a new user reaches their first review without hand-editing `registry.yaml`.
+
+### Added
+
+- `atcr quickstart` command: reuses `atcr init`'s writers for the `.atcr/` workspace, then sets up the synthetic provider + agents in `~/.config/atcr/registry.yaml`, walks the user through the `LLM_SYNTHETIC_API_KEY` environment variable (the key is never written into any atcr-owned file), and scaffolds a `.github/workflows/atcr.yml` CI workflow. Flags: `--open` (open the signup link in a browser) and `--force` (regenerate existing files).
+- A bundled synthetic-provider manifest and a scheduled GitHub Action that refreshes it from the live `/models` endpoint.
+
+### Changed
+
+- The referral signup link is shown as an OSC-8 terminal hyperlink; the scaffolded workflow and generated registry both key off the synthetic provider.
+
+*Shipped via /execute-epic (epic 16.0)*
+
 ## [Technical Debt] - 2026-07-02
 
 ### Fixed
