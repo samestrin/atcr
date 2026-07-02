@@ -31,7 +31,8 @@ func TestScore_RecallAndVolume(t *testing.T) {
 	assert.Equal(t, 2, r.Runs, "runs == number of cases scored")
 	assert.InDelta(t, 1.5, r.FindingsRaisedAvg, 1e-9, "mean findings per case == 3/2")
 	assert.InDelta(t, 0.75, r.CorroborationRate, 1e-9, "macro-avg recall == (1.0 + 0.5) / 2")
-	assert.InDelta(t, 0.0, r.CostPerCorroboratedFindingUSD, 1e-9, "no usage -> 0 cost")
+	require.NotNil(t, r.CostPerCorroboratedFindingUSD, "matched findings exist -> key present even at 0 cost")
+	assert.InDelta(t, 0.0, *r.CostPerCorroboratedFindingUSD, 1e-9, "no usage -> real 0 cost, not omitted")
 	assert.Equal(t, int64(0), r.LatencyP50MS)
 	assert.Nil(t, r.SurvivedSkepticRate, "no skeptic verification in the benchmark path")
 }
@@ -72,7 +73,22 @@ func TestScore_CostPerCorroborated(t *testing.T) {
 		Cases: []CaseScore{{Expected: []string{"correctness", "security"}, Raised: []string{"correctness", "security", "perf"}}},
 	}})
 	require.Len(t, got, 1)
-	assert.InDelta(t, 0.06, got[0].CostPerCorroboratedFindingUSD, 1e-9, "0.12 / 2 matched findings")
+	require.NotNil(t, got[0].CostPerCorroboratedFindingUSD)
+	assert.InDelta(t, 0.06, *got[0].CostPerCorroboratedFindingUSD, 1e-9, "0.12 / 2 matched findings")
+}
+
+// A priced reviewer that matches zero planted categories must leave the field
+// nil (key omitted) — the exact ambiguity this epic exists to fix: paid-but-
+// uncorroborated must not read identically to genuinely free.
+func TestScore_CostPerCorroboratedNilWhenPaidButUnmatched(t *testing.T) {
+	got := Score([]ReviewerScore{{
+		Model:   "m",
+		Persona: "p",
+		CostUSD: 0.5,
+		Cases:   []CaseScore{{Expected: []string{"correctness"}, Raised: []string{"perf"}}},
+	}})
+	require.Len(t, got, 1)
+	assert.Nil(t, got[0].CostPerCorroboratedFindingUSD, "paid but zero matched findings -> key must be absent, not 0.0")
 }
 
 // A reviewer that raised nothing scores recall 0 without dividing by zero, and a

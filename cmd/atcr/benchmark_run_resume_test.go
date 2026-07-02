@@ -445,7 +445,8 @@ func TestExecuteBenchmarkRun_UsageGatedFullResumeReproducesCostAndLatency(t *tes
 	// Guard against silently regressing to the vacuous all-zero state.
 	var total float64
 	for _, rv := range baseline.Reviewers {
-		total += rv.CostPerCorroboratedFindingUSD
+		require.NotNil(t, rv.CostPerCorroboratedFindingUSD, "priced reviewer with corroborated findings must carry the key")
+		total += *rv.CostPerCorroboratedFindingUSD
 	}
 	require.Greater(t, total, 0.0, "priced usage stub must yield a non-zero per-finding cost or the assertion is vacuous")
 
@@ -491,7 +492,8 @@ func TestExecuteBenchmarkRun_UsageGatedPartialResumeReproducesCost(t *testing.T)
 	baseline, err := executeBenchmarkRun(context.Background(), cfg, usageStubCompleter{}, suiteValidPath, gen, "")
 	require.NoError(t, err)
 	require.Len(t, baseline.Reviewers, 1)
-	require.Greater(t, baseline.Reviewers[0].CostPerCorroboratedFindingUSD, 0.0, "priced usage stub yields a non-zero cost")
+	require.NotNil(t, baseline.Reviewers[0].CostPerCorroboratedFindingUSD, "priced reviewer with corroborated findings must carry the key")
+	require.Greater(t, *baseline.Reviewers[0].CostPerCorroboratedFindingUSD, 0.0, "priced usage stub yields a non-zero cost")
 
 	// First attempt completes case 0 (with usage, checkpointed) then fails on case 1.
 	_, err = executeBenchmarkRun(context.Background(), cfg, &usageFailAfterCompleter{ok: 1}, suiteValidPath, gen, path)

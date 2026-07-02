@@ -77,7 +77,8 @@ func TestExecuteBenchmarkRun_ScoresSuite(t *testing.T) {
 	assert.Equal(t, 2, greta.Runs, "one run per case")
 	assert.InDelta(t, 0.75, greta.CorroborationRate, 1e-9, "(1.0 + 0.5) / 2 category recall")
 	assert.InDelta(t, 1.0, greta.FindingsRaisedAvg, 1e-9, "one finding per case")
-	assert.InDelta(t, 0.0, greta.CostPerCorroboratedFindingUSD, 1e-9, "stub reports no usage")
+	require.NotNil(t, greta.CostPerCorroboratedFindingUSD, "corroborated findings exist -> key present even at 0 cost")
+	assert.InDelta(t, 0.0, *greta.CostPerCorroboratedFindingUSD, 1e-9, "stub reports no usage")
 	assert.Equal(t, int64(0), greta.LatencyP50MS, "stub reports no usage -> deterministic 0")
 	assert.Equal(t, "m-kai", rr.Reviewers[1].Model)
 }
