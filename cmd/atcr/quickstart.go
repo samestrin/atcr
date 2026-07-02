@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -80,7 +84,108 @@ func runQuickstart(o quickstartOpts) error {
 	if err := writeSyntheticRegistry(o, manifest, builtins.Names()); err != nil {
 		return err
 	}
+
+	if err := keyEnvFlow(o, manifest); err != nil {
+		return err
+	}
 	return nil
+}
+
+// keyEnvFlow shows the referral signup link, optionally opens it, then walks the
+// user through setting the provider's API-key environment variable. The key is
+// held only transiently: it is echoed back as an `export` line and, if the user
+// names a shell profile, appended there — but it is NEVER written into any file
+// atcr owns (.atcr/ or registry.yaml), preserving atcr's env-resolved posture.
+func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
+	env := m.Provider.APIKeyEnv
+	link := m.SignupLink()
+
+	_, _ = fmt.Fprintf(o.out, "\nSign up for a %s API key:\n  %s\n", m.Provider.Name, osc8(link))
+	if o.open {
+		openFn := o.openFn
+		if openFn == nil {
+			openFn = openBrowser
+		}
+		if err := openFn(link); err != nil {
+			_, _ = fmt.Fprintf(o.errOut, "could not open browser (%v) — open the link above manually.\n", err)
+		}
+	}
+
+	scanner := bufio.NewScanner(o.in)
+	readLine := func(prompt string) string {
+		_, _ = fmt.Fprint(o.out, prompt)
+		if scanner.Scan() {
+			return strings.TrimSpace(scanner.Text())
+		}
+		return ""
+	}
+
+	key := readLine(fmt.Sprintf("\nPaste your API key (or press Enter to set %s yourself later): ", env))
+	if key == "" {
+		_, _ = fmt.Fprintf(o.out, "\nNo problem. When you have a key, set it with:\n  export %s=<your-key>\n", env)
+		return nil
+	}
+
+	_, _ = fmt.Fprintf(o.out, "\nSet it in your current shell:\n  export %s=%s\n", env, shellSingleQuote(key))
+
+	profile := readLine("\nAppend this export to a shell profile? Enter a path (or Enter to skip): ")
+	if profile == "" {
+		return nil
+	}
+	if err := appendExport(profile, env, key); err != nil {
+		_, _ = fmt.Fprintf(o.errOut, "could not append to %s: %v\n", profile, err)
+		return nil
+	}
+	_, _ = fmt.Fprintf(o.out, "Appended the export to %s — open a new shell or `source` it to load the key.\n", profile)
+	return nil
+}
+
+// appendExport appends `export ENV='key'` to the named shell profile, expanding
+// a leading ~/ and creating the file if absent. This is the one place the key
+// value touches disk, and only into a file the user explicitly named — never a
+// file atcr owns.
+func appendExport(profile, env, key string) error {
+	if strings.HasPrefix(profile, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		profile = filepath.Join(home, profile[2:])
+	}
+	f, err := os.OpenFile(profile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = fmt.Fprintf(f, "\n# added by atcr quickstart\nexport %s=%s\n", env, shellSingleQuote(key))
+	return err
+}
+
+// shellSingleQuote wraps s in single quotes safe for POSIX shells, escaping any
+// embedded single quote via the '\” idiom so a key with odd characters cannot
+// break out of the quoting (or forge shell into running injected commands).
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// osc8 wraps a URL in an OSC-8 terminal hyperlink whose visible text is the URL
+// itself, so it renders clickable in supporting terminals and still shows the
+// plain URL everywhere else.
+func osc8(url string) string {
+	return "\x1b]8;;" + url + "\x1b\\" + url + "\x1b]8;;\x1b\\"
+}
+
+// openBrowser opens url in the platform default browser. It returns promptly
+// (Start, not Run) so the wizard never blocks on the browser process.
+func openBrowser(url string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", url).Start()
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	default:
+		return exec.Command("xdg-open", url).Start()
+	}
 }
 
 // writeSyntheticRegistry writes the synthetic provider + agents to the user
