@@ -101,6 +101,53 @@ func TestQuickstart_RegistryGuard_SkipsExistingWithoutForce(t *testing.T) {
 	assert.Contains(t, out.String(), "registry.yaml", "user is told the snippet was not applied")
 }
 
+func TestQuickstart_ScaffoldsWorkflow(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: dir, in: strings.NewReader(quickstartInput), out: &bytes.Buffer{}, errOut: &bytes.Buffer{},
+	}))
+	wf := filepath.Join(dir, ".github", "workflows", "atcr.yml")
+	data, err := os.ReadFile(wf)
+	require.NoError(t, err, "workflow scaffolded")
+	assert.Contains(t, string(data), "LLM_SYNTHETIC_API_KEY: ${{ secrets.LLM_SYNTHETIC_API_KEY }}")
+}
+
+func TestQuickstart_WorkflowGuard_SkipsExistingWithoutForce(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	wf := filepath.Join(dir, ".github", "workflows", "atcr.yml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(wf), 0o755))
+	require.NoError(t, os.WriteFile(wf, []byte("# my own workflow\n"), 0o644))
+
+	out := &bytes.Buffer{}
+	errOut := &bytes.Buffer{}
+	// Must NOT abort the whole quickstart — the registry step still runs.
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: dir, in: strings.NewReader(quickstartInput), out: out, errOut: errOut,
+	}))
+
+	data, err := os.ReadFile(wf)
+	require.NoError(t, err)
+	assert.Equal(t, "# my own workflow\n", string(data), "existing workflow left intact")
+	assert.Contains(t, errOut.String()+out.String(), "atcr.yml", "user told the workflow was skipped")
+}
+
+func TestQuickstart_WorkflowGuard_ForceOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	wf := filepath.Join(dir, ".github", "workflows", "atcr.yml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(wf), 0o755))
+	require.NoError(t, os.WriteFile(wf, []byte("# my own workflow\n"), 0o644))
+
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: dir, force: true, in: strings.NewReader(quickstartInput), out: &bytes.Buffer{}, errOut: &bytes.Buffer{},
+	}))
+	data, err := os.ReadFile(wf)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "LLM_SYNTHETIC_API_KEY", "force overwrote with the scaffold")
+}
+
 func TestQuickstart_PrintsSignupLink(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
