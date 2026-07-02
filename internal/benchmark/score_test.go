@@ -1,6 +1,7 @@
 package benchmark
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,6 +92,34 @@ func TestScore_CostPerCorroboratedNilWhenPaidButUnmatched(t *testing.T) {
 	assert.Nil(t, got[0].CostPerCorroboratedFindingUSD, "paid but zero matched findings -> key must be absent, not 0.0")
 }
 
+// Invalid CostUSD values (negative, NaN, +Inf) must not propagate into the
+// public record; the field is omitted instead of emitting garbage that breaks
+// JSON export.
+func TestScore_CostUSDInvalid(t *testing.T) {
+	cases := []struct {
+		name    string
+		costUSD float64
+	}{
+		{name: "negative", costUSD: -1.0},
+		{name: "NaN", costUSD: math.NaN()},
+		{name: "positive infinity", costUSD: math.Inf(1)},
+		{name: "negative infinity", costUSD: math.Inf(-1)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Score([]ReviewerScore{{
+				Model:   "m",
+				Persona: "p",
+				CostUSD: tc.costUSD,
+				Cases:   []CaseScore{{Expected: []string{"correctness"}, Raised: []string{"correctness"}}},
+			}})
+			require.Len(t, got, 1)
+			assert.Nil(t, got[0].CostPerCorroboratedFindingUSD, "invalid cost -> field omitted")
+		})
+	}
+}
+
 // A reviewer that raised nothing scores recall 0 without dividing by zero, and a
 // reviewer with no cases is fully zeroed (Runs 0, no NaN).
 func TestScore_EmptyInputsNoPanic(t *testing.T) {
@@ -123,6 +152,24 @@ func TestScore_StableOnIdentityTie(t *testing.T) {
 	assert.InDelta(t, 1.0, first[0].CorroborationRate, 1e-9)
 	assert.InDelta(t, 0.0, first[1].CorroborationRate, 1e-9)
 	assert.Equal(t, first, second, "repeated scoring is byte-identical")
+}
+
+// A case with empty Expected contributes nothing to recall and must not count
+// in the CorroborationRate denominator — it would silently drag the rate down.
+// Runs and FindingsRaisedAvg still reflect total case volume.
+func TestScore_EmptyExpectedExcludedFromCorroborationRate(t *testing.T) {
+	got := Score([]ReviewerScore{{
+		Model:   "m",
+		Persona: "p",
+		Cases: []CaseScore{
+			{Expected: []string{"correctness"}, Raised: []string{"correctness"}}, // recall 1.0
+			{Expected: []string{}, Raised: []string{"security"}},                 // empty expected
+		},
+	}})
+	require.Len(t, got, 1)
+	assert.InDelta(t, 1.0, got[0].CorroborationRate, 1e-9, "empty-expected case should not drag down rate")
+	assert.Equal(t, 2, got[0].Runs, "Runs counts all cases")
+	assert.InDelta(t, 1.0, got[0].FindingsRaisedAvg, 1e-9, "FindingsRaisedAvg counts all cases")
 }
 
 // Records are sorted deterministically by (model, persona) so the same input

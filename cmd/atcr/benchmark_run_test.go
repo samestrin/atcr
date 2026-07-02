@@ -144,10 +144,11 @@ func TestBenchmarkRun_RoundTripsThroughExport(t *testing.T) {
 		Suite        string `json:"suite"`
 		SuiteVersion string `json:"suite_version"`
 		Reviewers    []struct {
-			Persona           string  `json:"persona"`
-			Model             string  `json:"model"`
-			Runs              int     `json:"runs"`
-			CorroborationRate float64 `json:"corroboration_rate"`
+			Persona                       string   `json:"persona"`
+			Model                         string   `json:"model"`
+			Runs                          int      `json:"runs"`
+			CorroborationRate             float64  `json:"corroboration_rate"`
+			CostPerCorroboratedFindingUSD *float64 `json:"cost_per_corroborated_finding_usd"`
 		} `json:"reviewers"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &sub), "export stdout must be valid JSON: %s", out)
@@ -157,6 +158,8 @@ func TestBenchmarkRun_RoundTripsThroughExport(t *testing.T) {
 	require.Equal(t, "2026-06-25T12:00:00Z", sub.SubmittedAt, "submitted_at uses the run-result's generated_at")
 	require.Len(t, sub.Reviewers, 1)
 	require.Equal(t, "greta", sub.Reviewers[0].Persona)
+	require.NotNil(t, sub.Reviewers[0].CostPerCorroboratedFindingUSD, "cost_per_corroborated_finding_usd must round-trip through the real CLI/export boundary")
+	assert.Contains(t, out, "cost_per_corroborated_finding_usd", "the key itself must be present in the raw export output")
 	require.Equal(t, "m-greta", sub.Reviewers[0].Model)
 	require.Equal(t, 2, sub.Reviewers[0].Runs, "two cases scored")
 	require.InDelta(t, 0.75, sub.Reviewers[0].CorroborationRate, 1e-9, "category recall (1.0 + 0.5)/2")

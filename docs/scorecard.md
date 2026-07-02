@@ -291,7 +291,8 @@ the surface, the less can leak.
 - Envelope: `submission_schema`, `atcr_version`, `submitted_at`
 - Per reviewer: `model`, `persona`, `runs`, `findings_raised_avg`,
   `corroboration_rate`, `survived_skeptic_rate` (omitted when no verification ran),
-  `cost_per_corroborated_finding_usd`, `latency_p50_ms`
+  `cost_per_corroborated_finding_usd` (omitted when zero corroborated findings),
+  `latency_p50_ms`
 
 **Stripped / never exported:**
 

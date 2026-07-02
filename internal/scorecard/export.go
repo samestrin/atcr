@@ -79,7 +79,7 @@ func (a *reviewerAcc) add(r Record) {
 	a.runs++
 	a.raisedTotal += clampNonNeg(r.FindingsRaised)
 	a.corroborated += clampNonNeg(r.FindingsCorroborated)
-	a.costTotal += clampNonNegF(r.CostUSD)
+	a.costTotal = clampNonNegF(a.costTotal + clampNonNegF(r.CostUSD))
 	a.latencies = append(a.latencies, clampNonNeg64(r.LatencyMS))
 	// Any verification pointer present marks the group as verified; the counts
 	// sum only over the runs that actually carried verification data.
@@ -273,6 +273,9 @@ func avgPerRun(total, runs int) float64 {
 // so the caller omits the JSON key rather than emitting a misleading 0.0. A
 // non-nil result is never Inf/NaN (corroborated > 0 is guaranteed by the guard).
 func costPer(totalCost float64, corroborated int) *float64 {
+	// corroborated is always a clampNonNeg-accumulated sum (export.go:81) and can
+	// never go negative; <= 0 (rather than == 0) is kept only for consistency with
+	// the identical guard in avgPerRun (export.go:264).
 	if corroborated <= 0 {
 		return nil
 	}
