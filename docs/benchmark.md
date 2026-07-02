@@ -125,7 +125,7 @@ schema** (the same row shape `export` and `leaderboard --export` emit):
 | `corroboration_rate` | **Category recall** — the macro-average across cases of (distinct `expected_categories` the reviewer surfaced ≥1 matching finding for) ÷ (distinct expected categories). This is the headline benchmark metric. |
 | `findings_raised_avg` | Mean findings raised per case (volume/thoroughness). |
 | `runs` | Number of cases scored. |
-| `cost_per_corroborated_finding_usd` | Recorded cost ÷ findings whose category matched an expected one (0 when the provider reports no usage). |
+| `cost_per_corroborated_finding_usd` | Recorded cost ÷ findings whose category matched an expected one. **Omitted from the JSON entirely** when zero findings matched an expected category — the metric is undefined, not `0.0` (a paid-but-uncorroborated reviewer must not read identically to a genuinely free one). Present as `0.0` only when matched findings exist and the provider reports no usage cost. |
 | `latency_p50_ms` | Median per-case latency over cases with reported usage (0 otherwise). |
 
 > **`corroboration_rate` is repurposed as a recall proxy here.** In a production
