@@ -1,6 +1,7 @@
 package benchmark
 
 import (
+	"math"
 	"sort"
 	"strings"
 
@@ -35,9 +36,9 @@ type ReviewerScore struct {
 // (defense in depth — the same pass BuildSubmission applies — so identity PII can
 // never reach a public submission even from a non-conforming producer).
 //
-// Every CaseScore.Expected must be non-empty: a case with no expected categories
-// contributes zero recall while still counting in the macro-average denominator,
-// silently lowering the reported CorroborationRate.
+// A case with no expected categories contributes zero recall and is excluded
+// from the CorroborationRate denominator so it cannot silently drag the rate
+// down. Runs and FindingsRaisedAvg still reflect total case volume.
 //
 // CorroborationRate carries CATEGORY RECALL: the macro-average across the
 // reviewer's cases of (distinct expected categories the reviewer surfaced at least
@@ -85,14 +86,15 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 		return pr
 	}
 
-	var totalFindings, matchedFindings int
+	var totalFindings, matchedFindings, ratedCases int
 	var recallSum float64
 	for _, c := range r.Cases {
-		expected := normalizeSet(c.Expected)
-		raised := normalizeSet(c.Raised)
+		expected, _ := normalizeSet(c.Expected)
+		raised, normalizedRaised := normalizeSet(c.Raised)
 		totalFindings += len(c.Raised)
 
 		if len(expected) > 0 {
+			ratedCases++
 			hit := 0
 			for cat := range expected {
 				if raised[cat] {
@@ -103,21 +105,24 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 		}
 		// Cost-per-corroborated denominator: every finding whose category matched
 		// an expected (planted) category. Counts findings, not distinct categories.
-		for _, cat := range c.Raised {
-			if expected[normalize(cat)] {
+		// Drive the count off normalizedRaised so normalize() runs once per finding.
+		for _, cat := range normalizedRaised {
+			if expected[cat] {
 				matchedFindings++
 			}
 		}
 	}
 
 	pr.FindingsRaisedAvg = float64(totalFindings) / float64(len(r.Cases))
-	pr.CorroborationRate = clamp01(recallSum / float64(len(r.Cases)))
+	if ratedCases > 0 {
+		pr.CorroborationRate = clamp01(recallSum / float64(ratedCases))
+	}
 	// matchedFindings == 0 leaves the field nil: cost-per-corroborated is
 	// undefined (a priced reviewer that matched nothing must not read the same
 	// as a genuinely free reviewer), so omitempty drops the key entirely. A
 	// non-nil value (including a real 0.0, e.g. a free reviewer with matches)
 	// mirrors the production export path in scorecard.costPer.
-	if matchedFindings > 0 {
+	if matchedFindings > 0 && !math.IsNaN(r.CostUSD) && !math.IsInf(r.CostUSD, 0) && r.CostUSD >= 0 {
 		v := r.CostUSD / float64(matchedFindings)
 		pr.CostPerCorroboratedFindingUSD = &v
 	}
@@ -128,15 +133,20 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 // whitespace-insensitive, mirroring reconcile.ModalCategory.
 func normalize(cat string) string { return strings.ToLower(strings.TrimSpace(cat)) }
 
-// normalizeSet returns the distinct non-empty normalized categories in cats.
-func normalizeSet(cats []string) map[string]bool {
+// normalizeSet returns the distinct non-empty normalized categories in cats
+// and a parallel slice of every normalized value (preserving order, including
+// empty entries) so callers can iterate findings without re-normalizing.
+func normalizeSet(cats []string) (map[string]bool, []string) {
 	set := make(map[string]bool, len(cats))
-	for _, c := range cats {
-		if n := normalize(c); n != "" {
+	normalized := make([]string, len(cats))
+	for i, c := range cats {
+		n := normalize(c)
+		normalized[i] = n
+		if n != "" {
 			set[n] = true
 		}
 	}
-	return set
+	return set, normalized
 }
 
 // clamp01 bounds a rate to [0,1]; a well-formed recall is already in range, this

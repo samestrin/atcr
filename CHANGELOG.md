@@ -1,3 +1,13 @@
+## [Technical Debt] - 2026-07-02
+
+### Fixed
+
+- Clamped the running cost accumulator in benchmark export to prevent +Inf/NaN from propagating into scorecard JSON output.
+- Restored `os.Stderr` correctly when a resumed benchmark run errors during stderr capture.
+- Excluded empty-`Expected` cases from the `CorroborationRate` denominator so it reflects only cases with a defined expected result.
+- Guarded invalid `CostUSD` values in `scoreOne` and removed duplicate `normalize()` calls in the matched-findings loop.
+- Clamped negative `CostUSD` before computing `CostPerCorroboratedFindingUSD`.
+
 ## [15.1.0] - 2026-07-02
 
 Fixed a public leaderboard schema ambiguity where a paid-but-ineffective reviewer (real cost, zero corroborated findings) rendered byte-identical to a genuinely free reviewer.
