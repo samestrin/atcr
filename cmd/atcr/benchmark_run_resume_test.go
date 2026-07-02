@@ -275,7 +275,10 @@ func TestExecuteBenchmarkRun_ResumeReportsReplayedCount(t *testing.T) {
 	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, path)
 	require.NoError(t, err)
 
-	// Capture stderr from the resumed run.
+	// Capture stderr from the resumed run. Restore unconditionally via t.Cleanup,
+	// registered immediately after the swap, so a failing assertion between here and
+	// the fall-through restore below can't leave os.Stderr pointed at this pipe for
+	// every later test in the process.
 	oldStderr := os.Stderr
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
@@ -287,6 +290,12 @@ func TestExecuteBenchmarkRun_ResumeReportsReplayedCount(t *testing.T) {
 		_, _ = io.Copy(&buf, r)
 		close(done)
 	}()
+
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+		_ = w.Close()
+		<-done
+	})
 
 	_, err = executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, path)
 	require.NoError(t, err)
@@ -301,12 +310,11 @@ func TestExecuteBenchmarkRun_ResumeReportsReplayedCount(t *testing.T) {
 	assert.Contains(t, out, "0 remaining to execute")
 }
 
-// TestExecuteBenchmarkRun_ResumeRestoresStderrOnError guards against the leak in
-// TestExecuteBenchmarkRun_ResumeReportsReplayedCount: os.Stderr was swapped for a pipe
-// before the resumed executeBenchmarkRun call, then restored by a plain statement
-// placed after that call — reached only on the happy path. attemptResume below
-// encodes that same naive pattern (restore on success, early return on error) to prove
-// it leaves os.Stderr un-restored when the resumed run errors.
+// TestExecuteBenchmarkRun_ResumeRestoresStderrOnError guards against the leak
+// TestExecuteBenchmarkRun_ResumeReportsReplayedCount used to be exposed to: os.Stderr
+// is swapped for a pipe before the resumed executeBenchmarkRun call and must be
+// restored unconditionally via defer, not by a statement reached only when that call
+// succeeds.
 func TestExecuteBenchmarkRun_ResumeRestoresStderrOnError(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
@@ -324,14 +332,13 @@ func TestExecuteBenchmarkRun_ResumeRestoresStderrOnError(t *testing.T) {
 		r, w, pipeErr := os.Pipe()
 		require.NoError(t, pipeErr)
 		os.Stderr = w
-		defer func() { _ = r.Close() }()
+		defer func() {
+			os.Stderr = oldStderr
+			_ = w.Close()
+			_ = r.Close()
+		}()
 
-		_, err := executeBenchmarkRun(context.Background(), cfg, &failAfterCompleter{ok: 0}, suiteValidPath, gen, path)
-		if err != nil {
-			return
-		}
-		os.Stderr = oldStderr
-		_ = w.Close()
+		_, _ = executeBenchmarkRun(context.Background(), cfg, &failAfterCompleter{ok: 0}, suiteValidPath, gen, path)
 	}
 	attemptResume()
 
