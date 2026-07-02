@@ -5,6 +5,21 @@
 // file writes and interactive prompts live in cmd/atcr/quickstart.go.
 package quickstart
 
+import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"strings"
+)
+
+// syntheticManifest is the bundled default provider/model set. It is regenerated
+// by the scheduled refresh job (cmd/refresh-manifest); keep the shape in sync
+// with Manifest.
+//
+//go:embed synthetic.json
+var syntheticManifest []byte
+
 // Provider describes the synthetic OpenAI-compatible endpoint. Only the env var
 // NAME is carried — the key value is never part of the manifest or any file
 // atcr writes (matching atcr's env-resolved-at-invoke-time posture).
@@ -24,15 +39,85 @@ type Manifest struct {
 	Models    []string `json:"models"`
 }
 
-// LoadManifest parses and validates the embedded synthetic manifest. Stub —
-// implemented in GREEN.
-func LoadManifest() (*Manifest, error) { return nil, nil }
+// LoadManifest parses and validates the embedded synthetic manifest. Validation
+// is defense-in-depth against a malformed refresh: the provider name, base_url,
+// api_key_env, and at least one model are required.
+func LoadManifest() (*Manifest, error) {
+	var m Manifest
+	if err := json.Unmarshal(syntheticManifest, &m); err != nil {
+		return nil, fmt.Errorf("parsing synthetic manifest: %w", err)
+	}
+	if err := m.validate(); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
 
-// SignupLink returns the signup URL with the referral code appended when set.
-// Stub — implemented in GREEN.
-func (m *Manifest) SignupLink() string { return "" }
+// validate rejects a structurally-incomplete manifest so a bad refresh can never
+// generate a broken registry.yaml.
+func (m *Manifest) validate() error {
+	switch {
+	case strings.TrimSpace(m.Provider.Name) == "":
+		return fmt.Errorf("synthetic manifest: provider.name is required")
+	case strings.TrimSpace(m.Provider.BaseURL) == "":
+		return fmt.Errorf("synthetic manifest: provider.base_url is required")
+	case strings.TrimSpace(m.Provider.APIKeyEnv) == "":
+		return fmt.Errorf("synthetic manifest: provider.api_key_env is required")
+	case len(m.Models) == 0:
+		return fmt.Errorf("synthetic manifest: at least one model is required")
+	}
+	for i, model := range m.Models {
+		if strings.TrimSpace(model) == "" {
+			return fmt.Errorf("synthetic manifest: models[%d] is empty", i)
+		}
+	}
+	return nil
+}
+
+// SignupLink returns the signup URL with the referral code appended as a query
+// param when set. A blank referral yields the bare URL — atcr ships without
+// claiming anyone's referral credit; set "referral" in synthetic.json to enable
+// tracking.
+func (m *Manifest) SignupLink() string {
+	if strings.TrimSpace(m.Referral) == "" {
+		return m.SignupURL
+	}
+	sep := "?"
+	if strings.Contains(m.SignupURL, "?") {
+		sep = "&"
+	}
+	return m.SignupURL + sep + "referral=" + url.QueryEscape(m.Referral)
+}
 
 // RegistryYAML renders the ~/.config/atcr/registry.yaml content: the synthetic
 // provider plus one agent per roster persona, bound round-robin across the
-// manifest's models. Stub — implemented in GREEN.
-func RegistryYAML(m *Manifest, roster []string) string { return "" }
+// manifest's models. Each agent's name equals its persona so the roster written
+// to .atcr/config.yaml (persona names) resolves against these agents. The output
+// only uses keys the strict registry loader knows, so it parses cleanly.
+func RegistryYAML(m *Manifest, roster []string) string {
+	var b strings.Builder
+	b.WriteString("# atcr user registry — see docs/registry.md\n")
+	b.WriteString("# Written by `atcr quickstart`. Providers + agents live here; the roster\n")
+	b.WriteString("# (agent names) lives in .atcr/config.yaml. The API key value is NEVER stored\n")
+	b.WriteString("# here — only the env var NAME. Set it in your environment:\n")
+	fmt.Fprintf(&b, "#   export %s=...\n", m.Provider.APIKeyEnv)
+	b.WriteString("providers:\n")
+	fmt.Fprintf(&b, "  %s:\n", m.Provider.Name)
+	fmt.Fprintf(&b, "    base_url: %s\n", m.Provider.BaseURL)
+	fmt.Fprintf(&b, "    api_key_env: %s\n", m.Provider.APIKeyEnv)
+	// Defensive: LoadManifest guarantees >=1 model, but RegistryYAML is exported
+	// and a direct caller could pass an empty set — the round-robin modulo would
+	// panic on len 0. Emit the provider block only rather than crash.
+	if len(m.Models) == 0 {
+		return b.String()
+	}
+	b.WriteString("agents:\n")
+	for i, persona := range roster {
+		model := m.Models[i%len(m.Models)]
+		fmt.Fprintf(&b, "  %s:\n", persona)
+		fmt.Fprintf(&b, "    persona: %s\n", persona)
+		fmt.Fprintf(&b, "    provider: %s\n", m.Provider.Name)
+		fmt.Fprintf(&b, "    model: %s\n", model)
+	}
+	return b.String()
+}

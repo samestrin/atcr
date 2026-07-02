@@ -50,6 +50,17 @@ func TestRegistryYAML_DefinesProviderAndAgents(t *testing.T) {
 	}
 }
 
+func TestRegistryYAML_EmptyModelsDoesNotPanic(t *testing.T) {
+	m := &Manifest{
+		Provider: Provider{Name: "synthetic", BaseURL: "https://x/y", APIKeyEnv: "K"},
+		Models:   nil,
+	}
+	// Must not panic on the round-robin modulo; emits the provider block only.
+	out := RegistryYAML(m, []string{"bruce"})
+	assert.Contains(t, out, "synthetic:")
+	assert.NotContains(t, out, "model:")
+}
+
 // The generated registry.yaml must strict-parse and validate through the real
 // registry loader, and the generated roster must resolve against it — otherwise
 // quickstart would produce a config that fails at first `atcr review`.

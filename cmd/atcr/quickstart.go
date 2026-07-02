@@ -1,9 +1,18 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"github.com/samestrin/atcr/internal/quickstart"
+	"github.com/samestrin/atcr/internal/registry"
+	builtins "github.com/samestrin/atcr/personas"
 )
 
 // quickstartOpts carries the inputs for an `atcr quickstart` run. Streams and
@@ -60,5 +69,50 @@ func runQuickstart(o quickstartOpts) error {
 	if err := runInit(o.dir, o.force, o.out, o.errOut); err != nil {
 		return err
 	}
+
+	manifest, err := quickstart.LoadManifest()
+	if err != nil {
+		return err
+	}
+
+	// The project roster init just wrote lists the persona names; define one
+	// synthetic-bound agent per persona so the roster resolves.
+	if err := writeSyntheticRegistry(o, manifest, builtins.Names()); err != nil {
+		return err
+	}
+	return nil
+}
+
+// writeSyntheticRegistry writes the synthetic provider + agents to the user
+// registry (~/.config/atcr/registry.yaml). It is non-destructive: an existing
+// registry is never clobbered without --force. When one exists and force is off,
+// the generated block is printed for the user to merge by hand rather than
+// silently overwriting their providers/agents.
+func writeSyntheticRegistry(o quickstartOpts, m *quickstart.Manifest, roster []string) error {
+	regPath, err := registry.DefaultRegistryPath()
+	if err != nil {
+		return err
+	}
+	content := quickstart.RegistryYAML(m, roster)
+
+	_, statErr := os.Lstat(regPath)
+	switch {
+	case statErr == nil && !o.force:
+		// Exists and no force: do not touch it. Show the block to merge.
+		_, _ = fmt.Fprintf(o.errOut, "\nA registry already exists at %s — not overwriting it (use --force to replace).\n", regPath)
+		_, _ = fmt.Fprintln(o.errOut, "Add the following synthetic provider + agents to it manually:")
+		_, _ = fmt.Fprintf(o.out, "\n%s\n", content)
+		return nil
+	case statErr != nil && !errors.Is(statErr, fs.ErrNotExist):
+		return fmt.Errorf("cannot check %s: %w", regPath, statErr)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(regPath), 0o755); err != nil {
+		return fmt.Errorf("cannot create %s: %w", filepath.Dir(regPath), err)
+	}
+	if err := os.WriteFile(regPath, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", regPath, err)
+	}
+	_, _ = fmt.Fprintf(o.out, "  created %s\n", regPath)
 	return nil
 }
