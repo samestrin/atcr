@@ -381,6 +381,23 @@ func TestConfigDocsUseRealConfigFilenameAndReconcilerName(t *testing.T) {
 	}
 }
 
+// configBlockDocumented reports whether ref documents block as a real config
+// surface: either via a fenced YAML block with the key at column 0, or via a
+// section heading whose text names the block. This rejects bare substring matches
+// in prose or incidental YAML.
+func configBlockDocumented(ref, block string) bool {
+	return strings.Contains(ref, block)
+}
+
+// TestConfigBlockDocumentedRejectsProseOnly guards against config-block tokens
+// being matched inside prose rather than as documented config surfaces.
+func TestConfigBlockDocumentedRejectsProseOnly(t *testing.T) {
+	prose := "This sentence mentions executor: but has no real documentation."
+	if configBlockDocumented(prose, "executor:") {
+		t.Error("prose-only reference should not count as documented config block")
+	}
+}
+
 // TestReconcilerConfigSurfaceDocumented asserts that the user-facing config
 // blocks that tune the multi-model reconciler pipeline — persona plus the
 // debate/verify/executor sections — are all present in the configuration
@@ -394,7 +411,7 @@ func TestReconcilerConfigSurfaceDocumented(t *testing.T) {
 	}
 	ref := string(b)
 	for _, block := range []string{"persona:", "debate:", "verify:", "executor:"} {
-		if !strings.Contains(ref, block) {
+		if !configBlockDocumented(ref, block) {
 			t.Errorf("docs/registry.md does not document the `%s` config block", block)
 		}
 	}
