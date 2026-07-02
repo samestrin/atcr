@@ -186,6 +186,7 @@ func newRootCmd() *cobra.Command {
 		newRangeCmd(),
 		newStatusCmd(),
 		newInitCmd(),
+		newQuickstartCmd(),
 		newServeCmd(),
 		newDoctorCmd(),
 		newTrustCmd(),
