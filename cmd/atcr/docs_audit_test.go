@@ -181,6 +181,52 @@ func canonicalFlags() map[string]bool {
 	return flags
 }
 
+// reachableFlags returns every long flag usable on the specific atcr command
+// addressed by an invocation's leading bare-word tokens: the resolved (deepest)
+// command's local flags plus every ancestor command's persistent flags (cobra's
+// inheritance), plus the universal --help (every command) and the root-only
+// --version. This is per-command, so a flag defined on `benchmark run` (e.g.
+// --checkpoint) is NOT considered valid on `review`, unlike the global union
+// returned by canonicalFlags().
+func reachableFlags(tokens []string) map[string]bool {
+	flags := map[string]bool{"help": true}
+	cur := newRootCmd()
+	chain := []*cobra.Command{cur}
+	for _, tok := range tokens {
+		if strings.HasPrefix(tok, "-") {
+			break // stop at the first flag; remaining tokens are not subcommands
+		}
+		var next *cobra.Command
+		for _, sub := range cur.Commands() {
+			if sub.Name() == tok {
+				next = sub
+				break
+			}
+		}
+		if next == nil {
+			break // token is not a real subcommand of cur; stop resolving
+		}
+		cur = next
+		chain = append(chain, cur)
+	}
+	add := func(fs *pflag.FlagSet) {
+		fs.VisitAll(func(f *pflag.Flag) { flags[f.Name] = true })
+	}
+	for i, c := range chain {
+		add(c.PersistentFlags()) // ancestors contribute inherited persistent flags
+		if i == len(chain)-1 {
+			add(c.LocalFlags()) // the resolved command contributes its local flags
+		}
+	}
+	// --version is registered only on the root command (added lazily by cobra when
+	// Version is set); it is not inherited by subcommands. A doc that writes
+	// `atcr --version` resolves to root (no bare-word command token → chain len 1).
+	if len(chain) == 1 {
+		flags["version"] = true
+	}
+	return flags
+}
+
 // validateSubcommandChain recursively validates that bare-word tokens following
 // a command group are real subcommands, skipping any --flags that appear before
 // the next subcommand. It reports at most one error per level.
@@ -213,7 +259,7 @@ func validateSubcommandChain(tokens []string, idx int, groups map[string]map[str
 
 // validateInvocationTokens checks a single `atcr ...` token sequence against the
 // compiled command tree and returns any human-readable error messages.
-func validateInvocationTokens(tokens []string, path string, cmds map[string]bool, groups map[string]map[string]bool, flags map[string]bool) []string {
+func validateInvocationTokens(tokens []string, path string, cmds map[string]bool, groups map[string]map[string]bool) []string {
 	var errs []string
 	reFlag := regexp.MustCompile(`^--([a-z][a-z-]+)`)
 	isWord := regexp.MustCompile(`^[a-z][a-z-]+$`).MatchString
@@ -226,6 +272,12 @@ func validateInvocationTokens(tokens []string, path string, cmds map[string]bool
 	default:
 		validateSubcommandChain(tokens, 0, groups, isWord, reFlag, path, &errs)
 	}
+	// Validate each --flag against the flags reachable on the *specific* command
+	// this invocation addresses (per-command inheritance), not the global union of
+	// every flag in the tree. This rejects e.g. `atcr review --checkpoint`, where
+	// --checkpoint is real but belongs to `benchmark run`, matching the per-command
+	// scope the error message claims.
+	flags := reachableFlags(tokens)
 	for _, tok := range tokens {
 		if m := reFlag.FindStringSubmatch(tok); m != nil && !flags[m[1]] {
 			errs = append(errs, fmt.Sprintf("%s references `--%s` on an `atcr %s` command, but no such flag exists", path, m[1], name0))
@@ -243,10 +295,9 @@ func validateInvocationTokens(tokens []string, path string, cmds map[string]bool
 func TestDocsReferenceOnlyRealCommands(t *testing.T) {
 	cmds := canonicalCommands()
 	groups := commandGroups()
-	flags := canonicalFlags()
 	for path, content := range auditedMarkdown(t) {
 		for _, tokens := range atcrInvocations(content, cmds) {
-			for _, err := range validateInvocationTokens(tokens, path, cmds, groups, flags) {
+			for _, err := range validateInvocationTokens(tokens, path, cmds, groups) {
 				t.Errorf("%s", err)
 			}
 		}
@@ -258,8 +309,7 @@ func TestDocsReferenceOnlyRealCommands(t *testing.T) {
 func TestSubcommandValidationSkipsFlags(t *testing.T) {
 	cmds := canonicalCommands()
 	groups := commandGroups()
-	flags := canonicalFlags()
-	errs := validateInvocationTokens([]string{"benchmark", "--json", "frobnicate"}, "fixture", cmds, groups, flags)
+	errs := validateInvocationTokens([]string{"benchmark", "--json", "frobnicate"}, "fixture", cmds, groups)
 	found := false
 	for _, err := range errs {
 		if strings.Contains(err, "frobnicate") && strings.Contains(err, "not a subcommand") {
@@ -281,14 +331,13 @@ func TestSubcommandValidationSkipsFlags(t *testing.T) {
 func TestFlagValidationIsPerCommand(t *testing.T) {
 	cmds := canonicalCommands()
 	groups := commandGroups()
-	flags := canonicalFlags()
 
 	// Wrong-command flags must be rejected.
 	for _, tc := range [][]string{
 		{"review", "--checkpoint"}, // checkpoint belongs to `benchmark run`
 		{"init", "--json"},         // json belongs to `doctor`
 	} {
-		errs := validateInvocationTokens(tc, "fixture", cmds, groups, flags)
+		errs := validateInvocationTokens(tc, "fixture", cmds, groups)
 		found := false
 		for _, err := range errs {
 			if strings.Contains(err, tc[1][2:]) && strings.Contains(err, "no such flag") {
@@ -306,7 +355,7 @@ func TestFlagValidationIsPerCommand(t *testing.T) {
 		{"benchmark", "run", "--checkpoint"},
 		{"doctor", "--json"},
 	} {
-		if errs := validateInvocationTokens(tc, "fixture", cmds, groups, flags); len(errs) != 0 {
+		if errs := validateInvocationTokens(tc, "fixture", cmds, groups); len(errs) != 0 {
 			t.Errorf("expected `atcr %s` to pass, got errors: %v", strings.Join(tc, " "), errs)
 		}
 	}
