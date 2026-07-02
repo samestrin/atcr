@@ -55,21 +55,21 @@ func BuildManifestFromModels(apiResp []byte, base *Manifest) ([]byte, error) {
 func RunRefresh(args []string, in io.Reader, out, errOut io.Writer) int {
 	base, err := LoadManifest()
 	if err != nil {
-		fmt.Fprintln(errOut, "refresh:", err)
+		_, _ = fmt.Fprintln(errOut, "refresh:", err)
 		return 1
 	}
 	apiResp, err := io.ReadAll(in)
 	if err != nil {
-		fmt.Fprintln(errOut, "refresh: reading input:", err)
+		_, _ = fmt.Fprintln(errOut, "refresh: reading input:", err)
 		return 1
 	}
 	result, err := BuildManifestFromModels(apiResp, base)
 	if err != nil {
-		fmt.Fprintln(errOut, "refresh:", err)
+		_, _ = fmt.Fprintln(errOut, "refresh:", err)
 		return 1
 	}
 	if _, err := out.Write(result); err != nil {
-		fmt.Fprintln(errOut, "refresh: writing output:", err)
+		_, _ = fmt.Fprintln(errOut, "refresh: writing output:", err)
 		return 1
 	}
 	return 0
