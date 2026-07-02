@@ -1,0 +1,110 @@
+[
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/docs_audit_test.go",
+    "line": 71,
+    "problem": "Fenced-block state toggles on any line starting with ``` or ~~~, so a code example containing a line like echo \"```\" incorrectly closes the fence and exposes subsequent prose to command parsing",
+    "fix": "Restrict fenced-line matching to shell-prompt ($) lines or require a following flag/argument token",
+    "category": "style",
+    "est_minutes": 15,
+    "evidence": "[brad] 20/if strings.HasPrefix(trimmed, \"```\") // strings.HasPrefix(trimmed, \"~~~\") { inFence = !inFence } toggles on any matching prefix regardless of context / [dax] `if strings.HasPrefix(s, \"atcr \")` inside `capture` matches any line starting with atcr inside a fence, not just commands / [otto] `if strings.HasPrefix(s, \"atcr \")` inside a fence loop",
+    "reviewers": [
+      "brad",
+      "dax",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "LOW vs MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/docs_audit_test.go",
+    "line": 79,
+    "problem": "Fence toggle uses inFence=!inFence without tracking info-strings or handling unbalanced fences, leaving state true for EOF and parsing prose as commands",
+    "fix": "Track fence depth or match explicit closing fences to prevent state leakage on malformed input",
+    "category": "correctness",
+    "est_minutes": 15,
+    "evidence": "if strings.HasPrefix(trimmed, \"```\") // strings.HasPrefix(trimmed, \"~~~\") { inFence = !inFence; continue }",
+    "reviewers": [
+      "greta"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/docs_audit_test.go",
+    "line": 176,
+    "problem": "TestReconcilerConfigSurfaceDocumented uses strings.Contains for persona:/debate:/verify:/executor:, matching those tokens in prose as readily as in a real yaml block",
+    "fix": "Anchor the check to fenced-yaml lines or a start-of-line block pattern rather than a bare substring",
+    "category": "correctness",
+    "est_minutes": 15,
+    "evidence": "[brad] strings.Contains(ref, block) matches prose occurrences of persona:, debate:, etc. / [dax] `strings.Contains(ref, block)` matches `persona:` anywhere in the doc, not just in a config block / [greta] if !strings.Contains(ref, block) { t.Errorf(\"docs/registry.md does not document the %s config block\", block) } / [otto] `for _, block := range []string{\"persona:\", ...} { if !strings.Contains(ref, block) }`",
+    "reviewers": [
+      "brad",
+      "dax",
+      "greta",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "LOW vs MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/docs_audit_test.go",
+    "line": 216,
+    "problem": "TestDocsIndexCoversEveryDoc link regex treats a titled markdown link `](x.md \"title\")` as target `x.md \"title\"`, which fails the .md suffix check and would false-fail if a future index link adds a title",
+    "fix": "Strip a trailing quoted title from the captured target before the .md/anchor checks",
+    "category": "correctness",
+    "est_minutes": 15,
+    "evidence": "[brad] re := regexp.MustCompile(`\\]\\(([^)]+)\\)`) captures x.md \"title\", strings.HasSuffix(target, \".md\") rejects it / [dax] `\\]\\(([^)]+)\\)` captures everything up to the closing paren, including a quoted title / [greta] re := regexp.MustCompile(`\\]\\(([^)]+)\\)`) / [otto] `target = strings.SplitN(target, \"#\", 2)[0]` does not handle titles",
+    "reviewers": [
+      "brad",
+      "dax",
+      "greta",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "LOW vs MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/docs_audit_test.go",
+    "line": 262,
+    "problem": "TestArchitectureDocDescribesReconciler comment claims a fictional-architecture stub would fail, but it only checks 8 substrings exist anywhere, so a buzzword-sprinkled stub passes",
+    "fix": "Strengthen assertion to verify stage ordering, headings, or structural markers instead of bare substring presence",
+    "category": "correctness",
+    "est_minutes": 10,
+    "evidence": "[brad] for _, term := range []string{\"review\", \"reconcile\"...} { if !strings.Contains(lower, term) ... } / [dax] `strings.Contains(lower, term)` for 8 terms; a doc containing only those words in any order passes / [greta] for _, term := range []string{\"review\", \"reconcile\", \"cluster\", \"dedupe\", \"confidence\", \"verify\", \"debate\", \"persona\"} { if !strings.Contains(lower, term) { ... } / [otto] `for _, term := range []string{...} { if !strings.Contains(lower, term) }`",
+    "reviewers": [
+      "brad",
+      "dax",
+      "greta",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "LOW vs MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "cmd/atcr/docs_audit_test.go",
+    "line": 53,
+    "problem": "Root README.md is folded into the atcr.yaml/Reconciler-v2/command/flag audit, so an unrelated future README edit could fail CI in a docs-audit test and surprise contributors",
+    "fix": "Scope drift-token and command checks to docs/ only, or explicitly document the coupling in the test header",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "[brad] paths := append(docs, filepath.Join(root, \"README.md\")) folds root README into auditedMarkdown used by all audit tests / [dax] `auditedMarkdown` includes root README.md; all five audit tests iterate over it / [otto] `paths := append(docs, filepath.Join(root, \"README.md\"))` / [greta] for _, m := range regexp.MustCompile(\"`([^`\\n]+)`\").FindAllStringSubmatch(md, -1) { capture(m[1]) }",
+    "reviewers": [
+      "brad",
+      "dax",
+      "greta",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true
+  }
+]

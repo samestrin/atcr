@@ -1,0 +1,9 @@
+LOW|cmd/atcr/docs_audit_test.go:71|`atcrInvocations` regex is too loose; it captures any line starting with "atcr " inside a fence, potentially flagging prose as commands|Restrict to lines starting with shell prompts ($) or those containing known flags/arguments|style|15|`if strings.HasPrefix(s, "atcr ")` inside a fence loop
+
+LOW|cmd/atcr/docs_audit_test.go:216|`TestDocsIndexCoversEveryDoc` fails on markdown links with titles (e.g. `[text](link.md "title")`) because it doesn't strip the title before the `.md` suffix check|Strip trailing quoted titles from captured targets before validation|style|15|`target = strings.SplitN(target, "#", 2)[0]` does not handle titles
+
+LOW|cmd/atcr/docs_audit_test.go:262|`TestArchitectureDocDescribesReconciler` is a weak keyword check; a "buzzword-sprinkled" stub would pass despite lacking structural accuracy|Strengthen to assert a specific sequence of stages or use a more robust structural check|style|10|`for _, term := range []string{...} { if !strings.Contains(lower, term) }`
+
+LOW|cmd/atcr/docs_audit_test.go:176|`TestReconcilerConfigSurfaceDocumented` uses `strings.Contains` on the whole file, which could match the tokens in a prose explanation rather than a YAML block|Anchor checks to fenced-yaml blocks or start-of-line patterns|style|15|`for _, block := range []string{"persona:", ...} { if !strings.Contains(ref, block) }`
+
+LOW|cmd/atcr/docs_audit_test.go:53|`auditedMarkdown` includes root `README.md` in the command/flag audit, meaning any future README edit might trigger a CI failure in a docs-specific test|Scope drift-token checks to `docs/` only or explicitly document this coupling in the test header|style|10|`paths := append(docs, filepath.Join(root, "README.md"))`

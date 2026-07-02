@@ -1,3 +1,13 @@
+## [Technical Debt] - 2026-07-01
+
+### Fixed
+
+- Validated documented CLI flags per-command instead of against a global flag union, catching flags documented on the wrong subcommand.
+- Fixed subcommand validation to catch bypasses where flags appear after the subcommand token.
+- Fixed docs-index link parsing to strip quoted titles before matching, avoiding false negatives on titled index links.
+- Anchored config-block detection in the docs audit to headings or fenced YAML keys, rejecting prose-only false matches.
+- Strengthened the architecture-doc guard test to assert load-bearing reconciler facts rather than just keyword presence.
+
 ## [15.0.0] - 2026-07-01
 
 Audited the documentation against the current engine and eliminated the drift found, so `docs/` is a trustworthy single source of truth for the upcoming website build.

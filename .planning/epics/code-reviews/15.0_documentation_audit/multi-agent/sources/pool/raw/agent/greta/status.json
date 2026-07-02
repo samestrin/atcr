@@ -1,0 +1,14 @@
+{
+  "agent": "greta",
+  "status": "ok",
+  "findings_count": 5,
+  "duration_ms": 237464,
+  "payload_mode": "blocks",
+  "truncated": false,
+  "files_dropped": [],
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0,
+  "model": "openai/qwen-3.6-plus",
+  "tokens_in": 22874,
+  "tokens_out": 6347
+}
