@@ -17,9 +17,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
+	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -483,22 +485,41 @@ func TestDocsIndexCoversEveryDoc(t *testing.T) {
 	}
 }
 
-// TestArchitectureDocDescribesReconciler asserts that docs/architecture.md
-// contains the key terms of the real multi-model reconciler pipeline (AC3). The
-// required tokens are the pipeline stages (review, reconcile, verify, debate)
-// and the reconciler's core operations (cluster, dedupe, confidence, persona).
-// This is a keyword-presence guard, not a structural guarantee: a stub that
-// sprinkles these terms could pass, but a doc that omits any of them fails.
+// TestArchitectureDocDescribesReconciler asserts that docs/architecture.md both
+// (a) names the key stages/concepts of the real multi-model reconciler pipeline
+// (review, reconcile, verify, debate, cluster, dedupe, confidence, persona) and
+// (b) states the substantive, load-bearing facts about it — the dedupe merge and
+// gray-zone thresholds (cross-checked live against reconcile.MergeThreshold /
+// reconcile.GrayLow) and the ATCR_DISABLE_AST_GROUPING opt-out (AC3). The fact
+// checks mean a doc that keeps the vocabulary but drifts on a real cutoff or
+// env-var name fails, closing the gap where a keyword-only stub would have passed.
 func TestArchitectureDocDescribesReconciler(t *testing.T) {
 	root := repoRootDir(t)
 	b, err := os.ReadFile(filepath.Join(root, "docs", "architecture.md"))
 	if err != nil {
 		t.Fatalf("docs/architecture.md must exist (AC3): %v", err)
 	}
-	lower := strings.ToLower(string(b))
+	doc := string(b)
+	lower := strings.ToLower(doc)
 	for _, term := range []string{"review", "reconcile", "cluster", "dedupe", "confidence", "verify", "debate", "persona"} {
 		if !strings.Contains(lower, term) {
 			t.Errorf("docs/architecture.md does not describe the %q stage/concept of the reconciler", term)
+		}
+	}
+
+	// Beyond keyword presence, assert the substantive claims the doc makes about
+	// the reconciler so an inaccurate rewrite (wrong dedupe cutoff, renamed env
+	// var) fails instead of passing on generic vocabulary. The threshold values
+	// are cross-checked live against reconcile/dedupe.go, so changing the real
+	// constant without mirroring it in the doc breaks this test.
+	facts := []struct{ label, want string }{
+		{"dedupe merge threshold (reconcile.MergeThreshold)", strconv.FormatFloat(reclib.MergeThreshold, 'g', -1, 64)},
+		{"dedupe gray-zone floor (reconcile.GrayLow)", strconv.FormatFloat(reclib.GrayLow, 'g', -1, 64)},
+		{"AST-grouping opt-out env var", "ATCR_DISABLE_AST_GROUPING"},
+	}
+	for _, f := range facts {
+		if !strings.Contains(doc, f.want) {
+			t.Errorf("docs/architecture.md omits the %s (%q); the doc must state this load-bearing fact, not just reconciler vocabulary", f.label, f.want)
 		}
 	}
 }
