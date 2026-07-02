@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 29 | 0 |
-| LOW | 0 | 29 | 0 |
+| LOW | 2 | 29 | 0 |
 
-**Last Modified:** 2026-07-02 | **Open Items:** 0 | **Deferred Items:** 60 | **Resolved Items:** 0 | **Total Items:** 60
+**Last Modified:** 2026-07-02 | **Open Items:** 2 | **Deferred Items:** 60 | **Resolved Items:** 0 | **Total Items:** 62
 
 ## Directory Structure
 
@@ -61,6 +61,13 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
+
+### [2026-07-02] From Sprint: epic-16.0
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/quickstart/workflow.go:34 | Scaffolded consumer CI workflow installs atcr via `go install ...@latest` (unpinned) so a breaking or compromised future release lands silently in consumer CI | Pin the install to a released tag (e.g. @v1) once a stable release exists, or switch the scaffold to the pinned composite action | SECURITY | 15 | execute-epic-stage3 |
+| U | [ ] | LOW | internal/quickstart/workflow.go:37 | Scaffolded CI workflow runs `go install ...@latest`, pinning consumer review CI to a floating version that can change behavior or break without any consumer change | Pin the generated workflow to a released tag (e.g. @v1) rather than @latest | UNDER_ENGINEERING | 15 | execute-epic-independent |
 
 ### [2026-07-02] From Sprint: 15.1_leaderboard-cost-na-rendering
 
