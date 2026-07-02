@@ -1,0 +1,77 @@
+[
+  {
+    "severity": "HIGH",
+    "file": "internal/scorecard/export_test.go",
+    "line": 381,
+    "problem": "TestExport_ClampsNegativeMetrics sets FindingsCorroborated=-2 which clamps to 0 at ingestion, so CostPerCorroboratedFindingUSD is always nil and the nil-guard assertion on that field is dead code, never exercising negative-CostUSD clamping through the non-nil pointer path.",
+    "fix": "Add a second case with positive FindingsCorroborated and negative CostUSD so the clamp is exercised through the non-nil pointer branch.",
+    "category": "testing",
+    "est_minutes": 15,
+    "evidence": "rec.FindingsCorroborated = -2; if r.CostPerCorroboratedFindingUSD != nil { assert.GreaterOrEqual(t, *r.CostPerCorroboratedFindingUSD, 0.0) } — the nil-guard is always taken, the GreaterOrEqual assertion never executes.",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/benchmark/score.go",
+    "line": 115,
+    "problem": "scoreOne now sets CostPerCorroboratedFindingUSD to a *float64 when matchedFindings\u003e0, but the zero-cost-with-matches path (CostUSD==0, matchedFindings\u003e0) yields a non-nil pointer to 0.0 — the benchmark scorer has no test asserting this specific disambiguation case (free+matched vs paid+unmatched).",
+    "fix": "Add a test case: CostUSD=0, matchedFindings\u003e0 → assert NotNil and *v==0.0.",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "TestScore_CostPerCorroboratedNilWhenPaidButUnmatched covers the nil path but no test covers the non-nil-zero path.",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/scorecard/export.go",
+    "line": 99,
+    "problem": "reviewerAcc.finalize() always calls costPer and assigns the result, but costPer now returns nil when corroborated==0 — the nil pointer is assigned and omitempty drops the key, which is correct, but there is no test asserting the nil-assignment path through finalize (the only test of the nil case goes through Export→parseEnvelope, not the accumulator directly).",
+    "fix": "Add a unit test calling finalize on an acc with corroborated==0 and asserting CostPerCorroboratedFindingUSD is nil.",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "pr.CostPerCorroboratedFindingUSD = costPer(a.costTotal, a.corroborated) — no test of finalize with corroborated==0 directly.",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": ".planning/technical-debt/README.md",
+    "line": 67,
+    "problem": "TD item for `internal/scorecard/export_test.go:381` is listed as `LOW` but describes a dead-code/test-gap scenario that could mask regressions in clamping logic",
+    "fix": "Update severity to MEDIUM or refine the \"Problem\" to emphasize the risk of missing regressions",
+    "category": "style",
+    "est_minutes": 5,
+    "evidence": "`TestExport_ClampsNegativeMetrics` sets FindingsCorroborated=-2 which clamps to 0... assertion on that field dead code`",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/scorecard/export_test.go",
+    "line": 103,
+    "problem": "TestExport_CostPerCorroboratedFinding uses a fixed record with FindingsCorroborated=7 and CostUSD=0.04 — the test name and assertion verify the division but the record's FindingsCorroborated is hardcoded in exportRec, making the test fragile to changes in the helper.",
+    "fix": "Extract the expected value from the record's own fields (0.04/7.0) or document the dependency on exportRec's internals.",
+    "category": "testing",
+    "est_minutes": 5,
+    "evidence": "exportRec(\"bruce\", \"claude-sonnet-4-6\", 1) — FindingsCorroborated=7 is an implicit contract of exportRec.",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  }
+]

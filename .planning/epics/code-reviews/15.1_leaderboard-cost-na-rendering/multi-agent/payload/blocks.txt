@@ -1,0 +1,1493 @@
+diff --git a/.planning/epics/active/15.1_core_landing_page.md b/.planning/epics/active/15.1_core_landing_page.md
+deleted file mode 100644
+index 23691a8e..00000000
+--- a/.planning/epics/active/15.1_core_landing_page.md
++++ /dev/null
+@@ -1,92 +0,0 @@
+-# Sprint Plan 15.1: Core Landing Page & Design System
+-
+-- **Estimated time**: 5 days
+-- **Tasks**: 6
+-- **Components**: 2
+-- **Execution**: execute-epic
+-
+-## Context
+-
+-The primary landing page of `atcr.dev` represents the first impression developers have of the tool. It needs to reflect the design system specified in [design-system.md](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/design-system.md): dual-theme, paper-like colors, IBM Plex typography, and a mechanical, high-trust documentation aesthetic. The core visual asset is "The Artifact Viewer" itself.
+-
+-## Problem Statement
+-
+-We need to construct the foundation of the site:
+-1. Build a responsive layout supporting device sizes from mobile viewports (320px) up to widescreen.
+-2. Implement theme switching automatically using `prefers-color-scheme`.
+-3. Support the interactive file tab switching of the artifact view panel (`report.md` / `findings.txt` / `findings.json`) without layout shifts or text wrapping.
+-4. Establish copy-to-clipboard command pill logic.
+-
+-## Proposed Solution
+-
+-1. Port mockup styles to `styles.css` matching colors, typography rules, layout widths, and key components.
+-2. Port index HTML structure to `index.html` ensuring semantic element tags (`<nav>`, `<section>`, `<footer >`).
+-3. Port Javascript animations and events (tab toggles, clipboard copy, scroll reveals) to `script.js`.
+-4. Package assets (such as `favicon.svg` and brand logo marks).
+-
+-## User Personas
+-
+-### Primary: Software Engineer (Devin)
+-- Wants to understand what ATCR does in 5 seconds.
+-- Looks for command-line instructions (`go install`).
+-- Evaluates the readability of output file formats.
+-
+-## User Journeys
+-
+-### Visitor Landing & Command Copy
+-1. Visits `atcr.dev`.
+-2. Scans the hero message ("A review panel, not a reviewer") and watches the scroll reveal animations.
+-3. Clicks through the "Artifact Viewer" tabs (`report.md`, `findings.txt`, `findings.json`) to see differences.
+-4. Clicks the "copy" button on the command pill to copy the installation command.
+-
+-## Acceptance Criteria
+-
+-- [ ] AC1: Page structure utilizes semantic HTML5 tags and has a single H1.
+-- [ ] AC2: All colors (backgrounds, borders, text, severe warnings) strictly map to HSL/Hex specs in the design system.
+-- [ ] AC3: The Artifact Viewer tabs are keyboard-focusable and switch active panes instantly without layout reflows.
+-- [ ] AC4: Clicking the copy button copies `$ go install github.com/samestrin/atcr/cmd/atcr@latest` to the system clipboard and displays a visual check/state change.
+-- [ ] AC5: The design changes themes automatically between light/dark depending on the user's OS settings.
+-
+-## Success Criteria
+-
+-### Functional
+-- [ ] Initial load time of the landing page is under 1.0 second on standard connections.
+-- [ ] Javascript payload is under 5KB and requires zero dependencies.
+-- [ ] Page layout displays correctly on Safari, Chrome, and Firefox.
+-
+-### Business
+-- [ ] Provide clear, accessible CTA buttons leading directly to Docs and Team Edition validation program signups.
+-
+-## Technical Constraints
+-
+-- Vanilla HTML, CSS, and JS only (no React, Svelte, or tailwind utility pollution).
+-- Responsive breakpoint configurations must prevent code wrap in the artifact view panels (using horizontal scrolls).
+-
+-## Non-Functional Requirements
+-
+-### Performance
+-- Total size of HTML/CSS/JS/SVG asset files must be less than 150KB.
+-- Lighthouse performance score must be > 95.
+-
+-### Security
+-- All scripts are inline or local; no external script calls (e.g. CDNs) to protect visitor privacy.
+-
+-## Out of Scope
+-
+-- Model Leaderboard and Personas pages details (covered in Sprint 14.1 and 14.2).
+-- Integration of backend lead tracking databases.
+-
+-## Dependencies
+-
+-- Selected mockup code files from [the-artifact mockups](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/mockups/).
+-
+-## Risks
+-
+-| Risk | Likelihood | Impact | Mitigation |
+-|------|------------|--------|------------|
+-| Font flash (FOUT) | Medium | Low | Use standard system monospaced fonts as fallbacks for IBM Plex Mono |
+-
+-## References
+-
+-- [design-system.md](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/design-system.md)
+-- [index.html mockup](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/mockups/index.html)
+diff --git a/.planning/epics/active/15.1_leaderboard-cost-na-rendering.md b/.planning/epics/active/15.1_leaderboard-cost-na-rendering.md
+new file mode 100644
+index 00000000..48ae0937
+--- /dev/null
++++ b/.planning/epics/active/15.1_leaderboard-cost-na-rendering.md
+@@ -0,0 +1,160 @@
++# Tech Debt: Distinguish free vs paid-but-uncorroborated `cost_per_corroborated_finding_usd`
++
++- **Estimated time**: 1 week
++- **Tasks/Components**: 4/2
++
++## Current State
++
++`scorecard.PublicRecord.CostPerCorroboratedFindingUSD` is a plain non-pointer `float64` with no `omitempty` tag (internal/scorecard/export.go:40). Both the production leaderboard `--export` path and the benchmark scorer therefore emit `0.0` in two very different situations:
++
++1. The reviewer genuinely cost $0 (free/stub model).
++2. The reviewer cost real money but matched zero planted/defect categories.
++
++Because the field has no absent/N/A state, these cases are byte-identical on the public leaderboard, making a paid-but-ineffective reviewer appear as best-in-class efficient.
++
++## Pain Points
++
++### Leaderboard Misreading
++- `cost_per_corroborated_finding_usd == 0.0` is ambiguous: it could mean "free" or "expensive but useless".
++- Readers who look only at cost efficiency cannot distinguish the two without cross-referencing `corroboration_rate` and `findings_raised_avg`.
++
++### Schema Freeze Conflict
++- Epic 10.2 froze `scorecard.PublicRecord` for byte-compatibility with production.
++- Any change to the field type (pointer, omitempty, or companion flag) is a schema change that must be applied to both production and benchmark paths together, not patched locally into the benchmark scorer.
++
++## Evidence
++
++### TD item driving this plan:
++- internal/benchmark/score.go:115-117 — "scoreOne sets CostPerCorroboratedFindingUSD only when matchedFindings>0. A reviewer with real CostUSD>0 but zero matched planted categories reports 0 — byte-identical to a genuinely free reviewer."
++
++### Existing parity precedent:
++- `internal/scorecard/export.go:272-274` — `costPer(totalCost, corroborated)` returns `0` when `corroborated <= 0`.
++- `internal/benchmark/score.go:115-117` — the benchmark scorer uses `if matchedFindings > 0 { ... }`, producing the same `0.0`.
++- `internal/scorecard/export_test.go:121` already asserts "no corroborated findings => 0, never Inf/NaN", confirming `0.0` is the intended sentinel today.
++- `internal/scorecard/export.go:39` — `SurvivedSkepticRate *float64` with `omitempty` already uses the identical pattern (absent key = no data, present key = real value including 0.0) for a different field on the same struct.
++
++## Proposed Solution
++
++**Decided:** change `CostPerCorroboratedFindingUSD` to `*float64` with `omitempty` on `scorecard.PublicRecord`. A nil pointer omits the JSON key (absent = "no corroborated findings, cost-per is undefined"); a non-nil pointer carries the real value, including a genuine `0.0` should that ever occur. This mirrors `SurvivedSkepticRate *float64` (`internal/scorecard/export.go:39`), which already uses this exact pattern on the same struct to distinguish "no verification ran" (key absent) from "verification ran, rate is 0" (key present, value 0.0) — the identical shape of ambiguity this epic addresses for cost-per-corroborated.
++
++Options considered:
++
++1. **Chosen.** Change `CostPerCorroboratedFindingUSD` to `*float64` with `omitempty`. Consistent with the `SurvivedSkepticRate` precedent already on this struct; the field is genuinely optional data, not always-present.
++2. Add a companion enum/boolean field (e.g., `cost_per_corroborated_finding_usd_available`) to disambiguate. Rejected: introduces a second convention for the same "value is optional" problem `SurvivedSkepticRate` already solves with a pointer — unnecessary duplication of an idiom the schema already has.
++3. Keep `0.0` in the raw JSON but update the leaderboard UI/rendering layer to display "N/A" when `corroboration_rate == 0 && findings_raised_avg > 0`. Rejected: no in-repo renderer consumes the exported `PublicRecord` JSON for human display (see Files Affected) — this option has no addressable implementation target in this codebase.
++
++## Scope
++
++### In Scope
++- Change `scorecard.PublicRecord.CostPerCorroboratedFindingUSD` to `*float64` with `omitempty` in `internal/scorecard/export.go` (Option 1, see Proposed Solution — decided, not open).
++- Update production export path (`internal/scorecard/export.go`) to emit the new representation.
++- Update benchmark scorer (`internal/benchmark/score.go`) to match production exactly.
++- Update field-reference documentation (`docs/scorecard.md:242`, `docs/benchmark.md:128`) to describe the new absent/N/A representation.
++- Update tests in both scorecard and benchmark packages.
++
++### Out of Scope
++- Changing benchmark scorer behavior before the schema decision is made.
++- Altering other PublicRecord fields.
++- New leaderboard features beyond the cost-per ambiguity fix.
++
++## Files Affected
++
++| File | Role |
++|------|------|
++| `internal/scorecard/export.go` | Production cost-per computation and PublicRecord schema |
++| `internal/scorecard/export_test.go` | Existing parity tests |
++| `internal/benchmark/score.go` | Benchmark cost-per computation |
++| `internal/benchmark/score_test.go` | Benchmark scorer tests |
++| `docs/scorecard.md` | Field-reference table entry (line 242) for `cost_per_corroborated_finding_usd` — must reflect the new absent/N/A representation |
++| `docs/benchmark.md` | Same field-reference table (line 128) in the benchmark suite output doc |
++
++## Acceptance Criteria
++
++- [ ] AC1: `scorecard.PublicRecord` supports an explicit N/A/absent state for `cost_per_corroborated_finding_usd`.
++- [ ] AC2: Production export emits the new N/A state when `cost > 0 && corroborated == 0`.
++- [ ] AC3: Benchmark run emits the identical N/A state for the same condition.
++- [ ] AC4: All existing scorecard and benchmark tests are updated and pass.
++- [ ] AC5: `docs/scorecard.md` and `docs/benchmark.md` field-reference tables document the new absent/N/A representation for `cost_per_corroborated_finding_usd`, so a reader consulting either doc can distinguish "free" from "paid, caught nothing".
++
++## Success Criteria
++
++- [ ] No paid-but-uncorroborated reviewer is rendered identically to a free reviewer.
++- [ ] Production and benchmark outputs remain byte-compatible where they were previously byte-compatible.
++- [ ] No regressions in existing scorecard or benchmark test suites.
++
++## Risks
++
++| Risk | Mitigation |
++|------|------------|
++| Schema change breaks downstream consumers | Choose the least-breaking option; add migration note to CHANGELOG |
++| Production and benchmark drift apart | Update both paths in the same PR; add a shared helper if possible |
++| Documentation drifts from the new schema | Update `docs/scorecard.md` and `docs/benchmark.md` in the same PR as the schema change (AC5) |
++
++## Rollback Plan
++
++1. Revert the schema change and any documentation updates.
++2. Restore the previous `0.0`-only behavior.
++3. Re-open this epic for re-evaluation.
++
++## References
++
++- `internal/scorecard/export.go:40` — `CostPerCorroboratedFindingUSD` field definition
++- `internal/scorecard/export.go:272-274` — `costPer` helper
++- `internal/benchmark/score.go:115-117` — benchmark cost-per guard
++- `.planning/technical-debt/README.md:62` — source TD row
++
++## Source TD Items
++
++- **Q1** `[internal/benchmark/score.go:109]` — "scoreOne sets CostPerCorroboratedFindingUSD only when matchedFindings>0..."  
++  **Rationale:** The disambiguating signal already exists in sibling columns; the correct home for a real fix is the public-schema/leaderboard-rendering layer, applied to production and benchmark together, not patched divergently into the benchmark scorer. Epic 15.3 is already completed, so a new 15.x sub-plan is required.
++
++## Refinements (2026-07-02)
++
++This section records findings from `/refine-epic` run on July 02, 2026 08:42:17AM. It is additive — original plan content above is preserved.
++
++### Auto-applied corrections (0)
++
++None — no mechanical corrections met the SAFE_AUTOFIX bar.
++
++### Items needing user confirmation (4)
++
++**All 4 applied 2026-07-02** — user reviewed the recommendations and directly approved applying them to the plan body above (Proposed Solution, Scope, Files Affected, AC5, Risks, Rollback Plan, Evidence, References). Left below for provenance/audit trail.
++
++⏸️ **1. Components mismatch — "Leaderboard/UI renderer" has no concrete file target.**
++The plan header claims `Tasks/Components: 4/2`, but the "Leaderboard/UI renderer" row (Files Affected), AC5, and the Risks table all point at a third area with no named file. Investigation: the only in-repo human-readable renderer for a comparable ambiguity is `cmd/atcr/leaderboard.go`'s `renderLeaderboard()`, which operates on the **unrelated** `scorecard.LeaderboardRow` / `scorecard.Aggregate()` path — not `PublicRecord` / `Export()`. That renderer already solved an analogous ambiguity in a prior epic via `LeaderboardRow.HasCostPerCorroborated` (`internal/scorecard/aggregate.go:151-158`), rendering `-` instead of `$0.0000` whenever `FindingsCorroborated == 0` (`cmd/atcr/leaderboard.go:135-138`). There is no in-repo renderer for the exported `PublicRecord` JSON itself — the actual human-readable surface for this schema is the field-reference tables in `docs/scorecard.md:242` and `docs/benchmark.md:128`, which document today's `0.0`-when-none-corroborated semantics and will go stale once the schema changes, but neither doc file is listed in Files Affected.
++Suggested action: replace the "Leaderboard/UI renderer" row with `docs/scorecard.md:242` + `docs/benchmark.md:128` and rescope AC5 to a documentation update — this keeps COMPONENT_COUNT at 2 (`internal/scorecard` + `internal/benchmark`), matching the plan's own claim. If genuine renderer code is intended instead, name the exact file/function; that would raise COMPONENT_COUNT to 3, exceeding `/execute-epic`'s ≤2-component scope guard (see INFO note below).
++
++⏸️ **2. Risks table references a "frontend owner" that doesn't exist in this codebase.**
++Row 3 of the Risks table reads: "Leaderboard UI not updated | Coordinate with frontend owner; add a dedicated AC." No `frontend/`, `web/`, or `site/` directory exists anywhere in this repository — this is a solo-maintained CLI tool with no separate frontend team.
++Suggested action: remove this risk row, or rewrite it as "Coordinate doc updates in `docs/scorecard.md` and `docs/benchmark.md`" consistent with item 1's rescoping.
++
++⏸️ **3. Hidden gated work — the schema-shape decision is unresolved.**
++"Proposed Solution" lists 3 mutually-exclusive options (pointer+`omitempty`, companion bool field, or render-layer-only) and states "the preferred option should be chosen after weighing backward compatibility against clarity" — an undecided design gate, not flagged as `HAS_GATED_WORK`. `/execute-epic`'s linear TDD loop expects T1 ("Schema decision and change") to already have a concrete target before a RED→GREEN cycle can start.
++Suggested action: decide the option now and rewrite T1 concretely — recommend Option 1 (`*float64` + `omitempty`), since Epic 10.0's `SurvivedSkepticRate` (`internal/scorecard/export.go:39`) already establishes exactly this pattern as in-repo precedent — or explicitly flag `HAS_GATED_WORK` and run the decision as a standalone step before `/execute-epic`.
++
++⏸️ **4. Stale line citations for the benchmark cost-per guard.**
++Cited twice, both drifted (comments were added elsewhere in the file since these citations were written): the Evidence section cites `internal/benchmark/score.go:109` and the References section cites `internal/benchmark/score.go:118-120`. Verified against the live file: line 109 is now a closing `}` (end of the inner category-match loop), and lines 118-120 are `return pr` / `}` (func close) / blank — neither location is the guard. The actual guard is:
++```go
++115: if matchedFindings > 0 {
++116:     pr.CostPerCorroboratedFindingUSD = r.CostUSD / float64(matchedFindings)
++117: }
++```
++Suggested action: update both citations to `internal/benchmark/score.go:115-117`.
++
++### Advisory observations (2)
++
++ℹ️ **Scope-guard risk (contingent).** If item 1's "Leaderboard/UI renderer" line resolves to real code changes in `cmd/atcr` rather than the docs-only rescoping recommended above, COMPONENT_COUNT becomes 3, exceeding `/execute-epic`'s ≤2-component limit — the plan would then need `/init-plan` instead.
++
++ℹ️ **Related precedent already in the codebase.** `internal/scorecard/aggregate.go`'s `LeaderboardRow.HasCostPerCorroborated` already solved an analogous ambiguity for the local `atcr leaderboard` table (renders `-` instead of `0.0000` whenever `FindingsCorroborated == 0`, whether the group was free or paid-but-uncorroborated). This is a directly relevant working example the plan should reference when making the schema decision in item 3 — it demonstrates the "companion boolean" shape (Option 2) already shipped and tested (`internal/scorecard/aggregate_test.go`).
++
++### Verification context
++
++- Refinement depth: spot-check
++- Derived TASK_COUNT: 4 (limit: 6)
++- Derived COMPONENT_COUNT: 2 (limit: 2) — see item 1 for the contingent 3rd-component risk
++- COMPONENTS_TOUCHED: internal/scorecard, internal/benchmark
++- VISUAL_SURFACE: false
++- HAS_GATED_WORK: true (see item 3)
++- HAS_CROSS_SYSTEM: true (`PublicRecord` is a frozen public schema per Epic 10.2, consumed outside this repo)
++- Cited references checked: 9 (4 file paths, 5 file:line/symbol citations)
++- Codebase search queries (spot-check): ["leaderboard rendering human-readable table", "PublicRecord export schema cost per corroborated", "reviewerAcc benchmark score aggregation"]
+diff --git a/.planning/epics/active/15.2_docs_and_personas.md b/.planning/epics/active/15.2_docs_and_personas.md
+deleted file mode 100644
+index 906468f3..00000000
+--- a/.planning/epics/active/15.2_docs_and_personas.md
++++ /dev/null
+@@ -1,80 +0,0 @@
+-# Sprint Plan 14.2: Documentation & Reviewer Personas
+-
+-- **Estimated time**: 4 days
+-- **Tasks**: 5
+-- **Components**: 3
+-- **Execution**: execute-epic --strong
+-
+-## Context
+-
+-A command-line developer utility is only as good as its documentation. Developers need to know:
+-1. How to run reviews and reconcile findings.
+-2. How the config schemas are defined.
+-3. Who the individual reviewer personas are (their specializations, focal points, and limitations).
+-This sprint addresses porting and refining the `docs.html`, `faq.html`, and `personas.html` layouts.
+-
+-## Problem Statement
+-
+-We need to provide:
+-1. Fully populated and structured CLI instruction documents covering standard commands (`atcr review`, `atcr reconcile`, `atcr scorecard`).
+-2. An interactive FAQ page handling frequently asked questions regarding offline capabilities, costs, and token consumption.
+-3. A beautiful "Reviewer Directory" showcasing the panel members (dossier cards for Greta, Bruce, Kai, Mira, Otto, etc.) with consistent visual design cues (top keylines reflecting persona accent colors and code sample outputs).
+-
+-## Proposed Solution
+-
+-1. Port mockup structures for [docs.html](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/mockups/docs.html) and [faq.html](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/mockups/faq.html) to the production source.
+-2. Port and format [personas.html](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/mockups/personas.html) structure, ensuring the reviewer dossiers are complete.
+-3. Ensure absolute styling consistency with the shared CSS layout tokens (IBM Plex fonts and HSL colors).
+-
+-## User Personas
+-
+-### Primary: Lead Architect (Alistair)
+-- Needs to review configuration structures and custom rules.
+-- Wants to understand which reviewer personas (e.g. Mira for security, Otto for architecture) should be included in their team review panels.
+-
+-## User Journeys
+-
+-### Reviewing Personas & Reading Docs
+-1. Navigates to the "Personas" page.
+-2. Reads the dossiers for each model persona.
+-3. Navigates to the "Docs" page to see how to enable specific personas in their `atcr.yaml` configuration file.
+-4. Copies example configuration values from the documentation block.
+-
+-## Acceptance Criteria
+-
+-- [ ] AC1: `docs.html` contains detailed references for command execution, configuration parameters, and environment keys.
+-- [ ] AC2: `faq.html` provides a clean accordion-style layout or clear text block segments matching the design theme.
+-- [ ] AC3: `personas.html` renders all reviewers as distinct cards with top color-keylines corresponding to their signature colors (`--src-greta`, `--src-mira`, etc.).
+-- [ ] AC4: Canonical findings on the persona cards are rendered using the dark code artifact block styling.
+-
+-## Success Criteria
+-
+-### Functional
+-- [ ] Tab and anchor links navigate correctly to page segments without offset errors.
+-- [ ] High-contrast readability is preserved for long-form prose.
+-
+-## Technical Constraints
+-
+-- HTML files must use standard relative links (`index.html`, `docs.html`, etc.) for portability.
+-- Avoid external CSS libraries; styling details must reside purely in `styles.css`.
+-
+-## Out of Scope
+-
+-- Integrating live leaderboard data (covered in Sprint 14.3).
+-- Deploying the site to production host environments (covered in Sprint 14.3).
+-
+-## Dependencies
+-
+-- Roster definitions of reviewers from Epic 9.0.
+-- Mockup pages from [mockups directory](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/mockups/).
+-
+-## Risks
+-
+-| Risk | Likelihood | Impact | Mitigation |
+-|------|------------|--------|------------|
+-| Configuration drift between codebase and docs | High | Medium | Verify that code snippets in `docs.html` match the active CLI flags and config structures in the main codebase |
+-
+-## References
+-
+-- [personas.html mockup](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/mockups/personas.html)
+-- [docs.html mockup](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/mockups/docs.html)
+diff --git a/.planning/epics/active/15.3_leaderboard_and_deployment.md b/.planning/epics/active/15.3_leaderboard_and_deployment.md
+deleted file mode 100644
+index 9837d9f4..00000000
+--- a/.planning/epics/active/15.3_leaderboard_and_deployment.md
++++ /dev/null
+@@ -1,84 +0,0 @@
+-# Sprint Plan 14.3: Leaderboard & Production Deployment
+-
+-- **Estimated time**: 5 days
+-- **Tasks**: 6
+-- **Components**: 3
+-- **Execution**: execute-epic --strong
+-
+-## Context
+-
+-The final piece of the `atcr.dev` launch is establishing credibility (via the public model-evaluation leaderboard) and deploying the code so pilot signups can begin. This sprint integrates the evaluation data, sets up lead generation, and configures the automated deployment pipeline to static hosting.
+-
+-## Problem Statement
+-
+-We need to:
+-1. Port and format the evaluation table on the leaderboard page (`leaderboard.html`), displaying real findings and scores generated in Epic 10.0.
+-2. Establish the signup form on the Team Edition page (`team-edition.html`) to capture volunteer teams for the Epic 15.0 pilot program.
+-3. Configure static deployment pipelines (e.g., GitHub Pages or Cloudflare Pages) linked to the `atcr.dev` custom domain.
+-4. Finalize SEO metadata, favicons, and error pages (`404.html`).
+-
+-## Proposed Solution
+-
+-1. Port mockup structures for [leaderboard.html](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/mockups/leaderboard.html) and [team-edition.html](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/mockups/team-edition.html).
+-2. Populate the leaderboard ledger table using evaluation numbers derived from Epic 10.0.
+-3. Hook up the pilot signup form fields to a secure static form provider (such as Formspree, Netlify Forms, or Cloudflare Workers endpoint).
+-4. Configure DNS records for the custom `atcr.dev` domain and create a GitHub Actions deployment workflow.
+-
+-## User Personas
+-
+-### Primary: Software Engineer (Devin)
+-- Wants to compare model performance on the conformance suite to verify reviewer accuracy.
+-- Wishes to sign up their team for the Team Edition Pilot.
+-
+-## User Journeys
+-
+-### Leaderboard Review & Pilot Signup
+-1. Accesses `atcr.dev/leaderboard.html`.
+-2. Inspects model rankings, consensus scores, and benchmark counts.
+-3. Clicks the "Team Edition" navigation link to read the validation program criteria.
+-4. Fills out the pilot application form (team size, stack, pain points, email) and hits submit.
+-5. Receives a friendly confirmation screen.
+-
+-## Acceptance Criteria
+-
+-- [ ] AC1: The leaderboard page correctly displays ranked models with agreement metrics, structured columns, and no styling layout bugs.
+-- [ ] AC2: The Team Edition signup form handles field validations (e.g., email syntax, mandatory fields) and submits payload securely via HTTPS.
+-- [ ] AC3: Submitting the pilot form successfully records lead information and presents a clean thank-you confirmation state.
+-- [ ] AC4: The custom domain `atcr.dev` resolves properly with active HTTPS certificates.
+-- [ ] AC5: Merge events to the `main` branch of the `atcr.dev` repo trigger a GitHub Action that deploys the static files within 2 minutes.
+-
+-## Success Criteria
+-
+-### Functional
+-- [ ] Form submit round-trip takes less than 2 seconds.
+-- [ ] Static pages load correctly over IPv4 and IPv6 networks.
+-
+-### Business
+-- [ ] Form inputs are structured cleanly so the pilot team coordinates can be exported easily in CSV/JSON format for validation tracking.
+-
+-## Technical Constraints
+-
+-- The deployment pipeline must run as an automated GitHub Action.
+-- All secrets (such as Formspree/API target IDs) must be injected securely or kept client-safe via obfuscation or proxy configurations.
+-
+-## Out of Scope
+-
+-- Building a private dashboard for signup management (spreadsheet/email lists are sufficient for validation).
+-- Live performance updating (updates will be batched manually or scheduled weekly).
+-
+-## Dependencies
+-
+-- Conformance benchmarking data generated in Epic 10.0.
+-- Custom domain registration (`atcr.dev`) ownership and DNS provider access.
+-
+-## Risks
+-
+-| Risk | Likelihood | Impact | Mitigation |
+-|------|------------|--------|------------|
+-| Lead capture form gets targeted by spam bots | Medium | Medium | Integrate simple client-side honeypot fields or basic form provider bot protection filters |
+-| DNS propagation delay | Low | Low | Set short TTL values on the DNS records prior to switching the nameservers or custom domains |
+-
+-## References
+-
+-- [leaderboard.html mockup](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/mockups/leaderboard.html)
+-- [team-edition.html mockup](file:///Users/samestrin/Documents/GitHub/atcr.dev/the-artifact/mockups/team-edition.html)
+diff --git a/.planning/epics/active/15.4_leaderboard-cost-na-rendering.md b/.planning/epics/active/15.4_leaderboard-cost-na-rendering.md
+deleted file mode 100644
+index 314800dd..00000000
+--- a/.planning/epics/active/15.4_leaderboard-cost-na-rendering.md
++++ /dev/null
+@@ -1,107 +0,0 @@
+-# Tech Debt: Distinguish free vs paid-but-uncorroborated `cost_per_corroborated_finding_usd`
+-
+-- **Estimated time**: 1 week
+-- **Tasks/Components**: 4/2
+-
+-## Current State
+-
+-`scorecard.PublicRecord.CostPerCorroboratedFindingUSD` is a plain non-pointer `float64` with no `omitempty` tag (internal/scorecard/export.go:40). Both the production leaderboard `--export` path and the benchmark scorer therefore emit `0.0` in two very different situations:
+-
+-1. The reviewer genuinely cost $0 (free/stub model).
+-2. The reviewer cost real money but matched zero planted/defect categories.
+-
+-Because the field has no absent/N/A state, these cases are byte-identical on the public leaderboard, making a paid-but-ineffective reviewer appear as best-in-class efficient.
+-
+-## Pain Points
+-
+-### Leaderboard Misreading
+-- `cost_per_corroborated_finding_usd == 0.0` is ambiguous: it could mean "free" or "expensive but useless".
+-- Readers who look only at cost efficiency cannot distinguish the two without cross-referencing `corroboration_rate` and `findings_raised_avg`.
+-
+-### Schema Freeze Conflict
+-- Epic 10.2 froze `scorecard.PublicRecord` for byte-compatibility with production.
+-- Any change to the field type (pointer, omitempty, or companion flag) is a schema change that must be applied to both production and benchmark paths together, not patched locally into the benchmark scorer.
+-
+-## Evidence
+-
+-### TD item driving this plan:
+-- internal/benchmark/score.go:109 — "scoreOne sets CostPerCorroboratedFindingUSD only when matchedFindings>0. A reviewer with real CostUSD>0 but zero matched planted categories reports 0 — byte-identical to a genuinely free reviewer."
+-
+-### Existing parity precedent:
+-- `internal/scorecard/export.go:272-274` — `costPer(totalCost, corroborated)` returns `0` when `corroborated <= 0`.
+-- `internal/benchmark/score.go:118-120` — the benchmark scorer uses `if matchedFindings > 0 { ... }`, producing the same `0.0`.
+-- `internal/scorecard/export_test.go:121` already asserts "no corroborated findings => 0, never Inf/NaN", confirming `0.0` is the intended sentinel today.
+-
+-## Proposed Solution
+-
+-Introduce an explicit "N/A" or absent state for `cost_per_corroborated_finding_usd` in the public schema, and render it consistently from both production export and benchmark run. Options to evaluate:
+-
+-1. Change `CostPerCorroboratedFindingUSD` to `*float64` with `omitempty` (breaking change; requires leaderboard renderer to handle absent).
+-2. Add a companion enum/boolean field (e.g., `cost_per_corroborated_finding_usd_available`) to disambiguate.
+-3. Keep `0.0` in the raw JSON but update the leaderboard UI/rendering layer to display "N/A" when `corroboration_rate == 0 && findings_raised_avg > 0`.
+-
+-The preferred option should be chosen after weighing backward compatibility against clarity.
+-
+-## Scope
+-
+-### In Scope
+-- Schema decision and change in `internal/scorecard`.
+-- Update production export path (`internal/scorecard/export.go`) to emit the new representation.
+-- Update benchmark scorer (`internal/benchmark/score.go`) to match production exactly.
+-- Update leaderboard/UI rendering to consume the new state.
+-- Update tests in both scorecard and benchmark packages.
+-
+-### Out of Scope
+-- Changing benchmark scorer behavior before the schema decision is made.
+-- Altering other PublicRecord fields.
+-- New leaderboard features beyond the cost-per ambiguity fix.
+-
+-## Files Affected
+-
+-| File | Role |
+-|------|------|
+-| `internal/scorecard/export.go` | Production cost-per computation and PublicRecord schema |
+-| `internal/scorecard/export_test.go` | Existing parity tests |
+-| `internal/benchmark/score.go` | Benchmark cost-per computation |
+-| `internal/benchmark/score_test.go` | Benchmark scorer tests |
+-| Leaderboard/UI renderer | Human-readable display |
+-
+-## Acceptance Criteria
+-
+-- [ ] AC1: `scorecard.PublicRecord` supports an explicit N/A/absent state for `cost_per_corroborated_finding_usd`.
+-- [ ] AC2: Production export emits the new N/A state when `cost > 0 && corroborated == 0`.
+-- [ ] AC3: Benchmark run emits the identical N/A state for the same condition.
+-- [ ] AC4: All existing scorecard and benchmark tests are updated and pass.
+-- [ ] AC5: The leaderboard renderer distinguishes "free" from "paid, caught nothing".
+-
+-## Success Criteria
+-
+-- [ ] No paid-but-uncorroborated reviewer is rendered identically to a free reviewer.
+-- [ ] Production and benchmark outputs remain byte-compatible where they were previously byte-compatible.
+-- [ ] No regressions in existing scorecard or benchmark test suites.
+-
+-## Risks
+-
+-| Risk | Mitigation |
+-|------|------------|
+-| Schema change breaks downstream consumers | Choose the least-breaking option; add migration note to CHANGELOG |
+-| Production and benchmark drift apart | Update both paths in the same PR; add a shared helper if possible |
+-| Leaderboard UI not updated | Coordinate with frontend owner; add a dedicated AC |
+-
+-## Rollback Plan
+-
+-1. Revert the schema change and any renderer updates.
+-2. Restore the previous `0.0`-only behavior.
+-3. Re-open this epic for re-evaluation.
+-
+-## References
+-
+-- `internal/scorecard/export.go:40` — `CostPerCorroboratedFindingUSD` field definition
+-- `internal/scorecard/export.go:272-274` — `costPer` helper
+-- `internal/benchmark/score.go:118-120` — benchmark cost-per guard
+-- `.planning/technical-debt/README.md:62` — source TD row
+-
+-## Source TD Items
+-
+-- **Q1** `[internal/benchmark/score.go:109]` — "scoreOne sets CostPerCorroboratedFindingUSD only when matchedFindings>0..."  
+-  **Rationale:** The disambiguating signal already exists in sibling columns; the correct home for a real fix is the public-schema/leaderboard-rendering layer, applied to production and benchmark together, not patched divergently into the benchmark scorer. Epic 15.3 is already completed, so a new 15.x sub-plan is required.
+diff --git a/.planning/epics/plans/15.0_website_launch_index.md b/.planning/epics/plans/15.0_website_launch_index.md
+deleted file mode 100644
+index 5af7dd7f..00000000
+--- a/.planning/epics/plans/15.0_website_launch_index.md
++++ /dev/null
+@@ -1,77 +0,0 @@
+-# Epic Index 15.0: atcr.dev Website Launch
+-
+-- **Estimated time**: 2 weeks
+-- **Tasks**: 9
+-- **Components**: 3
+-
+-## Context
+-
+-With Epic 13.0 delivering Reconciler v2 semantic deduplication and grouping, ATCR is mature enough to be showcased publicly. However, recruiting pilots for Epic 18.0 (Team Edition Validation) and onboarding early adopters requires a polished, high-fidelity marketing and documentation home. The selected "The Artifact" design concept matches the product's aesthetic: technical, evidence-forward, paper-like, and highly minimal.
+-
+-## Problem Statement
+-
+-1. Personal network recruitment for the Team Edition pilot is insufficient. We need a scaleable, public landing page to capture interest.
+-2. The engine's reviewer personas and CLI usage patterns are documented in repo markdown files, which are hard for non-contributors to read and digest.
+-3. The model evaluation leaderboard (Epic 10.0) needs to be publicly visible to establish brand credibility.
+-4. The website must feel extremely premium, responsive, and follow the site design system (Plex fonts, theme switching, interactive viewer).
+-
+-## Proposed Solution
+-
+-Coordinate the rollout of the `atcr.dev` website launch across 4 sprints:
+-- **[Sprint 15.0: Documentation & Code Review Alignment](../active/15.0_documentation_audit.md)** (Status: Active)
+-- **[Sprint 15.1: Core Landing Page & Design System](../active/15.1_core_landing_page.md)** (Status: Active)
+-- **[Sprint 15.2: Documentation & Reviewer Personas](../active/15.2_docs_and_personas.md)** (Status: Active)
+-- **[Sprint 15.3: Leaderboard & Production Deployment](../active/15.3_leaderboard_and_deployment.md)** (Status: Active)
+-
+-## Acceptance Criteria
+-
+-- [ ] AC1: All 3 sprints completed and integrated into the `atcr.dev` repository.
+-- [ ] AC2: Website passes Lighthouse accessibility and SEO audit with scores > 90.
+-- [ ] AC3: Fully responsive down to 320px mobile viewport (using horizontally scrollable artifact viewports without code wrapping).
+-- [ ] AC4: Dark mode support via system settings (`prefers-color-scheme`) with no visual flash on load.
+-- [ ] AC5: Functional command-copy pill, consensus meter, and tabbed artifact viewer with zero external frameworks.
+-
+-## Success Criteria
+-
+-### Functional
+-- Page initial load under 1.5 seconds.
+-- Interactive artifact tab switching is instantaneous (under 50ms).
+-- Interactive command pills copy CLI instructions cleanly to clipboard.
+-
+-### Business
+-- Establish a reliable signup channel capturing at least 50+ pilot program signups in the first month.
+-- Increase repository stars and external developer engagement.
+-
+-## Technical Constraints
+-
+-- Must be built with pure HTML, vanilla CSS, and vanilla JS (no heavy frameworks like React/Tailwind unless explicitly requested).
+-- Must be deployed via static hosting (GitHub Pages or Cloudflare Pages).
+-- Form signups must route securely to a form collector (e.g., Formspree, Netlify Forms, or Google Sheets integration).
+-
+-## Non-Functional Requirements
+-
+-### Performance
+-- Page weight < 500KB total assets.
+-- Fully offline-testable via relative URLs.
+-
+-### Accessibility
+-- Semantic HTML tags used for all layouts (`<nav>`, `<main>`, `<section>`, `<footer>`).
+-- Contrast ratios pass WCAG AA standards in both light and dark themes.
+-
+-## Out of Scope
+-
+-- Hosting a backend database or user account/login system (handled by third-party form handler or future SaaS epics).
+-- Real-time websocket logs or actual terminal runtime execution on the landing page (uses high-fidelity mockup output files).
+-
+-## Dependencies
+-
+-- Repo mockups and design assets from `~/Documents/GitHub/atcr.dev/the-artifact/`.
+-- Leaderboard evaluations (Epic 10.0) to populate the live standings.
+-- Roster profiles of reviewers (Epic 9.0) to populate the personas page.
+-
+-## Risks
+-
+-| Risk | Likelihood | Impact | Mitigation |
+-|------|------------|--------|------------|
+-| Form integration fails to capture leads | Low | High | Pre-launch test the submit endpoints, setup fallback email alerts, and verify CORS configurations |
+-| Horizontal code blocks break layouts | Medium | Medium | Force horizontal scrolling container overflow style on all `<pre>` and code blocks |
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index 2d50e830..994292c4 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,16 +3,16 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 2 | 0 |
+ | MEDIUM | 0 | 29 | 0 |
+-| LOW | 0 | 28 | 0 |
++| LOW | 1 | 28 | 0 |
+ 
+-**Last Modified:** 2026-07-01 | **Open Items:** 0 | **Deferred Items:** 59 | **Resolved Items:** 0 | **Total Items:** 59
++**Last Modified:** 2026-07-02 | **Open Items:** 1 | **Deferred Items:** 59 | **Resolved Items:** 0 | **Total Items:** 60
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -62,221 +62,227 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
++### [2026-07-02] From Sprint: epic-15.1
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| U | [ ] | LOW | internal/scorecard/export_test.go:381 | TestExport_ClampsNegativeMetrics sets FindingsCorroborated=-2 which clamps to 0 at ingestion, so CostPerCorroboratedFindingUSD is always nil in this scenario and the nil-guard makes the GreaterOrEqual(0.0) assertion on that field dead code, never exercising negative-CostUSD clamping through the non-nil pointer path. | Add a second case (or separate test) with a positive FindingsCorroborated and negative CostUSD so the clamp is actually exercised through the non-nil pointer branch. | EDGE_CASES | 15 | execute-epic-independent |
++
+ ### [2026-07-01] From Sprint: 14.3_diff_chunking_context
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | MEDIUM | internal/fanout/review.go:941 | After the T3 refactor extracted renderAgent, the add closure re-implements mode resolution (forceMode/EffectivePayloadMode, payload lookup, not-found/no-payload errors) at review.go:818-831, but buildAgent (line 941) still contains the identical resolution logic and now has NO production caller — only tests (retry_wiring_test.go, review_scope_inject_test.go, review_test.go, review_tools_test.go) reference it (verified: grep buildAgent internal/ excluding _test shows only the definition). This is dead production code plus two divergent copies of the same mode/payload-resolution logic that will silently drift. (Deferred 2026-07-01: Epic Plan 14.4_fanout_resolution_dedup — kept as-is; buildAgent has no production caller, duplication accepted for now.) | Either delete buildAgent and update the tests to drive buildSlots/renderAgent, or have the add closure call buildAgent for the single-chunk/bulk path so there is one resolution site. Verify no non-test caller exists before deleting and that fallback-wiring tests still pass. | maintainability | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-30] From Sprint: epic-14.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/fanout/grounding.go:54 | out-of-scope category is a blanket grounding-gate exemption in all modes, so an adversarial or hallucinating model can launder a fabricated finding past AC2 by tagging category=out-of-scope in diff/blocks mode | Restrict the out-of-scope exemption to files mode (or require the cited FILE:LINE/EVIDENCE to anchor before honoring it in diff/blocks) — DEFERRED: conflicts with clarification Q2 which chose blanket exemption because out-of-scope is annotated-not-promoted by the reconciler downstream | correctness | 30 | execute-epic-independent |
+ | 1 | [/] | MEDIUM | internal/fanout/grounding.go:47 | groundFindings ignores Result.Tools and Result.PayloadMode, so a tool-enabled or files-mode agent citing a real line it legitimately read outside the changed range is dropped unless it tags out-of-scope or quotes a changed line in EVIDENCE | Thread Tools/PayloadMode into the gate and relax the range/evidence requirement for tool/files agents — DEFERRED: the out-of-scope prompt convention already instructs such agents to tag read-but-unchanged citations, which the gate exempts | correctness | 45 | execute-epic-independent |
+ | 1 | [/] | LOW | internal/fanout/review.go:470 | computeGroundingData builds a fresh gitRunner and re-runs validateRange + --name-status + --unified=0 for a range the payload builder already diffed, duplicating ~4 git subprocesses per review and per resume | Reuse the payload builder's memoized rangeChunks/gitRunner for the same base..head instead of recomputing the zero-context diff | performance | 45 | execute-epic-independent |
+ 
+ ### [2026-06-29] From Sprint: 13.4_brace_language_parsers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:1 | Wasm ABI (alloc/free/parse/emit/pins) duplicated across three parser modules | Extract shared ABI into common guest package | maintainability | 60 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-28] From Sprint: epic-13.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:20 | The alloc/free/emit/pins guest ABI is duplicated across three parser sources (goparser, pyparser, braceparser); the threshold the existing code documents for extraction (parser count > 2) is now crossed | Extract the shared guest ABI into a package referenced via go.mod replace directives coordinated in build.sh | MAINTAINABILITY | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-28] From Sprint: epic-13.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | reconcile/pagerank.go:181 | Authority promotion is silent: no counter or Summary stat records that a HIGH came from authority rather than reviewer count, so a misfiring promotion is only derivable as HIGH-with-a-single-reviewer (Deferred: Epic Plan 13.4) | Add a Summary stat (e.g. AuthorityPromoted int) counting authority-promoted findings for observability; out of v1 scope since the clarification fixed the wire schema | OBSERVABILITY | 30 | execute-epic-independent |
+ 
+ ### [2026-06-27] From Sprint: 13.1_ast_plugin_architecture
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/astgroup/parsers/src/goparser/main.go:39 | The guest pins alloc'd buffers and hands the host int32(uintptr(unsafe.Pointer(&b[0]))) as a stable guest offset, valid only because the current Go GC is non-moving. This is an undocumented runtime invariant, not a language guarantee; a future moving GC makes the packed pointer a dangling offset with no detection. The unsafe alloc/free/emit/node boilerplate is copy-pasted across goparser, pyparser, and the 13.4 brace parsers, so any ABI fix must be applied N times. (Deferred: extraction premature at 2 parsers; epic scope fixed at Go+Python — a future-remedy note is in each parser's ABI section, revisit if parser count grows.) | Extract the shared alloc/free/emit/pins ABI into one internal guest package imported by every parser main.go, and add a build-time note pinning the GC assumption (or switch to an explicitly reserved arena). | maintainability | 120 | code-review | claude | MEDIUM |
+ | U | [/] | MEDIUM | internal/astgroup/parsers/src/pyparser/main.go:112 | scanTripleQuotes and stripComment are quote/escape-unaware. A triple-quote appearing inside a # comment, or a # appearing inside a string literal, flips the multi-line-string state machine the wrong way, so arbitrary spans of real code get classified as string content and dropped from significantLines, silently erasing blocks. The heuristic disclaimer documents the risk but does not bound it: on unusual source the structural hash diverges from the true AST. (Deferred: accepted PoC scope; heuristic limitation already documented at pyparser/main.go:72-78 and 152-156, degrades to proximity grouping.) | Run scanTripleQuotes only over the code portion (skip after an unquoted #) and skip triple-quotes occurring inside single-line strings. Add regression fixtures: a # containing a triple-quote, and a string literal containing #. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-26] From Sprint: 11.0_executing_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/tools/dispatch.go:146 | Tool gating for run_tests/run_script lives only in fanout.wireToolDefs (what the model is TOLD about); Dispatcher.Execute looks up d.handlers[name] with no check that the call was offered to the calling agent, and EnableExecution registers the exec handlers on the single dispatcher shared by the whole pool. The read-only guarantee for non-exec agents is therefore advisory, not structural — if any future caller enables exec non-uniformly across agents sharing one dispatcher, a non-exec agent could invoke run_script by simply naming it. No live exploit today: the sole exec caller, verify, sets exec uniformly for all skeptics. (Deferred: Epic Plan 11.1) | Pass the agent's allowed tool set (or Exec flag) into Execute and reject any call whose name was not offered to this agent, or gate the exec handlers behind a per-call capability rather than a globally-registered handler. Verify with a test where a non-exec agent emits a run_script tool_call and asserts it is refused. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-25] From Sprint: epic-11.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/tools/exec_tools.go:69 | Execution tools are gated per-agent only at the definition level (wireToolDefs); the shared per-run dispatcher will execute a run_tests/run_script call from any agent once EnableExecution is wired. The sandbox isolates every run identically so this is not a containment gap, but a non-designated agent could still incur execution cost. (Deferred: .planning/epics/active/11.1_dispatcher-structural-gating.md — exec_tools.go:69 is a data struct, not a gating point; the offering-layer gate is already structural, and a runtime per-call guard is the multi-file change scoped to Epic 11.1) | Thread agent exec-eligibility into the dispatcher (or add a per-call guard) so only designated agents execute, for precise cost attribution. | SECURITY | 30 | execute-epic-stage3 |
+ 
+ ### [2026-06-23] From Sprint: 8.0_reconciler_library
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | internal/reconcile/discover.go:25 | `internal/reconcile` keeps its discovery `Source` (Name + `[]stream.Finding` + Skipped + SkippedFiles); the library now defines a public `Source` (Name + `[]Finding`) | moved `Reconcile` takes the library `Source`; discovery output (`discover.Source`) is converted to `reconcile.Source` in the adapter/discovery layer | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | MEDIUM | unknown:0 | [Story 01 / Story 06] DoD item not implemented: both CI jobs (root ci.yml + reconcile-module PR-time job) must be marked as REQUIRED status checks on the main branch-protection rule. The CI workflow deliverables they depend on are all present and verified; only the protection-rule toggle is unset. The two story-level [ ] boxes (AC 01-06, AC 06-02) are the same single external action. (intent_note: deferred per sprint-plan Final Phase / dod-completion-summary.md (external repo-admin action)) | Configure branch protection in GitHub repo Settings -> Branches: add the root CI job and the reconcile-module PR-time job as required status checks. External repo-admin UI action (post-merge), not a source-tree change; documented deferred in dod-completion-summary.md. | docs | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: 7.3_github_action_pr_integration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 6 | [/] | MEDIUM | cmd/atcr/github.go:148-167 | Sequential inline comment posting is slow for PRs with many findings (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ | 6 | [/] | LOW | cmd/atcr/github.go:148-167 | Conclusion is computed twice for the same findings/failOn inputs (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: epic-7.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/verify/syntaxguard.go:130 | An unfenced multi-line JSON/config snippet with block braces can still satisfy looksLikeGoCode and be parsed as Go, producing a spurious invalid_syntax flag on non-Go content (residual after heuristic hardening). | Detect obviously non-Go brace content (JSON object / key:value lines) before treating block braces as a Go signal; deferred as a separate design refinement (unfenced non-Go fixes are rare; fenced non-Go is already handled). [Deferred 2026-06-22 to Epic Plan 7.5 syntax-guard-refinements per clarification] | EDGE_CASES | 30 | execute-epic-independent |
+ 
+ ### [2026-06-22] From Sprint: 7.0.1_executor_model_configuration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 7 | [/] | LOW | internal/registry/config.go:524 | Potential prompt injection via system_prompt (Won't-fix: config.go:531–534 explicitly documents that control chars are intentionally NOT rejected in system_prompt; the --- delimiter added at executor.go:225 eliminates the CRLF metadata-forgery surface; otto's fix conflicts with the documented design decision) | Add control character validation to SystemPrompt | security | 15 | code-review | otto | MEDIUM |
+ 
+ ### [2026-06-21] From Sprint: epic-6.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/debate/debate.go:165 | Gray-zone cluster merge/separate rulings are recorded in debate.json but not physically applied to findings.json; clusters still resolve via the existing adjudication path (Deferred: Epic Plan 6.1) | Wire the judge cluster decision into the reconcile adjudication application so unattended runs auto-merge gray-zone clusters inline | INTEGRATION | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-20] From Sprint: epic-5.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/cache/store.go:115 | Eviction does a full ReadDir+Stat of the cache dir on every Put even when under the cap; O(n) per write scales poorly if the cache accumulates thousands of entries (Won't-fix 2026-06-21: scan runs serially under the store mutex and LLM calls dominate latency; no Epic 5.2 perf criterion requires O(1) Put — added state not justified at LOW) | Maintain a running total-size counter and skip the directory scan when it is under the cap, or evict only on a periodic/threshold basis | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-06-20] From Sprint: epic-5.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/report/render.go:317 | The "File not found" warning format string is duplicated across internal/reconcile/emit.go (writeFindingsList) and internal/report/render.go (writePathWarning) in separate packages | Extract a shared constant/helper only if a common low-level rendering package emerges; a cross-package dependency is not justified for one format string today (Won't-fix 2026-06-21: two independent format strings across packages with no shared dependency; the recorded fix confirms extraction is not justified at this scope) | CROSS_CUTTING | 15 | execute-epic-cumulative |
+ | U | [/] | MEDIUM | internal/reconcile/reconcile.go:26 | Validation root is hardcoded to "." at every call site, so "atcr reconcile <path>" for a review of another repo, or running from a non-repo-root CWD, falsely flags every finding as "file not found" | Thread the reviewed repo root explicitly or add a --repo flag, applied consistently with the verify stage which uses the same "." convention (Deferred 2026-06-21: the narrow Root: os.Getwd() variant is a no-op — filepath.Abs(".") already equals the CWD, so it would not fix the non-repo-root / other-repo case; the real fix is to plumb the reviewed-repo path explicitly via a --repo flag threaded through the reconcile and verify call sites, est 60) | EDGE_CASES | 60 | execute-epic-independent |
+ 
+ ### [2026-06-20] From Sprint: 4.7.1_backup-swap-hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:318 | backupExisting() unconditionally RemoveAll's <path>.bak.old and <path>.bak.new at entry, but forceBackupOutputDir() only calls guardForeignBackup(dir+".bak") — the two staging siblings are not guarded. On an arbitrary --output-dir a user who owns <output-dir>.bak.old or <output-dir>.bak.new has it silently deleted by --force, re-opening the Epic 4.7 "never silently delete user data" contract. NOTE: epic clarification Q4 deliberately scoped the guard to .bak only (atcr-internal suffixes); this finding re-raises that decision as worth reconsidering, not a defect against the recorded scope. (intent_note: deferred per epic §Clarifications Q4 — extending guardForeignBackup to .bak.old/.bak.new is out of scope) (Won't-fix 2026-06-20: binding Epic 4.7.1 Q4 — guard stays scoped to .bak; .bak.old/.bak.new are atcr-owned staging names cleared by entry-time RemoveAll; confirmed via /sprint-clarification 95%) | In forceBackupOutputDir() (reviewdir.go:440) extend the guard to guardForeignBackup(dir+".bak.old") and guardForeignBackup(dir+".bak.new") before backupExisting, or refuse if either exists non-empty. Add a test pre-creating a foreign <output-dir>.bak.old with user content and assert --force errors instead of deleting it. | security | 60 | code-review | claude | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:373 | The advertised "an interrupted swap never leaves the user with neither generation" invariant is conditional on a best-effort SILENT restore succeeding. If restorePriorBackup's os.Rename(backupOld,backup) fails (e.g. backup partially recreated, or perms change), the only surviving copy is stranded under .bak.old — which the very next run's entry-time RemoveAll(backupOld) (line 318) then deletes. Same pattern at the copy site swapStagedBackup (atomic.go:159-167) feeding atomic.go:97 RemoveAll(bakOld). (Won't-fix 2026-06-20: observability half done (restore failure now logged); the lone-.bak.old-as-generation redesign is rejected per Epic 4.7.1 Q3 — .bak.old is atcr-owned temp deleted at entry, one-generation contract + TestBackupExisting_CleansStaleStagingStragglers stand; confirmed via /sprint-clarification 95%) | Surface restore failures loudly (log/return) instead of dropping them, and/or do not auto-RemoveAll .bak.old at entry when .bak is absent — treat a lone .bak.old as the surviving generation to recover. Add a test where restore fails and a subsequent run is asserted not to delete the only surviving copy. | correctness | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir.go:388 | backupCrossDevice's inner os.Rename(backupNew,backup) relies on backupNew and backup sharing a filesystem, an invariant that holds only by naming coincidence (both are siblings of path). If anyone later relocates backupNew under path, the inner rename silently becomes cross-device and returns a raw EXDEV to the user. (Won't-fix 2026-06-20: same-fs invariant holds by construction — backup and backupNew are both siblings of path; a runtime guard would be unreachable dead code today and is already documented at reviewdir.go:415-419; confirmed via /sprint-clarification 90%) | Add a test that forces renameFn to return syscall.EXDEV and makes the copy fail (a copy seam, or unreadable src), staging a prior .bak first; assert the prior .bak content is restored intact, the live tree survives, and .bak.new is cleaned up. Cover the copy-failure leg at minimum. | testing | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir_test.go:458 | Test-coverage gaps in the failed-swap/cleanup paths: TestBackupExisting_FailedSwapPreservesPriorBak asserts no .bak.old straggler but not .bak.new; the non-ErrNotExist Lstat(backup) error branch (reviewdir.go:333-335) is untested; the entry-time RemoveAll straggler-cleanup failure legs (reviewdir.go:318-323) are untested. Each is a real error branch a regression could silently break. | Add assert.NoDirExists for src+".bak.new" at reviewdir_test.go:458; add a perms-based test forcing Lstat(backup) to fail with a non-ErrNotExist error; add a test where .bak.old cannot be removed and assert the typed "clearing stale staging backup" error. Skip on root/CI where perms are not enforced. (Partial 2026-06-21: gaps 1 (.bak.new assertion) and 3 (RemoveAll(.bak.old) failure) covered; gap 2 (non-ErrNotExist Lstat(backup)) deferred — needs an lstatFn production seam since the staging siblings share a parent dir so perms cannot isolate it) | testing | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-19] From Sprint: 4.7_idempotency
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:284 | backupExisting() does os.RemoveAll(backup) then os.Rename(path, backup); BackupToDotBak() does os.RemoveAll(bak) then copyTree. If the rename/copy fails (cross-filesystem EXDEV when --output-dir and its .bak sibling are on different mounts, disk-full mid-copy, or SIGKILL), the single prior backup generation is already destroyed while the new backup is absent or partial. The live/original tree is preserved (good), but the one recoverable prior .bak is lost for no benefit — counter to the safe-to-retry goal. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 4.7.1) | Stage the new backup first: copy/rename into <path>.bak.new (or rename old .bak aside to .bak.old), confirm it is complete, then swap and only then remove the old generation. For backupExisting, attempt os.Rename before RemoveAll so a failed rename leaves the old .bak intact; detect EXDEV and fall back to copy+remove. Add a fault-injection test asserting the prior .bak survives a failed swap. | correctness | 120 | code-review | code-reviewer, claude | HIGH |
+ 
+ ### [2026-06-19] From Sprint: 4.5_circuit_breaker
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | MEDIUM | internal/fanout/metrics.go:37 | recordAgentOutcome zeroes apiCalls for any result whose error unwraps to context.DeadlineExceeded/Canceled, assuming no request was made. But a per-agent timeout routinely fires AFTER real HTTP round-trips (and mid tool-loop after several Chat turns already hit the wire), so atcr_api_calls_total undercounts real provider traffic exactly when a provider is degraded. The no-request assumption is only provably safe for CircuitOpenError and pre-first-send cancellation. (Deferred: Epic Plan 4.11) | Use max(1, r.Turns) for the deadline case instead of a flat 0, or thread a real calls-attempted counter out of the client rather than inferring from the terminal error class. Keep the apiCalls=0 path only for CircuitOpenError. | performance | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-18] From Sprint: epic-4.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/validation/validation.go:62 | System-dir denylist covers only /etc, /proc, /sys, leaving /boot, /dev, /root, /var and ~/.ssh writable via --output-dir / --output (deliberate Option-B permissive choice) (Won't-fix: intended Option-B policy per epic 4.3 clarifications 2026-06-18; revisit only on a concrete isolation requirement) | If stronger isolation is later required, switch to an allowlist anchored at the repo/.atcr root instead of a denylist | SECURITY | 30 | execute-epic-independent |
+ | 1 | [/] | LOW | internal/validation/validation.go:86 | Severity and Enum validators are shipped but wired to nothing (ParseSeverity/ValidFormat remain the live paths); they exist only to satisfy AC5/AC7 and future use (Won't-fix: intentionally public for AC5/AC7 per epic 4.3 clarifications; deletion breaks ACs, wire-in out of scope) | Revisit and delete if no caller adopts them within a release, or wire them in where duplication can be removed | OVER_ENGINEERING | 15 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/registry/attribution.go:55 | attribute() recurses and reconstructs the join even for a single-error errors.Join (which still satisfies Unwrap() []error), a small avoidable cost on the load-time validation path | Optionally short-circuit when len(children)==1 if profiling ever flags it (WON'T-FIX 2026-06-18: trigger unmet — error-path only, never hit on normal load; no perf AC in epic 4.2) | INTEGRATION | 5 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.1.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/fanout/review.go:361 | If a server shutdown (or CLI SIGINT) fires after all agents already succeeded but before ExecuteReview's interrupted := errors.Is(ctx.Err(), context.Canceled) check, a fully-completed run is stamped Interrupted=true and status.go:216 overrides RunCompleted to RunInterrupted (a false interrupted; inverse of AC4). Pre-existing in the CLI-shared path, newly reachable via MCP shutdown. | Gate the interrupted marker on at least one agent ending in StatusTimeout/cancelled rather than purely on parent ctx.Err()==Canceled. NOTE: touches CLI-shared review.go (out of scope for epic 4.1.2's MCP-only change); window is microscopic and outcome benign (resume no-ops a complete run) - separate design. (WON'T-FIX 2026-06-18: --resume self-healing via ClearInterrupted (resume.go:220) already recovers a stale interrupted-on-complete; revisit in a backlog sprint if insufficient) | CORRECTNESS | 30 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: epic-4.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:88 | Serve-mode background fan-out runs under context.WithoutCancel(ctx) so a SIGINT to the MCP server never cancels or marks an in-flight detached review interrupted; it is allowed to finish (intended MCP design) but never gets the interrupted marker CLI mode promises. (Deferred: Epic Plan 4.1.2) | Decide whether detached MCP reviews should be marked interrupted on server shutdown; if so, thread a cancellable/interrupt-aware context or post-hoc marker into the background review path — a separate design from this CLI-focused epic. | REGRESSION_RISK | 60 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: 4.0_structured_logging
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/review.go:172 | Both review entry points call `NewRedactor(root)` with ZERO configured secrets — cmd/atcr/review.go:172 and internal/mcp/handlers.go:87 pass only the path root, never the registry API keys. The exact-value secret-scrubbing loop in Redact is therefore dead in production; redaction relies entirely on the `sk-`/`Bearer` regexes, which miss raw provider keys that lack those prefixes (Google `AIzaSy...`, Azure `api-key`, JWTs `eyJ...`). The AC5 "no API key in log output" guarantee holds only for sk-/Bearer-shaped keys; the passing integration test likely uses an sk- key, masking the gap. (Deferred: Epic Plan 4.9 secret-value-redaction) | Thread resolved registry API key values into `NewRedactor(root, keys...)` at both review.go:172 and handlers.go:87 (keys are discoverable from prep.Slots / cfg.Registry). Add an integration test using a non-sk-shaped key (e.g. `AIzaSy...`) asserting it is redacted. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: 3.5_severity-rank-consolidation
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:18 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:30 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestGrayZoneNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:42 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNoDisagreementOnCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: epic-3.5
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/stream/severity.go:20 | The canonical SeverityRank map carries a read-only-after-init invariant in a comment only, with no test guard preventing a future caller from mutating the shared map (which would race across concurrent fan-out agents). (Won't fix: structural guard — reconcile copy-on-init at merge.go:29-31 means no consumer writes stream.SeverityRank directly; grep confirms zero write sites across consumers. Snapshot test trips the over-simplification gate; Rank() accessor cascades to 14+ direct-lookup sites — both out of pure-consolidation scope.) | Add a stream test that snapshots the map and asserts it is unchanged after consumers run, or wrap it behind a Rank(sev) accessor. | OBSERVABILITY | 20 | execute-epic-independent |
+ 
+ ### [2026-06-16] From Sprint: 3.4_scorecard-diagnostics-writer
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:118 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; the diagnostic already routes to the injectable writer, only fmt.Fprintf's own return is dropped; propagating it breaks Emit's never-fail contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:199 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; Append loop already surfaces firstErr; propagating the Fprintf return breaks the best-effort contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:235 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verdictTallies already writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:248 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verification-read-failed diagnostic writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:276 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; orphan-verdict diagnostic routes to injectable w, locked by TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/scorecard_test.go:291 | Epic 3.4 added unit tests proving EmitOpts.Diag / ReadOpts.Writer routing at the scorecard layer, but there is no test asserting the wiring itself — that the MCP handler passes a non-default writer or that the three CLI entry points pass cmd.ErrOrStderr(). This plumbing can silently regress (a future refactor swaps cmd.ErrOrStderr() back to a default and no test fails). (Deferred: Epic Plan 3.6 scorecard-wiring-tests) | Add a CLI-level test that drives a scorecard command against a deliberately-malformed store and asserts the read diagnostic reaches the command's ErrOrStderr buffer; once MCP diagnostics route through e.log, add a handler-level test asserting against a captured logger buffer. | testing | 60 | code-review | claude | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:114 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; over-long-line warning uses injectable w via diagWriter; read continues; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:145 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; decodeRecord writes to injectable w then returns (Record,bool) — no error cascade) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:155 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; schema-version skip writes to injectable w; identical to malformed-record path) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/store.go:194 | Redundant call to diagWriter (Wontfix: FALSE POSITIVE — diagWriter is the required typed-nil guard for the nil-able opts.Writer interface, not redundant; removing it reintroduces the panic fixed by commit 476c6d1) | Remove diagWriter call and use opts.Writer directly since ReadRecords already resolves it | performance | 2 | code-review | otto | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:211 | Error from diagWriter is silently discarded (Wontfix: FALSE POSITIVE — `_, _ = fmt.Fprintf` is the documented best-effort never-panic diagnostics contract at store.go:22-24; returning the write error would regress a successful read on a broken sink and logging is circular; confirmed working as designed via /sprint-clarification 97%) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:220 | The MCP engine carries a structured *slog.Logger (e.log) used for every other diagnostic in handleReconcile (e.g. the require_verified warning at line ~225), but scorecard diagnostics are routed to raw os.Stderr, so MCP-path scorecard write-failures/malformed-record/orphan-verdict warnings emit as unstructured plaintext that bypasses the logger's level filtering, formatting, and sink redirection. NOTE: this was a DELIBERATE, documented epic decision (Clarifications Q2: supply os.Stderr at the call site; adapting e.log to an io.Writer was explicitly OUT of scope), so this is enhancement debt, not a regression. (intent_note: deferred per epic Clarifications Q2 — adapting e.log to an io.Writer is out of scope) (Wontfix: ACCEPTED ENHANCEMENT DEBT — handlers.go:220 is an unconditional EmitOpts{Diag: os.Stderr} call, not deferred logic; all five Epic 3.4 ACs are met and the comment at handlers.go:214-219 satisfies AC4; e.log→io.Writer adaptation is out of scope per Clarifications Q2; confirmed via /sprint-clarification 97%) | If MCP observability is later desired, adapt e.log into an io.Writer shim (slog-backed at Warn level) and pass it as Diag instead of os.Stderr, so MCP-path scorecard diagnostics flow through the same structured pipeline as the rest of the handler. Defer unless/until structured MCP diagnostics are required. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-15] From Sprint: 3.3_per-run_scorecard
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go (FindByRunID adjacent-month notice; ReadRecords malformed-line notice); internal/scorecard/scorecard.go (Emit notices) | Store/emit diagnostics ("skipping malformed record", "run spans adjacent month files", "write failed") are written directly to the process-global `os.Stderr` rather than to a writer threaded from the cobra command (`cmd.ErrOrStderr()`). (Deferred: Epic Plan 3.4) | accept an `io.Writer` (or logger) on the store/emit entry points and have the CLI pass `cmd.ErrOrStderr()`, so warnings are capturable and redirectable. | ops | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-06-14] From Sprint: 3.2_disagreement_radar
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/reconcile/disagree.go:280 | Duplicate writeRadarSection rendering logic risks divergent escaping across packages (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Consolidate radar rendering into report package; reconcile should call report.writeRadarSection | security | 20 | code-review | greta | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/disagree.go:350 | Duplicated radar section rendering logic (Deferred: Epic Plan 7.2) | Extract shared writeRadarSection to a common package | maintainability | 10 | code-review | bruce | MEDIUM |
+ | 4 | [/] | MEDIUM | internal/reconcile/disagree.go:354 | Duplicated radar markdown rendering diverges (Deferred: Epic Plan 7.2) | Extract shared writer or make reconcile use report package's escTrunc | maintainability | 10 | code-review | bruce | MEDIUM |
+ | U | [/] | LOW | internal/reconcile/disagree.go:413 | Redundant implementation of writeRadarSection (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Remove duplicate function from internal/reconcile and use internal/report | maintainability | 15 | code-review | otto | MEDIUM |
+ | 5 | [/] | MEDIUM | internal/report/disagree.go:47 | The radar markup is rendered by two divergent copies: writeRadarSection + formatScore in internal/report/disagree.go and a structurally different copy in internal/reconcile/disagree.go:389. They are intentionally not identical (report copy truncates via escTrunc + uses joinReviewers/reviewerOrUnknown; reconcile copy uses uncapped esc + joinOrNone), so a future markup change (new field, reordered bullets) must be made in both or the live `atcr report` radar and the archival reconciled/report.md silently drift. (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Extract one shared item renderer parameterized by a truncate-vs-verbatim flag and heading prefix; have both call sites delegate. Add a test that diffs the rendered markup of both paths on the same DisagreementsFile asserting the only intended difference is truncation. | correctness | 60 | code-review | bruce, claude | HIGH |
+ 
+ ### [2026-06-14] From Sprint: 2.2_code_review_fanout_hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | MEDIUM | internal/fanout/postprocess.go:14 | The severity-rank rubric {CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1} is independently redefined in fanout/postprocess.go:17, reconcile/merge.go, verify, report, plus a set-form copy reviewSeverities in registry/config.go. postprocess looks up severityRank[strings.ToUpper(...)] while reconcile looks up the raw value, so a future severity change or non-canonical casing silently desyncs fan-out truncation from reconcile merging. The postprocess copy was newly added by Epic 2.2. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 3.5) | Extract a single canonical severity package (or export from internal/stream) exposing the ordered rank map plus normalizeSeverity, and have registry/fanout/reconcile/verify/report consume it. Verify by deleting the local maps and confirming the suite passes with one source of truth. | maintainability | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-14] From Review: llmclient OpenAI-compatible tool handling
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | U | [/] | LOW | internal/llmclient/chat.go:1 | No provider-conformance test matrix for the OpenAI-compatible surface. The client deliberately absorbs real wire divergence (string-encoded vs raw-object tool_call `arguments`, lenient finish_reason) but is exercised only against synthetic fixtures, so a regression against a specific provider's actual tool_call shape (OpenAI, litellm, Ollama, vLLM, Together) would not be caught. This is the robustness the official SDK is assumed to provide, achievable here without adopting it. | Add a recorded-fixture conformance suite: capture a real `tool_calls` response from each target provider and assert the parser (`ToolCallArguments`, `chatToolResponse` decode, finish_reason handling) yields identical engine-facing results. NOTE: scope is a few days, not a quick-win — consider promoting to a standalone test-remediation plan rather than resolving inline. | testing | 480 | review | claude | LOW |
+ 
+ ### [2026-06-14] From Sprint: 3.0_adversarial_verification
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 7 | [/] | LOW | internal/verify/pipeline.go:238 | The rich VerificationResult built in verifyFinding never populates TrippedBudgets (invokeSkeptic folds tripped budgets only into free-text Notes), base.Model is hard-coded to skeptics[0].Config.Model even when another skeptic produced the winning verdict, and the skip-already-verified rebuild (pipeline.go:199) re-synthesizes records from the compact on-disk block losing Model/DurationMs/TrippedBudgets — so verification.json's structured audit fields degrade or misattribute on multi-skeptic and no-op re-runs (extends the model-attribution gap of TD-011). Also: Model is empty on the no_eligible_skeptic / tool_harness_unavailable early-return paths. [intent: deferred per sprint-plan TD-011] | Thread the tripped-budget slice and the winning skeptic's model up from invokeSkeptic into base.TrippedBudgets/base.Model (join models when multiple voters agree, mirroring joinSkeptics), and carry Model/DurationMs/TrippedBudgets forward for skipped findings instead of synthesizing a lossy record. | correctness | 120 | execute-sprint | execute-sprint, claude | HIGH |
+ 
+ ### [2026-06-13] From Sprint: 2.0_tool_using_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 5 | [/] | LOW | internal/tools/snapshot.go | AC 03-02 Scenario 5 and AC 03-03 Scenarios 4-5 require `manifest.json` `stages.review` to record `snapshot_mode` (live/worktree), `head_sha`, and `snapshot_worktree_path`. (intent_note: deferred per sprint-plan §2.5.A (manifest review-stage recording is Phase 5 work); Deferred to Epic Plan 2.1) | when wiring `SnapshotFor` into the agent loop, record `snapshot_mode`/`head_sha`/`snapshot_worktree_path` into `internal/payload/manifest.go` review stage and add the manifest assertion tests from AC 03-02/03-03. | testing | 0 | execute-sprint | execute-sprint | MEDIUM |
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index e297f1ce..45079d79 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,11 +1,26 @@
++## [15.1.0] - 2026-07-02
++
++Fixed a public leaderboard schema ambiguity where a paid-but-ineffective reviewer (real cost, zero corroborated findings) rendered byte-identical to a genuinely free reviewer.
++
++### Changed
++
++- `cost_per_corroborated_finding_usd` in the public leaderboard/benchmark submission schema is now `omitempty`: the key is omitted entirely when there are zero corroborated findings (cost-per is undefined), and present with a real value — including `0.0` — only when corroborated findings exist. This mirrors the existing `survived_skeptic_rate` pattern.
++- Updated the benchmark scorer (`atcr benchmark run`/`export`) to compute the identical N/A representation as the production leaderboard export path.
++
++### Fixed
++
++- A paid reviewer that matched zero planted/defect categories no longer reads identically to a free reviewer on the public leaderboard.
++
++*Shipped via /execute-epic (epic 15.1)*
++
+ ## [Technical Debt] - 2026-07-01
+ 
+ ### Fixed
+ 
+ - Validated documented CLI flags per-command instead of against a global flag union, catching flags documented on the wrong subcommand.
+ - Fixed subcommand validation to catch bypasses where flags appear after the subcommand token.
+ - Fixed docs-index link parsing to strip quoted titles before matching, avoiding false negatives on titled index links.
+ - Anchored config-block detection in the docs audit to headings or fenced YAML keys, rejecting prose-only false matches.
+ - Strengthened the architecture-doc guard test to assert load-bearing reconciler facts rather than just keyword presence.
+ 
+ ## [15.0.0] - 2026-07-01
+diff --git a/cmd/atcr/benchmark_run_resume_test.go b/cmd/atcr/benchmark_run_resume_test.go
+index 678165ca..9bb24abc 100644
+--- a/cmd/atcr/benchmark_run_resume_test.go
++++ b/cmd/atcr/benchmark_run_resume_test.go
+@@ -426,96 +426,98 @@ func (c *usageFailAfterCompleter) CompleteWithUsage(ctx context.Context, inv llm
+ // AC3 (usage-gated): the per-reviewer CostUSD and latency median must reproduce
+ // byte-identical across a full resume with NON-ZERO usage. Every other resume test
+ // uses stubCompleter (no usage), so CostUSD/LatencyP50MS are 0 and the byte-identical
+ // claim is vacuous. Two priced reviewers (ComputeCostUSD is non-zero for these model
+ // ids per rates.go) drive a non-trivial cost sum and a multi-sample latency median.
+ // LatencyP50MS is 0 across all runs (the in-memory stub call the engine times is
+ // instantaneous), so cost is the load-bearing non-zero quantity being verified.
+ func TestExecuteBenchmarkRun_UsageGatedFullResumeReproducesCostAndLatency(t *testing.T) {
+ 	cfg := benchCfg(
+ 		[3]string{"greta", "claude-sonnet-4-6", "greta"},
+ 		[3]string{"kai", "gpt-4o-mini", "kai"},
+ 	)
+ 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+ 	path := filepath.Join(t.TempDir(), "ckpt.json")
+ 
+ 	baseline, err := executeBenchmarkRun(context.Background(), cfg, usageStubCompleter{}, suiteValidPath, gen, "")
+ 	require.NoError(t, err)
+ 	require.Len(t, baseline.Reviewers, 2)
+ 
+ 	// Guard against silently regressing to the vacuous all-zero state.
+ 	var total float64
+ 	for _, rv := range baseline.Reviewers {
+-		total += rv.CostPerCorroboratedFindingUSD
++		require.NotNil(t, rv.CostPerCorroboratedFindingUSD, "priced reviewer with corroborated findings must carry the key")
++		total += *rv.CostPerCorroboratedFindingUSD
+ 	}
+ 	require.Greater(t, total, 0.0, "priced usage stub must yield a non-zero per-finding cost or the assertion is vacuous")
+ 
+ 	first := &usageCountingCompleter{}
+ 	rr1, err := executeBenchmarkRun(context.Background(), cfg, first, suiteValidPath, gen, path)
+ 	require.NoError(t, err)
+ 	assert.Greater(t, int(first.calls.Load()), 0, "the first run executes the cases")
+ 
+ 	resume := &usageCountingCompleter{}
+ 	rr2, err := executeBenchmarkRun(context.Background(), cfg, resume, suiteValidPath, gen, path)
+ 	require.NoError(t, err)
+ 	assert.Equal(t, 0, int(resume.calls.Load()), "a fully-checkpointed resume makes zero Completer calls")
+ 
+ 	// rr2 resumes from the checkpoint rr1 wrote; it must reproduce rr1 byte-identical.
+ 	// This is the deterministic replay-fidelity check for BOTH the CostUSD sum and the
+ 	// LatencyP50MS median — rr2 folds rr1's stored per-reviewer cost and latency back
+ 	// in case order.
+ 	assert.Equal(t, mustMarshal(t, rr1), mustMarshal(t, rr2),
+ 		"resume reproduces the checkpointed run byte-identical (cost sum + latency median)")
+ 
+ 	// Cost is deterministic (fixed tokens + priced models), so the resumed run's
+ 	// per-reviewer cost equals an uninterrupted baseline too. Latency is NOT asserted
+ 	// against a separate baseline: the engine times wall-clock DurationMS, so only a
+ 	// replayed run reproduces stored latency exactly — two independent runs match only
+ 	// when every sample rounds to 0ms, which is not guaranteed.
+ 	require.Len(t, rr2.Reviewers, len(baseline.Reviewers))
+ 	for i := range baseline.Reviewers {
+ 		assert.Equal(t, baseline.Reviewers[i].Model, rr2.Reviewers[i].Model)
+ 		assert.Equal(t, baseline.Reviewers[i].CostPerCorroboratedFindingUSD, rr2.Reviewers[i].CostPerCorroboratedFindingUSD,
+ 			"resumed per-reviewer cost equals uninterrupted (AC3 cost replay)")
+ 	}
+ }
+ 
+ // AC3 (usage-gated, partial): a run that completed only case 0 (with usage) before
+ // failing resumes by replaying case 0's non-zero checkpointed cost and executing only
+ // case 1, yielding a result identical to an uninterrupted run. A single priced
+ // reviewer keeps the call sequence deterministic.
+ func TestExecuteBenchmarkRun_UsageGatedPartialResumeReproducesCost(t *testing.T) {
+ 	cfg := benchCfg([3]string{"greta", "claude-sonnet-4-6", "greta"})
+ 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+ 	path := filepath.Join(t.TempDir(), "ckpt.json")
+ 
+ 	baseline, err := executeBenchmarkRun(context.Background(), cfg, usageStubCompleter{}, suiteValidPath, gen, "")
+ 	require.NoError(t, err)
+ 	require.Len(t, baseline.Reviewers, 1)
+-	require.Greater(t, baseline.Reviewers[0].CostPerCorroboratedFindingUSD, 0.0, "priced usage stub yields a non-zero cost")
++	require.NotNil(t, baseline.Reviewers[0].CostPerCorroboratedFindingUSD, "priced reviewer with corroborated findings must carry the key")
++	require.Greater(t, *baseline.Reviewers[0].CostPerCorroboratedFindingUSD, 0.0, "priced usage stub yields a non-zero cost")
+ 
+ 	// First attempt completes case 0 (with usage, checkpointed) then fails on case 1.
+ 	_, err = executeBenchmarkRun(context.Background(), cfg, &usageFailAfterCompleter{ok: 1}, suiteValidPath, gen, path)
+ 	require.Error(t, err)
+ 
+ 	cp, err := loadCheckpoint(path)
+ 	require.NoError(t, err)
+ 	require.Len(t, cp.Cases, 1, "only case 0 is checkpointed before the failure")
+ 	require.Len(t, cp.Cases[0].Reviewers, 1)
+ 	assert.Greater(t, cp.Cases[0].Reviewers[0].CostUSD, 0.0, "the checkpointed case records a non-zero usage cost to replay")
+ 
+ 	// Resume: case 0 replayed (non-zero checkpointed cost folded back in), only case 1
+ 	// executes.
+ 	resume := &usageCountingCompleter{}
+ 	rr, err := executeBenchmarkRun(context.Background(), cfg, resume, suiteValidPath, gen, path)
+ 	require.NoError(t, err)
+ 	assert.Equal(t, 1, int(resume.calls.Load()), "only the one unscored case executes; case 0 is replayed")
+ 
+ 	// Cost is deterministic, so the partial resume's per-reviewer cost equals the
+ 	// uninterrupted baseline (case 0's replayed cost + case 1's freshly-computed cost).
+ 	// Latency is wall-clock, so it is not compared against the independent baseline.
+ 	require.Len(t, rr.Reviewers, len(baseline.Reviewers))
+ 	for i := range baseline.Reviewers {
+ 		assert.Equal(t, baseline.Reviewers[i].CostPerCorroboratedFindingUSD, rr.Reviewers[i].CostPerCorroboratedFindingUSD,
+ 			"partial resume per-reviewer cost equals uninterrupted (replayed case 0 + executed case 1)")
+ 	}
+ }
+diff --git a/cmd/atcr/benchmark_run_test.go b/cmd/atcr/benchmark_run_test.go
+index 2d571cae..8b04561b 100644
+--- a/cmd/atcr/benchmark_run_test.go
++++ b/cmd/atcr/benchmark_run_test.go
+@@ -57,30 +57,31 @@ func (stubCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string
+ // executeBenchmarkRun loads + validates the suite, executes each case's diff
+ // through the review pipeline with the injected Completer, scores findings against
+ // the case's expected categories, and aggregates per-reviewer PublicRecord into a
+ // suite-tagged RunResult with the injected generatedAt.
+ func TestExecuteBenchmarkRun_ScoresSuite(t *testing.T) {
+ 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"kai", "m-kai", "kai"})
+ 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+ 
+ 	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
+ 	require.NoError(t, err)
+ 
+ 	assert.Equal(t, "fixture-mini", rr.Suite)
+ 	assert.Equal(t, "1.0.0", rr.SuiteVersion)
+ 	assert.Equal(t, "2026-06-25T12:00:00Z", rr.GeneratedAt, "GeneratedAt is the injected time, not time.Now")
+ 	require.Len(t, rr.Reviewers, 2)
+ 
+ 	// Reviewers sorted by (model, persona): m-greta < m-kai.
+ 	greta := rr.Reviewers[0]
+ 	assert.Equal(t, "m-greta", greta.Model)
+ 	assert.Equal(t, "greta", greta.Persona, "persona sourced from registry config, not blank")
+ 	assert.Equal(t, 2, greta.Runs, "one run per case")
+ 	assert.InDelta(t, 0.75, greta.CorroborationRate, 1e-9, "(1.0 + 0.5) / 2 category recall")
+ 	assert.InDelta(t, 1.0, greta.FindingsRaisedAvg, 1e-9, "one finding per case")
+-	assert.InDelta(t, 0.0, greta.CostPerCorroboratedFindingUSD, 1e-9, "stub reports no usage")
++	require.NotNil(t, greta.CostPerCorroboratedFindingUSD, "corroborated findings exist -> key present even at 0 cost")
++	assert.InDelta(t, 0.0, *greta.CostPerCorroboratedFindingUSD, 1e-9, "stub reports no usage")
+ 	assert.Equal(t, int64(0), greta.LatencyP50MS, "stub reports no usage -> deterministic 0")
+ 	assert.Equal(t, "m-kai", rr.Reviewers[1].Model)
+ }
+ 
+ // Two runs over the same suite + transcript are byte-identical (generatedAt is
+ // injected, no time.Now, no wall-clock latency under the stub).
+diff --git a/docs/benchmark.md b/docs/benchmark.md
+index 6aee49b1..770fe2c3 100644
+--- a/docs/benchmark.md
++++ b/docs/benchmark.md
+@@ -121,18 +121,18 @@ Each reviewer's per-case findings are folded into the **single public reviewer
+ schema** (the same row shape `export` and `leaderboard --export` emit):
+ 
+ | Field | Benchmark meaning |
+ |-------|-------------------|
+ | `corroboration_rate` | **Category recall** — the macro-average across cases of (distinct `expected_categories` the reviewer surfaced ≥1 matching finding for) ÷ (distinct expected categories). This is the headline benchmark metric. |
+ | `findings_raised_avg` | Mean findings raised per case (volume/thoroughness). |
+ | `runs` | Number of cases scored. |
+-| `cost_per_corroborated_finding_usd` | Recorded cost ÷ findings whose category matched an expected one (0 when the provider reports no usage). |
++| `cost_per_corroborated_finding_usd` | Recorded cost ÷ findings whose category matched an expected one. **Omitted from the JSON entirely** when zero findings matched an expected category — the metric is undefined, not `0.0` (a paid-but-uncorroborated reviewer must not read identically to a genuinely free one). Present as `0.0` only when matched findings exist and the provider reports no usage cost. |
+ | `latency_p50_ms` | Median per-case latency over cases with reported usage (0 otherwise). |
+ 
+ > **`corroboration_rate` is repurposed as a recall proxy here.** In a production
+ > submission it means cross-reviewer corroboration; in a benchmark submission it
+ > carries category recall against the planted defects. The `source ==
+ > "benchmark-suite"` tag on the submission disambiguates the two. **Precision is
+ > deliberately not reported:** `expected_categories` is the planted-defect *subset*,
+ > not exhaustive ground truth, so a precision-vs-planted metric would penalize a
+ > reviewer for also surfacing legitimate non-planted issues. Category recall plus
+ > `findings_raised_avg` capture coverage and volume without that distortion.
+diff --git a/docs/scorecard.md b/docs/scorecard.md
+index fcaa2d9d..fd732f6f 100644
+--- a/docs/scorecard.md
++++ b/docs/scorecard.md
+@@ -205,41 +205,41 @@ selected slice** — the active filters are applied but are deliberately **not
+ echoed** (they would leak query parameters about your local dataset):
+ 
+ ```json
+ {
+   "submission_schema": 1,
+   "atcr_version": "0.0.0",
+   "submitted_at": "2026-06-15T00:00:00Z",
+   "reviewers": [
+     {
+       "model": "claude-sonnet-4-6",
+       "persona": "bruce",
+       "runs": 8,
+       "findings_raised_avg": 12.0,
+       "corroboration_rate": 0.5625,
+       "survived_skeptic_rate": 0.8333,
+       "cost_per_corroborated_finding_usd": 0.0059,
+       "latency_p50_ms": 9100
+     }
+   ]
+ }
+ ```
+ 
+ | Envelope field | Type | Description |
+ |----------------|------|-------------|
+ | `submission_schema` | int | Public submission schema version (currently `1`). Decoupled from the on-disk store's `schema_version`: the local record format and the public submission format version independently. |
+ | `atcr_version` | string | The ATCR build that produced the submission (`internal/version`; `0.0.0` in dev builds, stamped via ldflags for releases). |
+ | `submitted_at` | string | RFC3339 export timestamp (also the `--since` window anchor, so output is reproducible). |
+ | `reviewers` | array | One aggregated row per `(persona, model)`. |
+ 
+ | Reviewer field | Type | Presence | Description |
+ |----------------|------|----------|-------------|
+ | `model` | string | always | Model id (scrubbed). |
+ | `persona` | string | always | Reviewer/persona name (scrubbed; not PII). |
+ | `runs` | int | always | Number of runs aggregated into this row. |
+ | `findings_raised_avg` | float | always | Mean findings raised **per run** (not the total). |
+ | `corroboration_rate` | float | always | Corroborated / raised across the group (clamped to `[0,1]`). |
+ | `survived_skeptic_rate` | float | **omitempty** | Verified / (verified + refuted). **Omitted entirely** when no verification ran for the group; present as `0.0` only when verification ran and every finding was refuted. The omission is the disambiguator. |
+-| `cost_per_corroborated_finding_usd` | float | always | Total cost ÷ corroborated findings (`0.0` when none corroborated; never Inf/NaN). |
++| `cost_per_corroborated_finding_usd` | float | **omitempty** | Total cost ÷ corroborated findings. **Omitted entirely** when there are zero corroborated findings (the metric is undefined — this is what distinguishes a paid-but-ineffective reviewer from a genuinely free one); present as `0.0` only when corroborated findings exist AND the reviewer's cost was genuinely zero. Never Inf/NaN when present. |
+ | `latency_p50_ms` | int | always | Median (p50) of per-run latencies — not the mean. |
+ 
+ Reviewers are aggregated by `(persona, model)` (role is dropped from the public
+diff --git a/internal/benchmark/score.go b/internal/benchmark/score.go
+index f122c8d5..0fe110cc 100644
+--- a/internal/benchmark/score.go
++++ b/internal/benchmark/score.go
+@@ -76,47 +76,53 @@ func Score(reviewers []ReviewerScore) []scorecard.PublicRecord {
+ // scoreOne computes the public metrics for a single reviewer before scrubbing.
+ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
+ 	pr := scorecard.PublicRecord{
+ 		Model:        r.Model,
+ 		Persona:      r.Persona,
+ 		Runs:         len(r.Cases),
+ 		LatencyP50MS: r.LatencyP50MS,
+ 	}
+ 	if len(r.Cases) == 0 {
+ 		return pr
+ 	}
+ 
+ 	var totalFindings, matchedFindings int
+ 	var recallSum float64
+ 	for _, c := range r.Cases {
+ 		expected := normalizeSet(c.Expected)
+ 		raised := normalizeSet(c.Raised)
+ 		totalFindings += len(c.Raised)
+ 
+ 		if len(expected) > 0 {
+ 			hit := 0
+ 			for cat := range expected {
+ 				if raised[cat] {
+ 					hit++
+ 				}
+ 			}
+ 			recallSum += float64(hit) / float64(len(expected))
+ 		}
+ 		// Cost-per-corroborated denominator: every finding whose category matched
+ 		// an expected (planted) category. Counts findings, not distinct categories.
+ 		for _, cat := range c.Raised {
+ 			if expected[normalize(cat)] {
+ 				matchedFindings++
+ 			}
+ 		}
+ 	}
+ 
+ 	pr.FindingsRaisedAvg = float64(totalFindings) / float64(len(r.Cases))
+ 	pr.CorroborationRate = clamp01(recallSum / float64(len(r.Cases)))
++	// matchedFindings == 0 leaves the field nil: cost-per-corroborated is
++	// undefined (a priced reviewer that matched nothing must not read the same
++	// as a genuinely free reviewer), so omitempty drops the key entirely. A
++	// non-nil value (including a real 0.0, e.g. a free reviewer with matches)
++	// mirrors the production export path in scorecard.costPer.
+ 	if matchedFindings > 0 {
+-		pr.CostPerCorroboratedFindingUSD = r.CostUSD / float64(matchedFindings)
++		v := r.CostUSD / float64(matchedFindings)
++		pr.CostPerCorroboratedFindingUSD = &v
+ 	}
+ 	return pr
+ }
+ 
+ // normalize lowercases and trims a category so matching is case-insensitive and
+ // whitespace-insensitive, mirroring reconcile.ModalCategory.
+diff --git a/internal/benchmark/score_test.go b/internal/benchmark/score_test.go
+index d3ddff18..b1a6fc8c 100644
+--- a/internal/benchmark/score_test.go
++++ b/internal/benchmark/score_test.go
+@@ -10,31 +10,32 @@ import (
+ // Score folds each reviewer's per-case category outcomes into the public reviewer
+ // schema: CorroborationRate carries macro-averaged category recall, FindingsRaisedAvg
+ // the mean findings per case, and Runs the number of cases scored.
+ func TestScore_RecallAndVolume(t *testing.T) {
+ 	got := Score([]ReviewerScore{
+ 		{
+ 			Model:   "claude-sonnet-4-6",
+ 			Persona: "bruce",
+ 			Cases: []CaseScore{
+ 				// case A: all expected categories surfaced -> recall 1.0; 2 findings.
+ 				{Expected: []string{"correctness"}, Raised: []string{"correctness", "security"}},
+ 				// case B: 1 of 2 expected categories surfaced -> recall 0.5; 1 finding.
+ 				{Expected: []string{"security", "correctness"}, Raised: []string{"security"}},
+ 			},
+ 		},
+ 	})
+ 
+ 	require.Len(t, got, 1)
+ 	r := got[0]
+ 	assert.Equal(t, "claude-sonnet-4-6", r.Model)
+ 	assert.Equal(t, "bruce", r.Persona)
+ 	assert.Equal(t, 2, r.Runs, "runs == number of cases scored")
+ 	assert.InDelta(t, 1.5, r.FindingsRaisedAvg, 1e-9, "mean findings per case == 3/2")
+ 	assert.InDelta(t, 0.75, r.CorroborationRate, 1e-9, "macro-avg recall == (1.0 + 0.5) / 2")
+-	assert.InDelta(t, 0.0, r.CostPerCorroboratedFindingUSD, 1e-9, "no usage -> 0 cost")
++	require.NotNil(t, r.CostPerCorroboratedFindingUSD, "matched findings exist -> key present even at 0 cost")
++	assert.InDelta(t, 0.0, *r.CostPerCorroboratedFindingUSD, 1e-9, "no usage -> real 0 cost, not omitted")
+ 	assert.Equal(t, int64(0), r.LatencyP50MS)
+ 	assert.Nil(t, r.SurvivedSkepticRate, "no skeptic verification in the benchmark path")
+ }
+ 
+ // Category matching is case-insensitive and whitespace-trimmed on both sides,
+ // matching reconcile.ModalCategory normalization.
+@@ -64,16 +65,31 @@ func TestScore_DistinctExpectedDuplicateRaised(t *testing.T) {
+ // Cost-per-corroborated divides recorded cost by the number of findings whose
+ // category matched an expected (planted) category; 0 when nothing matched.
+ func TestScore_CostPerCorroborated(t *testing.T) {
+ 	got := Score([]ReviewerScore{{
+ 		Model:   "m",
+ 		Persona: "p",
+ 		CostUSD: 0.12,
+ 		// 2 matched findings (correctness, security both expected), 1 unmatched (perf).
+ 		Cases: []CaseScore{{Expected: []string{"correctness", "security"}, Raised: []string{"correctness", "security", "perf"}}},
+ 	}})
+ 	require.Len(t, got, 1)
+-	assert.InDelta(t, 0.06, got[0].CostPerCorroboratedFindingUSD, 1e-9, "0.12 / 2 matched findings")
++	require.NotNil(t, got[0].CostPerCorroboratedFindingUSD)
++	assert.InDelta(t, 0.06, *got[0].CostPerCorroboratedFindingUSD, 1e-9, "0.12 / 2 matched findings")
++}
++
++// A priced reviewer that matches zero planted categories must leave the field
++// nil (key omitted) — the exact ambiguity this epic exists to fix: paid-but-
++// uncorroborated must not read identically to genuinely free.
++func TestScore_CostPerCorroboratedNilWhenPaidButUnmatched(t *testing.T) {
++	got := Score([]ReviewerScore{{
++		Model:   "m",
++		Persona: "p",
++		CostUSD: 0.5,
++		Cases:   []CaseScore{{Expected: []string{"correctness"}, Raised: []string{"perf"}}},
++	}})
++	require.Len(t, got, 1)
++	assert.Nil(t, got[0].CostPerCorroboratedFindingUSD, "paid but zero matched findings -> key must be absent, not 0.0")
+ }
+ 
+ // A reviewer that raised nothing scores recall 0 without dividing by zero, and a
+ // reviewer with no cases is fully zeroed (Runs 0, no NaN).
+diff --git a/internal/scorecard/export.go b/internal/scorecard/export.go
+index 8732b53f..c9d2667f 100644
+--- a/internal/scorecard/export.go
++++ b/internal/scorecard/export.go
+@@ -20,28 +20,30 @@ var ErrNoExportRecords = errors.New("no records match the export filters")
+ // SubmissionSchema is the version of the PUBLIC leaderboard submission format
+ // (Epic 10.0). It is intentionally decoupled from the on-disk store's
+ // SchemaVersion: the local record format and the public submission format evolve
+ // independently, so bumping one must not silently change the other.
+ const SubmissionSchema = 1
+ 
+ // PublicRecord is one aggregated reviewer row of the public submission schema,
+ // matching the Epic 10.0 spec JSON exactly. It is an allowlist: only these fields
+ // are ever emitted, so anything not here (run_id, paths, hostnames, keys, raw
+-// token/cost/count internals) cannot leak. SurvivedSkepticRate is the sole
+-// omitempty field — a nil pointer omits the key, which distinguishes "no
+-// verification ran for this group" (key absent) from "verification ran and every
+-// finding was refuted" (key present with value 0.0).
++// token/cost/count internals) cannot leak. SurvivedSkepticRate and
++// CostPerCorroboratedFindingUSD are omitempty fields — a nil pointer omits the
++// key, which distinguishes "no verification ran for this group" / "cost-per is
++// undefined because nothing corroborated" (key absent) from a real value that
++// happens to be 0.0 (key present, e.g. "every finding was refuted" or "reviewer
++// was genuinely free").
+ type PublicRecord struct {
+ 	Model                         string   `json:"model"`
+ 	Persona                       string   `json:"persona"`
+ 	Runs                          int      `json:"runs"`
+ 	FindingsRaisedAvg             float64  `json:"findings_raised_avg"`
+ 	CorroborationRate             float64  `json:"corroboration_rate"`
+ 	SurvivedSkepticRate           *float64 `json:"survived_skeptic_rate,omitempty"`
+-	CostPerCorroboratedFindingUSD float64  `json:"cost_per_corroborated_finding_usd"`
++	CostPerCorroboratedFindingUSD *float64 `json:"cost_per_corroborated_finding_usd,omitempty"`
+ 	LatencyP50MS                  int64    `json:"latency_p50_ms"`
+ }
+ 
+ // ExportEnvelope is the top-level public submission document (Epic 10.0 spec).
+ // The active filters are deliberately NOT echoed: they would leak query
+ // parameters about the submitter's local dataset, and a public submission is
+ // defined as an aggregate over the selected slice, not a description of the query.
+@@ -97,44 +99,44 @@ func (a *reviewerAcc) add(r Record) {
+ 
+ func (a *reviewerAcc) finalize() PublicRecord {
+ 	pr := PublicRecord{
+-		Model:                         a.model,
+-		Persona:                       a.persona,
+-		Runs:                          a.runs,
+-		FindingsRaisedAvg:             avgPerRun(a.raisedTotal, a.runs),
+-		CorroborationRate:             clampRate(ratio(a.corroborated, a.raisedTotal)),
+-		CostPerCorroboratedFindingUSD: costPer(a.costTotal, a.corroborated),
+-		LatencyP50MS:                  medianInt64(a.latencies),
++		Model:             a.model,
++		Persona:           a.persona,
++		Runs:              a.runs,
++		FindingsRaisedAvg: avgPerRun(a.raisedTotal, a.runs),
++		CorroborationRate: clampRate(ratio(a.corroborated, a.raisedTotal)),
++		LatencyP50MS:      medianInt64(a.latencies),
+ 	}
++	pr.CostPerCorroboratedFindingUSD = costPer(a.costTotal, a.corroborated)
+ 	// Emit the rate ONLY when real verdict data backs it. hasVerification merely
+ 	// records that some verification pointer was present; a degenerate record can
+ 	// carry zero counts AND no stored rate (verified+refuted==0, storedRates empty),
+ 	// in which case there is no rate to report and the key must stay absent — a 0.0
+ 	// here would be indistinguishable from a genuine all-refuted rate.
+ 	if a.hasVerification && (a.verified+a.refuted > 0 || len(a.storedRates) > 0) {
+ 		// Count-based aggregation (verified/(verified+refuted)) is authoritative
+ 		// when verdict counts are present — AC 01-05 EC3 (rate from totals, not an
+ 		// average of per-run rates). Only when NO counts survive in the group (a
+ 		// corrupt/partial record carrying a rate pointer but nil count pointers, a
+ 		// shape the public Record type permits) do we fall back to the mean of the
+ 		// stored rates, rather than forcing ratio(0,0)=0 and silently zeroing a real
+ 		// public value.
+ 		var rate float64
+ 		if a.verified+a.refuted > 0 {
+ 			rate = clampRate(ratio(a.verified, a.verified+a.refuted))
+ 		} else {
+ 			sum := 0.0
+ 			for _, v := range a.storedRates {
+ 				sum += v
+ 			}
+ 			rate = clampRate(sum / float64(len(a.storedRates)))
+ 		}
+ 		pr.SurvivedSkepticRate = &rate
+ 	}
+ 	return pr
+ }
+ 
+ // AnonymizeRecord maps one internal Record to a single-run PublicRecord, scrubbing
+ // the persona/model identities and deriving the public metrics as if the record
+ // were a one-run group (avg == its raised, p50 == its latency, cost-per ==
+ // cost/corroborated). It shares the reviewerAcc finalize path so the allowlist
+ // and the derivation math live in exactly one place.
+@@ -260,23 +262,26 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
+ // avgPerRun returns total/runs as a float, or 0.0 when runs == 0.
+ func avgPerRun(total, runs int) float64 {
+ 	if runs <= 0 {
+ 		return 0
+ 	}
+ 	return float64(total) / float64(runs)
+ }
+ 
+-// costPer returns total cost divided by the corroborated-finding count, or 0.0
+-// when there are no corroborated findings (the metric is undefined; 0 is the
+-// documented sentinel, never Inf/NaN).
+-func costPer(totalCost float64, corroborated int) float64 {
++// costPer returns total cost divided by the corroborated-finding count, or nil
++// when there are no corroborated findings — the metric is undefined in that case
++// (paid-but-uncorroborated vs genuinely-free are otherwise indistinguishable),
++// so the caller omits the JSON key rather than emitting a misleading 0.0. A
++// non-nil result is never Inf/NaN (corroborated > 0 is guaranteed by the guard).
++func costPer(totalCost float64, corroborated int) *float64 {
+ 	if corroborated <= 0 {
+-		return 0
++		return nil
+ 	}
+-	return totalCost / float64(corroborated)
++	v := totalCost / float64(corroborated)
++	return &v
+ }
+ 
+ // medianInt64 returns the p50 (median) of the latencies: the middle element for
+ // an odd count, and for an even count the integer median — the FLOOR of the
+ // average of the two middle elements (p50 is an int64 millisecond field, so it is
+ // reported as a whole millisecond, never rounded up). Empty slice returns 0. The
+ // input is copied before sorting so the caller's accumulator order is not mutated.
+diff --git a/internal/scorecard/export_test.go b/internal/scorecard/export_test.go
+index 50edc57f..7795fa50 100644
+--- a/internal/scorecard/export_test.go
++++ b/internal/scorecard/export_test.go
+@@ -103,22 +103,43 @@ func TestExport_FindingsRaisedAvgIsPerRun(t *testing.T) {
+ }
+ 
+ func TestExport_CostPerCorroboratedFinding(t *testing.T) {
+-	// One run: cost 0.04, corroborated 7 => 0.04/7.
++	// One run: cost 0.04, corroborated 7 => 0.04/7, key present (real value).
+ 	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
+ 		FilterOpts{Since: "30d"}, fixedExportNow)
+ 	require.NoError(t, err)
+ 	r := parseEnvelope(t, data).Reviewers[0]
+-	assert.InDelta(t, 0.04/7.0, r.CostPerCorroboratedFindingUSD, 1e-9)
++	require.NotNil(t, r.CostPerCorroboratedFindingUSD, "corroborated findings exist => key must be present")
++	assert.InDelta(t, 0.04/7.0, *r.CostPerCorroboratedFindingUSD, 1e-9)
+ }
+ 
+-func TestExport_CostPerCorroboratedZeroWhenNoCorroboration(t *testing.T) {
++func TestExport_CostPerCorroboratedAbsentWhenNoCorroboration(t *testing.T) {
++	// Paid but zero corroborated findings: the metric is undefined, so the key
++	// must be OMITTED (nil pointer) — never a 0.0 that reads identically to a
++	// genuinely free reviewer.
+ 	rec := exportRec("bruce", "m", 1)
+ 	rec.FindingsCorroborated = 0
+ 	rec.CostUSD = 0.5
+ 	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+ 	require.NoError(t, err)
++	s := string(data)
++	assert.NotContains(t, s, `"cost_per_corroborated_finding_usd"`, "omitempty must drop the key when undefined")
+ 	r := parseEnvelope(t, data).Reviewers[0]
+-	assert.Equal(t, 0.0, r.CostPerCorroboratedFindingUSD, "no corroborated findings => 0, never Inf/NaN")
++	assert.Nil(t, r.CostPerCorroboratedFindingUSD, "no corroborated findings => key absent, not 0.0")
++}
++
++func TestExport_CostPerCorroboratedPresentAndZeroWhenGenuinelyFree(t *testing.T) {
++	// A genuinely free reviewer (cost 0) WITH corroborated findings must still
++	// carry the key, with value 0.0 — this is the disambiguating case the epic
++	// exists for: present-and-zero (free) vs absent (paid, uncorroborated).
++	rec := exportRec("bruce", "m", 1)
++	rec.CostUSD = 0
++	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
++	require.NoError(t, err)
++	s := string(data)
++	assert.Contains(t, s, `"cost_per_corroborated_finding_usd"`, "genuinely free reviewer still carries the key")
++	r := parseEnvelope(t, data).Reviewers[0]
++	require.NotNil(t, r.CostPerCorroboratedFindingUSD)
++	assert.Equal(t, 0.0, *r.CostPerCorroboratedFindingUSD)
+ }
+ 
+ func TestExport_LatencyP50IsMedian(t *testing.T) {
+@@ -356,15 +377,17 @@ func TestExport_PreservesProviderPrefixedModel(t *testing.T) {
+ func TestExport_ClampsNegativeMetrics(t *testing.T) {
+ 	rec := exportRec("bruce", "m", 1)
+ 	rec.FindingsRaised = -5
+ 	rec.FindingsCorroborated = -2
+ 	rec.CostUSD = -1.0
+ 	rec.LatencyMS = -100
+ 	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+ 	require.NoError(t, err)
+ 	r := parseEnvelope(t, data).Reviewers[0]
+ 	assert.GreaterOrEqual(t, r.FindingsRaisedAvg, 0.0)
+-	assert.GreaterOrEqual(t, r.CostPerCorroboratedFindingUSD, 0.0)
++	if r.CostPerCorroboratedFindingUSD != nil {
++		assert.GreaterOrEqual(t, *r.CostPerCorroboratedFindingUSD, 0.0)
++	}
+ 	assert.GreaterOrEqual(t, r.LatencyP50MS, int64(0))
+ 	assert.GreaterOrEqual(t, r.CorroborationRate, 0.0)
+ 	assert.LessOrEqual(t, r.CorroborationRate, 1.0)
+ }
+@@ -449,33 +472,34 @@ func TestExport_NoPIIPatternsInOutput(t *testing.T) {
+ func TestAnonymizeRecord_SingleRunDerivedFields(t *testing.T) {
+ 	v, ref := 4, 1
+ 	rate := 0.8
+ 	raw := Record{
+ 		SchemaVersion:        SchemaVersion,
+ 		RecordType:           RecordTypeReviewer,
+ 		RunID:                "2026-06-15T10:00:00Z-abc123",
+ 		Reviewer:             "bruce",
+ 		Model:                "claude-sonnet-4-6",
+ 		Role:                 "reviewer",
+ 		FindingsRaised:       120,
+ 		FindingsCorroborated: 80,
+ 		FindingsSolo:         40,
+ 		CorroborationRate:    ratio(80, 120),
+ 		CostUSD:              0.60,
+ 		TokensIn:             213000,
+ 		TokensOut:            60000,
+ 		LatencyMS:            9100,
+ 		FindingsVerified:     &v,
+ 		FindingsRefuted:      &ref,
+ 		SurvivedSkepticRate:  &rate,
+ 	}
+ 	pr := AnonymizeRecord(raw)
+ 	assert.Equal(t, "bruce", pr.Persona)
+ 	assert.Equal(t, "claude-sonnet-4-6", pr.Model)
+ 	assert.Equal(t, 1, pr.Runs, "a single record anonymizes to runs=1")
+ 	assert.InDelta(t, 120.0, pr.FindingsRaisedAvg, 1e-9, "single run: avg == raised")
+ 	assert.InDelta(t, ratio(80, 120), pr.CorroborationRate, 1e-9)
+-	assert.InDelta(t, 0.60/80.0, pr.CostPerCorroboratedFindingUSD, 1e-9)
++	require.NotNil(t, pr.CostPerCorroboratedFindingUSD)
++	assert.InDelta(t, 0.60/80.0, *pr.CostPerCorroboratedFindingUSD, 1e-9)
+ 	assert.Equal(t, int64(9100), pr.LatencyP50MS)
+ 	require.NotNil(t, pr.SurvivedSkepticRate)
+ 	assert.InDelta(t, 0.8, *pr.SurvivedSkepticRate, 1e-9)
+ }
