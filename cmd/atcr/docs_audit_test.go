@@ -272,6 +272,46 @@ func TestSubcommandValidationSkipsFlags(t *testing.T) {
 	}
 }
 
+// TestFlagValidationIsPerCommand asserts that a documented --flag is validated
+// against the flags reachable on the *specific* command it is attached to, not
+// the global union of every flag in the tree. `--checkpoint` is a `benchmark run`
+// flag and `--json` a `doctor` flag; neither exists on `review` or `init`, so a
+// doc that writes them there must be rejected — while the same flags on their
+// real owning commands must still pass.
+func TestFlagValidationIsPerCommand(t *testing.T) {
+	cmds := canonicalCommands()
+	groups := commandGroups()
+	flags := canonicalFlags()
+
+	// Wrong-command flags must be rejected.
+	for _, tc := range [][]string{
+		{"review", "--checkpoint"}, // checkpoint belongs to `benchmark run`
+		{"init", "--json"},         // json belongs to `doctor`
+	} {
+		errs := validateInvocationTokens(tc, "fixture", cmds, groups, flags)
+		found := false
+		for _, err := range errs {
+			if strings.Contains(err, tc[1][2:]) && strings.Contains(err, "no such flag") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected `atcr %s %s` to be rejected (flag not on that command), got errors: %v", tc[0], tc[1], errs)
+		}
+	}
+
+	// The same flags on their real owning commands must still pass.
+	for _, tc := range [][]string{
+		{"benchmark", "run", "--checkpoint"},
+		{"doctor", "--json"},
+	} {
+		if errs := validateInvocationTokens(tc, "fixture", cmds, groups, flags); len(errs) != 0 {
+			t.Errorf("expected `atcr %s` to pass, got errors: %v", strings.Join(tc, " "), errs)
+		}
+	}
+}
+
 // TestConfigDocsUseRealConfigFilenameAndReconcilerName guards against the two
 // drift tokens epic 15.0 was chartered to eliminate: the fictional `atcr.yaml`
 // config filename (the real project config is `.atcr/config.yaml`) and the
