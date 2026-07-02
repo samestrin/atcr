@@ -79,7 +79,7 @@ func (a *reviewerAcc) add(r Record) {
 	a.runs++
 	a.raisedTotal += clampNonNeg(r.FindingsRaised)
 	a.corroborated += clampNonNeg(r.FindingsCorroborated)
-	a.costTotal += clampNonNegF(r.CostUSD)
+	a.costTotal = clampNonNegF(a.costTotal + clampNonNegF(r.CostUSD))
 	a.latencies = append(a.latencies, clampNonNeg64(r.LatencyMS))
 	// Any verification pointer present marks the group as verified; the counts
 	// sum only over the runs that actually carried verification data.
