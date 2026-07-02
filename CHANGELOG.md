@@ -1,3 +1,18 @@
+## [15.1.0] - 2026-07-02
+
+Fixed a public leaderboard schema ambiguity where a paid-but-ineffective reviewer (real cost, zero corroborated findings) rendered byte-identical to a genuinely free reviewer.
+
+### Changed
+
+- `cost_per_corroborated_finding_usd` in the public leaderboard/benchmark submission schema is now `omitempty`: the key is omitted entirely when there are zero corroborated findings (cost-per is undefined), and present with a real value — including `0.0` — only when corroborated findings exist. This mirrors the existing `survived_skeptic_rate` pattern.
+- Updated the benchmark scorer (`atcr benchmark run`/`export`) to compute the identical N/A representation as the production leaderboard export path.
+
+### Fixed
+
+- A paid reviewer that matched zero planted/defect categories no longer reads identically to a free reviewer on the public leaderboard.
+
+*Shipped via /execute-epic (epic 15.1)*
+
 ## [Technical Debt] - 2026-07-01
 
 ### Fixed
