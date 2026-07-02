@@ -6,6 +6,11 @@ package main
 // from it. They exist so a future rename/removal that forgets the docs fails CI
 // instead of shipping stale instructions to the website build that consumes
 // docs/ as its single source of truth.
+//
+// Note: the root README.md is intentionally included in the audited set. That
+// means edits to README.md are also subject to the command/flag and
+// config-name/reconciler-name guards below, so a casual prose change that
+// mentions the fictional "atcr.yaml" or "Reconciler v2" will fail CI.
 
 import (
 	"fmt"
