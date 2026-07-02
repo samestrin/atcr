@@ -1,6 +1,7 @@
 package benchmark
 
 import (
+	"math"
 	"sort"
 	"strings"
 
@@ -117,7 +118,7 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 	// as a genuinely free reviewer), so omitempty drops the key entirely. A
 	// non-nil value (including a real 0.0, e.g. a free reviewer with matches)
 	// mirrors the production export path in scorecard.costPer.
-	if matchedFindings > 0 {
+	if matchedFindings > 0 && !math.IsNaN(r.CostUSD) && !math.IsInf(r.CostUSD, 0) && r.CostUSD >= 0 {
 		v := r.CostUSD / float64(matchedFindings)
 		pr.CostPerCorroboratedFindingUSD = &v
 	}
