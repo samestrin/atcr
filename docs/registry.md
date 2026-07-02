@@ -224,7 +224,18 @@ agents:
 
 **Different-model rule.** The verify engine never selects a skeptic whose `model` exactly matches the model of any reviewer credited on the finding — a model cannot verify its own work, even indirectly through a shared blind spot. This is enforced by the engine, not left to configuration discipline. If no eligible skeptic remains for a finding, that finding is recorded `unverifiable` (reason `no_eligible_skeptic`) and keeps its v1 confidence — it is never dropped. Roster enough skeptics on distinct models that every reviewer model is covered.
 
-The verification stage also reads an optional registry-level `verify:` block (`min_severity`, `votes`) — see [verification.md](verification.md#cost-controls) for those knobs and the full mechanics.
+The verification stage also reads an optional registry-level `verify:` block (`min_severity`, `votes`) — see [verification.md](verification.md#cost-controls) for the full mechanics.
+
+```yaml
+verify:
+  min_severity: MEDIUM        # findings below this floor skip verification
+  votes: 1                    # skeptics consulted per finding
+```
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `min_severity` | `MEDIUM` | Findings below this floor skip verification entirely and keep their v1 confidence. Override per run with `--min-severity`. |
+| `votes` | `1` | Skeptics consulted per finding. With one vote the single verdict passes through; with multiple, a clear majority wins and a tie becomes `unverifiable`. |
 
 ## Language scope and skeptic routing (`language`, active in 9.0)
 
