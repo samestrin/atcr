@@ -1,0 +1,86 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "severity_split",
+      "file": "cmd/atcr/docs_audit_test.go",
+      "line": 176,
+      "severity": "MEDIUM",
+      "problem": "TestReconcilerConfigSurfaceDocumented uses strings.Contains for persona:/debate:/verify:/executor:, matching those tokens in prose as readily as in a real yaml block",
+      "score": 4,
+      "spread": 1,
+      "independence": 4,
+      "reviewers": [
+        "brad",
+        "dax",
+        "greta",
+        "otto"
+      ],
+      "disagreement": "LOW vs MEDIUM"
+    },
+    {
+      "kind": "severity_split",
+      "file": "cmd/atcr/docs_audit_test.go",
+      "line": 216,
+      "severity": "MEDIUM",
+      "problem": "TestDocsIndexCoversEveryDoc link regex treats a titled markdown link `](x.md \"title\")` as target `x.md \"title\"`, which fails the .md suffix check and would false-fail if a future index link adds a title",
+      "score": 4,
+      "spread": 1,
+      "independence": 4,
+      "reviewers": [
+        "brad",
+        "dax",
+        "greta",
+        "otto"
+      ],
+      "disagreement": "LOW vs MEDIUM"
+    },
+    {
+      "kind": "severity_split",
+      "file": "cmd/atcr/docs_audit_test.go",
+      "line": 262,
+      "severity": "MEDIUM",
+      "problem": "TestArchitectureDocDescribesReconciler comment claims a fictional-architecture stub would fail, but it only checks 8 substrings exist anywhere, so a buzzword-sprinkled stub passes",
+      "score": 4,
+      "spread": 1,
+      "independence": 4,
+      "reviewers": [
+        "brad",
+        "dax",
+        "greta",
+        "otto"
+      ],
+      "disagreement": "LOW vs MEDIUM"
+    },
+    {
+      "kind": "severity_split",
+      "file": "cmd/atcr/docs_audit_test.go",
+      "line": 71,
+      "severity": "MEDIUM",
+      "problem": "Fenced-block state toggles on any line starting with ``` or ~~~, so a code example containing a line like echo \"```\" incorrectly closes the fence and exposes subsequent prose to command parsing",
+      "score": 3,
+      "spread": 1,
+      "independence": 3,
+      "reviewers": [
+        "brad",
+        "dax",
+        "otto"
+      ],
+      "disagreement": "LOW vs MEDIUM"
+    },
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/docs_audit_test.go",
+      "line": 79,
+      "severity": "MEDIUM",
+      "problem": "Fence toggle uses inFence=!inFence without tracking info-strings or handling unbalanced fences, leaving state true for EOF and parsing prose as commands",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "greta"
+      ]
+    }
+  ]
+}

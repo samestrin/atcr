@@ -1,0 +1,14 @@
+{
+  "agent": "vera",
+  "status": "ok",
+  "findings_count": 0,
+  "duration_ms": 45136,
+  "payload_mode": "blocks",
+  "truncated": false,
+  "files_dropped": [],
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0,
+  "model": "gpt-oss-20b",
+  "tokens_in": 21904,
+  "tokens_out": 135
+}

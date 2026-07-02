@@ -1,0 +1,914 @@
+diff --git a/.planning/epics/active/15.0_documentation_audit.md b/.planning/epics/active/15.0_documentation_audit.md
+index f33fd92f..8fccbe0b 100644
+--- a/.planning/epics/active/15.0_documentation_audit.md
++++ b/.planning/epics/active/15.0_documentation_audit.md
+@@ -45,31 +45,66 @@ As we've added features (like Reconciler v2 and Semantic NCD Deduplication), the
+ This section records findings from `/refine-epic` run on July 01, 2026 01:52:46PM. It is additive — original plan content above is preserved.
+ 
+ ### Auto-applied corrections (1)
+ 
+ - ✅ **CLI help flag convention:** Plan said "match the current binary's `-help` output". The CLI is built on cobra (`cmd/atcr`, e.g. `cmd/atcr/leaderboard.go:15`), whose help convention is `--help` / `-h`, not single-dash `-help`. Corrected `-help` → `--help`.
+ 
+ ### Items needing user confirmation (6)
+ 
+ - ⏸️ **Config filename is fictional:** The plan cites `atcr.yaml` (4×, incl. AC2) but that string appears nowhere in the repo. The real project config is `.atcr/config.yaml` (used by all Go code and 5 docs: `skill-usage.md`, `code-review-backend.md`, `execution.md`, `payload-modes.md`, `registry.md`). Replace every `atcr.yaml` with `.atcr/config.yaml`. NOT auto-applied because it recurs in acceptance criteria and defines the deliverable — confirm you don't instead mean a planned *new* user-facing `atcr.yaml`.
+ - ⏸️ **"Reconciler v2" is not a real named feature:** The term "Reconciler v2" (Problem Statement, AC2) matches nothing in code or docs (0 grep hits). A reconciler exists (`reconcile/`, `internal/reconcile/`) but is not named "v2". Either replace "Reconciler v2" with the actual feature name or drop the version label; AC2's "keys for Reconciler v2" cannot be documented until the real feature and its keys are named.
+ - ⏸️ **Architecture overview doc does not exist:** AC3 and the Proposed Solution assume an "architecture overview document" to *update*, but no such file exists in `docs/` (only `docs/registry.md` mentions "architecture" in passing). This is a *create*, not an *update*. Decide: create `docs/architecture.md`, re-point AC3 at an existing doc, or drop AC3.
+ - ⏸️ **Deduplication config keys may not exist:** T3/AC2 want config examples for "deduplication settings". The config schema (`internal/registry/config.go`) exposes a `persona` key (real, groundable) but no `dedup`/`ncd`/distance-tuning yaml keys — NCD lives in `reconcile/distance.go` as an internal algorithm, not user config. Verify dedup is user-configurable before writing config examples for it, or narrow T3 to the persona settings that are actually configurable.
+ - ⏸️ **T1 scope ("all markdown in the repository") exceeds the deliverable:** T1 says audit ALL markdown, but the repo has markdown well outside `docs/` (`README.md`, `CHANGELOG.md`, `skill/SKILL.md`, `personas/*.md`, `reconcile/README.md`, `internal/**/README.md`). Taken literally this touches many components and exceeds /execute-epic's ≤2-component guard. Narrow T1 to `docs/` (+ root `README.md`) to match T4's docs-as-source-of-truth deliverable and stay in scope.
+ - ⏸️ **T1 and T4 are meta/process tasks, not RED→GREEN:** "Audit all markdown" (T1) and "Establish docs/ as the definitive single source of truth" (T4) have no concrete file + change + observable success, so /execute-epic's TDD loop cannot express them as tests. Rewrite as verifiable doc edits (e.g., "T4: add `docs/README.md` index linking every doc the website consumes; assert the link set matches the docs/ file list").
+ 
+ ### Advisory observations (2)
+ 
+ - ℹ️ **`docs.html` / `faq.html` are forward references:** These are outputs of the future website epic (15.1+), not files this epic produces. Fine as context; they need not exist for 15.0.
+ - ℹ️ **Plan is a feature-sprint labeled execute-epic:** The file is titled "Sprint Plan 15.0" with feature-sprint sections (User Personas, Acceptance Criteria, Success Criteria) yet `Execution: execute-epic`. Not blocking, but the AC-driven framing plus the meta-tasks above make it lean toward the full `/init-plan` pipeline rather than a tight epic.
+ 
+ ### Verification context
+ 
+ - Refinement depth: spot-check
+ - Derived TASK_COUNT: 4 (limit: 6)
+ - Derived COMPONENT_COUNT: 2 (limit: 2)
+ - COMPONENTS_TOUCHED: docs/, examples/
+ - VISUAL_SURFACE: false
+ - HAS_GATED_WORK: false (but T1 audit-first + T4 are process tasks — see confirm items)
+ - HAS_CROSS_SYSTEM: false (website build is a future epic)
+ - Cited references checked: docs/, atcr.yaml, docs.html, faq.html, Reconciler v2, Semantic NCD Deduplication
+ - Codebase search queries (spot-check): ["documentation config atcr.yaml", "reconciler v2 ncd dedup", "cli help commands cobra"]
++
++## Clarifications
++
++### Recorded 2026-07-01 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- Config filename `atcr.yaml` is drift, not a planned artifact — replace every occurrence with the real project config `.atcr/config.yaml` (hardcoded at `internal/registry/project.go` `DefaultProjectConfigPath`, written by `atcr init`). Distinguish from the separate registry file (`~/.config/atcr/registry.yaml`); in this epic's persona/config context it always means the project config.
++- "Reconciler v2" is not a real named feature (0 grep hits) — rename to "the multi-model reconciler" throughout (Problem Statement + AC2). The shipped reconciler (`reconcile/` + `internal/reconcile/`, entry `reconcile.Reconcile()`) is the subject.
++- AC3's architecture doc does not exist — CREATE `docs/architecture.md` (reword AC3 "update" → "create"), describing the current multi-model reconciler. Write it only after the naming above is settled so it describes the real pipeline.
++- Deduplication is NOT user-configurable: NCD was falsified and never adopted (`reconcile/distance.go`); live merge cutoffs are hardcoded constants (`MergeThreshold = 0.7`, `GrayLow = 0.4` at `reconcile/dedupe.go`). Document dedup as fixed internal behavior (AST-isomorphism + token Jaccard, merge ≥0.7 / gray-zone 0.4–0.7), explicitly noting it is not tunable via `.atcr/config.yaml`.
++- Correction: there is no `reconcile:` yaml block. The real user-facing config surface is `persona` (in AgentConfig/ExecutorConfig) plus the `debate:`, `verify:`, and `executor:` blocks. The keys `triggers/max_items/allow_single_model/max_parallel` belong to `debate:` (`internal/registry/config.go`).
++
++**Scope Boundaries:**
++- IN scope: `docs/` + root `README.md`.
++- OUT of scope: `CHANGELOG.md`, `personas/*.md`, `reconcile/README.md`, `internal/**/README.md`, `skill/SKILL.md`, `.githooks/`, all `internal/**/testdata/*.md` fixtures, and the future website build (`docs.html`/`faq.html`).
++
++**Technical Approach:**
++- Reframe process tasks as verifiable RED→GREEN deliverables:
++  - T4 → a committed `docs/README.md` index whose relative-link set is asserted equal to the `docs/*.md` file list (fails on any unlinked doc or dangling link).
++  - T1 "audit" → the corrected docs themselves, verified by AC1 (`--help` parity) + AC2 (config-key presence) checks.
++- For this docs epic, assertable checks (link-set == file-list, CLI-help parity, config-key presence) are the accepted TDD substitute, implemented as Go tests that parse the docs and compare against the compiled binary / config schema — giving a lasting drift regression guard.
++
++**Original Questions and Answers:**
++1. Q: Config filename — replace `atcr.yaml` with `.atcr/config.yaml`, or is `atcr.yaml` a planned new file?
++   A: Replace every `atcr.yaml` with `.atcr/config.yaml`; it is drift, not a planned artifact. Confirm each occurrence means the project config, not the registry file.
++2. Q: "Reconciler v2" — document the existing pipeline and drop "v2", or is it unshipped work?
++   A: Document the existing multi-model reconciler and drop the "v2" label (rename, not a blocker). AC2's literal "config keys for the reconciler" premise still needs rewording toward the config keys that actually exist (see Q4).
++3. Q: Architecture overview doc (AC3) — create, re-point, or drop?
++   A: Create `docs/architecture.md` and reword AC3 "update" → "create"; write after Q2 naming is settled.
++4. Q: Deduplication config examples (T3/AC2) — narrow to real keys, or is dedup config a blocker?
++   A: Narrow to real keys — not a blocker. Dedup is not user-configurable; document persona + `debate:`/`verify:`/`executor:` blocks and present dedup as fixed internal behavior. There is no `reconcile:` block.
++5. Q: T1 audit scope — narrow to `docs/` + root `README.md` only?
++   A: Yes — narrow to `docs/` plus root `README.md`; exclude CHANGELOG, personas, reconcile/internal/skill READMEs, and testdata fixtures.
++6. Q: T1/T4 as verifiable edits — acceptable to reframe as concrete checkable edits rather than literal TDD?
++   A: Yes — reframing is required. T4 = committed `docs/README.md` index with link-set == file-list check; T1 = corrected docs verified by AC1/AC2 checks.
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index 9e5237e3..b0945e91 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,16 +3,16 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 2 | 0 |
+ | MEDIUM | 0 | 29 | 0 |
+-| LOW | 0 | 28 | 0 |
++| LOW | 6 | 28 | 0 |
+ 
+-**Last Modified:** 2026-07-01 | **Open Items:** 0 | **Deferred Items:** 59 | **Resolved Items:** 0 | **Total Items:** 59
++**Last Modified:** 2026-07-01 | **Open Items:** 6 | **Deferred Items:** 59 | **Resolved Items:** 0 | **Total Items:** 65
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -62,221 +62,232 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
++### [2026-07-01] From Sprint: epic-15.0
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:71 | docCommandTokens flags any fenced-block line beginning "atcr <word>", so prose accidentally placed inside a code fence (e.g. "atcr is ...") could register as a bogus command reference | Restrict fenced-line matching to shell-prompt ($) lines or require a following flag/argument token | EDGE_CASES | 15 | execute-epic-stage3 |
++| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:216 | TestDocsIndexCoversEveryDoc link regex treats a titled markdown link `](x.md "title")` as target `x.md "title"`, which fails the .md suffix check and would false-fail if a future index link adds a title | Strip a trailing quoted title from the captured target before the .md/anchor checks | EDGE_CASES | 15 | execute-epic-stage3 |
++| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:262 | TestArchitectureDocDescribesReconciler comment claims a fictional-architecture stub would fail, but it only checks 8 substrings exist anywhere, so a buzzword-sprinkled stub passes | Reword the comment to a keyword-presence check, or strengthen it to assert stage ordering/structure | CORRECTNESS | 10 | execute-epic-independent |
++| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:176 | TestReconcilerConfigSurfaceDocumented uses strings.Contains for persona:/debate:/verify:/executor:, matching those tokens in prose as readily as in a real yaml block | Anchor the check to fenced-yaml lines or a start-of-line block pattern rather than a bare substring | EDGE_CASES | 15 | execute-epic-independent |
++| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:53 | Root README.md is folded into the atcr.yaml/Reconciler-v2/command/flag audit, so an unrelated future README edit could fail CI in a docs-audit test and surprise contributors | Document this coupling in the test header, or scope the drift-token checks to docs/ only | REGRESSION_RISK | 10 | execute-epic-independent |
++| U | [ ] | LOW | internal/registry/persona.go:33 | Stale in-code comment still calls taskMessage the --task-message flag, now contradicting the corrected docs/registry.md line (no such CLI flag is registered) | Update the persona.go:33 comment to match the corrected doc so code and docs agree | INTEGRATION | 5 | execute-epic-independent |
++
+ ### [2026-07-01] From Sprint: 14.3_diff_chunking_context
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | MEDIUM | internal/fanout/review.go:941 | After the T3 refactor extracted renderAgent, the add closure re-implements mode resolution (forceMode/EffectivePayloadMode, payload lookup, not-found/no-payload errors) at review.go:818-831, but buildAgent (line 941) still contains the identical resolution logic and now has NO production caller — only tests (retry_wiring_test.go, review_scope_inject_test.go, review_test.go, review_tools_test.go) reference it (verified: grep buildAgent internal/ excluding _test shows only the definition). This is dead production code plus two divergent copies of the same mode/payload-resolution logic that will silently drift. (Deferred 2026-07-01: Epic Plan 14.4_fanout_resolution_dedup — kept as-is; buildAgent has no production caller, duplication accepted for now.) | Either delete buildAgent and update the tests to drive buildSlots/renderAgent, or have the add closure call buildAgent for the single-chunk/bulk path so there is one resolution site. Verify no non-test caller exists before deleting and that fallback-wiring tests still pass. | maintainability | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-30] From Sprint: epic-14.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/fanout/grounding.go:54 | out-of-scope category is a blanket grounding-gate exemption in all modes, so an adversarial or hallucinating model can launder a fabricated finding past AC2 by tagging category=out-of-scope in diff/blocks mode | Restrict the out-of-scope exemption to files mode (or require the cited FILE:LINE/EVIDENCE to anchor before honoring it in diff/blocks) — DEFERRED: conflicts with clarification Q2 which chose blanket exemption because out-of-scope is annotated-not-promoted by the reconciler downstream | correctness | 30 | execute-epic-independent |
+ | 1 | [/] | MEDIUM | internal/fanout/grounding.go:47 | groundFindings ignores Result.Tools and Result.PayloadMode, so a tool-enabled or files-mode agent citing a real line it legitimately read outside the changed range is dropped unless it tags out-of-scope or quotes a changed line in EVIDENCE | Thread Tools/PayloadMode into the gate and relax the range/evidence requirement for tool/files agents — DEFERRED: the out-of-scope prompt convention already instructs such agents to tag read-but-unchanged citations, which the gate exempts | correctness | 45 | execute-epic-independent |
+ | 1 | [/] | LOW | internal/fanout/review.go:470 | computeGroundingData builds a fresh gitRunner and re-runs validateRange + --name-status + --unified=0 for a range the payload builder already diffed, duplicating ~4 git subprocesses per review and per resume | Reuse the payload builder's memoized rangeChunks/gitRunner for the same base..head instead of recomputing the zero-context diff | performance | 45 | execute-epic-independent |
+ 
+ ### [2026-06-29] From Sprint: 13.4_brace_language_parsers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:1 | Wasm ABI (alloc/free/parse/emit/pins) duplicated across three parser modules | Extract shared ABI into common guest package | maintainability | 60 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-28] From Sprint: epic-13.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:20 | The alloc/free/emit/pins guest ABI is duplicated across three parser sources (goparser, pyparser, braceparser); the threshold the existing code documents for extraction (parser count > 2) is now crossed | Extract the shared guest ABI into a package referenced via go.mod replace directives coordinated in build.sh | MAINTAINABILITY | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-28] From Sprint: epic-13.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | u | [/] | LOW | reconcile/pagerank.go:181 | Authority promotion is silent: no counter or Summary stat records that a HIGH came from authority rather than reviewer count, so a misfiring promotion is only derivable as HIGH-with-a-single-reviewer (Deferred: Epic Plan 13.4) | Add a Summary stat (e.g. AuthorityPromoted int) counting authority-promoted findings for observability; out of v1 scope since the clarification fixed the wire schema | OBSERVABILITY | 30 | execute-epic-independent |
+ 
+ ### [2026-06-27] From Sprint: 13.1_ast_plugin_architecture
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | u | [/] | LOW | internal/astgroup/parsers/src/goparser/main.go:39 | The guest pins alloc'd buffers and hands the host int32(uintptr(unsafe.Pointer(&b[0]))) as a stable guest offset, valid only because the current Go GC is non-moving. This is an undocumented runtime invariant, not a language guarantee; a future moving GC makes the packed pointer a dangling offset with no detection. The unsafe alloc/free/emit/node boilerplate is copy-pasted across goparser, pyparser, and the 13.4 brace parsers, so any ABI fix must be applied N times. (Deferred: extraction premature at 2 parsers; epic scope fixed at Go+Python — a future-remedy note is in each parser's ABI section, revisit if parser count grows.) | Extract the shared alloc/free/emit/pins ABI into one internal guest package imported by every parser main.go, and add a build-time note pinning the GC assumption (or switch to an explicitly reserved arena). | maintainability | 120 | code-review | claude | MEDIUM |
+ | u | [/] | MEDIUM | internal/astgroup/parsers/src/pyparser/main.go:112 | scanTripleQuotes and stripComment are quote/escape-unaware. A triple-quote appearing inside a # comment, or a # appearing inside a string literal, flips the multi-line-string state machine the wrong way, so arbitrary spans of real code get classified as string content and dropped from significantLines, silently erasing blocks. The heuristic disclaimer documents the risk but does not bound it: on unusual source the structural hash diverges from the true AST. (Deferred: accepted PoC scope; heuristic limitation already documented at pyparser/main.go:72-78 and 152-156, degrades to proximity grouping.) | Run scanTripleQuotes only over the code portion (skip after an unquoted #) and skip triple-quotes occurring inside single-line strings. Add regression fixtures: a # containing a triple-quote, and a string literal containing #. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-26] From Sprint: 11.0_executing_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/tools/dispatch.go:146 | Tool gating for run_tests/run_script lives only in fanout.wireToolDefs (what the model is TOLD about); Dispatcher.Execute looks up d.handlers[name] with no check that the call was offered to the calling agent, and EnableExecution registers the exec handlers on the single dispatcher shared by the whole pool. The read-only guarantee for non-exec agents is therefore advisory, not structural — if any future caller enables exec non-uniformly across agents sharing one dispatcher, a non-exec agent could invoke run_script by simply naming it. No live exploit today: the sole exec caller, verify, sets exec uniformly for all skeptics. (Deferred: Epic Plan 11.1) | Pass the agent's allowed tool set (or Exec flag) into Execute and reject any call whose name was not offered to this agent, or gate the exec handlers behind a per-call capability rather than a globally-registered handler. Verify with a test where a non-exec agent emits a run_script tool_call and asserts it is refused. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-25] From Sprint: epic-11.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/tools/exec_tools.go:69 | Execution tools are gated per-agent only at the definition level (wireToolDefs); the shared per-run dispatcher will execute a run_tests/run_script call from any agent once EnableExecution is wired. The sandbox isolates every run identically so this is not a containment gap, but a non-designated agent could still incur execution cost. (Deferred: .planning/epics/active/11.1_dispatcher-structural-gating.md — exec_tools.go:69 is a data struct, not a gating point; the offering-layer gate is already structural, and a runtime per-call guard is the multi-file change scoped to Epic 11.1) | Thread agent exec-eligibility into the dispatcher (or add a per-call guard) so only designated agents execute, for precise cost attribution. | SECURITY | 30 | execute-epic-stage3 |
+ 
+ ### [2026-06-23] From Sprint: 8.0_reconciler_library
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | internal/reconcile/discover.go:25 | `internal/reconcile` keeps its discovery `Source` (Name + `[]stream.Finding` + Skipped + SkippedFiles); the library now defines a public `Source` (Name + `[]Finding`) | moved `Reconcile` takes the library `Source`; discovery output (`discover.Source`) is converted to `reconcile.Source` in the adapter/discovery layer | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | MEDIUM | unknown:0 | [Story 01 / Story 06] DoD item not implemented: both CI jobs (root ci.yml + reconcile-module PR-time job) must be marked as REQUIRED status checks on the main branch-protection rule. The CI workflow deliverables they depend on are all present and verified; only the protection-rule toggle is unset. The two story-level [ ] boxes (AC 01-06, AC 06-02) are the same single external action. (intent_note: deferred per sprint-plan Final Phase / dod-completion-summary.md (external repo-admin action)) | Configure branch protection in GitHub repo Settings -> Branches: add the root CI job and the reconcile-module PR-time job as required status checks. External repo-admin UI action (post-merge), not a source-tree change; documented deferred in dod-completion-summary.md. | docs | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: 7.3_github_action_pr_integration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 6 | [/] | MEDIUM | cmd/atcr/github.go:148-167 | Sequential inline comment posting is slow for PRs with many findings (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ | 6 | [/] | LOW | cmd/atcr/github.go:148-167 | Conclusion is computed twice for the same findings/failOn inputs (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: epic-7.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/verify/syntaxguard.go:130 | An unfenced multi-line JSON/config snippet with block braces can still satisfy looksLikeGoCode and be parsed as Go, producing a spurious invalid_syntax flag on non-Go content (residual after heuristic hardening). | Detect obviously non-Go brace content (JSON object / key:value lines) before treating block braces as a Go signal; deferred as a separate design refinement (unfenced non-Go fixes are rare; fenced non-Go is already handled). [Deferred 2026-06-22 to Epic Plan 7.5 syntax-guard-refinements per clarification] | EDGE_CASES | 30 | execute-epic-independent |
+ 
+ ### [2026-06-22] From Sprint: 7.0.1_executor_model_configuration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 7 | [/] | LOW | internal/registry/config.go:524 | Potential prompt injection via system_prompt (Won't-fix: config.go:531–534 explicitly documents that control chars are intentionally NOT rejected in system_prompt; the --- delimiter added at executor.go:225 eliminates the CRLF metadata-forgery surface; otto's fix conflicts with the documented design decision) | Add control character validation to SystemPrompt | security | 15 | code-review | otto | MEDIUM |
+ 
+ ### [2026-06-21] From Sprint: epic-6.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/debate/debate.go:165 | Gray-zone cluster merge/separate rulings are recorded in debate.json but not physically applied to findings.json; clusters still resolve via the existing adjudication path (Deferred: Epic Plan 6.1) | Wire the judge cluster decision into the reconcile adjudication application so unattended runs auto-merge gray-zone clusters inline | INTEGRATION | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-20] From Sprint: epic-5.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/cache/store.go:115 | Eviction does a full ReadDir+Stat of the cache dir on every Put even when under the cap; O(n) per write scales poorly if the cache accumulates thousands of entries (Won't-fix 2026-06-21: scan runs serially under the store mutex and LLM calls dominate latency; no Epic 5.2 perf criterion requires O(1) Put — added state not justified at LOW) | Maintain a running total-size counter and skip the directory scan when it is under the cap, or evict only on a periodic/threshold basis | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-06-20] From Sprint: epic-5.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/report/render.go:317 | The "File not found" warning format string is duplicated across internal/reconcile/emit.go (writeFindingsList) and internal/report/render.go (writePathWarning) in separate packages | Extract a shared constant/helper only if a common low-level rendering package emerges; a cross-package dependency is not justified for one format string today (Won't-fix 2026-06-21: two independent format strings across packages with no shared dependency; the recorded fix confirms extraction is not justified at this scope) | CROSS_CUTTING | 15 | execute-epic-cumulative |
+ | U | [/] | MEDIUM | internal/reconcile/reconcile.go:26 | Validation root is hardcoded to "." at every call site, so "atcr reconcile <path>" for a review of another repo, or running from a non-repo-root CWD, falsely flags every finding as "file not found" | Thread the reviewed repo root explicitly or add a --repo flag, applied consistently with the verify stage which uses the same "." convention (Deferred 2026-06-21: the narrow Root: os.Getwd() variant is a no-op — filepath.Abs(".") already equals the CWD, so it would not fix the non-repo-root / other-repo case; the real fix is to plumb the reviewed-repo path explicitly via a --repo flag threaded through the reconcile and verify call sites, est 60) | EDGE_CASES | 60 | execute-epic-independent |
+ 
+ ### [2026-06-20] From Sprint: 4.7.1_backup-swap-hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:318 | backupExisting() unconditionally RemoveAll's <path>.bak.old and <path>.bak.new at entry, but forceBackupOutputDir() only calls guardForeignBackup(dir+".bak") — the two staging siblings are not guarded. On an arbitrary --output-dir a user who owns <output-dir>.bak.old or <output-dir>.bak.new has it silently deleted by --force, re-opening the Epic 4.7 "never silently delete user data" contract. NOTE: epic clarification Q4 deliberately scoped the guard to .bak only (atcr-internal suffixes); this finding re-raises that decision as worth reconsidering, not a defect against the recorded scope. (intent_note: deferred per epic §Clarifications Q4 — extending guardForeignBackup to .bak.old/.bak.new is out of scope) (Won't-fix 2026-06-20: binding Epic 4.7.1 Q4 — guard stays scoped to .bak; .bak.old/.bak.new are atcr-owned staging names cleared by entry-time RemoveAll; confirmed via /sprint-clarification 95%) | In forceBackupOutputDir() (reviewdir.go:440) extend the guard to guardForeignBackup(dir+".bak.old") and guardForeignBackup(dir+".bak.new") before backupExisting, or refuse if either exists non-empty. Add a test pre-creating a foreign <output-dir>.bak.old with user content and assert --force errors instead of deleting it. | security | 60 | code-review | claude | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:373 | The advertised "an interrupted swap never leaves the user with neither generation" invariant is conditional on a best-effort SILENT restore succeeding. If restorePriorBackup's os.Rename(backupOld,backup) fails (e.g. backup partially recreated, or perms change), the only surviving copy is stranded under .bak.old — which the very next run's entry-time RemoveAll(backupOld) (line 318) then deletes. Same pattern at the copy site swapStagedBackup (atomic.go:159-167) feeding atomic.go:97 RemoveAll(bakOld). (Won't-fix 2026-06-20: observability half done (restore failure now logged); the lone-.bak.old-as-generation redesign is rejected per Epic 4.7.1 Q3 — .bak.old is atcr-owned temp deleted at entry, one-generation contract + TestBackupExisting_CleansStaleStagingStragglers stand; confirmed via /sprint-clarification 95%) | Surface restore failures loudly (log/return) instead of dropping them, and/or do not auto-RemoveAll .bak.old at entry when .bak is absent — treat a lone .bak.old as the surviving generation to recover. Add a test where restore fails and a subsequent run is asserted not to delete the only surviving copy. | correctness | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir.go:388 | backupCrossDevice's inner os.Rename(backupNew,backup) relies on backupNew and backup sharing a filesystem, an invariant that holds only by naming coincidence (both are siblings of path). If anyone later relocates backupNew under path, the inner rename silently becomes cross-device and returns a raw EXDEV to the user. (Won't-fix 2026-06-20: same-fs invariant holds by construction — backup and backupNew are both siblings of path; a runtime guard would be unreachable dead code today and is already documented at reviewdir.go:415-419; confirmed via /sprint-clarification 90%) | Add a test that forces renameFn to return syscall.EXDEV and makes the copy fail (a copy seam, or unreadable src), staging a prior .bak first; assert the prior .bak content is restored intact, the live tree survives, and .bak.new is cleaned up. Cover the copy-failure leg at minimum. | testing | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir_test.go:458 | Test-coverage gaps in the failed-swap/cleanup paths: TestBackupExisting_FailedSwapPreservesPriorBak asserts no .bak.old straggler but not .bak.new; the non-ErrNotExist Lstat(backup) error branch (reviewdir.go:333-335) is untested; the entry-time RemoveAll straggler-cleanup failure legs (reviewdir.go:318-323) are untested. Each is a real error branch a regression could silently break. | Add assert.NoDirExists for src+".bak.new" at reviewdir_test.go:458; add a perms-based test forcing Lstat(backup) to fail with a non-ErrNotExist error; add a test where .bak.old cannot be removed and assert the typed "clearing stale staging backup" error. Skip on root/CI where perms are not enforced. (Partial 2026-06-21: gaps 1 (.bak.new assertion) and 3 (RemoveAll(.bak.old) failure) covered; gap 2 (non-ErrNotExist Lstat(backup)) deferred — needs an lstatFn production seam since the staging siblings share a parent dir so perms cannot isolate it) | testing | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-19] From Sprint: 4.7_idempotency
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:284 | backupExisting() does os.RemoveAll(backup) then os.Rename(path, backup); BackupToDotBak() does os.RemoveAll(bak) then copyTree. If the rename/copy fails (cross-filesystem EXDEV when --output-dir and its .bak sibling are on different mounts, disk-full mid-copy, or SIGKILL), the single prior backup generation is already destroyed while the new backup is absent or partial. The live/original tree is preserved (good), but the one recoverable prior .bak is lost for no benefit — counter to the safe-to-retry goal. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 4.7.1) | Stage the new backup first: copy/rename into <path>.bak.new (or rename old .bak aside to .bak.old), confirm it is complete, then swap and only then remove the old generation. For backupExisting, attempt os.Rename before RemoveAll so a failed rename leaves the old .bak intact; detect EXDEV and fall back to copy+remove. Add a fault-injection test asserting the prior .bak survives a failed swap. | correctness | 120 | code-review | code-reviewer, claude | HIGH |
+ 
+ ### [2026-06-19] From Sprint: 4.5_circuit_breaker
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | MEDIUM | internal/fanout/metrics.go:37 | recordAgentOutcome zeroes apiCalls for any result whose error unwraps to context.DeadlineExceeded/Canceled, assuming no request was made. But a per-agent timeout routinely fires AFTER real HTTP round-trips (and mid tool-loop after several Chat turns already hit the wire), so atcr_api_calls_total undercounts real provider traffic exactly when a provider is degraded. The no-request assumption is only provably safe for CircuitOpenError and pre-first-send cancellation. (Deferred: Epic Plan 4.11) | Use max(1, r.Turns) for the deadline case instead of a flat 0, or thread a real calls-attempted counter out of the client rather than inferring from the terminal error class. Keep the apiCalls=0 path only for CircuitOpenError. | performance | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-18] From Sprint: epic-4.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/validation/validation.go:62 | System-dir denylist covers only /etc, /proc, /sys, leaving /boot, /dev, /root, /var and ~/.ssh writable via --output-dir / --output (deliberate Option-B permissive choice) (Won't-fix: intended Option-B policy per epic 4.3 clarifications 2026-06-18; revisit only on a concrete isolation requirement) | If stronger isolation is later required, switch to an allowlist anchored at the repo/.atcr root instead of a denylist | SECURITY | 30 | execute-epic-independent |
+ | 1 | [/] | LOW | internal/validation/validation.go:86 | Severity and Enum validators are shipped but wired to nothing (ParseSeverity/ValidFormat remain the live paths); they exist only to satisfy AC5/AC7 and future use (Won't-fix: intentionally public for AC5/AC7 per epic 4.3 clarifications; deletion breaks ACs, wire-in out of scope) | Revisit and delete if no caller adopts them within a release, or wire them in where duplication can be removed | OVER_ENGINEERING | 15 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/registry/attribution.go:55 | attribute() recurses and reconstructs the join even for a single-error errors.Join (which still satisfies Unwrap() []error), a small avoidable cost on the load-time validation path | Optionally short-circuit when len(children)==1 if profiling ever flags it (WON'T-FIX 2026-06-18: trigger unmet — error-path only, never hit on normal load; no perf AC in epic 4.2) | INTEGRATION | 5 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.1.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/fanout/review.go:361 | If a server shutdown (or CLI SIGINT) fires after all agents already succeeded but before ExecuteReview's interrupted := errors.Is(ctx.Err(), context.Canceled) check, a fully-completed run is stamped Interrupted=true and status.go:216 overrides RunCompleted to RunInterrupted (a false interrupted; inverse of AC4). Pre-existing in the CLI-shared path, newly reachable via MCP shutdown. | Gate the interrupted marker on at least one agent ending in StatusTimeout/cancelled rather than purely on parent ctx.Err()==Canceled. NOTE: touches CLI-shared review.go (out of scope for epic 4.1.2's MCP-only change); window is microscopic and outcome benign (resume no-ops a complete run) - separate design. (WON'T-FIX 2026-06-18: --resume self-healing via ClearInterrupted (resume.go:220) already recovers a stale interrupted-on-complete; revisit in a backlog sprint if insufficient) | CORRECTNESS | 30 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: epic-4.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:88 | Serve-mode background fan-out runs under context.WithoutCancel(ctx) so a SIGINT to the MCP server never cancels or marks an in-flight detached review interrupted; it is allowed to finish (intended MCP design) but never gets the interrupted marker CLI mode promises. (Deferred: Epic Plan 4.1.2) | Decide whether detached MCP reviews should be marked interrupted on server shutdown; if so, thread a cancellable/interrupt-aware context or post-hoc marker into the background review path — a separate design from this CLI-focused epic. | REGRESSION_RISK | 60 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: 4.0_structured_logging
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/review.go:172 | Both review entry points call `NewRedactor(root)` with ZERO configured secrets — cmd/atcr/review.go:172 and internal/mcp/handlers.go:87 pass only the path root, never the registry API keys. The exact-value secret-scrubbing loop in Redact is therefore dead in production; redaction relies entirely on the `sk-`/`Bearer` regexes, which miss raw provider keys that lack those prefixes (Google `AIzaSy...`, Azure `api-key`, JWTs `eyJ...`). The AC5 "no API key in log output" guarantee holds only for sk-/Bearer-shaped keys; the passing integration test likely uses an sk- key, masking the gap. (Deferred: Epic Plan 4.9 secret-value-redaction) | Thread resolved registry API key values into `NewRedactor(root, keys...)` at both review.go:172 and handlers.go:87 (keys are discoverable from prep.Slots / cfg.Registry). Add an integration test using a non-sk-shaped key (e.g. `AIzaSy...`) asserting it is redacted. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: 3.5_severity-rank-consolidation
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:18 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:30 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestGrayZoneNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:42 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNoDisagreementOnCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: epic-3.5
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/stream/severity.go:20 | The canonical SeverityRank map carries a read-only-after-init invariant in a comment only, with no test guard preventing a future caller from mutating the shared map (which would race across concurrent fan-out agents). (Won't fix: structural guard — reconcile copy-on-init at merge.go:29-31 means no consumer writes stream.SeverityRank directly; grep confirms zero write sites across consumers. Snapshot test trips the over-simplification gate; Rank() accessor cascades to 14+ direct-lookup sites — both out of pure-consolidation scope.) | Add a stream test that snapshots the map and asserts it is unchanged after consumers run, or wrap it behind a Rank(sev) accessor. | OBSERVABILITY | 20 | execute-epic-independent |
+ 
+ ### [2026-06-16] From Sprint: 3.4_scorecard-diagnostics-writer
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:118 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; the diagnostic already routes to the injectable writer, only fmt.Fprintf's own return is dropped; propagating it breaks Emit's never-fail contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:199 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; Append loop already surfaces firstErr; propagating the Fprintf return breaks the best-effort contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:235 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verdictTallies already writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:248 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verification-read-failed diagnostic writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:276 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; orphan-verdict diagnostic routes to injectable w, locked by TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/scorecard_test.go:291 | Epic 3.4 added unit tests proving EmitOpts.Diag / ReadOpts.Writer routing at the scorecard layer, but there is no test asserting the wiring itself — that the MCP handler passes a non-default writer or that the three CLI entry points pass cmd.ErrOrStderr(). This plumbing can silently regress (a future refactor swaps cmd.ErrOrStderr() back to a default and no test fails). (Deferred: Epic Plan 3.6 scorecard-wiring-tests) | Add a CLI-level test that drives a scorecard command against a deliberately-malformed store and asserts the read diagnostic reaches the command's ErrOrStderr buffer; once MCP diagnostics route through e.log, add a handler-level test asserting against a captured logger buffer. | testing | 60 | code-review | claude | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:114 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; over-long-line warning uses injectable w via diagWriter; read continues; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:145 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; decodeRecord writes to injectable w then returns (Record,bool) — no error cascade) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:155 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; schema-version skip writes to injectable w; identical to malformed-record path) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/store.go:194 | Redundant call to diagWriter (Wontfix: FALSE POSITIVE — diagWriter is the required typed-nil guard for the nil-able opts.Writer interface, not redundant; removing it reintroduces the panic fixed by commit 476c6d1) | Remove diagWriter call and use opts.Writer directly since ReadRecords already resolves it | performance | 2 | code-review | otto | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:211 | Error from diagWriter is silently discarded (Wontfix: FALSE POSITIVE — `_, _ = fmt.Fprintf` is the documented best-effort never-panic diagnostics contract at store.go:22-24; returning the write error would regress a successful read on a broken sink and logging is circular; confirmed working as designed via /sprint-clarification 97%) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:220 | The MCP engine carries a structured *slog.Logger (e.log) used for every other diagnostic in handleReconcile (e.g. the require_verified warning at line ~225), but scorecard diagnostics are routed to raw os.Stderr, so MCP-path scorecard write-failures/malformed-record/orphan-verdict warnings emit as unstructured plaintext that bypasses the logger's level filtering, formatting, and sink redirection. NOTE: this was a DELIBERATE, documented epic decision (Clarifications Q2: supply os.Stderr at the call site; adapting e.log to an io.Writer was explicitly OUT of scope), so this is enhancement debt, not a regression. (intent_note: deferred per epic Clarifications Q2 — adapting e.log to an io.Writer is out of scope) (Wontfix: ACCEPTED ENHANCEMENT DEBT — handlers.go:220 is an unconditional EmitOpts{Diag: os.Stderr} call, not deferred logic; all five Epic 3.4 ACs are met and the comment at handlers.go:214-219 satisfies AC4; e.log→io.Writer adaptation is out of scope per Clarifications Q2; confirmed via /sprint-clarification 97%) | If MCP observability is later desired, adapt e.log into an io.Writer shim (slog-backed at Warn level) and pass it as Diag instead of os.Stderr, so MCP-path scorecard diagnostics flow through the same structured pipeline as the rest of the handler. Defer unless/until structured MCP diagnostics are required. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-15] From Sprint: 3.3_per-run_scorecard
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go (FindByRunID adjacent-month notice; ReadRecords malformed-line notice); internal/scorecard/scorecard.go (Emit notices) | Store/emit diagnostics ("skipping malformed record", "run spans adjacent month files", "write failed") are written directly to the process-global `os.Stderr` rather than to a writer threaded from the cobra command (`cmd.ErrOrStderr()`). (Deferred: Epic Plan 3.4) | accept an `io.Writer` (or logger) on the store/emit entry points and have the CLI pass `cmd.ErrOrStderr()`, so warnings are capturable and redirectable. | ops | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-06-14] From Sprint: 3.2_disagreement_radar
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/reconcile/disagree.go:280 | Duplicate writeRadarSection rendering logic risks divergent escaping across packages (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Consolidate radar rendering into report package; reconcile should call report.writeRadarSection | security | 20 | code-review | greta | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/disagree.go:350 | Duplicated radar section rendering logic (Deferred: Epic Plan 7.2) | Extract shared writeRadarSection to a common package | maintainability | 10 | code-review | bruce | MEDIUM |
+ | 4 | [/] | MEDIUM | internal/reconcile/disagree.go:354 | Duplicated radar markdown rendering diverges (Deferred: Epic Plan 7.2) | Extract shared writer or make reconcile use report package's escTrunc | maintainability | 10 | code-review | bruce | MEDIUM |
+ | U | [/] | LOW | internal/reconcile/disagree.go:413 | Redundant implementation of writeRadarSection (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Remove duplicate function from internal/reconcile and use internal/report | maintainability | 15 | code-review | otto | MEDIUM |
+ | 5 | [/] | MEDIUM | internal/report/disagree.go:47 | The radar markup is rendered by two divergent copies: writeRadarSection + formatScore in internal/report/disagree.go and a structurally different copy in internal/reconcile/disagree.go:389. They are intentionally not identical (report copy truncates via escTrunc + uses joinReviewers/reviewerOrUnknown; reconcile copy uses uncapped esc + joinOrNone), so a future markup change (new field, reordered bullets) must be made in both or the live `atcr report` radar and the archival reconciled/report.md silently drift. (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Extract one shared item renderer parameterized by a truncate-vs-verbatim flag and heading prefix; have both call sites delegate. Add a test that diffs the rendered markup of both paths on the same DisagreementsFile asserting the only intended difference is truncation. | correctness | 60 | code-review | bruce, claude | HIGH |
+ 
+ ### [2026-06-14] From Sprint: 2.2_code_review_fanout_hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | MEDIUM | internal/fanout/postprocess.go:14 | The severity-rank rubric {CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1} is independently redefined in fanout/postprocess.go:17, reconcile/merge.go, verify, report, plus a set-form copy reviewSeverities in registry/config.go. postprocess looks up severityRank[strings.ToUpper(...)] while reconcile looks up the raw value, so a future severity change or non-canonical casing silently desyncs fan-out truncation from reconcile merging. The postprocess copy was newly added by Epic 2.2. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 3.5) | Extract a single canonical severity package (or export from internal/stream) exposing the ordered rank map plus normalizeSeverity, and have registry/fanout/reconcile/verify/report consume it. Verify by deleting the local maps and confirming the suite passes with one source of truth. | maintainability | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-14] From Review: llmclient OpenAI-compatible tool handling
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | U | [/] | LOW | internal/llmclient/chat.go:1 | No provider-conformance test matrix for the OpenAI-compatible surface. The client deliberately absorbs real wire divergence (string-encoded vs raw-object tool_call `arguments`, lenient finish_reason) but is exercised only against synthetic fixtures, so a regression against a specific provider's actual tool_call shape (OpenAI, litellm, Ollama, vLLM, Together) would not be caught. This is the robustness the official SDK is assumed to provide, achievable here without adopting it. | Add a recorded-fixture conformance suite: capture a real `tool_calls` response from each target provider and assert the parser (`ToolCallArguments`, `chatToolResponse` decode, finish_reason handling) yields identical engine-facing results. NOTE: scope is a few days, not a quick-win — consider promoting to a standalone test-remediation plan rather than resolving inline. | testing | 480 | review | claude | LOW |
+ 
+ ### [2026-06-14] From Sprint: 3.0_adversarial_verification
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 7 | [/] | LOW | internal/verify/pipeline.go:238 | The rich VerificationResult built in verifyFinding never populates TrippedBudgets (invokeSkeptic folds tripped budgets only into free-text Notes), base.Model is hard-coded to skeptics[0].Config.Model even when another skeptic produced the winning verdict, and the skip-already-verified rebuild (pipeline.go:199) re-synthesizes records from the compact on-disk block losing Model/DurationMs/TrippedBudgets — so verification.json's structured audit fields degrade or misattribute on multi-skeptic and no-op re-runs (extends the model-attribution gap of TD-011). Also: Model is empty on the no_eligible_skeptic / tool_harness_unavailable early-return paths. [intent: deferred per sprint-plan TD-011] | Thread the tripped-budget slice and the winning skeptic's model up from invokeSkeptic into base.TrippedBudgets/base.Model (join models when multiple voters agree, mirroring joinSkeptics), and carry Model/DurationMs/TrippedBudgets forward for skipped findings instead of synthesizing a lossy record. | correctness | 120 | execute-sprint | execute-sprint, claude | HIGH |
+ 
+ ### [2026-06-13] From Sprint: 2.0_tool_using_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 5 | [/] | LOW | internal/tools/snapshot.go | AC 03-02 Scenario 5 and AC 03-03 Scenarios 4-5 require `manifest.json` `stages.review` to record `snapshot_mode` (live/worktree), `head_sha`, and `snapshot_worktree_path`. (intent_note: deferred per sprint-plan §2.5.A (manifest review-stage recording is Phase 5 work); Deferred to Epic Plan 2.1) | when wiring `SnapshotFor` into the agent loop, record `snapshot_mode`/`head_sha`/`snapshot_worktree_path` into `internal/payload/manifest.go` review stage and add the manifest assertion tests from AC 03-02/03-03. | testing | 0 | execute-sprint | execute-sprint | MEDIUM |
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index eb16d3c2..c9cad255 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,8 +1,24 @@
++## [15.0.0] - 2026-07-01
++
++Audited the documentation against the current engine and eliminated the drift found, so `docs/` is a trustworthy single source of truth for the upcoming website build.
++
++### Added
++
++- `docs/architecture.md` — an architecture overview of the multi-model reviewer panel and the deterministic reconcile → verify → debate pipeline.
++- `docs/README.md` — a documentation index that links every doc, establishing `docs/` as the single source of truth.
++- Documentation-audit regression tests that assert the docs reference only real CLI commands, subcommands, and flags, and that the docs index covers every doc.
++
++### Fixed
++
++- Corrected the persona-resolution chain in `docs/registry.md` to stop documenting a non-existent `--task-message` CLI flag; that override is an internal resolution seam, not a flag.
++
++*Shipped via /execute-epic (epic 15.0)*
++
+ ## [Technical Debt] - 2026-07-01
+ 
+ ### Fixed
+ 
+ - Hardened the `buildOneAgent` fan-out review test helper to return an explicit error when its single-slot roster assumption is violated (empty or chunked config) instead of panicking on `slots[0]` or silently returning a partial-payload agent.
+ - Renamed the stale `TestBuildAgent_*` fan-out tests to `TestBuildOneAgent_*` to match the actual `buildOneAgent` helper seam after `buildAgent` was removed in epic 14.4.
+ 
+ ## [14.4.0] - 2026-07-01
+diff --git a/cmd/atcr/docs_audit_test.go b/cmd/atcr/docs_audit_test.go
+new file mode 100644
+index 00000000..337edc18
+--- /dev/null
++++ b/cmd/atcr/docs_audit_test.go
+@@ -0,0 +1,334 @@
++package main
++
++// Documentation-audit regression guards (epic 15.0). These tests treat the
++// compiled command tree and the real config schema as the source of truth and
++// assert that the prose in docs/ (plus the root README.md) never drifts away
++// from it. They exist so a future rename/removal that forgets the docs fails CI
++// instead of shipping stale instructions to the website build that consumes
++// docs/ as its single source of truth.
++
++import (
++	"os"
++	"path/filepath"
++	"regexp"
++	"strings"
++	"testing"
++
++	"github.com/spf13/cobra"
++	"github.com/spf13/pflag"
++)
++
++// repoRootDir ascends from the test working directory (the package dir,
++// cmd/atcr) until it finds go.mod, returning the repository root.
++func repoRootDir(t *testing.T) string {
++	t.Helper()
++	dir, err := os.Getwd()
++	if err != nil {
++		t.Fatalf("getwd: %v", err)
++	}
++	for {
++		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
++			return dir
++		}
++		parent := filepath.Dir(dir)
++		if parent == dir {
++			t.Fatalf("go.mod not found above %s", dir)
++		}
++		dir = parent
++	}
++}
++
++// auditedMarkdown returns the set of markdown files this epic owns as the
++// documentation source of truth: every docs/*.md plus the root README.md.
++// testdata fixtures and READMEs elsewhere in the tree are intentionally out of
++// scope (epic 15.0 clarifications).
++func auditedMarkdown(t *testing.T) map[string]string {
++	t.Helper()
++	root := repoRootDir(t)
++	out := map[string]string{}
++	docs, err := filepath.Glob(filepath.Join(root, "docs", "*.md"))
++	if err != nil {
++		t.Fatalf("glob docs: %v", err)
++	}
++	paths := append(docs, filepath.Join(root, "README.md"))
++	for _, p := range paths {
++		b, err := os.ReadFile(p)
++		if err != nil {
++			t.Fatalf("read %s: %v", p, err)
++		}
++		rel, _ := filepath.Rel(root, p)
++		out[rel] = string(b)
++	}
++	return out
++}
++
++// atcrInvocations returns the token lists (the words following "atcr") for every
++// `atcr ...` invocation appearing inside an inline code span or a fenced code
++// block whose content begins with atcr (optionally behind a `$ ` shell prompt).
++// Anchoring to the start of a span/line keeps ordinary prose (e.g. the sentence
++// "atcr is local-first") and cross-line adjacencies from registering as bogus
++// references. Both ``` and ~~~ GFM fences are recognized.
++func atcrInvocations(md string) [][]string {
++	var out [][]string
++	capture := func(s string) {
++		s = strings.TrimSpace(s)
++		s = strings.TrimSpace(strings.TrimPrefix(s, "$ "))
++		if !strings.HasPrefix(s, "atcr ") {
++			return
++		}
++		if fields := strings.Fields(s); len(fields) > 1 {
++			out = append(out, fields[1:]) // drop the leading "atcr"
++		}
++	}
++	for _, m := range regexp.MustCompile("`([^`\n]+)`").FindAllStringSubmatch(md, -1) {
++		capture(m[1])
++	}
++	inFence := false
++	for _, ln := range strings.Split(md, "\n") {
++		trimmed := strings.TrimSpace(ln)
++		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
++			inFence = !inFence
++			continue
++		}
++		if inFence {
++			capture(ln)
++		}
++	}
++	return out
++}
++
++// canonicalCommands walks the whole command tree and returns every command name
++// (top-level and nested), plus cobra's auto-registered help/completion.
++func canonicalCommands() map[string]bool {
++	names := map[string]bool{"help": true, "completion": true}
++	var walk func(c *cobra.Command)
++	walk = func(c *cobra.Command) {
++		for _, sub := range c.Commands() {
++			names[sub.Name()] = true
++			walk(sub)
++		}
++	}
++	walk(newRootCmd())
++	return names
++}
++
++// commandGroups maps each command that owns subcommands to the set of its direct
++// child command names, so a nested verb (e.g. the "run" in `atcr benchmark run`)
++// can be validated rather than only the first token.
++func commandGroups() map[string]map[string]bool {
++	groups := map[string]map[string]bool{}
++	var walk func(c *cobra.Command)
++	walk = func(c *cobra.Command) {
++		children := c.Commands()
++		if len(children) > 0 {
++			set := map[string]bool{}
++			for _, sub := range children {
++				set[sub.Name()] = true
++			}
++			groups[c.Name()] = set
++		}
++		for _, sub := range children {
++			walk(sub)
++		}
++	}
++	walk(newRootCmd())
++	return groups
++}
++
++// canonicalFlags walks the whole command tree and returns every long flag name
++// registered on any command (local + persistent).
++func canonicalFlags() map[string]bool {
++	// help (every command) and version (root) are cobra-managed universal flags
++	// added lazily during Execute, so they never appear in the static flag sets
++	// walked below; seed them explicitly.
++	flags := map[string]bool{"help": true, "version": true}
++	add := func(fs *pflag.FlagSet) {
++		fs.VisitAll(func(f *pflag.Flag) { flags[f.Name] = true })
++	}
++	var walk func(c *cobra.Command)
++	walk = func(c *cobra.Command) {
++		add(c.LocalFlags())
++		add(c.PersistentFlags())
++		for _, sub := range c.Commands() {
++			walk(sub)
++		}
++	}
++	walk(newRootCmd())
++	return flags
++}
++
++// TestDocsReferenceOnlyRealCommands asserts, for every `atcr ...` invocation in
++// the audited docs, that (a) the first token is a real command, (b) when that
++// command is a group its next bare-word token is a real subcommand, and (c) every
++// --flag on the line is a real flag somewhere in the compiled tree (AC1). Flags
++// are validated only when attached to an atcr invocation, so unrelated docker/git
++// flags in the same docs are not misread as atcr flags.
++func TestDocsReferenceOnlyRealCommands(t *testing.T) {
++	cmds := canonicalCommands()
++	groups := commandGroups()
++	flags := canonicalFlags()
++	reFlag := regexp.MustCompile(`^--([a-z][a-z-]+)`)
++	isWord := regexp.MustCompile(`^[a-z][a-z-]+$`).MatchString
++	for path, content := range auditedMarkdown(t) {
++		for _, tokens := range atcrInvocations(content) {
++			name0 := tokens[0]
++			switch {
++			case reFlag.MatchString(name0):
++				// e.g. `atcr --version`: a root flag, validated in the flag loop below.
++			case !cmds[name0]:
++				t.Errorf("%s references `atcr %s` but %q is not a real command", path, name0, name0)
++			default:
++				if children, isGroup := groups[name0]; isGroup && len(tokens) > 1 {
++					if next := tokens[1]; isWord(next) && !children[next] {
++						t.Errorf("%s references `atcr %s %s` but %q is not a subcommand of %q", path, name0, next, next, name0)
++					}
++				}
++			}
++			for _, tok := range tokens {
++				if m := reFlag.FindStringSubmatch(tok); m != nil && !flags[m[1]] {
++					t.Errorf("%s references `--%s` on an `atcr %s` command, but no such flag exists", path, m[1], name0)
++				}
++			}
++		}
++	}
++}
++
++// TestConfigDocsUseRealConfigFilenameAndReconcilerName guards against the two
++// drift tokens epic 15.0 was chartered to eliminate: the fictional `atcr.yaml`
++// config filename (the real project config is `.atcr/config.yaml`) and the
++// non-existent feature name "Reconciler v2" (the shipped feature is simply the
++// multi-model reconciler). Neither may appear in any audited doc (AC2).
++func TestConfigDocsUseRealConfigFilenameAndReconcilerName(t *testing.T) {
++	reFilename := regexp.MustCompile(`\batcr\.yaml\b`)
++	reReconciler := regexp.MustCompile(`(?i)reconciler v2`)
++	for path, content := range auditedMarkdown(t) {
++		if reFilename.MatchString(content) {
++			t.Errorf("%s references `atcr.yaml`; the real project config is `.atcr/config.yaml`", path)
++		}
++		if reReconciler.MatchString(content) {
++			t.Errorf("%s references \"Reconciler v2\", which is not a real feature name", path)
++		}
++	}
++}
++
++// TestReconcilerConfigSurfaceDocumented asserts that the user-facing config
++// blocks that tune the multi-model reconciler pipeline — persona plus the
++// debate/verify/executor sections — are all present in the configuration
++// reference (AC2). Dedup is deliberately excluded: it is fixed internal behavior
++// (hardcoded cutoffs in reconcile/dedupe.go), not a configurable surface.
++func TestReconcilerConfigSurfaceDocumented(t *testing.T) {
++	root := repoRootDir(t)
++	b, err := os.ReadFile(filepath.Join(root, "docs", "registry.md"))
++	if err != nil {
++		t.Fatalf("read registry.md: %v", err)
++	}
++	ref := string(b)
++	for _, block := range []string{"persona:", "debate:", "verify:", "executor:"} {
++		if !strings.Contains(ref, block) {
++			t.Errorf("docs/registry.md does not document the `%s` config block", block)
++		}
++	}
++}
++
++// TestDocsIndexCoversEveryDoc asserts that docs/README.md is the single
++// source-of-truth index the website build consumes: it must link to every other
++// docs/*.md file exactly, with no dangling links and no missing entries (T4). A
++// new doc that is never linked, or a link to a doc that was deleted/renamed,
++// fails this test.
++func TestDocsIndexCoversEveryDoc(t *testing.T) {
++	root := repoRootDir(t)
++	docsDir := filepath.Join(root, "docs")
++
++	all, err := filepath.Glob(filepath.Join(docsDir, "*.md"))
++	if err != nil {
++		t.Fatalf("glob docs: %v", err)
++	}
++	expected := map[string]bool{}
++	for _, p := range all {
++		base := filepath.Base(p)
++		if base == "README.md" {
++			continue // the index does not link itself
++		}
++		expected[base] = true
++	}
++
++	indexPath := filepath.Join(docsDir, "README.md")
++	b, err := os.ReadFile(indexPath)
++	if err != nil {
++		t.Fatalf("docs/README.md index must exist (T4): %v", err)
++	}
++
++	// Extract relative markdown link targets that point at a .md file, stripping
++	// any #anchor and ./ prefix. External (http) and non-.md links are ignored.
++	linked := map[string]bool{}
++	re := regexp.MustCompile(`\]\(([^)]+)\)`)
++	for _, m := range re.FindAllStringSubmatch(string(b), -1) {
++		target := m[1]
++		if strings.Contains(target, "://") {
++			continue
++		}
++		target = strings.SplitN(target, "#", 2)[0]
++		target = strings.TrimPrefix(target, "./")
++		if !strings.HasSuffix(target, ".md") || strings.Contains(target, "/") {
++			continue // only same-directory doc links count toward the index
++		}
++		base := filepath.Base(target)
++		if base == "README.md" {
++			continue
++		}
++		// Dangling-link guard: every linked doc must exist on disk.
++		if _, err := os.Stat(filepath.Join(docsDir, base)); err != nil {
++			t.Errorf("docs/README.md links %q but that file does not exist", base)
++			continue
++		}
++		linked[base] = true
++	}
++
++	for doc := range expected {
++		if !linked[doc] {
++			t.Errorf("docs/README.md index does not link docs/%s", doc)
++		}
++	}
++	for doc := range linked {
++		if !expected[doc] {
++			t.Errorf("docs/README.md links docs/%s which is not an expected doc", doc)
++		}
++	}
++}
++
++// TestArchitectureDocDescribesReconciler asserts that docs/architecture.md
++// exists and faithfully names the stages and concepts of the real multi-model
++// reconciler pipeline (AC3). The required tokens are the actual pipeline stages
++// (review → reconcile → verify → debate) and the reconciler's core operations
++// (cluster, dedupe, confidence), so a stub or a doc describing a fictional
++// architecture fails.
++func TestArchitectureDocDescribesReconciler(t *testing.T) {
++	root := repoRootDir(t)
++	b, err := os.ReadFile(filepath.Join(root, "docs", "architecture.md"))
++	if err != nil {
++		t.Fatalf("docs/architecture.md must exist (AC3): %v", err)
++	}
++	lower := strings.ToLower(string(b))
++	for _, term := range []string{"review", "reconcile", "cluster", "dedupe", "confidence", "verify", "debate", "persona"} {
++		if !strings.Contains(lower, term) {
++			t.Errorf("docs/architecture.md does not describe the %q stage/concept of the reconciler", term)
++		}
++	}
++}
++
++// TestDocsClaimedFlagsAreReal asserts that every flag the docs explicitly call a
++// "flag" via the “ `--x` flag “ idiom is a real flag on some command in the
++// compiled tree (AC1). This catches prose that documents a CLI flag which does
++// not exist, without matching docker/git flags used in unrelated examples.
++func TestDocsClaimedFlagsAreReal(t *testing.T) {
++	flags := canonicalFlags()
++	re := regexp.MustCompile("`--([a-z][a-z-]+)`\\s+flag")
++	for path, content := range auditedMarkdown(t) {
++		for _, m := range re.FindAllStringSubmatch(content, -1) {
++			name := m[1]
++			if !flags[name] {
++				t.Errorf("%s documents `--%s` as a flag but no such CLI flag exists", path, name)
++			}
++		}
++	}
++}
+diff --git a/docs/README.md b/docs/README.md
+new file mode 100644
+index 00000000..6f9593ff
+--- /dev/null
++++ b/docs/README.md
+@@ -0,0 +1,53 @@
++# atcr Documentation
++
++The canonical index of atcr's documentation. Every reference below is a
++standard GitHub Flavored Markdown file in this directory; this index is the
++single source of truth the website build consumes, so it links every doc in
++`docs/`.
++
++## Overview & configuration
++
++- [Architecture Overview](architecture.md) — how the multi-model reviewer panel
++  and the deterministic reconciler pipeline fit together, stage by stage.
++- [Configuration Reference](registry.md) — `.atcr/config.yaml`, the registry
++  files, resolution tiers, and the persona resolution chain.
++- [Providers](providers.md) — configuring OpenAI-compatible model providers.
++- [atcr Agent Skill — Installation & Usage](skill-usage.md) — installing and
++  driving atcr as an agent skill.
++
++## Pipeline stages
++
++- [Payload Modes](payload-modes.md) — `diff`, `blocks`, and `files`: how much
++  code each reviewer sees.
++- [Execution reproduction (`--exec`)](execution.md) — sandboxed reproduction of
++  findings during a single stage.
++- [Adversarial Verification](verification.md) — skeptic agents that try to
++  disprove reconciled findings.
++- [Cross-Examination (Debate Stage)](cross-examination.md) — proposer /
++  challenger / judge resolution of disputed findings.
++- [Disagreement Radar](disagreement-radar.md) — the focused view over reviewer
++  disagreement.
++- [Findings Format — `atcr-findings/v1`](findings-format.md) — the stable,
++  machine-parseable on-disk findings contract.
++
++## Personas
++
++- [Authoring a Persona](personas-authoring.md) — writing a reviewer persona.
++- [Installing Community Personas](personas-install.md) — installing and managing
++  community personas.
++
++## Integration
++
++- [CI Integration](ci-integration.md) — wiring atcr into a CI gate.
++- [GitHub Action — PR Review](github-action.md) — posting reconciled findings to
++  a pull request.
++- [Using atcr as a code-review backend (`--output-dir`)](code-review-backend.md)
++  — driving atcr as the reviewer backend for a separate pipeline.
++
++## Benchmarking & observability
++
++- [Benchmark Suite](benchmark.md) — the standard benchmark tooling behind the
++  public leaderboard.
++- [Scorecard](scorecard.md) — the per-reviewer scorecard for a reconcile run.
++- [Metrics](metrics.md) — the metrics atcr records.
++- [Logging](logging.md) — log levels and output formats.
+diff --git a/docs/architecture.md b/docs/architecture.md
+new file mode 100644
+index 00000000..017f0ce1
+--- /dev/null
++++ b/docs/architecture.md
+@@ -0,0 +1,138 @@
++# Architecture Overview
++
++atcr is a **review panel, not a reviewer**. It fans a single code change out to a
++panel of heterogeneous LLM reviewer personas — different models, different
++providers, different lenses — then deterministically reconciles their findings
++into one deduplicated, confidence-scored deliverable. Cross-model agreement is
++the signal: a finding two independent models both caught is worth more than
++either model's opinion alone.
++
++Two properties shape every design decision:
++
++- **The merge is the product.** Prompts orchestrate; the deterministic Go
++  reconciler does everything that must be reproducible. The same inputs always
++  produce byte-identical output.
++- **Disagreement is preserved, not flattened.** When reviewers disagree on
++  severity or whether a finding is real, that disagreement is recorded and, where
++  it matters, resolved by an explicit adversarial stage rather than silently
++  averaged away.
++
++atcr is local-first and BYO-keys: it talks to any OpenAI-compatible endpoint you
++configure, and every cross-stage handoff is a machine-parseable file on disk.
++
++## Pipeline
++
++```
++                 ┌──────────────────────────────────────────────┐
++                 │   atcr review                                │
++                 │   range → payload → fan-out to persona pool  │
++                 │   (parallel/serial lanes, fallbacks, budgets)│
++                 └──────────────────┬───────────────────────────┘
++                                    v
++   .atcr/reviews/<id>/sources/{pool,host,...}/findings.txt
++                                    v
++                 ┌──────────────────────────────────────────────┐
++                 │   atcr reconcile                             │
++                 │   discover → cluster → dedupe → confidence   │
++                 └──────────────────┬───────────────────────────┘
++                                    v
++       reconciled/{findings.txt, findings.json, report.md}
++                                    v
++              atcr verify  →  atcr debate  →  atcr report
++```
++
++Each stage is a separate command that reads the previous stage's on-disk
++artifacts and writes its own, so any stage can be re-run, resumed, or driven by
++an external orchestrator independently.
++
++### 1. Review — fan-out to the persona pool
++
++`atcr review` resolves the git range (base..head), builds a payload from the
++diff, and fans that payload out to the configured roster of reviewer agents.
++Each agent is a `(provider, model, persona)` triple; agents run across parallel
++and serial lanes with per-agent fallback chains and payload/token budgets. The
++per-agent and merged findings are written under
++`.atcr/reviews/<id>/sources/`.
++
++- **Payload modes** (`diff`, `blocks`, `files`) control how much code each
++  reviewer sees — see [payload-modes.md](payload-modes.md).
++- **Personas** are the reviewer lenses; the resolution chain and precedence are
++  described in [registry.md](registry.md) and [personas-authoring.md](personas-authoring.md).
++- Single-stage execution details live in [execution.md](execution.md).
++
++### 2. Reconcile — cluster, dedupe, score confidence
++
++`atcr reconcile` is the deterministic core. It **discovers** the source
++findings, **clusters** them by location, **dedupes** near-duplicate findings
++across reviewers, and scores **confidence** from cross-model agreement, then
++writes the reconciled artifacts (`findings.txt`, `findings.json`, `report.md`).
++
++- **Clustering** groups findings by AST isomorphism (the smallest covering AST
++  block of each finding's line) so findings group together across line-number
++  drift, with line proximity as the fallback when no parser is available. Set
++  `ATCR_DISABLE_AST_GROUPING` to revert to legacy line-proximity clustering.
++- **Deduplication is fixed internal behavior, not a configurable knob.** Within a
++  cluster, findings are merged by structural similarity (AST isomorphism plus a
++  token Jaccard measure). The cutoffs are hardcoded constants in
++  `reconcile/dedupe.go` — findings at or above a `0.7` merge threshold are merged;
++  the `0.4`–`0.7` gray zone is preserved as a soft/uncertain match rather than
++  collapsed. (An earlier NCD-based distance was evaluated and rejected; see
++  `reconcile/distance.go`.) There is no `.atcr/config.yaml` key to tune these.
++- **Confidence** rises with the number of distinct reviewers that independently
++  reported the same finding — the corroboration signal that drives the CI gate.
++
++The reconciler is also published as a standalone, stdlib-only library
++(`github.com/samestrin/atcr/reconcile`) so other tools can embed the exact same
++merge.
++
++### 3. Verify — adversarial skeptics
++
++`atcr verify` runs **skeptic** agents — a different model from any reviewer that
++produced a finding — that attempt to *disprove* each finding using the same
++path-jailed tool loop the reviewers used. Their verdicts feed a second
++confidence axis, and the gate can be configured to count only findings that
++survive verification. See [verification.md](verification.md).
++
++### 4. Debate — settle disputes
++
++`atcr debate` cross-examines disputed findings with a proposer / challenger /
++judge exchange, settling severity splits, gray-zone clusters, and
++verification disagreements that the earlier stages surfaced but did not resolve.
++See [cross-examination.md](cross-examination.md) and the focused
++[disagreement-radar.md](disagreement-radar.md) view.
++
++### 5. Report — render the deliverable
++
++`atcr report` renders `md`, `json`, or `checklist` views over the reconciled
++findings. The [findings format](findings-format.md) is stable and machine
++-parseable for downstream consumers.
++
++## Configuration model
++
++Settings resolve per field across four tiers, first hit wins:
++
++```
++CLI flag  >  .atcr/*  (project)  >  ~/.config/atcr/*  (user)  >  embedded default
++```
++
++The user-facing configuration surface that tunes the pipeline is the project
++config `.atcr/config.yaml` (written by `atcr init`) plus the registry files. The
++reconciler-adjacent blocks are `persona`, `debate:`, `verify:`, and `executor:`;
++the full reference is in [registry.md](registry.md). Provider authorization for
++project-defined providers goes through `atcr trust`.
++
++## MCP server
++
++`atcr serve` exposes the same review engine over an MCP stdio server, so an
++agentic host can drive the identical pipeline programmatically instead of through
++the CLI. Stdout is kept protocol-only; logs go to stderr.
++
++## Related documentation
++
++- [registry.md](registry.md) — full configuration reference
++- [execution.md](execution.md) — single-stage execution
++- [payload-modes.md](payload-modes.md) — how much code each reviewer sees
++- [verification.md](verification.md) — adversarial verification
++- [cross-examination.md](cross-examination.md) — the debate stage
++- [findings-format.md](findings-format.md) — the on-disk findings contract
++- [ci-integration.md](ci-integration.md) — wiring atcr into a CI gate
+diff --git a/docs/registry.md b/docs/registry.md
+index 1d6a9750..3ad56559 100644
+--- a/docs/registry.md
++++ b/docs/registry.md
+@@ -159,9 +159,9 @@ Settings resolve per field (above); personas resolve per file (`.atcr/personas/`
+ 
+ For each agent, the prompt is resolved by walking six levels in order, first hit wins:
+ 
+-1. **`--task-message` flag** — if provided it wins outright (even when empty: an explicit "no system prompt").
++1. **Programmatic task-message override** — an internal resolution seam (the `taskMessage` argument to persona resolution) that, when set, wins outright even when empty (an explicit "no system prompt"). It is **not** exposed as a CLI flag, so ordinary CLI and MCP runs pass nothing here and resolution effectively begins at level 2.
+ 2. **`<persona>.md` in the project personas dir** (`.atcr/personas/`).
+ 3. **`<persona>.md` in the registry personas dir** (`~/.config/atcr/personas/`).
+ 4. **`_base.md`** in the project dir, then the registry dir.
+ 5. **embedded `<agentName>.md`**, then
+ 6. **embedded `_base.md`**.

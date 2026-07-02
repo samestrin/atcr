@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 29 | 0 |
-| LOW | 6 | 28 | 0 |
+| LOW | 0 | 28 | 0 |
 
-**Last Modified:** 2026-07-01 | **Open Items:** 6 | **Deferred Items:** 59 | **Resolved Items:** 0 | **Total Items:** 65
+**Last Modified:** 2026-07-01 | **Open Items:** 0 | **Deferred Items:** 59 | **Resolved Items:** 0 | **Total Items:** 59
 
 ## Directory Structure
 
@@ -62,17 +62,6 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards �
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
-### [2026-07-01] From Sprint: epic-15.0
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:71 | docCommandTokens flags any fenced-block line beginning "atcr <word>", so prose accidentally placed inside a code fence (e.g. "atcr is ...") could register as a bogus command reference | Restrict fenced-line matching to shell-prompt ($) lines or require a following flag/argument token | EDGE_CASES | 15 | execute-epic-stage3 |
-| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:216 | TestDocsIndexCoversEveryDoc link regex treats a titled markdown link `](x.md "title")` as target `x.md "title"`, which fails the .md suffix check and would false-fail if a future index link adds a title | Strip a trailing quoted title from the captured target before the .md/anchor checks | EDGE_CASES | 15 | execute-epic-stage3 |
-| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:262 | TestArchitectureDocDescribesReconciler comment claims a fictional-architecture stub would fail, but it only checks 8 substrings exist anywhere, so a buzzword-sprinkled stub passes | Reword the comment to a keyword-presence check, or strengthen it to assert stage ordering/structure | CORRECTNESS | 10 | execute-epic-independent |
-| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:176 | TestReconcilerConfigSurfaceDocumented uses strings.Contains for persona:/debate:/verify:/executor:, matching those tokens in prose as readily as in a real yaml block | Anchor the check to fenced-yaml lines or a start-of-line block pattern rather than a bare substring | EDGE_CASES | 15 | execute-epic-independent |
-| 1 | [ ] | LOW | cmd/atcr/docs_audit_test.go:53 | Root README.md is folded into the atcr.yaml/Reconciler-v2/command/flag audit, so an unrelated future README edit could fail CI in a docs-audit test and surprise contributors | Document this coupling in the test header, or scope the drift-token checks to docs/ only | REGRESSION_RISK | 10 | execute-epic-independent |
-| U | [ ] | LOW | internal/registry/persona.go:33 | Stale in-code comment still calls taskMessage the --task-message flag, now contradicting the corrected docs/registry.md line (no such CLI flag is registered) | Update the persona.go:33 comment to match the corrected doc so code and docs agree | INTEGRATION | 5 | execute-epic-independent |
-
 ### [2026-07-01] From Sprint: 14.3_diff_chunking_context
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
@@ -103,14 +92,14 @@ table with zero data loss) is proven by the Go test suite in
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| u | [/] | LOW | reconcile/pagerank.go:181 | Authority promotion is silent: no counter or Summary stat records that a HIGH came from authority rather than reviewer count, so a misfiring promotion is only derivable as HIGH-with-a-single-reviewer (Deferred: Epic Plan 13.4) | Add a Summary stat (e.g. AuthorityPromoted int) counting authority-promoted findings for observability; out of v1 scope since the clarification fixed the wire schema | OBSERVABILITY | 30 | execute-epic-independent |
+| U | [/] | LOW | reconcile/pagerank.go:181 | Authority promotion is silent: no counter or Summary stat records that a HIGH came from authority rather than reviewer count, so a misfiring promotion is only derivable as HIGH-with-a-single-reviewer (Deferred: Epic Plan 13.4) | Add a Summary stat (e.g. AuthorityPromoted int) counting authority-promoted findings for observability; out of v1 scope since the clarification fixed the wire schema | OBSERVABILITY | 30 | execute-epic-independent |
 
 ### [2026-06-27] From Sprint: 13.1_ast_plugin_architecture
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| u | [/] | LOW | internal/astgroup/parsers/src/goparser/main.go:39 | The guest pins alloc'd buffers and hands the host int32(uintptr(unsafe.Pointer(&b[0]))) as a stable guest offset, valid only because the current Go GC is non-moving. This is an undocumented runtime invariant, not a language guarantee; a future moving GC makes the packed pointer a dangling offset with no detection. The unsafe alloc/free/emit/node boilerplate is copy-pasted across goparser, pyparser, and the 13.4 brace parsers, so any ABI fix must be applied N times. (Deferred: extraction premature at 2 parsers; epic scope fixed at Go+Python — a future-remedy note is in each parser's ABI section, revisit if parser count grows.) | Extract the shared alloc/free/emit/pins ABI into one internal guest package imported by every parser main.go, and add a build-time note pinning the GC assumption (or switch to an explicitly reserved arena). | maintainability | 120 | code-review | claude | MEDIUM |
-| u | [/] | MEDIUM | internal/astgroup/parsers/src/pyparser/main.go:112 | scanTripleQuotes and stripComment are quote/escape-unaware. A triple-quote appearing inside a # comment, or a # appearing inside a string literal, flips the multi-line-string state machine the wrong way, so arbitrary spans of real code get classified as string content and dropped from significantLines, silently erasing blocks. The heuristic disclaimer documents the risk but does not bound it: on unusual source the structural hash diverges from the true AST. (Deferred: accepted PoC scope; heuristic limitation already documented at pyparser/main.go:72-78 and 152-156, degrades to proximity grouping.) | Run scanTripleQuotes only over the code portion (skip after an unquoted #) and skip triple-quotes occurring inside single-line strings. Add regression fixtures: a # containing a triple-quote, and a string literal containing #. | security | 120 | code-review | claude | MEDIUM |
+| U | [/] | LOW | internal/astgroup/parsers/src/goparser/main.go:39 | The guest pins alloc'd buffers and hands the host int32(uintptr(unsafe.Pointer(&b[0]))) as a stable guest offset, valid only because the current Go GC is non-moving. This is an undocumented runtime invariant, not a language guarantee; a future moving GC makes the packed pointer a dangling offset with no detection. The unsafe alloc/free/emit/node boilerplate is copy-pasted across goparser, pyparser, and the 13.4 brace parsers, so any ABI fix must be applied N times. (Deferred: extraction premature at 2 parsers; epic scope fixed at Go+Python — a future-remedy note is in each parser's ABI section, revisit if parser count grows.) | Extract the shared alloc/free/emit/pins ABI into one internal guest package imported by every parser main.go, and add a build-time note pinning the GC assumption (or switch to an explicitly reserved arena). | maintainability | 120 | code-review | claude | MEDIUM |
+| U | [/] | MEDIUM | internal/astgroup/parsers/src/pyparser/main.go:112 | scanTripleQuotes and stripComment are quote/escape-unaware. A triple-quote appearing inside a # comment, or a # appearing inside a string literal, flips the multi-line-string state machine the wrong way, so arbitrary spans of real code get classified as string content and dropped from significantLines, silently erasing blocks. The heuristic disclaimer documents the risk but does not bound it: on unusual source the structural hash diverges from the true AST. (Deferred: accepted PoC scope; heuristic limitation already documented at pyparser/main.go:72-78 and 152-156, degrades to proximity grouping.) | Run scanTripleQuotes only over the code portion (skip after an unquoted #) and skip triple-quotes occurring inside single-line strings. Add regression fixtures: a # containing a triple-quote, and a string literal containing #. | security | 120 | code-review | claude | MEDIUM |
 
 ### [2026-06-26] From Sprint: 11.0_executing_reviewers
 
