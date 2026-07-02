@@ -273,6 +273,9 @@ func avgPerRun(total, runs int) float64 {
 // so the caller omits the JSON key rather than emitting a misleading 0.0. A
 // non-nil result is never Inf/NaN (corroborated > 0 is guaranteed by the guard).
 func costPer(totalCost float64, corroborated int) *float64 {
+	// corroborated is always a clampNonNeg-accumulated sum (export.go:81) and can
+	// never go negative; <= 0 (rather than == 0) is kept only for consistency with
+	// the identical guard in avgPerRun (export.go:264).
 	if corroborated <= 0 {
 		return nil
 	}
