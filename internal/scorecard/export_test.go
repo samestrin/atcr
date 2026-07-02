@@ -142,6 +142,39 @@ func TestExport_CostPerCorroboratedPresentAndZeroWhenGenuinelyFree(t *testing.T)
 	assert.Equal(t, 0.0, *r.CostPerCorroboratedFindingUSD)
 }
 
+func TestExport_CostPerCorroborated_GroupAggregation(t *testing.T) {
+	// Two records in the same group, both with zero corroborated findings:
+	// the summed corroborated count is zero, so the key must be omitted.
+	rec1 := exportRec("bruce", "m", 1)
+	rec1.FindingsCorroborated = 0
+	rec1.CostUSD = 0.5
+	rec2 := exportRec("bruce", "m", 2)
+	rec2.FindingsCorroborated = 0
+	rec2.CostUSD = 0.3
+	data, err := Export([]Record{rec1, rec2}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	s := string(data)
+	assert.NotContains(t, s, `"cost_per_corroborated_finding_usd"`, "group total corroborated=0 omits the key")
+	r := parseEnvelope(t, data).Reviewers[0]
+	assert.Nil(t, r.CostPerCorroboratedFindingUSD)
+
+	// Mixed group: one paid-but-uncorroborated record plus one free-and-corroborated
+	// record. The key must be present and use the GROUP totals, not a single
+	// record's fields.
+	rec3 := exportRec("otto", "m", 1)
+	rec3.FindingsCorroborated = 0
+	rec3.CostUSD = 0.5
+	rec4 := exportRec("otto", "m", 2)
+	rec4.FindingsCorroborated = 7
+	rec4.CostUSD = 0
+	data, err = Export([]Record{rec3, rec4}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	r = parseEnvelope(t, data).Reviewers[0]
+	require.NotNil(t, r.CostPerCorroboratedFindingUSD, "mixed group has corroborated>0 => key present")
+	assert.InDelta(t, 0.5/7.0, *r.CostPerCorroboratedFindingUSD, 1e-9,
+		"cost-per uses group totals (0.5 cost / 7 corroborated), not per-record fields")
+}
+
 func TestExport_LatencyP50IsMedian(t *testing.T) {
 	// Three runs with latencies 100, 9100, 200 => median 200.
 	mk := func(age int, lat int64) Record {
