@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 29 | 0 |
-| LOW | 0 | 28 | 0 |
+| LOW | 1 | 28 | 0 |
 
-**Last Modified:** 2026-07-01 | **Open Items:** 0 | **Deferred Items:** 59 | **Resolved Items:** 0 | **Total Items:** 59
+**Last Modified:** 2026-07-02 | **Open Items:** 1 | **Deferred Items:** 59 | **Resolved Items:** 0 | **Total Items:** 60
 
 ## Directory Structure
 
@@ -61,6 +61,12 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
+
+### [2026-07-02] From Sprint: epic-15.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/scorecard/export_test.go:381 | TestExport_ClampsNegativeMetrics sets FindingsCorroborated=-2 which clamps to 0 at ingestion, so CostPerCorroboratedFindingUSD is always nil in this scenario and the nil-guard makes the GreaterOrEqual(0.0) assertion on that field dead code, never exercising negative-CostUSD clamping through the non-nil pointer path. | Add a second case (or separate test) with a positive FindingsCorroborated and negative CostUSD so the clamp is actually exercised through the non-nil pointer branch. | EDGE_CASES | 15 | execute-epic-independent |
 
 ### [2026-07-01] From Sprint: 14.3_diff_chunking_context
 
