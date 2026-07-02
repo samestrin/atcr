@@ -425,6 +425,19 @@ func TestExport_ClampsNegativeMetrics(t *testing.T) {
 	assert.LessOrEqual(t, r.CorroborationRate, 1.0)
 }
 
+func TestExport_CostPerCorroboratedFinding_ClampsOverflowingTotal(t *testing.T) {
+	r1 := exportRec("bruce", "m", 1)
+	r1.CostUSD = math.MaxFloat64
+	r2 := exportRec("bruce", "m", 2)
+	r2.CostUSD = math.MaxFloat64
+	data, err := Export([]Record{r1, r2}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	r := parseEnvelope(t, data).Reviewers[0]
+	require.NotNil(t, r.CostPerCorroboratedFindingUSD)
+	assert.False(t, math.IsInf(*r.CostPerCorroboratedFindingUSD, 0), "cost-per must stay finite even when the group's summed cost overflows float64")
+	assert.False(t, math.IsNaN(*r.CostPerCorroboratedFindingUSD))
+}
+
 func TestExport_PersonaAndModelPreserved(t *testing.T) {
 	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
 		FilterOpts{Since: "30d"}, fixedExportNow)
