@@ -1,0 +1,297 @@
+{
+  "generated": "2026-07-02",
+  "discovery_method": "semantic",
+  "queries": [
+    "apply unified diff patch to working tree files",
+    "atomic file backup and restore on failure",
+    "github create branch and open pull request",
+    "run go build validation for syntax guard",
+    "CLI opt-in flag gate requires backend"
+  ],
+  "match_count": 15,
+  "build_from": {
+    "primary_file": "internal/atomicfs/atomic.go",
+    "reason": "Already provides the crash-safe primitives (WriteFileAtomic, BackupToDotBak, swapStagedBackup, CopyPath) that AC2 (apply without corruption) and AC4 (revert on failure) need. Epics 4.7/4.7.1 hardened this package specifically for the backup/swap/restore invariant this epic's AC4 restates.",
+    "suggested_approach": "Add a new internal/autofix package that is a thin orchestrator over existing primitives rather than a reimplementation: ApplyPatch(entries []payload.FileEntry) backs up each touched file via atomicfs.BackupToDotBak, writes the patched content via atomicfs.WriteFileAtomic, and on a validation failure restores from the .bak via atomicfs.CopyPath/os.Rename — mirroring the restore path internal/fanout/reviewdir.go's restorePriorBackup already implements for review artifacts."
+  },
+  "semantic_matches": [
+    {
+      "file": "internal/payload/ingest.go",
+      "symbol": "BuildEntriesFromDiff",
+      "type": "function",
+      "line": 42,
+      "score": 0.9956,
+      "query": "apply unified diff patch to working tree files",
+      "relevance": "AC1's exact reuse anchor — parses loose + git unified diffs into []FileEntry{Path, Size, Body}, the shape AC2's apply step consumes. Already handles missing-context edge cases (inflated hunk counts, combined-diff rejection, symlink escape)."
+    },
+    {
+      "file": "internal/atomicfs/atomic.go",
+      "symbol": "BackupToDotBak",
+      "type": "function",
+      "line": 62,
+      "score": 0.999,
+      "query": "atomic file backup and restore on failure",
+      "relevance": "Crash-safe one-generation backup (stage into temp sibling, swap prior aside to .bak.old, remove only after success, restore on failed swap). This is the exact 'automatically reverts patches that fail validation' primitive AC4 asks for."
+    },
+    {
+      "file": "internal/atomicfs/atomic.go",
+      "symbol": "WriteFileAtomic",
+      "type": "function",
+      "line": 17,
+      "score": 0.99,
+      "query": "atomic file backup and restore on failure",
+      "relevance": "Sibling-temp-then-rename write so a reader/build never observes a partially-applied patch — the primitive AC2 (apply without corrupting files) should write through rather than reimplement."
+    },
+    {
+      "file": "internal/fanout/reviewdir.go",
+      "symbol": "restorePriorBackup",
+      "type": "function",
+      "line": 373,
+      "score": 0.9995,
+      "query": "atomic file backup and restore on failure",
+      "relevance": "Existing revert-on-failure pattern in the codebase (restores a prior generation after an interrupted swap). AC4's revert-on-validation-failure path should follow this same shape, adapted to per-file patch backups instead of whole-directory review artifacts."
+    },
+    {
+      "file": "internal/ghaction/client.go",
+      "symbol": "Client.postDo",
+      "type": "method",
+      "line": 149,
+      "score": 0.9956,
+      "query": "github create branch and open pull request",
+      "relevance": "Existing GitHub REST client with retry/backoff, secret redaction, and typed APIError handling. AC5's new half (create branch, commit, open/update PR) should add methods to this Client rather than stand up a second HTTP client — same auth, same error taxonomy, same redaction guarantees."
+    },
+    {
+      "file": "cmd/atcr/github.go",
+      "symbol": "newGithubCmd",
+      "type": "function",
+      "line": 39,
+      "score": 0.9,
+      "query": "github create branch and open pull request",
+      "relevance": "Existing CLI wrapper over internal/ghaction (Epic 7.3) — posts a check run and optional inline comments to an EXISTING PR. Confirms AC5's create-branch/open-PR half is genuinely new; today's command has no branch/commit/PR-create path."
+    },
+    {
+      "file": "internal/verify/syntaxguard.go",
+      "symbol": "validateGoFixSyntax",
+      "type": "function",
+      "line": 101,
+      "score": 0.995,
+      "query": "run go build validation for syntax guard",
+      "relevance": "Existing local validation layer (go/parser-based) that already runs before a fix is presented. AC3's configurable go build/lint/format step is the natural extension point — add a build-command validation mode alongside the existing syntax-only check rather than a parallel validator."
+    },
+    {
+      "file": "internal/verify/executor.go",
+      "symbol": "generateFixes / invokeExecutor",
+      "type": "function",
+      "line": 0,
+      "score": 0.8,
+      "query": "run go build validation for syntax guard",
+      "relevance": "Upstream fix-generation dependency (Epics 7.0/7.4) — AC2's apply step consumes this output as its input. Reference-only; not part of this epic's net-new surface."
+    },
+    {
+      "file": ".planning/epics/completed/11.0_executing_reviewers.md",
+      "symbol": "T4 — --exec opt-in flag + config validation + refuse-without-backend gate",
+      "type": "task",
+      "line": 57,
+      "score": 0.9995,
+      "query": "CLI opt-in flag gate requires backend",
+      "relevance": "The exact pattern AC6 should mirror: an off-by-default opt-in flag (--exec) paired with a refuse-without-backend validation gate. AC6's --auto-fix flag should follow this same shape (off by default, refuses to run without a configured apply/validate/PR backend)."
+    }
+  ],
+  "existing_patterns": [
+    {
+      "name": "Crash-safe backup/swap/restore",
+      "description": "Stage a copy into a temp sibling, atomically swap the prior generation aside (never destroyed until the swap succeeds), and restore it on a failed swap. Implemented in internal/atomicfs/atomic.go (BackupToDotBak/swapStagedBackup) and mirrored in internal/fanout/reviewdir.go (restorePriorBackup).",
+      "files": ["internal/atomicfs/atomic.go", "internal/fanout/reviewdir.go"],
+      "follow_for": "AC2 (apply without corruption) and AC4 (auto-revert on validation failure) — back up each patched file before writing, restore from backup on validation failure."
+    },
+    {
+      "name": "Local conservative-recall validation guard",
+      "description": "Parse generated content and flag only when it is plausibly code yet fails to parse; prose and non-target-language content pass through untouched to avoid false positives that degrade trust. Implemented in internal/verify/syntaxguard.go.",
+      "files": ["internal/verify/syntaxguard.go"],
+      "follow_for": "AC3's configurable validation step — extend with a go build/lint/format mode alongside the existing go/parser mode, keeping the same conservative-failure philosophy."
+    },
+    {
+      "name": "Retrying, secret-redacting REST client",
+      "description": "A Client with exponential-backoff retry on 5xx/429, typed APIError for non-2xx, and credential redaction in error messages. Implemented in internal/ghaction/client.go (postDo/get).",
+      "files": ["internal/ghaction/client.go"],
+      "follow_for": "AC5's new half — add CreateBranch/CreateCommit/CreatePullRequest/UpdatePullRequest methods to the existing Client rather than a second HTTP stack."
+    },
+    {
+      "name": "Off-by-default opt-in flag + refuse-without-backend gate",
+      "description": "A feature flag that is off by default and, when enabled, validates a required backend/config is present before proceeding — refusing fast rather than failing deep into execution. Implemented for --exec in Epic 11.0 (cmd/atcr, T4).",
+      "files": [".planning/epics/completed/11.0_executing_reviewers.md"],
+      "follow_for": "AC6 — the --auto-fix flag should be off by default and refuse to run without a configured backend (apply target + validation command + GitHub credentials), mirroring --exec's gate."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/payload/ingest.go",
+      "relevance": "high",
+      "purpose": "Parses loose + git unified diffs into []FileEntry (Path, Size, Body) with byte-identical round-trip.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/atomicfs/atomic.go",
+      "relevance": "high",
+      "purpose": "Atomic write, crash-safe backup/swap, and copy primitives.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/fanout/reviewdir.go",
+      "relevance": "medium",
+      "purpose": "Review-directory backup/restore orchestration; restorePriorBackup is the closest existing analogue to AC4's revert path.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/verify/syntaxguard.go",
+      "relevance": "high",
+      "purpose": "go/parser-based local syntax validation for generated fixes.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/verify/executor.go",
+      "relevance": "medium",
+      "purpose": "Generates fixes (generateFixes/invokeExecutor) — upstream input to the apply step.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/ghaction/client.go",
+      "relevance": "high",
+      "purpose": "GitHub REST client (check runs, PR review comments) with retry/backoff and secret redaction.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "cmd/atcr/github.go",
+      "relevance": "medium",
+      "purpose": "CLI wrapper posting reconciled findings to an existing PR as a check run.",
+      "likely_modification": "reference (new command likely separate, e.g. cmd/atcr/autofix.go)"
+    },
+    {
+      "path": ".planning/epics/completed/11.0_executing_reviewers.md",
+      "relevance": "medium",
+      "purpose": "T4 documents the --exec opt-in-flag + refuse-without-backend gate pattern AC6 should mirror.",
+      "likely_modification": "reference-only"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "internal/autofix (new package)",
+      "type": "entry-point",
+      "description": "New orchestrator package: ApplyPatch consumes []payload.FileEntry, writes via atomicfs, and exposes a revert path for validation failures."
+    },
+    {
+      "location": "internal/verify (extend)",
+      "type": "hook",
+      "description": "A configurable go build/lint/format validation step, invoked after ApplyPatch and before any commit/PR action, gating AC4's revert decision."
+    },
+    {
+      "location": "internal/ghaction.Client (extend)",
+      "type": "api",
+      "description": "New methods (CreateBranch, CreateCommit, CreatePullRequest, UpdatePullRequest) reusing the existing retry/redact/backoff plumbing to cover AC5's create-branch/commit/open-PR half."
+    },
+    {
+      "location": "cmd/atcr (new --auto-fix flag)",
+      "type": "entry-point",
+      "description": "Opt-in CLI flag wiring the apply -> validate -> revert-or-commit -> branch/PR flow end to end, gated off by default per AC6."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "atomicfs.WriteFileAtomic / BackupToDotBak / CopyPath",
+      "path": "internal/atomicfs/atomic.go",
+      "can_extend": false,
+      "usage_example": "internal/autofix calls BackupToDotBak(path) before WriteFileAtomic(path, patchedContent); on validation failure, CopyPath(backupPath, path) restores the prior generation."
+    },
+    {
+      "name": "payload.BuildEntriesFromDiff",
+      "path": "internal/payload/ingest.go",
+      "can_extend": false,
+      "usage_example": "internal/autofix.ApplyPatch(entries []payload.FileEntry) takes the output of BuildEntriesFromDiff(fixDiffText) directly."
+    },
+    {
+      "name": "verify.validateGoFixSyntax (pattern)",
+      "path": "internal/verify/syntaxguard.go",
+      "can_extend": true,
+      "usage_example": "Add a sibling function (e.g. runConfiguredValidation) that shells out to a configured command (go build/golangci-lint/gofmt) and follows the same conservative-failure contract."
+    },
+    {
+      "name": "ghaction.Client (retry/redact plumbing)",
+      "path": "internal/ghaction/client.go",
+      "can_extend": true,
+      "usage_example": "Add CreateBranch/CreateCommit/CreatePullRequest methods that call the existing c.post/c.get/c.postDo helpers, inheriting retry-on-5xx/429 and secret redaction for free."
+    },
+    {
+      "name": "go-gitdiff (github.com/bluekeyes/go-gitdiff)",
+      "path": "external dependency",
+      "can_extend": false,
+      "usage_example": "Used in internal/autofix/apply.go to parse unified diffs into structured hunks and apply them to file content byte-for-byte with fuzzy matching."
+    }
+  ],
+  "architecture_notes": [
+    "internal/autofix should be a thin orchestrator gluing internal/payload, internal/atomicfs, internal/verify, and internal/ghaction — not a reimplementation of diff parsing, atomic writes, or HTTP retry logic that already exists.",
+    "AC5's new half (branch/commit/PR) belongs on internal/ghaction.Client as new methods, not a parallel client, so it inherits the existing auth/redaction/retry contract for free.",
+    "AC6's --auto-fix flag should mirror Epic 11.0's --exec gate exactly: off by default, refuse-without-backend validation before any apply/validate/commit work begins.",
+    "AC4's revert must be scoped per-file (one .bak per touched file via atomicfs), not directory-wide like internal/fanout/reviewdir.go's restorePriorBackup — a patch can touch multiple files and a partial apply must be revertible file-by-file.",
+    "Use the go-gitdiff package (github.com/bluekeyes/go-gitdiff) for robust patch application (AC2) handling fuzzy context matching and offset tolerance, rather than hand-rolling unified diff application."
+  ],
+  "files_to_modify": [
+    {
+      "path": "internal/verify/syntaxguard.go",
+      "reason": "Extend with a configurable go build/lint/format validation mode for AC3, alongside the existing go/parser-only check.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/ghaction/client.go",
+      "reason": "Add CreateBranch, CreateCommit (or tree/blob-based commit), CreatePullRequest, and UpdatePullRequest methods for AC5's new half.",
+      "scope": "major"
+    },
+    {
+      "path": "cmd/atcr/main.go",
+      "reason": "Register the new autofix command and flag in the root command setup.",
+      "scope": "minor"
+    },
+    {
+      "path": "cmd/atcr/review.go",
+      "reason": "Add the --auto-fix opt-in flag and its refuse-without-backend validation gate to the review command for one-shot auto-fix mode, or delegate to the autofix package.",
+      "scope": "minor"
+    },
+    {
+      "path": "go.mod",
+      "reason": "Declare external dependency github.com/bluekeyes/go-gitdiff.",
+      "scope": "minor"
+    },
+    {
+      "path": "go.sum",
+      "reason": "Updated automatically to store checksum of new external dependency.",
+      "scope": "minor"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "internal/autofix/apply.go",
+      "purpose": "ApplyPatch — apply parsed payload.FileEntry patches to the working tree via atomicfs primitives, without corrupting files (AC2).",
+      "based_on": "internal/atomicfs/atomic.go"
+    },
+    {
+      "path": "internal/autofix/revert.go",
+      "purpose": "Revert applied patches when validation fails, restoring from the atomicfs backups taken during apply (AC4).",
+      "based_on": "internal/fanout/reviewdir.go restorePriorBackup"
+    },
+    {
+      "path": "internal/autofix/orchestrate.go",
+      "purpose": "Wires apply -> validate -> revert-or-proceed -> ghaction branch/commit/PR into a single flow the --auto-fix CLI path drives.",
+      "based_on": null
+    },
+    {
+      "path": "cmd/atcr/autofix.go",
+      "purpose": "CLI wrapper exposing --auto-fix, following the newGithubCmd/runGithub shape in cmd/atcr/github.go.",
+      "based_on": "cmd/atcr/github.go"
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test (testify assert/require)",
+    "test_location": "alongside source, e.g. internal/autofix/apply_test.go",
+    "naming_convention": "Test<Func>_<Scenario>",
+    "example_test": "internal/verify/syntaxguard_test.go"
+  }
+}
