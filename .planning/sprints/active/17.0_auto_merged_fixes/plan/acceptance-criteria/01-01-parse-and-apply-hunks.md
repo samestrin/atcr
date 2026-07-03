@@ -74,17 +74,31 @@
 - Error message: `"autofix: target %q does not exist but diff expects a modification (old side is not /dev/null)"`
 - HTTP status / error code: N/A
 
+**Error Scenario 4: FileEntry.Path escapes the working-tree root (defense-in-depth path-traversal re-check)**
+- **Given** a `payload.FileEntry` whose `Path` contains `..` (or otherwise resolves to a location OUTSIDE the working-tree root) that reaches this package — either because the upstream `payload.BuildEntriesFromDiff` guard was bypassed, misconfigured, or a future refactor regressed it
+- **When** `autofix.Apply` prepares to write (or remove) the target for that entry
+- **Then** `internal/autofix` performs a belt-and-suspenders re-check at the write boundary — joining `Path` against the working-tree root and confirming the cleaned absolute result is still contained within that root — and refuses the write for that entry rather than touching any path outside the root; the entry surfaces a clear per-file error naming `Path`, and per AC 01-04 the failure is isolated to this entry (other entries' successes are unaffected). This is a defensive re-check, not a replacement for the upstream `isSafeDiffContentPath` guard in `internal/payload`, which remains the primary line of defense.
+- Error message: `"autofix: refusing to write %q: path escapes working-tree root"`
+- HTTP status / error code: N/A
+
+**Error Scenario 5: File removal fails for a deletion entry**
+- **Given** a deletion entry (a `+++ /dev/null` new side, per Scenario 3) whose target exists but cannot be removed — e.g. `os.Remove` returns a permission (`EACCES`/`EPERM`) or `EBUSY` error
+- **When** `autofix.Apply` routes the entry to file removal and the removal call fails
+- **Then** the removal failure is surfaced as a per-file error naming `Path` and wrapping the underlying `os.Remove` error; per AC 01-04 the failure is isolated to this entry and does not roll back or disturb other entries' already-applied successes
+- Error message: `"autofix: removing %q: %w"` (path, wrapped `os.Remove` error)
+- HTTP status / error code: N/A
+
 ## Performance Requirements
 - **Response Time:** Applying a single typical technical-debt-sized diff (under ~50 changed lines across 1-5 files) completes in well under 1 second of CPU time; parse/apply cost is dominated by `go-gitdiff`, not `internal/autofix` orchestration overhead.
 - **Throughput:** No batch-size limit imposed by this AC beyond what `payload.BuildEntriesFromDiff`'s existing `DefaultMaxDiffBytes` (10 MiB) already bounds upstream.
 
 ## Security Considerations
 - **Authentication/Authorization:** N/A — local filesystem operation, no network/auth surface in this AC.
-- **Input Validation:** `Path` values are already validated for traversal/absolute-path safety by `payload.BuildEntriesFromDiff` (`isSafeDiffContentPath`) before reaching this package; `internal/autofix` does not need to re-implement that check but must not weaken it by resolving `Path` through anything other than a direct join against the working-tree root.
+- **Input Validation:** `Path` values are already validated for traversal/absolute-path safety by `payload.BuildEntriesFromDiff` (`isSafeDiffContentPath`) before reaching this package; `internal/autofix` does not need to re-implement that check but must not weaken it by resolving `Path` through anything other than a direct join against the working-tree root. As defense-in-depth (belt-and-suspenders, not a replacement for the upstream guard), `internal/autofix` performs one final containment re-check at the write boundary — confirming the cleaned join of `Path` against the working-tree root stays inside that root — and refuses the write for any entry that escapes it (see Error Scenario 4), so a bypassed or regressed upstream guard cannot cause a write outside the working tree.
 
 ## Test Implementation Guidance
 **Test Type:** UNIT
-**Test Data Requirements:** Fixture unified-diff strings for: a simple single-hunk modification, a multi-hunk modification, a new-file creation (`/dev/null` old side), a deletion (`/dev/null` new side), a malformed/unparseable diff body, and a diff whose old-side context does not match any on-disk content. Use `t.TempDir()` to create the on-disk "before" state for modification/deletion cases.
+**Test Data Requirements:** Fixture unified-diff strings for: a simple single-hunk modification, a multi-hunk modification, a new-file creation (`/dev/null` old side), a deletion (`/dev/null` new side), a malformed/unparseable diff body, and a diff whose old-side context does not match any on-disk content. Use `t.TempDir()` to create the on-disk "before" state for modification/deletion cases. Additionally: a `payload.FileEntry` whose `Path` escapes the working-tree root (e.g. `../outside.go` or an entry whose cleaned join resolves outside `t.TempDir()`) to exercise the defense-in-depth re-check (Error Scenario 4); and a deletion-entry fixture whose target file is made un-removable (e.g. a read-only parent directory via `os.Chmod`, or a stubbed remover returning an `os.Remove` error) to exercise the removal-failure path (Error Scenario 5). Both must also assert per-file isolation (AC 01-04) by including a sibling entry that still succeeds in the same batch.
 **Mock/Stub Requirements:** None required — `gitdiff.Parse`/`gitdiff.Apply` and real filesystem reads via `t.TempDir()` are fast and deterministic enough to run directly in unit tests; no mocking layer needed for this AC.
 
 ## Definition of Done
@@ -96,6 +110,8 @@
 **Story-Specific:**
 - [ ] Modification, new-file creation, and deletion diff entries each produce the correct in-memory patched result via `gitdiff.Parse`/`gitdiff.Apply`
 - [ ] A malformed diff body and a hunk that fails to apply each return a clear per-file error naming the path, without panicking or touching disk
+- [ ] A `Path` that resolves outside the working-tree root is refused at the write boundary (defense-in-depth) with a per-file error, without writing outside the root
+- [ ] A deletion entry whose `os.Remove` fails surfaces a `"autofix: removing %q: %w"` per-file error and leaves other entries' successes intact (AC 01-04 isolation)
 - [ ] `go.mod`/`go.sum` include `github.com/bluekeyes/go-gitdiff` as a direct dependency
 
 **Manual Review:**

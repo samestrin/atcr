@@ -29,7 +29,8 @@
 **Edge Case 1: Multiple open PRs unexpectedly match the same head (manual PR created outside atcr)**
 - **Given** the lookup returns more than one open PR for the same `head` (e.g. a human manually opened a second PR against the same branch)
 - **When** the orchestrator processes the result
-- **Then** it deterministically picks the first (or lowest-numbered) match and updates that one, logging a warning that more than one open PR was found for the branch — it does not create a third PR and does not error out
+- **Then** it deterministically picks the LOWEST-NUMBERED matching open PR (sort the returned array by PR number ascending and select the first) and updates that one, logging a warning that more than one open PR was found for the branch — it does not create a third PR and does not error out
+- **And** a branch whose only prior PR is CLOSED yields `found=false` (the lookup filters `state=open`), so a NEW PR is created — this is intended and is NOT a duplicate
 
 **Edge Case 2: The existence-check GET itself fails transiently**
 - **Given** the lookup GET returns 503 twice then 200 with an empty array

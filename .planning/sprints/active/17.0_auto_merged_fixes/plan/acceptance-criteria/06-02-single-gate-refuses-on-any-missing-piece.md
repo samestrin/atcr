@@ -36,7 +36,7 @@
 **Edge Case 1: Multiple pieces missing simultaneously**
 - **Given** both the validation command AND the GitHub token are absent
 - **When** `validateAutoFixBackend` runs
-- **Then** the gate still fails with exit 2 (all-or-nothing per the story's Constraints) — the message either names the first piece it checks or aggregates all missing pieces (design choice), but never reports success or attempts a partial run
+- **Then** the gate still fails with exit 2 (all-or-nothing per the story's Constraints) — when more than one backend piece is missing/malformed the message AGGREGATES and names EVERY missing/invalid piece (not just the first one checked), e.g. `"--auto-fix cannot run: validation command not configured (see .atcr/config.yaml); a GitHub token is required (pass --token or set GITHUB_TOKEN)"`, and it never reports success or attempts a partial run
 
 **Edge Case 2: Apply target missing or unreadable**
 - **Given** the configured apply target (working tree path `internal/autofix` will patch) does not exist or is not a directory
@@ -55,7 +55,7 @@
 
 ## Error Conditions
 **Error Scenario 1: Validation command missing**
-- Error message: `"--auto-fix requires a validation command configured (see .atcr/config.yaml)"` (exact wording TBD at implementation, must name "validation command" and reference the config source)
+- Error message: `"--auto-fix requires a validation command configured (see .atcr/config.yaml)"` — names the specific missing piece ("validation command") and the config source to fix it (`.atcr/config.yaml`), mirroring the operator-facing style of the two verbatim-reused messages in Scenarios 2 and 3
 - HTTP status / error code: process exit code 2 (`usageError`, `cmd/atcr/main.go:98-101`)
 
 **Error Scenario 2: GitHub token missing/empty**
@@ -67,7 +67,7 @@
 - HTTP status / error code: process exit code 2
 
 **Error Scenario 4: Apply target missing**
-- Error message: `"--auto-fix requires a valid apply target (working tree path not found or not a directory)"` (exact wording TBD at implementation)
+- Error message: `"--auto-fix requires a valid apply target: working tree path %q not found or not a directory (set apply.target in .atcr/config.yaml)"` — names the specific invalid piece (the apply-target path) and the config source to fix it (`apply.target` in `.atcr/config.yaml`), mirroring the operator-facing style of the two verbatim-reused messages in Scenarios 2 and 3
 - HTTP status / error code: process exit code 2
 
 ## Performance Requirements
@@ -80,7 +80,7 @@
 
 ## Test Implementation Guidance
 **Test Type:** UNIT (gate function called directly with constructed `*registry.ProjectConfig`/flag values) + INTEGRATION (full `atcr review --auto-fix ...` invocation via the `execCmdCapture`-style harness, asserting exit code 2 and message content, mirroring `TestVerifyCmd_ExecRefusesWithoutSandbox`, `cmd/atcr/verify_test.go:127-136`)
-**Test Data Requirements:** Table-driven cases: (a) missing validation command only, (b) missing `GITHUB_TOKEN` only, (c) malformed `--repo` only, (d) missing apply target only, (e) all three missing at once — each asserting exit code 2 and that no file is created/modified and no HTTP call is attempted (verify via a `httptest.Server` that fails the test if hit, or simply absence of any `ghaction.Client` construction)
+**Test Data Requirements:** Table-driven cases: (a) missing validation command only, (b) missing `GITHUB_TOKEN` only, (c) malformed `--repo` only, (d) missing apply target only, (e) all three missing at once — each asserting exit code 2 and that no file is created/modified and no HTTP call is attempted (verify via a `httptest.Server` that fails the test if hit, or simply absence of any `ghaction.Client` construction); the combined case (e) additionally asserts the aggregated message names EVERY missing piece (validation command, GitHub token, and apply target all appear), not just the first one checked
 **Mock/Stub Requirements:** No live GitHub API mock needed (shape-only check); a temp-dir fixture for the apply-target existence check; `.atcr/config.yaml` fixtures with/without the validation-command block, following `writeVerifyRegistry`'s pattern (`cmd/atcr/verify_test.go`)
 
 ## Definition of Done

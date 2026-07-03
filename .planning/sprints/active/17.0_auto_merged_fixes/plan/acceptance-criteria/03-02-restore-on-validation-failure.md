@@ -37,6 +37,11 @@
 - **When** the revert loop processes A, B, and C
 - **Then** the loop does not stop at B's failure — it still attempts C's restore, collects B's error alongside any others, and returns all collected errors rather than only the first one, so failure is localized to the smallest possible set
 
+**Edge Case 3: Restore-of-CREATE — revert deletes a patch-created file instead of copying a backup**
+- **Given** a patch whose diff created a brand-new file (a `/dev/null` old-side entry, per Story 1's apply behavior), so the backup-map entry for that path records "no prior original" (i.e. the file did not exist before the patch) rather than pointing at a `.bak` of prior content — contrast with a restore-of-MODIFY entry, whose backup-map value points at a `.bak` capturing the overwritten file's pre-patch bytes (see sibling AC [03-01](./03-01-backup-map-tracking.md) for how the backup map records each entry's origin)
+- **When** validation fails and the revert loop processes this entry
+- **Then** revert routes on the "no prior original" marker to DELETE the created file (leaving the tree as if the patch never applied) rather than attempting a `.bak` copy-back that has no source, while restore-of-MODIFY entries in the same map are still restored via `atomicfs.CopyPath(backupPath, originalPath)`
+
 ## Error Conditions
 **Error Scenario 1: Restore attempted before validation signal is available**
 - Error message: `"revert called without a validation result"` (or equivalent guard-clause error)
@@ -56,7 +61,7 @@
 
 ## Test Implementation Guidance
 **Test Type:** UNIT and INTEGRATION
-**Test Data Requirements:** `t.TempDir()`-based fixtures with real files and `.bak` siblings created via `atomicfs.BackupToDotBak`; single-file, multi-file, and partial-apply scenarios each need dedicated fixtures.
+**Test Data Requirements:** `t.TempDir()`-based fixtures with real files and `.bak` siblings created via `atomicfs.BackupToDotBak`; single-file, multi-file, and partial-apply scenarios each need dedicated fixtures. Add a restore-of-CREATE fixture: a patch-created file with a backup-map entry marked "no prior original" (no `.bak`), asserting revert DELETES it, paired against a restore-of-MODIFY entry (with a `.bak`) asserting copy-back — a single map may mix both routing kinds.
 **Mock/Stub Requirements:** A package-level `copyPathFn` seam (mirroring `atomicfs`'s and `fanout`'s existing `renameFn`/`copyPathFn` fault-injection pattern) to deterministically simulate a restore failure without relying on real disk-pressure conditions. An integration test asserting the orchestrator's control-flow gate (no `internal/ghaction` call reachable without a terminal revert/cleanup result) should use a stub `ghaction` client that fails the test if invoked out of sequence.
 
 ## Definition of Done
@@ -68,6 +73,7 @@
 **Story-Specific:**
 - [ ] 100% of files in the backup map are bit-for-bit identical to pre-patch state after a failed-validation revert, across single-file, multi-file, and partial-apply scenarios
 - [ ] A single file's restore failure does not prevent remaining files' restores from being attempted
+- [ ] A restore-of-CREATE entry (backup-map "no prior original" marker) is DELETED on revert, while restore-of-MODIFY entries in the same map are copied back from their `.bak`
 - [ ] The `--auto-fix` orchestrator cannot reach any `internal/ghaction` call without first receiving this function's terminal result
 
 **Manual Review:**

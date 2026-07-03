@@ -19,7 +19,7 @@
 **Scenario 1: Passing command captures full result**
 - **Given** a validation command that exits `0` and writes to both stdout and stderr
 - **When** the command completes
-- **Then** the returned `ValidationResult` has `ExitCode == 0`, `Pass == true`, `Stdout` and `Stderr` populated with the exact captured output, and a non-zero `Duration`
+- **Then** the returned `ValidationResult` has `ExitCode == 0`, `Pass == true`, `Stdout` and `Stderr` populated with the exact captured output (exact up to the truncation cap defined in [AC 02-01](./02-01-configurable-validation-command-runner.md); the 02-01 truncation marker is what distinguishes a capped capture from a complete one), and a non-zero `Duration`
 
 **Scenario 2: Failing command captures full result**
 - **Given** a validation command that exits `1` with a compiler error on stderr
@@ -45,7 +45,7 @@
 **Edge Case 3: Non-UTF8 or binary output**
 - **Given** a validation command that emits non-UTF8 bytes on stdout/stderr
 - **When** output is captured into the result struct
-- **Then** capture does not panic or corrupt the result; invalid byte sequences are preserved as-is or safely sanitized for display, at the implementer's discretion, without crashing the `--auto-fix` flow
+- **Then** capture does not panic or corrupt the result; the raw captured bytes are preserved as-is in the `ValidationResult` struct (`Stdout`/`Stderr`), and sanitization for safe display happens ONLY at a display/reporting boundary — never mutating the stored bytes — with the runner never panicking on non-UTF8 and never crashing the `--auto-fix` flow
 
 ## Error Conditions
 **Error Scenario 1: Result struct requested before command execution starts**

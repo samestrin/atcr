@@ -6,24 +6,24 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Component Type | Go package method (`internal/ghaction.Client`) + new `CommitRequest`/`CommitFile` types | New request struct added to `internal/ghaction` alongside `CheckRunRequest`; no ORM, no local `git` shell-out |
-| Test Framework | Go `testing` + `net/http/httptest` + `testify` | Stub server must route four distinct endpoints (blobs, trees, commits, refs) and assert call order |
-| Key Dependencies | GitHub Git Data API: `POST .../git/blobs`, `POST .../git/trees`, `POST .../git/commits`, `PATCH .../git/refs/heads/{branch}` — all via existing `postDo` | `PATCH` requires `postDo` (or a sibling) to support a configurable HTTP method; see Related Files |
+| Test Framework | Go `testing` + `net/http/httptest` + `testify` | Stub server must route five distinct method+path endpoints (read-commit `GET /git/commits/{sha}`, `POST` blobs, trees, commits, `PATCH` refs) and assert call order |
+| Key Dependencies | GitHub Git Data API: `GET .../git/commits/{parent_sha}` (to resolve the parent commit's tree SHA), `POST .../git/blobs`, `POST .../git/trees`, `POST .../git/commits`, `PATCH .../git/refs/heads/{branch}` — all via existing `postDo`/a GET sibling | The parent SHA supplied by Story 4 is the default-branch HEAD, which is a COMMIT SHA (not a tree SHA), so `base_tree` must be resolved from it first; `PATCH` requires `postDo` (or a sibling) to support a configurable HTTP method; see Related Files |
 
 ### Related Files (from codebase-discovery.json)
-- `internal/ghaction/client.go` - modify: add `CommitRequest` (branch, message, base tree/parent SHA, `Files []CommitFile`) and `CommitFile` (path, content, `Deleted bool`) types; add `CreateCommit(ctx context.Context, owner, repo string, req CommitRequest) (string, error)` orchestrating blob → tree → commit → ref-update calls, returning the new commit SHA
+- `internal/ghaction/client.go` - modify: add `CommitRequest` (branch, message, `ParentSHA` — the PARENT COMMIT SHA, not a pre-resolved tree SHA — and `Files []CommitFile`) and `CommitFile` (path, content, `Deleted bool`) types; add `CreateCommit(ctx context.Context, owner, repo string, req CommitRequest) (string, error)` orchestrating read-commit → blob → tree → commit → ref-update calls (it first `GET /git/commits/{ParentSHA}` to read `tree.sha`, then uses that as `base_tree`), returning the new commit SHA
 - `internal/ghaction/client.go` - modify: `postDo` currently hardcodes `http.MethodPost`; extend it (or add a small `patchDo`/method parameter) so the final ref-update step (`PATCH /git/refs/heads/{branch}`) reuses the same auth/retry/redaction plumbing rather than a bespoke request builder
-- `internal/ghaction/client_test.go` - modify: add `TestCreateCommit*` cases with a stub server asserting the four calls occur in order (blob(s) → tree → commit → ref PATCH) and that the tree references the correct base tree SHA
+- `internal/ghaction/client_test.go` - modify: add `TestCreateCommit*` cases with a stub server asserting the calls occur in order (GET commit → blob(s) → tree → commit → ref PATCH) and that the tree's `base_tree` is the `tree.sha` read from the parent commit's `GET /git/commits/{parent_sha}` response — not the parent commit SHA itself
 
 ## Happy Path Scenarios
-**Scenario 1: Single-file change produces a four-call sequence**
-- **Given** a `CommitRequest` with one changed file (path + new content), a branch name, a commit message, and a base/parent commit SHA
+**Scenario 1: Single-file change produces a five-call sequence**
+- **Given** a `CommitRequest` with one changed file (path + new content), a branch name, a commit message, and a `ParentSHA` that is a COMMIT SHA (the default-branch HEAD supplied by Story 4)
 - **When** `CreateCommit(ctx, owner, repo, req)` is called
-- **Then** the client: (1) POSTs the file content to `/git/blobs` and receives a blob SHA, (2) POSTs a tree to `/git/trees` referencing `base_tree` (the parent commit's tree) plus one entry for the changed path/blob SHA, (3) POSTs a commit to `/git/commits` with the new tree SHA and the parent commit SHA, (4) PATCHes `/git/refs/heads/{branch}` with the new commit SHA — and the method returns that commit SHA with a `nil` error
+- **Then** the client: (1) GETs `/git/commits/{ParentSHA}` and reads its `tree.sha` to resolve the base tree, (2) POSTs the file content to `/git/blobs` and receives a blob SHA, (3) POSTs a tree to `/git/trees` referencing `base_tree` (the resolved parent tree SHA) plus one entry for the changed path/blob SHA, (4) POSTs a commit to `/git/commits` with the new tree SHA and `ParentSHA` as the parent, (5) PATCHes `/git/refs/heads/{branch}` with the new commit SHA — and the method returns that commit SHA with a `nil` error
 
 **Scenario 2: Multi-file change is expressed as one atomic commit**
 - **Given** a `CommitRequest` with three changed files (mirroring Story 1's patch apply touching multiple files)
 - **When** `CreateCommit` is called
-- **Then** exactly three blob-creation calls occur (one per file), followed by exactly one tree-creation call whose entries array contains all three paths, followed by exactly one commit call and one ref-update call — never one commit per file
+- **Then** exactly one read-commit `GET` occurs first to resolve the base tree, followed by exactly three blob-creation calls (one per file), followed by exactly one tree-creation call whose entries array contains all three paths, followed by exactly one commit call and one ref-update call — never one commit per file
 
 **Scenario 3: A deleted file is expressed via a tree entry with a null SHA**
 - **Given** a `CommitFile` with `Deleted: true`
@@ -66,8 +66,8 @@
 - **Input Validation:** File paths and content are passed through as opaque data to GitHub's API; no local filesystem access occurs inside `CreateCommit` (it operates purely on the `CommitRequest` payload the caller already assembled from the validated working tree)
 
 ## Test Implementation Guidance
-**Test Type:** UNIT (via `httptest.Server` routing on method+path to simulate all four Git Data API endpoints)
-**Test Data Requirements:** A stub server with a `ServeMux`-style dispatch on `/git/blobs`, `/git/trees`, `/git/commits`, `/git/refs/heads/{branch}` returning canned SHAs; a call-order recorder (slice of endpoint names appended per request) to assert sequencing
+**Test Type:** UNIT (via `httptest.Server` routing on method+path to simulate all five Git Data API endpoints)
+**Test Data Requirements:** A stub server with a `ServeMux`-style dispatch on `GET /git/commits/{sha}` (returning a canned `tree.sha`), `POST /git/blobs`, `POST /git/trees`, `POST /git/commits`, `PATCH /git/refs/heads/{branch}` returning canned SHAs; a call-order recorder (slice of endpoint names appended per request) to assert the `GET commit → blob(s) → tree → commit → ref` sequencing, and an assertion that the POSTed tree's `base_tree` equals the `tree.sha` from the GET response
 **Mock/Stub Requirements:** Single `httptest.Server`; no real GitHub calls; a helper to build a minimal valid `CommitRequest` for reuse across sub-tests
 
 ## Definition of Done
@@ -77,7 +77,7 @@
 - [ ] Build succeeds
 
 **Story-Specific:**
-- [ ] Blob → tree → commit → ref-update calls occur in that exact order for both single- and multi-file `CommitRequest`s
+- [ ] Read-commit `GET` → blob → tree → commit → ref-update calls occur in that exact order for both single- and multi-file `CommitRequest`s, and the tree's `base_tree` is the `tree.sha` resolved from the parent commit's GET response (not the `ParentSHA` commit SHA)
 - [ ] A deleted file produces a null-SHA tree entry, not a blob-creation call
 - [ ] A failure at any step short-circuits the remaining steps (no ref update after a failed commit; no commit after a failed tree)
 - [ ] The returned commit SHA matches the SHA from the commit-creation response, not the ref-update response
