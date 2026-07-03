@@ -166,6 +166,21 @@ func TestValidateAutoFixBackend_Refusals(t *testing.T) {
 	}
 }
 
+// TestValidateAutoFixBackend_RejectsInsecureAPIURL: a malformed or insecure
+// (non-loopback http) --api-url is a fail-closed gate refusal, caught up front by
+// shape-checking rather than surfacing lazily at the first HTTP call (TD-014).
+func TestValidateAutoFixBackend_RejectsInsecureAPIURL(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := autoFixCmd(t, "o/r", "tok", "http://ghe.internal/api/v3")
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err), "a malformed/insecure api-url is a fail-closed gate refusal")
+	require.Contains(t, err.Error(), "API URL")
+}
+
 // TestValidateAutoFixBackend_NoFilesystemMutationOnRefusal: a refused gate leaves
 // the apply target untouched — it only stats, never writes (AC 06-02 DoD).
 func TestValidateAutoFixBackend_NoFilesystemMutationOnRefusal(t *testing.T) {
