@@ -84,6 +84,9 @@ func (m *Manifest) validate() error {
 		if strings.IndexFunc(f.value, func(r rune) bool { return unicode.IsControl(r) }) >= 0 {
 			return fmt.Errorf("synthetic manifest: %s contains a control character", f.name)
 		}
+		if !isSafeYAMLScalar(f.value) {
+			return fmt.Errorf("synthetic manifest: %s is not a safe plain YAML scalar", f.name)
+		}
 	}
 	for i, model := range m.Models {
 		if strings.TrimSpace(model) == "" {
@@ -96,8 +99,40 @@ func (m *Manifest) validate() error {
 		if strings.IndexFunc(model, func(r rune) bool { return unicode.IsControl(r) }) >= 0 {
 			return fmt.Errorf("synthetic manifest: models[%d] contains a control character", i)
 		}
+		if !isSafeYAMLScalar(model) {
+			return fmt.Errorf("synthetic manifest: models[%d] is not a safe plain YAML scalar", i)
+		}
 	}
 	return nil
+}
+
+// isSafeYAMLScalar reports whether s can be emitted as a bare `key: <s>` value in
+// registry.yaml without being reinterpreted by the YAML parser. RegistryYAML
+// writes provider fields and model ids by string concatenation, not through a
+// YAML encoder, so a value like `gpt: evil` (breaks parsing — a DoS), `gpt # x`
+// (silently truncated at the comment), or `[a,b]` (becomes a list, not a string)
+// must be rejected at the load boundary. A colon NOT followed by a space is fine
+// — real ids (hf:org/model) and the https:// base_url rely on it.
+func isSafeYAMLScalar(s string) bool {
+	if s == "" || s != strings.TrimSpace(s) {
+		return false
+	}
+	// Characters that cannot begin a plain scalar (they open a flow collection,
+	// anchor, alias, tag, block scalar, quote, directive, comment, etc.).
+	if strings.ContainsRune("!&*[]{}#|>@`\"'%,", rune(s[0])) {
+		return false
+	}
+	// '-', '?', ':' are indicators only when the first char is followed by a space
+	// (or is the whole value).
+	if (s[0] == '-' || s[0] == '?' || s[0] == ':') && (len(s) == 1 || s[1] == ' ') {
+		return false
+	}
+	// Inside the scalar: ": " opens a mapping, a trailing ":" opens a mapping, and
+	// " #" starts a comment — each breaks `key: <value>` emission.
+	if strings.Contains(s, ": ") || strings.HasSuffix(s, ":") || strings.Contains(s, " #") {
+		return false
+	}
+	return true
 }
 
 // SignupLink returns the signup URL with the referral code appended as a query
