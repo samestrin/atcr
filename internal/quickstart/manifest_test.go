@@ -86,3 +86,24 @@ func TestRegistryYAML_LoadsAndRosterResolves(t *testing.T) {
 	cfg := &registry.ProjectConfig{Agents: roster}
 	assert.NoError(t, cfg.ValidateAgainst(reg))
 }
+
+func TestValidate_RequiresValidSignupURL(t *testing.T) {
+	m := &Manifest{
+		SignupURL: "",
+		Provider:  Provider{Name: "synthetic", BaseURL: "https://api.synthetic.new/openai/v1", APIKeyEnv: "LLM_SYNTHETIC_API_KEY"},
+		Models:    []string{"m0"},
+	}
+	err := m.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "signup_url")
+
+	m.SignupURL = "://not-a-url"
+	err = m.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "signup_url")
+}
+
+func TestSignupLink_HandlesFragment(t *testing.T) {
+	m := &Manifest{SignupURL: "https://example.com/#section", Referral: "abc"}
+	assert.Equal(t, "https://example.com/?referral=abc#section", m.SignupLink())
+}
