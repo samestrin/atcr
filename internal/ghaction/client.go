@@ -10,9 +10,35 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// retryAfter parses a Retry-After response header in the delta-seconds form
+// GitHub uses for secondary rate limits, returning the indicated delay and
+// whether a valid value was present. The HTTP-date form is not honored (GitHub
+// does not use it for these signals); an absent or unparseable header yields
+// (0, false) so the caller falls back to its exponential back-off.
+func retryAfter(resp *http.Response) (time.Duration, bool) {
+	v := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if v == "" {
+		return 0, false
+	}
+	secs, err := strconv.Atoi(v)
+	if err != nil || secs < 0 {
+		return 0, false
+	}
+	return time.Duration(secs) * time.Second, true
+}
+
+// retriableStatus reports whether a non-2xx response should be retried: transient
+// 5xx and 429 always, plus a 403 that carries Retry-After (GitHub's secondary
+// rate-limit signal, which is transient despite the 403 status). A plain 403 with
+// no Retry-After is a genuine permission failure and is not retried.
+func retriableStatus(status int, hasRetryAfter bool) bool {
+	return status >= 500 || status == 429 || (status == 403 && hasRetryAfter)
+}
 
 // bearerTokenPattern matches an Authorization "Bearer <token>" form so a token
 // echoed back in a GitHub error body is scrubbed even when it is not the exact
@@ -458,9 +484,15 @@ func (c *Client) sendDo(ctx context.Context, method, path string, body any, out 
 			return nil
 		}
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		delay, hasRetryAfter := retryAfter(resp)
 		_ = resp.Body.Close()
-		if attempt < maxRetries && (resp.StatusCode >= 500 || resp.StatusCode == 429) {
-			if err := sleepCtx(ctx, backoff); err != nil {
+		if attempt < maxRetries && retriableStatus(resp.StatusCode, hasRetryAfter) {
+			// Honor a server-instructed Retry-After delay over the local back-off.
+			wait := backoff
+			if hasRetryAfter {
+				wait = delay
+			}
+			if err := sleepCtx(ctx, wait); err != nil {
 				return err
 			}
 			backoff *= 2
@@ -523,9 +555,15 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 			return nil
 		}
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		delay, hasRetryAfter := retryAfter(resp)
 		_ = resp.Body.Close()
-		if attempt < maxRetries && (resp.StatusCode >= 500 || resp.StatusCode == 429) {
-			if err := sleepCtx(ctx, backoff); err != nil {
+		if attempt < maxRetries && retriableStatus(resp.StatusCode, hasRetryAfter) {
+			// Honor a server-instructed Retry-After delay over the local back-off.
+			wait := backoff
+			if hasRetryAfter {
+				wait = delay
+			}
+			if err := sleepCtx(ctx, wait); err != nil {
 				return err
 			}
 			backoff *= 2
