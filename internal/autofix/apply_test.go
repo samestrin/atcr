@@ -317,9 +317,16 @@ func TestApplyPatch_DeleteRemovalFailsIsolated(t *testing.T) {
 	writeFile(t, filepath.Join(root, "del.txt"), "gone1\ngone2\n")
 	writeFile(t, filepath.Join(root, "bar.txt"), "x\ny\nz\n")
 
-	// Inject a removal failure for the delete entry only.
+	// Inject a removal failure for the delete entry only; backup cleanup must still
+	// succeed so the .bak is not stranded (TD-006).
 	orig := removeFn
-	removeFn = func(path string) error { return os.ErrPermission }
+	delAbs := filepath.Join(root, "del.txt")
+	removeFn = func(path string) error {
+		if path == delAbs {
+			return os.ErrPermission
+		}
+		return orig(path)
+	}
 	t.Cleanup(func() { removeFn = orig })
 
 	bm, err := ApplyPatch(root, []payload.FileEntry{

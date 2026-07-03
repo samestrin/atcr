@@ -113,6 +113,11 @@ func applyOne(root string, e payload.FileEntry) (absTarget, backupPath string, e
 			if errors.Is(rerr, os.ErrNotExist) {
 				return abs, bak, nil // already gone; deletion is idempotent
 			}
+			// The delete failed but the backup was staged; clean it up so it is not
+			// left untracked (TD-006).
+			if bak != "" {
+				_ = removeFn(bak)
+			}
 			return "", "", fmt.Errorf("autofix: removing %q: %w", e.Path, rerr)
 		}
 		return abs, bak, nil
@@ -156,6 +161,11 @@ func applyOne(root string, e payload.FileEntry) (absTarget, backupPath string, e
 	}
 
 	if werr := writeFileAtomicFn(abs, out.Bytes()); werr != nil {
+		// The write failed but the backup was staged; clean it up so it is not
+		// left untracked (TD-006).
+		if bak != "" {
+			_ = removeFn(bak)
+		}
 		return "", "", fmt.Errorf("autofix: writing %q: %w", e.Path, werr)
 	}
 	return abs, bak, nil
