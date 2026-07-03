@@ -43,7 +43,8 @@ const defaultValidationTimeout = 2 * time.Minute
 func addAutoFixFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("auto-fix", false,
 		"opt-in: after review, apply each finding's fix, validate locally, and open a GitHub PR only if validation passes; "+
-			"refuses without a validation command + apply target + GitHub token/repo (token needs contents:write and pull_requests:write)")
+			"refuses without a validation command + apply target + GitHub token/repo (token needs contents:write and pull_requests:write). "+
+			"If branch/commit creation succeeds and a later step fails, the remote branch (and possibly commit) is left behind and must be deleted manually.")
 	cmd.Flags().String("repo", "", "owner/name target repository for --auto-fix (default: $GITHUB_REPOSITORY)")
 	cmd.Flags().String("token", "", "GitHub token with contents:write + pull_requests:write for --auto-fix (default: $GITHUB_TOKEN)")
 	cmd.Flags().String("api-url", "", "GitHub REST API base for --auto-fix (default: $GITHUB_API_URL or https://api.github.com)")
@@ -186,6 +187,15 @@ type autoFixRun struct {
 	Message string
 }
 
+// remoteLeftoverNotice appends a cleanup hint to errors returned after
+// CreateBranch has succeeded. At that point the remote branch exists (and a
+// commit may have been pushed), but local RevertPatch cannot undo remote state,
+// so the operator must delete the branch manually if they do not want it left
+// behind.
+func remoteLeftoverNotice(branch string) string {
+	return fmt.Sprintf(" (remote branch %q was created and may contain a commit; delete it manually to avoid leaving it behind)", branch)
+}
+
 // runAutoFix executes the gated pipeline: apply → validate → revert-or-continue →
 // branch/commit/PR. Its single invariant: no GitHub-mutating call is reachable
 // until local validation has PASSED. On an apply failure or a validation failure
@@ -245,24 +255,24 @@ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFi
 		ParentSHA: run.BaseSHA,
 		Files:     files,
 	}); err != nil {
-		return fmt.Errorf("auto-fix: committing fix to %q: %w", run.Branch, err)
+		return fmt.Errorf("auto-fix: committing fix to %q: %w%s", run.Branch, err, remoteLeftoverNotice(run.Branch))
 	}
 
 	prReq := ghaction.PullRequestRequest{Head: run.Branch, Base: run.Base, Title: run.Title, Body: run.Body}
 	num, found, err := gh.FindOpenPullRequest(ctx, be.owner, be.repo, run.Branch)
 	if err != nil {
-		return fmt.Errorf("auto-fix: checking for an existing pull request: %w", err)
+		return fmt.Errorf("auto-fix: checking for an existing pull request on branch %q: %w%s", run.Branch, err, remoteLeftoverNotice(run.Branch))
 	}
 	if found {
 		if err := gh.UpdatePullRequest(ctx, be.owner, be.repo, num, prReq); err != nil {
-			return fmt.Errorf("auto-fix: updating pull request #%d: %w", num, err)
+			return fmt.Errorf("auto-fix: updating pull request #%d: %w%s", num, err, remoteLeftoverNotice(run.Branch))
 		}
 		_, _ = fmt.Fprintf(out, "auto-fix: updated pull request #%d on %s/%s\n", num, be.owner, be.repo)
 		return nil
 	}
 	created, err := gh.CreatePullRequest(ctx, be.owner, be.repo, prReq)
 	if err != nil {
-		return fmt.Errorf("auto-fix: opening pull request: %w", err)
+		return fmt.Errorf("auto-fix: opening pull request for branch %q: %w%s", run.Branch, err, remoteLeftoverNotice(run.Branch))
 	}
 	_, _ = fmt.Fprintf(out, "auto-fix: opened pull request #%d on %s/%s\n", created, be.owner, be.repo)
 	return nil
