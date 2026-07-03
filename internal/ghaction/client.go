@@ -336,6 +336,13 @@ func (c *Client) UpdatePullRequest(ctx context.Context, owner, repo string, prNu
 // Multiple matches (e.g. a manually opened PR) resolve deterministically to the
 // lowest number so a re-run refreshes a stable PR rather than opening a third.
 //
+// It requests the max page size (per_page=100) but reads only the first page:
+// GitHub allows at most one open PR per (head, base), so a single head branch
+// realistically has one open PR and never approaches 100. The lowest-number
+// tiebreak is therefore deterministic under that single-page assumption; a head
+// with more than 100 open PRs (not reachable via atcr's own branch naming) is
+// out of scope.
+//
 // Exported so the Phase-5 internal/autofix orchestrator can run the existence
 // check before choosing CreatePullRequest vs UpdatePullRequest (AC 05-02) — the
 // create-vs-update decision itself lives in that orchestrator, not here.
@@ -343,6 +350,7 @@ func (c *Client) FindOpenPullRequest(ctx context.Context, owner, repo, branch st
 	q := url.Values{}
 	q.Set("head", owner+":"+branch)
 	q.Set("state", "open")
+	q.Set("per_page", "100")
 	path := fmt.Sprintf("/repos/%s/%s/pulls?%s", owner, repo, q.Encode())
 	var prs []struct {
 		Number int `json:"number"`
