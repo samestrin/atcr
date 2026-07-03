@@ -3,14 +3,13 @@ module github.com/samestrin/atcr
 go 1.25.0
 
 require (
+	github.com/bluekeyes/go-gitdiff v0.8.1
 	github.com/google/jsonschema-go v0.4.3
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/mod v0.37.0
 )
-
-require github.com/bluekeyes/go-gitdiff v0.8.1 // indirect
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1

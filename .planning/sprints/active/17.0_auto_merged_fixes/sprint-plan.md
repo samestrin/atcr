@@ -153,14 +153,14 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
    **Success Criteria:** Confirmed request bodies and response parsing for each of the 4 calls; confirmed 422 "ref already exists" is distinguishable; confirmed `postDo`/`get` can carry these calls without a second HTTP client. Stub routing pattern captured for Phase 4/6.
    **Files:** throwaway `internal/ghaction/spike_test.go` | **Duration:** ~3h
 
-### 1.3 [ ] **Phase 1 DoD**
-   - [ ] Both spikes executed; findings recorded (in commit message or a scratch note).
-   - [ ] `go-gitdiff` present in go.mod/go.sum; `go build ./...` succeeds.
-   - [ ] Interface decisions confirmed for Stories 1 and 4 (hard-failure-on-bad-hunk; single HTTP client reuse).
-   - [ ] Throwaway spike code removed or clearly marked; only fixtures/notes retained.
+### 1.3 [x] **Phase 1 DoD**
+   - [x] Both spikes executed; findings recorded (in commit message or a scratch note).
+   - [x] `go-gitdiff` present in go.mod/go.sum; `go build ./...` succeeds.
+   - [x] Interface decisions confirmed for Stories 1 and 4 (hard-failure-on-bad-hunk; single HTTP client reuse).
+   - [x] Throwaway spike code removed or clearly marked; only fixtures/notes retained.
    - COMMIT: `git add go.mod go.sum && git commit -m "chore(autofix): add go-gitdiff dependency + spike findings"`
 
-### 1.LAST [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+### 1.LAST [x] **Phase 1 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 1 (go.mod/go.sum, any retained fixtures/notes) — integration-level, not TDD cadence.
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's work — this is intentional. Do NOT review inline.
@@ -179,17 +179,18 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (first pass) + resolution:**
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
-   **Duration:** 15-30 min
+   | Severity | File:Line | Issue | Resolution |
+   |----------|-----------|-------|-----------|
+   | HIGH | go.mod:13 | `go-gitdiff` was an unimported `// indirect` require; `go mod tidy` would prune it, destroying the durable artifact Phase 2 needs. | FIXED — added retained `internal/autofix/gitdiff_contract_test.go` (real importer + drift-hard-failure regression guard) and `"autofix": {}` allowlist entry; go-gitdiff now a **direct** require (go.mod:6), proven by `go mod why`. |
+   | MEDIUM | findings note | Token `contents: write` scope unvalidated by the stub. | Deferred → TD-001 (Phase 4/5 gate precondition). |
+   | MEDIUM | findings note:88 | Git Data API request shapes retained only as prose (1.2 spike deleted). | Deferred → TD-002 (Phase 4.1 RED re-establishes executable fixtures). |
+   | LOW | findings note:88 | Note says "postDo/get" but only `postDo` used; 422 contract is POST-path-dependent. | Deferred → TD-003. |
+
+   **Re-review (after HIGH fix): CLEAN** — "No findings — HIGH resolved, gate clean." Independently verified direct require, real importer chain, contract-test legitimacy, allowlist correctness, and green build/vet/test.
+
+   **Phase gate passed.**
 
 > **GATED STOP** — `/execute-sprint` halts here. Resume to begin Phase 2.
 
