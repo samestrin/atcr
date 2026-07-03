@@ -1,0 +1,266 @@
+[
+  {
+    "id": "amb-c57337fe4336f6adb494c4f6748efbf2",
+    "file": "cmd/atcr/quickstart.go",
+    "line": 175,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "cmd/atcr/quickstart.go",
+        "Line": 175,
+        "Problem": "appendExport failure is logged to errOut but the error is swallowed — caller gets nil",
+        "Fix": "Return the error so the caller can decide; a disk-full or permission-denied on the shell profile is silently ignored",
+        "Category": "error-handling",
+        "EstMinutes": 10,
+        "Evidence": "`if err := appendExport(profile, env, key); err != nil { _, _ = fmt.Fprintf(o.errOut, ...); return nil }`",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-6a971428e44715b559128b37bd05f4a1",
+    "file": "internal/quickstart/manifest.go",
+    "line": 105,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "internal/quickstart/manifest.go",
+        "Line": 105,
+        "Problem": "`RegistryYAML` uses `fmt.Fprintf` for a simple string builder",
+        "Fix": "Use `b.WriteString` for static strings to avoid the overhead of fmt parsing",
+        "Category": "idiom",
+        "EstMinutes": 5,
+        "Evidence": "`fmt.Fprintf(\u0026b, \"  %s:\\n\", m.Provider.Name)`",
+        "Reviewer": "otto",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-733bf9fee1ce8408de7c3be68bafc455",
+    "file": "internal/quickstart/refresh.go",
+    "line": 39,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "internal/quickstart/refresh.go",
+        "Line": 39,
+        "Problem": "BuildManifestFromModels filters empty-trimmed ids but does not reject control characters in ids",
+        "Fix": "Add the same control-character rejection as manifest.validate() so the refresh job cannot emit a manifest that LoadManifest would reject (defense-in-depth gap)",
+        "Category": "testing",
+        "EstMinutes": 10,
+        "Evidence": "`if strings.TrimSpace(d.ID) != \"\"` accepts ids with embedded newlines; validate() later catches them but the refresh job should reject early",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-0bc5166929371aa3d381a2da355f9794",
+    "file": "internal/quickstart/refresh.go",
+    "line": 58,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "internal/quickstart/refresh.go",
+        "Line": 58,
+        "Problem": "io.ReadAll reads the entire stdin into memory without an upper bound, allowing a malicious or misconfigured API response to OOM the refresh process",
+        "Fix": "Wrap in with io.LimitReader(in, 10*1024*1024) before reading",
+        "Category": "resource",
+        "EstMinutes": 5,
+        "Evidence": "apiResp, err := io.ReadAll(in) allocates a buffer matching the full input size with no cap",
+        "Reviewer": "brad",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-64e1c7247202d70de793e43700296732",
+    "file": ".github/workflows/refresh-synthetic-manifest.yml",
+    "line": 52,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": ".github/workflows/refresh-synthetic-manifest.yml",
+        "Line": 52,
+        "Problem": "git checkout -b fails if the branch already exists from a concurrent or retried run, causing the workflow to abort without cleanup",
+        "Fix": "Use git checkout -B to force-create/reset the branch, or add git branch -D before checkout",
+        "Category": "reliability",
+        "EstMinutes": 5,
+        "Evidence": "git checkout -b \"$branch\" will error if the branch exists, and the script has no fallback or cleanup",
+        "Reviewer": "brad",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-f3f294ce9b5f04071d4127d4ec7f7dcc",
+    "file": "cmd/atcr/quickstart.go",
+    "line": 114,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "cmd/atcr/quickstart.go",
+        "Line": 114,
+        "Problem": "bufio.NewScanner uses a default 64KB token limit, silently truncating or failing on API keys or profile paths longer than 64KB",
+        "Fix": "Increase the buffer with scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) or switch to bufio.Reader.ReadString",
+        "Category": "robustness",
+        "EstMinutes": 10,
+        "Evidence": "scanner := bufio.NewScanner(o.in) relies on the default MaxScanTokenSize of 64KB for readLine",
+        "Reviewer": "brad",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-2c917a7f731218838a7c52182a7c4da0",
+    "file": "cmd/atcr/quickstart.go",
+    "line": 238,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "cmd/atcr/quickstart.go",
+        "Line": 238,
+        "Problem": "`appendExport` uses a hardcoded 0o600 for shell profiles",
+        "Fix": "Ensure this permission is appropriate for all target OSs or make it configurable",
+        "Category": "style",
+        "EstMinutes": 5,
+        "Evidence": "`os.OpenFile(profile, os.O_APPEND/os.O_CREATE/os.O_WRONLY, 0o600)`",
+        "Reviewer": "otto",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-90fefdc4e4220f6d50ac438d11642516",
+    "file": "cmd/atcr/quickstart_test.go",
+    "line": 1,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "cmd/atcr/quickstart_test.go",
+        "Line": 1,
+        "Problem": "No test exercises the error path when runInit fails (e.g. permission-denied on .atcr/)",
+        "Fix": "Add a test with a read-only target directory and assert the quickstart fails before registry/worfklow steps run",
+        "Category": "testing",
+        "EstMinutes": 15,
+        "Evidence": "All tests use writable temp dirs; the `runInit` error return at line 97 is uncovered",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-4bbfc7ae411f291df1f0eac81976be5e",
+    "file": "cmd/atcr/quickstart_test.go",
+    "line": 1,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "cmd/atcr/quickstart_test.go",
+        "Line": 1,
+        "Problem": "No test exercises the scanner error path (closed stdin, /dev/null input)",
+        "Fix": "Add a test with an io.Reader that returns an error and assert keyEnvFlow surfaces it",
+        "Category": "testing",
+        "EstMinutes": 10,
+        "Evidence": "`quickstartInput = \"\\n\\n\"` always succeeds; scanner.Err() path is uncovered",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-d4c5975058eb54d0ae5d1cb4e7a3986b",
+    "file": "internal/quickstart/workflow.go",
+    "line": 36,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "internal/quickstart/workflow.go",
+        "Line": 36,
+        "Problem": "`WorkflowYAML` uses `go install ...@latest` in a generated CI scaffold",
+        "Fix": "Pin the version to a specific tag (e.g., @v1.0.0) to prevent breaking changes from silently entering consumer CI pipelines",
+        "Category": "style",
+        "EstMinutes": 10,
+        "Evidence": "`run: go install github.com/samestrin/atcr/cmd/atcr@latest`",
+        "Reviewer": "otto",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-fc8ddaa75b2a7537d99eadcdcde6199f",
+    "file": "internal/quickstart/workflow_test.go",
+    "line": 1,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "internal/quickstart/workflow_test.go",
+        "Line": 1,
+        "Problem": "TestWorkflowYAML_ReviewOnlySynthetic does not assert the generated YAML is valid YAML",
+        "Fix": "Parse the output with yaml.v3 and assert no error; a stray unquoted colon or brace could produce invalid CI YAML",
+        "Category": "testing",
+        "EstMinutes": 5,
+        "Evidence": "Only string-contains assertions; no structural validation",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  }
+]

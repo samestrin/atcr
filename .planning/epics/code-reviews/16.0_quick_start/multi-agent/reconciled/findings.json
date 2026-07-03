@@ -1,0 +1,94 @@
+[
+  {
+    "severity": "HIGH",
+    "file": "cmd/atcr/quickstart.go",
+    "line": 97,
+    "problem": "runQuickstart silently discards writeSyntheticRegistry error when runInit fails",
+    "fix": "Return the error from writeSyntheticRegistry or wrap it; currently the error is discarded and the function falls through to keyEnvFlow",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "`if err := writeSyntheticRegistry(o, manifest, builtins.Names()); err != nil { return err }` — the error is returned, but the earlier `runInit` error path at line 97 returns without calling writeSyntheticRegistry, so this is a false read. The real gap: no test exercises runInit failure followed by the rest of the flow.",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "HIGH",
+    "file": "internal/quickstart/manifest.go",
+    "line": 83,
+    "problem": "Unquoted fmt.Fprintf for provider name and base_url allows YAML structure injection if the refreshed API returns values containing ':', '#', or other special characters",
+    "fix": "Use a proper YAML encoder (e.g. yaml.Marshal) or quote all interpolated values with single quotes and escape embedded quotes",
+    "category": "security",
+    "est_minutes": 20,
+    "evidence": "fmt.Fprintf(\u0026b, \"  %s:\\n\", m.Provider.Name) and fmt.Fprintf(\u0026b, \"    base_url: %s\\n\", m.Provider.BaseURL) construct YAML via string concatenation without escaping or quoting",
+    "reviewers": [
+      "brad"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/quickstart.go",
+    "line": 152,
+    "problem": "keyEnvFlow scanner.Scan() failure (e.g. EOF on stdin) returns empty string with no error surfaced",
+    "fix": "Return an error when scanner.Err() is non-nil after the loop, or check it after each prompt; a truncated stdin silently yields empty key/profile",
+    "category": "style",
+    "est_minutes": 15,
+    "evidence": "[otto] `os.MkdirAll(filepath.Dir(wfPath), 0o755)` and `os.WriteFile(wfPath, ..., 0o644)` / [dax] `readLine` returns `\"\"` on both empty input and scanner failure; the caller treats both as \"skip\" with no distinction",
+    "reviewers": [
+      "dax",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "LOW vs MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/quickstart.go",
+    "line": 173,
+    "problem": "resolveProfilePath uses filepath.Abs which does not resolve symlinks, allowing a user to bypass the atcr-owned file guard by passing a symlink pointing into .atcr/ or the registry",
+    "fix": "Use filepath.EvalSymlinks on both the profile path and the atcr/registry paths before comparison",
+    "category": "security",
+    "est_minutes": 10,
+    "evidence": "abs, err := filepath.Abs(profile) in resolveProfilePath does not dereference symlinks, so a symlink to an atcr-owned file bypasses the prefix/equals checks in profileIsAtcrOwned",
+    "reviewers": [
+      "brad"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/quickstart.go",
+    "line": 258,
+    "problem": "shellSingleQuote does not escape control characters other than single-quote",
+    "fix": "A key containing a newline or escape sequence injected via paste can break the export line or inject shell commands when the user sources the profile",
+    "category": "security",
+    "est_minutes": 15,
+    "evidence": "`strings.ReplaceAll(s, \"'\", `'\\''`)` only handles single quotes; a newline in the key would produce a multi-line export that a shell would execute",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/quickstart/manifest.go",
+    "line": 72,
+    "problem": "validate rejects control characters in model ids but not in provider Name, BaseURL, or APIKeyEnv",
+    "fix": "Add control-character checks for Provider.Name, Provider.BaseURL, and Provider.APIKeyEnv; a newline in BaseURL would forge YAML structure in the generated registry just like a model id",
+    "category": "security",
+    "est_minutes": 10,
+    "evidence": "Only `m.Models` loop checks `unicode.IsControl`; Provider fields are validated only for whitespace-trimmed emptiness",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  }
+]
