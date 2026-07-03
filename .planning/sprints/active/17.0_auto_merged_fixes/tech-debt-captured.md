@@ -30,12 +30,19 @@ Deferred MEDIUM/LOW findings surfaced during `/execute-sprint`. Read by
 **Why accepted:** Not data loss — the pre-existing content is captured by `atomicfs.BackupToDotBak` before the write and recorded in `BackupMap` with a non-empty backup path, so Story 3's Revert restores it. Only the git-apply-style "refuse create over existing" nicety is missing; the applied result is correct and revertible.
 **Fix in:** A later hardening pass — stat the target in the `IsNew` branch and fail the entry with an "already exists" per-file error, or route it through the modify path against the real on-disk content.
 
-## TD-005 — Symlink target modify/delete reverts by deletion, not link restore (LOW)
-**Origin:** Phase 2, task 2.2.A adversarial review, 2026-07-03
+## TD-005 — BackupMap empty-value sentinel is overloaded (Story 1→3 handoff) (MEDIUM)
+**Origin:** Phase 2, tasks 2.2.A adversarial + 2.8 gate reviews, 2026-07-03
 **File:** internal/autofix/apply.go:129
-**Issue:** When the patch target is itself a symlink, `atomicfs.BackupToDotBak` Lstat-skips it and returns `("", nil)`, so a modify replaces the link with a regular file (or a delete unlinks it) and `BackupMap` records an empty backup path. Story 3's Revert treats an empty backup as "run-created / remove on revert", so it would delete the file rather than restore the original symlink.
-**Why accepted:** Symlinked patch targets are an edge outside the technical-debt-fix use case. The security-relevant vector (a write escaping the tree via a symlinked *directory component*) is closed in task 2.3. Revert semantics for a symlink *leaf* are a Story-3 concern.
-**Fix in:** Phase 3 (Story 3, Revert) — detect a symlink target explicitly and either refuse the entry or record enough state to restore the link instead of deleting it.
+**Issue:** `BackupMap`'s empty backup-path value is documented to mean "file created by this run → Revert removes it," but `applyOne` also emits an empty value for (a) a modify/delete entry whose in-tree target is a **symlink** — `atomicfs.BackupToDotBak` Lstat-skips symlinks and returns `("", nil)`, then `WriteFileAtomic` replaces the link with a regular file (or a delete unlinks it) — and (b) an **already-gone delete** (the idempotent branch). Story 3's Revert, told to delete empty-value entries, would delete a pre-existing symlinked target instead of restoring it, defeating the revert safety net for that case. The write-boundary re-check guards a symlinked *directory component* (closed in 2.3) but not the *target leaf* itself.
+**Why accepted:** Symlinked patch targets are outside the technical-debt-fix use case; the security-relevant escape (symlinked directory component) is closed. This is a Story-1→Story-3 contract-clarity issue, best resolved where Revert is implemented and the created-vs-restore decision actually lives.
+**Fix in:** Phase 3 (Story 3, Revert) precondition — disambiguate the states rather than overloading `""`: either add an explicit per-entry kind (created/modified/deleted) to the handoff, or reject an in-tree symlink target at the write boundary so an empty backup path unambiguously means "created." Add a symlinked-target round-trip-through-Revert regression test.
+
+## TD-008 — No default validation-timeout constant / config key (LOW)
+**Origin:** Phase 2, task 2.8 gate review, 2026-07-03
+**File:** internal/verify/localvalidate.go:130
+**Issue:** `ResolveValidateCommand` establishes the command default (`go build ./...`) and hard refusal, but there is no matching constant or resolver for the ~2 min default validation timeout the sprint-design Performance table specifies. The timeout is a bare param on `RunConfiguredValidation`; a Phase-5 caller that passes `0` gets `context.WithTimeout(ctx, 0)` → immediate `DeadlineExceeded` → every validation reports `TimedOut` (fail-closed, but silently mislabeled).
+**Why accepted:** Fails closed. Phase 5 owns the `--auto-fix` config surface and gate wiring, where the default naturally lives; Phase 2's runner correctly treats the timeout as a caller-supplied parameter.
+**Fix in:** Phase 5 (Story 6 wiring) — add a `defaultValidationTimeout` (~2 min) constant + resolver (e.g. `ResolveValidateTimeout`) and document the `validate_command`/timeout config keys so the gate inherits a defined default rather than relying on each call site.
 
 ## TD-006 — Validation timeout leaves orphaned grandchild processes (MEDIUM)
 **Origin:** Phase 2, task 2.5.A adversarial review, 2026-07-03

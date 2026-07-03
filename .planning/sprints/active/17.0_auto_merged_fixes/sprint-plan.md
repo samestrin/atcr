@@ -295,7 +295,7 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
    **Story-1 DoD Complete** — Auto: 3/3 (tests/lint/build) | Story-Specific: apply modify/create/delete, per-file error isolation, atomic write, per-file backup, symlink-escape re-check — all green.
    **Story-2 DoD Complete** — Auto: 3/3 | Story-Specific: configurable argv runner, result capture (exit/stdout/stderr/duration/timeout/start-error/truncation), conservative `Passed()` gate, Go convenience default + hard refusal — all green.
 
-### 2.8 [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+### 2.8 [x] **Phase 2 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2 (`internal/autofix/apply.*`, `internal/verify/localvalidate.*`).
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. No memory of the phase's implementation — intentional. Do NOT review inline.
@@ -314,16 +314,15 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Gate findings + resolution (files changed: apply.go/apply_test.go, localvalidate.go/localvalidate_test.go, boundaries_test.go):**
+   | Severity | File:Line | Issue | Resolution |
+   |----------|-----------|-------|-----------|
+   | MEDIUM | apply.go:129 | `BackupMap` empty-value sentinel overloaded across created / in-tree-symlink-target / already-gone-delete — Story 3 Revert would delete a symlinked target instead of restoring it. | Deferred → TD-005 (expanded), flagged as a **Phase 3 (Story 3 Revert) precondition** to disambiguate the sentinel. |
+   | LOW | localvalidate.go:130 | No default validation-timeout constant/config key; a Phase-5 caller passing `0` gets an immediate false `TimedOut`. | Deferred → TD-008 (Phase 5 / Story 6 wiring owns the config surface). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   **No CRITICAL/HIGH — phase gate passed. Green build/tests, boundaries intact, syntaxguard untouched. Happy-path contract (absolute-path BackupMap consumed by root-less Revert) confirmed sound. MEDIUM/LOW deferred to tech-debt-captured.md.**
+
+   **Phase gate passed.**
    **Duration:** 15-30 min
 
 > **GATED STOP** — `/execute-sprint` halts here. Resume to begin Phase 3.
