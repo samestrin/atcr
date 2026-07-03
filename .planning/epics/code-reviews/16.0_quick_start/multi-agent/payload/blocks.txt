@@ -1,0 +1,1791 @@
+diff --git a/.github/workflows/refresh-synthetic-manifest.yml b/.github/workflows/refresh-synthetic-manifest.yml
+new file mode 100644
+index 00000000..4cfe17e1
+--- /dev/null
++++ b/.github/workflows/refresh-synthetic-manifest.yml
+@@ -0,0 +1,74 @@
++# Scheduled refresh of the bundled synthetic model manifest
++# (internal/quickstart/synthetic.json) used by `atcr quickstart`. The synthetic
++# model list changes semi-frequently; this job pulls the live /models list and
++# opens a PR when the committed manifest drifts. It is a no-op when the
++# LLM_SYNTHETIC_API_KEY repo secret is not configured.
++name: Refresh synthetic manifest
++
++on:
++  schedule:
++    - cron: '0 6 * * 1' # Mondays 06:00 UTC
++  workflow_dispatch:
++
++permissions:
++  contents: write
++  pull-requests: write
++
++jobs:
++  refresh:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-go@v5
++        with:
++          go-version: '1.25'
++
++      - name: Guard on secret
++        id: guard
++        env:
++          LLM_SYNTHETIC_API_KEY: ${{ secrets.LLM_SYNTHETIC_API_KEY }}
++        run: |
++          if [ -z "${LLM_SYNTHETIC_API_KEY}" ]; then
++            echo "LLM_SYNTHETIC_API_KEY not set — skipping refresh."
++            echo "proceed=false" >> "$GITHUB_OUTPUT"
++          else
++            echo "proceed=true" >> "$GITHUB_OUTPUT"
++          fi
++
++      - name: Fetch models and regenerate manifest
++        if: steps.guard.outputs.proceed == 'true'
++        env:
++          LLM_SYNTHETIC_API_KEY: ${{ secrets.LLM_SYNTHETIC_API_KEY }}
++        run: |
++          set -euo pipefail
++          curl -sSf https://api.synthetic.new/openai/v1/models \
++            -H "Authorization: Bearer ${LLM_SYNTHETIC_API_KEY}" > models.json
++          # Write to a temp file, THEN move into place. Redirecting straight onto
++          # synthetic.json would truncate it before `go run` compiles the package
++          # that //go:embeds it, so the refresh would embed (and re-emit) an empty
++          # manifest and fail on every run.
++          go run ./cmd/refresh-manifest < models.json > synthetic.json.tmp
++          mv synthetic.json.tmp internal/quickstart/synthetic.json
++          rm -f models.json
++
++      - name: Open PR on change
++        if: steps.guard.outputs.proceed == 'true'
++        env:
++          GH_TOKEN: ${{ github.token }}
++        run: |
++          set -euo pipefail
++          if git diff --quiet -- internal/quickstart/synthetic.json; then
++            echo "Manifest unchanged — nothing to do."
++            exit 0
++          fi
++          branch="chore/refresh-synthetic-manifest-${GITHUB_RUN_ID}"
++          git config user.name "github-actions[bot]"
++          git config user.email "github-actions[bot]@users.noreply.github.com"
++          git checkout -b "$branch"
++          git add internal/quickstart/synthetic.json
++          git commit -m "chore(quickstart): refresh synthetic manifest"
++          git push -u origin "$branch"
++          gh pr create \
++            --title "chore: refresh synthetic manifest" \
++            --body "Automated refresh of the bundled synthetic model manifest from the live /models endpoint." \
++            --base main --head "$branch"
+diff --git a/.planning/epics/active/16.0_quick_start.md b/.planning/epics/active/16.0_quick_start.md
+index 939b946f..38d524e5 100644
+--- a/.planning/epics/active/16.0_quick_start.md
++++ b/.planning/epics/active/16.0_quick_start.md
+@@ -12,19 +12,82 @@ Users currently have to manually configure API keys, generate `config.yaml`, and
+ Implement an `atcr init` or `atcr quickstart` interactive wizard. This will drive users to a synthetic sign-up (utilizing referral codes), fetch their API tokens securely, and automatically scaffold default profiles tied to synthetic models.
+ 
+ ## Acceptance Criteria
+ 
+ - [ ] AC1: `atcr init` command provides an interactive terminal wizard.
+ - [ ] AC2: Wizard guides the user through synthetic sign-up (e.g., opening a browser link with referral tracking).
+ - [ ] AC3: Tool securely receives or accepts the generated API token.
+ - [ ] AC4: Tool auto-generates `.atcr/config.yaml` with default settings and synthetic model references.
+ - [ ] AC5: Tool auto-generates boilerplate `.github/workflows/atcr.yml` without overwriting existing critical configs.
+ 
+ ## Success Criteria
+ 
+ - New users can run their first review within 30 seconds of running `atcr init`.
+ - 80%+ completion rate for users who start the initialization wizard.
+ 
+ ## Out of Scope
+ 
+ - Full GUI dashboard for configuration (CLI only for now).
+ - Migration of existing complex configs.
++
++## Clarifications
++
++### Recorded 2026-07-02 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- New command `atcr quickstart` (NOT a change to `atcr init`). `quickstart` reuses `init`'s
++  writers for the roster/personas, then layers interactive provider + key-env setup on top.
++  `atcr init` stays non-interactive and idempotent.
++- "Synthetic sign-up (utilizing referral codes)" = a convenience referral link only, no
++  automation. Print a referral-coded signup URL as an OSC-8 terminal hyperlink; optional
++  browser open behind a `--open` opt-in. No account creation, no token harvesting.
++- API keys follow atcr's existing posture: **never persisted by atcr**. The wizard helps the
++  user set an env var (prints `export LLM_SYNTHETIC_API_KEY=…`, optionally appends to a
++  user-chosen shell profile). The key value never enters `.atcr/` or `registry.yaml`.
++- "Synthetic models" = the synthetic.new OpenAI-compatible provider
++  (`base_url: https://api.synthetic.new/openai/v1`, `api_key_env: LLM_SYNTHETIC_API_KEY`)
++  plus agents bound to real synthetic.new model ids. Ship a static bundled manifest mirroring
++  `quickstart-synthetic.json`, PLUS a scheduled auto-refresh GitHub Action (in scope).
++- Config split matches current architecture: provider + agent definitions → user
++  `~/.config/atcr/registry.yaml`; roster (agent names) → project `.atcr/config.yaml`.
++- Scaffolded `.github/workflows/atcr.yml`: option (i) — install the atcr binary and run
++  `atcr review` directly, wired to `LLM_SYNTHETIC_API_KEY`. Minimal review-only template
++  (does NOT use `samestrin/atcr@v1`, drops the reconcile/github PR-gate; noted in a comment).
++  Per-file non-overwrite guard: refuse to overwrite an existing workflow file unless `--force`,
++  and skip just that file rather than aborting the whole quickstart.
++
++**Scope Boundaries:**
++- IN scope: `atcr quickstart` interactive command; synthetic provider/agents defaults; user
++  registry + project roster writes; env-var key guidance (no persistence); referral link;
++  `.github/workflows/atcr.yml` scaffold (per-file guard); scheduled auto-refresh Action for the
++  bundled synthetic manifest.
++- OUT of scope: automated account creation / token harvesting; persisting API keys to disk;
++  changing `atcr init`'s contract; modifying the published `action.yml` public contract; GUI
++  dashboard; migrating existing complex configs.
++
++**Technical Approach:**
++- Tasks: T1 `atcr quickstart` skeleton (reuse init writers); T2 interactive provider + key-env
++  flow; T3 synthetic provider/agents + bundled manifest + registry/roster writes; T4
++  `.github/workflows/atcr.yml` scaffold with per-file guard; T5 scheduled auto-refresh Action
++  regenerating the bundled manifest from synthetic.new `/models`.
++- `LLM_SYNTHETIC_API_KEY` is a new convention this epic introduces (zero hits in repo today).
++
++**Original Questions and Answers:**
++1. Q: What should "synthetic sign-up (utilizing referral codes)" concretely do?
++   A: (a) Convenience referral link only — print an OSC-8 hyperlink to a referral-coded signup
++      URL; `--open` opt-in for browser. No automation, no token harvesting.
++2. Q: AC3 "securely receives the API token" vs "never stored, never written to disk" — which wins?
++   A: (a) The posture wins. Help the user set an env var; never persist the key value.
++3. Q: What are "synthetic model references"?
++   A: The synthetic.new provider + agents bound to real model ids; static bundled manifest.
++      Auto-refresh Action for the manifest is IN scope.
++4. Q: New command, make `init` interactive, or a flag?
++   A: (a) New `atcr quickstart`; leave `atcr init` unchanged; reuse its writers.
++5. Q: Which config file gets credentials vs roster?
++   A: registry.yaml (user) = provider + agents (api_key_env NAME only); .atcr/config.yaml
++      (project) = roster (agent names). Key stays in env only.
++6. Q: AC5 workflow — reference the published action? exact non-overwrite rule?
++   A: See Q7. Non-overwrite: per-file guard, refuse unless `--force`, skip just the workflow.
++7. Q: Scaffolded workflow conflicts with synthetic-first (action requires openrouter-api-key) —
++      (i) direct-CLI synthetic workflow, (ii) add synthetic input to action.yml, (iii) provider-agnostic?
++   A: (i) Install the atcr binary and run `atcr review` wired to `LLM_SYNTHETIC_API_KEY`.
++      Minimal review-only template satisfies AC5; reconcile/github gate intentionally omitted.
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index fc8ada94..367ab900 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,16 +3,16 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 2 | 0 |
+ | MEDIUM | 0 | 29 | 0 |
+-| LOW | 0 | 29 | 0 |
++| LOW | 2 | 29 | 0 |
+ 
+-**Last Modified:** 2026-07-02 | **Open Items:** 0 | **Deferred Items:** 60 | **Resolved Items:** 0 | **Total Items:** 60
++**Last Modified:** 2026-07-02 | **Open Items:** 2 | **Deferred Items:** 60 | **Resolved Items:** 0 | **Total Items:** 62
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -62,227 +62,234 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
++### [2026-07-02] From Sprint: epic-16.0
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| U | [ ] | LOW | internal/quickstart/workflow.go:34 | Scaffolded consumer CI workflow installs atcr via `go install ...@latest` (unpinned) so a breaking or compromised future release lands silently in consumer CI | Pin the install to a released tag (e.g. @v1) once a stable release exists, or switch the scaffold to the pinned composite action | SECURITY | 15 | execute-epic-stage3 |
++| U | [ ] | LOW | internal/quickstart/workflow.go:37 | Scaffolded CI workflow runs `go install ...@latest`, pinning consumer review CI to a floating version that can change behavior or break without any consumer change | Pin the generated workflow to a released tag (e.g. @v1) rather than @latest | UNDER_ENGINEERING | 15 | execute-epic-independent |
++
+ ### [2026-07-02] From Sprint: 15.1_leaderboard-cost-na-rendering
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/scorecard/export.go:275-281 | Export groups records by the scrubbed persona/model, and scrubField's absolute-path regexes can reduce an entirely path-like input string to empty. Two genuinely distinct reviewer identities that both happen to be path-like scrub to the same empty string and silently merge into one aggregated group, blending the costPer/SurvivedSkepticRate/FindingsRaisedAvg values this epic's change is meant to make trustworthy. Adjacent to, not caused by, this epic, but feeds the same grouping key costPer's group totals depend on. (Won't fix: by-design -- scrubField intentionally merges identities that scrub-equal, locked in by TestExport_DistinctIdentitiesMergeWhenTheyScrubEqual, export_test.go:296) | By-design behavior, not a bug: grouping keys off the scrubbed identity is deliberate (scrubField strips PII/paths/secrets before export), and TestExport_DistinctIdentitiesMergeWhenTheyScrubEqual locks the merge-on-equal-scrub as an anti-regression invariant. No source change. | error-handling | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-01] From Sprint: 14.3_diff_chunking_context
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | MEDIUM | internal/fanout/review.go:941 | After the T3 refactor extracted renderAgent, the add closure re-implements mode resolution (forceMode/EffectivePayloadMode, payload lookup, not-found/no-payload errors) at review.go:818-831, but buildAgent (line 941) still contains the identical resolution logic and now has NO production caller — only tests (retry_wiring_test.go, review_scope_inject_test.go, review_test.go, review_tools_test.go) reference it (verified: grep buildAgent internal/ excluding _test shows only the definition). This is dead production code plus two divergent copies of the same mode/payload-resolution logic that will silently drift. (Deferred 2026-07-01: Epic Plan 14.4_fanout_resolution_dedup — kept as-is; buildAgent has no production caller, duplication accepted for now.) | Either delete buildAgent and update the tests to drive buildSlots/renderAgent, or have the add closure call buildAgent for the single-chunk/bulk path so there is one resolution site. Verify no non-test caller exists before deleting and that fallback-wiring tests still pass. | maintainability | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-30] From Sprint: epic-14.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/fanout/grounding.go:54 | out-of-scope category is a blanket grounding-gate exemption in all modes, so an adversarial or hallucinating model can launder a fabricated finding past AC2 by tagging category=out-of-scope in diff/blocks mode | Restrict the out-of-scope exemption to files mode (or require the cited FILE:LINE/EVIDENCE to anchor before honoring it in diff/blocks) — DEFERRED: conflicts with clarification Q2 which chose blanket exemption because out-of-scope is annotated-not-promoted by the reconciler downstream | correctness | 30 | execute-epic-independent |
+ | 1 | [/] | MEDIUM | internal/fanout/grounding.go:47 | groundFindings ignores Result.Tools and Result.PayloadMode, so a tool-enabled or files-mode agent citing a real line it legitimately read outside the changed range is dropped unless it tags out-of-scope or quotes a changed line in EVIDENCE | Thread Tools/PayloadMode into the gate and relax the range/evidence requirement for tool/files agents — DEFERRED: the out-of-scope prompt convention already instructs such agents to tag read-but-unchanged citations, which the gate exempts | correctness | 45 | execute-epic-independent |
+ | 1 | [/] | LOW | internal/fanout/review.go:470 | computeGroundingData builds a fresh gitRunner and re-runs validateRange + --name-status + --unified=0 for a range the payload builder already diffed, duplicating ~4 git subprocesses per review and per resume | Reuse the payload builder's memoized rangeChunks/gitRunner for the same base..head instead of recomputing the zero-context diff | performance | 45 | execute-epic-independent |
+ 
+ ### [2026-06-29] From Sprint: 13.4_brace_language_parsers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:1 | Wasm ABI (alloc/free/parse/emit/pins) duplicated across three parser modules | Extract shared ABI into common guest package | maintainability | 60 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-28] From Sprint: epic-13.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:20 | The alloc/free/emit/pins guest ABI is duplicated across three parser sources (goparser, pyparser, braceparser); the threshold the existing code documents for extraction (parser count > 2) is now crossed | Extract the shared guest ABI into a package referenced via go.mod replace directives coordinated in build.sh | MAINTAINABILITY | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-28] From Sprint: epic-13.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | reconcile/pagerank.go:181 | Authority promotion is silent: no counter or Summary stat records that a HIGH came from authority rather than reviewer count, so a misfiring promotion is only derivable as HIGH-with-a-single-reviewer (Deferred: Epic Plan 13.4) | Add a Summary stat (e.g. AuthorityPromoted int) counting authority-promoted findings for observability; out of v1 scope since the clarification fixed the wire schema | OBSERVABILITY | 30 | execute-epic-independent |
+ 
+ ### [2026-06-27] From Sprint: 13.1_ast_plugin_architecture
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/astgroup/parsers/src/goparser/main.go:39 | The guest pins alloc'd buffers and hands the host int32(uintptr(unsafe.Pointer(&b[0]))) as a stable guest offset, valid only because the current Go GC is non-moving. This is an undocumented runtime invariant, not a language guarantee; a future moving GC makes the packed pointer a dangling offset with no detection. The unsafe alloc/free/emit/node boilerplate is copy-pasted across goparser, pyparser, and the 13.4 brace parsers, so any ABI fix must be applied N times. (Deferred: extraction premature at 2 parsers; epic scope fixed at Go+Python — a future-remedy note is in each parser's ABI section, revisit if parser count grows.) | Extract the shared alloc/free/emit/pins ABI into one internal guest package imported by every parser main.go, and add a build-time note pinning the GC assumption (or switch to an explicitly reserved arena). | maintainability | 120 | code-review | claude | MEDIUM |
+ | U | [/] | MEDIUM | internal/astgroup/parsers/src/pyparser/main.go:112 | scanTripleQuotes and stripComment are quote/escape-unaware. A triple-quote appearing inside a # comment, or a # appearing inside a string literal, flips the multi-line-string state machine the wrong way, so arbitrary spans of real code get classified as string content and dropped from significantLines, silently erasing blocks. The heuristic disclaimer documents the risk but does not bound it: on unusual source the structural hash diverges from the true AST. (Deferred: accepted PoC scope; heuristic limitation already documented at pyparser/main.go:72-78 and 152-156, degrades to proximity grouping.) | Run scanTripleQuotes only over the code portion (skip after an unquoted #) and skip triple-quotes occurring inside single-line strings. Add regression fixtures: a # containing a triple-quote, and a string literal containing #. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-26] From Sprint: 11.0_executing_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/tools/dispatch.go:146 | Tool gating for run_tests/run_script lives only in fanout.wireToolDefs (what the model is TOLD about); Dispatcher.Execute looks up d.handlers[name] with no check that the call was offered to the calling agent, and EnableExecution registers the exec handlers on the single dispatcher shared by the whole pool. The read-only guarantee for non-exec agents is therefore advisory, not structural — if any future caller enables exec non-uniformly across agents sharing one dispatcher, a non-exec agent could invoke run_script by simply naming it. No live exploit today: the sole exec caller, verify, sets exec uniformly for all skeptics. (Deferred: Epic Plan 11.1) | Pass the agent's allowed tool set (or Exec flag) into Execute and reject any call whose name was not offered to this agent, or gate the exec handlers behind a per-call capability rather than a globally-registered handler. Verify with a test where a non-exec agent emits a run_script tool_call and asserts it is refused. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-25] From Sprint: epic-11.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/tools/exec_tools.go:69 | Execution tools are gated per-agent only at the definition level (wireToolDefs); the shared per-run dispatcher will execute a run_tests/run_script call from any agent once EnableExecution is wired. The sandbox isolates every run identically so this is not a containment gap, but a non-designated agent could still incur execution cost. (Deferred: .planning/epics/active/11.1_dispatcher-structural-gating.md — exec_tools.go:69 is a data struct, not a gating point; the offering-layer gate is already structural, and a runtime per-call guard is the multi-file change scoped to Epic 11.1) | Thread agent exec-eligibility into the dispatcher (or add a per-call guard) so only designated agents execute, for precise cost attribution. | SECURITY | 30 | execute-epic-stage3 |
+ 
+ ### [2026-06-23] From Sprint: 8.0_reconciler_library
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | internal/reconcile/discover.go:25 | `internal/reconcile` keeps its discovery `Source` (Name + `[]stream.Finding` + Skipped + SkippedFiles); the library now defines a public `Source` (Name + `[]Finding`) | moved `Reconcile` takes the library `Source`; discovery output (`discover.Source`) is converted to `reconcile.Source` in the adapter/discovery layer | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | MEDIUM | unknown:0 | [Story 01 / Story 06] DoD item not implemented: both CI jobs (root ci.yml + reconcile-module PR-time job) must be marked as REQUIRED status checks on the main branch-protection rule. The CI workflow deliverables they depend on are all present and verified; only the protection-rule toggle is unset. The two story-level [ ] boxes (AC 01-06, AC 06-02) are the same single external action. (intent_note: deferred per sprint-plan Final Phase / dod-completion-summary.md (external repo-admin action)) | Configure branch protection in GitHub repo Settings -> Branches: add the root CI job and the reconcile-module PR-time job as required status checks. External repo-admin UI action (post-merge), not a source-tree change; documented deferred in dod-completion-summary.md. | docs | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: 7.3_github_action_pr_integration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 6 | [/] | MEDIUM | cmd/atcr/github.go:148-167 | Sequential inline comment posting is slow for PRs with many findings (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ | 6 | [/] | LOW | cmd/atcr/github.go:148-167 | Conclusion is computed twice for the same findings/failOn inputs (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: epic-7.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/verify/syntaxguard.go:130 | An unfenced multi-line JSON/config snippet with block braces can still satisfy looksLikeGoCode and be parsed as Go, producing a spurious invalid_syntax flag on non-Go content (residual after heuristic hardening). | Detect obviously non-Go brace content (JSON object / key:value lines) before treating block braces as a Go signal; deferred as a separate design refinement (unfenced non-Go fixes are rare; fenced non-Go is already handled). [Deferred 2026-06-22 to Epic Plan 7.5 syntax-guard-refinements per clarification] | EDGE_CASES | 30 | execute-epic-independent |
+ 
+ ### [2026-06-22] From Sprint: 7.0.1_executor_model_configuration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 7 | [/] | LOW | internal/registry/config.go:524 | Potential prompt injection via system_prompt (Won't-fix: config.go:531–534 explicitly documents that control chars are intentionally NOT rejected in system_prompt; the --- delimiter added at executor.go:225 eliminates the CRLF metadata-forgery surface; otto's fix conflicts with the documented design decision) | Add control character validation to SystemPrompt | security | 15 | code-review | otto | MEDIUM |
+ 
+ ### [2026-06-21] From Sprint: epic-6.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/debate/debate.go:165 | Gray-zone cluster merge/separate rulings are recorded in debate.json but not physically applied to findings.json; clusters still resolve via the existing adjudication path (Deferred: Epic Plan 6.1) | Wire the judge cluster decision into the reconcile adjudication application so unattended runs auto-merge gray-zone clusters inline | INTEGRATION | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-20] From Sprint: epic-5.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/cache/store.go:115 | Eviction does a full ReadDir+Stat of the cache dir on every Put even when under the cap; O(n) per write scales poorly if the cache accumulates thousands of entries (Won't-fix 2026-06-21: scan runs serially under the store mutex and LLM calls dominate latency; no Epic 5.2 perf criterion requires O(1) Put — added state not justified at LOW) | Maintain a running total-size counter and skip the directory scan when it is under the cap, or evict only on a periodic/threshold basis | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-06-20] From Sprint: epic-5.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/report/render.go:317 | The "File not found" warning format string is duplicated across internal/reconcile/emit.go (writeFindingsList) and internal/report/render.go (writePathWarning) in separate packages | Extract a shared constant/helper only if a common low-level rendering package emerges; a cross-package dependency is not justified for one format string today (Won't-fix 2026-06-21: two independent format strings across packages with no shared dependency; the recorded fix confirms extraction is not justified at this scope) | CROSS_CUTTING | 15 | execute-epic-cumulative |
+ | U | [/] | MEDIUM | internal/reconcile/reconcile.go:26 | Validation root is hardcoded to "." at every call site, so "atcr reconcile <path>" for a review of another repo, or running from a non-repo-root CWD, falsely flags every finding as "file not found" | Thread the reviewed repo root explicitly or add a --repo flag, applied consistently with the verify stage which uses the same "." convention (Deferred 2026-06-21: the narrow Root: os.Getwd() variant is a no-op — filepath.Abs(".") already equals the CWD, so it would not fix the non-repo-root / other-repo case; the real fix is to plumb the reviewed-repo path explicitly via a --repo flag threaded through the reconcile and verify call sites, est 60) | EDGE_CASES | 60 | execute-epic-independent |
+ 
+ ### [2026-06-20] From Sprint: 4.7.1_backup-swap-hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:318 | backupExisting() unconditionally RemoveAll's <path>.bak.old and <path>.bak.new at entry, but forceBackupOutputDir() only calls guardForeignBackup(dir+".bak") — the two staging siblings are not guarded. On an arbitrary --output-dir a user who owns <output-dir>.bak.old or <output-dir>.bak.new has it silently deleted by --force, re-opening the Epic 4.7 "never silently delete user data" contract. NOTE: epic clarification Q4 deliberately scoped the guard to .bak only (atcr-internal suffixes); this finding re-raises that decision as worth reconsidering, not a defect against the recorded scope. (intent_note: deferred per epic §Clarifications Q4 — extending guardForeignBackup to .bak.old/.bak.new is out of scope) (Won't-fix 2026-06-20: binding Epic 4.7.1 Q4 — guard stays scoped to .bak; .bak.old/.bak.new are atcr-owned staging names cleared by entry-time RemoveAll; confirmed via /sprint-clarification 95%) | In forceBackupOutputDir() (reviewdir.go:440) extend the guard to guardForeignBackup(dir+".bak.old") and guardForeignBackup(dir+".bak.new") before backupExisting, or refuse if either exists non-empty. Add a test pre-creating a foreign <output-dir>.bak.old with user content and assert --force errors instead of deleting it. | security | 60 | code-review | claude | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:373 | The advertised "an interrupted swap never leaves the user with neither generation" invariant is conditional on a best-effort SILENT restore succeeding. If restorePriorBackup's os.Rename(backupOld,backup) fails (e.g. backup partially recreated, or perms change), the only surviving copy is stranded under .bak.old — which the very next run's entry-time RemoveAll(backupOld) (line 318) then deletes. Same pattern at the copy site swapStagedBackup (atomic.go:159-167) feeding atomic.go:97 RemoveAll(bakOld). (Won't-fix 2026-06-20: observability half done (restore failure now logged); the lone-.bak.old-as-generation redesign is rejected per Epic 4.7.1 Q3 — .bak.old is atcr-owned temp deleted at entry, one-generation contract + TestBackupExisting_CleansStaleStagingStragglers stand; confirmed via /sprint-clarification 95%) | Surface restore failures loudly (log/return) instead of dropping them, and/or do not auto-RemoveAll .bak.old at entry when .bak is absent — treat a lone .bak.old as the surviving generation to recover. Add a test where restore fails and a subsequent run is asserted not to delete the only surviving copy. | correctness | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir.go:388 | backupCrossDevice's inner os.Rename(backupNew,backup) relies on backupNew and backup sharing a filesystem, an invariant that holds only by naming coincidence (both are siblings of path). If anyone later relocates backupNew under path, the inner rename silently becomes cross-device and returns a raw EXDEV to the user. (Won't-fix 2026-06-20: same-fs invariant holds by construction — backup and backupNew are both siblings of path; a runtime guard would be unreachable dead code today and is already documented at reviewdir.go:415-419; confirmed via /sprint-clarification 90%) | Add a test that forces renameFn to return syscall.EXDEV and makes the copy fail (a copy seam, or unreadable src), staging a prior .bak first; assert the prior .bak content is restored intact, the live tree survives, and .bak.new is cleaned up. Cover the copy-failure leg at minimum. | testing | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir_test.go:458 | Test-coverage gaps in the failed-swap/cleanup paths: TestBackupExisting_FailedSwapPreservesPriorBak asserts no .bak.old straggler but not .bak.new; the non-ErrNotExist Lstat(backup) error branch (reviewdir.go:333-335) is untested; the entry-time RemoveAll straggler-cleanup failure legs (reviewdir.go:318-323) are untested. Each is a real error branch a regression could silently break. | Add assert.NoDirExists for src+".bak.new" at reviewdir_test.go:458; add a perms-based test forcing Lstat(backup) to fail with a non-ErrNotExist error; add a test where .bak.old cannot be removed and assert the typed "clearing stale staging backup" error. Skip on root/CI where perms are not enforced. (Partial 2026-06-21: gaps 1 (.bak.new assertion) and 3 (RemoveAll(.bak.old) failure) covered; gap 2 (non-ErrNotExist Lstat(backup)) deferred — needs an lstatFn production seam since the staging siblings share a parent dir so perms cannot isolate it) | testing | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-19] From Sprint: 4.7_idempotency
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:284 | backupExisting() does os.RemoveAll(backup) then os.Rename(path, backup); BackupToDotBak() does os.RemoveAll(bak) then copyTree. If the rename/copy fails (cross-filesystem EXDEV when --output-dir and its .bak sibling are on different mounts, disk-full mid-copy, or SIGKILL), the single prior backup generation is already destroyed while the new backup is absent or partial. The live/original tree is preserved (good), but the one recoverable prior .bak is lost for no benefit — counter to the safe-to-retry goal. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 4.7.1) | Stage the new backup first: copy/rename into <path>.bak.new (or rename old .bak aside to .bak.old), confirm it is complete, then swap and only then remove the old generation. For backupExisting, attempt os.Rename before RemoveAll so a failed rename leaves the old .bak intact; detect EXDEV and fall back to copy+remove. Add a fault-injection test asserting the prior .bak survives a failed swap. | correctness | 120 | code-review | code-reviewer, claude | HIGH |
+ 
+ ### [2026-06-19] From Sprint: 4.5_circuit_breaker
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | MEDIUM | internal/fanout/metrics.go:37 | recordAgentOutcome zeroes apiCalls for any result whose error unwraps to context.DeadlineExceeded/Canceled, assuming no request was made. But a per-agent timeout routinely fires AFTER real HTTP round-trips (and mid tool-loop after several Chat turns already hit the wire), so atcr_api_calls_total undercounts real provider traffic exactly when a provider is degraded. The no-request assumption is only provably safe for CircuitOpenError and pre-first-send cancellation. (Deferred: Epic Plan 4.11) | Use max(1, r.Turns) for the deadline case instead of a flat 0, or thread a real calls-attempted counter out of the client rather than inferring from the terminal error class. Keep the apiCalls=0 path only for CircuitOpenError. | performance | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-18] From Sprint: epic-4.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/validation/validation.go:62 | System-dir denylist covers only /etc, /proc, /sys, leaving /boot, /dev, /root, /var and ~/.ssh writable via --output-dir / --output (deliberate Option-B permissive choice) (Won't-fix: intended Option-B policy per epic 4.3 clarifications 2026-06-18; revisit only on a concrete isolation requirement) | If stronger isolation is later required, switch to an allowlist anchored at the repo/.atcr root instead of a denylist | SECURITY | 30 | execute-epic-independent |
+ | 1 | [/] | LOW | internal/validation/validation.go:86 | Severity and Enum validators are shipped but wired to nothing (ParseSeverity/ValidFormat remain the live paths); they exist only to satisfy AC5/AC7 and future use (Won't-fix: intentionally public for AC5/AC7 per epic 4.3 clarifications; deletion breaks ACs, wire-in out of scope) | Revisit and delete if no caller adopts them within a release, or wire them in where duplication can be removed | OVER_ENGINEERING | 15 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/registry/attribution.go:55 | attribute() recurses and reconstructs the join even for a single-error errors.Join (which still satisfies Unwrap() []error), a small avoidable cost on the load-time validation path | Optionally short-circuit when len(children)==1 if profiling ever flags it (WON'T-FIX 2026-06-18: trigger unmet — error-path only, never hit on normal load; no perf AC in epic 4.2) | INTEGRATION | 5 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.1.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/fanout/review.go:361 | If a server shutdown (or CLI SIGINT) fires after all agents already succeeded but before ExecuteReview's interrupted := errors.Is(ctx.Err(), context.Canceled) check, a fully-completed run is stamped Interrupted=true and status.go:216 overrides RunCompleted to RunInterrupted (a false interrupted; inverse of AC4). Pre-existing in the CLI-shared path, newly reachable via MCP shutdown. | Gate the interrupted marker on at least one agent ending in StatusTimeout/cancelled rather than purely on parent ctx.Err()==Canceled. NOTE: touches CLI-shared review.go (out of scope for epic 4.1.2's MCP-only change); window is microscopic and outcome benign (resume no-ops a complete run) - separate design. (WON'T-FIX 2026-06-18: --resume self-healing via ClearInterrupted (resume.go:220) already recovers a stale interrupted-on-complete; revisit in a backlog sprint if insufficient) | CORRECTNESS | 30 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: epic-4.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:88 | Serve-mode background fan-out runs under context.WithoutCancel(ctx) so a SIGINT to the MCP server never cancels or marks an in-flight detached review interrupted; it is allowed to finish (intended MCP design) but never gets the interrupted marker CLI mode promises. (Deferred: Epic Plan 4.1.2) | Decide whether detached MCP reviews should be marked interrupted on server shutdown; if so, thread a cancellable/interrupt-aware context or post-hoc marker into the background review path — a separate design from this CLI-focused epic. | REGRESSION_RISK | 60 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: 4.0_structured_logging
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/review.go:172 | Both review entry points call `NewRedactor(root)` with ZERO configured secrets — cmd/atcr/review.go:172 and internal/mcp/handlers.go:87 pass only the path root, never the registry API keys. The exact-value secret-scrubbing loop in Redact is therefore dead in production; redaction relies entirely on the `sk-`/`Bearer` regexes, which miss raw provider keys that lack those prefixes (Google `AIzaSy...`, Azure `api-key`, JWTs `eyJ...`). The AC5 "no API key in log output" guarantee holds only for sk-/Bearer-shaped keys; the passing integration test likely uses an sk- key, masking the gap. (Deferred: Epic Plan 4.9 secret-value-redaction) | Thread resolved registry API key values into `NewRedactor(root, keys...)` at both review.go:172 and handlers.go:87 (keys are discoverable from prep.Slots / cfg.Registry). Add an integration test using a non-sk-shaped key (e.g. `AIzaSy...`) asserting it is redacted. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: 3.5_severity-rank-consolidation
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:18 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:30 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestGrayZoneNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:42 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNoDisagreementOnCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: epic-3.5
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/stream/severity.go:20 | The canonical SeverityRank map carries a read-only-after-init invariant in a comment only, with no test guard preventing a future caller from mutating the shared map (which would race across concurrent fan-out agents). (Won't fix: structural guard — reconcile copy-on-init at merge.go:29-31 means no consumer writes stream.SeverityRank directly; grep confirms zero write sites across consumers. Snapshot test trips the over-simplification gate; Rank() accessor cascades to 14+ direct-lookup sites — both out of pure-consolidation scope.) | Add a stream test that snapshots the map and asserts it is unchanged after consumers run, or wrap it behind a Rank(sev) accessor. | OBSERVABILITY | 20 | execute-epic-independent |
+ 
+ ### [2026-06-16] From Sprint: 3.4_scorecard-diagnostics-writer
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:118 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; the diagnostic already routes to the injectable writer, only fmt.Fprintf's own return is dropped; propagating it breaks Emit's never-fail contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:199 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; Append loop already surfaces firstErr; propagating the Fprintf return breaks the best-effort contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:235 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verdictTallies already writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:248 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verification-read-failed diagnostic writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:276 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; orphan-verdict diagnostic routes to injectable w, locked by TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/scorecard_test.go:291 | Epic 3.4 added unit tests proving EmitOpts.Diag / ReadOpts.Writer routing at the scorecard layer, but there is no test asserting the wiring itself — that the MCP handler passes a non-default writer or that the three CLI entry points pass cmd.ErrOrStderr(). This plumbing can silently regress (a future refactor swaps cmd.ErrOrStderr() back to a default and no test fails). (Deferred: Epic Plan 3.6 scorecard-wiring-tests) | Add a CLI-level test that drives a scorecard command against a deliberately-malformed store and asserts the read diagnostic reaches the command's ErrOrStderr buffer; once MCP diagnostics route through e.log, add a handler-level test asserting against a captured logger buffer. | testing | 60 | code-review | claude | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:114 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; over-long-line warning uses injectable w via diagWriter; read continues; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:145 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; decodeRecord writes to injectable w then returns (Record,bool) — no error cascade) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:155 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; schema-version skip writes to injectable w; identical to malformed-record path) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/store.go:194 | Redundant call to diagWriter (Wontfix: FALSE POSITIVE — diagWriter is the required typed-nil guard for the nil-able opts.Writer interface, not redundant; removing it reintroduces the panic fixed by commit 476c6d1) | Remove diagWriter call and use opts.Writer directly since ReadRecords already resolves it | performance | 2 | code-review | otto | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:211 | Error from diagWriter is silently discarded (Wontfix: FALSE POSITIVE — `_, _ = fmt.Fprintf` is the documented best-effort never-panic diagnostics contract at store.go:22-24; returning the write error would regress a successful read on a broken sink and logging is circular; confirmed working as designed via /sprint-clarification 97%) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:220 | The MCP engine carries a structured *slog.Logger (e.log) used for every other diagnostic in handleReconcile (e.g. the require_verified warning at line ~225), but scorecard diagnostics are routed to raw os.Stderr, so MCP-path scorecard write-failures/malformed-record/orphan-verdict warnings emit as unstructured plaintext that bypasses the logger's level filtering, formatting, and sink redirection. NOTE: this was a DELIBERATE, documented epic decision (Clarifications Q2: supply os.Stderr at the call site; adapting e.log to an io.Writer was explicitly OUT of scope), so this is enhancement debt, not a regression. (intent_note: deferred per epic Clarifications Q2 — adapting e.log to an io.Writer is out of scope) (Wontfix: ACCEPTED ENHANCEMENT DEBT — handlers.go:220 is an unconditional EmitOpts{Diag: os.Stderr} call, not deferred logic; all five Epic 3.4 ACs are met and the comment at handlers.go:214-219 satisfies AC4; e.log→io.Writer adaptation is out of scope per Clarifications Q2; confirmed via /sprint-clarification 97%) | If MCP observability is later desired, adapt e.log into an io.Writer shim (slog-backed at Warn level) and pass it as Diag instead of os.Stderr, so MCP-path scorecard diagnostics flow through the same structured pipeline as the rest of the handler. Defer unless/until structured MCP diagnostics are required. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-15] From Sprint: 3.3_per-run_scorecard
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go (FindByRunID adjacent-month notice; ReadRecords malformed-line notice); internal/scorecard/scorecard.go (Emit notices) | Store/emit diagnostics ("skipping malformed record", "run spans adjacent month files", "write failed") are written directly to the process-global `os.Stderr` rather than to a writer threaded from the cobra command (`cmd.ErrOrStderr()`). (Deferred: Epic Plan 3.4) | accept an `io.Writer` (or logger) on the store/emit entry points and have the CLI pass `cmd.ErrOrStderr()`, so warnings are capturable and redirectable. | ops | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-06-14] From Sprint: 3.2_disagreement_radar
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/reconcile/disagree.go:280 | Duplicate writeRadarSection rendering logic risks divergent escaping across packages (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Consolidate radar rendering into report package; reconcile should call report.writeRadarSection | security | 20 | code-review | greta | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/disagree.go:350 | Duplicated radar section rendering logic (Deferred: Epic Plan 7.2) | Extract shared writeRadarSection to a common package | maintainability | 10 | code-review | bruce | MEDIUM |
+ | 4 | [/] | MEDIUM | internal/reconcile/disagree.go:354 | Duplicated radar markdown rendering diverges (Deferred: Epic Plan 7.2) | Extract shared writer or make reconcile use report package's escTrunc | maintainability | 10 | code-review | bruce | MEDIUM |
+ | U | [/] | LOW | internal/reconcile/disagree.go:413 | Redundant implementation of writeRadarSection (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Remove duplicate function from internal/reconcile and use internal/report | maintainability | 15 | code-review | otto | MEDIUM |
+ | 5 | [/] | MEDIUM | internal/report/disagree.go:47 | The radar markup is rendered by two divergent copies: writeRadarSection + formatScore in internal/report/disagree.go and a structurally different copy in internal/reconcile/disagree.go:389. They are intentionally not identical (report copy truncates via escTrunc + uses joinReviewers/reviewerOrUnknown; reconcile copy uses uncapped esc + joinOrNone), so a future markup change (new field, reordered bullets) must be made in both or the live `atcr report` radar and the archival reconciled/report.md silently drift. (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Extract one shared item renderer parameterized by a truncate-vs-verbatim flag and heading prefix; have both call sites delegate. Add a test that diffs the rendered markup of both paths on the same DisagreementsFile asserting the only intended difference is truncation. | correctness | 60 | code-review | bruce, claude | HIGH |
+ 
+ ### [2026-06-14] From Sprint: 2.2_code_review_fanout_hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | MEDIUM | internal/fanout/postprocess.go:14 | The severity-rank rubric {CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1} is independently redefined in fanout/postprocess.go:17, reconcile/merge.go, verify, report, plus a set-form copy reviewSeverities in registry/config.go. postprocess looks up severityRank[strings.ToUpper(...)] while reconcile looks up the raw value, so a future severity change or non-canonical casing silently desyncs fan-out truncation from reconcile merging. The postprocess copy was newly added by Epic 2.2. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 3.5) | Extract a single canonical severity package (or export from internal/stream) exposing the ordered rank map plus normalizeSeverity, and have registry/fanout/reconcile/verify/report consume it. Verify by deleting the local maps and confirming the suite passes with one source of truth. | maintainability | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-14] From Review: llmclient OpenAI-compatible tool handling
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | U | [/] | LOW | internal/llmclient/chat.go:1 | No provider-conformance test matrix for the OpenAI-compatible surface. The client deliberately absorbs real wire divergence (string-encoded vs raw-object tool_call `arguments`, lenient finish_reason) but is exercised only against synthetic fixtures, so a regression against a specific provider's actual tool_call shape (OpenAI, litellm, Ollama, vLLM, Together) would not be caught. This is the robustness the official SDK is assumed to provide, achievable here without adopting it. | Add a recorded-fixture conformance suite: capture a real `tool_calls` response from each target provider and assert the parser (`ToolCallArguments`, `chatToolResponse` decode, finish_reason handling) yields identical engine-facing results. NOTE: scope is a few days, not a quick-win — consider promoting to a standalone test-remediation plan rather than resolving inline. | testing | 480 | review | claude | LOW |
+ 
+ ### [2026-06-14] From Sprint: 3.0_adversarial_verification
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 7 | [/] | LOW | internal/verify/pipeline.go:238 | The rich VerificationResult built in verifyFinding never populates TrippedBudgets (invokeSkeptic folds tripped budgets only into free-text Notes), base.Model is hard-coded to skeptics[0].Config.Model even when another skeptic produced the winning verdict, and the skip-already-verified rebuild (pipeline.go:199) re-synthesizes records from the compact on-disk block losing Model/DurationMs/TrippedBudgets — so verification.json's structured audit fields degrade or misattribute on multi-skeptic and no-op re-runs (extends the model-attribution gap of TD-011). Also: Model is empty on the no_eligible_skeptic / tool_harness_unavailable early-return paths. [intent: deferred per sprint-plan TD-011] | Thread the tripped-budget slice and the winning skeptic's model up from invokeSkeptic into base.TrippedBudgets/base.Model (join models when multiple voters agree, mirroring joinSkeptics), and carry Model/DurationMs/TrippedBudgets forward for skipped findings instead of synthesizing a lossy record. | correctness | 120 | execute-sprint | execute-sprint, claude | HIGH |
+ 
+ ### [2026-06-13] From Sprint: 2.0_tool_using_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 5 | [/] | LOW | internal/tools/snapshot.go | AC 03-02 Scenario 5 and AC 03-03 Scenarios 4-5 require `manifest.json` `stages.review` to record `snapshot_mode` (live/worktree), `head_sha`, and `snapshot_worktree_path`. (intent_note: deferred per sprint-plan §2.5.A (manifest review-stage recording is Phase 5 work); Deferred to Epic Plan 2.1) | when wiring `SnapshotFor` into the agent loop, record `snapshot_mode`/`head_sha`/`snapshot_worktree_path` into `internal/payload/manifest.go` review stage and add the manifest assertion tests from AC 03-02/03-03. | testing | 0 | execute-sprint | execute-sprint | MEDIUM |
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index b48353c9..215b1894 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,11 +1,26 @@
++## [16.0.0] - 2026-07-02
++
++Added `atcr quickstart`, an interactive onboarding wizard that scaffolds a working synthetic-provider setup so a new user reaches their first review without hand-editing `registry.yaml`.
++
++### Added
++
++- `atcr quickstart` command: reuses `atcr init`'s writers for the `.atcr/` workspace, then sets up the synthetic provider + agents in `~/.config/atcr/registry.yaml`, walks the user through the `LLM_SYNTHETIC_API_KEY` environment variable (the key is never written into any atcr-owned file), and scaffolds a `.github/workflows/atcr.yml` CI workflow. Flags: `--open` (open the signup link in a browser) and `--force` (regenerate existing files).
++- A bundled synthetic-provider manifest and a scheduled GitHub Action that refreshes it from the live `/models` endpoint.
++
++### Changed
++
++- The referral signup link is shown as an OSC-8 terminal hyperlink; the scaffolded workflow and generated registry both key off the synthetic provider.
++
++*Shipped via /execute-epic (epic 16.0)*
++
+ ## [Technical Debt] - 2026-07-02
+ 
+ ### Fixed
+ 
+ - Clamped the running cost accumulator in benchmark export to prevent +Inf/NaN from propagating into scorecard JSON output.
+ - Restored `os.Stderr` correctly when a resumed benchmark run errors during stderr capture.
+ - Excluded empty-`Expected` cases from the `CorroborationRate` denominator so it reflects only cases with a defined expected result.
+ - Guarded invalid `CostUSD` values in `scoreOne` and removed duplicate `normalize()` calls in the matched-findings loop.
+ - Clamped negative `CostUSD` before computing `CostPerCorroboratedFindingUSD`.
+ 
+ ## [15.1.0] - 2026-07-02
+diff --git a/README.md b/README.md
+index 670bf913..be5a6da0 100644
+--- a/README.md
++++ b/README.md
+@@ -55,23 +55,26 @@ atcr review && atcr reconcile
+ # 6. Read the report
+ atcr report --format md
+ ```
+ 
++New to atcr? `atcr quickstart` runs steps 2–3 interactively: it scaffolds `.atcr/`, sets up the synthetic provider, walks you through the API-key environment variable (the key is never written to atcr's config), and scaffolds a `.github/workflows/atcr.yml` — so you reach your first review without hand-editing `registry.yaml`.
++
+ `atcr doctor` is the recommended post-`atcr init` verification step: it invokes every configured model endpoint once with a trivial prompt and reports any misconfigured provider, model, key, or base URL — so a bad config is caught in seconds instead of mid-review. See [Commands](#commands) for its flags and exit codes.
+ 
+ `atcr review` resolves the range against the default branch, fans the change out to the roster, and records the review id in `.atcr/latest`. Every later command takes an id or path as its single anchor argument and defaults to `latest`, so the two-command pipeline above just works on a feature branch.
+ 
+ ## Commands
+ 
+ | Command | Purpose |
+ |---------|---------|
+ | `atcr review` | Resolve the git range, build payloads, fan out to the reviewer pool, write per-agent + merged findings |
+ | `atcr reconcile` | Discover sources, cluster, dedupe, score confidence, write reconciled artifacts |
+ | `atcr verify` | Run adversarial skeptics over reconciled findings; write verdicts and confidence v2 |
+ | `atcr debate` | Cross-examine disputed findings (proposer/challenger/judge); settle severity splits, gray-zone clusters, and verification disagreements |
+ | `atcr report` | Render md / json / checklist views over the reconciled findings |
+ | `atcr range` | Pre-flight base..head resolution only; prints resolution JSON |
+ | `atcr status` | Print a review's fan-out progress as JSON (roster + per-agent state) |
+ | `atcr init` | Write `.atcr/config.yaml` and the six default personas (editable) |
++| `atcr quickstart` | Interactive onboarding: scaffold `.atcr/` (reusing `init`), set up the synthetic provider + API-key env var, and scaffold a CI workflow (`--open`, `--force`) |
+ | `atcr serve` | Run the MCP stdio server over the same engine |
+ | `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column |
+ | `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
+diff --git a/cmd/atcr/main.go b/cmd/atcr/main.go
+index 260d3220..c0708de0 100644
+--- a/cmd/atcr/main.go
++++ b/cmd/atcr/main.go
+@@ -126,79 +126,80 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
+ // newRootCmd constructs the atcr command tree. All subcommands use RunE so
+ // errors bubble up to main() for centralized exit-code mapping.
+ func newRootCmd() *cobra.Command {
+ 	root := &cobra.Command{
+ 		Use:   "atcr",
+ 		Short: "Agent Team Code Review — a review panel, not a reviewer",
+ 		// Setting Version makes cobra auto-register the --version flag, which
+ 		// short-circuits before PersistentPreRunE (matching the comments on that
+ 		// hook below). A peer `version` subcommand is also registered for the
+ 		// `atcr version` convention; both render the same string.
+ 		Version: atcrVersion(),
+ 		Long: "atcr fans a code change out to a panel of heterogeneous LLM reviewer personas,\n" +
+ 			"then deterministically reconciles their findings into a single deduplicated,\n" +
+ 			"confidence-scored deliverable.\n\n" +
+ 			"Logging:\n" +
+ 			"  LOG_LEVEL      environment variable: debug, info, warn, error (default info).\n" +
+ 			"                 Set LOG_LEVEL=debug to diagnose a failing review.\n" +
+ 			"  --log-format   log output format: text or json (default text).\n" +
+ 			"                 Use json for machine-readable, newline-delimited logs in CI.",
+ 		SilenceUsage:  true,
+ 		SilenceErrors: true,
+ 		// An unknown subcommand is a usage error (exit 2), not the generic
+ 		// failure code: in CI, exit 1 specifically means "findings at/above
+ 		// threshold". Setting Args bypasses cobra's legacyArgs path (which
+ 		// returns an uncoded error from Find), and the RunE keeps bare `atcr`
+ 		// printing help with exit 0.
+ 		Args: usageArgs(cobra.NoArgs),
+ 		// PersistentPreRunE is inherited by every subcommand, so it is the single
+ 		// point where the root logger is constructed (from LOG_LEVEL and
+ 		// --log-format) and stored in the command context. No subcommand builds
+ 		// its own logger after this; they retrieve it via log.FromContext.
+ 		// Note: cobra's --help/-h and --version flags short-circuit before
+ 		// PersistentPreRunE runs, so no logger is stored in context on those
+ 		// paths. All consumers must use log.FromContext, which falls back to a
+ 		// shared discard logger on a miss — never assert logger presence directly.
+ 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+ 			return setupLogger(cmd)
+ 		},
+ 		RunE: func(cmd *cobra.Command, _ []string) error {
+ 			return cmd.Help()
+ 		},
+ 	}
+ 
+ 	// --log-format is a persistent flag so every subcommand inherits it; LOG_LEVEL
+ 	// is read from the environment (see logLevelFromEnv). Both feed setupLogger.
+ 	root.PersistentFlags().String("log-format", "text", "log output format: text or json")
+ 
+ 	// Flag-parse errors (unknown flags, bad values, violated flag groups)
+ 	// are usage errors: exit 2.
+ 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+ 		return usageError(err)
+ 	})
+ 
+ 	root.AddCommand(
+ 		newReviewCmd(),
+ 		newReconcileCmd(),
+ 		newVerifyCmd(),
+ 		newDebateCmd(),
+ 		newReportCmd(),
+ 		newGithubCmd(),
+ 		newRangeCmd(),
+ 		newStatusCmd(),
+ 		newInitCmd(),
++		newQuickstartCmd(),
+ 		newServeCmd(),
+ 		newDoctorCmd(),
+ 		newTrustCmd(),
+ 		newScorecardCmd(),
+ 		newLeaderboardCmd(),
+ 		newBenchmarkCmd(),
+ 		newPersonasCmd(),
+ 		newVersionCmd(),
+ 	)
+ 	return root
+ }
+ 
+ // logLevelFromEnv returns the configured LOG_LEVEL, defaulting to "info" when the
+ // variable is unset or blank. LOG_LEVEL is read from the environment (not a flag)
+ // so operators can raise verbosity per-invocation without changing the command
+ // line; log.LevelFromString validates the value in setupLogger.
+diff --git a/cmd/atcr/main_test.go b/cmd/atcr/main_test.go
+index 7ce69cdc..33bb8653 100644
+--- a/cmd/atcr/main_test.go
++++ b/cmd/atcr/main_test.go
+@@ -43,19 +43,19 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
+ 	}
+ }
+ 
+-func TestRootCmd_HasExactlySeventeenSubcommands(t *testing.T) {
+-	// The sixteen prior commands plus `version`, which reports the binary
+-	// version for the `atcr version` convention (peer to the --version flag).
++func TestRootCmd_HasExactlyEighteenSubcommands(t *testing.T) {
++	// The seventeen prior commands plus `quickstart`, the interactive onboarding
++	// wizard (peer to the non-interactive `init`).
+ 	root := newRootCmd()
+ 	names := map[string]bool{}
+ 	for _, c := range root.Commands() {
+ 		if c.Hidden || c.Name() == "help" || c.Name() == "completion" {
+ 			continue
+ 		}
+ 		names[c.Name()] = true
+ 	}
+-	assert.Len(t, names, 17)
+-	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "version"} {
++	assert.Len(t, names, 18)
++	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "version"} {
+ 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
+ 	}
+ }
+diff --git a/cmd/atcr/quickstart.go b/cmd/atcr/quickstart.go
+new file mode 100644
+index 00000000..ec4162c3
+--- /dev/null
++++ b/cmd/atcr/quickstart.go
+@@ -0,0 +1,308 @@
++package main
++
++import (
++	"bufio"
++	"errors"
++	"fmt"
++	"io"
++	"io/fs"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"runtime"
++	"strings"
++
++	"github.com/spf13/cobra"
++
++	"github.com/samestrin/atcr/internal/quickstart"
++	"github.com/samestrin/atcr/internal/registry"
++	builtins "github.com/samestrin/atcr/personas"
++)
++
++// quickstartOpts carries the inputs for an `atcr quickstart` run. Streams and
++// the browser-open hook are injectable so the interactive flow is unit-testable
++// without a TTY or a real browser.
++type quickstartOpts struct {
++	dir    string
++	force  bool
++	open   bool
++	in     io.Reader
++	out    io.Writer
++	errOut io.Writer
++	openFn func(string) error
++}
++
++// newQuickstartCmd builds `atcr quickstart`: the interactive onboarding wizard.
++// It scaffolds the same .atcr/ workspace as `atcr init` (reusing its writers),
++// then layers on an interactive synthetic-provider + key-env setup and a CI
++// workflow scaffold so a new user reaches their first review quickly.
++func newQuickstartCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "quickstart",
++		Short: "Interactive onboarding: scaffold config, provider, and a CI workflow",
++		Args:  usageArgs(cobra.NoArgs),
++		RunE: func(cmd *cobra.Command, args []string) error {
++			force, err := cmd.Flags().GetBool("force")
++			if err != nil {
++				return err
++			}
++			open, err := cmd.Flags().GetBool("open")
++			if err != nil {
++				return err
++			}
++			return runQuickstart(quickstartOpts{
++				dir:    ".",
++				force:  force,
++				open:   open,
++				in:     cmd.InOrStdin(),
++				out:    cmd.OutOrStdout(),
++				errOut: cmd.ErrOrStderr(),
++			})
++		},
++	}
++	cmd.Flags().Bool("force", false, "overwrite existing configuration and workflow files")
++	cmd.Flags().Bool("open", false, "open the provider signup page in a browser")
++	return cmd
++}
++
++// runQuickstart orchestrates the onboarding wizard. It first reuses `atcr init`'s
++// writers to lay down .atcr/config.yaml and the editable personas, then (in later
++// steps) sets up the synthetic provider, guides the user through the API-key env
++// var, and scaffolds a CI workflow.
++func runQuickstart(o quickstartOpts) error {
++	// Layer onto an existing .atcr rather than aborting: `atcr init`'s writers are
++	// all-or-nothing (any existing target is a hard error without --force), which
++	// would block a returning user — and --force would clobber their edited
++	// personas. So when a config already exists and force is off, skip the init
++	// step and continue with provider/key/workflow setup (mirroring the per-file
++	// skip guards used for the registry and workflow below).
++	cfgPath := registry.DefaultProjectConfigPath(o.dir)
++	if _, statErr := os.Lstat(cfgPath); statErr == nil && !o.force {
++		_, _ = fmt.Fprintf(o.errOut, "Using existing workspace at %s (run with --force to regenerate config + personas).\n", filepath.Dir(cfgPath))
++	} else if err := runInit(o.dir, o.force, o.out, o.errOut); err != nil {
++		return err
++	}
++
++	manifest, err := quickstart.LoadManifest()
++	if err != nil {
++		return err
++	}
++
++	// The project roster init just wrote lists the persona names; define one
++	// synthetic-bound agent per persona so the roster resolves.
++	if err := writeSyntheticRegistry(o, manifest, builtins.Names()); err != nil {
++		return err
++	}
++
++	if err := keyEnvFlow(o, manifest); err != nil {
++		return err
++	}
++
++	if err := scaffoldWorkflow(o, manifest); err != nil {
++		return err
++	}
++	return nil
++}
++
++// scaffoldWorkflow writes .github/workflows/atcr.yml under the target dir. The
++// guard is per-file: an existing workflow is never overwritten without --force,
++// and a skip only skips this file — it never aborts the wizard (the .atcr and
++// registry setup already ran). A genuine write/stat error is returned.
++func scaffoldWorkflow(o quickstartOpts, m *quickstart.Manifest) error {
++	wfPath := filepath.Join(o.dir, ".github", "workflows", "atcr.yml")
++
++	_, statErr := os.Lstat(wfPath)
++	switch {
++	case statErr == nil && !o.force:
++		_, _ = fmt.Fprintf(o.errOut, "\nA workflow already exists at %s — not overwriting it (use --force to replace).\n", wfPath)
++		return nil
++	case statErr != nil && !errors.Is(statErr, fs.ErrNotExist):
++		return fmt.Errorf("cannot check %s: %w", wfPath, statErr)
++	}
++
++	if err := os.MkdirAll(filepath.Dir(wfPath), 0o755); err != nil {
++		return fmt.Errorf("cannot create %s: %w", filepath.Dir(wfPath), err)
++	}
++	if err := os.WriteFile(wfPath, []byte(quickstart.WorkflowYAML(m)), 0o644); err != nil {
++		return fmt.Errorf("failed to write %s: %w", wfPath, err)
++	}
++	_, _ = fmt.Fprintf(o.out, "  created %s\n", wfPath)
++	return nil
++}
++
++// keyEnvFlow shows the referral signup link, optionally opens it, then walks the
++// user through setting the provider's API-key environment variable. The key is
++// held only transiently: it is echoed back as an `export` line and, if the user
++// names a shell profile, appended there — but it is NEVER written into any file
++// atcr owns (.atcr/ or registry.yaml), preserving atcr's env-resolved posture.
++func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
++	env := m.Provider.APIKeyEnv
++	link := m.SignupLink()
++
++	_, _ = fmt.Fprintf(o.out, "\nSign up for a %s API key:\n  %s\n", m.Provider.Name, osc8(link))
++	if o.open {
++		openFn := o.openFn
++		if openFn == nil {
++			openFn = openBrowser
++		}
++		if err := openFn(link); err != nil {
++			_, _ = fmt.Fprintf(o.errOut, "could not open browser (%v) — open the link above manually.\n", err)
++		}
++	}
++
++	scanner := bufio.NewScanner(o.in)
++	readLine := func(prompt string) string {
++		_, _ = fmt.Fprint(o.out, prompt)
++		if scanner.Scan() {
++			return strings.TrimSpace(scanner.Text())
++		}
++		return ""
++	}
++
++	key := readLine(fmt.Sprintf("\nPaste your API key (or press Enter to set %s yourself later): ", env))
++	if key == "" {
++		_, _ = fmt.Fprintf(o.out, "\nNo problem. When you have a key, set it with:\n  export %s=<your-key>\n", env)
++		return nil
++	}
++
++	_, _ = fmt.Fprintf(o.out, "\nSet it in your current shell:\n  export %s=%s\n", env, shellSingleQuote(key))
++
++	profile := readLine("\nAppend this export to a shell profile? Enter a path (or Enter to skip): ")
++	if profile == "" {
++		return nil
++	}
++	// Guard the invariant: the key must never land in a file atcr owns, even if
++	// the user names one at this prompt.
++	if profileIsAtcrOwned(profile, o.dir) {
++		_, _ = fmt.Fprintf(o.errOut, "Refusing to write the key into an atcr-owned file (%s) — choose a shell profile like ~/.zshrc instead.\n", profile)
++		return nil
++	}
++	if err := appendExport(profile, env, key); err != nil {
++		_, _ = fmt.Fprintf(o.errOut, "could not append to %s: %v\n", profile, err)
++		return nil
++	}
++	_, _ = fmt.Fprintf(o.out, "Appended the export to %s — open a new shell or `source` it to load the key.\n", profile)
++	return nil
++}
++
++// appendExport appends `export ENV='key'` to the named shell profile, expanding
++// a leading ~/ and creating the file if absent. This is the one place the key
++// value touches disk, and only into a file the user explicitly named — never a
++// file atcr owns.
++func appendExport(profile, env, key string) error {
++	if strings.HasPrefix(profile, "~/") {
++		home, err := os.UserHomeDir()
++		if err != nil {
++			return err
++		}
++		profile = filepath.Join(home, profile[2:])
++	}
++	f, err := os.OpenFile(profile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
++	if err != nil {
++		return err
++	}
++	defer func() { _ = f.Close() }()
++	_, err = fmt.Fprintf(f, "\n# added by atcr quickstart\nexport %s=%s\n", env, shellSingleQuote(key))
++	return err
++}
++
++// profileIsAtcrOwned reports whether the shell-profile path the user named would
++// resolve inside the .atcr/ workspace or to the user registry — the files whose
++// key-free posture the wizard must preserve. It is the enforcement point behind
++// the "key never in an atcr-owned file" invariant at the profile prompt.
++func profileIsAtcrOwned(profile, dir string) bool {
++	abs := resolveProfilePath(profile)
++	if abs == "" {
++		return false
++	}
++	if atcr, err := filepath.Abs(filepath.Join(dir, ".atcr")); err == nil {
++		if abs == atcr || strings.HasPrefix(abs, atcr+string(os.PathSeparator)) {
++			return true
++		}
++	}
++	if reg, err := registry.DefaultRegistryPath(); err == nil {
++		if regAbs, err := filepath.Abs(reg); err == nil && abs == regAbs {
++			return true
++		}
++	}
++	return false
++}
++
++// resolveProfilePath expands a leading ~/ and returns the absolute form of a
++// user-supplied profile path, or "" if it cannot be resolved.
++func resolveProfilePath(profile string) string {
++	if strings.HasPrefix(profile, "~/") {
++		if home, err := os.UserHomeDir(); err == nil {
++			profile = filepath.Join(home, profile[2:])
++		}
++	}
++	abs, err := filepath.Abs(profile)
++	if err != nil {
++		return ""
++	}
++	return abs
++}
++
++// shellSingleQuote wraps s in single quotes safe for POSIX shells, escaping any
++// embedded single quote via the '\” idiom so a key with odd characters cannot
++// break out of the quoting (or forge shell into running injected commands).
++func shellSingleQuote(s string) string {
++	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
++}
++
++// osc8 wraps a URL in an OSC-8 terminal hyperlink whose visible text is the URL
++// itself, so it renders clickable in supporting terminals and still shows the
++// plain URL everywhere else.
++func osc8(url string) string {
++	return "\x1b]8;;" + url + "\x1b\\" + url + "\x1b]8;;\x1b\\"
++}
++
++// openBrowser opens url in the platform default browser. It returns promptly
++// (Start, not Run) so the wizard never blocks on the browser process.
++func openBrowser(url string) error {
++	switch runtime.GOOS {
++	case "darwin":
++		return exec.Command("open", url).Start()
++	case "windows":
++		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
++	default:
++		return exec.Command("xdg-open", url).Start()
++	}
++}
++
++// writeSyntheticRegistry writes the synthetic provider + agents to the user
++// registry (~/.config/atcr/registry.yaml). It is non-destructive: an existing
++// registry is never clobbered without --force. When one exists and force is off,
++// the generated block is printed for the user to merge by hand rather than
++// silently overwriting their providers/agents.
++func writeSyntheticRegistry(o quickstartOpts, m *quickstart.Manifest, roster []string) error {
++	regPath, err := registry.DefaultRegistryPath()
++	if err != nil {
++		return err
++	}
++	content := quickstart.RegistryYAML(m, roster)
++
++	_, statErr := os.Lstat(regPath)
++	switch {
++	case statErr == nil && !o.force:
++		// Exists and no force: do not touch it. Show the block to merge, and warn
++		// that the roster just written to .atcr/config.yaml references these agents
++		// — until they are merged, `atcr review` will fail to resolve the roster.
++		_, _ = fmt.Fprintf(o.errOut, "\nA registry already exists at %s — not overwriting it (use --force to replace).\n", regPath)
++		_, _ = fmt.Fprintln(o.errOut, "Add the following synthetic provider + agents to it manually:")
++		_, _ = fmt.Fprintf(o.out, "\n%s\n", content)
++		_, _ = fmt.Fprintf(o.errOut, "Until you merge these, `atcr review` will fail: .atcr/config.yaml lists agents (%s) your registry does not define yet.\n", strings.Join(roster, ", "))
++		return nil
++	case statErr != nil && !errors.Is(statErr, fs.ErrNotExist):
++		return fmt.Errorf("cannot check %s: %w", regPath, statErr)
++	}
++
++	if err := os.MkdirAll(filepath.Dir(regPath), 0o755); err != nil {
++		return fmt.Errorf("cannot create %s: %w", filepath.Dir(regPath), err)
++	}
++	if err := os.WriteFile(regPath, []byte(content), 0o644); err != nil {
++		return fmt.Errorf("failed to write %s: %w", regPath, err)
++	}
++	_, _ = fmt.Fprintf(o.out, "  created %s\n", regPath)
++	return nil
++}
+diff --git a/cmd/atcr/quickstart_test.go b/cmd/atcr/quickstart_test.go
+new file mode 100644
+index 00000000..a6cb98b9
+--- /dev/null
++++ b/cmd/atcr/quickstart_test.go
+@@ -0,0 +1,291 @@
++package main
++
++import (
++	"bytes"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++
++	"github.com/samestrin/atcr/internal/registry"
++)
++
++// quickstartInput is the canned interactive input for a non-interactive test
++// run: an empty key line (skip key entry) followed by an empty shell-profile
++// choice (skip profile append). Extended per task as the flow grows.
++const quickstartInput = "\n\n"
++
++func TestQuickstart_CommandWiring(t *testing.T) {
++	cmd := newQuickstartCmd()
++	assert.Equal(t, "quickstart", cmd.Name(), "command is named quickstart")
++
++	// It must be registered on the root command tree.
++	root := newRootCmd()
++	var found bool
++	for _, c := range root.Commands() {
++		if c.Name() == "quickstart" {
++			found = true
++			break
++		}
++	}
++	assert.True(t, found, "quickstart is registered on the root command")
++}
++
++func TestQuickstart_ReusesInitWriters(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv("HOME", t.TempDir()) // registry writes land in a throwaway home
++	out := &bytes.Buffer{}
++	err := runQuickstart(quickstartOpts{
++		dir:    dir,
++		in:     strings.NewReader(quickstartInput),
++		out:    out,
++		errOut: &bytes.Buffer{},
++	})
++	require.NoError(t, err)
++
++	// The .atcr side is produced by reusing init's writers: config + personas.
++	cfg, err := registry.LoadProjectConfig(filepath.Join(dir, ".atcr", "config.yaml"))
++	require.NoError(t, err)
++	assert.NotEmpty(t, cfg.Agents, "roster is populated by the reused init writer")
++	assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", "bruce.md"))
++	assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", "_base.md"))
++}
++
++func TestQuickstart_WritesSyntheticRegistry(t *testing.T) {
++	dir := t.TempDir()
++	home := t.TempDir()
++	t.Setenv("HOME", home)
++	require.NoError(t, runQuickstart(quickstartOpts{
++		dir:    dir,
++		in:     strings.NewReader(quickstartInput),
++		out:    &bytes.Buffer{},
++		errOut: &bytes.Buffer{},
++	}))
++
++	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
++	reg, err := registry.LoadRegistry(regPath)
++	require.NoError(t, err, "quickstart writes a valid registry.yaml")
++	_, ok := reg.Providers["synthetic"]
++	assert.True(t, ok, "synthetic provider is defined")
++
++	// Every roster entry in the generated project config must resolve against
++	// the generated registry — otherwise the first review would fail.
++	cfg, err := registry.LoadProjectConfig(filepath.Join(dir, ".atcr", "config.yaml"))
++	require.NoError(t, err)
++	assert.NoError(t, cfg.ValidateAgainst(reg), "roster resolves against synthetic registry")
++}
++
++func TestQuickstart_RegistryGuard_SkipsExistingWithoutForce(t *testing.T) {
++	dir := t.TempDir()
++	home := t.TempDir()
++	t.Setenv("HOME", home)
++	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
++	require.NoError(t, os.MkdirAll(filepath.Dir(regPath), 0o755))
++	require.NoError(t, os.WriteFile(regPath, []byte("# user's own registry\n"), 0o644))
++
++	out := &bytes.Buffer{}
++	require.NoError(t, runQuickstart(quickstartOpts{
++		dir:    dir,
++		in:     strings.NewReader(quickstartInput),
++		out:    out,
++		errOut: &bytes.Buffer{},
++	}))
++
++	// The existing registry must be untouched (no clobber).
++	data, err := os.ReadFile(regPath)
++	require.NoError(t, err)
++	assert.Equal(t, "# user's own registry\n", string(data), "existing registry left intact")
++	assert.Contains(t, out.String(), "registry.yaml", "user is told the snippet was not applied")
++}
++
++func TestQuickstart_ScaffoldsWorkflow(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv("HOME", t.TempDir())
++	require.NoError(t, runQuickstart(quickstartOpts{
++		dir: dir, in: strings.NewReader(quickstartInput), out: &bytes.Buffer{}, errOut: &bytes.Buffer{},
++	}))
++	wf := filepath.Join(dir, ".github", "workflows", "atcr.yml")
++	data, err := os.ReadFile(wf)
++	require.NoError(t, err, "workflow scaffolded")
++	assert.Contains(t, string(data), "LLM_SYNTHETIC_API_KEY: ${{ secrets.LLM_SYNTHETIC_API_KEY }}")
++}
++
++func TestQuickstart_WorkflowGuard_SkipsExistingWithoutForce(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv("HOME", t.TempDir())
++	wf := filepath.Join(dir, ".github", "workflows", "atcr.yml")
++	require.NoError(t, os.MkdirAll(filepath.Dir(wf), 0o755))
++	require.NoError(t, os.WriteFile(wf, []byte("# my own workflow\n"), 0o644))
++
++	out := &bytes.Buffer{}
++	errOut := &bytes.Buffer{}
++	// Must NOT abort the whole quickstart — the registry step still runs.
++	require.NoError(t, runQuickstart(quickstartOpts{
++		dir: dir, in: strings.NewReader(quickstartInput), out: out, errOut: errOut,
++	}))
++
++	data, err := os.ReadFile(wf)
++	require.NoError(t, err)
++	assert.Equal(t, "# my own workflow\n", string(data), "existing workflow left intact")
++	assert.Contains(t, errOut.String()+out.String(), "atcr.yml", "user told the workflow was skipped")
++}
++
++func TestQuickstart_WorkflowGuard_ForceOverwrites(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv("HOME", t.TempDir())
++	wf := filepath.Join(dir, ".github", "workflows", "atcr.yml")
++	require.NoError(t, os.MkdirAll(filepath.Dir(wf), 0o755))
++	require.NoError(t, os.WriteFile(wf, []byte("# my own workflow\n"), 0o644))
++
++	require.NoError(t, runQuickstart(quickstartOpts{
++		dir: dir, force: true, in: strings.NewReader(quickstartInput), out: &bytes.Buffer{}, errOut: &bytes.Buffer{},
++	}))
++	data, err := os.ReadFile(wf)
++	require.NoError(t, err)
++	assert.Contains(t, string(data), "LLM_SYNTHETIC_API_KEY", "force overwrote with the scaffold")
++}
++
++func TestQuickstart_PrintsSignupLink(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv("HOME", t.TempDir())
++	out := &bytes.Buffer{}
++	require.NoError(t, runQuickstart(quickstartOpts{
++		dir: dir, in: strings.NewReader(quickstartInput), out: out, errOut: &bytes.Buffer{},
++	}))
++	assert.Contains(t, out.String(), "https://synthetic.new/", "signup link is shown")
++}
++
++func TestQuickstart_Open_InvokesOpenFn(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv("HOME", t.TempDir())
++	var opened string
++	require.NoError(t, runQuickstart(quickstartOpts{
++		dir: dir, open: true, in: strings.NewReader(quickstartInput),
++		out: &bytes.Buffer{}, errOut: &bytes.Buffer{},
++		openFn: func(u string) error { opened = u; return nil },
++	}))
++	assert.Equal(t, "https://synthetic.new/", opened, "--open passes the signup link to the opener")
++}
++
++func TestQuickstart_KeyEntry_ExportAndProfileAppend(t *testing.T) {
++	dir := t.TempDir()
++	home := t.TempDir()
++	t.Setenv("HOME", home)
++	profile := filepath.Join(home, "profile.sh")
++
++	out := &bytes.Buffer{}
++	// Paste a key, then name a shell profile to append the export to.
++	in := strings.NewReader("MYSECRETKEY\n" + profile + "\n")
++	require.NoError(t, runQuickstart(quickstartOpts{
++		dir: dir, in: in, out: out, errOut: &bytes.Buffer{},
++	}))
++
++	// The export instruction is shown to the user.
++	assert.Contains(t, out.String(), "export LLM_SYNTHETIC_API_KEY=")
++
++	// The chosen shell profile received the export with the key value.
++	prof, err := os.ReadFile(profile)
++	require.NoError(t, err)
++	assert.Contains(t, string(prof), "export LLM_SYNTHETIC_API_KEY='MYSECRETKEY'")
++
++	// SECURITY INVARIANT: the key value must NEVER be persisted into atcr's own
++	// config files — only the env var name lives there.
++	regBytes, err := os.ReadFile(filepath.Join(home, ".config", "atcr", "registry.yaml"))
++	require.NoError(t, err)
++	assert.NotContains(t, string(regBytes), "MYSECRETKEY", "key never written to registry.yaml")
++	cfgBytes, err := os.ReadFile(filepath.Join(dir, ".atcr", "config.yaml"))
++	require.NoError(t, err)
++	assert.NotContains(t, string(cfgBytes), "MYSECRETKEY", "key never written to config.yaml")
++}
++
++func TestQuickstart_NoKey_PrintsInstructions(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv("HOME", t.TempDir())
++	out := &bytes.Buffer{}
++	// Empty key line → skip entry; no profile prompt is consumed.
++	require.NoError(t, runQuickstart(quickstartOpts{
++		dir: dir, in: strings.NewReader("\n"), out: out, errOut: &bytes.Buffer{},
++	}))
++	assert.Contains(t, out.String(), "export LLM_SYNTHETIC_API_KEY=<your-key>",
++		"instructions to set the env var later are shown when no key is pasted")
++}
++
++func TestQuickstart_LayersOntoExistingAtcr(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv("HOME", t.TempDir())
++	// Simulate a prior `atcr init` with an edited persona.
++	require.NoError(t, runInit(dir, false, &bytes.Buffer{}, &bytes.Buffer{}))
++	persona := filepath.Join(dir, ".atcr", "personas", "bruce.md")
++	require.NoError(t, os.WriteFile(persona, []byte("EDITED BY USER"), 0o644))
++
++	// quickstart (no --force) must NOT abort and must NOT clobber the edited persona.
++	require.NoError(t, runQuickstart(quickstartOpts{
++		dir: dir, in: strings.NewReader(quickstartInput), out: &bytes.Buffer{}, errOut: &bytes.Buffer{},
++	}))
++
++	data, err := os.ReadFile(persona)
++	require.NoError(t, err)
++	assert.Equal(t, "EDITED BY USER", string(data), "existing edited persona preserved")
++	// Provider setup still ran (registry written into the throwaway home).
++	assert.FileExists(t, filepath.Join(os.Getenv("HOME"), ".config", "atcr", "registry.yaml"))
++}
++
++func TestQuickstart_RegistryGuard_WarnsRosterWontResolve(t *testing.T) {
++	dir := t.TempDir()
++	home := t.TempDir()
++	t.Setenv("HOME", home)
++	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
++	require.NoError(t, os.MkdirAll(filepath.Dir(regPath), 0o755))
++	require.NoError(t, os.WriteFile(regPath, []byte("# user's own registry\n"), 0o644))
++
++	errOut := &bytes.Buffer{}
++	require.NoError(t, runQuickstart(quickstartOpts{
++		dir: dir, in: strings.NewReader(quickstartInput), out: &bytes.Buffer{}, errOut: errOut,
++	}))
++	assert.Contains(t, errOut.String(), "atcr review` will fail",
++		"user is warned the roster will not resolve until they merge the block")
++}
++
++func TestQuickstart_KeyEntry_RefusesAtcrOwnedProfilePath(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv("HOME", t.TempDir())
++	atcrCfg := filepath.Join(dir, ".atcr", "config.yaml")
++
++	errOut := &bytes.Buffer{}
++	// User pastes a key, then (foolishly) names an atcr-owned file as the profile.
++	in := strings.NewReader("MYSECRETKEY\n" + atcrCfg + "\n")
++	require.NoError(t, runQuickstart(quickstartOpts{
++		dir: dir, in: in, out: &bytes.Buffer{}, errOut: errOut,
++	}))
++
++	assert.Contains(t, errOut.String(), "Refusing to write the key")
++	// INVARIANT: the key value must not have been appended to the atcr config.
++	cfg, err := os.ReadFile(atcrCfg)
++	require.NoError(t, err)
++	assert.NotContains(t, string(cfg), "MYSECRETKEY", "key never written into an atcr-owned file")
++}
++
++func TestQuickstart_RegistryGuard_ForceOverwrites(t *testing.T) {
++	dir := t.TempDir()
++	home := t.TempDir()
++	t.Setenv("HOME", home)
++	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
++	require.NoError(t, os.MkdirAll(filepath.Dir(regPath), 0o755))
++	require.NoError(t, os.WriteFile(regPath, []byte("# user's own registry\n"), 0o644))
++
++	require.NoError(t, runQuickstart(quickstartOpts{
++		dir:    dir,
++		force:  true,
++		in:     strings.NewReader(quickstartInput),
++		out:    &bytes.Buffer{},
++		errOut: &bytes.Buffer{},
++	}))
++
++	reg, err := registry.LoadRegistry(regPath)
++	require.NoError(t, err, "force overwrites with a valid synthetic registry")
++	_, ok := reg.Providers["synthetic"]
++	assert.True(t, ok, "synthetic provider present after force overwrite")
++}
+diff --git a/cmd/refresh-manifest/main.go b/cmd/refresh-manifest/main.go
+new file mode 100644
+index 00000000..f946b4ba
+--- /dev/null
++++ b/cmd/refresh-manifest/main.go
+@@ -0,0 +1,17 @@
++// Command refresh-manifest regenerates the bundled synthetic manifest
++// (internal/quickstart/synthetic.json) from a live OpenAI-compatible /models
++// response read on stdin, writing the updated manifest JSON to stdout. All logic
++// lives in internal/quickstart so it stays unit-testable; this shim only wires
++// os.Args/streams to quickstart.RunRefresh. It is invoked by the scheduled
++// refresh workflow (.github/workflows/refresh-synthetic-manifest.yml).
++package main
++
++import (
++	"os"
++
++	"github.com/samestrin/atcr/internal/quickstart"
++)
++
++func main() {
++	os.Exit(quickstart.RunRefresh(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
++}
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index 91ee0ae6..a28942ba 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -22,43 +22,44 @@ const modulePath = "github.com/samestrin/atcr"
+ // allowedInternalImports maps every top-level internal package to the set of
+ // internal packages it may import (subpackages inherit their top-level
+ // entry). Absence of a directory here fails the completeness check.
+ var allowedInternalImports = map[string][]string{
+ 	"atomicfs":       {},
+ 	"atomicwrite":    {"atomicfs"},
+ 	"cache":          {"atomicfs"}, // diff cache leaf; atomicfs for atomic entry writes (epic 5.2)
+ 	"stream":         {"metrics"},  // metrics: observability counters for a git-unavailable file index and indeterminate/unresolvable path validation (stdlib-only leaf, no cycle)
+ 	"gitrange":       {},
+ 	"log":            {},                                       // single diagnostic sink; stdlib-only (epic 4.0)
+ 	"errors":         {},                                       // error-classification taxonomy; stdlib-only (epic 4.0)
+ 	"registry":       {"stream"},                               // stream is the canonical zero-dependency severity leaf (epic 3.5)
+ 	"tools":          {"sandbox"},                              // sandbox: run_tests/run_script execute in the container backend (epic 11.0, opt-in --exec)
+ 	"sandbox":        {"log"},                                  // container-isolated executor for --exec reproduction; log: structured audit line per sandbox run (epic 11.0)
+ 	"repro":          {"reconcile", "sandbox"},                 // 2-run determinism + evidence_exec write-back: runs the sandbox, stamps reconcile findings (epic 11.0)
+ 	"metrics":        {},                                       // in-process metrics collector; stdlib-only leaf (epic 4.4)
+ 	"version":        {},                                       // build-version holder (atcr_version in the leaderboard submission); stdlib-only leaf, no imports (epic 10.0)
+ 	"circuitbreaker": {"metrics"},                              // per-provider breaker; pushes state to the metrics gauge (epic 4.5)
+ 	"validation":     {},                                       // user-input validators; stdlib-only leaf (epic 4.3)
+ 	"tdmigrate":      {},                                       // technical-debt storage migrator; yaml.v3 + stdlib only, imports no internal package (epic 12.1)
+ 	"payload":        {"gitrange", "atomicfs", "log"},          // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
+ 	"llmclient":      {"registry", "errors", "circuitbreaker"}, // circuitbreaker: per-provider fail-fast on the API call path (epic 4.5)
+ 	"doctor":         {"llmclient", "registry"},
+ 	"fanout":         {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics", "circuitbreaker", "validation", "atomicfs", "cache"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4); circuitbreaker: provider threaded onto the call context (epic 4.5); validation: engine-level --output-dir system-path reject for non-CLI callers (stdlib-only leaf); atomicfs: CopyPath for the EXDEV copy-fallback in backupExisting's crash-safe swap, the shared low-level fs leaf reconcile/verify already import (epic 4.7.1); cache: diff-cache replay on the single-shot review path (epic 5.2)
+ 	"reconcile":      {"stream", "atomicfs", "astgroup"},                                                                                             // astgroup: AST-isomorphism grouper wired as the primary clustering signal (epic 13.1)
+ 	"scorecard":      {"llmclient", "reconcile", "fanout", "version"},                                                                                // version: atcr_version stamped into the public submission envelope (epic 10.0)
+ 	"personas":       {"registry", "payload"},                                                                                                        // community persona lifecycle: validates fetched YAML via registry.ValidateAgentYAML; built-in roster from top-level personas/ (non-internal) (epic 9.0); payload: TemplateFixtureRunner calls RenderPrompt to validate built-in templates against embedded fixtures (TD-012)
+ 	"report":         {"stream", "reconcile"},
+ 	"ghaction":       {"reconcile"},                                                                                                                        // GitHub Action renderer/client: reads reconciled findings, posts check runs (epic 7.3)
+ 	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log", "sandbox", "repro"}, // log: skeptic-failure routing (epic 4.0 phase 4.2); atomicwrite: shared group-write helper; sandbox: --exec backend resolution + dispatcher wiring (epic 11.0); repro: evidence_exec write-back stamping (epic 11.0)
+ 	"debate":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"},                     // cross-examination stage; mirrors verify's harness; atomicwrite shared group-write helper (epic 6.0)
+ 	"mcp":            {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "debate", "scorecard", "log", "metrics"},
+ 	"benchmark":      {"scorecard", "version"}, // standard-suite contract + suite-tagged submission envelope; reuses scorecard.PublicRecord for one public reviewer schema, version for atcr_version (epic 10.0)
+ 	"astgroup":       {},                       // AST-isomorphism grouper: wazero host + embedded .wasm parsers; imports the external reconcile library (Grouper seam) + wazero only, no internal package (epic 13.1)
++	"quickstart":     {},                       // `atcr quickstart` data layer: synthetic manifest + registry.yaml/workflow generators + refresh transform; stdlib + embed only, no internal package (epic 16.0)
+ 	// integration holds only end-to-end _test.go files (no production code).
+ 	// The dependency-direction walk skips _test.go, so this entry exists to
+ 	// satisfy the allowlist-completeness check; it records the packages those
+ 	// tests exercise (epic 4.0 phase 5.2).
+ 	"integration": {"fanout", "llmclient", "log", "errors", "registry", "mcp"},
+ }
+ 
+ // repoRoot walks up from the working directory to the directory containing
+ // go.mod. Robust under -trimpath, unlike runtime.Caller paths.
+diff --git a/internal/quickstart/manifest.go b/internal/quickstart/manifest.go
+new file mode 100644
+index 00000000..a5453761
+--- /dev/null
++++ b/internal/quickstart/manifest.go
+@@ -0,0 +1,131 @@
++// Package quickstart holds the data layer for `atcr quickstart`: the bundled
++// synthetic-provider manifest, the registry.yaml generator that turns it into a
++// working provider + agent roster, and the pure transform used by the scheduled
++// manifest-refresh job. All logic here is I/O-free so it stays unit-testable;
++// file writes and interactive prompts live in cmd/atcr/quickstart.go.
++package quickstart
++
++import (
++	_ "embed"
++	"encoding/json"
++	"fmt"
++	"net/url"
++	"strings"
++	"unicode"
++)
++
++// syntheticManifest is the bundled default provider/model set. It is regenerated
++// by the scheduled refresh job (cmd/refresh-manifest); keep the shape in sync
++// with Manifest.
++//
++//go:embed synthetic.json
++var syntheticManifest []byte
++
++// Provider describes the synthetic OpenAI-compatible endpoint. Only the env var
++// NAME is carried — the key value is never part of the manifest or any file
++// atcr writes (matching atcr's env-resolved-at-invoke-time posture).
++type Provider struct {
++	Name      string `json:"name"`
++	BaseURL   string `json:"base_url"`
++	APIKeyEnv string `json:"api_key_env"`
++}
++
++// Manifest is the bundled synthetic-provider defaults shipped with atcr and
++// regenerated by the scheduled refresh job. SignupURL + Referral drive the
++// onboarding link; Provider + Models seed the generated registry.yaml.
++type Manifest struct {
++	SignupURL string   `json:"signup_url"`
++	Referral  string   `json:"referral"`
++	Provider  Provider `json:"provider"`
++	Models    []string `json:"models"`
++}
++
++// LoadManifest parses and validates the embedded synthetic manifest. Validation
++// is defense-in-depth against a malformed refresh: the provider name, base_url,
++// api_key_env, and at least one model are required.
++func LoadManifest() (*Manifest, error) {
++	var m Manifest
++	if err := json.Unmarshal(syntheticManifest, &m); err != nil {
++		return nil, fmt.Errorf("parsing synthetic manifest: %w", err)
++	}
++	if err := m.validate(); err != nil {
++		return nil, err
++	}
++	return &m, nil
++}
++
++// validate rejects a structurally-incomplete manifest so a bad refresh can never
++// generate a broken registry.yaml.
++func (m *Manifest) validate() error {
++	switch {
++	case strings.TrimSpace(m.Provider.Name) == "":
++		return fmt.Errorf("synthetic manifest: provider.name is required")
++	case strings.TrimSpace(m.Provider.BaseURL) == "":
++		return fmt.Errorf("synthetic manifest: provider.base_url is required")
++	case strings.TrimSpace(m.Provider.APIKeyEnv) == "":
++		return fmt.Errorf("synthetic manifest: provider.api_key_env is required")
++	case len(m.Models) == 0:
++		return fmt.Errorf("synthetic manifest: at least one model is required")
++	}
++	for i, model := range m.Models {
++		if strings.TrimSpace(model) == "" {
++			return fmt.Errorf("synthetic manifest: models[%d] is empty", i)
++		}
++		// Model ids are emitted verbatim as `model: <id>` lines in the generated
++		// registry.yaml. A control character (esp. a newline) in an id sourced from
++		// the live /models endpoint could forge YAML structure, so reject them at
++		// the load boundary — defense-in-depth against a hostile refresh response.
++		if strings.IndexFunc(model, func(r rune) bool { return unicode.IsControl(r) }) >= 0 {
++			return fmt.Errorf("synthetic manifest: models[%d] contains a control character", i)
++		}
++	}
++	return nil
++}
++
++// SignupLink returns the signup URL with the referral code appended as a query
++// param when set. A blank referral yields the bare URL — atcr ships without
++// claiming anyone's referral credit; set "referral" in synthetic.json to enable
++// tracking.
++func (m *Manifest) SignupLink() string {
++	if strings.TrimSpace(m.Referral) == "" {
++		return m.SignupURL
++	}
++	sep := "?"
++	if strings.Contains(m.SignupURL, "?") {
++		sep = "&"
++	}
++	return m.SignupURL + sep + "referral=" + url.QueryEscape(m.Referral)
++}
++
++// RegistryYAML renders the ~/.config/atcr/registry.yaml content: the synthetic
++// provider plus one agent per roster persona, bound round-robin across the
++// manifest's models. Each agent's name equals its persona so the roster written
++// to .atcr/config.yaml (persona names) resolves against these agents. The output
++// only uses keys the strict registry loader knows, so it parses cleanly.
++func RegistryYAML(m *Manifest, roster []string) string {
++	var b strings.Builder
++	b.WriteString("# atcr user registry — see docs/registry.md\n")
++	b.WriteString("# Written by `atcr quickstart`. Providers + agents live here; the roster\n")
++	b.WriteString("# (agent names) lives in .atcr/config.yaml. The API key value is NEVER stored\n")
++	b.WriteString("# here — only the env var NAME. Set it in your environment:\n")
++	fmt.Fprintf(&b, "#   export %s=...\n", m.Provider.APIKeyEnv)
++	b.WriteString("providers:\n")
++	fmt.Fprintf(&b, "  %s:\n", m.Provider.Name)
++	fmt.Fprintf(&b, "    base_url: %s\n", m.Provider.BaseURL)
++	fmt.Fprintf(&b, "    api_key_env: %s\n", m.Provider.APIKeyEnv)
++	// Defensive: LoadManifest guarantees >=1 model, but RegistryYAML is exported
++	// and a direct caller could pass an empty set — the round-robin modulo would
++	// panic on len 0. Emit the provider block only rather than crash.
++	if len(m.Models) == 0 {
++		return b.String()
++	}
++	b.WriteString("agents:\n")
++	for i, persona := range roster {
++		model := m.Models[i%len(m.Models)]
++		fmt.Fprintf(&b, "  %s:\n", persona)
++		fmt.Fprintf(&b, "    persona: %s\n", persona)
++		fmt.Fprintf(&b, "    provider: %s\n", m.Provider.Name)
++		fmt.Fprintf(&b, "    model: %s\n", model)
++	}
++	return b.String()
++}
+diff --git a/internal/quickstart/manifest_test.go b/internal/quickstart/manifest_test.go
+new file mode 100644
+index 00000000..89fbd3d2
+--- /dev/null
++++ b/internal/quickstart/manifest_test.go
+@@ -0,0 +1,88 @@
++package quickstart
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++
++	"github.com/samestrin/atcr/internal/registry"
++)
++
++func TestLoadManifest_Embedded(t *testing.T) {
++	m, err := LoadManifest()
++	require.NoError(t, err)
++	require.NotNil(t, m)
++	assert.Equal(t, "synthetic", m.Provider.Name)
++	assert.Equal(t, "LLM_SYNTHETIC_API_KEY", m.Provider.APIKeyEnv)
++	assert.True(t, strings.HasPrefix(m.Provider.BaseURL, "https://"), "base_url is https")
++	require.NotEmpty(t, m.Models, "manifest ships at least one model")
++}
++
++func TestSignupLink(t *testing.T) {
++	// No referral → the bare signup URL.
++	m := &Manifest{SignupURL: "https://synthetic.new/", Referral: ""}
++	assert.Equal(t, "https://synthetic.new/", m.SignupLink())
++
++	// Referral set → appended as a query param.
++	m.Referral = "ABC123"
++	assert.Equal(t, "https://synthetic.new/?referral=ABC123", m.SignupLink())
++}
++
++func TestRegistryYAML_DefinesProviderAndAgents(t *testing.T) {
++	m := &Manifest{
++		Provider: Provider{Name: "synthetic", BaseURL: "https://api.synthetic.new/openai/v1", APIKeyEnv: "LLM_SYNTHETIC_API_KEY"},
++		Models:   []string{"m0", "m1"},
++	}
++	out := RegistryYAML(m, []string{"bruce", "greta", "kai"})
++
++	assert.Contains(t, out, "base_url: https://api.synthetic.new/openai/v1")
++	assert.Contains(t, out, "api_key_env: LLM_SYNTHETIC_API_KEY")
++	// Round-robin binding across the two models.
++	assert.Contains(t, out, "model: m0")
++	assert.Contains(t, out, "model: m1")
++	for _, agent := range []string{"bruce", "greta", "kai"} {
++		assert.Contains(t, out, agent+":")
++		assert.Contains(t, out, "persona: "+agent)
++	}
++}
++
++func TestRegistryYAML_EmptyModelsDoesNotPanic(t *testing.T) {
++	m := &Manifest{
++		Provider: Provider{Name: "synthetic", BaseURL: "https://x/y", APIKeyEnv: "K"},
++		Models:   nil,
++	}
++	// Must not panic on the round-robin modulo; emits the provider block only.
++	out := RegistryYAML(m, []string{"bruce"})
++	assert.Contains(t, out, "synthetic:")
++	assert.NotContains(t, out, "model:")
++}
++
++// The generated registry.yaml must strict-parse and validate through the real
++// registry loader, and the generated roster must resolve against it — otherwise
++// quickstart would produce a config that fails at first `atcr review`.
++func TestRegistryYAML_LoadsAndRosterResolves(t *testing.T) {
++	m, err := LoadManifest()
++	require.NoError(t, err)
++	roster := []string{"bruce", "greta", "kai"}
++
++	dir := t.TempDir()
++	regPath := filepath.Join(dir, "registry.yaml")
++	require.NoError(t, os.WriteFile(regPath, []byte(RegistryYAML(m, roster)), 0o644))
++
++	reg, err := registry.LoadRegistry(regPath)
++	require.NoError(t, err, "generated registry.yaml must load and validate")
++	_, ok := reg.Providers["synthetic"]
++	assert.True(t, ok, "synthetic provider defined")
++	for _, agent := range roster {
++		_, ok := reg.Agents[agent]
++		assert.True(t, ok, "agent %q defined in registry", agent)
++	}
++
++	// A project roster listing those agents must resolve cleanly.
++	cfg := &registry.ProjectConfig{Agents: roster}
++	assert.NoError(t, cfg.ValidateAgainst(reg))
++}
+diff --git a/internal/quickstart/refresh.go b/internal/quickstart/refresh.go
+new file mode 100644
+index 00000000..419e500f
+--- /dev/null
++++ b/internal/quickstart/refresh.go
+@@ -0,0 +1,76 @@
++package quickstart
++
++import (
++	"encoding/json"
++	"fmt"
++	"io"
++	"strings"
++)
++
++// modelsResponse is the subset of an OpenAI-compatible /models response the
++// refresh job needs: the list of model ids under "data".
++type modelsResponse struct {
++	Data []struct {
++		ID string `json:"id"`
++	} `json:"data"`
++}
++
++// BuildManifestFromModels rebuilds the synthetic manifest JSON from an
++// OpenAI-compatible /models API response, preserving the base manifest's
++// signup_url, referral, and provider (none of which come from /models). It
++// refuses an empty model list so a transient/misconfigured API response can
++// never ship a zero-model manifest that breaks the wizard. Output is 2-space
++// indented with a trailing newline to match the committed synthetic.json.
++func BuildManifestFromModels(apiResp []byte, base *Manifest) ([]byte, error) {
++	var resp modelsResponse
++	if err := json.Unmarshal(apiResp, &resp); err != nil {
++		return nil, fmt.Errorf("parsing /models response: %w", err)
++	}
++	models := make([]string, 0, len(resp.Data))
++	for _, d := range resp.Data {
++		if strings.TrimSpace(d.ID) != "" {
++			models = append(models, d.ID)
++		}
++	}
++	if len(models) == 0 {
++		return nil, fmt.Errorf("refusing to write manifest: /models returned no usable model ids")
++	}
++
++	updated := *base
++	updated.Models = models
++	if err := updated.validate(); err != nil {
++		return nil, err
++	}
++
++	out, err := json.MarshalIndent(updated, "", "  ")
++	if err != nil {
++		return nil, fmt.Errorf("encoding manifest: %w", err)
++	}
++	return append(out, '\n'), nil
++}
++
++// RunRefresh is the entry point for the scheduled manifest-refresh job: it reads
++// a /models response from in, rebuilds the manifest atop the embedded base, and
++// writes the result to out. It returns a process exit code (0 success, 1 error).
++func RunRefresh(args []string, in io.Reader, out, errOut io.Writer) int {
++	base, err := LoadManifest()
++	if err != nil {
++		_, _ = fmt.Fprintln(errOut, "refresh:", err)
++		return 1
++	}
++	apiResp, err := io.ReadAll(in)
++	if err != nil {
++		_, _ = fmt.Fprintln(errOut, "refresh: reading input:", err)
++		return 1
++	}
++	result, err := BuildManifestFromModels(apiResp, base)
++	if err != nil {
++		_, _ = fmt.Fprintln(errOut, "refresh:", err)
++		return 1
++	}
++	if _, err := out.Write(result); err != nil {
++		_, _ = fmt.Fprintln(errOut, "refresh: writing output:", err)
++		return 1
++	}
++	return 0
++}
+diff --git a/internal/quickstart/refresh_test.go b/internal/quickstart/refresh_test.go
+new file mode 100644
+index 00000000..3cbfe78f
+--- /dev/null
++++ b/internal/quickstart/refresh_test.go
+@@ -0,0 +1,86 @@
++package quickstart
++
++import (
++	"bytes"
++	"encoding/json"
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func baseManifest() *Manifest {
++	return &Manifest{
++		SignupURL: "https://synthetic.new/",
++		Referral:  "CODE",
++		Provider:  Provider{Name: "synthetic", BaseURL: "https://api.synthetic.new/openai/v1", APIKeyEnv: "LLM_SYNTHETIC_API_KEY"},
++		Models:    []string{"old-model"},
++	}
++}
++
++func TestBuildManifestFromModels_ExtractsIdsPreservesBase(t *testing.T) {
++	resp := []byte(`{"data":[{"id":"model-a"},{"id":"model-b"}]}`)
++	out, err := BuildManifestFromModels(resp, baseManifest())
++	require.NoError(t, err)
++
++	var m Manifest
++	require.NoError(t, json.Unmarshal(out, &m))
++	assert.Equal(t, []string{"model-a", "model-b"}, m.Models, "model ids refreshed from /models")
++	// Fields not present in /models are preserved from the base.
++	assert.Equal(t, "https://synthetic.new/", m.SignupURL)
++	assert.Equal(t, "CODE", m.Referral)
++	assert.Equal(t, "LLM_SYNTHETIC_API_KEY", m.Provider.APIKeyEnv)
++	// Output ends with a trailing newline for a clean file diff.
++	assert.True(t, strings.HasSuffix(string(out), "\n"))
++}
++
++func TestBuildManifestFromModels_EmptyDataRefused(t *testing.T) {
++	// An empty model list must NOT overwrite the manifest — that would ship a
++	// zero-model quickstart. Refuse instead.
++	_, err := BuildManifestFromModels([]byte(`{"data":[]}`), baseManifest())
++	assert.Error(t, err)
++}
++
++func TestBuildManifestFromModels_InvalidJSON(t *testing.T) {
++	_, err := BuildManifestFromModels([]byte(`not json`), baseManifest())
++	assert.Error(t, err)
++}
++
++func TestBuildManifestFromModels_RegeneratedManifestLoads(t *testing.T) {
++	// The regenerated manifest must satisfy the same validation LoadManifest
++	// applies, so a refresh can never ship a manifest the wizard rejects.
++	resp := []byte(`{"data":[{"id":"m1"},{"id":"m2"}]}`)
++	out, err := BuildManifestFromModels(resp, baseManifest())
++	require.NoError(t, err)
++	var m Manifest
++	require.NoError(t, json.Unmarshal(out, &m))
++	assert.NoError(t, m.validate())
++}
++
++func TestBuildManifestFromModels_RejectsControlCharInId(t *testing.T) {
++	// A newline in a model id would forge YAML lines in the generated
++	// registry.yaml — a hostile /models response must be refused.
++	resp := []byte(`{"data":[{"id":"ok"},{"id":"evil\n    injected: true"}]}`)
++	_, err := BuildManifestFromModels(resp, baseManifest())
++	assert.Error(t, err)
++}
++
++func TestRunRefresh_Success(t *testing.T) {
++	in := strings.NewReader(`{"data":[{"id":"x"},{"id":"y"}]}`)
++	out := &bytes.Buffer{}
++	errOut := &bytes.Buffer{}
++	code := RunRefresh(nil, in, out, errOut)
++	assert.Equal(t, 0, code, "exit 0 on success")
++
++	var m Manifest
++	require.NoError(t, json.Unmarshal(out.Bytes(), &m))
++	assert.Equal(t, []string{"x", "y"}, m.Models)
++	// Provider is preserved from the embedded base.
++	assert.Equal(t, "synthetic", m.Provider.Name)
++}
++
++func TestRunRefresh_BadInput(t *testing.T) {
++	code := RunRefresh(nil, strings.NewReader("garbage"), &bytes.Buffer{}, &bytes.Buffer{})
++	assert.NotEqual(t, 0, code, "non-zero exit on bad input")
++}
+diff --git a/internal/quickstart/synthetic.json b/internal/quickstart/synthetic.json
+new file mode 100644
+index 00000000..dd2837d6
+--- /dev/null
++++ b/internal/quickstart/synthetic.json
+@@ -0,0 +1,14 @@
++{
++  "signup_url": "https://synthetic.new/",
++  "referral": "",
++  "provider": {
++    "name": "synthetic",
++    "base_url": "https://api.synthetic.new/openai/v1",
++    "api_key_env": "LLM_SYNTHETIC_API_KEY"
++  },
++  "models": [
++    "MiniMax-M2.5",
++    "glm-5",
++    "kimi-k2.5"
++  ]
++}
+diff --git a/internal/quickstart/workflow.go b/internal/quickstart/workflow.go
+new file mode 100644
+index 00000000..6eae982e
+--- /dev/null
++++ b/internal/quickstart/workflow.go
+@@ -0,0 +1,47 @@
++package quickstart
++
++import (
++	"fmt"
++	"strings"
++)
++
++// WorkflowYAML renders the .github/workflows/atcr.yml scaffold: a minimal
++// review-only CI workflow that installs atcr and runs `atcr review` wired to the
++// synthetic provider's API-key secret. It is intentionally review-only — it does
++// NOT run `atcr reconcile`/`atcr github`, so it posts no PR check and is not a
++// merge gate; the published composite action (samestrin/atcr@v1) is the path for
++// the full pipeline. The secret name tracks the manifest's api_key_env so the
++// scaffold stays consistent with the generated registry.
++func WorkflowYAML(m *Manifest) string {
++	env := m.Provider.APIKeyEnv
++	var b strings.Builder
++	b.WriteString("# .github/workflows/atcr.yml — scaffolded by `atcr quickstart`.\n")
++	b.WriteString("# Minimal review-only workflow: installs atcr and runs `atcr review` against\n")
++	b.WriteString("# the PR, wired to the synthetic provider via the secret below.\n")
++	b.WriteString("#\n")
++	b.WriteString("# NOTE: intentionally minimal. It does NOT run `atcr reconcile` or `atcr github`,\n")
++	b.WriteString("# so it posts no PR check and is not a merge gate. For the full PR-check pipeline\n")
++	b.WriteString("# use the published composite action (samestrin/atcr@v1); see docs/github-action.md.\n")
++	b.WriteString("name: atcr review\n")
++	b.WriteString("on:\n")
++	b.WriteString("  pull_request:\n")
++	b.WriteString("permissions:\n")
++	b.WriteString("  contents: read\n")
++	b.WriteString("jobs:\n")
++	b.WriteString("  atcr:\n")
++	b.WriteString("    runs-on: ubuntu-latest\n")
++	b.WriteString("    steps:\n")
++	b.WriteString("      - uses: actions/checkout@v4\n")
++	b.WriteString("        with:\n")
++	b.WriteString("          fetch-depth: 0   # atcr needs full history to resolve the merge-base\n")
++	b.WriteString("      - uses: actions/setup-go@v5\n")
++	b.WriteString("        with:\n")
++	b.WriteString("          go-version: '1.25'\n")
++	b.WriteString("      - name: Install atcr\n")
++	b.WriteString("        run: go install github.com/samestrin/atcr/cmd/atcr@latest\n")
++	b.WriteString("      - name: Review\n")
++	b.WriteString("        env:\n")
++	fmt.Fprintf(&b, "          %s: ${{ secrets.%s }}\n", env, env)
++	b.WriteString("        run: atcr review --base \"origin/${{ github.base_ref }}\"\n")
++	return b.String()
++}
+diff --git a/internal/quickstart/workflow_test.go b/internal/quickstart/workflow_test.go
+new file mode 100644
+index 00000000..2bec66fd
+--- /dev/null
++++ b/internal/quickstart/workflow_test.go
+@@ -0,0 +1,23 @@
++package quickstart
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++)
++
++func TestWorkflowYAML_ReviewOnlySynthetic(t *testing.T) {
++	m := &Manifest{Provider: Provider{Name: "synthetic", APIKeyEnv: "LLM_SYNTHETIC_API_KEY"}}
++	out := WorkflowYAML(m)
++
++	// Wired to the synthetic key secret and runs a review.
++	assert.Contains(t, out, "LLM_SYNTHETIC_API_KEY: ${{ secrets.LLM_SYNTHETIC_API_KEY }}")
++	assert.Contains(t, out, "atcr review")
++	// atcr needs full history to resolve the merge-base.
++	assert.Contains(t, out, "fetch-depth: 0")
++	// Intentionally review-only: no reconcile/github PR-gate RUN steps (the
++	// explanatory header may still name them).
++	assert.NotContains(t, out, "run: atcr github")
++	assert.NotContains(t, out, "run: atcr reconcile")
++	assert.NotContains(t, out, "atcr reconcile &&")
++}

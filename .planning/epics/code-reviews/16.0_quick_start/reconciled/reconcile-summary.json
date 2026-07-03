@@ -1,0 +1,14 @@
+{
+  "sources": ["claude"],
+  "raw_count": 13,
+  "merged_count": 13,
+  "clusters_collapsed": "13 raw findings reduced into 13 merged findings",
+  "severity_disagreements": 0,
+  "intent_annotations": 0,
+  "validated_count": 13,
+  "pruned_count": 0,
+  "corrected_count": 0,
+  "annotated_count": 0,
+  "claude_role": "intent_verifier",
+  "timestamp": "2026-07-03T00:42:33Z"
+}
