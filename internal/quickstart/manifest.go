@@ -127,6 +127,9 @@ func RegistryYAML(m *Manifest, roster []string) string {
 	if len(m.Models) == 0 {
 		return b.String()
 	}
+	if len(roster) == 0 {
+		return b.String()
+	}
 	b.WriteString("agents:\n")
 	for i, persona := range roster {
 		model := m.Models[i%len(m.Models)]
