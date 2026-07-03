@@ -60,6 +60,10 @@ type ProjectConfig struct {
 	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
 	// nil means execution is unconfigured and `--exec` is refused.
 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
+	// AutoFix is the optional `--auto-fix` backend block (Sprint 17.0). nil means
+	// the config-derived pieces inherit their defaults; it never enables the flow
+	// on its own (validateAutoFixBackend gates that).
+	AutoFix *AutoFixConfig `yaml:"auto_fix,omitempty"`
 }
 
 // DefaultProjectConfigPath returns .atcr/config.yaml under root.
@@ -148,6 +152,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 		return nil, fmt.Errorf("%s: invalid review_strategy '%s': must be one of bulk, chunked", base, strings.TrimSpace(cfg.ReviewStrategy))
 	}
 	if err := cfg.Sandbox.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", base, err)
+	}
+	if err := cfg.AutoFix.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}
 
