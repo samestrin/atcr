@@ -387,7 +387,7 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
    **Story-3 DoD Complete** — Auto: 3/3 (tests/lint/build) | Story-Specific: backup-map coverage matches writes, restore-on-failure (single/multi/partial/create-delete/delete-restore), all-errors-collected aggregate, cleanup-on-success + already-absent tolerance + best-effort, hard-error naming, revert-before-remote sequencing, TD-005 symlink-leaf sentinel disambiguation — all green.
    Manual Review: [x] Reviewed via 3.2.A fresh-subagent adversarial pass (2 MEDIUM closed inline as tests, 2 LOW → TD-009/010).
 
-### 3.5 [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+### 3.5 [x] **Phase 3 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3 (`internal/autofix/revert.*`).
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase — intentional. Do NOT review inline.
@@ -406,16 +406,9 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Gate result: CLEAN — No findings.** Fresh-context integrator verified: every `BackupMap` value shape `ApplyPatch` emits has a correct `RevertPatch` route; `refuseSymlinkLeaf` runs on all apply paths before parse and closes the TD-005 sentinel ambiguity un-bypassably; `containedPath` + `refuseSymlinkLeaf` jointly cover directory-component and leaf symlink escapes; the apply.go change is additive (Phase 2 behavior intact); the `log` allowlist addition reflects a real, justified dependency; revert-before-remote sequencing is soundly modeled at the package boundary for Phase 4/5 to wire. `internal/autofix` and `internal` (boundaries) suites both green.
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   **Phase gate passed.**
    **Duration:** 15-30 min
 
 > **GATED STOP** — `/execute-sprint` halts here. Resume to begin Phase 4.
