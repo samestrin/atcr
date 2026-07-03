@@ -125,6 +125,17 @@ func applyOne(root string, e payload.FileEntry) (absTarget, backupPath string, e
 		}
 	}
 
+	// A create diff (old side /dev/null) must not clobber an existing file.
+	// This mirrors git apply's refusal and keeps the create-vs-modify routing
+	// unambiguous (TD-004).
+	if f.IsNew {
+		if _, err := os.Stat(abs); err == nil {
+			return "", "", fmt.Errorf("autofix: refusing to create %q: target already exists", e.Path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", "", fmt.Errorf("autofix: checking %q before create: %w", e.Path, err)
+		}
+	}
+
 	var out bytes.Buffer
 	if aerr := gitdiff.Apply(&out, bytes.NewReader(src), f); aerr != nil {
 		// Any non-nil apply error is a hard per-file failure — no partial-confidence
