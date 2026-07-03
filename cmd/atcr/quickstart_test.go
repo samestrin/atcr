@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -343,4 +344,17 @@ func TestQuickstart_AppendExportAndGuardResolveSamePath(t *testing.T) {
 	expected := resolveProfilePath(profile)
 	assert.FileExists(t, expected)
 	assert.Equal(t, filepath.Join(home, ".atcr-test-profile"), expected)
+}
+
+func TestQuickstart_AppendExport_ChmodsExistingProfileTo0600(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	profile := filepath.Join(home, ".zshrc")
+	require.NoError(t, os.WriteFile(profile, []byte("# existing profile\n"), 0o644))
+
+	require.NoError(t, appendExport(profile, "TEST_KEY", "secret"))
+
+	info, err := os.Stat(profile)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0o600), info.Mode().Perm(), "existing profile must be restricted after appending a secret")
 }
