@@ -629,7 +629,7 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
    **Story-6 DoD Complete** — Auto: 3/3 (tests/lint/build) | Story-Specific: `--auto-fix` off-by-default + help-discoverable + absent from other commands; single all-or-nothing gate refusing on each of apply-target / validation-command / GitHub-token / malformed-repo independently AND aggregated; no live network/exec in the gate; no filesystem mutation on refusal; fully-configured pass with flag>env precedence, resolved-timeout default (TD-008) + configured override; `runAutoFix` sequencing (no GitHub call before `Passed()`, revert on apply/validate failure), empty-base guard before any GitHub call (5.2.A HIGH) — all green.
    Manual Review: [ ] Code reviewed (pending `/execute-code-review`) — adversarial 5.2.A fresh-subagent pass done (1 HIGH fixed inline, 2 LOW → TD-014/TD-015).
 
-### 5.5 [ ] **Phase 5 - GATE: Integration & Exit Review (subagent)**
+### 5.5 [x] **Phase 5 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 5 (`cmd/atcr/autofix.*`, `cmd/atcr/flags.go`).
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase — intentional. Do NOT review inline.
@@ -648,16 +648,20 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Gate findings (fresh-context integrator) + resolution — no CRITICAL/HIGH:**
+   Verified: git-confirmed Phase-5 commits touched only the six declared files (no illegal edit of internal/autofix/verify/ghaction); apply→validate→revert-or-continue→cleanup→base-guard→branch/commit/PR order correct; no GitHub mutation reachable before `Passed()`; seam is Phase-6-stubbable (api-url override + `resolveHeadSHAFn` var + `autoFixGitHub` interface); `|| autoFix` trigger and terminal return leave every non-auto-fix path byte-identical.
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   | Severity | File:Line | Issue | Resolution |
+   |----------|-----------|-------|-----------|
+   | MEDIUM | autofix.go selectAutoFixEntries | Duplicate target paths across findings were never deduped: two findings touching one file → two `FileEntry` for one path → `ApplyPatch` re-runs `BackupToDotBak` on the already-patched file, clobbering the original backup so a later `RevertPatch` restores once-patched content — breaking the sprint's central revert-safety invariant. | **FIXED at gate** — `selectAutoFixEntries` now dedupes by `Path` (one fix per file per run), preserving one-backup-per-file. Regression test `TestSelectAutoFixEntries_DedupesByPath`. |
+   | MEDIUM | autofix.go selectAutoFixEntries | Auto-fix scope silently coupled to the `--fail-on` threshold (config `fail_on` defaults HIGH in `atcr init`), so a stock project drops MEDIUM/LOW fixes with a misleading "nothing to apply". | Deferred → TD-016. Matches the user-approved selection policy; fail-safe (fewer fixes). UX/doc gap. |
+   | MEDIUM | registry (DefaultProjectConfigYAML) | `auto_fix` keys not emitted in the `atcr init` template (documented only via doc-comments + flag help). | Deferred → TD-017. All keys optional with working defaults. |
+   | LOW | review.go terminal return | `--auto-fix` bypasses the `--fail-on` CI exit gate (deliberate, undocumented in help). | Deferred → TD-018. Intentional design. |
+   | LOW | autofix.go validateAutoFixBackend | `applyTarget` stored relative when `repoRoot="."` (works because CWD==repo root). | Deferred → TD-019. Correct in the only call path. |
+
+   **No CRITICAL/HIGH — phase gate passed. The one revert-safety-relevant MEDIUM fixed at the gate; remaining MEDIUM/LOW deferred to tech-debt-captured.md (TD-016…TD-019).**
+
+   **Phase gate passed.**
    **Duration:** 15-30 min
 
 > **GATED STOP** — `/execute-sprint` halts here. Resume to begin Phase 6.
