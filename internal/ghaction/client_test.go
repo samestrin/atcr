@@ -681,6 +681,39 @@ func TestCreateCommitRedactsTokenInError(t *testing.T) {
 	assert.Contains(t, err.Error(), "[redacted]")
 }
 
+func TestCreateCommitRedactsOutboundMessage(t *testing.T) {
+	const token = "ghp_SECRETTOKEN1234567890abcdef"
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/commits/"):
+			_, _ = w.Write([]byte(`{"tree":{"sha":"bt"}}`))
+		case strings.HasSuffix(r.URL.Path, "/git/blobs"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"sha":"b"}`))
+		case strings.HasSuffix(r.URL.Path, "/git/trees"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"sha":"t"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/commits"):
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &gotBody)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"sha":"c"}`))
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/git/refs/heads/"):
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: token, HTTPClient: srv.Client()}
+	_, err := c.CreateCommit(context.Background(), "o", "r", CommitRequest{
+		Branch: "b", Message: "fix leak " + token, ParentSHA: "p", Files: []CommitFile{{Path: "a.go", Content: "x"}},
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, gotBody["message"], token, "the outbound commit message must be redacted before it is sent to GitHub")
+	assert.Contains(t, gotBody["message"].(string), "[redacted]")
+}
+
 func TestCreateCommitEmptyCommitShaIsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
