@@ -345,6 +345,23 @@ func TestOrchestrateAutoFix_NoApplicableFix(t *testing.T) {
 	require.Contains(t, buf.String(), "nothing to apply")
 }
 
+// TestOrchestrateAutoFix_AllBelowThresholdMessage: when every fix-carrying finding
+// is below the resolved --fail-on threshold, the "nothing to apply" message must
+// say so (the default fail_on: HIGH silently drops MEDIUM/LOW fixes — TD-016),
+// distinct from "no finding carried a fix".
+func TestOrchestrateAutoFix_AllBelowThresholdMessage(t *testing.T) {
+	isolate(t)
+	id := verifyFixture(t, "belowthresh", []reconcile.JSONFinding{
+		{Severity: "LOW", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Fix: diffFor("a.go")},
+	})
+	reviewDir := filepath.Join(".atcr", "reviews", id)
+	var buf strings.Builder
+	err := orchestrateAutoFix(context.Background(), &buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, "HIGH", "main")
+	require.NoError(t, err)
+	require.Contains(t, buf.String(), "below the --fail-on HIGH threshold",
+		"an all-below-threshold run must name the threshold, not report no fixes")
+}
+
 // --- runAutoFix sequencing (the Story-4/5 gate: no GitHub before validation) -
 
 // fakeGitHub records calls and lets a test assert the sequencing guarantee.
