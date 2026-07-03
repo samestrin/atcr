@@ -44,6 +44,9 @@ func addAutoFixFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("auto-fix", false,
 		"opt-in: after review, apply each finding's fix, validate locally, and open a GitHub PR only if validation passes; "+
 			"refuses without a validation command + apply target + GitHub token/repo (token needs contents:write and pull_requests:write). "+
+			"Only findings at or above --fail-on are fixed, so the default fail_on: HIGH applies HIGH+ fixes only — lower --fail-on to include MEDIUM/LOW. "+
+			"Each run opens a NEW pull request on a fresh timestamped branch (create-per-run; it does not update a prior auto-fix PR). "+
+			"Requires local HEAD to be pushed and to equal the PR base branch (the base commit and commit parent are resolved from local HEAD). "+
 			"When --auto-fix succeeds, the --fail-on exit gate is bypassed because the intent is to remediate, not to fail CI. "+
 			"If branch/commit creation succeeds and a later step fails, the remote branch (and possibly commit) is left behind and must be deleted manually.")
 	cmd.Flags().String("repo", "", "owner/name target repository for --auto-fix (default: $GITHUB_REPOSITORY)")
@@ -89,7 +92,15 @@ func resolveValidateTimeout(af *registry.AutoFixConfig) (time.Duration, error) {
 // 2's config or Go default), and (3) GitHub token + owner/name repo (flags or
 // env) — plus the validation timeout. It performs only local checks (env/flag
 // reads, config-shape parsing, one os.Stat); it never makes a network call or
-// executes the validation command. Any missing/malformed piece makes the whole
+// executes the validation command.
+//
+// Precondition it CANNOT verify (TD-001): the token must carry contents:write +
+// pull_requests:write. Confirming that needs a live API call, which this
+// local-only gate deliberately avoids, so the scope is a documented precondition
+// (here and on the --auto-fix flag) rather than a runtime smoke-check; an
+// under-scoped token surfaces only as a GitHub 403 at the first mutating call.
+//
+// Any missing/malformed piece makes the whole
 // run refuse: every failure is collected and returned as one usage error (exit
 // 2) naming every missing piece, so a half-configured backend fails fast before
 // any file is touched. On success it returns the fully-resolved backend and nil.
@@ -358,13 +369,32 @@ func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, r
 		_, _ = fmt.Fprintf(out, "auto-fix: %d additional fix(es) for already-patched files were skipped this run\n", skipped)
 	}
 	if len(entries) == 0 {
-		_, _ = fmt.Fprintln(out, "auto-fix: no reconciled finding carried an applicable fix; nothing to apply.")
+		// Distinguish "nothing carried a fix" from "every fix was filtered out by
+		// the --fail-on threshold" (the default fail_on: HIGH silently drops
+		// MEDIUM/LOW fixes — TD-016), so a stock-init operator is not left
+		// wondering why a MEDIUM-only run applied nothing.
+		if threshold != "" && countFixBelowThreshold(findings, threshold) > 0 {
+			_, _ = fmt.Fprintf(out, "auto-fix: every fix was below the --fail-on %s threshold; nothing to apply (lower --fail-on / auto_fix threshold to include them).\n", threshold)
+		} else {
+			_, _ = fmt.Fprintln(out, "auto-fix: no reconciled finding carried an applicable fix; nothing to apply.")
+		}
 		return nil
 	}
+	// Base commit AND commit parent both come from local HEAD. Precondition
+	// (TD-021): local HEAD must be pushed and equal to the PR base branch. If HEAD
+	// is unpushed, CreateBranch/CreateCommit fail with GitHub's 422/404; if HEAD is
+	// a feature branch ahead of the base, the opened PR silently carries the
+	// intervening commits. Resolving/verifying against the remote base is a
+	// deliberate future enhancement, not done here.
 	baseSHA, err := resolveHeadSHAFn(ctx, be.applyTarget)
 	if err != nil {
-		return fmt.Errorf("auto-fix: resolving base commit: %w", err)
+		return fmt.Errorf("auto-fix: resolving base commit (ensure local HEAD is pushed and equals the PR base %q): %w", baseBranch, err)
 	}
+	// Create-per-run: a fresh timestamped branch each run — the user-approved
+	// Phase-5 MVP (TD-015). runAutoFix's create-vs-update path is reachable only
+	// when a caller reuses a branch name; this live adapter intentionally does not,
+	// so each run opens a NEW PR rather than updating a stable one. Deterministic
+	// one-PR-per-target naming would be a separate feature, not a TD fix.
 	branch := fmt.Sprintf("atcr/auto-fix/%s", time.Now().UTC().Format("20060102-150405"))
 	client := &ghaction.Client{APIURL: be.apiURL, Token: be.token}
 	return runAutoFix(ctx, out, client, autoFixRun{
@@ -418,4 +448,20 @@ func selectAutoFixEntries(findings []reconcile.JSONFinding, threshold string) ([
 		}
 	}
 	return entries, skipped, nil
+}
+
+// countFixBelowThreshold reports how many findings carry a non-empty Fix but sit
+// below threshold, so orchestrateAutoFix can tell "nothing carried a fix" apart
+// from "every fix was filtered out by --fail-on" in its empty-selection message.
+func countFixBelowThreshold(findings []reconcile.JSONFinding, threshold string) int {
+	if threshold == "" {
+		return 0
+	}
+	n := 0
+	for _, f := range findings {
+		if strings.TrimSpace(f.Fix) != "" && !reconcile.AtOrAbove(f.Severity, threshold) {
+			n++
+		}
+	}
+	return n
 }
