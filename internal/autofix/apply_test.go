@@ -281,6 +281,23 @@ func TestApplyPatch_PathTraversalRefused(t *testing.T) {
 	assert.Empty(t, bm)
 }
 
+// TestApplyPatch_SymlinkedDirComponentRefused guards the symlink-escape defense:
+// a symlinked directory component inside root that points outside must not let a
+// write follow it out of the tree (a purely lexical containment check misses this).
+func TestApplyPatch_SymlinkedDirComponentRefused(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir() // a sibling dir that must never be written to
+	victim := filepath.Join(outside, "victim.txt")
+	writeFile(t, victim, "ORIGINAL\n")
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "link")))
+
+	bm, err := ApplyPatch(root, []payload.FileEntry{fe("link/victim.txt", fixtureModify)})
+	require.Error(t, err)
+	assert.Contains(t, strings.ToLower(err.Error()), "escape")
+	assert.Equal(t, "ORIGINAL\n", readFile(t, victim), "must not write through a symlinked directory component")
+	assert.Empty(t, bm)
+}
+
 func TestApplyPatch_DeleteRemovalFailsIsolated(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "del.txt"), "gone1\ngone2\n")

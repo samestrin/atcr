@@ -200,17 +200,17 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
 
 **Goal:** Build the local write-path (`internal/autofix/apply.go`) and the post-apply validation gate (`internal/verify` extension) — the foundation every later story depends on.
 
-### 2.1 [ ] **[Apply Patch to Working Tree - RED](plan/user-stories/01-apply-patch-to-working-tree-without-corruption.md)**
+### 2.1 [x] **[Apply Patch to Working Tree - RED](plan/user-stories/01-apply-patch-to-working-tree-without-corruption.md)**
    **AC:** [01-01](plan/acceptance-criteria/01-01-parse-and-apply-hunks.md), [01-02](plan/acceptance-criteria/01-02-atomic-write-to-target-path.md), [01-03](plan/acceptance-criteria/01-03-per-file-backup-before-overwrite.md), [01-04](plan/acceptance-criteria/01-04-per-file-error-isolation.md)
    Write comprehensive failing tests for `ApplyPatch(entries []payload.FileEntry) (BackupMap, error)`: parse+apply hunks for modify/create/delete via `gitdiff.Parse`/`gitdiff.Apply` (01-01); every write goes through `atomicfs.WriteFileAtomic` (01-02); per-file backup via `atomicfs.BackupToDotBak` before any overwrite (01-03); a failed hunk yields a clear per-file error without corrupting prior successes (01-04). Include a path-traversal/symlink-escape fixture (preserve `payload` guard). Verify all fail correctly.
    **Files:** `internal/autofix/apply_test.go` | **Duration:** ~0.75 day
 
-### 2.2 [ ] **[Apply Patch to Working Tree - GREEN](plan/user-stories/01-apply-patch-to-working-tree-without-corruption.md)**
+### 2.2 [x] **[Apply Patch to Working Tree - GREEN](plan/user-stories/01-apply-patch-to-working-tree-without-corruption.md)**
    Minimal `internal/autofix/apply.go`, one test at a time (T1), verify all (T2). Wrap `go-gitdiff` entirely; return a populated `BackupMap` (`originalPath -> backupPath`). COMMIT.
    COMMIT: `git add internal/autofix/apply.go internal/autofix/apply_test.go && git commit -m "feat(autofix): apply parsed patch atomically with per-file backup (green)"`
    **Files:** `internal/autofix/apply.go` | **Duration:** ~1 day
 
-### 2.2.A [ ] **[Apply Patch - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-apply-patch-to-working-tree-without-corruption.md)**
+### 2.2.A [x] **[Apply Patch - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-apply-patch-to-working-tree-without-corruption.md)**
    **Changed Files:** `internal/autofix/apply.go`, `internal/autofix/apply_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -228,18 +228,16 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings + resolution:**
+   | Severity | File:Line | Issue | Resolution |
+   |----------|-----------|-------|-----------|
+   | HIGH | apply.go containedPath | Symlink-escape guard not preserved — purely lexical containment; a symlinked directory component inside root (root/link -> /etc) lets a write follow the link outside the tree. | FIXED in 2.3 — `containedPath` now resolves symlinks on the parent dir + root (mirrors payload's `rejectDiffSymlinkEscape`) and re-checks containment; added `TestApplyPatch_SymlinkedDirComponentRefused`. |
+   | MEDIUM | apply.go:108 (create branch) | Create-on-existing-file silently overwrites instead of rejecting like `git apply`. | Deferred → TD-004. Not data loss: prior content is backed up + revertible. |
+   | LOW | apply.go:129 | Modify/delete of a symlink *leaf* → empty backup → Story-3 Revert would delete rather than restore the link. | Deferred → TD-005 (Story-3 Revert concern). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **HIGH resolved inline in 2.3; MEDIUM/LOW deferred to tech-debt-captured.md. Adversarial review complete.**
 
-### 2.3 [ ] **[Apply Patch to Working Tree - REFACTOR](plan/user-stories/01-apply-patch-to-working-tree-without-corruption.md)**
+### 2.3 [x] **[Apply Patch to Working Tree - REFACTOR](plan/user-stories/01-apply-patch-to-working-tree-without-corruption.md)**
    1. Fix CRITICAL/HIGH issues from 2.2.A (if any).
    2. Improve quality, maintain green (T1), validate (T3).
    3. COMMIT: `git commit -m "refactor(autofix): address review + clean up apply path"`

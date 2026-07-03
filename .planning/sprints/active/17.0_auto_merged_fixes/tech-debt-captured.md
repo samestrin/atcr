@@ -22,3 +22,17 @@ Deferred MEDIUM/LOW findings surfaced during `/execute-sprint`. Read by
 **Issue:** The note header says "via existing `postDo`/`get`" but the 1.2 spike exercised only `postDo`. `get` returns a plain `fmt.Errorf`, not `*APIError`, so the AC 04-02 422-collision contract (`errors.As(err, *APIError)`) holds only because all 4 Git Data calls are POST — a silent trap if any is later switched to GET.
 **Why accepted:** Cosmetic/documentation nuance; all 4 Git Data calls are POST by design and Story 4 has no GET on the mutation path.
 **Fix in:** Phase 4 — when Story 4 lands, confirm no mutation-path call uses `get`, or extend `get` to also return `*APIError` if one is ever needed there.
+
+## TD-004 — Create entry silently overwrites an existing target (MEDIUM)
+**Origin:** Phase 2, task 2.2.A adversarial review, 2026-07-03
+**File:** internal/autofix/apply.go:108
+**Issue:** A create entry (`f.IsNew`) whose target already exists is applied against empty content and atomically overwritten, rather than rejected the way `git apply` refuses a create over an existing file. The clobber is silent.
+**Why accepted:** Not data loss — the pre-existing content is captured by `atomicfs.BackupToDotBak` before the write and recorded in `BackupMap` with a non-empty backup path, so Story 3's Revert restores it. Only the git-apply-style "refuse create over existing" nicety is missing; the applied result is correct and revertible.
+**Fix in:** A later hardening pass — stat the target in the `IsNew` branch and fail the entry with an "already exists" per-file error, or route it through the modify path against the real on-disk content.
+
+## TD-005 — Symlink target modify/delete reverts by deletion, not link restore (LOW)
+**Origin:** Phase 2, task 2.2.A adversarial review, 2026-07-03
+**File:** internal/autofix/apply.go:129
+**Issue:** When the patch target is itself a symlink, `atomicfs.BackupToDotBak` Lstat-skips it and returns `("", nil)`, so a modify replaces the link with a regular file (or a delete unlinks it) and `BackupMap` records an empty backup path. Story 3's Revert treats an empty backup as "run-created / remove on revert", so it would delete the file rather than restore the original symlink.
+**Why accepted:** Symlinked patch targets are an edge outside the technical-debt-fix use case. The security-relevant vector (a write escaping the tree via a symlinked *directory component*) is closed in task 2.3. Revert semantics for a symlink *leaf* are a Story-3 concern.
+**Fix in:** Phase 3 (Story 3, Revert) — detect a symlink target explicitly and either refuse the entry or record enough state to restore the link instead of deleting it.

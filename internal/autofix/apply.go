@@ -137,14 +137,47 @@ func applyOne(root string, e payload.FileEntry) (absTarget, backupPath string, e
 	return abs, bak, nil
 }
 
-// containedPath joins p against root and confirms the cleaned result stays inside
-// root, returning the absolute target. This is a belt-and-suspenders re-check at
-// the write boundary, not a replacement for the upstream payload traversal guard.
+// containedPath joins p against root and confirms the result stays inside root
+// both lexically AND after symlink resolution, returning the absolute target.
+// This is a belt-and-suspenders re-check at the write boundary, not a replacement
+// for the upstream payload traversal guard.
+//
+// The symlink-resolution pass mirrors payload's rejectDiffSymlinkEscape: a purely
+// lexical check is defeated by a symlinked directory component inside root that
+// points elsewhere (e.g. root/link -> /etc, entry path "link/passwd"), because
+// os.ReadFile and atomicfs.WriteFileAtomic follow that symlink and would create
+// their temp+rename in the link's real target. Resolving the parent directory
+// (which must already exist — this package never mkdirs) against the resolved
+// root closes that escape. A parent that does not resolve (a genuinely new
+// subdirectory) is left to fail naturally at the write, since nothing can be
+// written into a non-existent directory.
 func containedPath(root, p string) (string, error) {
 	abs := filepath.Join(root, p) // Join cleans the joined path
-	rel, err := filepath.Rel(root, abs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("autofix: refusing to write %q: path escapes working-tree root", p)
+	if !contains(root, abs) {
+		return "", escapeErr(p)
+	}
+	realRoot := root
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		realRoot = r
+	}
+	if realParent, err := filepath.EvalSymlinks(filepath.Dir(abs)); err == nil {
+		if !contains(realRoot, filepath.Join(realParent, filepath.Base(abs))) {
+			return "", escapeErr(p)
+		}
 	}
 	return abs, nil
+}
+
+// contains reports whether target is root itself or lies within it, by lexical
+// relative-path inspection (both inputs are expected already absolute/cleaned).
+func contains(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return false
+	}
+	return true
+}
+
+func escapeErr(p string) error {
+	return fmt.Errorf("autofix: refusing to write %q: path escapes working-tree root", p)
 }
