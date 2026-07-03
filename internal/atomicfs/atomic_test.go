@@ -8,6 +8,60 @@ import (
 	"testing"
 )
 
+// TestCopyFile_PreservesModeThroughBackupAndRestore is the TD-009 mode-fidelity
+// regression: a source file's mode must survive the BackupToDotBak -> CopyPath
+// round trip, even when restoring over an existing dst. copyFile's O_CREATE only
+// applies perm to a NEW file, so before the fix an executable 0755 (or private
+// 0600) source came back 0644 after being backed up and restored over a 0644 file.
+func TestCopyFile_PreservesModeThroughBackupAndRestore(t *testing.T) {
+	cases := []struct {
+		name string
+		mode os.FileMode
+	}{
+		{"executable", 0o755},
+		{"private", 0o600},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "src")
+			if err := os.WriteFile(src, []byte("data\n"), tc.mode); err != nil {
+				t.Fatalf("WriteFile src: %v", err)
+			}
+			// WriteFile applies the umask, so force the exact mode.
+			if err := os.Chmod(src, tc.mode); err != nil {
+				t.Fatalf("Chmod src: %v", err)
+			}
+
+			// The staged .bak must carry the source mode, not the 0600 that
+			// os.CreateTemp staging leaves behind.
+			bak, err := BackupToDotBak(src)
+			if err != nil {
+				t.Fatalf("BackupToDotBak: %v", err)
+			}
+			if fi, serr := os.Stat(bak); serr != nil {
+				t.Fatalf("stat bak: %v", serr)
+			} else if got := fi.Mode().Perm(); got != tc.mode {
+				t.Errorf("backup mode = %o, want %o", got, tc.mode)
+			}
+
+			// Restoring the .bak over an existing 0644 file must re-apply the mode.
+			dst := filepath.Join(dir, "dst")
+			if err := os.WriteFile(dst, []byte("stale\n"), 0o644); err != nil {
+				t.Fatalf("WriteFile dst: %v", err)
+			}
+			if err := CopyPath(bak, dst); err != nil {
+				t.Fatalf("CopyPath restore: %v", err)
+			}
+			if fi, serr := os.Stat(dst); serr != nil {
+				t.Fatalf("stat dst: %v", serr)
+			} else if got := fi.Mode().Perm(); got != tc.mode {
+				t.Errorf("restored mode = %o, want %o", got, tc.mode)
+			}
+		})
+	}
+}
+
 func TestWriteJSON_RoundTripsIndented(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "out.json")

@@ -3,15 +3,42 @@ package ghaction
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// retryAfter parses a Retry-After response header in the delta-seconds form
+// GitHub uses for secondary rate limits, returning the indicated delay and
+// whether a valid value was present. The HTTP-date form is not honored (GitHub
+// does not use it for these signals); an absent or unparseable header yields
+// (0, false) so the caller falls back to its exponential back-off.
+func retryAfter(resp *http.Response) (time.Duration, bool) {
+	v := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if v == "" {
+		return 0, false
+	}
+	secs, err := strconv.Atoi(v)
+	if err != nil || secs < 0 {
+		return 0, false
+	}
+	return time.Duration(secs) * time.Second, true
+}
+
+// retriableStatus reports whether a non-2xx response should be retried: transient
+// 5xx and 429 always, plus a 403 that carries Retry-After (GitHub's secondary
+// rate-limit signal, which is transient despite the 403 status). A plain 403 with
+// no Retry-After is a genuine permission failure and is not retried.
+func retriableStatus(status int, hasRetryAfter bool) bool {
+	return status >= 500 || status == 429 || (status == 403 && hasRetryAfter)
+}
 
 // bearerTokenPattern matches an Authorization "Bearer <token>" form so a token
 // echoed back in a GitHub error body is scrubbed even when it is not the exact
@@ -35,10 +62,14 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("github API returned %d: %s", e.StatusCode, e.Message)
 }
 
-// Client is a minimal GitHub REST client for posting check runs and PR review
-// comments. A zero HTTPClient falls back to a sane default; a zero APIURL falls
-// back to the public GitHub API. Timeout overrides the default HTTP client
-// timeout when HTTPClient is nil.
+// Client is a minimal GitHub REST client. It posts check runs and PR review
+// comments, and — for the --auto-fix flow — creates branches, commits, and pull
+// requests via the Git Data and Pulls APIs (CreateBranch, CreateCommit,
+// CreatePullRequest, UpdatePullRequest, FindOpenPullRequest). Those mutating
+// methods require a token with `contents: write` (branch/commit) and
+// `pull_requests: write` (PR create/update) scope. A zero HTTPClient falls back
+// to a sane default; a zero APIURL falls back to the public GitHub API. Timeout
+// overrides the default HTTP client timeout when HTTPClient is nil.
 type Client struct {
 	APIURL     string
 	Token      string
@@ -57,20 +88,37 @@ func (c *Client) httpClient() *http.Client {
 	return &http.Client{Timeout: timeout}
 }
 
+// ValidateAPIURL shape-checks a GitHub API base URL without performing any
+// network call. An empty value is accepted (it means "use the default"); any
+// other value must be an absolute URL with a host and an https scheme (loopback
+// hosts may use http for local testing). It is exported so the --auto-fix gate
+// can refuse a malformed or insecure api-url up front — before any file is
+// touched — instead of letting it surface lazily at the first HTTP call (TD-014).
+func ValidateAPIURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	raw = strings.TrimRight(raw, "/")
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Host == "" {
+		return fmt.Errorf("invalid API URL %q", raw)
+	}
+	if u.Scheme != "https" && !isLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("insecure API URL %q: must use https", raw)
+	}
+	return nil
+}
+
 func (c *Client) baseURL() (string, error) {
 	raw := strings.TrimSpace(c.APIURL)
 	if raw == "" {
 		return DefaultAPIURL, nil
 	}
-	raw = strings.TrimRight(raw, "/")
-	u, err := url.Parse(raw)
-	if err != nil || !u.IsAbs() || u.Host == "" {
-		return "", fmt.Errorf("invalid API URL %q", raw)
+	if err := ValidateAPIURL(raw); err != nil {
+		return "", err
 	}
-	if u.Scheme != "https" && !isLoopbackHost(u.Hostname()) {
-		return "", fmt.Errorf("insecure API URL %q: must use https", raw)
-	}
-	return raw, nil
+	return strings.TrimRight(raw, "/"), nil
 }
 
 func isLoopbackHost(host string) bool {
@@ -127,6 +175,258 @@ func (c *Client) CreateCheckRun(ctx context.Context, owner, repo string, req Che
 	return err
 }
 
+// CreateBranch creates a new Git ref refs/heads/<branch> pointing at sha via
+// POST /repos/{owner}/{repo}/git/refs. The branch is normalized to a full
+// refs/heads/ ref inside the method, so callers pass a bare branch name. A ref
+// that already exists surfaces as GitHub's 422 *APIError (StatusCode 422,
+// "Reference already exists") unchanged, so a caller can errors.As it and decide
+// whether to retry with a suffixed name — the collision policy is the caller's,
+// not this wrapper's.
+//
+// Caveat (TD-011): the underlying POST is retried on transport error / 5xx, so a
+// request that succeeds server-side but whose response is lost will, on retry,
+// receive a 422 "Reference already exists" that is NOT a genuine name collision.
+// A caller whose collision policy suffixes-and-retries should treat a 422 here as
+// possibly spurious (e.g. pre-check ref existence) rather than assuming a real
+// clash. The lost-response window is narrow and any orphaned ref is unreferenced.
+func (c *Client) CreateBranch(ctx context.Context, owner, repo, branch, sha string) error {
+	ref := branch
+	if !strings.HasPrefix(ref, "refs/heads/") {
+		ref = "refs/heads/" + ref
+	}
+	path := fmt.Sprintf("/repos/%s/%s/git/refs", owner, repo)
+	return c.postDo(ctx, path, map[string]any{"ref": ref, "sha": sha}, nil)
+}
+
+// CommitFile is one path in a CommitRequest. Content is the new file bytes for a
+// modify/create; Deleted marks the path for removal (expressed as a null-SHA tree
+// entry, with no blob created).
+type CommitFile struct {
+	Path    string
+	Content string
+	Deleted bool
+}
+
+// CommitRequest describes a single atomic commit to create on a branch. ParentSHA
+// is the PARENT COMMIT SHA (e.g. the base-branch HEAD), not a tree SHA —
+// CreateCommit resolves the base tree from it.
+type CommitRequest struct {
+	Branch    string
+	Message   string
+	ParentSHA string
+	Files     []CommitFile
+}
+
+// CreateCommit builds one atomic commit from req.Files and advances the branch
+// ref to it, following GitHub's Git Data API sequence:
+//
+//	GET   /git/commits/{ParentSHA}   → resolve the parent's tree SHA (base_tree)
+//	POST  /git/blobs                 → one blob per non-deleted file
+//	POST  /git/trees                 → a tree over base_tree, one entry per file
+//	POST  /git/commits               → a commit on the new tree, parented at ParentSHA
+//	PATCH /git/refs/heads/{Branch}   → advance the branch ref to the new commit
+//
+// A deleted file creates no blob and becomes a null-SHA tree entry. Any step's
+// failure short-circuits the rest — in particular the ref is never advanced after
+// a failed commit — and the returned error names the failed step. The returned
+// string is the new commit SHA (from the commit-creation response, not the ref
+// update). An empty Files set is rejected before any HTTP call. All calls route
+// through postDo / its PATCH sibling, inheriting the existing retry/back-off/
+// redaction — no bespoke http.Client.Do anywhere.
+func (c *Client) CreateCommit(ctx context.Context, owner, repo string, req CommitRequest) (string, error) {
+	if len(req.Files) == 0 {
+		return "", fmt.Errorf("creating commit: no files to commit")
+	}
+	// Reject trivially-malformed requests before any HTTP call: an empty ParentSHA
+	// would produce a malformed parent-read, and an empty Branch would let the
+	// commit be created and then orphaned by a bad ref PATCH.
+	if strings.TrimSpace(req.ParentSHA) == "" {
+		return "", fmt.Errorf("creating commit: empty parent SHA")
+	}
+	if strings.TrimSpace(req.Branch) == "" {
+		return "", fmt.Errorf("creating commit: empty branch")
+	}
+	repoPath := func(suffix string) string {
+		return fmt.Sprintf("/repos/%s/%s/%s", owner, repo, suffix)
+	}
+
+	// 1. Resolve the parent commit's tree SHA (the tree GitHub calls base_tree).
+	var parent struct {
+		Tree struct {
+			SHA string `json:"sha"`
+		} `json:"tree"`
+	}
+	if err := c.get(ctx, repoPath("git/commits/"+req.ParentSHA), &parent); err != nil {
+		return "", fmt.Errorf("reading parent commit %s: %w", req.ParentSHA, err)
+	}
+	if parent.Tree.SHA == "" {
+		return "", fmt.Errorf("reading parent commit %s: response carried no tree sha", req.ParentSHA)
+	}
+
+	// 2. Create a blob per non-deleted file and assemble the tree entries.
+	treeEntries := make([]map[string]any, 0, len(req.Files))
+	for _, f := range req.Files {
+		entry := map[string]any{"path": f.Path, "mode": "100644", "type": "blob"}
+		if f.Deleted {
+			entry["sha"] = nil // an explicit null sha removes the path from the tree
+			treeEntries = append(treeEntries, entry)
+			continue
+		}
+		var blob struct {
+			SHA string `json:"sha"`
+		}
+		blobBody := map[string]any{
+			"content":  base64.StdEncoding.EncodeToString([]byte(f.Content)),
+			"encoding": "base64",
+		}
+		if err := c.postDo(ctx, repoPath("git/blobs"), blobBody, &blob); err != nil {
+			return "", fmt.Errorf("creating blob for path %q: %w", f.Path, err)
+		}
+		if blob.SHA == "" {
+			return "", fmt.Errorf("creating blob for path %q: response carried no sha", f.Path)
+		}
+		entry["sha"] = blob.SHA
+		treeEntries = append(treeEntries, entry)
+	}
+
+	// 3. Create the tree over the resolved base tree.
+	var tree struct {
+		SHA string `json:"sha"`
+	}
+	treeBody := map[string]any{"base_tree": parent.Tree.SHA, "tree": treeEntries}
+	if err := c.postDo(ctx, repoPath("git/trees"), treeBody, &tree); err != nil {
+		return "", fmt.Errorf("creating tree: %w", err)
+	}
+	if tree.SHA == "" {
+		return "", fmt.Errorf("creating tree: response carried no sha")
+	}
+
+	// 4. Create the commit on the new tree, parented at ParentSHA.
+	var commit struct {
+		SHA string `json:"sha"`
+	}
+	commitBody := map[string]any{
+		"message": c.redactSecrets(req.Message),
+		"tree":    tree.SHA,
+		"parents": []string{req.ParentSHA},
+	}
+	if err := c.postDo(ctx, repoPath("git/commits"), commitBody, &commit); err != nil {
+		return "", fmt.Errorf("creating commit: %w", err)
+	}
+	if commit.SHA == "" {
+		return "", fmt.Errorf("creating commit: response carried no sha")
+	}
+
+	// 5. Advance the branch ref to the new commit. The commit object exists on
+	// GitHub even if this fails, so the error makes the branch/commit split clear.
+	branch := strings.TrimPrefix(req.Branch, "refs/heads/")
+	refBody := map[string]any{"sha": commit.SHA, "force": false}
+	if err := c.sendDo(ctx, http.MethodPatch, repoPath("git/refs/heads/"+branch), refBody, nil); err != nil {
+		return "", fmt.Errorf("updating ref refs/heads/%s (commit %s created but branch not advanced): %w", branch, commit.SHA, err)
+	}
+	return commit.SHA, nil
+}
+
+// PullRequestRequest is the caller-supplied content for opening or updating a PR.
+// Title and Body are run through redactSecrets before being sent because — unlike
+// the read-only check-run/comment endpoints — they can carry dynamic content
+// sourced from local validation diagnostics that could echo a credential.
+type PullRequestRequest struct {
+	Head  string
+	Base  string
+	Title string
+	Body  string
+}
+
+// CreatePullRequest opens a new PR via POST /repos/{owner}/{repo}/pulls and
+// returns the GitHub-assigned PR number. Title/Body are redacted on the way out.
+// A 422 (invalid base, or a duplicate-PR race) surfaces as a typed *APIError via
+// postDo so the caller can treat it as a non-fatal condition rather than a crash.
+func (c *Client) CreatePullRequest(ctx context.Context, owner, repo string, req PullRequestRequest) (int, error) {
+	body := map[string]any{
+		"head":  req.Head,
+		"base":  req.Base,
+		"title": c.redactSecrets(req.Title),
+		"body":  c.redactSecrets(req.Body),
+	}
+	var resp struct {
+		Number int `json:"number"`
+	}
+	if err := c.postDo(ctx, fmt.Sprintf("/repos/%s/%s/pulls", owner, repo), body, &resp); err != nil {
+		return 0, err
+	}
+	// postDo ignores body-decode errors, so a 2xx whose body carried no number
+	// would otherwise return (0, nil). A real PR number is always >= 1; surface 0
+	// as an error so an orchestrator never misreads it as "not created" and opens
+	// a duplicate PR.
+	if resp.Number == 0 {
+		return 0, fmt.Errorf("creating pull request: response carried no PR number")
+	}
+	return resp.Number, nil
+}
+
+// UpdatePullRequest refreshes an existing PR's title/body via
+// PATCH /repos/{owner}/{repo}/pulls/{prNumber}, reusing the PATCH-capable sendDo.
+// Both title and body are always sent (redacted) from the caller-supplied req —
+// the client does no partial-field diffing. A 404 (PR closed/deleted between the
+// existence check and this call) surfaces as a typed *APIError.
+func (c *Client) UpdatePullRequest(ctx context.Context, owner, repo string, prNumber int, req PullRequestRequest) error {
+	body := map[string]any{
+		"title": c.redactSecrets(req.Title),
+		"body":  c.redactSecrets(req.Body),
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, prNumber)
+	return c.sendDo(ctx, http.MethodPatch, path, body, nil)
+}
+
+// FindOpenPullRequest returns the number of the lowest-numbered OPEN pull request
+// whose head is owner:branch, or found=false when none exist (an empty result is
+// not an error). It uses GET /repos/{owner}/{repo}/pulls?head={owner}:{branch}&
+// state=open via get, inheriting its retry/back-off; the branch is query-escaped.
+// Multiple matches (e.g. a manually opened PR) resolve deterministically to the
+// lowest number so a re-run refreshes a stable PR rather than opening a third.
+//
+// It requests the max page size (per_page=100) but reads only the first page:
+// GitHub allows at most one open PR per (head, base), so a single head branch
+// realistically has one open PR and never approaches 100. The lowest-number
+// tiebreak is therefore deterministic under that single-page assumption; a head
+// with more than 100 open PRs (not reachable via atcr's own branch naming) is
+// out of scope.
+//
+// By design (AC 05-02, TD-012): the query filters on head + state only, NOT base.
+// GitHub permits multiple open PRs from one head to different bases, so in theory
+// the lowest-number tiebreak could pick a PR targeting an unintended base — but
+// atcr generates single-base branches, so that case is not reachable in practice.
+// This head-only match is intentional; do not add a base filter without revising
+// AC 05-02.
+//
+// Exported so the Phase-5 internal/autofix orchestrator can run the existence
+// check before choosing CreatePullRequest vs UpdatePullRequest (AC 05-02) — the
+// create-vs-update decision itself lives in that orchestrator, not here.
+func (c *Client) FindOpenPullRequest(ctx context.Context, owner, repo, branch string) (int, bool, error) {
+	q := url.Values{}
+	q.Set("head", owner+":"+branch)
+	q.Set("state", "open")
+	q.Set("per_page", "100")
+	path := fmt.Sprintf("/repos/%s/%s/pulls?%s", owner, repo, q.Encode())
+	var prs []struct {
+		Number int `json:"number"`
+	}
+	if err := c.get(ctx, path, &prs); err != nil {
+		return 0, false, err
+	}
+	if len(prs) == 0 {
+		return 0, false, nil
+	}
+	lowest := prs[0].Number
+	for _, pr := range prs[1:] {
+		if pr.Number < lowest {
+			lowest = pr.Number
+		}
+	}
+	return lowest, true, nil
+}
+
 // sleepCtx waits for d to elapse or for ctx to be cancelled, whichever happens
 // first. It returns ctx.Err() if the context is cancelled during the wait so
 // that retry back-off is interruptible by cancellation or shutdown.
@@ -149,10 +449,21 @@ func (c *Client) post(ctx context.Context, path string, body any) error {
 	return c.postDo(ctx, path, body, nil)
 }
 
-// postDo is the inner implementation shared by post and CreateCheckRunWithID.
-// If out is non-nil, the 2xx response body is JSON-decoded into it (best-effort;
-// decode errors are silently ignored so callers need not handle partial responses).
+// postDo issues a POST through sendDo. If out is non-nil, the 2xx response body
+// is JSON-decoded into it (best-effort; decode errors are silently ignored so
+// callers need not handle partial responses).
 func (c *Client) postDo(ctx context.Context, path string, body any, out any) error {
+	return c.sendDo(ctx, http.MethodPost, path, body, out)
+}
+
+// sendDo marshals body as JSON, issues an authenticated `method` request to path
+// under the API base with the standard GitHub headers, retries transient 5xx/429
+// responses with the existing exponential back-off, and JSON-decodes a 2xx
+// response into out (when non-nil). Non-2xx, non-retriable responses become an
+// *APIError carrying the status code and the redacted GitHub message. It is the
+// shared implementation behind postDo (POST) and the PATCH ref-update / PR-update
+// call sites, so every mutating endpoint inherits identical auth/retry/redaction.
+func (c *Client) sendDo(ctx context.Context, method, path string, body any, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("encoding request: %w", err)
@@ -163,7 +474,7 @@ func (c *Client) postDo(ctx context.Context, path string, body any, out any) err
 	}
 	url := apiBase + path
 	makeReq := func() (*http.Request, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
 		if err != nil {
 			return nil, err
 		}
@@ -195,15 +506,24 @@ func (c *Client) postDo(ctx context.Context, path string, body any, out any) err
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if out != nil {
-				_ = json.NewDecoder(io.LimitReader(resp.Body, 8<<10)).Decode(out)
+				// 8MB limit (matching get): a PR object or git/trees listing can
+				// exceed 8KB, and the decoded number/sha is load-bearing for the
+				// new mutating methods — truncation must not silently drop it.
+				_ = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(out)
 			}
 			_ = resp.Body.Close()
 			return nil
 		}
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		delay, hasRetryAfter := retryAfter(resp)
 		_ = resp.Body.Close()
-		if attempt < maxRetries && (resp.StatusCode >= 500 || resp.StatusCode == 429) {
-			if err := sleepCtx(ctx, backoff); err != nil {
+		if attempt < maxRetries && retriableStatus(resp.StatusCode, hasRetryAfter) {
+			// Honor a server-instructed Retry-After delay over the local back-off.
+			wait := backoff
+			if hasRetryAfter {
+				wait = delay
+			}
+			if err := sleepCtx(ctx, wait); err != nil {
 				return err
 			}
 			backoff *= 2
@@ -215,6 +535,9 @@ func (c *Client) postDo(ctx context.Context, path string, body any, out any) err
 
 // get performs an authenticated GET to path and JSON-decodes the response into
 // out (when non-nil). Retries on transient 5xx / 429 with exponential back-off.
+// A non-2xx, non-retriable response becomes an *APIError (matching sendDo) so a
+// caller — e.g. CreateCommit reading a missing base SHA — can errors.As it and
+// inspect StatusCode rather than string-matching the message.
 func (c *Client) get(ctx context.Context, path string, out any) error {
 	apiBase, err := c.baseURL()
 	if err != nil {
@@ -263,15 +586,21 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 			return nil
 		}
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		delay, hasRetryAfter := retryAfter(resp)
 		_ = resp.Body.Close()
-		if attempt < maxRetries && (resp.StatusCode >= 500 || resp.StatusCode == 429) {
-			if err := sleepCtx(ctx, backoff); err != nil {
+		if attempt < maxRetries && retriableStatus(resp.StatusCode, hasRetryAfter) {
+			// Honor a server-instructed Retry-After delay over the local back-off.
+			wait := backoff
+			if hasRetryAfter {
+				wait = delay
+			}
+			if err := sleepCtx(ctx, wait); err != nil {
 				return err
 			}
 			backoff *= 2
 			continue
 		}
-		return fmt.Errorf("github API %s returned %d: %s", path, resp.StatusCode, c.redactSecrets(githubMessage(respBody)))
+		return &APIError{StatusCode: resp.StatusCode, Message: c.redactSecrets(githubMessage(respBody))}
 	}
 }
 

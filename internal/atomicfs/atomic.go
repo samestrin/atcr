@@ -244,6 +244,16 @@ func copyFile(src, dst string, perm os.FileMode) error {
 		return err
 	}
 
+	// O_CREATE applies perm only to a NEWLY created dst; an existing dst keeps its
+	// prior mode. Chmod explicitly so perm is honored either way — otherwise a
+	// 0755 (executable) or 0600 (private) source copied over an existing 0644 file
+	// would silently come back 0644 (TD-009). Every caller passes the source's own
+	// mode and wants it preserved, so this makes backup + restore faithful.
+	if err := dstFile.Chmod(perm); err != nil {
+		_ = dstFile.Close()
+		return err
+	}
+
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		_ = dstFile.Close()
 		return err
