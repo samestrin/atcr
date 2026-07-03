@@ -74,15 +74,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Every existing-file overwrite or deletion is preceded by a completed `atomicfs.BackupToDotBak` call for that exact path
-- [ ] A multi-file patch produces one `.bak` per touched existing file, not a single tree-level backup
-- [ ] A new-file creation entry produces no `.bak` file (no-op backup verified)
-- [ ] A backup failure aborts the write/delete for that file without corrupting the target and without blocking other entries in the same batch
+- [x] Every existing-file overwrite or deletion is preceded by a completed `atomicfs.BackupToDotBak` call for that exact path
+- [x] A multi-file patch produces one `.bak` per touched existing file, not a single tree-level backup
+- [x] A new-file creation entry produces no `.bak` file (no-op backup verified)
+- [x] A backup failure aborts the write/delete for that file without corrupting the target and without blocking other entries in the same batch
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

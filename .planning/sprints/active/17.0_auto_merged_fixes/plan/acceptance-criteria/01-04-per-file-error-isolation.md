@@ -71,14 +71,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A batch with a mix of succeeding and failing entries leaves every succeeding file correctly patched on disk and every failing file byte-for-byte unchanged from its pre-patch state
-- [ ] The aggregate error/result identifies every failing entry (not just the first) with its path and reason
-- [ ] The returned result distinguishes successful entries from failed ones so later stories (validation, revert) know exactly which files were touched
+- [x] A batch with a mix of succeeding and failing entries leaves every succeeding file correctly patched on disk and every failing file byte-for-byte unchanged from its pre-patch state
+- [x] The aggregate error/result identifies every failing entry (not just the first) with its path and reason
+- [x] The returned result distinguishes successful entries from failed ones so later stories (validation, revert) know exactly which files were touched
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

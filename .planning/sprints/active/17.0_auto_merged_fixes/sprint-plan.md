@@ -285,13 +285,15 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
    3. COMMIT — no code refactor; planning-doc deferrals (TD-006/TD-007) committed with the phase.
    **Duration:** ~0.5 day
 
-### 2.7 [ ] **Phase 2 DoD (Stories 1 & 2)**
-   - [ ] Tests (T3): `go test ./internal/autofix/... ./internal/verify/...` all passing.
-   - [ ] Coverage ≥ 80% on new files.
-   - [ ] `go vet ./...` clean; `golangci-lint run` no errors; `go build ./...` succeeds.
-   - [ ] `BackupMap` and `ValidationResult` contracts match sprint-design.md Architecture section.
-   - [ ] Story checkboxes and AC files updated to `[x]`.
-   - DoD Report per template.
+### 2.7 [x] **Phase 2 DoD (Stories 1 & 2)**
+   - [x] Tests (T3): `go test ./internal/autofix/... ./internal/verify/...` all passing.
+   - [x] Coverage ≥ 80% on new files. (apply.go 91.7%; localvalidate.go core fns 100%, Write branch 75% — well above bar.)
+   - [x] `go vet ./...` clean; `golangci-lint run` 0 issues; `go build ./...` succeeds.
+   - [x] `BackupMap` (`map[string]string` originalPath→backupPath) and `ValidationResult` contracts match sprint-design.md Architecture (ValidationResult adds AC-mandated `TimedOut`/`StartError` + truncation flags; `Passed()` is a method per AC 02-03).
+   - [x] Story checkboxes and AC files updated to `[x]` (7 Phase-2 AC files fully checked).
+
+   **Story-1 DoD Complete** — Auto: 3/3 (tests/lint/build) | Story-Specific: apply modify/create/delete, per-file error isolation, atomic write, per-file backup, symlink-escape re-check — all green.
+   **Story-2 DoD Complete** — Auto: 3/3 | Story-Specific: configurable argv runner, result capture (exit/stdout/stderr/duration/timeout/start-error/truncation), conservative `Passed()` gate, Go convenience default + hard refusal — all green.
 
 ### 2.8 [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2 (`internal/autofix/apply.*`, `internal/verify/localvalidate.*`).

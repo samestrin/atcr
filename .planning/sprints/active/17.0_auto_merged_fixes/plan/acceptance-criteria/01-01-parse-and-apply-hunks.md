@@ -103,16 +103,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Modification, new-file creation, and deletion diff entries each produce the correct in-memory patched result via `gitdiff.Parse`/`gitdiff.Apply`
-- [ ] A malformed diff body and a hunk that fails to apply each return a clear per-file error naming the path, without panicking or touching disk
-- [ ] A `Path` that resolves outside the working-tree root is refused at the write boundary (defense-in-depth) with a per-file error, without writing outside the root
-- [ ] A deletion entry whose `os.Remove` fails surfaces a `"autofix: removing %q: %w"` per-file error and leaves other entries' successes intact (AC 01-04 isolation)
-- [ ] `go.mod`/`go.sum` include `github.com/bluekeyes/go-gitdiff` as a direct dependency
+- [x] Modification, new-file creation, and deletion diff entries each produce the correct in-memory patched result via `gitdiff.Parse`/`gitdiff.Apply`
+- [x] A malformed diff body and a hunk that fails to apply each return a clear per-file error naming the path, without panicking or touching disk
+- [x] A `Path` that resolves outside the working-tree root is refused at the write boundary (defense-in-depth) with a per-file error, without writing outside the root
+- [x] A deletion entry whose `os.Remove` fails surfaces a `"autofix: removing %q: %w"` per-file error and leaves other entries' successes intact (AC 01-04 isolation)
+- [x] `go.mod`/`go.sum` include `github.com/bluekeyes/go-gitdiff` as a direct dependency
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

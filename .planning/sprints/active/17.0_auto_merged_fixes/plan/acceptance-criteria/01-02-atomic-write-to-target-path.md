@@ -71,14 +71,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Every target-path write in `internal/autofix/apply.go` traces to a call to `atomicfs.WriteFileAtomic` — no direct `os.WriteFile`/`os.Create`/`os.OpenFile` on a `FileEntry.Path` anywhere in the package (verified by test and code inspection)
-- [ ] A concurrent-reader test confirms no partial/truncated read is ever observed during a write
-- [ ] A disk-full/write-failure scenario leaves the pre-existing target file byte-for-byte unchanged
+- [x] Every target-path write in `internal/autofix/apply.go` traces to a call to `atomicfs.WriteFileAtomic` — no direct `os.WriteFile`/`os.Create`/`os.OpenFile` on a `FileEntry.Path` anywhere in the package (verified by test and code inspection)
+- [x] A concurrent-reader test confirms no partial/truncated read is ever observed during a write
+- [x] A disk-full/write-failure scenario leaves the pre-existing target file byte-for-byte unchanged
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

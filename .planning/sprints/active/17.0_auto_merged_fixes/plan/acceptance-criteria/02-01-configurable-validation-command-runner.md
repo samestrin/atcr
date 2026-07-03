@@ -84,15 +84,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `runConfiguredValidation` (or equivalent) exists as a sibling function to `validateGoFixSyntax`, and `validateGoFixSyntax` itself is unmodified
-- [ ] A missing/empty configured command falls back to the single Go convenience default (`go build ./...`) ONLY when a `go.mod` exists at the repo root; there is NO hardcoded multi-language default table; any other project with no configured command causes a hard refusal (Error Scenario 2)
-- [ ] The validation argv is sourced only from operator config or the Go convenience default; a test asserts no PR-body/diff/model-derived value can reach `exec.CommandContext` (arguments or working directory), and the command is always an argv list, never a shell string
-- [ ] Timeout is enforced via `context.WithTimeout` and produces a distinct timeout result
+- [x] `runConfiguredValidation` (or equivalent) exists as a sibling function to `validateGoFixSyntax`, and `validateGoFixSyntax` itself is unmodified
+- [x] A missing/empty configured command falls back to the single Go convenience default (`go build ./...`) ONLY when a `go.mod` exists at the repo root; there is NO hardcoded multi-language default table; any other project with no configured command causes a hard refusal (Error Scenario 2)
+- [x] The validation argv is sourced only from operator config or the Go convenience default; a test asserts no PR-body/diff/model-derived value can reach `exec.CommandContext` (arguments or working directory), and the command is always an argv list, never a shell string
+- [x] Timeout is enforced via `context.WithTimeout` and produces a distinct timeout result
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

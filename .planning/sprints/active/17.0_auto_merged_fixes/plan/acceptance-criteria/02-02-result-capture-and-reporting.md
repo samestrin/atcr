@@ -71,14 +71,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `ValidationResult` captures exit code, stdout, stderr, and duration for both passing and failing runs
-- [ ] Timeout and command-not-found are represented as distinct fields/error classes, not folded into a generic non-zero exit code
-- [ ] Result struct is safe to construct and inspect even when output is empty, huge, or non-UTF8
+- [x] `ValidationResult` captures exit code, stdout, stderr, and duration for both passing and failing runs
+- [x] Timeout and command-not-found are represented as distinct fields/error classes, not folded into a generic non-zero exit code
+- [x] Result struct is safe to construct and inspect even when output is empty, huge, or non-UTF8
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

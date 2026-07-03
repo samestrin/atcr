@@ -71,14 +71,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Any non-zero exit code or timeout yields `Passed() == false`; only `ExitCode == 0` and no timeout yields `Passed() == true`
-- [ ] stdout/stderr content never influences the pass/fail decision (verified by a test asserting a passing exit code with "error"-laden stderr still passes)
-- [ ] No test or code path in this AC creates, modifies, or deletes any file, and `internal/verify`'s validation code has zero import of `internal/ghaction`
+- [x] Any non-zero exit code or timeout yields `Passed() == false`; only `ExitCode == 0` and no timeout yields `Passed() == true`
+- [x] stdout/stderr content never influences the pass/fail decision (verified by a test asserting a passing exit code with "error"-laden stderr still passes)
+- [x] No test or code path in this AC creates, modifies, or deletes any file, and `internal/verify`'s validation code has zero import of `internal/ghaction`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved
