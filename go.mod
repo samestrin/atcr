@@ -10,6 +10,8 @@ require (
 	golang.org/x/mod v0.37.0
 )
 
+require github.com/bluekeyes/go-gitdiff v0.8.1 // indirect
+
 require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/segmentio/asm v1.1.3 // indirect

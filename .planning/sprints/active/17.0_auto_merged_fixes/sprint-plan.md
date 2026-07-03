@@ -143,12 +143,12 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
 
 **Goal:** De-risk the two most novel unknowns — a never-before-used `go-gitdiff` library and the GitHub Git Data API's 4-call sequence — before committing to `internal/autofix` and `ghaction.Client` interfaces. Spikes are throwaway; capture findings, then discard or seed fixtures.
 
-### 1.1 [ ] **Spike: `go-gitdiff` against representative fixtures**
+### 1.1 [x] **Spike: `go-gitdiff` against representative fixtures**
    **Task:** Add `github.com/bluekeyes/go-gitdiff` to go.mod. In a throwaway `internal/autofix/spike_test.go` (or scratch main), run `gitdiff.Parse` + `gitdiff.Apply` against fixture diffs covering: modify, create (`/dev/null` old-side), delete (`/dev/null` new-side), and **drifted-context** (fuzzy hunk match). Record: does `Apply` return a clean error on a hunk that cannot be located, or mis-apply silently?
    **Success Criteria:** Documented behavior for each diff type; confirmed that a non-locatable hunk yields a non-nil error (the "hard failure" contract Story 1 depends on). Reusable fixtures captured for Phase 2 RED.
    **Files:** `go.mod`, `go.sum`, throwaway spike + fixtures | **Duration:** ~3h
 
-### 1.2 [ ] **Spike: GitHub Git Data API 4-call sequence against `httptest.Server`**
+### 1.2 [x] **Spike: GitHub Git Data API 4-call sequence against `httptest.Server`**
    **Task:** Stand up an `httptest.Server` stub routing on method+path for the blob → tree → commit → ref sequence (and the 422 ref-exists case). Drive it through the existing `internal/ghaction` `postDo`/`get` plumbing to confirm the request/response shapes, auth header flow, and retry/backoff behavior are compatible before Story 4 commits to method signatures.
    **Success Criteria:** Confirmed request bodies and response parsing for each of the 4 calls; confirmed 422 "ref already exists" is distinguishable; confirmed `postDo`/`get` can carry these calls without a second HTTP client. Stub routing pattern captured for Phase 4/6.
    **Files:** throwaway `internal/ghaction/spike_test.go` | **Duration:** ~3h
