@@ -15,6 +15,7 @@ Deferred MEDIUM/LOW findings surfaced during `/execute-sprint`. Read by
 **Issue:** The 1.2 spike httptest driver was deleted, so the exact request-body keys (blob/tree/commit/ref) and the 422 `Message == "Reference already exists"` extraction survive only as prose in the findings note, not as an executable fixture. (Contrast 1.1, whose contract is retained as `internal/autofix/gitdiff_contract_test.go`.)
 **Why accepted:** Phase 4 RED (task 4.1, AC 04-03) writes these `httptest`-driven tests against method+path routing anyway, re-establishing executable fixtures; the prose note + the retained stub-routing pattern are sufficient scaffolding until then.
 **Fix in:** Phase 4 — Phase 4.1 RED tests supersede the prose by encoding the 4 request/response bodies and the 422 path as real assertions.
+**Resolved:** 2026-07-03 — Story-4 tests (`TestCreateCommitSingleFile`, `TestCreateBranchRefAlreadyExists`, et al.) now encode the blob/tree/commit/ref bodies and the 422 collision path as executable assertions.
 
 ## TD-003 — Findings note overstates plumbing; 422 contract is POST-path-dependent (LOW)
 **Origin:** Phase 1, task 1.LAST gate review, 2026-07-03
@@ -22,6 +23,7 @@ Deferred MEDIUM/LOW findings surfaced during `/execute-sprint`. Read by
 **Issue:** The note header says "via existing `postDo`/`get`" but the 1.2 spike exercised only `postDo`. `get` returns a plain `fmt.Errorf`, not `*APIError`, so the AC 04-02 422-collision contract (`errors.As(err, *APIError)`) holds only because all 4 Git Data calls are POST — a silent trap if any is later switched to GET.
 **Why accepted:** Cosmetic/documentation nuance; all 4 Git Data calls are POST by design and Story 4 has no GET on the mutation path.
 **Fix in:** Phase 4 — when Story 4 lands, confirm no mutation-path call uses `get`, or extend `get` to also return `*APIError` if one is ever needed there.
+**Resolved:** 2026-07-03 — Story 4's `CreateCommit` reads the parent commit via `get` (a mutation-path GET), so `get` was extended to return `*APIError` on non-2xx (mirroring `sendDo`); a missing base SHA now surfaces as an inspectable typed error (`TestCreateCommitParentReadErrorIsTyped`).
 
 ## TD-004 — Create entry silently overwrites an existing target (MEDIUM)
 **Origin:** Phase 2, task 2.2.A adversarial review, 2026-07-03
@@ -64,6 +66,13 @@ Deferred MEDIUM/LOW findings surfaced during `/execute-sprint`. Read by
 **Issue:** `RevertPatch` restores pre-patch bytes via `atomicfs.CopyPath`, but `copyFile` opens the existing target with `O_TRUNC` and ignores its `perm` argument for an already-existing file, so a file whose original mode was 0755 (executable) or 0600 comes back as the 0644 the apply step wrote. The `.bak` does carry the original mode (`BackupToDotBak` copies with `info.Mode().Perm()`), so the information to restore it is available; it is simply not re-applied.
 **Why accepted:** Out of AC scope — ACs 03-02/03-04 specify byte-for-byte *content* restoration, which holds. The auto-fix target corpus is 0644 Go source, so a mode regression is not reachable for the intended use case. LOW.
 **Fix in:** A later hardening pass — after a successful `copyPathFn` restore, `os.Chmod(target, bakMode)` from the backup's mode (or stat the `.bak`); add an executable-fixture mode-fidelity regression test.
+
+## TD-011 — Non-idempotent POST retry can yield a spurious 422 collision (LOW)
+**Origin:** Phase 4, task 4.2.A adversarial review, 2026-07-03
+**File:** internal/ghaction/client.go:180
+**Issue:** `sendDo` retries on transport error / 5xx for all verbs. If `CreateBranch`'s `POST /git/refs` (or a `CreateCommit` sub-POST) succeeds server-side but its response is lost, the retry receives GitHub's 422 "Reference already exists" — indistinguishable from a genuine name collision. The Story-6 caller's collision policy (suffix-and-retry) could then create a redundant branch, or a retried `POST /git/commits` could leave an orphan duplicate commit object.
+**Why accepted:** Inherent to the reused `postDo`/`sendDo` retry plumbing shared by every existing mutating endpoint (check-runs, comments) — not introduced by Story 4. The window (lost response on a first-try success) is narrow, orphan blob/commit objects are inert and GitHub-GC'd, and AC 04-02 already delegates collision policy to the caller. Redesigning retry idempotency (e.g. dedup by pre-checking ref existence) is out of Phase 4 scope.
+**Fix in:** A later hardening pass — document the spurious-422 possibility on `CreateBranch`'s contract, or gate retry-on-5xx to idempotent verbs and have the Story-6 orchestrator pre-check ref existence before a suffix-retry so a lost-response 422 is not misread as a real collision.
 
 ## TD-010 — RevertPatch does not re-check path containment at the revert boundary (LOW)
 **Origin:** Phase 3, task 3.2.A adversarial review, 2026-07-03

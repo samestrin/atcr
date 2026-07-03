@@ -460,6 +460,44 @@ func TestCreateCommitEmptyFilesError(t *testing.T) {
 	assert.Empty(t, rec.seq(), "no HTTP call may be made for an empty file set")
 }
 
+func TestCreateCommitParentReadErrorIsTyped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Missing/invalid base SHA: the parent-commit read 404s.
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"No commit found for SHA"}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	_, err := c.CreateCommit(context.Background(), "o", "r", CommitRequest{
+		Branch: "b", Message: "m", ParentSHA: "missing", Files: []CommitFile{{Path: "a.go", Content: "x"}},
+	})
+	require.Error(t, err)
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr, "a missing base SHA on the parent-commit read must surface as a typed *APIError")
+	assert.Equal(t, http.StatusNotFound, apiErr.StatusCode)
+}
+
+func TestCreateCommitRejectsEmptyParentOrBranch(t *testing.T) {
+	cases := []struct {
+		name string
+		req  CommitRequest
+	}{
+		{"empty parent", CommitRequest{Branch: "b", Message: "m", ParentSHA: "", Files: []CommitFile{{Path: "a.go", Content: "x"}}}},
+		{"empty branch", CommitRequest{Branch: "", Message: "m", ParentSHA: "p", Files: []CommitFile{{Path: "a.go", Content: "x"}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &gitDataRecorder{}
+			srv := newGitDataServer(t, rec, "bt")
+			c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+			_, err := c.CreateCommit(context.Background(), "o", "r", tc.req)
+			require.Error(t, err)
+			assert.Empty(t, rec.seq(), "a malformed request must be rejected before any HTTP call, never orphaning a commit")
+		})
+	}
+}
+
 func TestCreateCommitCommitStepFailsNoRefUpdate(t *testing.T) {
 	var refCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

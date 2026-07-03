@@ -183,6 +183,15 @@ func (c *Client) CreateCommit(ctx context.Context, owner, repo string, req Commi
 	if len(req.Files) == 0 {
 		return "", fmt.Errorf("creating commit: no files to commit")
 	}
+	// Reject trivially-malformed requests before any HTTP call: an empty ParentSHA
+	// would produce a malformed parent-read, and an empty Branch would let the
+	// commit be created and then orphaned by a bad ref PATCH.
+	if strings.TrimSpace(req.ParentSHA) == "" {
+		return "", fmt.Errorf("creating commit: empty parent SHA")
+	}
+	if strings.TrimSpace(req.Branch) == "" {
+		return "", fmt.Errorf("creating commit: empty branch")
+	}
 	repoPath := func(suffix string) string {
 		return fmt.Sprintf("/repos/%s/%s/%s", owner, repo, suffix)
 	}
@@ -351,6 +360,9 @@ func (c *Client) sendDo(ctx context.Context, method, path string, body any, out 
 
 // get performs an authenticated GET to path and JSON-decodes the response into
 // out (when non-nil). Retries on transient 5xx / 429 with exponential back-off.
+// A non-2xx, non-retriable response becomes an *APIError (matching sendDo) so a
+// caller — e.g. CreateCommit reading a missing base SHA — can errors.As it and
+// inspect StatusCode rather than string-matching the message.
 func (c *Client) get(ctx context.Context, path string, out any) error {
 	apiBase, err := c.baseURL()
 	if err != nil {
@@ -407,7 +419,7 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 			backoff *= 2
 			continue
 		}
-		return fmt.Errorf("github API %s returned %d: %s", path, resp.StatusCode, c.redactSecrets(githubMessage(respBody)))
+		return &APIError{StatusCode: resp.StatusCode, Message: c.redactSecrets(githubMessage(respBody))}
 	}
 }
 
