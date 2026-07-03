@@ -103,6 +103,32 @@ func TestValidate_RequiresValidSignupURL(t *testing.T) {
 	assert.Contains(t, err.Error(), "signup_url")
 }
 
+func TestValidate_RejectsControlCharInProviderFields(t *testing.T) {
+	base := Manifest{
+		SignupURL: "https://synthetic.new/",
+		Provider:  Provider{Name: "synthetic", BaseURL: "https://api.synthetic.new/openai/v1", APIKeyEnv: "LLM_SYNTHETIC_API_KEY"},
+		Models:    []string{"m0"},
+	}
+
+	// A newline in provider.name is emitted verbatim into registry.yaml and would
+	// forge entirely new YAML keys/agents — reject it at the load boundary, the
+	// same defense already applied to model ids.
+	m := base
+	m.Provider.Name = "synthetic\nagents:\n  evil: {}"
+	err := m.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "provider.name")
+
+	// The other emitted provider fields get the same scan.
+	m = base
+	m.Provider.APIKeyEnv = "KEY\nINJECT"
+	assert.Error(t, m.validate())
+
+	m = base
+	m.Provider.BaseURL = "https://x/y\r\nevil: true"
+	assert.Error(t, m.validate())
+}
+
 func TestSignupLink_HandlesFragment(t *testing.T) {
 	m := &Manifest{SignupURL: "https://example.com/#section", Referral: "abc"}
 	assert.Equal(t, "https://example.com/?referral=abc#section", m.SignupLink())
