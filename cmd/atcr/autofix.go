@@ -102,7 +102,13 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 		af = proj.AutoFix
 	}
 
-	// (1) Apply target — an existing directory under the repo root.
+	// (1) Apply target — must be an existing directory that resolves to the repo
+	// root itself. The resolved path is made absolute so it is independent of the
+	// caller's CWD (runReview passes repoRoot="."; TD-019). A subdirectory target
+	// is refused: the patch is applied and validated under applyTarget but the
+	// commit sends repo-root-relative paths, so a non-root target would certify a
+	// file GitHub never receives (autofix.go:274 commit-path mismatch). Until path
+	// translation is implemented, only the repo root is accepted.
 	applyTarget := "."
 	if af != nil && strings.TrimSpace(af.ApplyTarget) != "" {
 		applyTarget = strings.TrimSpace(af.ApplyTarget)
@@ -111,10 +117,20 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 	if !filepath.IsAbs(absTarget) {
 		absTarget = filepath.Join(repoRoot, applyTarget)
 	}
-	if info, err := os.Stat(absTarget); err != nil || !info.IsDir() {
+	absTarget, absErr := filepath.Abs(absTarget)
+	absRoot, rootErr := filepath.Abs(repoRoot)
+	info, statErr := os.Stat(absTarget)
+	switch {
+	case absErr != nil || rootErr != nil:
+		missing = append(missing, fmt.Sprintf(
+			"apply target: cannot resolve %q to an absolute path (set auto_fix.apply_target in .atcr/config.yaml)", applyTarget))
+	case statErr != nil || !info.IsDir():
 		missing = append(missing, fmt.Sprintf(
 			"apply target: working tree path %q not found or not a directory (set auto_fix.apply_target in .atcr/config.yaml)", applyTarget))
-	} else {
+	case absTarget != absRoot:
+		missing = append(missing, fmt.Sprintf(
+			"apply target: %q must resolve to the repository root; a subdirectory apply_target is not supported because fixes are committed with repo-root-relative paths (set auto_fix.apply_target to the repo root)", applyTarget))
+	default:
 		be.applyTarget = absTarget
 	}
 
