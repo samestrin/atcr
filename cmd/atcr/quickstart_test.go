@@ -383,6 +383,25 @@ func TestQuickstart_ReadLine_SurfacesScannerError(t *testing.T) {
 	assert.Contains(t, errOut.String(), "injected read error")
 }
 
+func TestQuickstart_ProfileIsAtcrOwned_CaseInsensitiveFilesystem(t *testing.T) {
+	dir := t.TempDir()
+	atcrDir := filepath.Join(dir, ".atcr")
+	require.NoError(t, os.MkdirAll(atcrDir, 0o755))
+
+	// Only meaningful where the filesystem is case-insensitive (macOS/APFS,
+	// Windows): there ./.ATCR and ./.atcr are the same directory, so writing to
+	// .ATCR/config.yaml lands inside the atcr-owned .atcr. On a case-sensitive FS
+	// (typical Linux CI) the two are genuinely distinct dirs and the guard
+	// correctly reports not-owned, so the assertion does not apply — skip it.
+	upper := filepath.Join(dir, ".ATCR")
+	if _, err := os.Stat(upper); err != nil {
+		t.Skip("filesystem is case-sensitive; case-collision guard not applicable")
+	}
+
+	owned := profileIsAtcrOwned(filepath.Join(dir, ".ATCR", "config.yaml"), dir)
+	assert.True(t, owned, "a profile under a case-variant of .atcr must be reported atcr-owned")
+}
+
 func TestQuickstart_ResolveProfilePath_ExpandsBareTilde(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
