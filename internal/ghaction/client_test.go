@@ -16,6 +16,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestFindOpenPullRequestRequestsMaxPageSize(t *testing.T) {
+	// Without per_page the endpoint returns at most 30 results, so the true
+	// lowest-numbered open PR could sit on an unfetched page — non-deterministic
+	// create-vs-update. Requesting the max page size (100) bounds that to the
+	// documented single-page assumption.
+	var perPage, head, state string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		q := r.URL.Query()
+		perPage = q.Get("per_page")
+		head = q.Get("head")
+		state = q.Get("state")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"number": 7}, {"number": 3}]`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	num, found, err := c.FindOpenPullRequest(context.Background(), "o", "r", "feature")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, 3, num, "the lowest-numbered open PR wins")
+	assert.Equal(t, "100", perPage, "request the max page size so the lowest PR is not stranded on an unfetched page")
+	assert.Equal(t, "o:feature", head)
+	assert.Equal(t, "open", state)
+}
+
 func TestCreateCheckRunRejectsPlaintextAPIURL(t *testing.T) {
 	c := &Client{APIURL: "http://example.com/api/v3", Token: "tok"}
 	err := c.CreateCheckRun(context.Background(), "o", "r", CheckRunRequest{Name: "atcr", HeadSHA: "x"})
