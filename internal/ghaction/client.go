@@ -165,6 +165,13 @@ func (c *Client) CreateCheckRun(ctx context.Context, owner, repo string, req Che
 // "Reference already exists") unchanged, so a caller can errors.As it and decide
 // whether to retry with a suffixed name — the collision policy is the caller's,
 // not this wrapper's.
+//
+// Caveat (TD-011): the underlying POST is retried on transport error / 5xx, so a
+// request that succeeds server-side but whose response is lost will, on retry,
+// receive a 422 "Reference already exists" that is NOT a genuine name collision.
+// A caller whose collision policy suffixes-and-retries should treat a 422 here as
+// possibly spurious (e.g. pre-check ref existence) rather than assuming a real
+// clash. The lost-response window is narrow and any orphaned ref is unreferenced.
 func (c *Client) CreateBranch(ctx context.Context, owner, repo, branch, sha string) error {
 	ref := branch
 	if !strings.HasPrefix(ref, "refs/heads/") {
@@ -368,6 +375,13 @@ func (c *Client) UpdatePullRequest(ctx context.Context, owner, repo string, prNu
 // tiebreak is therefore deterministic under that single-page assumption; a head
 // with more than 100 open PRs (not reachable via atcr's own branch naming) is
 // out of scope.
+//
+// By design (AC 05-02, TD-012): the query filters on head + state only, NOT base.
+// GitHub permits multiple open PRs from one head to different bases, so in theory
+// the lowest-number tiebreak could pick a PR targeting an unintended base — but
+// atcr generates single-base branches, so that case is not reachable in practice.
+// This head-only match is intentional; do not add a base filter without revising
+// AC 05-02.
 //
 // Exported so the Phase-5 internal/autofix orchestrator can run the existence
 // check before choosing CreatePullRequest vs UpdatePullRequest (AC 05-02) — the
