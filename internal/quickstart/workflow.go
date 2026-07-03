@@ -31,6 +31,18 @@ func WorkflowYAML(m *Manifest) string {
 	b.WriteString("  atcr:\n")
 	b.WriteString("    runs-on: ubuntu-latest\n")
 	b.WriteString("    steps:\n")
+	// Pinning note (deliberate, not an oversight): this scaffold uses @latest for
+	// the atcr install and floating major tags for the setup actions. atcr has no
+	// published release yet, so pinning `go install ...@vN` — or switching to the
+	// composite `uses: samestrin/atcr@v1` — would fail to resolve and break
+	// consumer CI worse than @latest. (The composite path is also foreclosed here
+	// independent of the tag: action.yml requires an openrouter-api-key input with
+	// no synthetic-key alternative, and its public contract is out of scope to
+	// change.) This template is an intentionally minimal, non-merge-gating
+	// review-only starter — unlike the composite action's full pipeline referenced
+	// above — so a floating version is an acceptable default. Revisit once atcr
+	// cuts a tagged release; that is its own release-engineering follow-up, not a
+	// workflow-template change.
 	b.WriteString("      - uses: actions/checkout@v4\n")
 	b.WriteString("        with:\n")
 	b.WriteString("          fetch-depth: 0   # atcr needs full history to resolve the merge-base\n")
