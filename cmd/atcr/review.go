@@ -397,7 +397,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		// findings, and it is terminal — the fail-on exit gate below is bypassed
 		// because the intent under --auto-fix is to remediate, not to fail CI.
 		if autoFix {
-			return orchestrateAutoFix(ctx, cmd.OutOrStdout(), afBackend, result.Dir, threshold)
+			return orchestrateAutoFix(ctx, cmd.OutOrStdout(), afBackend, result.Dir, threshold, res.DefaultBranch)
 		}
 
 		// Gate on the post-chain findings.json when a stage rewrote it; otherwise

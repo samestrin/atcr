@@ -175,7 +175,11 @@ type autoFixGitHub interface {
 type autoFixRun struct {
 	Backend autoFixBackend
 	Entries []payload.FileEntry
+	// BaseSHA is the parent commit the fix commit is built on (the branch is
+	// created at it); Base is the target branch the pull request merges INTO
+	// (e.g. "main"). They are distinct: a commit parent vs. a PR base.
 	BaseSHA string
+	Base    string
 	Branch  string
 	Title   string
 	Body    string
@@ -220,6 +224,13 @@ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFi
 	// (best-effort) and proceed to the remote mutation, which is unreachable above.
 	autofix.CleanupBackups(ctx, bm)
 
+	// A pull request needs a non-empty base branch to merge into. Guard it BEFORE
+	// creating the branch/commit so a missing base can never leave an orphan
+	// branch and commit behind on the remote (GitHub 422s an empty base).
+	if strings.TrimSpace(run.Base) == "" {
+		return fmt.Errorf("auto-fix: no base branch resolved for the pull request; no GitHub changes made")
+	}
+
 	files, err := commitFilesFrom(be.applyTarget, run.Entries)
 	if err != nil {
 		return fmt.Errorf("auto-fix: preparing commit files: %w", err)
@@ -237,7 +248,7 @@ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFi
 		return fmt.Errorf("auto-fix: committing fix to %q: %w", run.Branch, err)
 	}
 
-	prReq := ghaction.PullRequestRequest{Head: run.Branch, Base: "", Title: run.Title, Body: run.Body}
+	prReq := ghaction.PullRequestRequest{Head: run.Branch, Base: run.Base, Title: run.Title, Body: run.Body}
 	num, found, err := gh.FindOpenPullRequest(ctx, be.owner, be.repo, run.Branch)
 	if err != nil {
 		return fmt.Errorf("auto-fix: checking for an existing pull request: %w", err)
@@ -298,7 +309,10 @@ var resolveHeadSHAFn = func(ctx context.Context, dir string) (string, error) {
 // GitHub client. The heavy end-to-end proof (sequencing against stubs) lives in
 // Phase 6; this adapter only assembles the run. It is guarded entirely by the
 // --auto-fix flag, so the default review path is byte-identical (AC 06-01).
-func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, reviewDir, threshold string) error {
+func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, reviewDir, threshold, baseBranch string) error {
+	if strings.TrimSpace(baseBranch) == "" {
+		return fmt.Errorf("auto-fix: could not resolve a base branch to open the pull request against")
+	}
 	findings, err := reconcile.ReadReconciledFindings(reviewDir)
 	if err != nil {
 		return fmt.Errorf("auto-fix: reading reconciled findings: %w", err)
@@ -321,6 +335,7 @@ func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, r
 		Backend: be,
 		Entries: entries,
 		BaseSHA: baseSHA,
+		Base:    baseBranch,
 		Branch:  branch,
 		Title:   "atcr: automated fixes",
 		Body:    "Automated fixes applied by `atcr --auto-fix` after local validation passed.",

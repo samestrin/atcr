@@ -308,7 +308,7 @@ func TestRunAutoFix_ValidationPassCreatesPR(t *testing.T) {
 			owner:           "o", repo: "r", token: "tok",
 		},
 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
-		BaseSHA: "base", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, gh.branchCalls)
@@ -317,6 +317,31 @@ func TestRunAutoFix_ValidationPassCreatesPR(t *testing.T) {
 	require.Equal(t, 0, gh.updatePR)
 	got, _ := os.ReadFile(filepath.Join(root, rel))
 	require.Equal(t, "new\n", string(got), "validated content stays applied")
+}
+
+// TestRunAutoFix_EmptyBaseRefusesBeforeGitHub: a missing PR base branch must be
+// caught AFTER a clean validation but BEFORE any GitHub call, so no orphan
+// branch/commit is ever pushed (adversarial 5.2.A HIGH regression guard).
+func TestRunAutoFix_EmptyBaseRefusesBeforeGitHub(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // validation passes
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "", Branch: "atcr/auto-fix", // no base branch
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "base branch")
+	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
+		"no GitHub call may fire when the PR base is unresolved")
 }
 
 // --- thin finding->entry selection ----------------------------------------
