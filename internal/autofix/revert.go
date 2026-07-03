@@ -38,6 +38,14 @@ var copyPathFn = atomicfs.CopyPath
 // non-empty return is an errors.Join aggregate naming every diverged file and its
 // backup path, which the orchestrator maps to a non-zero exit. A nil return means
 // the tree is fully restored.
+//
+// Precondition (TD-010): bm MUST be an ApplyPatch-produced BackupMap. ApplyPatch
+// containment-validates every path on the write side (containedPath), so this
+// function trusts each target/backup path and does NOT re-check containment. Do
+// not hand it a hand-built or externally mutated map: a target or backup path
+// outside the working-tree root would be copied or removed without a boundary
+// check. The defense-in-depth re-check is intentionally omitted because the map is
+// never externally sourced in the --auto-fix flow.
 func RevertPatch(ctx context.Context, bm BackupMap) error {
 	var errs []error
 	for target, bak := range bm {
