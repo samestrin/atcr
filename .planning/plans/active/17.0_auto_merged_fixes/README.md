@@ -4,7 +4,7 @@ Plan 17.0 lets ATCR apply the fixes it generates instead of leaving that burden 
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/17.0_auto_merged_fixes/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/17.0_auto_merged_fixes/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/17.0_auto_merged_fixes/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/17.0_auto_merged_fixes/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/17.0_auto_merged_fixes/`
 

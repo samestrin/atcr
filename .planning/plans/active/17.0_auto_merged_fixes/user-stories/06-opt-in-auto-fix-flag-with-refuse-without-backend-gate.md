@@ -38,13 +38,20 @@
 - **Relevant:** This is AC6 and the safety valve for the entire plan — without it, Stories 1–5's powerful, remote-mutating flow (branch creation, commit, PR open) could run accidentally or with a half-configured backend, which is precisely the risk this plan's Risk Mitigation section calls out for AC5.
 - **Time-bound:** Deliverable last in the plan's sequence (Theme 6), once Stories 2, 4, and 5 have defined the exact shape of the configuration each of them needs, so this story's gate function can name the concrete config keys/flags/env vars it checks.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [06-01](../acceptance-criteria/06-01-auto-fix-off-by-default.md) | `--auto-fix` Off by Default, Zero Behavior Change When Absent | Integration |
+| [06-02](../acceptance-criteria/06-02-single-gate-refuses-on-any-missing-piece.md) | Single Gate Refuses the Entire `--auto-fix` Run on Any Missing/Malformed Backend Piece | Unit/Integration |
+| [06-03](../acceptance-criteria/06-03-gate-passes-silently-when-fully-configured.md) | Gate Passes Silently When Fully Configured, No Overhead Into Story 1 | Unit/Integration |
+
+## Original Criteria Overview
 
 1. `--auto-fix` defaults to `false` (or the flow is otherwise absent) on every existing ATCR command, and no existing command's behavior changes when the flag is not passed.
 2. When `--auto-fix` is passed, a single gate function runs before Story 1's apply step and checks, in one pass, that an apply target, a validation command (Story 2), and valid-shaped GitHub token/repo credentials (Stories 4/5) are all present — any one missing or malformed piece produces a usage error (exit 2) naming the specific missing/invalid piece, and the flow does not proceed.
 3. When all three backend pieces are present and valid-shaped, the gate passes silently and control proceeds into Story 1's apply step with no observable overhead or side effect from the gate itself.
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/17.0_auto_merged_fixes/`_
 
 ## Technical Considerations
 

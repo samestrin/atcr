@@ -30,13 +30,19 @@
 - **Relevant:** This is the safety gate the plan's success criteria depend on directly — "zero broken builds introduced by auto-merged fixes" is only achievable if every fix is locally validated before it can reach a branch/PR.
 - **Time-bound:** Validation command execution completes (or times out) within the sprint's per-task budget; a configurable timeout (with a sane default, e.g. 2 minutes) prevents an unbounded hang from blocking the `--auto-fix` run.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-configurable-validation-command-runner.md) | Configurable Validation Command Runner | Unit |
+| [02-02](../acceptance-criteria/02-02-result-capture-and-reporting.md) | Validation Result Capture and Reporting | Unit |
+| [02-03](../acceptance-criteria/02-03-conservative-pass-fail-gate.md) | Conservative Pass/Fail Gate (No Mutation, No Partial Success) | Unit |
+
+## Original Criteria Overview
 
 1. `internal/verify` exposes a new configurable validation entry point that accepts a user-supplied command (or a sane per-language default) and runs it against the post-patch working tree.
 2. The validation step captures the command's exit code, stdout, and stderr, and reports a clear pass/fail result plus captured output for diagnostics.
 3. A non-zero exit code is always treated as a failed fix (conservative failure, no partial-success interpretation), and the result is handed to the AC4 revert decision without the validation step itself mutating any files.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/17.0_auto_merged_fixes/`_
 
 ## Technical Considerations
 

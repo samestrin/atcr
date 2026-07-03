@@ -37,13 +37,21 @@
 - **Relevant:** Directly delivers AC4 and is the mechanism behind the plan's stated success criterion "a validation failure never leaves the working tree in a patched-but-broken state."
 - **Time-bound:** Implementable within the sprint allocated to this plan's AC2–AC4 slice; unblocks AC5 (User Stories 4–5) which must not begin until this revert path is proven correct, since AC5 is explicitly sequenced after local validation passes.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-backup-map-tracking.md) | Per-File Backup Map Precondition and Tracking | Unit |
+| [03-02](../acceptance-criteria/03-02-restore-on-validation-failure.md) | Restore All Touched Files on Validation Failure | Unit/Integration |
+| [03-03](../acceptance-criteria/03-03-cleanup-on-validation-success.md) | Cleanup Backup Files on Validation Success | Unit |
+| [03-04](../acceptance-criteria/03-04-hard-error-on-restore-failure.md) | Hard Error Surfacing on Restore Failure | Unit |
+
+## Original Criteria Overview
 
 1. Before any file in a patch is modified, a per-file backup exists (produced by AC2/User Story 1) that this story's revert path can restore from.
 2. When the configured validation command (AC3/User Story 2) exits non-zero, every touched file is restored from its `.bak` via `atomicfs.CopyPath`/`os.Rename`, and this restore completes fully before control returns to the `--auto-fix` orchestrator — no GitHub-mutating call may occur if any restore is pending or failed.
 3. When validation succeeds, all `.bak` files created for this patch are removed so no stale backup state persists between `--auto-fix` runs; when a restore itself fails, the failure is surfaced as a hard error naming the still-diverged file(s) rather than silently continuing.
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/17.0_auto_merged_fixes/`_
 
 ## Technical Considerations
 

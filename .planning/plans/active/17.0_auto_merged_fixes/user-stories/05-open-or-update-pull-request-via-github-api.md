@@ -30,13 +30,20 @@
 - **Relevant:** This is the human-in-the-loop closing step the plan's design principle depends on — auto-fix surfaces changes for review rather than merging them silently, so a broken or unwanted fix is always caught by a person before it reaches the target branch.
 - **Time-bound:** PR create/update completes within the same per-run budget as the rest of the `--auto-fix` flow, using the `Client`'s existing retry/backoff and timeout behavior rather than a new waiting strategy.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-create-pull-request.md) | CreatePullRequest Opens a New PR From the Auto-Fix Branch | Unit |
+| [05-02](../acceptance-criteria/05-02-existence-check-avoids-duplicate-prs.md) | Existence Check Decides Create-vs-Update and Avoids Duplicate PRs | Integration |
+| [05-03](../acceptance-criteria/05-03-update-pull-request.md) | UpdatePullRequest Refreshes an Existing Open PR | Unit |
+| [05-04](../acceptance-criteria/05-04-retry-backoff-redaction-reuse.md) | PR Endpoints Reuse Existing Retry/Backoff Plumbing and Redact Secrets From PR Content | Unit |
+
+## Original Criteria Overview
 
 1. `Client.CreatePullRequest` opens a new PR from the auto-fix branch against the configured base branch, with a title/body that identifies the fix, and returns the PR number.
 2. Before creating, ATCR checks whether an open PR already exists for the branch; if one does, `Client.UpdatePullRequest` updates that PR (e.g. refreshed title/body) instead of creating a duplicate.
 3. Both methods reuse `Client.postDo`/`get` for retry/backoff, typed `APIError` handling, and secret redaction, matching the conventions of `CreateCheckRunWithID` and `runGithub`.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/17.0_auto_merged_fixes/`_
 
 ## Technical Considerations
 

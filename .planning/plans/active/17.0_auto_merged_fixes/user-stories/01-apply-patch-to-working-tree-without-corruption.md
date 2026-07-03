@@ -39,14 +39,22 @@
 - **Relevant:** This is the write-path every later story in the plan (validation, revert, branch/PR) depends on; a correct, corruption-free apply here is what makes the rest of the auto-fix flow trustworthy enough to run unattended.
 - **Time-bound:** Deliverable within this plan's sprint cycle, as the first story executed (Theme 1) since every subsequent story's local-write assumptions depend on it.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-parse-and-apply-hunks.md) | Parse and Apply Hunks for Modify, Create, and Delete Entries | Unit |
+| [01-02](../acceptance-criteria/01-02-atomic-write-to-target-path.md) | Every Target Write Goes Through Atomic Sibling-Temp-Then-Rename | Unit |
+| [01-03](../acceptance-criteria/01-03-per-file-backup-before-overwrite.md) | Per-File Backup via BackupToDotBak Before Any Overwrite | Unit |
+| [01-04](../acceptance-criteria/01-04-per-file-error-isolation.md) | A Failed Hunk Reports a Clear Per-File Error Without Corrupting Prior Successes | Unit |
+
+## Original Criteria Overview
 
 1. `internal/autofix` parses each `payload.FileEntry.Body` via `gitdiff.Parse` and applies the resulting hunks via `gitdiff.Apply` against the current on-disk content of `FileEntry.Path`, correctly handling file modification, new-file creation (`/dev/null` old side), and file deletion.
 2. Every file write to a target path goes through `atomicfs.WriteFileAtomic` (sibling-temp-then-rename) — no target file is ever visible in a partially written state to a concurrent reader.
 3. Before a target file is overwritten, its pre-patch state is preserved individually via `atomicfs.BackupToDotBak` (one backup per touched file, not one per directory/patch), so a later revert story can restore file-by-file.
 4. A hunk that fails to apply (context drifted beyond `go-gitdiff`'s fuzzy-match tolerance, target path missing when the diff expects it to exist, or vice versa) is reported as a clear per-file error without corrupting any file that succeeded before it in the same batch.
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/17.0_auto_merged_fixes/`_
 
 ## Technical Considerations
 

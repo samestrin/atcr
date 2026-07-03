@@ -38,14 +38,24 @@
 - **Relevant:** This is the first point in the plan where a verified fix becomes visible outside the local machine; without it, PLAN_GOAL's "push a branch" half of the flow has no implementation for Story 5 (PR open/update) to build on.
 - **Time-bound:** Deliverable within this plan's sprint cycle, sequenced strictly after Story 1 and Story 2 land, since this story's entry point is only reachable behind a passing validation result.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-create-branch-ref.md) | CreateBranch Creates a New Git Ref at a Base SHA | Unit |
+| [04-02](../acceptance-criteria/04-02-branch-collision-handling.md) | Branch Name Collision Is Distinguishable and Recoverable | Unit |
+| [04-03](../acceptance-criteria/04-03-create-commit-multi-file-sequence.md) | CreateCommit Builds a Multi-File Commit via Blob/Tree/Commit/Ref Sequence | Unit |
+| [04-04](../acceptance-criteria/04-04-validation-gated-call-site.md) | CreateBranch/CreateCommit Are Unreachable Without a Prior Validation Success | Integration |
+| [04-05](../acceptance-criteria/04-05-retry-backoff-redaction-reuse.md) | New Endpoints Inherit Existing Retry, Backoff, and Redaction Behavior | Unit |
+
+## Original Criteria Overview
 
 1. `Client.CreateBranch(ctx, owner, repo, branch, sha)` creates a new Git ref (`refs/heads/<branch>`) at the given base SHA, returning a clear error (surfaced via the existing `APIError` type) if the ref already exists or the base SHA is invalid.
 2. `Client.CreateCommit(ctx, owner, repo, req)` builds a commit from the given set of changed files (blob creation, tree creation, commit creation against the branch's current head as parent) and advances the branch ref to the new commit SHA, returning the new commit SHA to the caller.
 3. Neither method is reachable from the CLI flow unless Story 2's validation step has already reported success for the current working-tree state — the call site enforces this ordering, not the `Client` methods themselves.
 4. All new HTTP calls reuse `postDo`/`get`'s existing retry-on-5xx/429 backoff and `redactSecrets` scrubbing — no new error path leaks a token or bypasses retry.
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/17.0_auto_merged_fixes/`_
+
 
 ## Technical Considerations
 
