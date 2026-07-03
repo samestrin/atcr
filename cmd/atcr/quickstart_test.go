@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -288,4 +289,36 @@ func TestQuickstart_RegistryGuard_ForceOverwrites(t *testing.T) {
 	require.NoError(t, err, "force overwrites with a valid synthetic registry")
 	_, ok := reg.Providers["synthetic"]
 	assert.True(t, ok, "synthetic provider present after force overwrite")
+}
+
+// errorAfterReader returns data once, then returns err on subsequent reads.
+// It simulates a stream that fails mid-way through the interactive wizard.
+type errorAfterReader struct {
+	data []byte
+	err  error
+	done bool
+}
+
+func (r *errorAfterReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, r.err
+	}
+	n := copy(p, r.data)
+	r.done = true
+	return n, nil
+}
+
+func TestQuickstart_ReadLine_SurfacesScannerError(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	in := &errorAfterReader{data: []byte("MYSECRETKEY\n"), err: errors.New("injected read error")}
+	errOut := &bytes.Buffer{}
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:    dir,
+		in:     in,
+		out:    &bytes.Buffer{},
+		errOut: errOut,
+	}))
+	assert.Contains(t, errOut.String(), "injected read error")
 }
