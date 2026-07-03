@@ -78,6 +78,13 @@ func RunConfiguredValidation(ctx context.Context, argv []string, dir string, tim
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	if dir != "" {
+		if _, err := os.Stat(dir); err != nil {
+			startErr := fmt.Errorf("validation working directory does not exist: %s: %w", dir, err)
+			return ValidationResult{StartError: startErr}, startErr
+		}
+	}
+
 	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.WaitDelay = validationWaitGrace
