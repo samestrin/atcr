@@ -112,24 +112,42 @@ func RunConfiguredValidation(ctx context.Context, argv []string, dir string, tim
 		StderrTruncated: stderr.truncated,
 	}
 
-	// A deadline hit is a hard failure regardless of what exit the killed process
-	// reported; partial output captured before the kill is retained above.
-	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+	// A deadline hit OR a parent-context cancellation ends the run before it could
+	// complete cleanly: a hard failure regardless of what exit the killed process
+	// reported. Both are folded into TimedOut (the only cancellation-class signal
+	// on the result) so Passed()==false without a spurious command-not-found label.
+	// Partial output captured before the kill is retained above.
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) || errors.Is(runCtx.Err(), context.Canceled) {
 		res.TimedOut = true
 		return res, nil
 	}
 
 	if runErr != nil {
 		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
+		switch {
+		case errors.As(runErr, &exitErr):
 			// Ran to completion but exited non-zero: a validation failure, not a
 			// Go error. Passed()==false via the non-zero ExitCode.
 			res.ExitCode = exitErr.ExitCode()
 			return res, nil
+		case errors.Is(runErr, exec.ErrWaitDelay):
+			// The command exited but a lingering child held its I/O pipes open
+			// past cmd.WaitDelay, so the run completed uncleanly. That is a hard
+			// failure, not a start failure: mark TimedOut (the wait grace elapsed)
+			// so it fails closed without being mislabeled command-not-found.
+			res.TimedOut = true
+			return res, nil
+		case errors.Is(runErr, exec.ErrNotFound) || errors.Is(runErr, os.ErrPermission):
+			// Genuinely could not start (binary missing / not executable): the
+			// only case that is a true StartError.
+			res.StartError = fmt.Errorf("auto-fix validation command not found or not executable: %s: %w", argv[0], runErr)
+			return res, res.StartError
+		default:
+			// Any other failure to run (e.g. an I/O setup error): fail closed as a
+			// start error rather than silently passing.
+			res.StartError = fmt.Errorf("auto-fix validation could not run: %s: %w", argv[0], runErr)
+			return res, res.StartError
 		}
-		// Could not start (binary missing / not executable): a distinct class.
-		res.StartError = fmt.Errorf("auto-fix validation command not found or not executable: %s: %w", argv[0], runErr)
-		return res, res.StartError
 	}
 
 	res.ExitCode = 0
