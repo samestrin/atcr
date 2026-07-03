@@ -189,6 +189,26 @@ func TestValidationResult_Passed(t *testing.T) {
 
 // --- AC 02-01: command resolution (Go convenience default / hard refusal) --
 
+func TestResolveValidateCommand_ArgvSourcedOnlyFromConfig(t *testing.T) {
+	goRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(goRoot, "go.mod"), []byte("module x\n"), 0o644))
+
+	// Operator-configured argv is passed through verbatim (trusted input).
+	modelDerived := "rm -rf /"
+	got, err := ResolveValidateCommand([]string{"echo", modelDerived}, goRoot)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"echo", modelDerived}, got)
+
+	// With no config, the argv is the hard-coded Go default; it never derives
+	// from repoRoot or any PR/diff/model content.
+	got, err = ResolveValidateCommand(nil, goRoot)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"go", "build", "./..."}, got)
+	for _, arg := range got {
+		assert.NotContains(t, arg, modelDerived, "default argv must never include model/PR-derived strings")
+	}
+}
+
 func TestResolveValidateCommand(t *testing.T) {
 	goRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(goRoot, "go.mod"), []byte("module x\n"), 0o644))
