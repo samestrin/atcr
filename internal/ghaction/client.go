@@ -209,6 +209,9 @@ func (c *Client) CreateCommit(ctx context.Context, owner, repo string, req Commi
 	if err := c.get(ctx, repoPath("git/commits/"+req.ParentSHA), &parent); err != nil {
 		return "", fmt.Errorf("reading parent commit %s: %w", req.ParentSHA, err)
 	}
+	if parent.Tree.SHA == "" {
+		return "", fmt.Errorf("reading parent commit %s: response carried no tree sha", req.ParentSHA)
+	}
 
 	// 2. Create a blob per non-deleted file and assemble the tree entries.
 	treeEntries := make([]map[string]any, 0, len(req.Files))
