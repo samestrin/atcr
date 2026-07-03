@@ -62,14 +62,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `CreateBranch` issues exactly one `POST /repos/{owner}/{repo}/git/refs` call with the correct `ref`/`sha` body
-- [ ] A 2xx response yields a `nil` error; a non-2xx response yields a populated `*ghaction.APIError` with the redacted GitHub message
-- [ ] Branch name is normalized to `refs/heads/<branch>` inside the method, not by the caller
+- [x] `CreateBranch` issues exactly one `POST /repos/{owner}/{repo}/git/refs` call with the correct `ref`/`sha` body
+- [x] A 2xx response yields a `nil` error; a non-2xx response yields a populated `*ghaction.APIError` with the redacted GitHub message
+- [x] Branch name is normalized to `refs/heads/<branch>` inside the method, not by the caller
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

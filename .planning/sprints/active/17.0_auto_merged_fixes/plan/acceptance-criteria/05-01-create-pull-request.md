@@ -60,14 +60,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `CreatePullRequest` sends `head`, `base`, `title`, `body` and returns the decoded PR number
-- [ ] A 422 (invalid base, duplicate PR) surfaces as a typed `*ghaction.APIError`, not a generic error or panic
-- [ ] No raw `http.Client.Do` call exists in the new code — all traffic routes through `postDo`
+- [x] `CreatePullRequest` sends `head`, `base`, `title`, `body` and returns the decoded PR number
+- [x] A 422 (invalid base, duplicate PR) surfaces as a typed `*ghaction.APIError`, not a generic error or panic
+- [x] No raw `http.Client.Do` call exists in the new code — all traffic routes through `postDo`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

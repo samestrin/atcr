@@ -65,15 +65,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `CreatePullRequest`, `UpdatePullRequest`, and the existence-check lookup retry on 5xx/429 using the existing backoff schedule, and fail immediately (no retry) on other 4xx codes
-- [ ] A token echoed in an error response body is redacted in the returned `APIError.Message` for every new endpoint
-- [ ] A token or credential embedded in caller-supplied PR title/body content (sourced from validation diagnostics) is redacted before the outbound request is sent, not just in error messages
-- [ ] No new raw `http.Client.Do` call exists anywhere in the `CreatePullRequest`/`UpdatePullRequest`/existence-check implementation
+- [x] `CreatePullRequest`, `UpdatePullRequest`, and the existence-check lookup retry on 5xx/429 using the existing backoff schedule, and fail immediately (no retry) on other 4xx codes
+- [x] A token echoed in an error response body is redacted in the returned `APIError.Message` for every new endpoint
+- [x] A token or credential embedded in caller-supplied PR title/body content (sourced from validation diagnostics) is redacted before the outbound request is sent, not just in error messages
+- [x] No new raw `http.Client.Do` call exists anywhere in the `CreatePullRequest`/`UpdatePullRequest`/existence-check implementation
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

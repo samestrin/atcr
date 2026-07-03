@@ -653,7 +653,53 @@ func TestCreateCommitRedactsTokenInError(t *testing.T) {
 	assert.Contains(t, err.Error(), "[redacted]")
 }
 
-// --- Story 5: Pull Request lifecycle (CreatePullRequest / findOpenPullRequest / UpdatePullRequest) ---
+func TestCreateCommitEmptyCommitShaIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/commits/"):
+			_, _ = w.Write([]byte(`{"tree":{"sha":"bt"}}`))
+		case strings.HasSuffix(r.URL.Path, "/git/blobs"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"sha":"b"}`))
+		case strings.HasSuffix(r.URL.Path, "/git/trees"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"sha":"t"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/commits"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{}`)) // 2xx but no sha decoded
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/git/refs/heads/"):
+			t.Error("ref must not be patched when the commit response carried no sha")
+		}
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	_, err := c.CreateCommit(context.Background(), "o", "r", CommitRequest{
+		Branch: "b", Message: "m", ParentSHA: "p", Files: []CommitFile{{Path: "a.go", Content: "x"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "commit", "an empty commit sha must fail naming the commit step, never advancing the ref")
+}
+
+// --- Story 5: Pull Request lifecycle (CreatePullRequest / FindOpenPullRequest / UpdatePullRequest) ---
+
+func TestCreatePullRequestDecodesNumberInLargeBody(t *testing.T) {
+	// A real PR object is well over 8KB; the number must still decode. The
+	// success-decode limit is 8MB (matching get) — the old 8KB limit truncated
+	// the body and dropped the number, tripping the zero-guard as a false "not
+	// created" (the exact duplicate-PR failure the guard exists to prevent).
+	padding := strings.Repeat("x", 16<<10)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"padding":"` + padding + `","number":42}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	num, err := c.CreatePullRequest(context.Background(), "o", "r", PullRequestRequest{Head: "h", Base: "main", Title: "t", Body: "b"})
+	require.NoError(t, err)
+	assert.Equal(t, 42, num, "the PR number must decode even when it follows >8KB of body")
+}
 
 func TestCreatePullRequest(t *testing.T) {
 	var gotPath, gotMethod string
@@ -779,7 +825,7 @@ func TestFindOpenPullRequestFound(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
-	num, found, err := c.findOpenPullRequest(context.Background(), "o", "r", "atcr-fix/x")
+	num, found, err := c.FindOpenPullRequest(context.Background(), "o", "r", "atcr-fix/x")
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, 17, num)
@@ -794,7 +840,7 @@ func TestFindOpenPullRequestNotFound(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
-	num, found, err := c.findOpenPullRequest(context.Background(), "o", "r", "atcr-fix/x")
+	num, found, err := c.FindOpenPullRequest(context.Background(), "o", "r", "atcr-fix/x")
 	require.NoError(t, err, "an empty result is found=false, not an error")
 	assert.False(t, found)
 	assert.Equal(t, 0, num)
@@ -808,7 +854,7 @@ func TestFindOpenPullRequestPicksLowestNumber(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
-	num, found, err := c.findOpenPullRequest(context.Background(), "o", "r", "b")
+	num, found, err := c.FindOpenPullRequest(context.Background(), "o", "r", "b")
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, 8, num, "on multiple matches the lowest-numbered open PR is chosen deterministically")
@@ -824,7 +870,7 @@ func TestFindOpenPullRequestEscapesBranch(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
-	_, _, err := c.findOpenPullRequest(context.Background(), "o", "r", "feature/a b&x")
+	_, _, err := c.FindOpenPullRequest(context.Background(), "o", "r", "feature/a b&x")
 	require.NoError(t, err)
 	assert.Equal(t, "o:feature/a b&x", gotHead, "branch with special chars must round-trip via a properly escaped query")
 	assert.NotContains(t, gotRawQuery, "a b", "a raw space must not leak into the query string (must be escaped)")

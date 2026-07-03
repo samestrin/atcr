@@ -67,6 +67,13 @@ Deferred MEDIUM/LOW findings surfaced during `/execute-sprint`. Read by
 **Why accepted:** Out of AC scope — ACs 03-02/03-04 specify byte-for-byte *content* restoration, which holds. The auto-fix target corpus is 0644 Go source, so a mode regression is not reachable for the intended use case. LOW.
 **Fix in:** A later hardening pass — after a successful `copyPathFn` restore, `os.Chmod(target, bakMode)` from the backup's mode (or stat the `.bak`); add an executable-fixture mode-fidelity regression test.
 
+## TD-013 — CommitRequest.Message is sent verbatim (no outbound redaction) (LOW)
+**Origin:** Phase 4, task 4.8 gate review, 2026-07-03
+**File:** internal/ghaction/client.go:245
+**Issue:** `CreatePullRequest`/`UpdatePullRequest` run `PullRequestRequest.Title`/`Body` through `redactSecrets` before sending (AC 05-04), but `CreateCommit` sends `CommitRequest.Message` verbatim. If the Phase-5 orchestrator builds a commit message from validation/model output the same way it builds the PR body, a credential could leak into the commit message on GitHub.
+**Why accepted:** No AC requires commit-message redaction (05-04 governs PR title/body only), and today the auto-fix commit message is atcr-generated boilerplate, not diagnostics-sourced — adding redaction now would be speculative. Flagged rather than fixed to avoid pre-empting Phase 5's not-yet-defined message construction.
+**Fix in:** Phase 5 (Story 6 wiring) precondition — if the orchestrator sources `CommitRequest.Message` (or branch name) from validation/model diagnostics, run it through `Client.redactSecrets` at the call site (or redact `req.Message` inside `CreateCommit`, symmetric with the PR title/body treatment).
+
 ## TD-012 — Existence check scopes on head only, not the (head, base) pair (LOW)
 **Origin:** Phase 4, task 4.5.A adversarial review, 2026-07-03
 **File:** internal/ghaction/client.go:315

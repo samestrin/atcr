@@ -54,14 +54,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A 422 "Reference already exists" response is returned to the caller as a `*ghaction.APIError` with `StatusCode == 422` and the original GitHub message intact
-- [ ] A 422 for a different cause (invalid SHA) is distinguishable by message text, not conflated with a collision
-- [ ] No retry-with-suffix logic is implemented inside `internal/ghaction` — that decision remains the caller's, per the story's constraint that `CreateBranch`/`CreateCommit` are pure API wrappers
+- [x] A 422 "Reference already exists" response is returned to the caller as a `*ghaction.APIError` with `StatusCode == 422` and the original GitHub message intact
+- [x] A 422 for a different cause (invalid SHA) is distinguishable by message text, not conflated with a collision
+- [x] No retry-with-suffix logic is implemented inside `internal/ghaction` — that decision remains the caller's, per the story's constraint that `CreateBranch`/`CreateCommit` are pure API wrappers
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

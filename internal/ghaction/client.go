@@ -36,10 +36,14 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("github API returned %d: %s", e.StatusCode, e.Message)
 }
 
-// Client is a minimal GitHub REST client for posting check runs and PR review
-// comments. A zero HTTPClient falls back to a sane default; a zero APIURL falls
-// back to the public GitHub API. Timeout overrides the default HTTP client
-// timeout when HTTPClient is nil.
+// Client is a minimal GitHub REST client. It posts check runs and PR review
+// comments, and — for the --auto-fix flow — creates branches, commits, and pull
+// requests via the Git Data and Pulls APIs (CreateBranch, CreateCommit,
+// CreatePullRequest, UpdatePullRequest, FindOpenPullRequest). Those mutating
+// methods require a token with `contents: write` (branch/commit) and
+// `pull_requests: write` (PR create/update) scope. A zero HTTPClient falls back
+// to a sane default; a zero APIURL falls back to the public GitHub API. Timeout
+// overrides the default HTTP client timeout when HTTPClient is nil.
 type Client struct {
 	APIURL     string
 	Token      string
@@ -225,6 +229,9 @@ func (c *Client) CreateCommit(ctx context.Context, owner, repo string, req Commi
 		if err := c.postDo(ctx, repoPath("git/blobs"), blobBody, &blob); err != nil {
 			return "", fmt.Errorf("creating blob for path %q: %w", f.Path, err)
 		}
+		if blob.SHA == "" {
+			return "", fmt.Errorf("creating blob for path %q: response carried no sha", f.Path)
+		}
 		entry["sha"] = blob.SHA
 		treeEntries = append(treeEntries, entry)
 	}
@@ -236,6 +243,9 @@ func (c *Client) CreateCommit(ctx context.Context, owner, repo string, req Commi
 	treeBody := map[string]any{"base_tree": parent.Tree.SHA, "tree": treeEntries}
 	if err := c.postDo(ctx, repoPath("git/trees"), treeBody, &tree); err != nil {
 		return "", fmt.Errorf("creating tree: %w", err)
+	}
+	if tree.SHA == "" {
+		return "", fmt.Errorf("creating tree: response carried no sha")
 	}
 
 	// 4. Create the commit on the new tree, parented at ParentSHA.
@@ -249,6 +259,9 @@ func (c *Client) CreateCommit(ctx context.Context, owner, repo string, req Commi
 	}
 	if err := c.postDo(ctx, repoPath("git/commits"), commitBody, &commit); err != nil {
 		return "", fmt.Errorf("creating commit: %w", err)
+	}
+	if commit.SHA == "" {
+		return "", fmt.Errorf("creating commit: response carried no sha")
 	}
 
 	// 5. Advance the branch ref to the new commit. The commit object exists on
@@ -313,13 +326,17 @@ func (c *Client) UpdatePullRequest(ctx context.Context, owner, repo string, prNu
 	return c.sendDo(ctx, http.MethodPatch, path, body, nil)
 }
 
-// findOpenPullRequest returns the number of the lowest-numbered OPEN pull request
+// FindOpenPullRequest returns the number of the lowest-numbered OPEN pull request
 // whose head is owner:branch, or found=false when none exist (an empty result is
 // not an error). It uses GET /repos/{owner}/{repo}/pulls?head={owner}:{branch}&
 // state=open via get, inheriting its retry/back-off; the branch is query-escaped.
 // Multiple matches (e.g. a manually opened PR) resolve deterministically to the
 // lowest number so a re-run refreshes a stable PR rather than opening a third.
-func (c *Client) findOpenPullRequest(ctx context.Context, owner, repo, branch string) (int, bool, error) {
+//
+// Exported so the Phase-5 internal/autofix orchestrator can run the existence
+// check before choosing CreatePullRequest vs UpdatePullRequest (AC 05-02) — the
+// create-vs-update decision itself lives in that orchestrator, not here.
+func (c *Client) FindOpenPullRequest(ctx context.Context, owner, repo, branch string) (int, bool, error) {
 	q := url.Values{}
 	q.Set("head", owner+":"+branch)
 	q.Set("state", "open")
@@ -421,7 +438,10 @@ func (c *Client) sendDo(ctx context.Context, method, path string, body any, out 
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if out != nil {
-				_ = json.NewDecoder(io.LimitReader(resp.Body, 8<<10)).Decode(out)
+				// 8MB limit (matching get): a PR object or git/trees listing can
+				// exceed 8KB, and the decoded number/sha is load-bearing for the
+				// new mutating methods — truncation must not silently drop it.
+				_ = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(out)
 			}
 			_ = resp.Body.Close()
 			return nil

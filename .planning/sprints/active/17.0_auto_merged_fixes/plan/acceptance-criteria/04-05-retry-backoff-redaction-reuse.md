@@ -54,14 +54,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `CreateBranch` and every `CreateCommit` sub-call retry on 5xx/429 using the existing backoff schedule, and fail immediately (no retry) on other 4xx codes
-- [ ] A token echoed in an error response body is redacted in the returned `APIError.Message` for every new endpoint, not just the pre-existing check-run/comment endpoints
-- [ ] No new raw `http.Client.Do` call exists anywhere in the `CreateBranch`/`CreateCommit` implementation — grep confirms all HTTP traffic routes through `postDo` or its PATCH-capable sibling
+- [x] `CreateBranch` and every `CreateCommit` sub-call retry on 5xx/429 using the existing backoff schedule, and fail immediately (no retry) on other 4xx codes
+- [x] A token echoed in an error response body is redacted in the returned `APIError.Message` for every new endpoint, not just the pre-existing check-run/comment endpoints
+- [x] No new raw `http.Client.Do` call exists anywhere in the `CreateBranch`/`CreateCommit` implementation — grep confirms all HTTP traffic routes through `postDo` or its PATCH-capable sibling
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

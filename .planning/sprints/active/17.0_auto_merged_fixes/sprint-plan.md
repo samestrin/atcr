@@ -419,17 +419,17 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
 
 **Goal:** The cross-system GitHub orchestration — the highest-risk surface (`HAS_CROSS_SYSTEM=true`). Extend `ghaction.Client` with branch/commit/PR-create methods routed through existing `postDo`/`get` plumbing.
 
-### 4.1 [ ] **[Create Branch and Commit Verified Fix - RED](plan/user-stories/04-create-branch-and-commit-verified-fix.md)**
+### 4.1 [x] **[Create Branch and Commit Verified Fix - RED](plan/user-stories/04-create-branch-and-commit-verified-fix.md)**
    **AC:** [04-01](plan/acceptance-criteria/04-01-create-branch-ref.md), [04-02](plan/acceptance-criteria/04-02-branch-collision-handling.md), [04-03](plan/acceptance-criteria/04-03-create-commit-multi-file-sequence.md), [04-04](plan/acceptance-criteria/04-04-validation-gated-call-site.md), [04-05](plan/acceptance-criteria/04-05-retry-backoff-redaction-reuse.md)
    Write failing tests (against `httptest.Server`, routing on method+path per Phase 1 spike): `CreateBranch` creates a ref at a base SHA (04-01); 422 ref-exists is distinguishable/recoverable (04-02); `CreateCommit` builds a multi-file commit via blob → tree → commit → ref-update (04-03); `CreateBranch`/`CreateCommit` unreachable without prior validation success — integration (04-04); new endpoints inherit retry/backoff/redaction from `postDo`/`get` (04-05). Verify fail correctly.
    **Files:** `internal/ghaction/client_test.go` | **Duration:** ~0.75 day
 
-### 4.2 [ ] **[Create Branch and Commit - GREEN](plan/user-stories/04-create-branch-and-commit-verified-fix.md)**
+### 4.2 [x] **[Create Branch and Commit - GREEN](plan/user-stories/04-create-branch-and-commit-verified-fix.md)**
    Minimal additions to `internal/ghaction/client.go`: `CreateBranch` + `CreateCommit` using `CommitRequest{Branch, Message, ParentSHA, Files}`. Route all HTTP through existing `postDo`/`get` — no second client. One test at a time (T1), verify all (T2). COMMIT.
    COMMIT: `git add internal/ghaction/client.go internal/ghaction/client_test.go && git commit -m "feat(ghaction): CreateBranch + CreateCommit via Git Data API (green)"`
    **Files:** `internal/ghaction/client.go` | **Duration:** ~1.25 day
 
-### 4.2.A [ ] **[Create Branch and Commit - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-create-branch-and-commit-verified-fix.md)**
+### 4.2.A [x] **[Create Branch and Commit - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-create-branch-and-commit-verified-fix.md)**
    **Changed Files:** `internal/ghaction/client.go`, `internal/ghaction/client_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the implementation in 4.2 — intentional. Do NOT review inline.
@@ -447,34 +447,32 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (fresh-context) + resolution — no CRITICAL/HIGH:**
+   | Severity | File:Line | Issue | Resolution |
+   |----------|-----------|-------|-----------|
+   | MEDIUM | client.go:196 | `CreateCommit`'s parent-commit read used `get`, which returned an untyped `fmt.Errorf` — asymmetric with `sendDo`; a missing base SHA (404) was not `errors.As`-inspectable. (Same issue Phase-1 flagged as TD-003.) | FIXED in 4.3 — `get` now returns `*APIError` on non-2xx (mirrors `sendDo`); `TestCreateCommitParentReadErrorIsTyped` locks it. Closes TD-003. |
+   | LOW | client.go:182 | Only empty `Files` was guarded; empty `ParentSHA`/`Branch` let a real commit be created then orphaned by a bad ref PATCH. | FIXED in 4.3 — non-empty `ParentSHA`/`Branch` guards before any HTTP call; `TestCreateCommitRejectsEmptyParentOrBranch`. |
+   | LOW | client.go:180 | Non-idempotent POST retried on 5xx/transport error can yield a spurious 422 collision on a lost-response first success. | Deferred → TD-011. Inherent to the reused `postDo`/`sendDo` plumbing (all mutating endpoints share it); collision policy is the caller's per AC 04-02. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 4.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **No CRITICAL/HIGH — nothing blocking. Both fixable findings closed inline in 4.3 (one closes the pre-existing TD-003); one LOW deferred to tech-debt-captured.md. Adversarial review complete.**
 
-### 4.3 [ ] **[Create Branch and Commit - REFACTOR](plan/user-stories/04-create-branch-and-commit-verified-fix.md)**
+### 4.3 [x] **[Create Branch and Commit - REFACTOR](plan/user-stories/04-create-branch-and-commit-verified-fix.md)**
    1. Fix CRITICAL/HIGH issues from 4.2.A (if any).
    2. Improve quality, maintain green (T1), validate (T3).
    3. COMMIT: `git commit -m "refactor(ghaction): address review + clean up branch/commit path"`
    **Duration:** ~0.5 day
 
-### 4.4 [ ] **[Open or Update Pull Request - RED](plan/user-stories/05-open-or-update-pull-request-via-github-api.md)**
+### 4.4 [x] **[Open or Update Pull Request - RED](plan/user-stories/05-open-or-update-pull-request-via-github-api.md)**
    **AC:** [05-01](plan/acceptance-criteria/05-01-create-pull-request.md), [05-02](plan/acceptance-criteria/05-02-existence-check-avoids-duplicate-prs.md), [05-03](plan/acceptance-criteria/05-03-update-pull-request.md), [05-04](plan/acceptance-criteria/05-04-retry-backoff-redaction-reuse.md)
    Write failing tests (against `httptest.Server`): `CreatePullRequest` opens a new PR from the auto-fix branch (05-01); existence check decides create-vs-update, avoids duplicate PRs — integration (05-02); `UpdatePullRequest` refreshes an existing open PR (05-03); PR endpoints reuse retry/backoff and **redact secrets from outbound PR title/body** (05-04). Verify fail correctly.
    **Files:** `internal/ghaction/client_test.go` | **Duration:** ~0.5 day
 
-### 4.5 [ ] **[Open or Update Pull Request - GREEN](plan/user-stories/05-open-or-update-pull-request-via-github-api.md)**
+### 4.5 [x] **[Open or Update Pull Request - GREEN](plan/user-stories/05-open-or-update-pull-request-via-github-api.md)**
    Minimal additions to `internal/ghaction/client.go`: `CreatePullRequest` + `UpdatePullRequest` using `PullRequestRequest{Head, Base, Title, Body}`; existence-check routing. `redactSecrets` on outbound PR content. One test at a time (T1), verify all (T2). COMMIT.
    COMMIT: `git add internal/ghaction/client.go internal/ghaction/client_test.go && git commit -m "feat(ghaction): create/update PR with existence check + redaction (green)"`
    **Files:** `internal/ghaction/client.go` | **Duration:** ~0.5 day
 
-### 4.5.A [ ] **[Open or Update Pull Request - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-open-or-update-pull-request-via-github-api.md)**
+### 4.5.A [x] **[Open or Update Pull Request - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-open-or-update-pull-request-via-github-api.md)**
    **Changed Files:** `internal/ghaction/client.go`, `internal/ghaction/client_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the implementation in 4.5 — intentional. Do NOT review inline.
@@ -492,32 +490,32 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (fresh-context) + resolution — no CRITICAL/HIGH:**
+   | Severity | File:Line | Issue | Resolution |
+   |----------|-----------|-------|-----------|
+   | LOW | client.go:289 | `postDo`/`sendDo` ignore body-decode errors, so a 2xx whose body carried no `number` made `CreatePullRequest` return `(0, nil)`; an orchestrator could misread 0 as "not created" and open a duplicate PR — defeating the never-duplicate AC. | FIXED in 4.6 — `CreatePullRequest` now returns an error when a 2xx yields `Number == 0` (a real PR number is always ≥1); `TestCreatePullRequestZeroNumberIsError` locks it. |
+   | LOW | client.go:315 | `findOpenPullRequest` scopes on `head` only, not the `(head, base)` pair; GitHub permits multiple open PRs from the same head to different bases, so the lowest-number tiebreak could pick a PR against an unintended base. | Deferred → TD-012. AC 05-02 explicitly specifies the `head + state=open` query and resolves multi-match by lowest number *by design*; adding `base` would deviate from the contract, and the real auto-fix flow always targets the single default base. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 4.6, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **No CRITICAL/HIGH — nothing blocking. LOW #1 (duplicate-PR correctness) closed inline in 4.6; LOW #2 deferred to tech-debt-captured.md as a by-design/AC-contract note. Adversarial review complete.**
 
-### 4.6 [ ] **[Open or Update Pull Request - REFACTOR](plan/user-stories/05-open-or-update-pull-request-via-github-api.md)**
+### 4.6 [x] **[Open or Update Pull Request - REFACTOR](plan/user-stories/05-open-or-update-pull-request-via-github-api.md)**
    1. Fix CRITICAL/HIGH issues from 4.5.A (if any).
    2. Improve quality, maintain green (T1), validate (T3).
    3. COMMIT: `git commit -m "refactor(ghaction): address review + clean up PR path"`
    **Duration:** ~0.5 day
 
-### 4.7 [ ] **Phase 4 DoD (Stories 4 & 5)**
-   - [ ] Tests (T3): `go test ./internal/ghaction/...` all passing, incl. validation-gated-call-site + existence-check integration tests.
-   - [ ] Coverage ≥ 80% on new methods.
-   - [ ] `go vet` / lint / build clean.
-   - [ ] All 4 new methods route through `postDo`/`get`; `redactSecrets` on outbound PR content verified.
-   - [ ] Story checkboxes and AC files updated to `[x]`.
-   - DoD Report per template.
+### 4.7 [x] **Phase 4 DoD (Stories 4 & 5)**
+   - [x] Tests (T3): `go test ./internal/ghaction/...` all passing (full `go test ./...` green). Existence-check tests (`TestFindOpenPullRequest*`) live in `internal/ghaction`. **Validation-gated-call-site (AC 04-04)** is orchestrator-level: modeled at the package boundary in Phase 3 (`autoFixFlowModel` / `TestRevertPatch_RemoteStepUnreachableOnValidationFailure`), wired in Phase 5, proven end-to-end in Phase 6 — not a `ghaction`-package concern (these methods are pure API wrappers, per AC 04-04's own "the gate lives in the caller").
+   - [x] Coverage ≥ 80% on new methods — package 90.7%; CreateBranch 100%, CreateCommit 97.3%, CreatePullRequest 100%, UpdatePullRequest 100%, findOpenPullRequest 92.9%, sendDo 88.6%.
+   - [x] `go vet ./...` clean; `golangci-lint run ./internal/ghaction/` 0 issues; `go build ./...` succeeds.
+   - [x] All new methods route through `postDo`/`get`/`sendDo` (grep-confirmed: only 2 `http.Client.Do` sites, both in the shared plumbing); `redactSecrets` on outbound PR title AND body verified (`TestCreatePullRequestRedactsOutboundTitleAndBody`, `TestUpdatePullRequestRedactsOutboundContent`) and on inbound error bodies for every new endpoint.
+   - [x] AC files updated to `[x]`: 04-01/02/03/05 and 05-01/03/04 fully; 05-02 Client-half checked (lookup query, found/not-found, `get` retry reuse), its end-to-end create-vs-update item left for Phase 5/6; **04-04 left entirely open by design** (orchestrator-owned, Phase 5/6).
 
-### 4.8 [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+   **Story-4 DoD Complete** — Auto: 3/3 (tests/lint/build) | Story-Specific: CreateBranch ref-create + normalization + 422 collision/invalid-SHA distinction + retry; CreateCommit get-commit→blob→tree→commit→ref sequence, base_tree resolution, multi-file atomicity, null-SHA deletion, empty/partial-failure short-circuit, step-named errors, 5xx/429 retry on POST & PATCH, token redaction — all green.
+   **Story-5 DoD Complete** — Auto: 3/3 | Story-Specific: CreatePullRequest (number decode + zero-guard + 422 typed + 5xx retry), findOpenPullRequest (head:branch+state=open query, found/not-found, lowest-numbered multi-match, branch escaping, get retry), UpdatePullRequest (PATCH title/body, 404 typed, 429 retry, idempotent), outbound title+body redaction — all green.
+   Manual Review: [x] Reviewed via 4.2.A + 4.5.A fresh-subagent adversarial passes (0 CRITICAL/HIGH; 1 MEDIUM + 2 LOW → 2 fixed inline closing TD-003, 2 LOW deferred TD-011/TD-012).
+
+### 4.8 [x] **Phase 4 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 4 (`internal/ghaction/client.*`).
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase — intentional. Do NOT review inline.
@@ -536,16 +534,19 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Gate findings (first pass) + resolution — files changed: `internal/ghaction/client.{go,_test.go}`:**
+   | Severity | File:Line | Issue | Resolution |
+   |----------|-----------|-------|-----------|
+   | HIGH | client.go:322 | `findOpenPullRequest` was unexported, but AC 05-02 places the create-vs-update orchestrator in `internal/autofix` (a different package) — the duplicate-PR existence check was unreachable at the Phase-5 seam. | FIXED before boundary — exported as `FindOpenPullRequest` (AC 05-02 permits "or equivalent exported lookup"); tests renamed. Phase 5 can now run the existence check without editing `client.go`. |
+   | MEDIUM | client.go:424 | `sendDo`'s 2xx success-decode used an 8KB `LimitReader`; a PR/tree object exceeding 8KB truncates → `Number==0` false "not created" (the exact duplicate-PR failure the zero-guard prevents) or empty commit SHA. | FIXED before boundary — success-decode limit raised to 8MB (`8<<20`, matching `get`); `TestCreatePullRequestDecodesNumberInLargeBody` (16KB body) locks it. |
+   | LOW | client.go:250 | `CreateCommit` did not guard an empty decoded blob/tree/commit SHA; a silent decode miss would PATCH the ref with an empty commit sha and surface a misleading error. | FIXED before boundary — empty-SHA guards after each blob/tree/commit decode; ref is never advanced on an empty commit sha; `TestCreateCommitEmptyCommitShaIsError` locks it. |
+   | LOW | client.go:39 | Stale `Client` doc ("check runs and PR review comments" only); token scopes for the new mutating methods undocumented. | FIXED before boundary — `Client` doc updated to cover the mutating methods and note `contents: write` + `pull_requests: write` scope. |
+   | LOW | sprint-design.md:196 | Architecture summary declared `Files []FileChange`; no such type — impl + AC 04-03 use `CommitFile`. | FIXED before boundary — sprint-design corrected to `Files []CommitFile` (+ `CommitFile` shape). |
+   | LOW | client.go:245 | `CommitRequest.Message` sent verbatim (no outbound redaction), asymmetric with PR title/body. | Deferred → TD-013 (Phase-5 precondition — redact if the message is diagnostics-sourced; speculative to add now, no AC backing). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   **Re-review (after fixes): CLEAN — "No findings."** Fresh-context integrator independently verified the export is cross-package callable, the 8MB decode limit, the three empty-SHA guards (ref unreachable on empty commit sha), documented token scopes, single-plumbing integration (no second client), and `comments.go` regression-free (posting uses `out=nil`). Green build/vet/lint/tests.
+
+   **Phase gate passed.**
    **Duration:** 15-30 min
 
 > **GATED STOP** — `/execute-sprint` halts here. Resume to begin Phase 5.

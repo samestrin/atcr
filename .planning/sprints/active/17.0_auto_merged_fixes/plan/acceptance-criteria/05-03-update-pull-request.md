@@ -60,14 +60,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `UpdatePullRequest` sends `title`/`body` via `PATCH /repos/{owner}/{repo}/pulls/{prNumber}` and returns `nil` on success
-- [ ] A 404 (stale/closed PR number) surfaces as a typed `*ghaction.APIError`, not a silent success or panic
-- [ ] Repeated calls with identical content are idempotent (no error on a no-op update)
+- [x] `UpdatePullRequest` sends `title`/`body` via `PATCH /repos/{owner}/{repo}/pulls/{prNumber}` and returns `nil` on success
+- [x] A 404 (stale/closed PR number) surfaces as a typed `*ghaction.APIError`, not a silent success or panic
+- [x] Repeated calls with identical content are idempotent (no error on a no-op update)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

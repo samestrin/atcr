@@ -72,15 +72,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Read-commit `GET` → blob → tree → commit → ref-update calls occur in that exact order for both single- and multi-file `CommitRequest`s, and the tree's `base_tree` is the `tree.sha` resolved from the parent commit's GET response (not the `ParentSHA` commit SHA)
-- [ ] A deleted file produces a null-SHA tree entry, not a blob-creation call
-- [ ] A failure at any step short-circuits the remaining steps (no ref update after a failed commit; no commit after a failed tree)
-- [ ] The returned commit SHA matches the SHA from the commit-creation response, not the ref-update response
+- [x] Read-commit `GET` → blob → tree → commit → ref-update calls occur in that exact order for both single- and multi-file `CommitRequest`s, and the tree's `base_tree` is the `tree.sha` resolved from the parent commit's GET response (not the `ParentSHA` commit SHA)
+- [x] A deleted file produces a null-SHA tree entry, not a blob-creation call
+- [x] A failure at any step short-circuits the remaining steps (no ref update after a failed commit; no commit after a failed tree)
+- [x] The returned commit SHA matches the SHA from the commit-creation response, not the ref-update response
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

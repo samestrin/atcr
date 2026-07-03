@@ -61,14 +61,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] The existence-check lookup queries `GET /repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open` and correctly reports found/not-found
-- [ ] A second `--auto-fix` run against a branch with an already-open PR calls `UpdatePullRequest`, never `CreatePullRequest` — verified end to end, closing the story's "100% of successful runs result in exactly one open PR per branch" success criterion
-- [ ] Existence-check retry/backoff reuses `c.get` — no bespoke retry loop
+- [x] The existence-check lookup queries `GET /repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open` and correctly reports found/not-found <!-- findOpenPullRequest + TestFindOpenPullRequestFound/NotFound/PicksLowestNumber/EscapesBranch -->
+- [ ] A second `--auto-fix` run against a branch with an already-open PR calls `UpdatePullRequest`, never `CreatePullRequest` — verified end to end, closing the story's "100% of successful runs result in exactly one open PR per branch" success criterion <!-- ORCHESTRATOR (create-vs-update decision): Phase 5 wiring + Phase 6 end-to-end integration test -->
+- [x] Existence-check retry/backoff reuses `c.get` — no bespoke retry loop
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved <!-- 4.5.A fresh-subagent adversarial pass -->

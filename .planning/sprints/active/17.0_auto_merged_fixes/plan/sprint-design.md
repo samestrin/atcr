@@ -193,7 +193,7 @@ Thresholds: adversarial triggered by complexity >= 6/12 or phases >= 3; gated tr
 - `payload.FileEntry{Path, Size, Body}` — existing, unmodified input shape from `BuildEntriesFromDiff` (Story 1's input).
 - New `autofix.BackupMap` (`map[string]string` of `originalPath -> backupPath`) — the Story 1 → Story 3 handoff contract.
 - New `verify.ValidationResult{Passed bool, ExitCode int, Stdout, Stderr string, Duration time.Duration}` — Story 2's output, Story 3's trigger signal.
-- New `ghaction.CommitRequest{Branch, Message, ParentSHA string, Files []FileChange}` and `ghaction.PullRequestRequest{Head, Base, Title, Body string}` — Story 4/5 request shapes.
+- New `ghaction.CommitRequest{Branch, Message, ParentSHA string, Files []CommitFile}` (with `CommitFile{Path, Content string, Deleted bool}`) and `ghaction.PullRequestRequest{Head, Base, Title, Body string}` — Story 4/5 request shapes. (Corrected 2026-07-03: implementation and AC 04-03 use `CommitFile`, not the earlier `FileChange` placeholder.)
 
 **Module Boundaries:**
 - `internal/autofix`: exposes `ApplyPatch(entries []payload.FileEntry) (BackupMap, error)` and `Revert(backupMap BackupMap) error` — hides `go-gitdiff` and `atomicfs` call sequencing entirely.
