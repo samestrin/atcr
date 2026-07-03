@@ -100,6 +100,20 @@ func TestApplyPatch_CreateNewFile(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(root, "new.txt.bak"))
 }
 
+// A create diff whose target already exists must be refused, mirroring git apply's
+// behavior and preventing a silent overwrite of existing content.
+func TestApplyPatch_CreateOverExistingFileRefused(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "new.txt"), "pre-existing\n")
+
+	bm, err := ApplyPatch(root, []payload.FileEntry{fe("new.txt", fixtureCreate)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "new.txt")
+	assert.Contains(t, strings.ToLower(err.Error()), "already exists")
+	assert.Empty(t, bm, "refused create must not be recorded as a success")
+	assert.Equal(t, "pre-existing\n", readFile(t, filepath.Join(root, "new.txt")), "existing file must be untouched")
+}
+
 func TestApplyPatch_DeleteExistingFile(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "del.txt"), "gone1\ngone2\n")
