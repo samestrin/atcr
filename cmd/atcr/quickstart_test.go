@@ -150,6 +150,38 @@ func TestQuickstart_WorkflowGuard_ForceOverwrites(t *testing.T) {
 	assert.Contains(t, string(data), "LLM_SYNTHETIC_API_KEY", "force overwrote with the scaffold")
 }
 
+func TestQuickstart_ScaffoldWorkflow_ForceDoesNotFollowSymlink(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	// Pre-plant a symlink at the workflow path pointing at an outside file, then
+	// run with --force. A check-then-write (Lstat + WriteFile) would follow the
+	// symlink and clobber the outside target; an atomic create must not.
+	wf := filepath.Join(dir, ".github", "workflows", "atcr.yml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(wf), 0o755))
+	outside := filepath.Join(t.TempDir(), "victim.txt")
+	require.NoError(t, os.WriteFile(outside, []byte("PRECIOUS"), 0o644))
+	require.NoError(t, os.Symlink(outside, wf))
+
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: dir, force: true, in: strings.NewReader(quickstartInput),
+		out: &bytes.Buffer{}, errOut: &bytes.Buffer{},
+	}))
+
+	// The outside file must NOT have been written through the symlink.
+	victim, err := os.ReadFile(outside)
+	require.NoError(t, err)
+	assert.Equal(t, "PRECIOUS", string(victim), "force must not write through a pre-planted symlink")
+
+	// The workflow path is now a regular file holding the scaffold, not a symlink.
+	info, err := os.Lstat(wf)
+	require.NoError(t, err)
+	assert.Zero(t, info.Mode()&os.ModeSymlink, "symlink replaced by a regular file")
+	data, err := os.ReadFile(wf)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "LLM_SYNTHETIC_API_KEY")
+}
+
 func TestQuickstart_PrintsSignupLink(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
