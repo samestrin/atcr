@@ -88,20 +88,37 @@ func (c *Client) httpClient() *http.Client {
 	return &http.Client{Timeout: timeout}
 }
 
+// ValidateAPIURL shape-checks a GitHub API base URL without performing any
+// network call. An empty value is accepted (it means "use the default"); any
+// other value must be an absolute URL with a host and an https scheme (loopback
+// hosts may use http for local testing). It is exported so the --auto-fix gate
+// can refuse a malformed or insecure api-url up front — before any file is
+// touched — instead of letting it surface lazily at the first HTTP call (TD-014).
+func ValidateAPIURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	raw = strings.TrimRight(raw, "/")
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Host == "" {
+		return fmt.Errorf("invalid API URL %q", raw)
+	}
+	if u.Scheme != "https" && !isLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("insecure API URL %q: must use https", raw)
+	}
+	return nil
+}
+
 func (c *Client) baseURL() (string, error) {
 	raw := strings.TrimSpace(c.APIURL)
 	if raw == "" {
 		return DefaultAPIURL, nil
 	}
-	raw = strings.TrimRight(raw, "/")
-	u, err := url.Parse(raw)
-	if err != nil || !u.IsAbs() || u.Host == "" {
-		return "", fmt.Errorf("invalid API URL %q", raw)
+	if err := ValidateAPIURL(raw); err != nil {
+		return "", err
 	}
-	if u.Scheme != "https" && !isLoopbackHost(u.Hostname()) {
-		return "", fmt.Errorf("insecure API URL %q: must use https", raw)
-	}
-	return raw, nil
+	return strings.TrimRight(raw, "/"), nil
 }
 
 func isLoopbackHost(host string) bool {

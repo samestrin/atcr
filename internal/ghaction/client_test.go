@@ -16,6 +16,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestValidateAPIURL(t *testing.T) {
+	// Empty means "use the default" and is accepted; loopback http is allowed for
+	// local testing; everything else must be an absolute https URL.
+	require.NoError(t, ValidateAPIURL(""))
+	require.NoError(t, ValidateAPIURL("https://api.github.com"))
+	require.NoError(t, ValidateAPIURL("http://127.0.0.1:8080/api/v3"))
+	require.NoError(t, ValidateAPIURL("http://localhost/api/v3"))
+
+	require.Error(t, ValidateAPIURL("http://ghe.internal/api/v3"), "non-loopback http must be refused")
+	require.Error(t, ValidateAPIURL("not a url"))
+	require.Error(t, ValidateAPIURL("ftp://example.com"))
+}
+
 func TestSendDoHonorsRetryAfterOn403(t *testing.T) {
 	// GitHub signals a secondary rate limit with 403 + Retry-After. That must be
 	// retried (not treated as a permanent APIError) and honor the server delay.

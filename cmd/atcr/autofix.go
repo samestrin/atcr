@@ -151,6 +151,12 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 	}
 	apiURLFlag, _ := cmd.Flags().GetString("api-url")
 	be.apiURL = envOr(apiURLFlag, "GITHUB_API_URL")
+	// Shape-check the api-url now (local, no network) so a malformed or insecure
+	// value is a fail-closed refusal before any file is touched, rather than
+	// surfacing lazily at the first HTTP call in ghaction.Client.baseURL (TD-014).
+	if err := ghaction.ValidateAPIURL(be.apiURL); err != nil {
+		missing = append(missing, err.Error())
+	}
 
 	if len(missing) > 0 {
 		return autoFixBackend{}, usageError(fmt.Errorf("--auto-fix cannot run: %s", strings.Join(missing, "; ")))
