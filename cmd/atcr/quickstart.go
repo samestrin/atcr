@@ -230,8 +230,13 @@ func appendExport(profile, env, key string) error {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	_, err = fmt.Fprintf(f, "\n# added by atcr quickstart\nexport %s=%s\n", env, shellSingleQuote(key))
-	return err
+	if _, err := fmt.Fprintf(f, "\n# added by atcr quickstart\nexport %s=%s\n", env, shellSingleQuote(key)); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(profile, 0o600)
 }
 
 // profileIsAtcrOwned reports whether the shell-profile path the user named would
