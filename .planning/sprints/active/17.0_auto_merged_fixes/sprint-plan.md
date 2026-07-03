@@ -672,24 +672,25 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
 
 **Goal:** Prove the sequencing guarantees (no GitHub mutation before local validation passes) hold end-to-end, not just per-story.
 
-### 6.1 [ ] **Cross-story integration test: full auto-fix flow against stubs**
+### 6.1 [x] **Cross-story integration test: full auto-fix flow against stubs**
    **Task:** Write an integration test (`//go:build integration`) exercising apply → validate → revert-or-continue → branch/commit → PR against an `httptest.Server` GitHub stub, driven through the `cmd/atcr` `--auto-fix` entry point. Cover both branches: validation-pass (proceeds to branch/commit/PR) and validation-fail (reverts, zero GitHub calls).
    **Success Criteria:** Full happy-path produces a PR against the stub; failure-path restores files and makes zero HTTP calls.
    **Files:** `cmd/atcr/autofix_integration_test.go` | **Duration:** ~0.5 day
 
-### 6.2 [ ] **Zero-HTTP-calls-on-validation-failure regression test**
+### 6.2 [x] **Zero-HTTP-calls-on-validation-failure regression test**
    **Task:** Independent cross-check asserting that when validation fails, the GitHub stub receives **zero** requests (guard against a false-green from `httptest` mis-routing). Assert revert ran and a clear operator error surfaced.
    **Success Criteria:** Stub request counter == 0 on the validation-failure path; test fails loudly if any GitHub-mutating call fires pre-validation.
    **Files:** `cmd/atcr/autofix_integration_test.go` | **Duration:** ~0.25 day
 
-### 6.3 [ ] **Phase 6 DoD**
-   - [ ] Tests (T3): `go test -tags integration ./...` all passing.
-   - [ ] Both sequencing branches (pass/fail) covered end-to-end.
-   - [ ] Zero-HTTP regression test in place and green.
-   - [ ] `go vet` / lint / build clean.
-   - DoD Report per template.
+### 6.3 [x] **Phase 6 DoD**
+   - [x] Tests (T3): `go test -tags integration ./...` all passing (full suite green; `cmd/atcr` 13.7s incl. the 4 new integration tests).
+   - [x] Both sequencing branches (pass/fail) covered end-to-end — happy path (`TestAutoFixIntegration_HappyPathOpensPR` via `orchestrateAutoFix` entry point + `...ValidationPassCreatesPRViaRealClient` via real client) and fail path (`...ValidationFailRevertsThroughEntryPoint` + `...ZeroHTTPOnValidationFailure`).
+   - [x] Zero-HTTP regression test in place and green — two independent routes assert `stub.count() == 0` on the validation-failure path (`orchestrateAutoFix` and `runAutoFix`), guarding against an httptest mis-routing false-green.
+   - [x] `go vet -tags integration ./cmd/atcr/` clean; `golangci-lint run ./cmd/atcr/ --build-tags integration` 0 issues; `go build ./...` succeeds; `gofmt` clean.
 
-### 6.4 [ ] **Phase 6 - GATE: Integration & Exit Review (subagent)**
+   **Phase 6 DoD Complete** — Auto: 3/3 (tests/lint/build) | Story-Specific: full apply→validate→revert-or-continue→branch/commit→PR flow proven end-to-end against an httptest GitHub stub over real HTTP through the real `--auto-fix` entry point; both validation branches covered; zero-GitHub-call-on-failure enforced via two independent routes; tree revert verified on failure and applied content preserved on success.
+
+### 6.4 [x] **Phase 6 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 6 (integration tests).
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase — intentional. Do NOT review inline.
@@ -708,16 +709,17 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (fresh-context integrator) + resolution — no CRITICAL/HIGH:**
+   Verified: stub routing cross-checked method-by-method against `internal/ghaction/client.go` (matches the real Git Data + Pulls sequence); `default` route fails loudly (`t.Errorf`) so a mis-route cannot silently pass; both `stub.count()==0` assertions are load-bearing (happy-path tests prove the same stub records requests); build tag `//go:build integration` syntactically valid; tests hermetic (no real git/network, `t.TempDir` auto-cleanup, `resolveHeadSHAFn` restored via `t.Cleanup`).
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   | Severity | File:Line | Issue | Resolution |
+   |----------|-----------|-------|-----------|
+   | LOW | autofix_integration_test.go:199 | Validation-FAIL assertion only checked `err.Error()` contains "reverted", which both the `!Passed()` (non-zero exit) and the cannot-start branch emit — could green on the wrong branch. `stub.count()==0` holds either way, so the sequencing contract was never at risk (robustness gap only). | FIXED inline — assertion tightened to `"local validation failed (exit"`, pinning the intended non-zero-exit branch. |
+   | LOW | autofix_integration_test.go:158-161 | Happy-path sequence assertions omitted the `GET /repos/o/r/pulls` (FindOpenPullRequest / create-vs-update) leg — implied by reaching CreatePullRequest but not directly asserted. Coverage completeness, not correctness. | FIXED inline — added `require.True(t, stub.saw("GET /repos/o/r/pulls"), ...)` to pin the existence-check call. |
+
+   **No CRITICAL/HIGH — phase gate passed. Both LOW findings were sub-minute test-fidelity strengthenings closed inline (tightening the very sequencing assertions Phase 6 exists to prove); tests re-run green, gofmt/vet clean.**
+
+   **Phase gate passed.**
    **Duration:** 15-30 min
 
 > **GATED STOP** — `/execute-sprint` halts here. Resume to begin the Final Phase.
