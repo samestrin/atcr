@@ -1,26 +1,7 @@
-generated_at: "2026-06-10"
+generated_at: "July 02, 2026 10:03:44PM"
 manifest_file: go.mod
 package_manager: go
 packages:
-  github:
-    com/stretchr/testify:
-      doc_file: testify.md
-      docs_url: https://pkg.go.dev/github.com/stretchr/testify
-      last_updated: "2026-06-10"
-      name: github.com/stretchr/testify
-      parent: <nil>
-      status: complete
-      tier: important
-      version: v1.11.1
-  github.com/modelcontextprotocol/go-sdk:
-    doc_file: mcp-go-sdk.md
-    docs_url: https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp
-    last_updated: June 10, 2026
-    name: github.com/modelcontextprotocol/go-sdk
-    parent: null
-    status: complete
-    tier: critical
-    version: v1.6.1
   github.com/spf13/cobra:
     doc_file: cobra.md
     docs_url: https://pkg.go.dev/github.com/spf13/cobra
@@ -30,6 +11,15 @@ packages:
     status: complete
     tier: critical
     version: v1.10.2
+  github.com/modelcontextprotocol/go-sdk:
+    doc_file: mcp-go-sdk.md
+    docs_url: https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp
+    last_updated: June 10, 2026
+    name: github.com/modelcontextprotocol/go-sdk
+    parent: null
+    status: complete
+    tier: critical
+    version: v1.6.1
   gopkg.in/yaml.v3:
     doc_file: yaml-v3.md
     docs_url: https://pkg.go.dev/gopkg.in/yaml.v3
@@ -39,5 +29,32 @@ packages:
     status: complete
     tier: important
     version: v3.0.1
-packages_count: 4
+  github.com/stretchr/testify:
+    doc_file: testify.md
+    docs_url: https://pkg.go.dev/github.com/stretchr/testify
+    last_updated: "2026-06-10"
+    name: github.com/stretchr/testify
+    parent: null
+    status: complete
+    tier: important
+    version: v1.11.1
+  github.com/google/jsonschema-go:
+    doc_file: jsonschema-go.md
+    docs_url: https://pkg.go.dev/github.com/google/jsonschema-go
+    last_updated: June 10, 2026
+    name: github.com/google/jsonschema-go
+    parent: null
+    status: complete
+    tier: important
+    version: v0.4.3
+  go-gitdiff:
+    doc_file: go-gitdiff.md
+    docs_url: https://github.com/bluekeyes/go-gitdiff
+    last_updated: "July 02, 2026 10:03:44PM"
+    name: go-gitdiff
+    parent: null
+    status: complete
+    tier: important
+    version: v0.8.1
+packages_count: 6
 version: 1.0
