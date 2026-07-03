@@ -243,17 +243,17 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
    3. COMMIT: `git commit -m "refactor(autofix): address review + clean up apply path"`
    **Duration:** ~0.5 day
 
-### 2.4 [ ] **[Configurable Local Validation - RED](plan/user-stories/02-configurable-local-validation.md)**
+### 2.4 [x] **[Configurable Local Validation - RED](plan/user-stories/02-configurable-local-validation.md)**
    **AC:** [02-01](plan/acceptance-criteria/02-01-configurable-validation-command-runner.md), [02-02](plan/acceptance-criteria/02-02-result-capture-and-reporting.md), [02-03](plan/acceptance-criteria/02-03-conservative-pass-fail-gate.md)
    Write failing tests for `RunConfiguredValidation(ctx, cmd string, timeout time.Duration) (ValidationResult, error)`: runner via `os/exec.CommandContext` with bounded timeout (02-01); result capture — exit code, stdout, stderr, duration (02-02); conservative exit-code-only pass/fail gate, no partial-success interpretation, no mutation (02-03). Include distinct cases for command-missing/not-executable vs. command-runs-nonzero, and timeout-is-hard-failure. Verify fail correctly.
    **Files:** `internal/verify/localvalidate_test.go` | **Duration:** ~0.5 day
 
-### 2.5 [ ] **[Configurable Local Validation - GREEN](plan/user-stories/02-configurable-local-validation.md)**
+### 2.5 [x] **[Configurable Local Validation - GREEN](plan/user-stories/02-configurable-local-validation.md)**
    Minimal `internal/verify/localvalidate.go` sibling to `syntaxguard.go`, one test at a time (T1), verify all (T2). `context.WithTimeout`; timeout is a hard failure, never retried; command sourced from operator config only. COMMIT.
    COMMIT: `git add internal/verify/localvalidate.go internal/verify/localvalidate_test.go && git commit -m "feat(verify): configurable local validation runner with conservative gate (green)"`
    **Files:** `internal/verify/localvalidate.go` | **Duration:** ~0.75 day
 
-### 2.5.A [ ] **[Configurable Local Validation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-configurable-local-validation.md)**
+### 2.5.A [x] **[Configurable Local Validation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-configurable-local-validation.md)**
    **Changed Files:** `internal/verify/localvalidate.go`, `internal/verify/localvalidate_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.5 — this is intentional. Do NOT review inline.
@@ -271,21 +271,18 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings + resolution:**
+   | Severity | File:Line | Issue | Resolution |
+   |----------|-----------|-------|-----------|
+   | MEDIUM | localvalidate.go:81 | Timeout SIGKILLs only the direct child; a command that spawns subprocesses (`sh -c "make ..."`) leaves grandchildren orphaned. WaitDelay unblocks Run but does not reap the group. | Deferred → TD-006. Core "never stalls indefinitely" guarantee already met by `cmd.WaitDelay`; only orphan reaping missing. |
+   | LOW | localvalidate.go:106 | `exec.ErrWaitDelay` / non-deadline `context.Canceled` fall through the ExitError guard into the StartError branch, polluting that class. | Deferred → TD-007. Fails closed; unreachable via the `--auto-fix` bounded-timeout path (deadline is caught as TimedOut first). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.6, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **No CRITICAL/HIGH — nothing to fix inline. MEDIUM/LOW deferred to tech-debt-captured.md. Adversarial review complete.**
 
-### 2.6 [ ] **[Configurable Local Validation - REFACTOR](plan/user-stories/02-configurable-local-validation.md)**
-   1. Fix CRITICAL/HIGH issues from 2.5.A (if any).
-   2. Improve quality, maintain green (T1), validate (T3).
-   3. COMMIT: `git commit -m "refactor(verify): address review + clean up validation runner"`
+### 2.6 [x] **[Configurable Local Validation - REFACTOR](plan/user-stories/02-configurable-local-validation.md)**
+   1. Fix CRITICAL/HIGH issues from 2.5.A (if any). — None found.
+   2. Improve quality, maintain green (T1), validate (T3). — Runner already clean; the timeout-stall robustness fix (`cmd.WaitDelay`) was folded into 2.5 GREEN when caught, so no separate refactor code change was warranted.
+   3. COMMIT — no code refactor; planning-doc deferrals (TD-006/TD-007) committed with the phase.
    **Duration:** ~0.5 day
 
 ### 2.7 [ ] **Phase 2 DoD (Stories 1 & 2)**
