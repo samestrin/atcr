@@ -107,3 +107,12 @@ func TestSignupLink_HandlesFragment(t *testing.T) {
 	m := &Manifest{SignupURL: "https://example.com/#section", Referral: "abc"}
 	assert.Equal(t, "https://example.com/?referral=abc#section", m.SignupLink())
 }
+
+func TestRegistryYAML_SkipsAgentsHeaderWhenRosterEmpty(t *testing.T) {
+	m := &Manifest{
+		Provider: Provider{Name: "synthetic", BaseURL: "https://api.synthetic.new/openai/v1", APIKeyEnv: "LLM_SYNTHETIC_API_KEY"},
+		Models:   []string{"m0"},
+	}
+	out := RegistryYAML(m, nil)
+	assert.NotContains(t, out, "agents:")
+}
