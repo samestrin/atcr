@@ -44,6 +44,7 @@ func addAutoFixFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("auto-fix", false,
 		"opt-in: after review, apply each finding's fix, validate locally, and open a GitHub PR only if validation passes; "+
 			"refuses without a validation command + apply target + GitHub token/repo (token needs contents:write and pull_requests:write). "+
+			"When --auto-fix succeeds, the --fail-on exit gate is bypassed because the intent is to remediate, not to fail CI. "+
 			"If branch/commit creation succeeds and a later step fails, the remote branch (and possibly commit) is left behind and must be deleted manually.")
 	cmd.Flags().String("repo", "", "owner/name target repository for --auto-fix (default: $GITHUB_REPOSITORY)")
 	cmd.Flags().String("token", "", "GitHub token with contents:write + pull_requests:write for --auto-fix (default: $GITHUB_TOKEN)")
