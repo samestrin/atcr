@@ -652,3 +652,241 @@ func TestCreateCommitRedactsTokenInError(t *testing.T) {
 	assert.NotContains(t, err.Error(), token, "a token echoed in an error body must not leak through a CreateCommit sub-call")
 	assert.Contains(t, err.Error(), "[redacted]")
 }
+
+// --- Story 5: Pull Request lifecycle (CreatePullRequest / findOpenPullRequest / UpdatePullRequest) ---
+
+func TestCreatePullRequest(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"number":42}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	num, err := c.CreatePullRequest(context.Background(), "o", "r", PullRequestRequest{
+		Head: "atcr-fix/x", Base: "main", Title: "atcr: auto-fix TD-042", Body: "fixes the thing",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 42, num, "the decoded PR number must be returned")
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/repos/o/r/pulls", gotPath)
+	assert.Equal(t, "atcr-fix/x", gotBody["head"])
+	assert.Equal(t, "main", gotBody["base"])
+	assert.Equal(t, "atcr: auto-fix TD-042", gotBody["title"])
+	assert.Equal(t, "fixes the thing", gotBody["body"])
+}
+
+func TestCreatePullRequest422Typed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"message":"A pull request already exists for o:atcr-fix/x"}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	_, err := c.CreatePullRequest(context.Background(), "o", "r", PullRequestRequest{Head: "h", Base: "main", Title: "t", Body: "b"})
+	require.Error(t, err)
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr, "a 422 (duplicate/invalid base) must be a typed *APIError, not a generic error")
+	assert.Equal(t, http.StatusUnprocessableEntity, apiErr.StatusCode)
+}
+
+func TestCreatePullRequestRedactsOutboundTitleAndBody(t *testing.T) {
+	const token = "ghp_SECRETTOKEN1234567890abcdef"
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"number":1}`))
+	}))
+	defer srv.Close()
+
+	// A PR title/body built from validation diagnostics happens to echo a token.
+	c := &Client{APIURL: srv.URL, Token: token, HTTPClient: srv.Client()}
+	_, err := c.CreatePullRequest(context.Background(), "o", "r", PullRequestRequest{
+		Head: "h", Base: "main",
+		Title: "atcr fix (leaked " + token + ")",
+		Body:  "validation stderr: authorization Bearer " + token,
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, gotBody["title"], token, "the outbound PR title must be redacted before it is sent to GitHub")
+	assert.NotContains(t, gotBody["body"], token, "the outbound PR body must be redacted before it is sent to GitHub")
+	assert.Contains(t, gotBody["title"].(string), "[redacted]")
+	assert.Contains(t, gotBody["body"].(string), "[redacted]")
+}
+
+func TestCreatePullRequestRetriesOn5xx(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"number":7}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	num, err := c.CreatePullRequest(context.Background(), "o", "r", PullRequestRequest{Head: "h", Base: "main", Title: "t", Body: "b"})
+	require.NoError(t, err)
+	assert.Equal(t, 7, num)
+	assert.GreaterOrEqual(t, attempts, 3, "PR creation must inherit postDo's 5xx retry")
+}
+
+func TestCreatePullRequestRedactsTokenInError(t *testing.T) {
+	const token = "ghp_SECRETTOKEN1234567890abcdef"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"bad credentials for ` + r.Header.Get("Authorization") + `"}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: token, HTTPClient: srv.Client()}
+	_, err := c.CreatePullRequest(context.Background(), "o", "r", PullRequestRequest{Head: "h", Base: "main", Title: "t", Body: "b"})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), token)
+	assert.Contains(t, err.Error(), "[redacted]")
+}
+
+func TestFindOpenPullRequestFound(t *testing.T) {
+	var gotHead, gotState string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHead = r.URL.Query().Get("head")
+		gotState = r.URL.Query().Get("state")
+		_, _ = w.Write([]byte(`[{"number":17}]`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	num, found, err := c.findOpenPullRequest(context.Background(), "o", "r", "atcr-fix/x")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, 17, num)
+	assert.Equal(t, "o:atcr-fix/x", gotHead, "existence check must query head=owner:branch")
+	assert.Equal(t, "open", gotState)
+}
+
+func TestFindOpenPullRequestNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	num, found, err := c.findOpenPullRequest(context.Background(), "o", "r", "atcr-fix/x")
+	require.NoError(t, err, "an empty result is found=false, not an error")
+	assert.False(t, found)
+	assert.Equal(t, 0, num)
+}
+
+func TestFindOpenPullRequestPicksLowestNumber(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// More than one open PR matches the same head (e.g. a human opened one manually).
+		_, _ = w.Write([]byte(`[{"number":20},{"number":8},{"number":15}]`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	num, found, err := c.findOpenPullRequest(context.Background(), "o", "r", "b")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, 8, num, "on multiple matches the lowest-numbered open PR is chosen deterministically")
+}
+
+func TestFindOpenPullRequestEscapesBranch(t *testing.T) {
+	var gotHead, gotRawQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHead = r.URL.Query().Get("head")
+		gotRawQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	_, _, err := c.findOpenPullRequest(context.Background(), "o", "r", "feature/a b&x")
+	require.NoError(t, err)
+	assert.Equal(t, "o:feature/a b&x", gotHead, "branch with special chars must round-trip via a properly escaped query")
+	assert.NotContains(t, gotRawQuery, "a b", "a raw space must not leak into the query string (must be escaped)")
+}
+
+func TestUpdatePullRequest(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		_, _ = w.Write([]byte(`{"number":17}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	err := c.UpdatePullRequest(context.Background(), "o", "r", 17, PullRequestRequest{
+		Head: "h", Base: "main", Title: "atcr: auto-fix TD-042 (updated)", Body: "refreshed",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, http.MethodPatch, gotMethod)
+	assert.Equal(t, "/repos/o/r/pulls/17", gotPath)
+	assert.Equal(t, "atcr: auto-fix TD-042 (updated)", gotBody["title"])
+	assert.Equal(t, "refreshed", gotBody["body"])
+}
+
+func TestUpdatePullRequestNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	err := c.UpdatePullRequest(context.Background(), "o", "r", 17, PullRequestRequest{Title: "t", Body: "b"})
+	require.Error(t, err)
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr, "a stale/closed PR number (404) must surface as a typed *APIError")
+	assert.Equal(t, http.StatusNotFound, apiErr.StatusCode)
+}
+
+func TestUpdatePullRequestRetriesOn429(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 2 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(`{"number":17}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	err := c.UpdatePullRequest(context.Background(), "o", "r", 17, PullRequestRequest{Title: "t", Body: "b"})
+	require.NoError(t, err, "the PR-update PATCH must retry a 429 identically to other calls")
+	assert.GreaterOrEqual(t, attempts, 2)
+}
+
+func TestUpdatePullRequestRedactsOutboundContent(t *testing.T) {
+	const token = "ghp_SECRETTOKEN1234567890abcdef"
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		_, _ = w.Write([]byte(`{"number":17}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: token, HTTPClient: srv.Client()}
+	err := c.UpdatePullRequest(context.Background(), "o", "r", 17, PullRequestRequest{
+		Title: "updated " + token, Body: "body " + token,
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, gotBody["title"], token, "an updated PR title must be redacted before it is sent")
+	assert.NotContains(t, gotBody["body"], token, "an updated PR body must be redacted before it is sent")
+}

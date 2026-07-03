@@ -261,6 +261,80 @@ func (c *Client) CreateCommit(ctx context.Context, owner, repo string, req Commi
 	return commit.SHA, nil
 }
 
+// PullRequestRequest is the caller-supplied content for opening or updating a PR.
+// Title and Body are run through redactSecrets before being sent because — unlike
+// the read-only check-run/comment endpoints — they can carry dynamic content
+// sourced from local validation diagnostics that could echo a credential.
+type PullRequestRequest struct {
+	Head  string
+	Base  string
+	Title string
+	Body  string
+}
+
+// CreatePullRequest opens a new PR via POST /repos/{owner}/{repo}/pulls and
+// returns the GitHub-assigned PR number. Title/Body are redacted on the way out.
+// A 422 (invalid base, or a duplicate-PR race) surfaces as a typed *APIError via
+// postDo so the caller can treat it as a non-fatal condition rather than a crash.
+func (c *Client) CreatePullRequest(ctx context.Context, owner, repo string, req PullRequestRequest) (int, error) {
+	body := map[string]any{
+		"head":  req.Head,
+		"base":  req.Base,
+		"title": c.redactSecrets(req.Title),
+		"body":  c.redactSecrets(req.Body),
+	}
+	var resp struct {
+		Number int `json:"number"`
+	}
+	if err := c.postDo(ctx, fmt.Sprintf("/repos/%s/%s/pulls", owner, repo), body, &resp); err != nil {
+		return 0, err
+	}
+	return resp.Number, nil
+}
+
+// UpdatePullRequest refreshes an existing PR's title/body via
+// PATCH /repos/{owner}/{repo}/pulls/{prNumber}, reusing the PATCH-capable sendDo.
+// Both title and body are always sent (redacted) from the caller-supplied req —
+// the client does no partial-field diffing. A 404 (PR closed/deleted between the
+// existence check and this call) surfaces as a typed *APIError.
+func (c *Client) UpdatePullRequest(ctx context.Context, owner, repo string, prNumber int, req PullRequestRequest) error {
+	body := map[string]any{
+		"title": c.redactSecrets(req.Title),
+		"body":  c.redactSecrets(req.Body),
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, prNumber)
+	return c.sendDo(ctx, http.MethodPatch, path, body, nil)
+}
+
+// findOpenPullRequest returns the number of the lowest-numbered OPEN pull request
+// whose head is owner:branch, or found=false when none exist (an empty result is
+// not an error). It uses GET /repos/{owner}/{repo}/pulls?head={owner}:{branch}&
+// state=open via get, inheriting its retry/back-off; the branch is query-escaped.
+// Multiple matches (e.g. a manually opened PR) resolve deterministically to the
+// lowest number so a re-run refreshes a stable PR rather than opening a third.
+func (c *Client) findOpenPullRequest(ctx context.Context, owner, repo, branch string) (int, bool, error) {
+	q := url.Values{}
+	q.Set("head", owner+":"+branch)
+	q.Set("state", "open")
+	path := fmt.Sprintf("/repos/%s/%s/pulls?%s", owner, repo, q.Encode())
+	var prs []struct {
+		Number int `json:"number"`
+	}
+	if err := c.get(ctx, path, &prs); err != nil {
+		return 0, false, err
+	}
+	if len(prs) == 0 {
+		return 0, false, nil
+	}
+	lowest := prs[0].Number
+	for _, pr := range prs[1:] {
+		if pr.Number < lowest {
+			lowest = pr.Number
+		}
+	}
+	return lowest, true, nil
+}
+
 // sleepCtx waits for d to elapse or for ctx to be cancelled, whichever happens
 // first. It returns ctx.Err() if the context is cancelled during the wait so
 // that retry back-off is interruptible by cancellation or shutdown.
