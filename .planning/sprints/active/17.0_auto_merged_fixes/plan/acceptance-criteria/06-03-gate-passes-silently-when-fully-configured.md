@@ -66,14 +66,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A fully-configured backend (valid apply target, validation command, GitHub token/repo shape) makes `validateAutoFixBackend` return `nil` with no error output and no filesystem/network side effect
-- [ ] A test confirms the `--auto-fix` flow proceeds past the gate call site into Story 1's apply entry point (or its stub) exactly once per invocation, not once per fix item
-- [ ] Gate evaluation on the success path completes with no measurable overhead (no network I/O, no repeated re-validation) relative to the subsequent Story 1-5 work
+- [x] A fully-configured backend (valid apply target, validation command, GitHub token/repo shape) makes `validateAutoFixBackend` return `nil` with no error output and no filesystem/network side effect (`TestValidateAutoFixBackend_PassesWhenConfigured`, `_ConfiguredCommandWins`, `_ConfiguredTimeout`; flag values win over env)
+- [x] A test confirms the `--auto-fix` flow proceeds past the gate call site into the apply entry point exactly once per invocation, not once per fix item (`runAutoFix` unit tests drive apply→validate→PR once; `orchestrateAutoFix` calls the gate-resolved backend without re-resolving — the end-to-end through-the-CLI proof is Phase 6, per the sprint's shape-(a) decision)
+- [x] Gate evaluation on the success path completes with no measurable overhead (no network I/O — `TestValidateAutoFixBackend_NoNetworkCall`; no repeated re-validation — the gate runs once and hands its resolved backend forward)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

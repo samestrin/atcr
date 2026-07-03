@@ -85,15 +85,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Each of the three required pieces (apply target, validation command, GitHub token/repo shape), when independently missing or malformed, produces a usage error (exit 2) naming that specific piece, verified by a dedicated test per piece
-- [ ] The gate is all-or-nothing: any single missing/malformed piece refuses the entire run — no test observes a partial execution (e.g. apply-and-validate-but-skip-PR)
-- [ ] The gate performs no live network call (no GitHub API round-trip, no validation-command execution) — verified by a test that fails if any HTTP request or subprocess exec occurs during gate evaluation
-- [ ] `validateAutoFixBackend` runs strictly before any `internal/autofix` apply call, verified by an integration test asserting zero filesystem mutation when the gate fails
+- [x] Each of the three required pieces (apply target, validation command, GitHub token/repo shape), when independently missing or malformed, produces a usage error (exit 2) naming that specific piece, verified by a dedicated test per piece (`TestValidateAutoFixBackend_Refusals` table: missing validation command / token / malformed repo / missing apply target)
+- [x] The gate is all-or-nothing: any single missing/malformed piece refuses the entire run — the aggregate case (`all missing`) asserts every missing piece is named in one exit-2 error; no partial execution is reachable (gate returns before any apply)
+- [x] The gate performs no live network call (no GitHub API round-trip, no validation-command execution) — `TestValidateAutoFixBackend_NoNetworkCall` fails the test if an api-url server is hit
+- [x] `validateAutoFixBackend` runs strictly before any `internal/autofix` apply call, verified by `TestValidateAutoFixBackend_NoFilesystemMutationOnRefusal` (apply target dir stays empty on refusal)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

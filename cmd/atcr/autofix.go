@@ -351,6 +351,13 @@ func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, r
 // suggestion must not abort the whole auto-fix run.
 func selectAutoFixEntries(findings []reconcile.JSONFinding, threshold string) ([]payload.FileEntry, error) {
 	var entries []payload.FileEntry
+	// One entry per target path per run: two findings whose fixes touch the same
+	// file would otherwise produce two entries for one path, and ApplyPatch would
+	// re-run BackupToDotBak on the already-patched file — clobbering the original
+	// backup so RevertPatch could no longer restore the pre-patch state. Keeping
+	// only the first fix per path preserves the revert-safety invariant (one
+	// backup per file). A second fix for the same file is left for a later run.
+	seen := make(map[string]bool)
 	for _, f := range findings {
 		if strings.TrimSpace(f.Fix) == "" {
 			continue
@@ -362,7 +369,13 @@ func selectAutoFixEntries(findings []reconcile.JSONFinding, threshold string) ([
 		if err != nil {
 			continue // an unparseable fix is skipped, not fatal
 		}
-		entries = append(entries, fes...)
+		for _, e := range fes {
+			if seen[e.Path] {
+				continue // already have a fix for this file this run
+			}
+			seen[e.Path] = true
+			entries = append(entries, e)
+		}
 	}
 	return entries, nil
 }

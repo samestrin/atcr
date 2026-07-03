@@ -422,3 +422,17 @@ func TestSelectAutoFixEntries_FiltersByThresholdAndFix(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, all, 2)
 }
+
+// TestSelectAutoFixEntries_DedupesByPath: two findings whose fixes touch the same
+// file yield a single entry for that path — a double backup would clobber the
+// original and break RevertPatch (gate 5.5 MEDIUM regression guard).
+func TestSelectAutoFixEntries_DedupesByPath(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "same.txt", Line: 1, Fix: diffFor("same.txt")},
+		{Severity: "HIGH", File: "same.txt", Line: 9, Fix: diffFor("same.txt")},
+	}
+	entries, err := selectAutoFixEntries(findings, "")
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "one entry per target path per run")
+	require.Equal(t, "same.txt", entries[0].Path)
+}

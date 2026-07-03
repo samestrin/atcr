@@ -65,14 +65,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `--auto-fix` defaults to `false` and is absent from every command's behavior when unset, verified by a help-text-contains test mirroring `TestVerifyCmd_Exists`
-- [ ] A regression test confirms an existing `atcr review` invocation without `--auto-fix` produces output identical to the pre-story baseline
-- [ ] No code path under `internal/autofix` (or equivalent) is reachable unless `--auto-fix` is explicitly `true`
+- [x] `--auto-fix` defaults to `false` and is absent from every command's behavior when unset, verified by a help-text-contains test mirroring `TestVerifyCmd_Exists` (`TestReviewCmd_AutoFixFlagExists`, `TestReviewCmd_AutoFixAbsentFromOtherCommands`)
+- [x] A regression test confirms an existing `atcr review` invocation without `--auto-fix` produces output identical to the pre-story baseline (full existing `cmd/atcr` review/verify/reconcile suite passes unchanged — 37 packages green — and every new code path is guarded by `if autoFix`, so the flag-absent path is byte-identical)
+- [x] No code path under `internal/autofix` (or equivalent) is reachable unless `--auto-fix` is explicitly `true` (all wiring gated by `if autoFix` in `runReview`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

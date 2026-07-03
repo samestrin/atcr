@@ -94,3 +94,45 @@ Deferred MEDIUM/LOW findings surfaced during `/execute-sprint`. Read by
 **Issue:** `RevertPatch` is exported and trusts every path in the `BackupMap` it is handed, calling `copyPathFn`/`removeFn` with no independent containment re-check. Its safety depends entirely on the upstream invariant that the map was produced by `ApplyPatch` (whose `containedPath` validates every target stays inside root). A hand-built or corrupted map with a target/backup outside the working-tree root would copy or delete outside it.
 **Why accepted:** In the real flow the map is always apply-produced and already `containedPath`-validated; this is defense-in-depth, not a reachable bug. The write-side already carries the belt-and-suspenders re-check (`apply.go` `containedPath`). LOW.
 **Fix in:** A later pass — either re-assert `contains(root, target)` at the revert boundary (mirroring apply's defense-in-depth, which requires threading `root` into `RevertPatch`), or document `RevertPatch`'s "apply-produced map only" precondition explicitly on the exported signature.
+
+## TD-014 — `--auto-fix` gate does not shape-check `--api-url` (LOW)
+**Origin:** Phase 5, task 5.2.A adversarial review, 2026-07-03
+**File:** cmd/atcr/autofix.go
+**Issue:** `validateAutoFixBackend` resolves `--api-url`/`GITHUB_API_URL` into the backend but never shape-checks it; validation happens lazily in `ghaction.Client.baseURL()` at the first HTTP call. A malformed or insecure (`http://`) api-url therefore passes the all-or-nothing gate, and the run proceeds to apply the patch, run validation, and clean up backups, failing only at `CreateBranch`. No GitHub mutation occurs (the URL parse fails before any request), but it violates the gate's stated "refuse before any file is touched" contract and leaves the tree patched-but-validated.
+**Why accepted:** Fails closed — no remote mutation is possible on a bad url, and the applied content already passed local validation, so it is a correct (if surprising) tree state, not data loss. The default/most-CI path leaves api-url empty (→ api.github.com), so the malformed-url case is not reachable in the common flow. Adding a url pre-parse to the gate is a small hardening, not a correctness fix.
+**Fix in:** A later pass — reuse ghaction's `baseURL`-style parse (or export it) inside `validateAutoFixBackend` and add a malformed/insecure api-url to the `missing` aggregation, so a bad value is a fail-closed exit-2 refusal before any apply.
+
+## TD-015 — `--auto-fix` live adapter always mints a unique branch (create-only) (LOW)
+**Origin:** Phase 5, task 5.2.A adversarial review, 2026-07-03
+**File:** cmd/atcr/autofix.go orchestrateAutoFix
+**Issue:** `orchestrateAutoFix` names the branch `atcr/auto-fix/<UTC-timestamp>`, unique per run, so `FindOpenPullRequest`/`UpdatePullRequest` in `runAutoFix` never match in production — the create-vs-update path (AC 05-02) is implemented and unit-tested but unreachable via the live adapter, and each re-run opens a fresh PR + branch rather than updating a stable one.
+**Why accepted:** Create-per-run is acceptable MVP behavior (each review run yields its own fix PR) and sidesteps the 422-on-existing-branch handling a stable branch name would require. The update path is genuinely exercised by `runAutoFix`'s unit tests and Phase 6's injected-entry integration, so the code is not dead — only the live adapter always creates.
+**Fix in:** A later pass — if one-stable-PR-per-target is desired, derive a deterministic branch name (e.g. keyed to the review target/base) and handle `CreateBranch`'s 422 "reference already exists" by advancing the existing ref, so re-runs converge on a single updating PR; otherwise document orchestrate as intentionally create-only.
+
+## TD-016 — Auto-fix scope silently coupled to the --fail-on CI threshold (MEDIUM)
+**Origin:** Phase 5, task 5.5 gate review, 2026-07-03
+**File:** cmd/atcr/autofix.go selectAutoFixEntries
+**Issue:** `orchestrateAutoFix` passes the resolved `--fail-on` threshold to `selectAutoFixEntries`, which drops every finding below it. That threshold comes from `resolveGateThreshold` (flag > project `fail_on` > registry), and the `atcr init` template defaults `fail_on: HIGH` — so on a stock-init project `atcr review --auto-fix` silently fixes only HIGH+ findings and prints "no reconciled finding carried an applicable fix; nothing to apply" for a MEDIUM-only run. No Story-6 AC specifies this coupling and the `--auto-fix` help never mentions it.
+**Why accepted:** Matches the user-approved Phase-5 selection policy (Clarification 2: "--fail-on set → findings at/above threshold; absent → all"), and is fail-safe (fewer fixes, never more). It is a discoverability/UX gap, not a correctness bug. Deferred to keep Phase 5 to the gate scope.
+**Fix in:** A later pass — either decouple auto-fix scope from the CI gate (a dedicated `auto_fix.min_severity`, defaulting to "all-with-a-fix"), or document the coupling in the `--auto-fix` help and change the empty-selection message to distinguish "all fixes below the --fail-on threshold" from "no findings carried a fix".
+
+## TD-017 — auto_fix config keys absent from the `atcr init` template (MEDIUM)
+**Origin:** Phase 5, task 5.5 gate review, 2026-07-03
+**File:** internal/registry (DefaultProjectConfigYAML)
+**Issue:** The new `auto_fix:` keys (`apply_target` / `validate_command` / `validate_timeout`) are documented only via struct doc-comments and `--auto-fix` flag help; the `atcr init` project-config template emits no commented `auto_fix:` stanza, and there is no README/docs mention. An operator enabling `--auto-fix` has no in-repo template to copy.
+**Why accepted:** The keys are all optional with working defaults (apply target = repo root; Go build default; ~2 min timeout), so `--auto-fix` is usable without the block; this is a discoverability gap, not a functional one. Deferred per the gate's MEDIUM→TD protocol.
+**Fix in:** A later pass — add a commented `auto_fix:` stanza to `DefaultProjectConfigYAML` (mirroring the `# max_parallel:` / `# cache_max_bytes:` comment style) and document the keys alongside the flag.
+
+## TD-018 — `--auto-fix` bypasses the `--fail-on` CI exit gate (LOW)
+**Origin:** Phase 5, task 5.5 gate review, 2026-07-03
+**File:** cmd/atcr/review.go (the terminal `if autoFix { return orchestrateAutoFix(...) }`)
+**Issue:** The auto-fix terminal return sits before the `--fail-on` gate block, so `atcr review --auto-fix --fail-on HIGH` returns exit 0 even when unfixable HIGH findings (e.g. findings carrying no Fix) survive. Deliberate — under `--auto-fix` the intent is to remediate, not to fail CI — but not stated in the flag help and surprising in a CI-gate context.
+**Why accepted:** Intentional design (documented inline in review.go). LOW.
+**Fix in:** A later pass — document in the `--auto-fix` help that it supersedes the `--fail-on` exit gate, or preserve the gate for findings that had no applicable fix.
+
+## TD-019 — Gate stores a relative applyTarget when repoRoot=="." (LOW)
+**Origin:** Phase 5, task 5.5 gate review, 2026-07-03
+**File:** cmd/atcr/autofix.go validateAutoFixBackend
+**Issue:** `autoFixBackend.applyTarget` is documented as an absolute path, but `runReview` calls the gate with `repoRoot="."`, so a default/relative `apply_target` resolves to a relative `"."` stored in the field. It works only because CWD == repo root at call time; a latent inconsistency if the gate is ever reused with `repoRoot != CWD`.
+**Why accepted:** Correct in the only current call path (CWD is always the repo root for `atcr review`). LOW.
+**Fix in:** A later pass — `filepath.Abs` the resolved `repoRoot`/apply target in the gate so the field honors its documented absolute contract regardless of caller CWD.
