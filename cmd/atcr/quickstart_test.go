@@ -322,3 +322,25 @@ func TestQuickstart_ReadLine_SurfacesScannerError(t *testing.T) {
 	}))
 	assert.Contains(t, errOut.String(), "injected read error")
 }
+
+func TestQuickstart_ResolveProfilePath_ExpandsBareTilde(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	assert.Equal(t, home, resolveProfilePath("~"))
+	assert.Equal(t, filepath.Join(home, "foo"), resolveProfilePath("~/foo"))
+}
+
+func TestQuickstart_ResolveProfilePath_PropagatesHomeError(t *testing.T) {
+	t.Setenv("HOME", "")
+	assert.Empty(t, resolveProfilePath("~/foo"), "resolveProfilePath should fail when home dir cannot be determined")
+}
+
+func TestQuickstart_AppendExportAndGuardResolveSamePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	profile := "~/.atcr-test-profile"
+	require.NoError(t, appendExport(profile, "TEST_KEY", "secret"))
+	expected := resolveProfilePath(profile)
+	assert.FileExists(t, expected)
+	assert.Equal(t, filepath.Join(home, ".atcr-test-profile"), expected)
+}
