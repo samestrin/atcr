@@ -37,6 +37,11 @@ type BackupMap map[string]string
 // (AC 01-01 Error Scenario 5) deterministically. In production it is os.Remove.
 var removeFn = os.Remove
 
+// writeFileAtomicFn is the atomic-write primitive ApplyPatch uses for modify/create
+// entries, indirected through a package var so a test can drive the write-failure
+// branch (TD-006) deterministically. In production it is atomicfs.WriteFileAtomic.
+var writeFileAtomicFn = atomicfs.WriteFileAtomic
+
 // ApplyPatch applies each entry's per-file unified-diff Body to its target path
 // under root, using go-gitdiff for hunk matching and atomicfs for crash-safe
 // backup-then-atomic-write. Entries are processed independently: one entry's
@@ -150,7 +155,7 @@ func applyOne(root string, e payload.FileEntry) (absTarget, backupPath string, e
 		return "", "", fmt.Errorf("autofix: backing up %q before apply: %w", e.Path, berr)
 	}
 
-	if werr := atomicfs.WriteFileAtomic(abs, out.Bytes()); werr != nil {
+	if werr := writeFileAtomicFn(abs, out.Bytes()); werr != nil {
 		return "", "", fmt.Errorf("autofix: writing %q: %w", e.Path, werr)
 	}
 	return abs, bak, nil

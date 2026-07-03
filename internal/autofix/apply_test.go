@@ -332,6 +332,24 @@ func TestApplyPatch_DeleteRemovalFailsIsolated(t *testing.T) {
 	assert.Equal(t, "x\ny-mod\nz\n", readFile(t, filepath.Join(root, "bar.txt")))
 	assert.Contains(t, bm, filepath.Join(root, "bar.txt"))
 	assert.NotContains(t, bm, filepath.Join(root, "del.txt"), "failed delete must not be recorded as success")
+	assert.NoFileExists(t, filepath.Join(root, "del.txt.bak"), "failed delete must not leave a stranded backup")
+}
+
+// A write failure after backup must clean up the staged .bak so it is not left
+// untracked in the working tree (TD-006).
+func TestApplyPatch_WriteFailureCleansUpBackup(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "foo.txt"), "line1\nline2\nline3\n")
+
+	orig := writeFileAtomicFn
+	writeFileAtomicFn = func(path string, data []byte) error { return os.ErrPermission }
+	t.Cleanup(func() { writeFileAtomicFn = orig })
+
+	bm, err := ApplyPatch(root, []payload.FileEntry{fe("foo.txt", fixtureModify)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "foo.txt")
+	assert.Empty(t, bm, "failed write must not be recorded as a success")
+	assert.NoFileExists(t, filepath.Join(root, "foo.txt.bak"), "failed write must not leave a stranded backup")
 }
 
 // --- AC 01-04: per-file error isolation & aggregation --------------------
