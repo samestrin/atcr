@@ -21,10 +21,15 @@ import (
 
 // BackupMap records, for each successfully-applied entry, the mapping from the
 // absolute target path to the absolute backup path atomicfs.BackupToDotBak
-// produced for it. A newly-created file (no prior content to back up) maps to an
-// empty backup path; Story 3's Revert interprets an empty value as "the file was
-// created by this run, so revert by removing it". Absolute paths are stored so
-// Revert is self-contained and needs no working-tree root of its own.
+// produced for it. A non-empty value points at a .bak holding the pre-patch bytes
+// (a modify or delete of an existing regular file). An empty value means the
+// pre-patch state was "absent" — a file created by this run, or a delete whose
+// target was already gone — so Story 3's Revert routes it to removal rather than a
+// copy-back. This sentinel is kept unambiguous by refuseSymlinkLeaf, which rejects
+// an in-tree symlink leaf target at the write boundary (atomicfs.BackupToDotBak
+// would otherwise Lstat-skip it and also yield an empty value; see TD-005).
+// Absolute paths are stored so Revert is self-contained and needs no working-tree
+// root of its own.
 type BackupMap map[string]string
 
 // removeFn is the file-removal primitive ApplyPatch uses for deletion entries,
@@ -77,6 +82,9 @@ func applyOne(root string, e payload.FileEntry) (absTarget, backupPath string, e
 	abs, err := containedPath(root, e.Path)
 	if err != nil {
 		return "", "", err
+	}
+	if serr := refuseSymlinkLeaf(abs, e.Path); serr != nil {
+		return "", "", serr
 	}
 
 	files, _, perr := gitdiff.Parse(strings.NewReader(e.Body))
@@ -166,6 +174,26 @@ func containedPath(root, p string) (string, error) {
 		}
 	}
 	return abs, nil
+}
+
+// refuseSymlinkLeaf rejects an entry whose target IS an existing symlink. Backing
+// up a symlink leaf is a documented no-op in atomicfs.BackupToDotBak (it Lstat-
+// skips symlinks and returns ("", nil)), so applying a modify/delete through one
+// would replace or unlink the link while recording an empty BackupMap value —
+// indistinguishable from a freshly-created file, which Revert deletes rather than
+// restores. Refusing it here keeps the empty-backup sentinel unambiguous
+// ("pre-patch state was absent") so Revert's created-vs-restore routing is sound
+// (TD-005). A non-symlink or absent target (Lstat error) passes; the symlinked
+// directory *component* case is handled separately by containedPath.
+func refuseSymlinkLeaf(abs, p string) error {
+	info, lerr := os.Lstat(abs)
+	if lerr != nil {
+		return nil // absent (create) or unstattable — nothing to guard here
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("autofix: refusing to patch %q: target is a symlink", p)
+	}
+	return nil
 }
 
 // contains reports whether target is root itself or lies within it, by lexical
