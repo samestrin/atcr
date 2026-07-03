@@ -72,6 +72,19 @@ func (m *Manifest) validate() error {
 	if _, err := url.Parse(m.SignupURL); err != nil {
 		return fmt.Errorf("synthetic manifest: signup_url is invalid: %w", err)
 	}
+	// Provider.Name, BaseURL, and APIKeyEnv are emitted verbatim into
+	// registry.yaml (RegistryYAML lines ~121-123). A control character — a newline
+	// especially — could forge new YAML keys/agents, a strictly worse injection
+	// than the model-id case guarded below. Apply the same scan symmetrically.
+	for _, f := range []struct{ name, value string }{
+		{"provider.name", m.Provider.Name},
+		{"provider.base_url", m.Provider.BaseURL},
+		{"provider.api_key_env", m.Provider.APIKeyEnv},
+	} {
+		if strings.IndexFunc(f.value, func(r rune) bool { return unicode.IsControl(r) }) >= 0 {
+			return fmt.Errorf("synthetic manifest: %s contains a control character", f.name)
+		}
+	}
 	for i, model := range m.Models {
 		if strings.TrimSpace(model) == "" {
 			return fmt.Errorf("synthetic manifest: models[%d] is empty", i)
