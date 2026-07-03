@@ -42,6 +42,11 @@ func WorkflowYAML(m *Manifest) string {
 	b.WriteString("      - name: Review\n")
 	b.WriteString("        env:\n")
 	fmt.Fprintf(&b, "          %s: ${{ secrets.%s }}\n", env, env)
-	b.WriteString("        run: atcr review --base \"origin/${{ github.base_ref }}\"\n")
+	// Pass the base ref through an env var rather than inlining ${{ }} into the
+	// run: shell line — GitHub hardening guidance warns that expressions are
+	// substituted before the shell runs, so a branch name with shell
+	// metacharacters could break or inject. The script reads the shell var.
+	b.WriteString("          BASE_REF: ${{ github.base_ref }}\n")
+	b.WriteString("        run: atcr review --base \"origin/${BASE_REF}\"\n")
 	return b.String()
 }
