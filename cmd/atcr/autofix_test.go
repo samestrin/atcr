@@ -464,7 +464,7 @@ func TestRunAutoFix_RemoteLeftoverNotice(t *testing.T) {
 		{
 			name:      "CreateCommit fails",
 			gh:        &fakeGitHub{commitErr: errors.New("boom")},
-			wantCalls: 1, // branch created, commit attempted
+			wantCalls: 2, // branch created, commit attempted and failed
 		},
 		{
 			name:      "FindOpenPullRequest fails",
@@ -514,13 +514,13 @@ func TestSelectAutoFixEntries_FiltersByThresholdAndFix(t *testing.T) {
 		{Severity: "LOW", File: "b.txt", Line: 1, Fix: diffFor("b.txt")}, // below threshold
 		{Severity: "CRITICAL", File: "c.txt", Line: 1, Fix: ""},          // no fix
 	}
-	entries, err := selectAutoFixEntries(findings, "HIGH")
+	entries, _, err := selectAutoFixEntries(findings, "HIGH")
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, "a.txt", entries[0].Path)
 
 	// No threshold -> every finding carrying a Fix is included.
-	all, err := selectAutoFixEntries(findings, "")
+	all, _, err := selectAutoFixEntries(findings, "")
 	require.NoError(t, err)
 	require.Len(t, all, 2)
 }
@@ -533,8 +533,52 @@ func TestSelectAutoFixEntries_DedupesByPath(t *testing.T) {
 		{Severity: "HIGH", File: "same.txt", Line: 1, Fix: diffFor("same.txt")},
 		{Severity: "HIGH", File: "same.txt", Line: 9, Fix: diffFor("same.txt")},
 	}
-	entries, err := selectAutoFixEntries(findings, "")
+	entries, _, err := selectAutoFixEntries(findings, "")
 	require.NoError(t, err)
 	require.Len(t, entries, 1, "one entry per target path per run")
 	require.Equal(t, "same.txt", entries[0].Path)
+}
+
+// TestSelectAutoFixEntries_CountsSkippedDuplicates: when a second fix for the
+// same path is dropped, the caller receives a count so the operator can be told.
+func TestSelectAutoFixEntries_CountsSkippedDuplicates(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "same.txt", Line: 1, Fix: diffFor("same.txt")},
+		{Severity: "HIGH", File: "same.txt", Line: 9, Fix: diffFor("same.txt")},
+	}
+	entries, skipped, err := selectAutoFixEntries(findings, "")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, 1, skipped, "second fix for the same path must be counted as skipped")
+}
+
+// TestOrchestrateAutoFix_SkippedDuplicatesNotice: when duplicate-path fixes are
+// dropped, orchestrateAutoFix surfaces the count before proceeding.
+func TestOrchestrateAutoFix_SkippedDuplicatesNotice(t *testing.T) {
+	isolate(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	rel := "same.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	// Stub HEAD resolution so the test does not need a real git repo.
+	oldResolve := resolveHeadSHAFn
+	resolveHeadSHAFn = func(context.Context, string) (string, error) { return "deadbeef", nil }
+	t.Cleanup(func() { resolveHeadSHAFn = oldResolve })
+
+	id := verifyFixture(t, "dup", []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "same.txt", Line: 1, Fix: diffFor("same.txt")},
+		{Severity: "HIGH", File: "same.txt", Line: 9, Fix: diffFor("same.txt")},
+	})
+
+	var buf strings.Builder
+	be := autoFixBackend{
+		applyTarget:     root,
+		validateArgv:    []string{"true"},
+		validateTimeout: 5 * time.Second,
+		owner:           "o", repo: "r", token: "tok",
+	}
+	err := orchestrateAutoFix(context.Background(), &buf, be, filepath.Join(".atcr", "reviews", id), "", "main")
+	require.Error(t, err) // the live GitHub client fails without network/auth
+	require.Contains(t, buf.String(), "skipped", "output must tell the operator that duplicate-path fixes were skipped")
 }

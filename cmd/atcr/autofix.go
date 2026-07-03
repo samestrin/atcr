@@ -327,9 +327,12 @@ func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, r
 	if err != nil {
 		return fmt.Errorf("auto-fix: reading reconciled findings: %w", err)
 	}
-	entries, err := selectAutoFixEntries(findings, threshold)
+	entries, skipped, err := selectAutoFixEntries(findings, threshold)
 	if err != nil {
 		return fmt.Errorf("auto-fix: selecting fixes: %w", err)
+	}
+	if skipped > 0 {
+		_, _ = fmt.Fprintf(out, "auto-fix: %d additional fix(es) for already-patched files were skipped this run\n", skipped)
 	}
 	if len(entries) == 0 {
 		_, _ = fmt.Fprintln(out, "auto-fix: no reconciled finding carried an applicable fix; nothing to apply.")
@@ -358,9 +361,12 @@ func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, r
 // FileEntry values via payload.BuildEntriesFromDiff. When threshold is set, only
 // findings at or above it are included; otherwise every finding with a Fix is.
 // A finding whose Fix is not a parseable diff is skipped, not fatal — one bad
-// suggestion must not abort the whole auto-fix run.
-func selectAutoFixEntries(findings []reconcile.JSONFinding, threshold string) ([]payload.FileEntry, error) {
+// suggestion must not abort the whole auto-fix run. The returned skipped count is
+// the number of duplicate-path fixes dropped after the first entry for that path,
+// surfaced in orchestrateAutoFix so the operator knows a second fix was deferred.
+func selectAutoFixEntries(findings []reconcile.JSONFinding, threshold string) ([]payload.FileEntry, int, error) {
 	var entries []payload.FileEntry
+	skipped := 0
 	// One entry per target path per run: two findings whose fixes touch the same
 	// file would otherwise produce two entries for one path, and ApplyPatch would
 	// re-run BackupToDotBak on the already-patched file — clobbering the original
@@ -381,11 +387,12 @@ func selectAutoFixEntries(findings []reconcile.JSONFinding, threshold string) ([
 		}
 		for _, e := range fes {
 			if seen[e.Path] {
+				skipped++
 				continue // already have a fix for this file this run
 			}
 			seen[e.Path] = true
 			entries = append(entries, e)
 		}
 	}
-	return entries, nil
+	return entries, skipped, nil
 }
