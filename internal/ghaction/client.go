@@ -3,6 +3,7 @@ package ghaction
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -127,6 +128,130 @@ func (c *Client) CreateCheckRun(ctx context.Context, owner, repo string, req Che
 	return err
 }
 
+// CreateBranch creates a new Git ref refs/heads/<branch> pointing at sha via
+// POST /repos/{owner}/{repo}/git/refs. The branch is normalized to a full
+// refs/heads/ ref inside the method, so callers pass a bare branch name. A ref
+// that already exists surfaces as GitHub's 422 *APIError (StatusCode 422,
+// "Reference already exists") unchanged, so a caller can errors.As it and decide
+// whether to retry with a suffixed name — the collision policy is the caller's,
+// not this wrapper's.
+func (c *Client) CreateBranch(ctx context.Context, owner, repo, branch, sha string) error {
+	ref := branch
+	if !strings.HasPrefix(ref, "refs/heads/") {
+		ref = "refs/heads/" + ref
+	}
+	path := fmt.Sprintf("/repos/%s/%s/git/refs", owner, repo)
+	return c.postDo(ctx, path, map[string]any{"ref": ref, "sha": sha}, nil)
+}
+
+// CommitFile is one path in a CommitRequest. Content is the new file bytes for a
+// modify/create; Deleted marks the path for removal (expressed as a null-SHA tree
+// entry, with no blob created).
+type CommitFile struct {
+	Path    string
+	Content string
+	Deleted bool
+}
+
+// CommitRequest describes a single atomic commit to create on a branch. ParentSHA
+// is the PARENT COMMIT SHA (e.g. the base-branch HEAD), not a tree SHA —
+// CreateCommit resolves the base tree from it.
+type CommitRequest struct {
+	Branch    string
+	Message   string
+	ParentSHA string
+	Files     []CommitFile
+}
+
+// CreateCommit builds one atomic commit from req.Files and advances the branch
+// ref to it, following GitHub's Git Data API sequence:
+//
+//	GET   /git/commits/{ParentSHA}   → resolve the parent's tree SHA (base_tree)
+//	POST  /git/blobs                 → one blob per non-deleted file
+//	POST  /git/trees                 → a tree over base_tree, one entry per file
+//	POST  /git/commits               → a commit on the new tree, parented at ParentSHA
+//	PATCH /git/refs/heads/{Branch}   → advance the branch ref to the new commit
+//
+// A deleted file creates no blob and becomes a null-SHA tree entry. Any step's
+// failure short-circuits the rest — in particular the ref is never advanced after
+// a failed commit — and the returned error names the failed step. The returned
+// string is the new commit SHA (from the commit-creation response, not the ref
+// update). An empty Files set is rejected before any HTTP call. All calls route
+// through postDo / its PATCH sibling, inheriting the existing retry/back-off/
+// redaction — no bespoke http.Client.Do anywhere.
+func (c *Client) CreateCommit(ctx context.Context, owner, repo string, req CommitRequest) (string, error) {
+	if len(req.Files) == 0 {
+		return "", fmt.Errorf("creating commit: no files to commit")
+	}
+	repoPath := func(suffix string) string {
+		return fmt.Sprintf("/repos/%s/%s/%s", owner, repo, suffix)
+	}
+
+	// 1. Resolve the parent commit's tree SHA (the tree GitHub calls base_tree).
+	var parent struct {
+		Tree struct {
+			SHA string `json:"sha"`
+		} `json:"tree"`
+	}
+	if err := c.get(ctx, repoPath("git/commits/"+req.ParentSHA), &parent); err != nil {
+		return "", fmt.Errorf("reading parent commit %s: %w", req.ParentSHA, err)
+	}
+
+	// 2. Create a blob per non-deleted file and assemble the tree entries.
+	treeEntries := make([]map[string]any, 0, len(req.Files))
+	for _, f := range req.Files {
+		entry := map[string]any{"path": f.Path, "mode": "100644", "type": "blob"}
+		if f.Deleted {
+			entry["sha"] = nil // an explicit null sha removes the path from the tree
+			treeEntries = append(treeEntries, entry)
+			continue
+		}
+		var blob struct {
+			SHA string `json:"sha"`
+		}
+		blobBody := map[string]any{
+			"content":  base64.StdEncoding.EncodeToString([]byte(f.Content)),
+			"encoding": "base64",
+		}
+		if err := c.postDo(ctx, repoPath("git/blobs"), blobBody, &blob); err != nil {
+			return "", fmt.Errorf("creating blob for path %q: %w", f.Path, err)
+		}
+		entry["sha"] = blob.SHA
+		treeEntries = append(treeEntries, entry)
+	}
+
+	// 3. Create the tree over the resolved base tree.
+	var tree struct {
+		SHA string `json:"sha"`
+	}
+	treeBody := map[string]any{"base_tree": parent.Tree.SHA, "tree": treeEntries}
+	if err := c.postDo(ctx, repoPath("git/trees"), treeBody, &tree); err != nil {
+		return "", fmt.Errorf("creating tree: %w", err)
+	}
+
+	// 4. Create the commit on the new tree, parented at ParentSHA.
+	var commit struct {
+		SHA string `json:"sha"`
+	}
+	commitBody := map[string]any{
+		"message": req.Message,
+		"tree":    tree.SHA,
+		"parents": []string{req.ParentSHA},
+	}
+	if err := c.postDo(ctx, repoPath("git/commits"), commitBody, &commit); err != nil {
+		return "", fmt.Errorf("creating commit: %w", err)
+	}
+
+	// 5. Advance the branch ref to the new commit. The commit object exists on
+	// GitHub even if this fails, so the error makes the branch/commit split clear.
+	branch := strings.TrimPrefix(req.Branch, "refs/heads/")
+	refBody := map[string]any{"sha": commit.SHA, "force": false}
+	if err := c.sendDo(ctx, http.MethodPatch, repoPath("git/refs/heads/"+branch), refBody, nil); err != nil {
+		return "", fmt.Errorf("updating ref refs/heads/%s (commit %s created but branch not advanced): %w", branch, commit.SHA, err)
+	}
+	return commit.SHA, nil
+}
+
 // sleepCtx waits for d to elapse or for ctx to be cancelled, whichever happens
 // first. It returns ctx.Err() if the context is cancelled during the wait so
 // that retry back-off is interruptible by cancellation or shutdown.
@@ -149,10 +274,21 @@ func (c *Client) post(ctx context.Context, path string, body any) error {
 	return c.postDo(ctx, path, body, nil)
 }
 
-// postDo is the inner implementation shared by post and CreateCheckRunWithID.
-// If out is non-nil, the 2xx response body is JSON-decoded into it (best-effort;
-// decode errors are silently ignored so callers need not handle partial responses).
+// postDo issues a POST through sendDo. If out is non-nil, the 2xx response body
+// is JSON-decoded into it (best-effort; decode errors are silently ignored so
+// callers need not handle partial responses).
 func (c *Client) postDo(ctx context.Context, path string, body any, out any) error {
+	return c.sendDo(ctx, http.MethodPost, path, body, out)
+}
+
+// sendDo marshals body as JSON, issues an authenticated `method` request to path
+// under the API base with the standard GitHub headers, retries transient 5xx/429
+// responses with the existing exponential back-off, and JSON-decodes a 2xx
+// response into out (when non-nil). Non-2xx, non-retriable responses become an
+// *APIError carrying the status code and the redacted GitHub message. It is the
+// shared implementation behind postDo (POST) and the PATCH ref-update / PR-update
+// call sites, so every mutating endpoint inherits identical auth/retry/redaction.
+func (c *Client) sendDo(ctx context.Context, method, path string, body any, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("encoding request: %w", err)
@@ -163,7 +299,7 @@ func (c *Client) postDo(ctx context.Context, path string, body any, out any) err
 	}
 	url := apiBase + path
 	makeReq := func() (*http.Request, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
 		if err != nil {
 			return nil, err
 		}
