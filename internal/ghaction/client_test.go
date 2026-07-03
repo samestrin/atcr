@@ -498,6 +498,34 @@ func TestCreateCommitRejectsEmptyParentOrBranch(t *testing.T) {
 	}
 }
 
+func TestCreateCommitRejectsEmptyParentTreeSHA(t *testing.T) {
+	rec := &gitDataRecorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/commits/"):
+			rec.record("get-commit", nil)
+			_, _ = w.Write([]byte(`{"sha":"parent-sha","tree":{"sha":""}}`))
+		case strings.HasSuffix(r.URL.Path, "/git/blobs"):
+			t.Error("blob must not be created when parent tree sha is empty")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"sha":"b"}`))
+		case strings.HasSuffix(r.URL.Path, "/git/trees"):
+			t.Error("tree must not be posted when parent tree sha is empty")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"sha":"t"}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	_, err := c.CreateCommit(context.Background(), "o", "r", CommitRequest{
+		Branch: "b", Message: "m", ParentSHA: "p", Files: []CommitFile{{Path: "a.go", Content: "x"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tree sha", "error must name the missing parent tree sha")
+	assert.Equal(t, []string{"get-commit"}, rec.seq(), "no sub-call may be made after an empty parent tree sha")
+}
+
 func TestCreateCommitCommitStepFailsNoRefUpdate(t *testing.T) {
 	var refCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
