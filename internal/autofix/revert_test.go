@@ -97,6 +97,26 @@ func TestRevertPatch_SingleFileRestored(t *testing.T) {
 	assert.NoFileExists(t, fooAbs+".bak", "backup removed after successful restore")
 }
 
+// An executable (0755) file backed up by ApplyPatch and restored by RevertPatch
+// must come back executable, not the mode the restore wrote (TD-009): the restore
+// dropped the original mode, so a 0755 script returned as 0644.
+func TestRevertPatch_RestoresOriginalFileMode(t *testing.T) {
+	root := t.TempDir()
+	fooAbs := filepath.Join(root, "foo.txt")
+	writeFile(t, fooAbs, fooPre)
+	require.NoError(t, os.Chmod(fooAbs, 0o755))
+
+	bm := applyClean(t, root, fe("foo.txt", fixtureModify))
+	require.Equal(t, fooMod, readFile(t, fooAbs), "precondition: patch applied")
+
+	require.NoError(t, RevertPatch(context.Background(), bm))
+	assert.Equal(t, fooPre, readFile(t, fooAbs), "content restored from backup")
+
+	fi, err := os.Stat(fooAbs)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o755), fi.Mode().Perm(), "revert must restore the original executable mode (TD-009)")
+}
+
 func TestRevertPatch_MultiFileAllRestored(t *testing.T) {
 	root := t.TempDir()
 	fooAbs := filepath.Join(root, "foo.txt")
