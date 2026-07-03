@@ -1,3 +1,22 @@
+## [Technical Debt] - 2026-07-02
+
+### Fixed
+
+- Resolved a scanner error silently discarded in `cmd/atcr/quickstart.go`'s `readLine`, so I/O failures during interactive prompts are now surfaced instead of swallowed.
+- Extracted an `expandHome` helper so `~/`-prefixed paths expand consistently across the quickstart flow.
+- Fixed `appendExport` leaving the profile world-readable after appending an API key; the file is now chmod'd to `0600`.
+- Fixed invalid `SignupURL` handling and referral-link fragment mishandling by validating and building the link via `url.Parse`.
+- Fixed the agents header rendering bare when the roster is empty.
+- Closed a symlink-follow race in quickstart's check-then-write file creation by switching to an atomic `O_EXCL` create.
+- Fixed a symlink profile that could leak the API key into `.atcr` by resolving symlinks before the `profileIsAtcrOwned` guard.
+- Fixed a case-insensitive bypass of the `.ATCR` ownership guard by comparing ownership via inode identity instead of string prefix.
+- Fixed unchecked control characters in provider fields by scanning them during manifest validation.
+- Fixed unsafe plain YAML scalars (model ids, provider fields) being accepted by manifest validation; they are now rejected.
+- Fixed an inlined GitHub Actions expression in a workflow run line by passing `base_ref` via an environment variable instead.
+- Pinned the refresh-manifest workflow's actions to commit SHAs.
+- Corrected a stale prefix-comparison comment in `profileIsAtcrOwned`.
+- Documented why the quickstart scaffold intentionally keeps `go install @latest` unpinned.
+
 ## [16.0.0] - 2026-07-02
 
 Added `atcr quickstart`, an interactive onboarding wizard that scaffolds a working synthetic-provider setup so a new user reaches their first review without hand-editing `registry.yaml`.

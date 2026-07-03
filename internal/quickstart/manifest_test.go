@@ -86,3 +86,87 @@ func TestRegistryYAML_LoadsAndRosterResolves(t *testing.T) {
 	cfg := &registry.ProjectConfig{Agents: roster}
 	assert.NoError(t, cfg.ValidateAgainst(reg))
 }
+
+func TestValidate_RequiresValidSignupURL(t *testing.T) {
+	m := &Manifest{
+		SignupURL: "",
+		Provider:  Provider{Name: "synthetic", BaseURL: "https://api.synthetic.new/openai/v1", APIKeyEnv: "LLM_SYNTHETIC_API_KEY"},
+		Models:    []string{"m0"},
+	}
+	err := m.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "signup_url")
+
+	m.SignupURL = "://not-a-url"
+	err = m.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "signup_url")
+}
+
+func TestValidate_RejectsControlCharInProviderFields(t *testing.T) {
+	base := Manifest{
+		SignupURL: "https://synthetic.new/",
+		Provider:  Provider{Name: "synthetic", BaseURL: "https://api.synthetic.new/openai/v1", APIKeyEnv: "LLM_SYNTHETIC_API_KEY"},
+		Models:    []string{"m0"},
+	}
+
+	// A newline in provider.name is emitted verbatim into registry.yaml and would
+	// forge entirely new YAML keys/agents — reject it at the load boundary, the
+	// same defense already applied to model ids.
+	m := base
+	m.Provider.Name = "synthetic\nagents:\n  evil: {}"
+	err := m.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "provider.name")
+
+	// The other emitted provider fields get the same scan.
+	m = base
+	m.Provider.APIKeyEnv = "KEY\nINJECT"
+	assert.Error(t, m.validate())
+
+	m = base
+	m.Provider.BaseURL = "https://x/y\r\nevil: true"
+	assert.Error(t, m.validate())
+}
+
+func TestValidate_RejectsUnsafeYAMLScalars(t *testing.T) {
+	base := Manifest{
+		SignupURL: "https://synthetic.new/",
+		Provider:  Provider{Name: "synthetic", BaseURL: "https://api.synthetic.new/openai/v1", APIKeyEnv: "LLM_SYNTHETIC_API_KEY"},
+		Models:    []string{"m0"},
+	}
+
+	// A model id emitted as a bare `model: <id>` scalar can break YAML (`: `),
+	// silently truncate (` #`), or change type (`[a,b]` becomes a list). Reject
+	// them at the load boundary rather than shipping a broken registry.yaml.
+	for _, bad := range []string{"gpt: evil", "gpt # x", "[a,b]", "*alias", "&anchor", "a:"} {
+		m := base
+		m.Models = []string{bad}
+		assert.Errorf(t, m.validate(), "unsafe model id %q must be rejected", bad)
+	}
+
+	// The same guard applies to the provider fields, which are also emitted bare.
+	m := base
+	m.Provider.Name = "synthetic: injected"
+	assert.Error(t, m.validate(), "unsafe provider.name must be rejected")
+
+	// A colon NOT followed by a space is a valid plain scalar — real provider ids
+	// use them (hf:org/model), and base_url has one (https://…). Do not over-reject.
+	m = base
+	m.Models = []string{"hf:meta-llama/Llama-3.3-70B"}
+	assert.NoError(t, m.validate(), "colon-without-space id must be accepted")
+}
+
+func TestSignupLink_HandlesFragment(t *testing.T) {
+	m := &Manifest{SignupURL: "https://example.com/#section", Referral: "abc"}
+	assert.Equal(t, "https://example.com/?referral=abc#section", m.SignupLink())
+}
+
+func TestRegistryYAML_SkipsAgentsHeaderWhenRosterEmpty(t *testing.T) {
+	m := &Manifest{
+		Provider: Provider{Name: "synthetic", BaseURL: "https://api.synthetic.new/openai/v1", APIKeyEnv: "LLM_SYNTHETIC_API_KEY"},
+		Models:   []string{"m0"},
+	}
+	out := RegistryYAML(m, nil)
+	assert.NotContains(t, out, "agents:")
+}

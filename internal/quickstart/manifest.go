@@ -58,6 +58,8 @@ func LoadManifest() (*Manifest, error) {
 // generate a broken registry.yaml.
 func (m *Manifest) validate() error {
 	switch {
+	case strings.TrimSpace(m.SignupURL) == "":
+		return fmt.Errorf("synthetic manifest: signup_url is required")
 	case strings.TrimSpace(m.Provider.Name) == "":
 		return fmt.Errorf("synthetic manifest: provider.name is required")
 	case strings.TrimSpace(m.Provider.BaseURL) == "":
@@ -66,6 +68,25 @@ func (m *Manifest) validate() error {
 		return fmt.Errorf("synthetic manifest: provider.api_key_env is required")
 	case len(m.Models) == 0:
 		return fmt.Errorf("synthetic manifest: at least one model is required")
+	}
+	if _, err := url.Parse(m.SignupURL); err != nil {
+		return fmt.Errorf("synthetic manifest: signup_url is invalid: %w", err)
+	}
+	// Provider.Name, BaseURL, and APIKeyEnv are emitted verbatim into
+	// registry.yaml (RegistryYAML lines ~121-123). A control character — a newline
+	// especially — could forge new YAML keys/agents, a strictly worse injection
+	// than the model-id case guarded below. Apply the same scan symmetrically.
+	for _, f := range []struct{ name, value string }{
+		{"provider.name", m.Provider.Name},
+		{"provider.base_url", m.Provider.BaseURL},
+		{"provider.api_key_env", m.Provider.APIKeyEnv},
+	} {
+		if strings.IndexFunc(f.value, func(r rune) bool { return unicode.IsControl(r) }) >= 0 {
+			return fmt.Errorf("synthetic manifest: %s contains a control character", f.name)
+		}
+		if !isSafeYAMLScalar(f.value) {
+			return fmt.Errorf("synthetic manifest: %s is not a safe plain YAML scalar", f.name)
+		}
 	}
 	for i, model := range m.Models {
 		if strings.TrimSpace(model) == "" {
@@ -78,8 +99,40 @@ func (m *Manifest) validate() error {
 		if strings.IndexFunc(model, func(r rune) bool { return unicode.IsControl(r) }) >= 0 {
 			return fmt.Errorf("synthetic manifest: models[%d] contains a control character", i)
 		}
+		if !isSafeYAMLScalar(model) {
+			return fmt.Errorf("synthetic manifest: models[%d] is not a safe plain YAML scalar", i)
+		}
 	}
 	return nil
+}
+
+// isSafeYAMLScalar reports whether s can be emitted as a bare `key: <s>` value in
+// registry.yaml without being reinterpreted by the YAML parser. RegistryYAML
+// writes provider fields and model ids by string concatenation, not through a
+// YAML encoder, so a value like `gpt: evil` (breaks parsing — a DoS), `gpt # x`
+// (silently truncated at the comment), or `[a,b]` (becomes a list, not a string)
+// must be rejected at the load boundary. A colon NOT followed by a space is fine
+// — real ids (hf:org/model) and the https:// base_url rely on it.
+func isSafeYAMLScalar(s string) bool {
+	if s == "" || s != strings.TrimSpace(s) {
+		return false
+	}
+	// Characters that cannot begin a plain scalar (they open a flow collection,
+	// anchor, alias, tag, block scalar, quote, directive, comment, etc.).
+	if strings.ContainsRune("!&*[]{}#|>@`\"'%,", rune(s[0])) {
+		return false
+	}
+	// '-', '?', ':' are indicators only when the first char is followed by a space
+	// (or is the whole value).
+	if (s[0] == '-' || s[0] == '?' || s[0] == ':') && (len(s) == 1 || s[1] == ' ') {
+		return false
+	}
+	// Inside the scalar: ": " opens a mapping, a trailing ":" opens a mapping, and
+	// " #" starts a comment — each breaks `key: <value>` emission.
+	if strings.Contains(s, ": ") || strings.HasSuffix(s, ":") || strings.Contains(s, " #") {
+		return false
+	}
+	return true
 }
 
 // SignupLink returns the signup URL with the referral code appended as a query
@@ -90,11 +143,14 @@ func (m *Manifest) SignupLink() string {
 	if strings.TrimSpace(m.Referral) == "" {
 		return m.SignupURL
 	}
-	sep := "?"
-	if strings.Contains(m.SignupURL, "?") {
-		sep = "&"
+	u, err := url.Parse(m.SignupURL)
+	if err != nil {
+		return m.SignupURL
 	}
-	return m.SignupURL + sep + "referral=" + url.QueryEscape(m.Referral)
+	q := u.Query()
+	q.Set("referral", m.Referral)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // RegistryYAML renders the ~/.config/atcr/registry.yaml content: the synthetic
@@ -117,6 +173,9 @@ func RegistryYAML(m *Manifest, roster []string) string {
 	// and a direct caller could pass an empty set — the round-robin modulo would
 	// panic on len 0. Emit the provider block only rather than crash.
 	if len(m.Models) == 0 {
+		return b.String()
+	}
+	if len(roster) == 0 {
 		return b.String()
 	}
 	b.WriteString("agents:\n")

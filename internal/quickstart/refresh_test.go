@@ -66,6 +66,15 @@ func TestBuildManifestFromModels_RejectsControlCharInId(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestBuildManifestFromModels_RejectsUnsafeYAMLScalarId(t *testing.T) {
+	// A `: ` in a model id makes `model: <id>` invalid YAML — every generated
+	// registry.yaml would fail to parse (a DoS). A hostile /models response must
+	// be refused at build time, not surface later at quickstart.
+	resp := []byte(`{"data":[{"id":"ok"},{"id":"gpt: evil"}]}`)
+	_, err := BuildManifestFromModels(resp, baseManifest())
+	assert.Error(t, err)
+}
+
 func TestRunRefresh_Success(t *testing.T) {
 	in := strings.NewReader(`{"data":[{"id":"x"},{"id":"y"}]}`)
 	out := &bytes.Buffer{}
