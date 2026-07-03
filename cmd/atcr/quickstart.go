@@ -200,17 +200,30 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 	return nil
 }
 
+// expandHome replaces a leading `~` or `~/` with the user's home directory.
+// It returns an error if the home directory cannot be determined.
+func expandHome(path string) (string, error) {
+	if path == "~" {
+		return os.UserHomeDir()
+	}
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, path[2:]), nil
+	}
+	return path, nil
+}
+
 // appendExport appends `export ENV='key'` to the named shell profile, expanding
 // a leading ~/ and creating the file if absent. This is the one place the key
 // value touches disk, and only into a file the user explicitly named — never a
 // file atcr owns.
 func appendExport(profile, env, key string) error {
-	if strings.HasPrefix(profile, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		profile = filepath.Join(home, profile[2:])
+	profile, err := expandHome(profile)
+	if err != nil {
+		return err
 	}
 	f, err := os.OpenFile(profile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -243,13 +256,12 @@ func profileIsAtcrOwned(profile, dir string) bool {
 	return false
 }
 
-// resolveProfilePath expands a leading ~/ and returns the absolute form of a
+// resolveProfilePath expands a leading ~ and returns the absolute form of a
 // user-supplied profile path, or "" if it cannot be resolved.
 func resolveProfilePath(profile string) string {
-	if strings.HasPrefix(profile, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			profile = filepath.Join(home, profile[2:])
-		}
+	profile, err := expandHome(profile)
+	if err != nil {
+		return ""
 	}
 	abs, err := filepath.Abs(profile)
 	if err != nil {
