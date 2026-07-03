@@ -36,6 +36,11 @@ const maxValidationOutputBytes = 1 << 20 // 1 MiB per stream
 // immediately, unaffected.
 const validationWaitGrace = 2 * time.Second
 
+// defaultValidationTimeout is the bound applied when a caller passes a zero
+// timeout, so a missing configuration value does not immediately fail every
+// validation with DeadlineExceeded.
+const defaultValidationTimeout = 2 * time.Minute
+
 // ValidationResult captures the outcome of one post-apply validation command run.
 // Stdout/Stderr hold the raw captured bytes as-is (never sanitized or mutated —
 // display-time sanitization is a reporting-boundary concern), so non-UTF8 output
@@ -70,6 +75,10 @@ func (r ValidationResult) Passed() bool {
 // validate" from "validation failed". The command is sourced entirely from argv;
 // no shell interprets it, so no configured or injected value is expanded.
 func RunConfiguredValidation(ctx context.Context, argv []string, dir string, timeout time.Duration) (ValidationResult, error) {
+	if timeout <= 0 {
+		timeout = defaultValidationTimeout
+	}
+
 	if len(argv) == 0 {
 		err := errors.New("auto-fix validation command not found or not executable: no command configured")
 		return ValidationResult{StartError: err}, err
