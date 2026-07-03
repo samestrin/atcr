@@ -82,6 +82,14 @@ func TestRunConfiguredValidation_RunsInConfiguredDir(t *testing.T) {
 	assert.Equal(t, "in-dir", res.Stdout, "command must run with the configured working directory")
 }
 
+func TestRunConfiguredValidation_MissingDirIsDistinct(t *testing.T) {
+	res, err := RunConfiguredValidation(context.Background(), []string{"true"}, "/nonexistent/dir/atcr-test", 5*time.Second)
+	require.Error(t, err, "a missing working directory must be a distinct start error")
+	assert.NotNil(t, res.StartError)
+	assert.Contains(t, res.StartError.Error(), "validation working directory does not exist", "error must name the directory, not the binary")
+	assert.False(t, res.Passed())
+}
+
 // --- AC 02-02: result capture --------------------------------------------
 
 func TestRunConfiguredValidation_CapturesExitStdoutStderrDuration(t *testing.T) {
