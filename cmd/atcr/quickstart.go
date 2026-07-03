@@ -151,15 +151,21 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 	}
 
 	scanner := bufio.NewScanner(o.in)
-	readLine := func(prompt string) string {
+	readLine := func(prompt string) (string, bool) {
 		_, _ = fmt.Fprint(o.out, prompt)
 		if scanner.Scan() {
-			return strings.TrimSpace(scanner.Text())
+			return strings.TrimSpace(scanner.Text()), true
 		}
-		return ""
+		return "", false
 	}
 
-	key := readLine(fmt.Sprintf("\nPaste your API key (or press Enter to set %s yourself later): ", env))
+	key, keyOK := readLine(fmt.Sprintf("\nPaste your API key (or press Enter to set %s yourself later): ", env))
+	if !keyOK {
+		if err := scanner.Err(); err != nil {
+			_, _ = fmt.Fprintf(o.errOut, "could not read input: %v\n", err)
+		}
+		return nil
+	}
 	if key == "" {
 		_, _ = fmt.Fprintf(o.out, "\nNo problem. When you have a key, set it with:\n  export %s=<your-key>\n", env)
 		return nil
@@ -167,7 +173,13 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 
 	_, _ = fmt.Fprintf(o.out, "\nSet it in your current shell:\n  export %s=%s\n", env, shellSingleQuote(key))
 
-	profile := readLine("\nAppend this export to a shell profile? Enter a path (or Enter to skip): ")
+	profile, profileOK := readLine("\nAppend this export to a shell profile? Enter a path (or Enter to skip): ")
+	if !profileOK {
+		if err := scanner.Err(); err != nil {
+			_, _ = fmt.Fprintf(o.errOut, "could not read input: %v\n", err)
+		}
+		return nil
+	}
 	if profile == "" {
 		return nil
 	}
@@ -182,6 +194,9 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 		return nil
 	}
 	_, _ = fmt.Fprintf(o.out, "Appended the export to %s — open a new shell or `source` it to load the key.\n", profile)
+	if err := scanner.Err(); err != nil {
+		_, _ = fmt.Fprintf(o.errOut, "input error: %v\n", err)
+	}
 	return nil
 }
 
