@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -226,6 +227,63 @@ func TestValidateAutoFixBackend_ConfiguredCommandWins(t *testing.T) {
 	be, err := validateAutoFixBackend(cmd, proj, root)
 	require.NoError(t, err)
 	require.Equal(t, []string{"make", "check"}, be.validateArgv)
+}
+
+// TestValidateAutoFixBackend_ConfiguredTimeout: an operator-set
+// auto_fix.validate_timeout is resolved into the backend (covers the configured
+// branch of resolveValidateTimeout).
+func TestValidateAutoFixBackend_ConfiguredTimeout(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: ".", ValidateTimeout: "30s"},
+	}
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	be, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err)
+	require.Equal(t, 30*time.Second, be.validateTimeout)
+}
+
+// TestValidateAutoFixBackend_BadTimeoutRefuses: a malformed configured timeout is
+// a fail-closed refusal (defensive; also validated at config load).
+func TestValidateAutoFixBackend_BadTimeoutRefuses(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: ".", ValidateTimeout: "nope"},
+	}
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "validate_timeout")
+}
+
+// TestOrchestrateAutoFix_EmptyBaseBranch: with no resolvable base branch the
+// adapter refuses before reading findings or touching disk.
+func TestOrchestrateAutoFix_EmptyBaseBranch(t *testing.T) {
+	err := orchestrateAutoFix(context.Background(), io.Discard, autoFixBackend{applyTarget: t.TempDir()}, t.TempDir(), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "base branch")
+}
+
+// TestOrchestrateAutoFix_NoApplicableFix: reconciled findings with no Fix produce
+// no entries — the adapter reports "nothing to apply" and returns nil without
+// resolving a base commit or constructing a client (covers the select path).
+func TestOrchestrateAutoFix_NoApplicableFix(t *testing.T) {
+	isolate(t)
+	id := verifyFixture(t, "af", []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Fix: ""},
+	})
+	reviewDir := filepath.Join(".atcr", "reviews", id)
+	var buf strings.Builder
+	err := orchestrateAutoFix(context.Background(), &buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, "", "main")
+	require.NoError(t, err)
+	require.Contains(t, buf.String(), "nothing to apply")
 }
 
 // --- runAutoFix sequencing (the Story-4/5 gate: no GitHub before validation) -
