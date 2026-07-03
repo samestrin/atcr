@@ -57,3 +57,17 @@ Deferred MEDIUM/LOW findings surfaced during `/execute-sprint`. Read by
 **Issue:** A command that exits 0 but whose child lingers past `WaitDelay` makes `cmd.Run` return `exec.ErrWaitDelay` (not `*exec.ExitError`); a parent-context `context.Canceled` (non-deadline) is likewise not `DeadlineExceeded`. Both fall through the `errors.As(*exec.ExitError)` guard into the catch-all StartError branch and are reported as "command not found or not executable", polluting the StartError class (meant to distinguish "cannot validate" from "validation failed").
 **Why accepted:** Fails closed (`Passed()==false`, no unsafe behavior). Not reachable via the `--auto-fix` bounded-timeout path — a deadline hit is caught as `TimedOut` before this branch; it requires a zero-exit command that backgrounds a pipe-holding child, or an external parent-ctx cancel. LOW.
 **Fix in:** A later pass — treat `exec.ErrWaitDelay` as a completed-but-failed run and handle `context.Canceled` alongside `DeadlineExceeded`; reserve StartError for genuine start failures (`errors.Is` `exec.ErrNotFound` / `os.ErrPermission`).
+
+## TD-009 — Revert restores file content but not file mode (LOW)
+**Origin:** Phase 3, task 3.2.A adversarial review, 2026-07-03
+**File:** internal/autofix/revert.go:41
+**Issue:** `RevertPatch` restores pre-patch bytes via `atomicfs.CopyPath`, but `copyFile` opens the existing target with `O_TRUNC` and ignores its `perm` argument for an already-existing file, so a file whose original mode was 0755 (executable) or 0600 comes back as the 0644 the apply step wrote. The `.bak` does carry the original mode (`BackupToDotBak` copies with `info.Mode().Perm()`), so the information to restore it is available; it is simply not re-applied.
+**Why accepted:** Out of AC scope — ACs 03-02/03-04 specify byte-for-byte *content* restoration, which holds. The auto-fix target corpus is 0644 Go source, so a mode regression is not reachable for the intended use case. LOW.
+**Fix in:** A later hardening pass — after a successful `copyPathFn` restore, `os.Chmod(target, bakMode)` from the backup's mode (or stat the `.bak`); add an executable-fixture mode-fidelity regression test.
+
+## TD-010 — RevertPatch does not re-check path containment at the revert boundary (LOW)
+**Origin:** Phase 3, task 3.2.A adversarial review, 2026-07-03
+**File:** internal/autofix/revert.go:41
+**Issue:** `RevertPatch` is exported and trusts every path in the `BackupMap` it is handed, calling `copyPathFn`/`removeFn` with no independent containment re-check. Its safety depends entirely on the upstream invariant that the map was produced by `ApplyPatch` (whose `containedPath` validates every target stays inside root). A hand-built or corrupted map with a target/backup outside the working-tree root would copy or delete outside it.
+**Why accepted:** In the real flow the map is always apply-produced and already `containedPath`-validated; this is defense-in-depth, not a reachable bug. The write-side already carries the belt-and-suspenders re-check (`apply.go` `containedPath`). LOW.
+**Fix in:** A later pass — either re-assert `contains(root, target)` at the revert boundary (mirroring apply's defense-in-depth, which requires threading `root` into `RevertPatch`), or document `RevertPatch`'s "apply-produced map only" precondition explicitly on the exported signature.

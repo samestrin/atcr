@@ -363,6 +363,52 @@ func TestRevertPatch_MultiRestoreFailureNamesEvery(t *testing.T) {
 	assert.Equal(t, barPre, readFile(t, barAbs), "the restorable file still restored")
 }
 
+// A missing .bak at restore time is a HARD error — never silently tolerated,
+// which would leave the file patched with no indication anything went wrong.
+func TestRevertPatch_MissingBackupIsHardError(t *testing.T) {
+	root := t.TempDir()
+	fooAbs := filepath.Join(root, "foo.txt")
+	writeFile(t, fooAbs, fooPre)
+
+	bm := applyClean(t, root, fe("foo.txt", fixtureModify))
+	// Evict the backup out-of-band before revert runs.
+	require.NoError(t, os.Remove(fooAbs+".bak"))
+
+	err := RevertPatch(context.Background(), bm)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), fooAbs, "hard error names the file whose backup is gone")
+	assert.Equal(t, fooMod, readFile(t, fooAbs),
+		"target left in its patched state — the failure is surfaced, not silently 'restored'")
+}
+
+// A failure removing a patch-created file (empty sentinel, non-ErrNotExist) is a
+// hard, named error, and the loop still processes the remaining entries.
+func TestRevertPatch_CreatedFileRemovalFailureNamedError(t *testing.T) {
+	root := t.TempDir()
+	fooAbs := filepath.Join(root, "foo.txt")
+	newAbs := filepath.Join(root, "new.txt")
+	writeFile(t, fooAbs, fooPre)
+
+	bm := applyClean(t, root,
+		fe("foo.txt", fixtureModify), // modify -> copy-back (must still run)
+		fe("new.txt", fixtureCreate), // create -> delete, injected to fail
+	)
+
+	orig := removeFn
+	removeFn = func(path string) error {
+		if path == newAbs {
+			return os.ErrPermission
+		}
+		return orig(path)
+	}
+	t.Cleanup(func() { removeFn = orig })
+
+	err := RevertPatch(context.Background(), bm)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), newAbs, "aggregate names the created file that could not be removed")
+	assert.Equal(t, fooPre, readFile(t, fooAbs), "sibling modify still restored despite the create-removal failure")
+}
+
 // --- TD-005 precondition: in-tree symlink leaf refused at apply time -----
 
 // A modify targeting an in-tree symlink leaf must be REFUSED, so the empty-backup

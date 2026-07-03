@@ -333,17 +333,17 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
 
 **Goal:** Complete the local safety net (`internal/autofix/revert.go`) that makes the apply→validate pipeline trustworthy enough to gate remote mutation on.
 
-### 3.1 [ ] **[Automatic Revert on Validation Failure - RED](plan/user-stories/03-automatic-revert-on-validation-failure.md)**
+### 3.1 [x] **[Automatic Revert on Validation Failure - RED](plan/user-stories/03-automatic-revert-on-validation-failure.md)**
    **AC:** [03-01](plan/acceptance-criteria/03-01-backup-map-tracking.md), [03-02](plan/acceptance-criteria/03-02-restore-on-validation-failure.md), [03-03](plan/acceptance-criteria/03-03-cleanup-on-validation-success.md), [03-04](plan/acceptance-criteria/03-04-hard-error-on-restore-failure.md)
    Write failing tests for `Revert(backupMap BackupMap) error`: backup-map precondition/tracking as input contract from Story 1 (03-01); restore all touched files on validation failure **strictly before any `ghaction` call** — includes an integration-level sequencing test (03-02); cleanup backup files on validation success (03-03); hard error surfacing on restore failure, never silently continue (03-04). Verify fail correctly.
    **Files:** `internal/autofix/revert_test.go` | **Duration:** ~0.5 day
 
-### 3.2 [ ] **[Automatic Revert on Validation Failure - GREEN](plan/user-stories/03-automatic-revert-on-validation-failure.md)**
+### 3.2 [x] **[Automatic Revert on Validation Failure - GREEN](plan/user-stories/03-automatic-revert-on-validation-failure.md)**
    Minimal `internal/autofix/revert.go` (build on `restorePriorBackup` semantics), one test at a time (T1), verify all (T2). COMMIT.
    COMMIT: `git add internal/autofix/revert.go internal/autofix/revert_test.go && git commit -m "feat(autofix): restore touched files on validation failure (green)"`
    **Files:** `internal/autofix/revert.go` | **Duration:** ~0.5 day
 
-### 3.2.A [ ] **[Automatic Revert - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-automatic-revert-on-validation-failure.md)**
+### 3.2.A [x] **[Automatic Revert - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-automatic-revert-on-validation-failure.md)**
    **Changed Files:** `internal/autofix/revert.go`, `internal/autofix/revert_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. No memory of the implementation in 3.2 — intentional. Do NOT review inline.
@@ -361,18 +361,17 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings + resolution (no CRITICAL/HIGH):**
+   | Severity | File:Line | Issue | Resolution |
+   |----------|-----------|-------|-----------|
+   | MEDIUM | revert.go:47-51 | Hard-error branch for a failed removal of a patch-created file (empty sentinel, non-`ErrNotExist`) untested through `RevertPatch` — AC 03-04's named-aggregate guarantee unverified for the create-deletion path. | FIXED in 3.3 — added `TestRevertPatch_CreatedFileRemovalFailureNamedError` (injects `removeFn` failure on a created target; asserts named error + remaining entries still processed). |
+   | MEDIUM | revert_test.go | "Backup file missing at restore time" (checklist edge case) untested — a future change silently tolerating a missing `.bak` would go unnoticed. | FIXED in 3.3 — added `TestRevertPatch_MissingBackupIsHardError` (removes `.bak` out-of-band; asserts hard error names the file and the target is not silently left patched). |
+   | LOW | revert.go | Restore copies content byte-for-byte but not file *mode* — an original 0755/0600 comes back 0644 (`copyFile` ignores perm on an existing `O_TRUNC` target). Content restored; mode regresses. | Deferred → TD-009. Out of AC scope (ACs specify byte content); TD-fix corpus is 0644 Go source. |
+   | LOW | revert.go:41-72 | `RevertPatch` trusts every path in the (exported) `BackupMap` with no independent containment re-check; a hand-built/corrupted map could act outside root. | Deferred → TD-010. Map is apply-produced + `containedPath`-validated upstream; defense-in-depth only. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **No CRITICAL/HIGH — nothing blocking. Both MEDIUM findings are test-coverage gaps on this story's ACs, closed inline in 3.3 (strengthening). Both LOW deferred to tech-debt-captured.md. Adversarial review complete.**
 
-### 3.3 [ ] **[Automatic Revert - REFACTOR](plan/user-stories/03-automatic-revert-on-validation-failure.md)**
+### 3.3 [x] **[Automatic Revert - REFACTOR](plan/user-stories/03-automatic-revert-on-validation-failure.md)**
    1. Fix CRITICAL/HIGH issues from 3.2.A (if any).
    2. Improve quality, maintain green (T1), validate (T3).
    3. COMMIT: `git commit -m "refactor(autofix): address review + clean up revert path"`
