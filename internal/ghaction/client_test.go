@@ -16,6 +16,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSendDoHonorsRetryAfterOn403(t *testing.T) {
+	// GitHub signals a secondary rate limit with 403 + Retry-After. That must be
+	// retried (not treated as a permanent APIError) and honor the server delay.
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	start := time.Now()
+	err := c.CreateBranch(context.Background(), "o", "r", "b", "sha")
+	require.NoError(t, err, "a 403+Retry-After must be retried, not returned as a permanent error")
+	require.Equal(t, 2, calls, "the request must be retried once after the 403+Retry-After")
+	require.GreaterOrEqual(t, time.Since(start), 900*time.Millisecond, "the server-instructed Retry-After delay must be honored")
+}
+
+func TestSendDoDoesNotRetryPlain403(t *testing.T) {
+	// A 403 WITHOUT Retry-After is a genuine permission failure — it must remain a
+	// permanent APIError, not be retried.
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	err := c.CreateBranch(context.Background(), "o", "r", "b", "sha")
+	require.Error(t, err)
+	require.Equal(t, 1, calls, "a plain 403 must not be retried")
+}
+
 func TestFindOpenPullRequestRequestsMaxPageSize(t *testing.T) {
 	// Without per_page the endpoint returns at most 30 results, so the true
 	// lowest-numbered open PR could sit on an unfetched page — non-deterministic
