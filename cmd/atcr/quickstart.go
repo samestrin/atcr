@@ -282,19 +282,54 @@ func profileIsAtcrOwned(profile, dir string) bool {
 	// is applied symmetrically to both sides so the prefix comparison holds.
 	abs = resolveEffectivePath(abs)
 	if atcr, err := filepath.Abs(filepath.Join(dir, ".atcr")); err == nil {
-		atcr = resolveEffectivePath(atcr)
-		if abs == atcr || strings.HasPrefix(abs, atcr+string(os.PathSeparator)) {
+		if pathWithinDir(abs, atcr) {
 			return true
 		}
 	}
 	if reg, err := registry.DefaultRegistryPath(); err == nil {
-		if regAbs, err := filepath.Abs(reg); err == nil {
-			if abs == resolveEffectivePath(regAbs) {
-				return true
-			}
+		if regAbs, err := filepath.Abs(reg); err == nil && sameFilePath(abs, regAbs) {
+			return true
 		}
 	}
 	return false
+}
+
+// pathWithinDir reports whether path is dir itself or lives inside it, compared
+// by inode identity rather than lexical prefix — so it holds on case-insensitive
+// filesystems (macOS/APFS, Windows) where ./.ATCR and ./.atcr are the same
+// directory and a strings.HasPrefix check would miss. path's leaf may not exist
+// yet (the profile is created on append), so it walks up path's ancestor chain
+// and compares each existing ancestor against dir via os.SameFile.
+func pathWithinDir(path, dir string) bool {
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	for p := path; ; {
+		if info, err := os.Stat(p); err == nil && os.SameFile(info, dirInfo) {
+			return true
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false
+		}
+		p = parent
+	}
+}
+
+// sameFilePath reports whether a and b are the same existing file by inode
+// identity (device+inode), so a case-variant path to the user registry is caught
+// on case-insensitive filesystems.
+func sameFilePath(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(ai, bi)
 }
 
 // resolveEffectivePath returns the path a write to abs would actually land on,
