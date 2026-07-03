@@ -57,14 +57,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Map contains exactly one entry per successfully backed-up file, never more, never fewer
-- [ ] Partial-apply scenario (2-of-3 files) produces a map with exactly 2 entries
-- [ ] Zero-touch patch produces an empty map and a no-op revert/cleanup call
+- [x] Map contains exactly one entry per successfully backed-up file, never more, never fewer
+- [x] Partial-apply scenario (2-of-3 files) produces a map with exactly 2 entries
+- [x] Zero-touch patch produces an empty map and a no-op revert/cleanup call
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

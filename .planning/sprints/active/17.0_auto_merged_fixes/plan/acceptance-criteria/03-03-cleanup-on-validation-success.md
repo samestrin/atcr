@@ -56,14 +56,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] All `.bak` files for a successfully validated patch are removed from disk after cleanup
-- [ ] An already-absent `.bak` is tolerated, not treated as an error
-- [ ] A non-`ErrNotExist` cleanup failure is logged at Warn and does not fail an otherwise-successful `--auto-fix` run
+- [x] All `.bak` files for a successfully validated patch are removed from disk after cleanup
+- [x] An already-absent `.bak` is tolerated, not treated as an error
+- [x] A non-`ErrNotExist` cleanup failure is logged at Warn and does not fail an otherwise-successful `--auto-fix` run
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

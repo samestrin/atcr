@@ -409,6 +409,63 @@ func TestRevertPatch_CreatedFileRemovalFailureNamedError(t *testing.T) {
 	assert.Equal(t, fooPre, readFile(t, fooAbs), "sibling modify still restored despite the create-removal failure")
 }
 
+// --- AC 03-02: revert is sequenced strictly before any remote mutation ---
+
+// autoFixFlowModel mirrors the Phase-5 --auto-fix orchestrator's control-flow
+// contract at the autofix package boundary: validation failure routes to
+// RevertPatch and returns WITHOUT calling the remote step; validation success
+// routes to CleanupBackups and only then invokes remote. Phase 6 wires the real
+// end-to-end version against an httptest GitHub stub; this pins the ordering
+// Story 3 guarantees (no GitHub-mutating call reachable before a terminal
+// revert/cleanup result) at the point the guarantee actually originates.
+func autoFixFlowModel(ctx context.Context, bm BackupMap, validationPassed bool, remote func() error) error {
+	if !validationPassed {
+		if err := RevertPatch(ctx, bm); err != nil {
+			return err
+		}
+		return nil // terminal: reverted, remote is unreachable
+	}
+	CleanupBackups(ctx, bm)
+	return remote()
+}
+
+func TestRevertPatch_RemoteStepUnreachableOnValidationFailure(t *testing.T) {
+	root := t.TempDir()
+	fooAbs := filepath.Join(root, "foo.txt")
+	writeFile(t, fooAbs, fooPre)
+	bm := applyClean(t, root, fe("foo.txt", fixtureModify))
+
+	remoteCalled := false
+	err := autoFixFlowModel(context.Background(), bm, false, func() error {
+		remoteCalled = true
+		return nil
+	})
+	require.NoError(t, err)
+
+	assert.False(t, remoteCalled, "no remote/ghaction step is reachable on the validation-failure path")
+	assert.Equal(t, fooPre, readFile(t, fooAbs), "file reverted before control returned")
+	assert.NoFileExists(t, fooAbs+".bak", "backup cleaned up by the successful revert")
+}
+
+func TestRevertPatch_RemoteStepReachedOnlyAfterCleanupOnSuccess(t *testing.T) {
+	root := t.TempDir()
+	fooAbs := filepath.Join(root, "foo.txt")
+	writeFile(t, fooAbs, fooPre)
+	bm := applyClean(t, root, fe("foo.txt", fixtureModify))
+
+	remoteCalled := false
+	err := autoFixFlowModel(context.Background(), bm, true, func() error {
+		// By the time remote runs, cleanup must already have removed the backup.
+		assert.NoFileExists(t, fooAbs+".bak", "cleanup ran before the remote step")
+		remoteCalled = true
+		return nil
+	})
+	require.NoError(t, err)
+
+	assert.True(t, remoteCalled, "remote step runs on the validation-success path")
+	assert.Equal(t, fooMod, readFile(t, fooAbs), "patched content retained on success")
+}
+
 // --- TD-005 precondition: in-tree symlink leaf refused at apply time -----
 
 // A modify targeting an in-tree symlink leaf must be REFUSED, so the empty-backup

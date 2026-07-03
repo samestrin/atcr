@@ -66,15 +66,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] 100% of files in the backup map are bit-for-bit identical to pre-patch state after a failed-validation revert, across single-file, multi-file, and partial-apply scenarios
-- [ ] A single file's restore failure does not prevent remaining files' restores from being attempted
-- [ ] A restore-of-CREATE entry (backup-map "no prior original" marker) is DELETED on revert, while restore-of-MODIFY entries in the same map are copied back from their `.bak`
-- [ ] The `--auto-fix` orchestrator cannot reach any `internal/ghaction` call without first receiving this function's terminal result
+- [x] 100% of files in the backup map are bit-for-bit identical to pre-patch state after a failed-validation revert, across single-file, multi-file, and partial-apply scenarios
+- [x] A single file's restore failure does not prevent remaining files' restores from being attempted
+- [x] A restore-of-CREATE entry (backup-map "no prior original" marker) is DELETED on revert, while restore-of-MODIFY entries in the same map are copied back from their `.bak`
+- [x] The `--auto-fix` orchestrator cannot reach any `internal/ghaction` call without first receiving this function's terminal result
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

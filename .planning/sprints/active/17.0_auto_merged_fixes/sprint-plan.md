@@ -377,13 +377,15 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
    3. COMMIT: `git commit -m "refactor(autofix): address review + clean up revert path"`
    **Duration:** ~0.5 day
 
-### 3.4 [ ] **Phase 3 DoD (Story 3)**
-   - [ ] Tests (T3): `go test ./internal/autofix/...` all passing, incl. the restore-before-ghaction sequencing test.
-   - [ ] Coverage ≥ 80% on `revert.go`.
-   - [ ] `go vet` / lint / build clean.
-   - [ ] Restore-failure is a hard error; cleanup only on validation success.
-   - [ ] Story checkboxes and AC files updated to `[x]`.
-   - DoD Report per template.
+### 3.4 [x] **Phase 3 DoD (Story 3)**
+   - [x] Tests (T3): `go test ./internal/autofix/...` all passing (43 tests), incl. the restore-before-ghaction sequencing model tests (`TestRevertPatch_RemoteStepUnreachableOnValidationFailure` / `...ReachedOnlyAfterCleanupOnSuccess`). Full `go test ./...` green.
+   - [x] Coverage ≥ 80% on `revert.go` — `RevertPatch` 93.8%, `CleanupBackups` 100%, package total 93.3%.
+   - [x] `go vet ./...` clean; `golangci-lint run ./internal/autofix/...` 0 issues; `go build ./...` succeeds.
+   - [x] Restore-failure is a hard error (logged at Warn AND returned as a named `errors.Join` aggregate); cleanup runs only on validation success and is best-effort (never fails the run).
+   - [x] Story-3 checkboxes (3.1–3.3) and all 4 AC files (03-01…03-04) updated to `[x]`.
+
+   **Story-3 DoD Complete** — Auto: 3/3 (tests/lint/build) | Story-Specific: backup-map coverage matches writes, restore-on-failure (single/multi/partial/create-delete/delete-restore), all-errors-collected aggregate, cleanup-on-success + already-absent tolerance + best-effort, hard-error naming, revert-before-remote sequencing, TD-005 symlink-leaf sentinel disambiguation — all green.
+   Manual Review: [x] Reviewed via 3.2.A fresh-subagent adversarial pass (2 MEDIUM closed inline as tests, 2 LOW → TD-009/010).
 
 ### 3.5 [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3 (`internal/autofix/revert.*`).

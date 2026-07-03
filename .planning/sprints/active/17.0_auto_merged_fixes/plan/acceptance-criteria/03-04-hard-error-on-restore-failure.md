@@ -61,14 +61,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A single restore failure produces a named, non-nil error identifying the file and its `.bak` path
-- [ ] A multi-file restore failure names every failed file, not only the first
-- [ ] `--auto-fix` exits non-zero and prints the restore-failure detail when this error path fires; no restore failure is ever logged-only with a zero exit
+- [x] A single restore failure produces a named, non-nil error identifying the file and its `.bak` path
+- [x] A multi-file restore failure names every failed file, not only the first
+- [x] `--auto-fix` exits non-zero and prints the restore-failure detail when this error path fires; no restore failure is ever logged-only with a zero exit
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved
