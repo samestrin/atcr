@@ -142,6 +142,14 @@ func TestRunConfiguredValidation_TimeoutPreservesPartialOutput(t *testing.T) {
 	assert.Contains(t, res.Stdout, "partial", "output captured before the deadline is retained")
 }
 
+func TestRunConfiguredValidation_ZeroTimeoutUsesDefault(t *testing.T) {
+	skipOnWindows(t)
+	res, err := RunConfiguredValidation(context.Background(), []string{"true"}, t.TempDir(), 0)
+	require.NoError(t, err, "zero timeout must not be an immediate start error")
+	assert.False(t, res.TimedOut, "zero timeout must use a default rather than immediate DeadlineExceeded")
+	assert.True(t, res.Passed(), "a fast command must complete under the default timeout")
+}
+
 func TestRunConfiguredValidation_NoFileMutation(t *testing.T) {
 	skipOnWindows(t)
 	dir := t.TempDir()
