@@ -66,6 +66,30 @@ func TestRunConfiguredValidation_CommandNotFoundIsDistinct(t *testing.T) {
 	assert.False(t, res.TimedOut)
 }
 
+func TestRunConfiguredValidation_ParentCancellationIsHardFailureNotStartError(t *testing.T) {
+	skipOnWindows(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // parent cancelled before the command can complete
+	res, err := RunConfiguredValidation(ctx, []string{"sleep", "10"}, t.TempDir(), 5*time.Second)
+	require.NoError(t, err, "a parent-cancelled run completed as a hard failure, not a Go start error")
+	assert.False(t, res.Passed())
+	assert.Nil(t, res.StartError, "cancellation must not be mislabeled as command-not-found")
+	assert.True(t, res.TimedOut, "cancellation is folded into the cancellation/timeout hard-failure path")
+}
+
+func TestRunConfiguredValidation_LingeringChildIsFailureNotStartError(t *testing.T) {
+	skipOnWindows(t)
+	// The command itself exits 0 immediately, but a backgrounded grandchild
+	// inherits and holds the stdout pipe open past cmd.WaitDelay, so cmd.Run
+	// returns exec.ErrWaitDelay. That is a completed-but-unclean run, not a
+	// command that could not start.
+	res, err := RunConfiguredValidation(context.Background(),
+		[]string{"sh", "-c", "sleep 5 & exit 0"}, t.TempDir(), 30*time.Second)
+	require.NoError(t, err, "a lingering child is a completed hard failure, not a Go start error")
+	assert.Nil(t, res.StartError, "ErrWaitDelay must not be mislabeled as command-not-found")
+	assert.False(t, res.Passed(), "an unclean run must not pass the validation gate")
+}
+
 func TestRunConfiguredValidation_EmptyArgvRefused(t *testing.T) {
 	res, err := RunConfiguredValidation(context.Background(), nil, t.TempDir(), 5*time.Second)
 	require.Error(t, err, "empty argv must not attempt to execute")
