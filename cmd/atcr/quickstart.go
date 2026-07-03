@@ -276,17 +276,61 @@ func profileIsAtcrOwned(profile, dir string) bool {
 	if abs == "" {
 		return false
 	}
+	// Compare the effective write targets, not the lexical paths: appendExport
+	// follows symlinks, so a profile that is (or lives behind) a symlink into
+	// .atcr/ must be judged by where the write actually lands. resolveEffectivePath
+	// is applied symmetrically to both sides so the prefix comparison holds.
+	abs = resolveEffectivePath(abs)
 	if atcr, err := filepath.Abs(filepath.Join(dir, ".atcr")); err == nil {
+		atcr = resolveEffectivePath(atcr)
 		if abs == atcr || strings.HasPrefix(abs, atcr+string(os.PathSeparator)) {
 			return true
 		}
 	}
 	if reg, err := registry.DefaultRegistryPath(); err == nil {
-		if regAbs, err := filepath.Abs(reg); err == nil && abs == regAbs {
-			return true
+		if regAbs, err := filepath.Abs(reg); err == nil {
+			if abs == resolveEffectivePath(regAbs) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// resolveEffectivePath returns the path a write to abs would actually land on,
+// with symlinks resolved. If the leaf itself is a symlink it is dereferenced
+// (os.OpenFile would follow it, even to a not-yet-existing target), and any
+// symlink in the deepest existing ancestor is resolved via filepath.EvalSymlinks.
+// The trailing component(s) may not exist yet — the profile is created on append —
+// so only the longest existing prefix is resolved and the remaining lexical
+// components are rejoined. Applied to both the candidate profile and the
+// atcr-owned paths, it makes the ownership guard robust to a symlink whose target
+// lands inside .atcr/ but whose own path does not.
+func resolveEffectivePath(abs string) string {
+	if fi, err := os.Lstat(abs); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		if target, rlErr := os.Readlink(abs); rlErr == nil {
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(abs), target)
+			}
+			abs = filepath.Clean(target)
+		}
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	dir := abs
+	var tail []string
+	for {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return abs // reached the root without an existing ancestor
+		}
+		tail = append([]string{filepath.Base(dir)}, tail...)
+		dir = parent
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(append([]string{resolved}, tail...)...)
+		}
+	}
 }
 
 // resolveProfilePath expands a leading ~ and returns the absolute form of a
