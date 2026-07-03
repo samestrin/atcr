@@ -256,7 +256,7 @@ func (c *Client) CreateCommit(ctx context.Context, owner, repo string, req Commi
 		SHA string `json:"sha"`
 	}
 	commitBody := map[string]any{
-		"message": req.Message,
+		"message": c.redactSecrets(req.Message),
 		"tree":    tree.SHA,
 		"parents": []string{req.ParentSHA},
 	}
