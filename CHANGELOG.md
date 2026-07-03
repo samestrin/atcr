@@ -1,3 +1,30 @@
+## [17.0.0] - 2026-07-03
+
+Added an opt-in `--auto-fix` flow that closes the loop from detection to a ready-to-review pull request: ATCR now applies the fixes it generates, validates them locally, reverts automatically on failure, and only then orchestrates a Git branch, commit, and PR through the GitHub API.
+
+### Added
+
+- `atcr review --auto-fix`: opt-in flag (off by default) that parses a model-generated diff, applies it to the local working tree, runs a configurable local validation command, reverts on failure, and — only after validation passes — creates a branch, commit, and pull request. Guarded by an all-or-nothing refuse-without-backend gate.
+- `internal/autofix`: safe patch apply and revert over `atomicfs`, wrapping `go-gitdiff` — per-file backups, symlink-escape guard at the write boundary, refusal to clobber an existing target on a create diff, and full restore of touched files when validation fails.
+- `internal/verify`: configurable local validation runner with a conservative exit-code-only pass/fail gate, default timeout handling, and directory/argv guards.
+- `internal/ghaction.Client`: `CreateBranch`, `CreateCommit`, `CreatePullRequest`, and `UpdatePullRequest` via the GitHub Git Data API, reusing existing retry/backoff/redaction plumbing, with an open-PR existence check before creating a duplicate.
+- A commented `auto_fix` stanza documented in the `atcr init` config template.
+
+### Changed
+
+- `CreateCommit` now redacts the commit message before sending it to GitHub and guards against an empty parent tree SHA.
+- `sendDo`/`get` honor `Retry-After` on 403 secondary rate limits; `FindOpenPullRequest` requests the maximum page size.
+
+### Fixed
+
+- `copyFile` now honors permissions on an existing destination so backup/restore round trips preserve file mode.
+- Validation errors (`ErrWaitDelay`/`context.Canceled`) are classified as run failures rather than start errors.
+- A stranded backup left on apply write/delete failure is now cleaned up; duplicate-path skipped fixes are surfaced.
+- The `--auto-fix` gate rejects a malformed or insecure `api-url` and resolves the apply target to an absolute, repo-root-only path.
+- No GitHub-mutating call is reachable before local validation passes; the empty-selection message distinguishes all-below-threshold from no-fix.
+
+*Shipped via /execute-sprint (sprint 17.0)*
+
 ## [Technical Debt] - 2026-07-02
 
 ### Fixed

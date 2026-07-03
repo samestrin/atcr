@@ -60,6 +60,10 @@ type ProjectConfig struct {
 	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
 	// nil means execution is unconfigured and `--exec` is refused.
 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
+	// AutoFix is the optional `--auto-fix` backend block (Sprint 17.0). nil means
+	// the config-derived pieces inherit their defaults; it never enables the flow
+	// on its own (validateAutoFixBackend gates that).
+	AutoFix *AutoFixConfig `yaml:"auto_fix,omitempty"`
 }
 
 // DefaultProjectConfigPath returns .atcr/config.yaml under root.
@@ -94,6 +98,16 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   least-recently-used entries are evicted past the cap. Set to 0 for unbounded.\n")
 	fmt.Fprintf(&b, "cache_max_bytes: %d\n", DefaultCacheMaxBytes)
 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
+	b.WriteString("# auto_fix: opt-in remediation for `atcr review --auto-fix`. Off unless the flag\n")
+	b.WriteString("#   is passed; leave this stanza commented to keep the default review path.\n")
+	b.WriteString("#   apply_target: working-tree dir the patch applies to (default: repo root).\n")
+	b.WriteString("#   validate_command: argv run after apply; must pass before any GitHub PR is\n")
+	b.WriteString("#     opened (default: `go build ./...` for Go projects; required otherwise).\n")
+	b.WriteString("#   validate_timeout: max duration for one validation run (default: 2m).\n")
+	b.WriteString("# auto_fix:\n")
+	b.WriteString("#   apply_target: .\n")
+	b.WriteString("#   validate_command: [go, build, ./...]\n")
+	b.WriteString("#   validate_timeout: 2m\n")
 	return b.String()
 }
 
@@ -148,6 +162,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 		return nil, fmt.Errorf("%s: invalid review_strategy '%s': must be one of bulk, chunked", base, strings.TrimSpace(cfg.ReviewStrategy))
 	}
 	if err := cfg.Sandbox.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", base, err)
+	}
+	if err := cfg.AutoFix.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}
 

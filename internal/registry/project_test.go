@@ -51,6 +51,21 @@ fail_on: MEDIUM
 	assert.Equal(t, "MEDIUM", cfg.FailOn)
 }
 
+func TestDefaultProjectConfigYAML_DocumentsAutoFix(t *testing.T) {
+	out := DefaultProjectConfigYAML([]string{"bruce"})
+	// The opt-in auto_fix keys must ship as a commented template, mirroring how
+	// max_parallel / cache_max_bytes are documented, so an operator enabling
+	// --auto-fix has an in-repo stanza to copy (TD-017).
+	assert.Contains(t, out, "auto_fix:")
+	assert.Contains(t, out, "apply_target:")
+	assert.Contains(t, out, "validate_command:")
+	assert.Contains(t, out, "validate_timeout:")
+
+	// The rendered config (commented stanza included) must still load cleanly.
+	_, err := LoadProjectConfig(writeProject(t, out))
+	require.NoError(t, err)
+}
+
 func TestProjectConfig_MinimalRoster(t *testing.T) {
 	cfg, err := LoadProjectConfig(writeProject(t, `
 agents: [bruce]

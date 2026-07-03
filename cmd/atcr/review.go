@@ -53,6 +53,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
 	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
 	addRangeFlags(cmd)
+	addAutoFixFlags(cmd)
 	return cmd
 }
 
@@ -188,6 +189,13 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		return usageError(errors.New("--single-model requires --debate"))
 	}
 
+	// --auto-fix (Sprint 17.0, Story 6) is the opt-in write-back flow. Its
+	// refuse-without-backend gate is resolved after config load (it needs the
+	// project config) but before any fix is applied; afBackend carries the
+	// resolved backend forward to the post-reconcile orchestration.
+	autoFix := boolFlag(cmd, "auto-fix")
+	var afBackend autoFixBackend
+
 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
 	if err != nil {
 		// A SIGINT/SIGTERM during range resolution surfaces as context.Canceled
@@ -207,6 +215,16 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	}
 	if banner := cfg.Registry.ProjectProviderBanner(); banner != "" {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), banner)
+	}
+
+	// The --auto-fix backend must be fully configured before any review work so a
+	// half-configured run refuses fast (exit 2) instead of reviewing, applying,
+	// and stalling mid-flow. The gate is shape-only (no network/exec); "." is the
+	// working-tree root every review runs against.
+	if autoFix {
+		if afBackend, err = validateAutoFixBackend(cmd, cfg.Project, "."); err != nil {
+			return err
+		}
 	}
 
 	if verifyFlag {
@@ -319,7 +337,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// error and short-circuits before this line. The FailureMarker correction in
 	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
 	// path that runs after the fact against the on-disk summary.json.
-	if threshold != "" || verifyFlag || debateFlag {
+	if threshold != "" || verifyFlag || debateFlag || autoFix {
 		rec, rerr := reconcile.RunReconcile(ctx, result.Dir, nil, reclib.Options{
 			ReconciledAt: time.Now(),
 			Partial:      result.Summary.Partial,
@@ -371,6 +389,15 @@ func runReview(cmd *cobra.Command, _ []string) error {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow)\n",
 				dres.Selected, dres.Upheld, dres.Overturned, dres.Split, dres.Unresolved, dres.Overflow)
+		}
+
+		// --auto-fix consumes the reconciled (and, when chained, verified/debated)
+		// findings: apply each selected fix, validate locally, and open a PR only
+		// if validation passes. It runs LAST so it operates on the post-chain
+		// findings, and it is terminal — the fail-on exit gate below is bypassed
+		// because the intent under --auto-fix is to remediate, not to fail CI.
+		if autoFix {
+			return orchestrateAutoFix(ctx, cmd.OutOrStdout(), afBackend, result.Dir, threshold, res.DefaultBranch)
 		}
 
 		// Gate on the post-chain findings.json when a stage rewrote it; otherwise

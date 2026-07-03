@@ -54,6 +54,13 @@ var allowedInternalImports = map[string][]string{
 	"benchmark":      {"scorecard", "version"}, // standard-suite contract + suite-tagged submission envelope; reuses scorecard.PublicRecord for one public reviewer schema, version for atcr_version (epic 10.0)
 	"astgroup":       {},                       // AST-isomorphism grouper: wazero host + embedded .wasm parsers; imports the external reconcile library (Grouper seam) + wazero only, no internal package (epic 13.1)
 	"quickstart":     {},                       // `atcr quickstart` data layer: synthetic manifest + registry.yaml/workflow generators + refresh transform; stdlib + embed only, no internal package (epic 16.0)
+	// autofix is the --auto-fix local write-path (Sprint 17.0). apply.go wraps
+	// go-gitdiff behind ApplyPatch and consumes payload.FileEntry (input shape)
+	// and atomicfs (crash-safe backup + atomic write); revert.go (Phase 3) builds
+	// on the same two, plus log for the AC 03-04 restore-failure contract — a
+	// failed restore is both Warn-logged (operational visibility) and returned as
+	// a hard error, mirroring fanout's restorePriorBackup Warn-not-swallow precedent.
+	"autofix": {"payload", "atomicfs", "log"},
 	// integration holds only end-to-end _test.go files (no production code).
 	// The dependency-direction walk skips _test.go, so this entry exists to
 	// satisfy the allowlist-completeness check; it records the packages those
