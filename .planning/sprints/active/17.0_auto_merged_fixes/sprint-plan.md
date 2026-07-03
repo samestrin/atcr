@@ -627,7 +627,7 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
    - [x] Story-6 checkbox (5.1–5.3) and all 3 AC files (06-01/02/03) updated to `[x]`.
 
    **Story-6 DoD Complete** — Auto: 3/3 (tests/lint/build) | Story-Specific: `--auto-fix` off-by-default + help-discoverable + absent from other commands; single all-or-nothing gate refusing on each of apply-target / validation-command / GitHub-token / malformed-repo independently AND aggregated; no live network/exec in the gate; no filesystem mutation on refusal; fully-configured pass with flag>env precedence, resolved-timeout default (TD-008) + configured override; `runAutoFix` sequencing (no GitHub call before `Passed()`, revert on apply/validate failure), empty-base guard before any GitHub call (5.2.A HIGH) — all green.
-   Manual Review: [ ] Code reviewed (pending `/execute-code-review`) — adversarial 5.2.A fresh-subagent pass done (1 HIGH fixed inline, 2 LOW → TD-014/TD-015).
+   Manual Review: [x] Code reviewed (via `/execute-code-review` 2026-07-03 — 0 CRITICAL/HIGH; 7 new MED/LOW findings streamed to code-review/claude/) — adversarial 5.2.A fresh-subagent pass done (1 HIGH fixed inline, 2 LOW → TD-014/TD-015).
 
 ### 5.5 [x] **Phase 5 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 5 (`cmd/atcr/autofix.*`, `cmd/atcr/flags.go`).
