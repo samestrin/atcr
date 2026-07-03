@@ -111,23 +111,51 @@ func runQuickstart(o quickstartOpts) error {
 func scaffoldWorkflow(o quickstartOpts, m *quickstart.Manifest) error {
 	wfPath := filepath.Join(o.dir, ".github", "workflows", "atcr.yml")
 
-	_, statErr := os.Lstat(wfPath)
-	switch {
-	case statErr == nil && !o.force:
+	existed, err := createExclusive(wfPath, []byte(quickstart.WorkflowYAML(m)), 0o644, o.force)
+	if err != nil {
+		return err
+	}
+	if existed {
 		_, _ = fmt.Fprintf(o.errOut, "\nA workflow already exists at %s — not overwriting it (use --force to replace).\n", wfPath)
 		return nil
-	case statErr != nil && !errors.Is(statErr, fs.ErrNotExist):
-		return fmt.Errorf("cannot check %s: %w", wfPath, statErr)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(wfPath), 0o755); err != nil {
-		return fmt.Errorf("cannot create %s: %w", filepath.Dir(wfPath), err)
-	}
-	if err := os.WriteFile(wfPath, []byte(quickstart.WorkflowYAML(m)), 0o644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", wfPath, err)
 	}
 	_, _ = fmt.Fprintf(o.out, "  created %s\n", wfPath)
 	return nil
+}
+
+// createExclusive atomically creates path with the given contents, honoring the
+// never-overwrite-without-force contract without a check-then-write race. It
+// returns existed=true (having written nothing) when the path is already present
+// and force is off, so the caller can print its own skip message. The O_EXCL
+// open closes the TOCTOU window a separate Lstat+WriteFile leaves open: a file
+// or symlink appearing at path is never silently overwritten or followed. When
+// force is set, any existing entry is removed first — os.Remove drops the link
+// itself, never following it — so the scaffold is never written through a
+// pre-planted symlink into an outside (or atcr-owned) file.
+func createExclusive(path string, data []byte, perm os.FileMode, force bool) (existed bool, err error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, fmt.Errorf("cannot create %s: %w", filepath.Dir(path), err)
+	}
+	if force {
+		if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+			return false, fmt.Errorf("cannot replace %s: %w", path, rmErr)
+		}
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return true, nil
+		}
+		return false, fmt.Errorf("failed to write %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, werr := f.Write(data); werr != nil {
+		return false, fmt.Errorf("failed to write %s: %w", path, werr)
+	}
+	if cerr := f.Close(); cerr != nil {
+		return false, fmt.Errorf("failed to write %s: %w", path, cerr)
+	}
+	return false, nil
 }
 
 // keyEnvFlow shows the referral signup link, optionally opens it, then walks the
@@ -314,9 +342,11 @@ func writeSyntheticRegistry(o quickstartOpts, m *quickstart.Manifest, roster []s
 	}
 	content := quickstart.RegistryYAML(m, roster)
 
-	_, statErr := os.Lstat(regPath)
-	switch {
-	case statErr == nil && !o.force:
+	existed, err := createExclusive(regPath, []byte(content), 0o644, o.force)
+	if err != nil {
+		return err
+	}
+	if existed {
 		// Exists and no force: do not touch it. Show the block to merge, and warn
 		// that the roster just written to .atcr/config.yaml references these agents
 		// — until they are merged, `atcr review` will fail to resolve the roster.
@@ -325,15 +355,6 @@ func writeSyntheticRegistry(o quickstartOpts, m *quickstart.Manifest, roster []s
 		_, _ = fmt.Fprintf(o.out, "\n%s\n", content)
 		_, _ = fmt.Fprintf(o.errOut, "Until you merge these, `atcr review` will fail: .atcr/config.yaml lists agents (%s) your registry does not define yet.\n", strings.Join(roster, ", "))
 		return nil
-	case statErr != nil && !errors.Is(statErr, fs.ErrNotExist):
-		return fmt.Errorf("cannot check %s: %w", regPath, statErr)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(regPath), 0o755); err != nil {
-		return fmt.Errorf("cannot create %s: %w", filepath.Dir(regPath), err)
-	}
-	if err := os.WriteFile(regPath, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", regPath, err)
 	}
 	_, _ = fmt.Fprintf(o.out, "  created %s\n", regPath)
 	return nil
