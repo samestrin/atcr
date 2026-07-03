@@ -278,8 +278,9 @@ func profileIsAtcrOwned(profile, dir string) bool {
 	}
 	// Compare the effective write targets, not the lexical paths: appendExport
 	// follows symlinks, so a profile that is (or lives behind) a symlink into
-	// .atcr/ must be judged by where the write actually lands. resolveEffectivePath
-	// is applied symmetrically to both sides so the prefix comparison holds.
+	// .atcr/ must be judged by where the write actually lands. The ownership
+	// checks below compare by inode identity so a case-variant path (.ATCR on a
+	// case-insensitive filesystem) is caught too.
 	abs = resolveEffectivePath(abs)
 	if atcr, err := filepath.Abs(filepath.Join(dir, ".atcr")); err == nil {
 		if pathWithinDir(abs, atcr) {
