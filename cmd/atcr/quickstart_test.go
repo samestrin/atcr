@@ -302,6 +302,33 @@ func TestQuickstart_KeyEntry_RefusesAtcrOwnedProfilePath(t *testing.T) {
 	assert.NotContains(t, string(cfg), "MYSECRETKEY", "key never written into an atcr-owned file")
 }
 
+func TestQuickstart_KeyEntry_RefusesSymlinkIntoAtcr(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	// A profile path that is a symlink pointing into the .atcr workspace. The
+	// symlink's own path is lexically outside .atcr, so a filepath.Abs-only guard
+	// waves it through — then appendExport (which follows symlinks) writes the key
+	// through the link into an atcr-owned file, defeating the invariant.
+	link := filepath.Join(dir, "innocent-profile.sh")
+	atcrTarget := filepath.Join(dir, ".atcr", "leaked.sh")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".atcr"), 0o755))
+	require.NoError(t, os.Symlink(atcrTarget, link))
+
+	errOut := &bytes.Buffer{}
+	in := strings.NewReader("MYSECRETKEY\n" + link + "\n")
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: dir, in: in, out: &bytes.Buffer{}, errOut: errOut,
+	}))
+
+	assert.Contains(t, errOut.String(), "Refusing to write the key",
+		"a profile symlinked into .atcr/ must be refused")
+	// The key must never have been written through the symlink into .atcr/.
+	if data, err := os.ReadFile(atcrTarget); err == nil {
+		assert.NotContains(t, string(data), "MYSECRETKEY", "key never written into .atcr via a symlink")
+	}
+}
+
 func TestQuickstart_RegistryGuard_ForceOverwrites(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()
