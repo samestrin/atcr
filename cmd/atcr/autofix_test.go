@@ -69,6 +69,17 @@ func TestReviewCmd_AutoFixFlagExists(t *testing.T) {
 	require.False(t, v, "--auto-fix must default to false")
 }
 
+// TestReviewCmd_AutoFixHelpMentionsFailOnBypass: the --auto-fix help documents
+// that a successful auto-fix run bypasses the --fail-on exit gate, so operators
+// using --auto-fix in CI are not surprised when unfixable findings no longer
+// fail the build (TD-018).
+func TestReviewCmd_AutoFixHelpMentionsFailOnBypass(t *testing.T) {
+	_, help := execCmdCapture(t, "review", "--help")
+	require.Contains(t, help, "--auto-fix")
+	require.Contains(t, help, "--fail-on")
+	require.Contains(t, help, "bypassed")
+}
+
 // TestReviewCmd_AutoFixAbsentFromOtherCommands: the flag is registered only on
 // review, not on unrelated commands (AC 06-01 Scenario 1).
 func TestReviewCmd_AutoFixAbsentFromOtherCommands(t *testing.T) {
