@@ -58,6 +58,8 @@ func LoadManifest() (*Manifest, error) {
 // generate a broken registry.yaml.
 func (m *Manifest) validate() error {
 	switch {
+	case strings.TrimSpace(m.SignupURL) == "":
+		return fmt.Errorf("synthetic manifest: signup_url is required")
 	case strings.TrimSpace(m.Provider.Name) == "":
 		return fmt.Errorf("synthetic manifest: provider.name is required")
 	case strings.TrimSpace(m.Provider.BaseURL) == "":
@@ -66,6 +68,9 @@ func (m *Manifest) validate() error {
 		return fmt.Errorf("synthetic manifest: provider.api_key_env is required")
 	case len(m.Models) == 0:
 		return fmt.Errorf("synthetic manifest: at least one model is required")
+	}
+	if _, err := url.Parse(m.SignupURL); err != nil {
+		return fmt.Errorf("synthetic manifest: signup_url is invalid: %w", err)
 	}
 	for i, model := range m.Models {
 		if strings.TrimSpace(model) == "" {
@@ -90,11 +95,14 @@ func (m *Manifest) SignupLink() string {
 	if strings.TrimSpace(m.Referral) == "" {
 		return m.SignupURL
 	}
-	sep := "?"
-	if strings.Contains(m.SignupURL, "?") {
-		sep = "&"
+	u, err := url.Parse(m.SignupURL)
+	if err != nil {
+		return m.SignupURL
 	}
-	return m.SignupURL + sep + "referral=" + url.QueryEscape(m.Referral)
+	q := u.Query()
+	q.Set("referral", m.Referral)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // RegistryYAML renders the ~/.config/atcr/registry.yaml content: the synthetic
