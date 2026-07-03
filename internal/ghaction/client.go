@@ -289,6 +289,13 @@ func (c *Client) CreatePullRequest(ctx context.Context, owner, repo string, req 
 	if err := c.postDo(ctx, fmt.Sprintf("/repos/%s/%s/pulls", owner, repo), body, &resp); err != nil {
 		return 0, err
 	}
+	// postDo ignores body-decode errors, so a 2xx whose body carried no number
+	// would otherwise return (0, nil). A real PR number is always >= 1; surface 0
+	// as an error so an orchestrator never misreads it as "not created" and opens
+	// a duplicate PR.
+	if resp.Number == 0 {
+		return 0, fmt.Errorf("creating pull request: response carried no PR number")
+	}
 	return resp.Number, nil
 }
 

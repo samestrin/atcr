@@ -681,6 +681,19 @@ func TestCreatePullRequest(t *testing.T) {
 	assert.Equal(t, "fixes the thing", gotBody["body"])
 }
 
+func TestCreatePullRequestZeroNumberIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{}`)) // 2xx but no decodable PR number
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	num, err := c.CreatePullRequest(context.Background(), "o", "r", PullRequestRequest{Head: "h", Base: "main", Title: "t", Body: "b"})
+	require.Error(t, err, "a 2xx with no PR number must error so the orchestrator never reads 0 as 'not created' and duplicates the PR")
+	assert.Equal(t, 0, num)
+}
+
 func TestCreatePullRequest422Typed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)

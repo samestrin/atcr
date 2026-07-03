@@ -67,6 +67,13 @@ Deferred MEDIUM/LOW findings surfaced during `/execute-sprint`. Read by
 **Why accepted:** Out of AC scope — ACs 03-02/03-04 specify byte-for-byte *content* restoration, which holds. The auto-fix target corpus is 0644 Go source, so a mode regression is not reachable for the intended use case. LOW.
 **Fix in:** A later hardening pass — after a successful `copyPathFn` restore, `os.Chmod(target, bakMode)` from the backup's mode (or stat the `.bak`); add an executable-fixture mode-fidelity regression test.
 
+## TD-012 — Existence check scopes on head only, not the (head, base) pair (LOW)
+**Origin:** Phase 4, task 4.5.A adversarial review, 2026-07-03
+**File:** internal/ghaction/client.go:315
+**Issue:** `findOpenPullRequest` queries `?head={owner}:{branch}&state=open` and, on multiple matches, returns the lowest-numbered PR. GitHub permits multiple open PRs from the same head to different base branches, so the lowest-number tiebreak could return a PR targeting an unintended base; the Story-6 orchestrator would then update that PR instead of the one against the intended base.
+**Why accepted:** AC 05-02 explicitly specifies the query as head + state=open (no base), and its Edge Case 1 deliberately resolves multiple-same-head matches by lowest number — head-only + lowest-number is the AC's chosen design, so scoping on base here would deviate from the contract. In the real `--auto-fix` flow the branch is atcr-generated and always targets the single default base, so multi-base same-head PRs are not a reachable condition for the intended use case.
+**Fix in:** A later hardening pass, only if multi-base auto-fix PRs ever become a real scenario — thread a `base` argument into `findOpenPullRequest` and add `q.Set("base", base)` so the existence check matches GitHub's one-open-PR-per-(head,base) invariant, and update AC 05-02's query accordingly.
+
 ## TD-011 — Non-idempotent POST retry can yield a spurious 422 collision (LOW)
 **Origin:** Phase 4, task 4.2.A adversarial review, 2026-07-03
 **File:** internal/ghaction/client.go:180
