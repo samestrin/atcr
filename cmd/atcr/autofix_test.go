@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -300,6 +301,11 @@ type fakeGitHub struct {
 	// exercise the update path (AC 05-02).
 	findFound  bool
 	findNumber int
+	// Per-call errors simulate post-CreateBranch failures so the remote-cleanup
+	// notice in runAutoFix can be exercised.
+	commitErr   error
+	findErr     error
+	createPRErr error
 }
 
 func (f *fakeGitHub) CreateBranch(_ context.Context, _, _, _, _ string) error {
@@ -308,14 +314,23 @@ func (f *fakeGitHub) CreateBranch(_ context.Context, _, _, _, _ string) error {
 }
 func (f *fakeGitHub) CreateCommit(_ context.Context, _, _ string, _ ghaction.CommitRequest) (string, error) {
 	f.commitCalls++
+	if f.commitErr != nil {
+		return "", f.commitErr
+	}
 	return "deadbeef", nil
 }
 func (f *fakeGitHub) FindOpenPullRequest(_ context.Context, _, _, _ string) (int, bool, error) {
 	f.findCalls++
+	if f.findErr != nil {
+		return 0, false, f.findErr
+	}
 	return f.findNumber, f.findFound, nil
 }
 func (f *fakeGitHub) CreatePullRequest(_ context.Context, _, _ string, _ ghaction.PullRequestRequest) (int, error) {
 	f.createPR++
+	if f.createPRErr != nil {
+		return 0, f.createPRErr
+	}
 	return 7, nil
 }
 func (f *fakeGitHub) UpdatePullRequest(_ context.Context, _, _ string, _ int, _ ghaction.PullRequestRequest) error {
@@ -434,6 +449,59 @@ func TestRunAutoFix_EmptyBaseRefusesBeforeGitHub(t *testing.T) {
 	require.Contains(t, err.Error(), "base branch")
 	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
 		"no GitHub call may fire when the PR base is unresolved")
+}
+
+// TestRunAutoFix_RemoteLeftoverNotice: after CreateBranch succeeds, any failure
+// in CreateCommit / FindOpenPullRequest / CreatePullRequest must tell the
+// operator that a remote branch (and possibly commit) was left behind and must
+// be deleted manually — the local RevertPatch cannot undo remote state.
+func TestRunAutoFix_RemoteLeftoverNotice(t *testing.T) {
+	cases := []struct {
+		name      string
+		gh        *fakeGitHub
+		wantCalls int
+	}{
+		{
+			name:      "CreateCommit fails",
+			gh:        &fakeGitHub{commitErr: errors.New("boom")},
+			wantCalls: 1, // branch created, commit attempted
+		},
+		{
+			name:      "FindOpenPullRequest fails",
+			gh:        &fakeGitHub{findErr: errors.New("boom")},
+			wantCalls: 2, // branch + commit created, find attempted
+		},
+		{
+			name:      "CreatePullRequest fails",
+			gh:        &fakeGitHub{createPRErr: errors.New("boom")},
+			wantCalls: 2, // branch + commit created, find succeeded, create attempted
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			rel := "f.txt"
+			require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+			err := runAutoFix(context.Background(), io.Discard, tc.gh, autoFixRun{
+				Backend: autoFixBackend{
+					applyTarget:     root,
+					validateArgv:    []string{"true"},
+					validateTimeout: 5 * time.Second,
+					owner:           "o", repo: "r", token: "tok",
+				},
+				Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+				BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+			})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "atcr/auto-fix")
+			require.Contains(t, err.Error(), "remote branch", "error must warn that a remote branch was created")
+			require.Contains(t, err.Error(), "delete", "error must tell the operator to delete the remote branch manually")
+			require.Equal(t, tc.wantCalls, tc.gh.branchCalls+tc.gh.commitCalls,
+				"branch and optional commit calls must match the failure point")
+		})
+	}
 }
 
 // --- thin finding->entry selection ----------------------------------------
