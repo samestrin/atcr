@@ -75,4 +75,5 @@
 - [x] No code path under `internal/autofix` (or equivalent) is reachable unless `--auto-fix` is explicitly `true` (all wiring gated by `if autoFix` in `runReview`)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved <!-- 5.2.A fresh-subagent adversarial pass + 5.5 phase gate -->
+

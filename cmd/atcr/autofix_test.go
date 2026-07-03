@@ -295,6 +295,11 @@ type fakeGitHub struct {
 	findCalls   int
 	createPR    int
 	updatePR    int
+	// findFound/findNumber let a test drive the create-vs-update decision:
+	// the zero value reports "no open PR" (create path); set findFound=true to
+	// exercise the update path (AC 05-02).
+	findFound  bool
+	findNumber int
 }
 
 func (f *fakeGitHub) CreateBranch(_ context.Context, _, _, _, _ string) error {
@@ -307,7 +312,7 @@ func (f *fakeGitHub) CreateCommit(_ context.Context, _, _ string, _ ghaction.Com
 }
 func (f *fakeGitHub) FindOpenPullRequest(_ context.Context, _, _, _ string) (int, bool, error) {
 	f.findCalls++
-	return 0, false, nil
+	return f.findNumber, f.findFound, nil
 }
 func (f *fakeGitHub) CreatePullRequest(_ context.Context, _, _ string, _ ghaction.PullRequestRequest) (int, error) {
 	f.createPR++
@@ -373,6 +378,35 @@ func TestRunAutoFix_ValidationPassCreatesPR(t *testing.T) {
 	require.Equal(t, 1, gh.commitCalls)
 	require.Equal(t, 1, gh.createPR)
 	require.Equal(t, 0, gh.updatePR)
+	got, _ := os.ReadFile(filepath.Join(root, rel))
+	require.Equal(t, "new\n", string(got), "validated content stays applied")
+}
+
+// TestRunAutoFix_ValidationPassUpdatesExistingPR: on validation success, when an
+// open PR already exists for the branch, runAutoFix UPDATES it and never opens a
+// duplicate — the create-vs-update decision (AC 05-02) verified at the
+// orchestration seam. The fakeGitHub reports an existing open PR so runAutoFix
+// takes the found=true branch (the create-path test above exercises found=false).
+func TestRunAutoFix_ValidationPassUpdatesExistingPR(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	gh := &fakeGitHub{findFound: true, findNumber: 17}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // always exits zero
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, gh.findCalls, "the existence check must run")
+	require.Equal(t, 1, gh.updatePR, "an existing open PR must be updated")
+	require.Equal(t, 0, gh.createPR, "no duplicate PR may be created when one is already open")
 	got, _ := os.ReadFile(filepath.Join(root, rel))
 	require.Equal(t, "new\n", string(got), "validated content stays applied")
 }

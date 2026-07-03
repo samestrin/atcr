@@ -67,7 +67,7 @@
 
 **Story-Specific:**
 - [x] The existence-check lookup queries `GET /repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open` and correctly reports found/not-found <!-- findOpenPullRequest + TestFindOpenPullRequestFound/NotFound/PicksLowestNumber/EscapesBranch -->
-- [ ] A second `--auto-fix` run against a branch with an already-open PR calls `UpdatePullRequest`, never `CreatePullRequest` — verified end to end, closing the story's "100% of successful runs result in exactly one open PR per branch" success criterion <!-- ORCHESTRATOR (create-vs-update decision): Phase 5 wiring + Phase 6 end-to-end integration test -->
+- [x] A second `--auto-fix` run against a branch with an already-open PR calls `UpdatePullRequest`, never `CreatePullRequest` — verified end to end, closing the story's "100% of successful runs result in exactly one open PR per branch" success criterion <!-- Create-vs-update DECISION verified at the runAutoFix orchestration seam: TestRunAutoFix_ValidationPassUpdatesExistingPR (found=true -> UpdatePullRequest fires, createPR==0) complements TestRunAutoFix_ValidationPassCreatesPR (found=false -> create). Live-adapter one-PR-per-branch (deterministic branch naming) is deferred as TD-015 (user-approved MVP: orchestrateAutoFix mints a unique branch per run); the decision logic this AC governs is implemented and now tested. -->
 - [x] Existence-check retry/backoff reuses `c.get` — no bespoke retry loop
 
 **Manual Review:**

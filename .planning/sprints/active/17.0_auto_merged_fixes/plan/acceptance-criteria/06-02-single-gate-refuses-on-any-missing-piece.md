@@ -96,4 +96,5 @@
 - [x] `validateAutoFixBackend` runs strictly before any `internal/autofix` apply call, verified by `TestValidateAutoFixBackend_NoFilesystemMutationOnRefusal` (apply target dir stays empty on refusal)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved <!-- 5.2.A fresh-subagent adversarial pass + 5.5 phase gate -->
+

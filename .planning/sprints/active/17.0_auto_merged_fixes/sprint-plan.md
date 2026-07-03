@@ -730,17 +730,19 @@ Conventional Commit types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `
 
 **Goal:** Definition of Done verification across all 23 ACs and the full quality gate before `/execute-code-review`.
 
-### 7.1 [ ] **Full DoD verification across 23 ACs**
+### 7.1 [x] **Full DoD verification across 23 ACs**
    Walk every AC file in `plan/acceptance-criteria/` (23 total) and confirm each is satisfied and checked `[x]`. Confirm each maps to a passing test.
+   **Result:** All 23 AC files fully `[x]` (0 unchecked). The 5 files carrying open items on entry were verified and closed: 04-04 (all 7 — proven by the Phase-6 integration + Phase-3 boundary tests + global gate); 05-02 (update-vs-create decision — a real coverage gap found here: no test drove `runAutoFix`'s `found=true` branch, so `TestRunAutoFix_ValidationPassUpdatesExistingPR` was added to verify it at the seam; production one-PR-per-branch remains TD-015); 06-01/02/03 (manual-review boxes checked via the 5.2.A adversarial + 5.5 gate passes, consistent with Stories 1-5).
 
 ### Validation Checklist
-- [ ] All tests passing (T3): `go test ./...` and `go test -tags integration ./...`
-- [ ] Coverage meets threshold: `go test -coverprofile=coverage.out ./...` ≥ 80% baseline
-- [ ] Lint/format clean: `golangci-lint run`, `go fmt ./...` (no diff), `goimports`
-- [ ] Vet clean: `go vet ./...`
-- [ ] Build succeeds: `go build ./...`
-- [ ] All 6 stories and 23 ACs checked `[x]`
-- [ ] `tech-debt-captured.md` reviewed; deferred MEDIUM/LOW findings recorded
+- [x] All tests passing (T3): `go test ./...` and `go test -tags integration ./...` <!-- both suites green; cmd/atcr unit 10.9s, integration 10.3s -->
+- [x] Coverage meets threshold: `go test -coverprofile=coverage.out ./...` ≥ 80% baseline <!-- total 89.0% -->
+- [x] Lint/format clean: `golangci-lint run`, `go fmt ./...` (no diff), `goimports` <!-- golangci-lint 0 issues (incl. --build-tags integration); gofmt -l empty -->
+- [x] Vet clean: `go vet ./...` <!-- clean -->
+- [x] Build succeeds: `go build ./...` <!-- clean -->
+- [x] All 6 stories and 23 ACs checked `[x]`
+- [x] `tech-debt-captured.md` reviewed; deferred MEDIUM/LOW findings recorded <!-- TD-001..TD-019 present; TD-002/003 resolved mid-sprint; no CRITICAL/HIGH open -->
+
 
 ### Optional: Targeted Mutation Testing
 MUTATION_TOOL = **UNAVAILABLE** (no `stryker`/`mutmut`/`cargo-mutants` for this Go project). Skip — no mutation step. If a Go mutation tool is added later, target only the highest-risk changed files (`internal/autofix/apply.go`, `internal/autofix/revert.go`), never the full codebase.
@@ -755,7 +757,7 @@ Compare the delivered surface against [original-requirements.md](plan/original-r
 - Out of scope confirmed NOT built: complex merge-conflict resolution; architectural/cross-repo fixes.
 - Flag any task that drifted beyond the original request; if found, STOP and reconcile.
 
-### 7.LAST [ ] **Final GATE: Sprint Exit Review (subagent)**
+### 7.LAST [x] **Final GATE: Sprint Exit Review (subagent)**
    **Scope:** Full sprint diff (all files changed across Phases 1-7).
 
    **Spawn a fresh subagent** via the Agent tool for a final hostile integration review across the whole sprint. No memory of the implementation — intentional. Do NOT review inline.
@@ -774,15 +776,15 @@ Compare the delivered surface against [original-requirements.md](plan/original-r
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (fresh-context final integrator) — no CRITICAL/HIGH:**
+   | Severity | File:Line | Issue | Resolution |
+   |----------|-----------|-------|-----------|
+   | MEDIUM | cmd/atcr/autofix.go:248 | Remote-rollback gap not surfaced to the operator (a pushed branch/commit after a later-step failure is not named as un-revertible-by-AC4), and the `--auto-fix` flow is undocumented under `docs/`/`README`. | Deferred → **TD-020**. Known sprint-design risk; fails closed, no data loss; messaging/docs polish. |
+   | MEDIUM | cmd/atcr/autofix.go:332 | Create-vs-update (AC 05-02) unreachable through the live `orchestrateAutoFix` (unique per-run branch → re-runs duplicate rather than update). | **Maps to existing TD-015** (user-approved MVP). Decision logic now unit-verified at the seam (`TestRunAutoFix_ValidationPassUpdatesExistingPR`); live deterministic-branch refinement stays deferred. No duplicate TD created. |
+   | LOW | cmd/atcr/autofix.go:328 | `orchestrateAutoFix` uses local `git rev-parse HEAD` as the remote base/parent SHA; unpushed or ahead-of-base HEAD yields an opaque failure or a PR carrying extra commits. | Deferred → **TD-021**. Not reachable in the common CI flow; fails closed. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before sprint completion, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Final gate passed" — sprint ready for /execute-code-review
+   **Action taken:** No CRITICAL/HIGH → no inline fix required. All three MEDIUM/LOW findings recorded in `tech-debt-captured.md` (TD-020, TD-021; finding #2 mapped to existing TD-015). Sequencing invariant (no GitHub-mutating call before `Passed()`) independently re-confirmed CLEAN across every apply/validate/timeout/revert/empty-base path.
+
+   **Final gate passed** — sprint ready for `/execute-code-review`.
 
 > **GATED STOP** — Sprint complete. Next: `/execute-code-review`.

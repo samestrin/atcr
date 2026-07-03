@@ -136,3 +136,20 @@ Deferred MEDIUM/LOW findings surfaced during `/execute-sprint`. Read by
 **Issue:** `autoFixBackend.applyTarget` is documented as an absolute path, but `runReview` calls the gate with `repoRoot="."`, so a default/relative `apply_target` resolves to a relative `"."` stored in the field. It works only because CWD == repo root at call time; a latent inconsistency if the gate is ever reused with `repoRoot != CWD`.
 **Why accepted:** Correct in the only current call path (CWD is always the repo root for `atcr review`). LOW.
 **Fix in:** A later pass — `filepath.Abs` the resolved `repoRoot`/apply target in the gate so the field honors its documented absolute contract regardless of caller CWD.
+
+## TD-020 — Remote-rollback gap not surfaced + `--auto-fix` flow undocumented (MEDIUM)
+**Origin:** Phase 7, task 7.LAST final sprint-exit gate review, 2026-07-03
+**File:** cmd/atcr/autofix.go:248
+**Issue:** After `CreateBranch` succeeds, a failure in `CreateCommit` / `FindOpenPullRequest` / `CreatePullRequest` returns an error that names the branch but never tells the operator a *remote* branch/commit was pushed that AC4's local file-revert cannot undo (validation has already passed, so the working tree is also left patched). Separately, there is no operator documentation for the flow — no mention of `auto-fix` / `auto_fix` under `docs/` or `README.md`. The known remote-rollback limitation is effectively swallowed.
+**Why accepted:** The remote-rollback limitation is a documented sprint-design risk (a local file-revert cannot undo pushed remote state); the flow fails closed (no data loss) and the applied tree is a validated, correct state. This is operator-messaging / documentation polish, not a correctness defect, and no AC mandates the remote-cleanup guidance string.
+**Fix in:** A later hardening/docs pass — append "a remote branch <branch> (and commit) was created on <owner>/<repo> and must be deleted manually; the local working tree remains patched" to the post-`CreateBranch` error paths, and document the remote-leftover behavior alongside the `--auto-fix` flag.
+
+## TD-021 — `orchestrateAutoFix` uses local HEAD as the remote base/parent SHA (LOW)
+**Origin:** Phase 7, task 7.LAST final sprint-exit gate review, 2026-07-03
+**File:** cmd/atcr/autofix.go:328
+**Issue:** `orchestrateAutoFix` uses the local `git rev-parse HEAD` as both the branch base SHA and the commit `ParentSHA`. If local HEAD is unpushed, `CreateBranch`/`CreateCommit` fail against GitHub with an opaque 422/404; if HEAD is a feature branch ahead of the PR base (`res.DefaultBranch`), the opened PR silently carries all intervening commits, not just the fix.
+**Why accepted:** In the common CI flow HEAD is the pushed base and equals the PR base, so the mismatch is not reachable; a genuine mismatch fails closed (GitHub rejects the ref/commit). The correctness of the applied fix content is unaffected in the intended path. LOW.
+**Fix in:** A later pass — resolve/verify the base SHA against the remote base branch (or document that HEAD must be pushed and equal the PR base), and surface a clear error when the parent SHA is not present on the remote.
+
+## Note — final-gate finding #2 maps to existing TD-015 (no duplicate)
+The 2026-07-03 final gate re-flagged that `orchestrateAutoFix` mints a unique per-run branch, so the create-vs-update path (AC 05-02) is unreachable through the live entry point (re-runs open duplicate PRs rather than updating). This is the same issue already recorded as **TD-015** (user-approved MVP: create-per-run). The decision logic itself is now unit-verified at the seam (`TestRunAutoFix_ValidationPassUpdatesExistingPR`, added in Phase 7); only the live-adapter deterministic-branch refinement remains deferred under TD-015.

@@ -76,4 +76,5 @@
 - [x] Gate evaluation on the success path completes with no measurable overhead (no network I/O — `TestValidateAutoFixBackend_NoNetworkCall`; no repeated re-validation — the gate runs once and hands its resolved backend forward)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved <!-- 5.2.A fresh-subagent adversarial pass + 5.5 phase gate -->
+

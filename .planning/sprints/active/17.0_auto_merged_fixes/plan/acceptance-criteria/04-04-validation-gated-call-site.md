@@ -50,14 +50,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing <!-- go test -tags integration ./... green -->
+- [x] No linting errors <!-- golangci-lint run 0 issues -->
+- [x] Build succeeds <!-- go build ./... -->
 
 **Story-Specific:**
-- [ ] A validation-failure or validation-error result reaches Story 3's revert path and issues zero HTTP calls to `/git/refs` or `/git/blobs`
-- [ ] A validation-success result is the only path that constructs a `*ghaction.Client` call to `CreateBranch`/`CreateCommit`
-- [ ] The orchestrator's structure makes the invariant visually inspectable (single success branch), not merely enforced by a runtime flag check that a future edit could bypass
+- [x] A validation-failure or validation-error result reaches Story 3's revert path and issues zero HTTP calls to `/git/refs` or `/git/blobs` <!-- TestAutoFixIntegration_ValidationFailRevertsThroughEntryPoint + TestAutoFixIntegration_ZeroHTTPOnValidationFailure (two independent routes assert stub.count()==0) -->
+- [x] A validation-success result is the only path that constructs a `*ghaction.Client` call to `CreateBranch`/`CreateCommit` <!-- runAutoFix (autofix.go:216-249) reverts+returns before any gh.Create* on !Passed(); TestRunAutoFix_ValidationPassCreatesPR / TestAutoFixIntegration_HappyPathOpensPR prove the success path -->
+- [x] The orchestrator's structure makes the invariant visually inspectable (single success branch), not merely enforced by a runtime flag check that a future edit could bypass <!-- validation-fail/error branches each revert-and-return; GitHub calls sit only after the !res.Passed() guard, no fallthrough -->
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved <!-- Phase 3 boundary model (3.5 gate), Phase 5 gate (5.5), Phase 6 gate (6.4) fresh-subagent passes -->
+
