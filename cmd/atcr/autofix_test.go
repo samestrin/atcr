@@ -181,6 +181,38 @@ func TestValidateAutoFixBackend_RejectsInsecureAPIURL(t *testing.T) {
 	require.Contains(t, err.Error(), "API URL")
 }
 
+// TestValidateAutoFixBackend_ApplyTargetResolvedAbsolute: runReview passes
+// repoRoot="."; the resolved apply target must still be absolute so it is
+// independent of the caller's CWD (TD-019).
+func TestValidateAutoFixBackend_ApplyTargetResolvedAbsolute(t *testing.T) {
+	clearGitHubEnv(t)
+	dir := t.TempDir()
+	writeGoMod(t, dir)
+	t.Chdir(dir)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	be, err := validateAutoFixBackend(cmd, proj, ".")
+	require.NoError(t, err)
+	require.True(t, filepath.IsAbs(be.applyTarget), "apply target must be absolute regardless of caller CWD")
+}
+
+// TestValidateAutoFixBackend_RejectsSubdirApplyTarget: a subdirectory apply_target
+// would apply/validate under the subdir but commit repo-root-relative paths GitHub
+// never receives, so the gate refuses it until path translation exists
+// (autofix.go:274 commit-path-mismatch finding).
+func TestValidateAutoFixBackend_RejectsSubdirApplyTarget(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "sub"), 0o755))
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "sub"}}
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "repository root")
+}
+
 // TestValidateAutoFixBackend_NoFilesystemMutationOnRefusal: a refused gate leaves
 // the apply target untouched — it only stats, never writes (AC 06-02 DoD).
 func TestValidateAutoFixBackend_NoFilesystemMutationOnRefusal(t *testing.T) {
