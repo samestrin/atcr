@@ -32,9 +32,10 @@ var debtStdinIsTTY = func(in io.Reader) bool {
 // wizardDefaults seeds the interactive prompts (and flag-mode section fields)
 // with sensible defaults that an empty answer falls back to.
 type wizardDefaults struct {
-	Date, SourceType, Label string
-	Group, Status, Source   string
-	Est                     int
+	Date, SourceType, Label                string
+	Group, Status, Source                  string
+	Severity, File, Problem, Fix, Category string
+	Est                                    int
 }
 
 func newDebtAddCmd() *cobra.Command {
@@ -119,17 +120,17 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	est, _ := cmd.Flags().GetInt("est")
-	def := wizardDefaults{
-		Date: date, SourceType: mustFlag(cmd, "source-type"), Label: mustFlag(cmd, "label"),
-		Group: mustFlag(cmd, "group"), Status: mustFlag(cmd, "status"), Source: mustFlag(cmd, "source"),
-		Est: est,
-	}
-
 	sev := mustFlag(cmd, "severity")
 	file := mustFlag(cmd, "file")
 	problem := mustFlag(cmd, "problem")
 	fix := mustFlag(cmd, "fix")
 	category := mustFlag(cmd, "category")
+	def := wizardDefaults{
+		Date: date, SourceType: mustFlag(cmd, "source-type"), Label: mustFlag(cmd, "label"),
+		Group: mustFlag(cmd, "group"), Status: mustFlag(cmd, "status"), Source: mustFlag(cmd, "source"),
+		Severity: sev, File: file, Problem: problem, Fix: fix, Category: category,
+		Est: est,
+	}
 
 	var (
 		sec debt.Section
@@ -144,17 +145,20 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 			File: file, Problem: problem, Fix: fix, Category: category,
 			EstMinutes: est, Source: def.Source,
 		}
-	case sev != "" || file != "" || problem != "" || fix != "" || category != "":
-		// Some but not all required flags were provided; name the missing ones.
-		missing := missingRequiredFlags(sev, file, problem, fix, category)
-		return usageError(fmt.Errorf("missing required flags (%s)", strings.Join(missing, ", ")))
 	case debtStdinIsTTY(cmd.InOrStdin()):
-		// Interactive wizard — only when we can actually prompt a human.
+		// Interactive wizard — only when we can actually prompt a human. Any
+		// required flags already supplied were seeded into def above, so partial
+		// flag input carries into the prompts instead of being discarded.
 		var err error
 		sec, it, err = promptEntry(cmd.InOrStdin(), cmd.OutOrStdout(), def)
 		if err != nil {
 			return err
 		}
+	case sev != "" || file != "" || problem != "" || fix != "" || category != "":
+		// Some but not all required flags were provided and there is no TTY to
+		// finish the rest; name the missing ones.
+		missing := missingRequiredFlags(sev, file, problem, fix, category)
+		return usageError(fmt.Errorf("missing required flags (%s)", strings.Join(missing, ", ")))
 	default:
 		missing := missingRequiredFlags(sev, file, problem, fix, category)
 		return usageError(fmt.Errorf("missing required flags (%s); provide them or run on an interactive terminal", strings.Join(missing, ", ")))
@@ -216,11 +220,11 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (debt.Section,
 	stype := ask("Source type (Sprint|Review)", def.SourceType, false)
 	label := ask("Label", def.Label, true)
 	group := ask("Group", def.Group, false)
-	sev := ask("Severity (CRITICAL|HIGH|MEDIUM|LOW)", "", true)
-	file := ask("File (file:line)", "", true)
-	problem := ask("Problem", "", true)
-	fix := ask("Fix", "", true)
-	category := ask("Category", "", true)
+	sev := ask("Severity (CRITICAL|HIGH|MEDIUM|LOW)", def.Severity, true)
+	file := ask("File (file:line)", def.File, true)
+	problem := ask("Problem", def.Problem, true)
+	fix := ask("Fix", def.Fix, true)
+	category := ask("Category", def.Category, true)
 	estStr := ask("Est minutes", strconv.Itoa(def.Est), false)
 	status := ask("Status (open|deferred|resolved)", def.Status, false)
 	source := ask("Source", def.Source, false)
