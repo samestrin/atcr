@@ -128,6 +128,35 @@ type JSONFinding struct {
 	// never by any reconcile-time path. omitempty keeps every non-reproduced record
 	// byte-identical to pre-11.0 findings.json.
 	EvidenceExec *EvidenceExec `json:"evidence_exec,omitempty"`
+	// Justification is the narrative context extracted at reconcile time from the
+	// originating source's review.md (Epic 18.2): the human-readable explanation a
+	// reviewer wrote alongside its terse findings.txt row, matched best-effort by
+	// file:line and carried forward so a downstream TD-resolution consumer inherits
+	// the reasoning instead of re-deriving it from raw review.md files. Set ONLY by
+	// stampJustifications on the reconcile path; distinct from Verification.Notes
+	// (skeptic/judge reasoning, a different concept). No match leaves it empty, and
+	// omitempty keeps a finding with no matched narrative byte-identical to pre-18.2
+	// findings.json. It lands ONLY here — never in the TD README table's Problem
+	// cell, whose column structure Epic 18.1 freezes.
+	Justification string `json:"justification,omitempty"`
+	// SourceReport is the back-reference to the review.md section the Justification
+	// was extracted from (Epic 18.2): path (review-dir-relative) plus the anchor
+	// line and nearest heading, so a consumer can navigate to full detail without
+	// re-deriving the mapping. Set alongside Justification by stampJustifications;
+	// nil (omitempty) when no narrative matched, keeping output byte-identical.
+	SourceReport *SourceReport `json:"source_report,omitempty"`
+}
+
+// SourceReport is the back-reference (Epic 18.2) from a reconciled finding to the
+// review.md narrative section its Justification was extracted from. Path is
+// relative to the review directory (e.g. "sources/host/review.md") so a consumer
+// can resolve it against the same review dir that holds reconciled/findings.json.
+// Line is the 1-based line in that review.md where the file:line match anchored;
+// Section is the nearest enclosing Markdown heading (both omitempty when absent).
+type SourceReport struct {
+	Path    string `json:"path"`
+	Line    int    `json:"line,omitempty"`
+	Section string `json:"section,omitempty"`
 }
 
 // EvidenceExec is the executable-evidence block attached to a finding that was
