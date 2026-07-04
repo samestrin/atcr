@@ -233,6 +233,18 @@ func TestStampJustifications_LineZero_NoProximityMatch(t *testing.T) {
 	require.Empty(t, jf[0].Justification, "file-level finding (line 0) must not match via proximity")
 }
 
+// TestExtractSection_IncludesItemStartWhenAnchorOnContinuation verifies that the
+// list-item marker line is included when the file:line anchor falls on the item's
+// continuation line (Epic 18.2 TD #6).
+func TestExtractSection_IncludesItemStartWhenAnchorOnContinuation(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n1. **First line of item.**\n   `a/x.go:42` continuation line.\n")
+	jf := []JSONFinding{{File: "a/x.go", Line: 42}}
+	stampJustifications(jf, reviewDir)
+	require.Contains(t, jf[0].Justification, "First line of item", "must include the list-item marker line")
+	require.Contains(t, jf[0].Justification, "continuation line")
+}
+
 // TestIsItemStart covers the list-item boundary detector.
 func TestIsItemStart(t *testing.T) {
 	for _, s := range []string{"- bullet", "* star", "+ plus", "1. ordered", "12) paren", "  - indented", "3."} {
