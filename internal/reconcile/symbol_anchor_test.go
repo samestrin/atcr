@@ -1,6 +1,8 @@
 package reconcile
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -112,4 +114,22 @@ func TestStampSymbolAnchors_RealGrouper(t *testing.T) {
 	jf := []JSONFinding{{File: "code.go", Line: 4, Problem: "unused write"}}
 	stampSymbolAnchors(jf, grouper)
 	require.Equal(t, "(Anchor) unused write", jf[0].Problem)
+}
+
+func TestStampSymbolAnchors_LogsDebugSummary(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(old)
+
+	jf := []JSONFinding{
+		{File: "a.go", Line: 1, Problem: "one"},
+		{File: "b.go", Line: 2, Problem: "two"},
+		{File: "c.go", Line: 3, Problem: "three"},
+	}
+	stampSymbolAnchors(jf, fakeResolver{name: "classifyHeader"})
+
+	require.Contains(t, buf.String(), "symbol anchors")
+	require.Contains(t, buf.String(), "anchored=3")
+	require.Contains(t, buf.String(), "total=3")
 }
