@@ -139,3 +139,8 @@ func TestDebtList_SyncRegeneratesFromREADME(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "pkg/x.go:1")
 }
+
+func TestTruncate_GuardNonPositiveN(t *testing.T) {
+	assert.Equal(t, "", truncate("abc", 0), "n==0 must not panic")
+	assert.Equal(t, "", truncate("abc", -1), "negative n must not panic")
+}
