@@ -202,6 +202,9 @@ func AppendItem(readmePath, itemsDir string, sec Section, it tdmigrate.Item, std
 // after an add. modDate stamps the Last Modified date. A README that has no
 // Stats block (or no Last Modified line) is left untouched — this is a
 // best-effort refresh of an existing summary, not an inserter.
+//
+// The Stats table and Last Modified line are replaced independently so that any
+// notes or sections between them are preserved.
 func RefreshStats(readmePath, modDate string) error {
 	data, err := os.ReadFile(readmePath)
 	if err != nil {
@@ -214,10 +217,30 @@ func RefreshStats(readmePath, modDate string) error {
 	if statsIdx < 0 || lmIdx < 0 || lmIdx < statsIdx {
 		return nil // no recognizable stats block to refresh
 	}
-	// Extend the replaced span to the end of the Last Modified line.
-	lmLineEnd := len(content)
-	if nl := strings.IndexByte(content[lmIdx:], '\n'); nl >= 0 {
-		lmLineEnd = lmIdx + nl
+
+	lines := strings.Split(content, "\n")
+	statsLine := -1
+	lmLine := -1
+	for i, line := range lines {
+		if statsLine < 0 && strings.HasPrefix(line, "## Stats") {
+			statsLine = i
+		}
+		if strings.HasPrefix(line, "**Last Modified:**") {
+			lmLine = i
+		}
+	}
+	if statsLine < 0 || lmLine < 0 || lmLine <= statsLine {
+		return nil
+	}
+
+	// The Stats table ends at the first blank line between it and the Last
+	// Modified line (or immediately before the Last Modified line if none).
+	statsEnd := lmLine
+	for i := statsLine + 2; i < lmLine; i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			statsEnd = i
+			break
+		}
 	}
 
 	shards, err := tdmigrate.ParseREADME(content)
@@ -226,8 +249,17 @@ func RefreshStats(readmePath, modDate string) error {
 	}
 	sum := Summarize(Flatten(shards), time.Time{}, 0)
 
-	block := renderStatsBlock(sum, modDate)
-	updated := content[:statsIdx] + block + content[lmLineEnd:]
+	outLines := make([]string, 0, len(lines))
+	outLines = append(outLines, lines[:statsLine]...)
+	outLines = append(outLines, renderStatsTable(sum))
+	outLines = append(outLines, lines[statsEnd:lmLine]...)
+	outLines = append(outLines, renderLastModified(sum, modDate))
+	outLines = append(outLines, lines[lmLine+1:]...)
+
+	updated := strings.Join(outLines, "\n")
+	if _, err := tdmigrate.ParseREADME(updated); err != nil {
+		return fmt.Errorf("refusing to write README: refreshed stats would corrupt the table: %w", err)
+	}
 	if err := os.WriteFile(readmePath, []byte(updated), 0o644); err != nil {
 		return fmt.Errorf("write README stats: %w", err)
 	}
@@ -237,6 +269,12 @@ func RefreshStats(readmePath, modDate string) error {
 // renderStatsBlock renders the `## Stats` table and the Last Modified summary
 // line (no trailing newline) from an aggregated Summary.
 func renderStatsBlock(sum Summary, modDate string) string {
+	return renderStatsTable(sum) + "\n" + renderLastModified(sum, modDate)
+}
+
+// renderStatsTable renders just the `## Stats` Markdown table (including a
+// trailing newline after the last row).
+func renderStatsTable(sum Summary) string {
 	var b strings.Builder
 	b.WriteString("## Stats\n\n")
 	b.WriteString("| Severity | Open | Deferred | Resolved |\n")
@@ -244,8 +282,12 @@ func renderStatsBlock(sum Summary, modDate string) string {
 	for _, c := range sum.BySeverity {
 		fmt.Fprintf(&b, "| %s | %d | %d | %d |\n", c.Severity, c.Open, c.Deferred, c.Resolved)
 	}
-	b.WriteString("\n")
-	fmt.Fprintf(&b, "**Last Modified:** %s | **Open Items:** %d | **Deferred Items:** %d | **Resolved Items:** %d | **Total Items:** %d",
-		modDate, sum.Open, sum.Deferred, sum.Resolved, sum.Total)
 	return b.String()
+}
+
+// renderLastModified renders the `**Last Modified:**` summary line without a
+// trailing newline.
+func renderLastModified(sum Summary, modDate string) string {
+	return fmt.Sprintf("**Last Modified:** %s | **Open Items:** %d | **Deferred Items:** %d | **Resolved Items:** %d | **Total Items:** %d",
+		modDate, sum.Open, sum.Deferred, sum.Resolved, sum.Total)
 }
