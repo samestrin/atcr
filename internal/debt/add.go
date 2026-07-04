@@ -171,20 +171,27 @@ func AppendItem(readmePath, itemsDir string, sec Section, it tdmigrate.Item, std
 	// Validate that the mutated README still parses cleanly BEFORE touching disk.
 	// The subsequent SyncShards re-migrates the whole README, so if any
 	// pre-existing drift elsewhere would make migrate fail, catch it here and
-	// abort with both README and shards untouched (no partial-write window).
+	// abort with both README and shards untouched.
 	if _, err := tdmigrate.ParseREADME(updated); err != nil {
 		return fmt.Errorf("refusing to write README: updated table does not parse cleanly (pre-existing drift elsewhere in the README?): %w", err)
 	}
 	if err := os.WriteFile(readmePath, []byte(updated), 0o644); err != nil {
 		return fmt.Errorf("write README: %w", err)
 	}
+	// After a successful README write, a failure in SyncShards or RefreshStats
+	// would leave the authoritative README ahead of the derived stores. Roll
+	// back to the original bytes on a best-effort basis so AppendItem remains
+	// atomic: either the row is committed and all derived stores are refreshed,
+	// or the README is restored to its pre-call state.
 	if err := SyncShards(readmePath, itemsDir, stderr); err != nil {
+		_ = os.WriteFile(readmePath, data, 0o644) // best-effort rollback
 		return fmt.Errorf("regenerate shards after add: %w", err)
 	}
 	// Keep the authoritative README self-consistent: refresh its Stats table and
 	// Last Modified summary so they agree with the row just appended. A README
 	// without a Stats block is left untouched.
 	if err := RefreshStats(readmePath, sec.Date); err != nil {
+		_ = os.WriteFile(readmePath, data, 0o644) // best-effort rollback
 		return fmt.Errorf("refresh README stats after add: %w", err)
 	}
 	return nil
