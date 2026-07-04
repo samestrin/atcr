@@ -33,7 +33,7 @@ func newDebtCmd() *cobra.Command {
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newDebtListCmd())
+	cmd.AddCommand(newDebtListCmd(), newDebtAddCmd())
 	return cmd
 }
 

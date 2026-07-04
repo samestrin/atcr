@@ -50,6 +50,10 @@ func runDebt(t *testing.T, args ...string) (string, error) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
+	// Default to a non-TTY stdin so add's interactive path is not triggered by a
+	// real terminal under the test runner; tests exercising the wizard set their
+	// own reader and force debtStdinIsTTY.
+	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetArgs(args)
 	err := cmd.Execute()
 	return out.String(), err
