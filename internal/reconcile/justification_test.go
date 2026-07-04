@@ -1,7 +1,9 @@
 package reconcile
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -243,6 +245,24 @@ func TestExtractSection_IncludesItemStartWhenAnchorOnContinuation(t *testing.T) 
 	stampJustifications(jf, reviewDir)
 	require.Contains(t, jf[0].Justification, "First line of item", "must include the list-item marker line")
 	require.Contains(t, jf[0].Justification, "continuation line")
+}
+
+// TestStampJustifications_NoMatches_LogsWarning verifies that when review.md
+// narratives exist but none match any finding, the event is logged at Warn or
+// higher so review.md format drift does not go unnoticed (Epic 18.2 TD #8).
+func TestStampJustifications_NoMatches_LogsWarning(t *testing.T) {
+	var buf bytes.Buffer
+	h := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	old := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n1. **`other/file.go:1`** narrative.\n")
+	jf := []JSONFinding{{File: "a.go", Line: 1}}
+	stampJustifications(jf, reviewDir)
+
+	require.Contains(t, buf.String(), "level=WARN", "expected warning when narratives exist but matched==0")
 }
 
 // TestIsItemStart covers the list-item boundary detector.
