@@ -197,8 +197,8 @@ func beatsMatch(tier int, revPref bool, ni, li, bTier int, bRev bool, bNi, bLi i
 //
 //	3 — a `file:N` or `file:A-B` reference whose N (or range A..B) covers line
 //	2 — a `file:N` reference to the same file within anchorLineProximity of line
-//	1 — the file path appears with no nearby line number
-//	0 — the file path does not appear on this line
+//	0 — no usable line reference (bare file mention is intentionally ignored
+//	    because minAnchorTier is 2; returning 1 would be treated the same as 0).
 //
 // The `file:` scan handles both a bare `internal/x.go:42` anchor and a range
 // `internal/x.go:65-102`; the char after the number is not required to be a
@@ -208,9 +208,6 @@ func beatsMatch(tier int, revPref bool, ni, li, bTier int, bRev bool, bNi, bLi i
 // falsely match a line referencing "internal/x/y.go:42".
 func anchorTier(s, file string, line int) int {
 	best := 0
-	if strings.Contains(s, file) {
-		best = 1 // file present, no covering line reference (yet)
-	}
 	needle := file + ":"
 	from := 0
 	for {
