@@ -115,9 +115,9 @@ func TestStampJustifications_PrefersCoveringLine(t *testing.T) {
 // TestAnchorTier covers the scoring tiers directly.
 func TestAnchorTier(t *testing.T) {
 	require.Equal(t, 0, anchorTier("no file here", "x/y.go", 42))
-	require.Equal(t, 1, anchorTier("mentions x/y.go with no line", "x/y.go", 42))
-	require.Equal(t, 1, anchorTier("x/y.go:10 far other line", "x/y.go", 42)) // far → below tier 2
-	require.Equal(t, 2, anchorTier("x/y.go:44 near line", "x/y.go", 42))      // within ±3 → tier 2
+	require.Equal(t, 0, anchorTier("mentions x/y.go with no line", "x/y.go", 42)) // below minAnchorTier
+	require.Equal(t, 0, anchorTier("x/y.go:10 far other line", "x/y.go", 42))     // far → below tier 2
+	require.Equal(t, 2, anchorTier("x/y.go:44 near line", "x/y.go", 42))          // within ±3 → tier 2
 	require.Equal(t, 3, anchorTier("`x/y.go:42` exact", "x/y.go", 42))
 	require.Equal(t, 3, anchorTier("`x/y.go:40-50` range", "x/y.go", 42))
 	require.Equal(t, 2, anchorTier("`x/y.go:43` off by one", "x/y.go", 42))
