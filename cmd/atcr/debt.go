@@ -56,8 +56,13 @@ func loadRecords(cmd *cobra.Command) ([]debt.Record, error) {
 	sync, _ := cmd.Flags().GetBool("sync")
 
 	if sync {
-		if err := debt.SyncShards(readme, items, cmd.ErrOrStderr()); err != nil {
-			return nil, err
+		// --check is a read-only verification mode; combining it with --sync
+		// would mutate the working tree while claiming to only verify drift.
+		check, _ := cmd.Flags().GetBool("check")
+		if !check {
+			if err := debt.SyncShards(readme, items, cmd.ErrOrStderr()); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return debt.Load(items)
