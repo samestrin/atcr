@@ -79,3 +79,10 @@ func TestRenderDashboard_AgeByMonthIsTimeInvariant(t *testing.T) {
 	// Unresolved items are dated 2026-06 (CRITICAL, MEDIUM) — grouped by month.
 	require.Contains(t, age, "2026-06")
 }
+
+func TestMonthHistogram_MalformedDateGoesToUnknown(t *testing.T) {
+	recs := []Record{{Date: "2026-7x", Item: mkItem("open", "HIGH")}}
+	got := monthHistogram(recs)
+	require.Len(t, got, 1)
+	assert.Equal(t, "unknown", got[0].month)
+}
