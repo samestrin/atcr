@@ -222,6 +222,17 @@ func TestStampJustifications_TightListNoBleed(t *testing.T) {
 	require.Equal(t, "Findings", jf[0].SourceReport.Section)
 }
 
+// TestStampJustifications_LineZero_NoProximityMatch verifies that a file-level
+// finding with Line == 0 does not inherit the narrative of an early-line finding
+// via proximity (Epic 18.2 TD #5).
+func TestStampJustifications_LineZero_NoProximityMatch(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n1. **`a/x.go:2` — early line issue.** narrative.\n")
+	jf := []JSONFinding{{File: "a/x.go", Line: 0}}
+	stampJustifications(jf, reviewDir)
+	require.Empty(t, jf[0].Justification, "file-level finding (line 0) must not match via proximity")
+}
+
 // TestIsItemStart covers the list-item boundary detector.
 func TestIsItemStart(t *testing.T) {
 	for _, s := range []string{"- bullet", "* star", "+ plus", "1. ordered", "12) paren", "  - indented", "3."} {
