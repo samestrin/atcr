@@ -168,3 +168,20 @@ func TestStampJustifications_SetsSourceReport(t *testing.T) {
 	require.Contains(t, string(b), `"source_report"`)
 	require.Contains(t, string(b), `"path":"sources/host/review.md"`)
 }
+
+// TestStampJustifications_SuffixPathNoFalseMatch: a finding for "y.go" must NOT
+// match a line that only references a longer path ending in y.go (Epic 18.2
+// cumulative-review fix).
+func TestStampJustifications_SuffixPathNoFalseMatch(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n1. **`internal/x/y.go:42` — a different file entirely.** wrong narrative.\n")
+	jf := []JSONFinding{{File: "y.go", Line: 42}}
+	stampJustifications(jf, reviewDir)
+	require.Empty(t, jf[0].Justification, "y.go must not match internal/x/y.go:42")
+
+	// The full path still matches its own anchor at the covering tier; the suffix
+	// "y.go" never reaches a matchable tier — its `y.go:` occurrence is a suffix of
+	// the longer path token, so it scores below minAnchorTier.
+	require.Equal(t, 3, anchorTier("`internal/x/y.go:42`", "internal/x/y.go", 42))
+	require.Less(t, anchorTier("`internal/x/y.go:42`", "y.go", 42), minAnchorTier)
+}

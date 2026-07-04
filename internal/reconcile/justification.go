@@ -183,31 +183,51 @@ func beatsMatch(tier int, revPref bool, ni, li, bTier int, bRev bool, bNi, bLi i
 //
 // The `file:` scan handles both a bare `internal/x.go:42` anchor and a range
 // `internal/x.go:65-102`; the char after the number is not required to be a
-// non-digit because parseLineRange consumes the full leading integer run.
+// non-digit because parseLineRange consumes the full leading integer run. Each
+// `file:` occurrence is rejected when it is a suffix of a longer path token (the
+// char to its left is a path/identifier char), so a finding for "y.go" does not
+// falsely match a line referencing "internal/x/y.go:42".
 func anchorTier(s, file string, line int) int {
-	if !strings.Contains(s, file) {
-		return 0
+	best := 0
+	if strings.Contains(s, file) {
+		best = 1 // file present, no covering line reference (yet)
 	}
-	best := 1 // file present, no covering line reference (yet)
 	needle := file + ":"
-	rest := s
+	from := 0
 	for {
-		p := strings.Index(rest, needle)
+		p := strings.Index(s[from:], needle)
 		if p < 0 {
 			break
 		}
-		lo, hi, ok := parseLineRange(rest[p+len(needle):])
-		if ok {
-			if line >= lo && line <= hi {
-				return 3 // covering reference — best possible, stop early
-			}
-			if best < 2 {
-				best = 2
-			}
+		abs := from + p
+		from = abs + len(needle)
+		if abs > 0 && isPathChar(s[abs-1]) {
+			continue // suffix of a longer path token — not this file
 		}
-		rest = rest[p+len(needle):]
+		lo, hi, ok := parseLineRange(s[abs+len(needle):])
+		if !ok {
+			continue
+		}
+		if line >= lo && line <= hi {
+			return 3 // covering reference — best possible, stop early
+		}
+		if best < 2 {
+			best = 2
+		}
 	}
 	return best
+}
+
+// isPathChar reports whether b can be part of a path/identifier token, used to
+// detect when a matched file path is actually the tail of a longer path.
+func isPathChar(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	case b == '/' || b == '.' || b == '_' || b == '-':
+		return true
+	}
+	return false
 }
 
 // parseLineRange parses a leading integer, optionally followed by "-integer",
