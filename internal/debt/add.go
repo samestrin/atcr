@@ -208,11 +208,9 @@ func RefreshStats(readmePath, modDate string) error {
 		return nil // no recognizable stats block to refresh
 	}
 	// Extend the replaced span to the end of the Last Modified line.
-	lmLineEnd := lmIdx
+	lmLineEnd := len(content)
 	if nl := strings.IndexByte(content[lmIdx:], '\n'); nl >= 0 {
 		lmLineEnd = lmIdx + nl
-	} else {
-		lmLineEnd = len(content)
 	}
 
 	shards, err := tdmigrate.ParseREADME(content)
