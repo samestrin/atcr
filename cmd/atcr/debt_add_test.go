@@ -103,6 +103,22 @@ func TestDebtAdd_CaseNormalizedEnums(t *testing.T) {
 	assert.Equal(t, "open", recs[0].Status)
 }
 
+func TestDebtAdd_PartialFlagsIsUsageError(t *testing.T) {
+	readme, items := emptyTDRepo(t)
+	out, err := runDebt(t, "add",
+		"--readme", readme, "--items", items,
+		"--severity", "HIGH", "--file", "x.go",
+	)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	// Error must name only the missing flags, not the ones that were provided.
+	assert.Contains(t, out, "--problem")
+	assert.Contains(t, out, "--fix")
+	assert.Contains(t, out, "--category")
+	assert.NotContains(t, out, "--severity")
+	assert.NotContains(t, out, "--file")
+}
+
 func TestPromptEntry_ReadsFieldsAndDefaults(t *testing.T) {
 	// Answers, in order: date (default), source-type (default), label,
 	// group (default), severity, file, problem, fix, category, est, status
