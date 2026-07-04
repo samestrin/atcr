@@ -77,9 +77,13 @@ func stampJustifications(jf []JSONFinding, reviewDir string) {
 	if len(narratives) == 0 {
 		return
 	}
+	// Pre-index every narrative line once so each finding scans only the lines
+	// that mention its file, instead of every line of every narrative (the
+	// pre-18.2 hot path was O(findings x narrativeBytes)).
+	index := buildAnchorIndex(narratives)
 	matched := 0
 	for i := range jf {
-		m, ok := matchNarrative(narratives, jf[i].File, jf[i].Line, jf[i].Reviewers)
+		m, ok := matchNarrative(narratives, index, jf[i].File, jf[i].Line, jf[i].Reviewers)
 		if !ok {
 			continue
 		}
@@ -138,6 +142,71 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 	return out
 }
 
+// anchorRef locates one review.md line that carries a file:line anchor: the
+// narrative index and the line index within that narrative's lines.
+type anchorRef struct {
+	ni int
+	li int
+}
+
+// anchorIndex maps a referenced file path to every review.md line that mentions
+// it with a line anchor (`<path>:<digit>`). The key is the MAXIMAL path token
+// preceding the colon, which mirrors anchorTier's suffix-path rejection: a line
+// referencing `internal/x/y.go:42` is indexed only under `internal/x/y.go`, so a
+// finding for `y.go` finds no candidate — identical to the full-scan behavior.
+type anchorIndex map[string][]anchorRef
+
+// buildAnchorIndex scans every narrative line once, recording under each
+// referenced file path the (narrative, line) positions that mention it. Built
+// once per stampJustifications run and shared across all findings, replacing the
+// pre-18.2 per-finding full rescan (O(findings x narrativeBytes)). anchorTier
+// still scores the exact tier per finding on the real line, so match results are
+// unchanged — this only prunes the candidate set each finding considers.
+func buildAnchorIndex(narratives []reviewNarrative) anchorIndex {
+	idx := make(anchorIndex)
+	for ni := range narratives {
+		for li, lt := range narratives[ni].lines {
+			indexLineFiles(idx, lt, ni, li)
+		}
+	}
+	return idx
+}
+
+// indexLineFiles records, for line lt at position (ni,li), each distinct file
+// path appearing as `<path>:<digit>` — the maximal run of path chars ending at a
+// colon that is followed by a digit. Deduped per line so a file mentioned twice
+// on one line yields a single ref (anchorTier already scans every occurrence on
+// the line for the best tier).
+func indexLineFiles(idx anchorIndex, lt string, ni, li int) {
+	var seen map[string]struct{}
+	for c := 0; c < len(lt); c++ {
+		if lt[c] != ':' {
+			continue
+		}
+		// A parseable line reference requires a digit right after the colon.
+		if c+1 >= len(lt) || lt[c+1] < '0' || lt[c+1] > '9' {
+			continue
+		}
+		// Walk left over path chars to recover the maximal path token.
+		start := c
+		for start > 0 && isPathChar(lt[start-1]) {
+			start--
+		}
+		if start == c {
+			continue // colon with no path token before it
+		}
+		file := lt[start:c]
+		if _, dup := seen[file]; dup {
+			continue
+		}
+		if seen == nil {
+			seen = make(map[string]struct{})
+		}
+		seen[file] = struct{}{}
+		idx[file] = append(idx[file], anchorRef{ni: ni, li: li})
+	}
+}
+
 // matchNarrative finds the review.md section that best references file:line and
 // returns its extracted narrative + back-reference. Selection is deterministic:
 // highest anchor tier wins (a line/range covering the finding's exact line beats
@@ -145,22 +214,28 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 // a narrative whose leaf dir is one of the finding's reviewers, then toward the
 // earliest narrative (sorted), then the earliest line. Returns ok=false when no
 // review.md mentions the finding's file at all.
-func matchNarrative(narratives []reviewNarrative, file string, line int, reviewers []string) (narrativeMatch, bool) {
+func matchNarrative(narratives []reviewNarrative, index anchorIndex, file string, line int, reviewers []string) (narrativeMatch, bool) {
 	if file == "" {
+		return narrativeMatch{}, false
+	}
+	refs := index[file]
+	if len(refs) == 0 {
 		return narrativeMatch{}, false
 	}
 	revSet := toSet(reviewers)
 	bestTier, bestRev, bestNarr, bestLine := 0, false, -1, -1
-	for ni := range narratives {
-		revPref := revSet[narratives[ni].leaf]
-		for li, lt := range narratives[ni].lines {
-			tier := anchorTier(lt, file, line)
-			if tier < minAnchorTier {
-				continue
-			}
-			if beatsMatch(tier, revPref, ni, li, bestTier, bestRev, bestNarr, bestLine) {
-				bestTier, bestRev, bestNarr, bestLine = tier, revPref, ni, li
-			}
+	// refs are already in (ni, li) order (buildAnchorIndex scans in that order),
+	// and anchorTier re-scores each candidate line for this finding's line, so the
+	// winner is identical to the full-scan version — this only prunes the lines
+	// considered from all lines to the handful that mention file.
+	for _, r := range refs {
+		tier := anchorTier(narratives[r.ni].lines[r.li], file, line)
+		if tier < minAnchorTier {
+			continue
+		}
+		revPref := revSet[narratives[r.ni].leaf]
+		if beatsMatch(tier, revPref, r.ni, r.li, bestTier, bestRev, bestNarr, bestLine) {
+			bestTier, bestRev, bestNarr, bestLine = tier, revPref, r.ni, r.li
 		}
 	}
 	if bestNarr < 0 {
