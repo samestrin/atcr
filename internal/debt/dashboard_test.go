@@ -73,6 +73,14 @@ func TestRenderDashboard_TopRespectsLimitAndExcludesResolved(t *testing.T) {
 	assert.NotContains(t, top, "internal/autofix/revert.go:41") // resolved LOW, excluded
 }
 
+func TestRenderDashboard_TopZeroShowsSuppressed(t *testing.T) {
+	out := RenderDashboard(Flatten(sampleShards()), 0)
+	// A zero cap hides the list but should not pretend the backlog is empty.
+	top := out[strings.Index(out, "## Top Priority"):]
+	assert.Contains(t, top, "(top list suppressed)")
+	assert.NotContains(t, top, "_No unresolved items._")
+}
+
 func TestRenderDashboard_AgeByMonthIsTimeInvariant(t *testing.T) {
 	out := RenderDashboard(Flatten(sampleShards()), 10)
 	age := out[strings.Index(out, "## By Age"):]
