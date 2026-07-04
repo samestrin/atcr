@@ -1,3 +1,17 @@
+## [18.0.0] - 2026-07-03
+
+Added an `atcr debt` command namespace for querying, capturing, and reporting technical debt directly from the Epic-12.1 sharded store, making the structured YAML shards a read source for the first time.
+
+### Added
+
+- `atcr debt list`: filter (severity/status/category/component/group) and sort (severity/age/est/file) technical-debt items into a terminal table; `--sync` regenerates the shards from the authoritative README before reading.
+- `atcr debt add`: file a new item into the authoritative README table and regenerate the shards in one step — flag-driven for scripting, with an interactive wizard on a TTY when required flags are omitted. Keeps the README's Stats summary self-consistent after each add.
+- `atcr debt dashboard`: generate a deterministic, read-only aggregated Markdown dashboard (totals, by severity, by component, by age, top priority) at `.planning/technical-debt/DASHBOARD.md`, with a `--check` drift mode for CI and pre-commit hooks and secret-token scrubbing of finding text.
+- `internal/debt`: a query/aggregation/render layer over `internal/tdmigrate`, reusing its Item/Shard types, shard loader, and README↔shard migration rather than re-parsing the format.
+- `docs/technical-debt.md`: `atcr debt` usage plus pre-commit and GitHub Actions integration examples.
+
+*Shipped via /execute-epic (epic 18.0)*
+
 ## [17.0.0] - 2026-07-03
 
 Added an opt-in `--auto-fix` flow that closes the loop from detection to a ready-to-review pull request: ATCR now applies the fixes it generates, validates them locally, reverts automatically on failure, and only then orchestrates a Git branch, commit, and PR through the GitHub API.

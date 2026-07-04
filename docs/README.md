@@ -43,6 +43,8 @@ single source of truth the website build consumes, so it links every doc in
   a pull request.
 - [Using atcr as a code-review backend (`--output-dir`)](code-review-backend.md)
   — driving atcr as the reviewer backend for a separate pipeline.
+- [Technical-Debt Tooling (`atcr debt`)](technical-debt.md) — query, capture, and
+  report on technical debt; the `--check` dashboard gate for CI and pre-commit.
 
 ## Benchmarking & observability
 
