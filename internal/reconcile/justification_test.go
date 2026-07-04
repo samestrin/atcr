@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -229,4 +230,32 @@ func TestIsItemStart(t *testing.T) {
 	for _, s := range []string{"", "not a list", "-nospace", "word - dash", "#. heading-ish", "1x. not"} {
 		require.Falsef(t, isItemStart(s), "%q should NOT be an item start", s)
 	}
+}
+
+// TestReviewFileName_MatchesFanout guards against silent drift between the
+// review.md filename used by internal/reconcile (reviewFileName) and the one
+// used by internal/fanout (reviewFile). The two packages deliberately do not
+// import each other to avoid a cycle, so the contract is enforced by this
+// cross-package source test instead (Epic 18.2 TD #1).
+func TestReviewFileName_MatchesFanout(t *testing.T) {
+	reconcileSrc, err := os.ReadFile("justification.go")
+	require.NoError(t, err)
+	fanoutSrc, err := os.ReadFile("../fanout/artifacts.go")
+	require.NoError(t, err)
+
+	extract := func(src []byte, name string) string {
+		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\s*=\s*"([^"]+)"`)
+		m := re.FindSubmatch(src)
+		if m == nil {
+			return ""
+		}
+		return string(m[1])
+	}
+
+	reconcileName := extract(reconcileSrc, "reviewFileName")
+	fanoutName := extract(fanoutSrc, "reviewFile")
+	require.NotEmpty(t, reconcileName, "could not find reviewFileName constant in justification.go")
+	require.NotEmpty(t, fanoutName, "could not find reviewFile constant in fanout/artifacts.go")
+	require.Equal(t, fanoutName, reconcileName,
+		"internal/reconcile reviewFileName must stay in sync with internal/fanout reviewFile")
 }
