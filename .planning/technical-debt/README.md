@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 0 | 30 | 9 |
-| LOW | 0 | 29 | 17 |
+| MEDIUM | 2 | 30 | 9 |
+| LOW | 3 | 29 | 17 |
 
-**Last Modified:** 2026-07-03 | **Open Items:** 0 | **Deferred Items:** 61 | **Resolved Items:** 26 | **Total Items:** 87
+**Last Modified:** 2026-07-03 | **Open Items:** 5 | **Deferred Items:** 61 | **Resolved Items:** 26 | **Total Items:** 92
 
 ## Directory Structure
 
@@ -61,6 +61,16 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
+
+### [2026-07-03] From Sprint: epic-18.0
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | MEDIUM | internal/debt/add.go:181 | AppendItem does an unlocked read-modify-write of the authoritative README; two concurrent `atcr debt add` (or another TD writer) can interleave and lose one update | Wrap the README read-modify-write in the shared mkdir-flock used by the TD flush path (extract a reusable lock helper), or serialize TD writes through a single utility | CONCURRENCY | 30 | execute-epic-stage3 |
+| 1 | [ ] | LOW | internal/debt/add.go:195 | AppendItem writes the README then runs SyncShards; a migrate failure after the write leaves shards lagging the (still-authoritative, valid) README until the next migrate | Either regenerate shards to a temp dir and swap, or document that a post-write sync failure is recovered by re-running `td-migrate migrate` / `atcr debt list --sync` | ERROR_PATHS | 20 | execute-epic-stage3 |
+| 1 | [ ] | MEDIUM | internal/debt/add.go:181 | AppendItem does an unlocked read-modify-write of the shared README plus a full items/ shard prune+rewrite; concurrent TD writers (group_td, resolve-td, another `atcr debt add`) take a lock but this path does not, so a concurrent write can lose a row or race the shard swap | Extract the mkdir-flock helper the TD flush path uses into a shared utility and guard AppendItem's README RMW + shard regenerate under it | CONCURRENCY | 45 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/debt/dashboard.go:75 | `atcr debt dashboard --top 0` prints "_No unresolved items._" under Top Priority even when unresolved items exist, which is misleading rather than an omitted-list note | Distinguish an empty Top due to a zero/negative --top cap from a genuinely empty backlog and render "(top list suppressed)" in the former case | UNDER_ENGINEERING | 15 | execute-epic-independent |
+| U | [ ] | LOW | cmd/atcr/debt_add.go:96 | On a TTY, partially-supplied required flags are ignored and the wizard re-prompts every field from scratch because wizardDefaults is not seeded from the flags already passed | Seed wizardDefaults (severity/file/problem/fix/category) from any flags the user provided so partial flag input carries into the interactive prompts | UNDER_ENGINEERING | 20 | execute-epic-independent |
 
 ### [2026-07-03] From Sprint: 17.0_auto_merged_fixes
 

@@ -1,0 +1,16 @@
+date: "2026-07-02"
+source_type: Sprint
+label: 15.1_leaderboard-cost-na-rendering
+items:
+  - group: "2"
+    status: deferred
+    severity: LOW
+    file: internal/scorecard/export.go:275-281
+    problem: 'Export groups records by the scrubbed persona/model, and scrubField''s absolute-path regexes can reduce an entirely path-like input string to empty. Two genuinely distinct reviewer identities that both happen to be path-like scrub to the same empty string and silently merge into one aggregated group, blending the costPer/SurvivedSkepticRate/FindingsRaisedAvg values this epic''s change is meant to make trustworthy. Adjacent to, not caused by, this epic, but feeds the same grouping key costPer''s group totals depend on. (Won''t fix: by-design -- scrubField intentionally merges identities that scrub-equal, locked in by TestExport_DistinctIdentitiesMergeWhenTheyScrubEqual, export_test.go:296)'
+    fix: 'By-design behavior, not a bug: grouping keys off the scrubbed identity is deliberate (scrubField strips PII/paths/secrets before export), and TestExport_DistinctIdentitiesMergeWhenTheyScrubEqual locks the merge-on-equal-scrub as an anti-regression invariant. No source change.'
+    category: error-handling
+    est_minutes: 60
+    source: code-review
+    reviewers:
+      - claude
+    confidence: MEDIUM

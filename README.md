@@ -78,6 +78,7 @@ New to atcr? `atcr quickstart` runs steps 2–3 interactively: it scaffolds `.at
 | `atcr serve` | Run the MCP stdio server over the same engine |
 | `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column |
 | `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
+| `atcr debt` | Query, capture, and report on technical debt (`list` / `add` / `dashboard`); see [docs/technical-debt.md](docs/technical-debt.md) |
 
 Key flags:
 

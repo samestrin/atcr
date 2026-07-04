@@ -1,0 +1,16 @@
+date: "2026-07-01"
+source_type: Sprint
+label: 14.3_diff_chunking_context
+items:
+  - group: "2"
+    status: deferred
+    severity: MEDIUM
+    file: internal/fanout/review.go:941
+    problem: 'After the T3 refactor extracted renderAgent, the add closure re-implements mode resolution (forceMode/EffectivePayloadMode, payload lookup, not-found/no-payload errors) at review.go:818-831, but buildAgent (line 941) still contains the identical resolution logic and now has NO production caller — only tests (retry_wiring_test.go, review_scope_inject_test.go, review_test.go, review_tools_test.go) reference it (verified: grep buildAgent internal/ excluding _test shows only the definition). This is dead production code plus two divergent copies of the same mode/payload-resolution logic that will silently drift. (Deferred 2026-07-01: Epic Plan 14.4_fanout_resolution_dedup — kept as-is; buildAgent has no production caller, duplication accepted for now.)'
+    fix: Either delete buildAgent and update the tests to drive buildSlots/renderAgent, or have the add closure call buildAgent for the single-chunk/bulk path so there is one resolution site. Verify no non-test caller exists before deleting and that fallback-wiring tests still pass.
+    category: maintainability
+    est_minutes: 60
+    source: code-review
+    reviewers:
+      - claude
+    confidence: MEDIUM
