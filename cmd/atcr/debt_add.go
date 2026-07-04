@@ -68,12 +68,22 @@ func newDebtAddCmd() *cobra.Command {
 
 func todayUTC() string { return time.Now().UTC().Format("2006-01-02") }
 
+func validateDate(date string) error {
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		return usageError(fmt.Errorf("invalid date %q: expected YYYY-MM-DD", date))
+	}
+	return nil
+}
+
 func runDebtAdd(cmd *cobra.Command, _ []string) error {
 	readme := mustFlag(cmd, "readme")
 	items := mustFlag(cmd, "items")
 	date := mustFlag(cmd, "date")
 	if date == "" {
 		date = todayUTC()
+	}
+	if err := validateDate(date); err != nil {
+		return err
 	}
 	est, _ := cmd.Flags().GetInt("est")
 	def := wizardDefaults{
@@ -162,6 +172,9 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (debt.Section,
 	}
 
 	date := ask("Date (YYYY-MM-DD)", def.Date, false)
+	if err := validateDate(date); err != nil {
+		return debt.Section{}, tdmigrate.Item{}, err
+	}
 	stype := ask("Source type (Sprint|Review)", def.SourceType, false)
 	label := ask("Label", def.Label, true)
 	group := ask("Group", def.Group, false)
