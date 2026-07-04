@@ -228,6 +228,9 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (debt.Section,
 	if perr != nil {
 		return debt.Section{}, tdmigrate.Item{}, perr
 	}
+	if err := sc.Err(); err != nil {
+		return debt.Section{}, tdmigrate.Item{}, fmt.Errorf("input read error: %w", err)
+	}
 
 	est := def.Est
 	if n, err := strconv.Atoi(strings.TrimSpace(estStr)); err == nil {
