@@ -321,11 +321,17 @@ func extractSection(lines []string, idx int) (text, section string) {
 		}
 	}
 	// Walk up until the current line begins the block (heading or list item) or
-	// the line above is a blank / heading / new list item.
+	// the line above is a blank / heading / new list item. If the anchor landed on
+	// a continuation line, absorb the list-item marker line above it so the finding
+	// headline is included in the excerpt.
 	start := idx
 	for start > 0 && !isHeadingLine(lines[start]) && !isItemStart(lines[start]) {
 		prev := lines[start-1]
-		if strings.TrimSpace(prev) == "" || isHeadingLine(prev) || isItemStart(prev) {
+		if strings.TrimSpace(prev) == "" || isHeadingLine(prev) {
+			break
+		}
+		if isItemStart(prev) {
+			start-- // absorb the marker line, then stop
 			break
 		}
 		start--
