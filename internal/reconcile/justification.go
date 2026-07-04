@@ -26,6 +26,14 @@ const (
 	// section is genuinely about the finding, per AC1's "relevant narrative" and
 	// the plan's "match by file:line".
 	minAnchorTier = 2
+	// anchorLineProximity bounds a non-covering tier-2 match. A source's review.md
+	// and its findings.txt are written in the same review run, so a legitimate
+	// same-finding reference is exact (tier 3) or off by only the small divergence
+	// cluster-merge introduces when it adopts a neighboring reviewer's line as the
+	// merged line — the engine clusters findings by FILE:LINE ±3. A same-file
+	// reference to a line farther than this is a DIFFERENT finding in that file,
+	// not this one, so it must not attach its narrative here.
+	anchorLineProximity = 3
 )
 
 // reviewNarrative is one collected source review.md: its review-dir-relative path
@@ -102,7 +110,10 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 		}
 		rel, rerr := filepath.Rel(reviewDir, path)
 		if rerr != nil {
-			rel = path
+			// Cannot express the path relative to the review dir (e.g. different
+			// volume). Skip it rather than leak an absolute filesystem path into
+			// source_report.path, whose documented contract is review-dir-relative.
+			return nil
 		}
 		out = append(out, reviewNarrative{
 			relPath: filepath.ToSlash(rel),
@@ -177,8 +188,8 @@ func beatsMatch(tier int, revPref bool, ni, li, bTier int, bRev bool, bNi, bLi i
 // anchorTier scores how strongly a single review.md line references file:line:
 //
 //	3 — a `file:N` or `file:A-B` reference whose N (or range A..B) covers line
-//	2 — a `file:N` reference to the same file but a different line
-//	1 — the file path appears with no adjacent line number
+//	2 — a `file:N` reference to the same file within anchorLineProximity of line
+//	1 — the file path appears with no nearby line number
 //	0 — the file path does not appear on this line
 //
 // The `file:` scan handles both a bare `internal/x.go:42` anchor and a range
@@ -211,11 +222,26 @@ func anchorTier(s, file string, line int) int {
 		if line >= lo && line <= hi {
 			return 3 // covering reference — best possible, stop early
 		}
-		if best < 2 {
+		// Non-covering same-file reference: a weaker match only within the small
+		// proximity window (beyond it, a different finding in the same file).
+		if best < 2 && lineDistance(line, lo, hi) <= anchorLineProximity {
 			best = 2
 		}
 	}
 	return best
+}
+
+// lineDistance returns how far line lies outside the inclusive [lo,hi] interval
+// (0 when inside).
+func lineDistance(line, lo, hi int) int {
+	switch {
+	case line < lo:
+		return lo - line
+	case line > hi:
+		return line - hi
+	default:
+		return 0
+	}
 }
 
 // isPathChar reports whether b can be part of a path/identifier token, used to
@@ -268,11 +294,12 @@ func leadingInt(s string) (val, width int) {
 }
 
 // extractSection returns the narrative block containing anchor line idx and the
-// nearest enclosing Markdown heading. The block is the maximal run of contiguous
-// non-blank, non-heading lines around idx (a heading may start the block but is
-// never crossed), so a per-finding list item or paragraph is captured without
-// bleeding into the next section. The result is trimmed and truncated to
-// justificationMaxRunes.
+// nearest enclosing Markdown heading. The block is the run of contiguous
+// non-blank lines around idx bounded by a blank line, a heading, or a new list
+// item — so a per-finding list item or paragraph is captured without bleeding
+// into a sibling item (a tight, blank-line-free findings list) or the next
+// section. A heading or list-item marker may START the block but is never
+// crossed. The result is trimmed and truncated to justificationMaxRunes.
 func extractSection(lines []string, idx int) (text, section string) {
 	if idx < 0 || idx >= len(lines) {
 		return "", ""
@@ -283,14 +310,23 @@ func extractSection(lines []string, idx int) (text, section string) {
 			break
 		}
 	}
+	// Walk up until the current line begins the block (heading or list item) or
+	// the line above is a blank / heading / new list item.
 	start := idx
-	for start > 0 && !isHeadingLine(lines[start]) &&
-		strings.TrimSpace(lines[start-1]) != "" && !isHeadingLine(lines[start-1]) {
+	for start > 0 && !isHeadingLine(lines[start]) && !isItemStart(lines[start]) {
+		prev := lines[start-1]
+		if strings.TrimSpace(prev) == "" || isHeadingLine(prev) || isItemStart(prev) {
+			break
+		}
 		start--
 	}
+	// Walk down until the next line starts a new item/section or is blank.
 	end := idx
-	for end < len(lines)-1 &&
-		strings.TrimSpace(lines[end+1]) != "" && !isHeadingLine(lines[end+1]) {
+	for end < len(lines)-1 {
+		next := lines[end+1]
+		if strings.TrimSpace(next) == "" || isHeadingLine(next) || isItemStart(next) {
+			break
+		}
 		end++
 	}
 	var b strings.Builder
@@ -301,6 +337,28 @@ func extractSection(lines []string, idx int) (text, section string) {
 		b.WriteString(strings.TrimRight(lines[j], "\r"))
 	}
 	return truncateRunes(strings.TrimSpace(b.String()), justificationMaxRunes), section
+}
+
+// isItemStart reports whether s begins a Markdown list item: an unordered bullet
+// ("- ", "* ", "+ ") or an ordered marker ("N." / "N)" optionally followed by a
+// space), after optional leading spaces. Used as a block boundary so one finding's
+// list item does not absorb its siblings when items are not blank-separated.
+func isItemStart(s string) bool {
+	s = strings.TrimLeft(s, " ")
+	if s == "" {
+		return false
+	}
+	if (s[0] == '-' || s[0] == '*' || s[0] == '+') && len(s) > 1 && s[1] == ' ' {
+		return true
+	}
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i > 0 && i < len(s) && (s[i] == '.' || s[i] == ')') {
+		return i+1 == len(s) || s[i+1] == ' '
+	}
+	return false
 }
 
 // isHeadingLine reports whether s is a Markdown ATX heading (1–6 leading '#'

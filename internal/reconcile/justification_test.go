@@ -115,7 +115,8 @@ func TestStampJustifications_PrefersCoveringLine(t *testing.T) {
 func TestAnchorTier(t *testing.T) {
 	require.Equal(t, 0, anchorTier("no file here", "x/y.go", 42))
 	require.Equal(t, 1, anchorTier("mentions x/y.go with no line", "x/y.go", 42))
-	require.Equal(t, 2, anchorTier("x/y.go:10 other line", "x/y.go", 42))
+	require.Equal(t, 1, anchorTier("x/y.go:10 far other line", "x/y.go", 42)) // far → below tier 2
+	require.Equal(t, 2, anchorTier("x/y.go:44 near line", "x/y.go", 42))      // within ±3 → tier 2
 	require.Equal(t, 3, anchorTier("`x/y.go:42` exact", "x/y.go", 42))
 	require.Equal(t, 3, anchorTier("`x/y.go:40-50` range", "x/y.go", 42))
 	require.Equal(t, 2, anchorTier("`x/y.go:43` off by one", "x/y.go", 42))
@@ -184,4 +185,48 @@ func TestStampJustifications_SuffixPathNoFalseMatch(t *testing.T) {
 	// the longer path token, so it scores below minAnchorTier.
 	require.Equal(t, 3, anchorTier("`internal/x/y.go:42`", "internal/x/y.go", 42))
 	require.Less(t, anchorTier("`internal/x/y.go:42`", "y.go", 42), minAnchorTier)
+}
+
+// TestStampJustifications_FarSameFileLine_NoMatch: a same-file reference far from
+// the finding's line (beyond anchorLineProximity) is a different finding and must
+// not attach its narrative (independent-review MEDIUM #1).
+func TestStampJustifications_FarSameFileLine_NoMatch(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n1. **`svc/a.go:200` — a totally different bug far away.** unrelated narrative.\n")
+	jf := []JSONFinding{{File: "svc/a.go", Line: 42}}
+	stampJustifications(jf, reviewDir)
+	require.Empty(t, jf[0].Justification, "line 200 is far from finding line 42 — different finding")
+
+	// A near line (within ±3, cluster-merge divergence) still matches at tier 2;
+	// a far same-file reference stays below the match threshold.
+	require.Equal(t, 2, anchorTier("`svc/a.go:44`", "svc/a.go", 42)) // off by 2 → near
+	require.Less(t, anchorTier("`svc/a.go:200`", "svc/a.go", 42), minAnchorTier)
+}
+
+// TestStampJustifications_TightListNoBleed: a blank-line-free numbered list must
+// not bleed sibling items into one finding's Justification (independent-review
+// MEDIUM #2).
+func TestStampJustifications_TightListNoBleed(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n"+
+		"1. **`a/x.go:10` — first issue.** first narrative alpha.\n"+
+		"2. **`a/x.go:42` — second issue.** second narrative bravo.\n"+
+		"3. **`a/x.go:99` — third issue.** third narrative charlie.\n")
+	jf := []JSONFinding{{File: "a/x.go", Line: 42}}
+	stampJustifications(jf, reviewDir)
+	require.Contains(t, jf[0].Justification, "second narrative bravo")
+	require.NotContains(t, jf[0].Justification, "first narrative alpha")
+	require.NotContains(t, jf[0].Justification, "third narrative charlie")
+	require.NotNil(t, jf[0].SourceReport)
+	require.Equal(t, "Findings", jf[0].SourceReport.Section)
+}
+
+// TestIsItemStart covers the list-item boundary detector.
+func TestIsItemStart(t *testing.T) {
+	for _, s := range []string{"- bullet", "* star", "+ plus", "1. ordered", "12) paren", "  - indented", "3."} {
+		require.Truef(t, isItemStart(s), "%q should be an item start", s)
+	}
+	for _, s := range []string{"", "not a list", "-nospace", "word - dash", "#. heading-ish", "1x. not"} {
+		require.Falsef(t, isItemStart(s), "%q should NOT be an item start", s)
+	}
 }
