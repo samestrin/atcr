@@ -190,3 +190,26 @@ func TestAppendItem_WritesREADMEAndRegeneratesShards(t *testing.T) {
 	require.Len(t, recs, 1)
 	assert.Equal(t, "HIGH", recs[0].Severity)
 }
+
+func TestAppendItem_RollsBackREADMEOnShardSyncFailure(t *testing.T) {
+	dir := t.TempDir()
+	readme := filepath.Join(dir, "README.md")
+	items := filepath.Join(dir, "items")
+	require.NoError(t, os.WriteFile(readme, []byte(readmeWithStats), 0o644))
+
+	// Make the items path a regular file so WriteShards cannot create a directory
+	// there and SyncShards fails after the README has already been updated.
+	require.NoError(t, os.WriteFile(items, []byte("not a directory"), 0o644))
+
+	sec := Section{Date: "2026-07-03", SourceType: "Sprint", Label: "manual"}
+	var stderr bytes.Buffer
+	err := AppendItem(readme, items, sec, newItemForAdd(), &stderr)
+	require.Error(t, err)
+
+	got, err := os.ReadFile(readme)
+	require.NoError(t, err)
+	assert.NotContains(t, string(got), "internal/x/y.go:12",
+		"README should be rolled back to pre-write bytes when shard sync fails")
+	assert.Contains(t, string(got), "## How to Use",
+		"intervening prose must survive the rollback")
+}
