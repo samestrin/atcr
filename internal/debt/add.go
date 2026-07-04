@@ -45,16 +45,6 @@ const (
 	newSectionSepRow    = "|-------|---|----------|------|---------|-----|----------|-------------|--------|"
 )
 
-// cellClean makes a value safe to embed in a Markdown table cell: newlines
-// collapse to spaces and literal pipes become "/", mirroring the canonical
-// TD-table contract used by tdmigrate.GenerateTable so the row round-trips.
-func cellClean(s string) string {
-	s = strings.ReplaceAll(s, "\r\n", " ")
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "|", "/")
-	return strings.TrimSpace(s)
-}
-
 // renderRow renders a validated item as a 9-cell Markdown table row.
 func renderRow(it tdmigrate.Item) (string, error) {
 	box, err := tdmigrate.StatusToCheckbox(it.Status)
@@ -62,15 +52,15 @@ func renderRow(it tdmigrate.Item) (string, error) {
 		return "", err
 	}
 	cells := []string{
-		cellClean(it.Group),
+		sanitizeCell(it.Group),
 		box,
 		it.Severity,
-		cellClean(it.File),
-		cellClean(it.Problem),
-		cellClean(it.Fix),
-		cellClean(it.Category),
+		sanitizeCell(it.File),
+		sanitizeCell(it.Problem),
+		sanitizeCell(it.Fix),
+		sanitizeCell(it.Category),
 		strconv.Itoa(it.EstMinutes),
-		cellClean(it.Source),
+		sanitizeCell(it.Source),
 	}
 	return "| " + strings.Join(cells, " | ") + " |", nil
 }

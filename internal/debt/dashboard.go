@@ -77,7 +77,7 @@ func RenderDashboard(recs []Record, topN int) string {
 		b.WriteString("| Severity | File | Est | Problem |\n|----------|------|-----|---------|\n")
 		for _, r := range sum.Top {
 			fmt.Fprintf(&b, "| %s | %s | %d | %s |\n",
-				r.Severity, r.File, r.EstMinutes, dashCell(red.Redact(r.Problem)))
+				r.Severity, r.File, r.EstMinutes, sanitizeCell(red.Redact(r.Problem)))
 		}
 	}
 
@@ -116,13 +116,4 @@ func monthHistogram(recs []Record) []monthCount {
 		return out[i].month < out[j].month
 	})
 	return out
-}
-
-// dashCell makes a value safe inside a Markdown table cell: newlines collapse to
-// spaces and pipes become "/" so a finding's prose cannot break the table.
-func dashCell(s string) string {
-	s = strings.ReplaceAll(s, "\r\n", " ")
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "|", "/")
-	return strings.TrimSpace(s)
 }

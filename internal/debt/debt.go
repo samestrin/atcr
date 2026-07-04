@@ -110,6 +110,17 @@ func Apply(recs []Record, f Filter) []Record {
 	return out
 }
 
+// sanitizeCell makes a value safe to embed in a Markdown table cell: newlines
+// collapse to spaces and literal pipes become "/", mirroring the canonical
+// TD-table contract used by tdmigrate.GenerateTable so a row round-trips. Shared
+// by the README-append (add) and dashboard renderers.
+func sanitizeCell(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "|", "/")
+	return strings.TrimSpace(s)
+}
+
 // Sort keys accepted by Sort.
 const (
 	SortSeverity = "severity" // CRITICAL first, then age within a severity
