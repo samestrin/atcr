@@ -88,6 +88,26 @@ func normalizeSourceType(s string) string {
 	}
 }
 
+func missingRequiredFlags(sev, file, problem, fix, category string) []string {
+	var missing []string
+	if sev == "" {
+		missing = append(missing, "--severity")
+	}
+	if file == "" {
+		missing = append(missing, "--file")
+	}
+	if problem == "" {
+		missing = append(missing, "--problem")
+	}
+	if fix == "" {
+		missing = append(missing, "--fix")
+	}
+	if category == "" {
+		missing = append(missing, "--category")
+	}
+	return missing
+}
+
 func runDebtAdd(cmd *cobra.Command, _ []string) error {
 	readme := mustFlag(cmd, "readme")
 	items := mustFlag(cmd, "items")
@@ -126,22 +146,7 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 		}
 	case sev != "" || file != "" || problem != "" || fix != "" || category != "":
 		// Some but not all required flags were provided; name the missing ones.
-		var missing []string
-		if sev == "" {
-			missing = append(missing, "--severity")
-		}
-		if file == "" {
-			missing = append(missing, "--file")
-		}
-		if problem == "" {
-			missing = append(missing, "--problem")
-		}
-		if fix == "" {
-			missing = append(missing, "--fix")
-		}
-		if category == "" {
-			missing = append(missing, "--category")
-		}
+		missing := missingRequiredFlags(sev, file, problem, fix, category)
 		return usageError(fmt.Errorf("missing required flags (%s)", strings.Join(missing, ", ")))
 	case debtStdinIsTTY(cmd.InOrStdin()):
 		// Interactive wizard — only when we can actually prompt a human.
@@ -151,22 +156,7 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	default:
-		var missing []string
-		if sev == "" {
-			missing = append(missing, "--severity")
-		}
-		if file == "" {
-			missing = append(missing, "--file")
-		}
-		if problem == "" {
-			missing = append(missing, "--problem")
-		}
-		if fix == "" {
-			missing = append(missing, "--fix")
-		}
-		if category == "" {
-			missing = append(missing, "--category")
-		}
+		missing := missingRequiredFlags(sev, file, problem, fix, category)
 		return usageError(fmt.Errorf("missing required flags (%s); provide them or run on an interactive terminal", strings.Join(missing, ", ")))
 	}
 
