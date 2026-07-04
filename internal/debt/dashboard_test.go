@@ -48,6 +48,23 @@ func TestRenderDashboard_ScrubsSecretTokens(t *testing.T) {
 	assert.Contains(t, out, "[redacted]")
 }
 
+func TestRenderDashboard_SanitizesFileAndComponent(t *testing.T) {
+	recs := []Record{{
+		Date:  "2026-06-26",
+		Label: "sanitize",
+		Item:  mkItem("open", "CRITICAL"),
+	}}
+	recs[0].File = "internal/x | y.go:1"
+	recs[0].Problem = "pipe in file"
+
+	out := RenderDashboard(recs, 10)
+	// A literal pipe in the File cell would break the Markdown table column count.
+	assert.NotContains(t, out, "| internal/x | y.go:1 |")
+	assert.Contains(t, out, "| internal/x / y.go:1 |")
+	// The By Component rollup must sanitize the component label as well.
+	assert.Contains(t, out, "| internal/x / y.go | 1 |")
+}
+
 func TestRenderDashboard_TopRespectsLimitAndExcludesResolved(t *testing.T) {
 	out := RenderDashboard(Flatten(sampleShards()), 1)
 	// Only the single highest-priority (CRITICAL) item is listed in Top Priority.
