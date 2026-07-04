@@ -87,7 +87,11 @@ func stampJustifications(jf []JSONFinding, reviewDir string) {
 		jf[i].SourceReport = &SourceReport{Path: m.relPath, Line: m.line, Section: m.section}
 		matched++
 	}
-	slog.Debug("justifications stamped", "matched", matched, "total", len(jf))
+	if matched == 0 {
+		slog.Warn("justifications stamped", "matched", matched, "total", len(jf), "note", "review.md narratives exist but matched zero findings; possible format drift")
+	} else {
+		slog.Debug("justifications stamped", "matched", matched, "total", len(jf))
+	}
 }
 
 // collectReviewNarratives walks sourcesDir for every review.md and returns them
