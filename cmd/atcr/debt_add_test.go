@@ -75,6 +75,17 @@ func TestDebtAdd_InvalidSeverityIsError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestDebtAdd_InvalidDateIsUsageError(t *testing.T) {
+	readme, items := emptyTDRepo(t)
+	_, err := runDebt(t, "add",
+		"--readme", readme, "--items", items,
+		"--date", "07-03-2026",
+		"--severity", "HIGH", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c",
+	)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+}
+
 func TestPromptEntry_ReadsFieldsAndDefaults(t *testing.T) {
 	// Answers, in order: date (default), source-type (default), label,
 	// group (default), severity, file, problem, fix, category, est, status
@@ -115,6 +126,27 @@ func TestPromptEntry_ReadsFieldsAndDefaults(t *testing.T) {
 func TestPromptEntry_RequiredFieldMissingAtEOFErrors(t *testing.T) {
 	// Provide date/source-type/label then EOF before severity (required).
 	answers := "\n\nlbl\n\n" // date, source-type, label, group -> then EOF
+	var out bytes.Buffer
+	def := wizardDefaults{Date: "2026-07-03", SourceType: "Sprint", Label: "manual", Group: "U", Status: "open", Source: "manual"}
+	_, _, err := promptEntry(strings.NewReader(answers), &out, def)
+	require.Error(t, err)
+}
+
+func TestPromptEntry_InvalidDateErrors(t *testing.T) {
+	answers := strings.Join([]string{
+		"07-03-2026", // invalid date
+		"Sprint",
+		"lbl",
+		"",
+		"MEDIUM",
+		"a.go:1",
+		"p",
+		"f",
+		"c",
+		"5",
+		"open",
+		"manual",
+	}, "\n") + "\n"
 	var out bytes.Buffer
 	def := wizardDefaults{Date: "2026-07-03", SourceType: "Sprint", Label: "manual", Group: "U", Status: "open", Source: "manual"}
 	_, _, err := promptEntry(strings.NewReader(answers), &out, def)
