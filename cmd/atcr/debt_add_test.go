@@ -66,6 +66,24 @@ func TestDebtAdd_MissingRequiredNonTTYIsUsageError(t *testing.T) {
 	assert.Equal(t, exitUsage, exitCode(err))
 }
 
+func TestDebtAdd_MissingRequiredNamesSpecificFlags(t *testing.T) {
+	readme, items := emptyTDRepo(t)
+	out, err := runDebt(t, "add",
+		"--readme", readme, "--items", items,
+		"--severity", "HIGH",
+	)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	lines := strings.Split(out, "\n")
+	require.Greater(t, len(lines), 0)
+	errLine := lines[0]
+	assert.Contains(t, errLine, "--file")
+	assert.Contains(t, errLine, "--problem")
+	assert.Contains(t, errLine, "--fix")
+	assert.Contains(t, errLine, "--category")
+	assert.NotContains(t, errLine, "--severity")
+}
+
 func TestDebtAdd_InvalidSeverityIsError(t *testing.T) {
 	readme, items := emptyTDRepo(t)
 	_, err := runDebt(t, "add",

@@ -151,7 +151,23 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	default:
-		return usageError(fmt.Errorf("missing required flags (--severity, --file, --problem, --fix, --category); provide them or run on an interactive terminal"))
+		var missing []string
+		if sev == "" {
+			missing = append(missing, "--severity")
+		}
+		if file == "" {
+			missing = append(missing, "--file")
+		}
+		if problem == "" {
+			missing = append(missing, "--problem")
+		}
+		if fix == "" {
+			missing = append(missing, "--fix")
+		}
+		if category == "" {
+			missing = append(missing, "--category")
+		}
+		return usageError(fmt.Errorf("missing required flags (%s); provide them or run on an interactive terminal", strings.Join(missing, ", ")))
 	}
 
 	if err := debt.AppendItem(readme, items, sec, it, cmd.ErrOrStderr()); err != nil {
