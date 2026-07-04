@@ -1,0 +1,13 @@
+date: "2026-06-28"
+source_type: Sprint
+label: epic-13.4
+items:
+  - group: "1"
+    status: deferred
+    severity: LOW
+    file: internal/astgroup/parsers/src/braceparser/main.go:20
+    problem: The alloc/free/emit/pins guest ABI is duplicated across three parser sources (goparser, pyparser, braceparser); the threshold the existing code documents for extraction (parser count > 2) is now crossed
+    fix: Extract the shared guest ABI into a package referenced via go.mod replace directives coordinated in build.sh
+    category: MAINTAINABILITY
+    est_minutes: 60
+    source: execute-epic-stage3

@@ -1,0 +1,31 @@
+date: "2026-06-30"
+source_type: Sprint
+label: epic-14.1
+items:
+  - group: "1"
+    status: deferred
+    severity: MEDIUM
+    file: internal/fanout/grounding.go:54
+    problem: out-of-scope category is a blanket grounding-gate exemption in all modes, so an adversarial or hallucinating model can launder a fabricated finding past AC2 by tagging category=out-of-scope in diff/blocks mode
+    fix: 'Restrict the out-of-scope exemption to files mode (or require the cited FILE:LINE/EVIDENCE to anchor before honoring it in diff/blocks) — DEFERRED: conflicts with clarification Q2 which chose blanket exemption because out-of-scope is annotated-not-promoted by the reconciler downstream'
+    category: correctness
+    est_minutes: 30
+    source: execute-epic-independent
+  - group: "1"
+    status: deferred
+    severity: MEDIUM
+    file: internal/fanout/grounding.go:47
+    problem: groundFindings ignores Result.Tools and Result.PayloadMode, so a tool-enabled or files-mode agent citing a real line it legitimately read outside the changed range is dropped unless it tags out-of-scope or quotes a changed line in EVIDENCE
+    fix: 'Thread Tools/PayloadMode into the gate and relax the range/evidence requirement for tool/files agents — DEFERRED: the out-of-scope prompt convention already instructs such agents to tag read-but-unchanged citations, which the gate exempts'
+    category: correctness
+    est_minutes: 45
+    source: execute-epic-independent
+  - group: "1"
+    status: deferred
+    severity: LOW
+    file: internal/fanout/review.go:470
+    problem: computeGroundingData builds a fresh gitRunner and re-runs validateRange + --name-status + --unified=0 for a range the payload builder already diffed, duplicating ~4 git subprocesses per review and per resume
+    fix: Reuse the payload builder's memoized rangeChunks/gitRunner for the same base..head instead of recomputing the zero-context diff
+    category: performance
+    est_minutes: 45
+    source: execute-epic-independent

@@ -1,0 +1,49 @@
+date: "2026-07-03"
+source_type: Sprint
+label: epic-18.0
+items:
+  - group: "1"
+    status: open
+    severity: MEDIUM
+    file: internal/debt/add.go:181
+    problem: AppendItem does an unlocked read-modify-write of the authoritative README; two concurrent `atcr debt add` (or another TD writer) can interleave and lose one update
+    fix: Wrap the README read-modify-write in the shared mkdir-flock used by the TD flush path (extract a reusable lock helper), or serialize TD writes through a single utility
+    category: CONCURRENCY
+    est_minutes: 30
+    source: execute-epic-stage3
+  - group: "1"
+    status: open
+    severity: LOW
+    file: internal/debt/add.go:195
+    problem: AppendItem writes the README then runs SyncShards; a migrate failure after the write leaves shards lagging the (still-authoritative, valid) README until the next migrate
+    fix: Either regenerate shards to a temp dir and swap, or document that a post-write sync failure is recovered by re-running `td-migrate migrate` / `atcr debt list --sync`
+    category: ERROR_PATHS
+    est_minutes: 20
+    source: execute-epic-stage3
+  - group: "1"
+    status: open
+    severity: MEDIUM
+    file: internal/debt/add.go:181
+    problem: AppendItem does an unlocked read-modify-write of the shared README plus a full items/ shard prune+rewrite; concurrent TD writers (group_td, resolve-td, another `atcr debt add`) take a lock but this path does not, so a concurrent write can lose a row or race the shard swap
+    fix: Extract the mkdir-flock helper the TD flush path uses into a shared utility and guard AppendItem's README RMW + shard regenerate under it
+    category: CONCURRENCY
+    est_minutes: 45
+    source: execute-epic-independent
+  - group: "1"
+    status: open
+    severity: LOW
+    file: internal/debt/dashboard.go:75
+    problem: '`atcr debt dashboard --top 0` prints "_No unresolved items._" under Top Priority even when unresolved items exist, which is misleading rather than an omitted-list note'
+    fix: Distinguish an empty Top due to a zero/negative --top cap from a genuinely empty backlog and render "(top list suppressed)" in the former case
+    category: UNDER_ENGINEERING
+    est_minutes: 15
+    source: execute-epic-independent
+  - group: U
+    status: open
+    severity: LOW
+    file: cmd/atcr/debt_add.go:96
+    problem: On a TTY, partially-supplied required flags are ignored and the wizard re-prompts every field from scratch because wizardDefaults is not seeded from the flags already passed
+    fix: Seed wizardDefaults (severity/file/problem/fix/category) from any flags the user provided so partial flag input carries into the interactive prompts
+    category: UNDER_ENGINEERING
+    est_minutes: 20
+    source: execute-epic-independent

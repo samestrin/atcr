@@ -1,0 +1,13 @@
+date: "2026-06-28"
+source_type: Sprint
+label: epic-13.3
+items:
+  - group: U
+    status: deferred
+    severity: LOW
+    file: reconcile/pagerank.go:181
+    problem: 'Authority promotion is silent: no counter or Summary stat records that a HIGH came from authority rather than reviewer count, so a misfiring promotion is only derivable as HIGH-with-a-single-reviewer (Deferred: Epic Plan 13.4)'
+    fix: Add a Summary stat (e.g. AuthorityPromoted int) counting authority-promoted findings for observability; out of v1 scope since the clarification fixed the wire schema
+    category: OBSERVABILITY
+    est_minutes: 30
+    source: execute-epic-independent
