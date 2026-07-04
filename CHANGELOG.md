@@ -1,3 +1,18 @@
+## [18.1.0] - 2026-07-04
+
+Anchored each reconciled finding to the name of its enclosing code symbol so technical-debt items keep a stable relocation key when intervening edits drift their line numbers.
+
+### Added
+
+- Reconciler: each finding's `problem` is now prefixed with `(symbolName)` — the nearest enclosing named AST block (function/method/class/type) — resolved via the existing `internal/astgroup` parsers. The anchor is a drift-stable `RELOCATE_KEY` for downstream technical-debt resolution.
+- `docs/technical-debt-format.md`: documents the `(symbolName)` Problem-cell contract — placement, resolution semantics, graceful degradation, table safety, and how a consumer parses it.
+
+### Changed
+
+- The anchor is omitted (Problem cell byte-identical to before) when no named block resolves — unsupported language, absent/unparseable file, file-level finding, or `ATCR_DISABLE_AST_GROUPING` — and when the resolved name would not be table-safe, so the technical-debt table format stays backward-compatible.
+
+*Shipped via /execute-epic (epic 18.1)*
+
 ## [Technical Debt] - 2026-07-03
 
 ### Fixed
