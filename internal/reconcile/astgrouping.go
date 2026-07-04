@@ -60,6 +60,23 @@ func (lg *lazyGrouper) GroupKey(f reclib.Finding) string {
 	return lg.g.GroupKey(f)
 }
 
+// EnclosingSymbol resolves f to the name of its nearest enclosing named AST block
+// (epic 18.1), or "" when f's language has no parser, AST grouping is disabled, or
+// no named block covers the line. Like GroupKey it short-circuits unsupported
+// extensions before constructing the wazero runtime, and shares the lazily-built
+// grouper (and its per-run file-tree cache) so a symbol lookup for a finding the
+// reconciler already grouped reuses the parsed tree rather than re-parsing.
+func (lg *lazyGrouper) EnclosingSymbol(f reclib.Finding) string {
+	if lang := astgroup.LanguageForExt(strings.ToLower(filepath.Ext(f.File))); lang == "" {
+		return ""
+	}
+	lg.once.Do(func() { lg.g = lg.newGrouper(lg.root) })
+	if lg.g == nil {
+		return ""
+	}
+	return lg.g.EnclosingSymbol(f)
+}
+
 // Close releases the grouper's per-run file-tree cache if it was constructed. The
 // shared wazero Host (astgroup.SharedHost) is process-lifetime and is deliberately
 // not closed here, so its compiled-parser cache survives for the next reconcile.
