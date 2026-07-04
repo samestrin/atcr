@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "internal/debt/add.go",
+      "line": 181,
+      "severity": "MEDIUM",
+      "problem": "AppendItem does an unlocked read-modify-write of the authoritative README",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/debt_add.go",
+      "line": 96,
+      "severity": "LOW",
+      "problem": "Interactive wizard does not seed defaults from provided flags",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/debt/add.go",
+      "line": 195,
+      "severity": "LOW",
+      "problem": "AppendItem writes the README then runs SyncShards; a failure in SyncShards leaves shards lagging the README",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ]
+    }
+  ]
+}

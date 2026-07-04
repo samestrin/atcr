@@ -1,0 +1,14 @@
+{
+  "agent": "kai",
+  "status": "ok",
+  "findings_count": 0,
+  "duration_ms": 108953,
+  "payload_mode": "blocks",
+  "truncated": false,
+  "files_dropped": [],
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0,
+  "model": "kimi-k2.7-code",
+  "tokens_in": 59683,
+  "tokens_out": 8192
+}

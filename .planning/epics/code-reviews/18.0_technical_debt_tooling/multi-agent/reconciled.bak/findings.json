@@ -1,0 +1,47 @@
+[
+  {
+    "severity": "MEDIUM",
+    "file": "internal/debt/add.go",
+    "line": 181,
+    "problem": "AppendItem does an unlocked read-modify-write of the authoritative README",
+    "fix": "Wrap the README read-modify-write in the shared mkdir-flock used by the TD flush path or serialize TD writes through a single utility",
+    "category": "concurrency",
+    "est_minutes": 30,
+    "evidence": "`data, err := os.ReadFile(readmePath)` followed by `os.WriteFile(readmePath, ...)` without synchronization",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "cmd/atcr/debt_add.go",
+    "line": 96,
+    "problem": "Interactive wizard does not seed defaults from provided flags",
+    "fix": "Seed `wizardDefaults` from flags passed to the command so partial flag input carries into the interactive prompts",
+    "category": "style",
+    "est_minutes": 20,
+    "evidence": "`promptEntry` is called with `def` but `sev`, `file`, `problem`, `fix`, and `category` are checked via `mustFlag` and ignored if the wizard is triggered",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/debt/add.go",
+    "line": 195,
+    "problem": "AppendItem writes the README then runs SyncShards; a failure in SyncShards leaves shards lagging the README",
+    "fix": "Regenerate shards to a temp dir and swap, or document that post-write sync failure is recovered by re-running `atcr debt list --sync`",
+    "category": "error-handling",
+    "est_minutes": 20,
+    "evidence": "`os.WriteFile(readmePath, ...)` occurs before `SyncShards(readmePath, itemsDir, stderr)`",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  }
+]
