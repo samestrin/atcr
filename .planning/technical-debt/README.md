@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 1 | 30 | 0 |
-| LOW | 3 | 30 | 0 |
+| MEDIUM | 0 | 30 | 0 |
+| LOW | 0 | 32 | 0 |
 
-**Last Modified:** 2026-07-04 | **Open Items:** 4 | **Deferred Items:** 62 | **Resolved Items:** 0 | **Total Items:** 66
+**Last Modified:** 2026-07-04 | **Open Items:** 0 | **Deferred Items:** 64 | **Resolved Items:** 0 | **Total Items:** 64
 
 ## Directory Structure
 
@@ -66,10 +66,8 @@ table with zero data loss) is proven by the Go test suite in
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | LOW | internal/reconcile/emit.go:211 | ambiguous.json gray-zone cluster Problem cells are not symbol-anchored while findings.json cells are - a now-harmless cosmetic asymmetry (debate correlation is anchor-insensitive as of the 18.1 HIGH fix) | If the TD ToC ever consumes ambiguous.json, stamp toAmbiguousWire cluster problems via the same symbolResolver | CORRECTNESS | 30 | execute-epic-stage3 |
-| 1 | [ ] | MEDIUM | internal/reconcile/gate.go:247 | Symbol anchor propagates to all findings.json consumers (findings.txt, RenderJSON, report, ghaction PR comments), not only the TD README - a deliberate consequence of the clarified emit-layer injection point (epic 18.1 Q2) | Confine to a TD-destined surface or explicitly accept/document the PR-comment prefix; revisit only if the PR-comment prefix proves undesirable | INTEGRATION | 60 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/reconcile/symbol_anchor.go:56 | safeSymbolAnchor blacklists only table/parse-breakers (pipe, parens, whitespace), allowing markdown-active chars (backtick, brackets, angle) that render oddly but cannot corrupt the table or the parse | Leave permissive - a strict identifier whitelist would wrongly reject valid names like C++ Foo<T> or ~Dtor; revisit only if odd rendering is observed | SECURITY | 15 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/reconcile/symbol_anchor.go:30 | stampSymbolAnchors emits no signal - wholesale non-resolution (e.g. misconfigured opts.Root) is only inferable from astgroup grouper Warn logs | Optionally log a debug summary of anchored-vs-total findings in stampSymbolAnchors | OBSERVABILITY | 15 | execute-epic-independent |
+| 1 | [/] | LOW | internal/reconcile/emit.go:211 | ambiguous.json gray-zone cluster Problem cells are not symbol-anchored while findings.json cells are - a now-harmless cosmetic asymmetry (debate correlation is anchor-insensitive as of the 18.1 HIGH fix) (Accepted: intentional by design — cluster members stay raw and StripSymbolAnchors normalizes for identity correlation, documented at symbol_anchor.go:82-90; no current ambiguous.json consumer needs the anchor. Revisit only if a TD ToC consumes ambiguous.json) | If the TD ToC ever consumes ambiguous.json, stamp toAmbiguousWire cluster problems via the same symbolResolver | CORRECTNESS | 30 | execute-epic-stage3 |
+| 1 | [/] | LOW | internal/reconcile/symbol_anchor.go:56 | safeSymbolAnchor blacklists only table/parse-breakers (pipe, parens, whitespace), allowing markdown-active chars (backtick, brackets, angle) that render oddly but cannot corrupt the table or the parse (Accepted: leave permissive — no supported parser (Go, C-family, Python) can emit a name containing backtick/bracket/angle; generics and operators are stripped before Node.Name is set, so tightening guards unreachable input) | Leave permissive - a strict identifier whitelist would wrongly reject valid names like C++ Foo<T> or ~Dtor; revisit only if odd rendering is observed | SECURITY | 15 | execute-epic-independent |
 
 ### [2026-07-03] From Sprint: 18.0_technical_debt_tooling
 
