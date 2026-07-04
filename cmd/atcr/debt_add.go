@@ -124,6 +124,25 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 			File: file, Problem: problem, Fix: fix, Category: category,
 			EstMinutes: est, Source: def.Source,
 		}
+	case sev != "" || file != "" || problem != "" || fix != "" || category != "":
+		// Some but not all required flags were provided; name the missing ones.
+		var missing []string
+		if sev == "" {
+			missing = append(missing, "--severity")
+		}
+		if file == "" {
+			missing = append(missing, "--file")
+		}
+		if problem == "" {
+			missing = append(missing, "--problem")
+		}
+		if fix == "" {
+			missing = append(missing, "--fix")
+		}
+		if category == "" {
+			missing = append(missing, "--category")
+		}
+		return usageError(fmt.Errorf("missing required flags (%s)", strings.Join(missing, ", ")))
 	case debtStdinIsTTY(cmd.InOrStdin()):
 		// Interactive wizard — only when we can actually prompt a human.
 		var err error

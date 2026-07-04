@@ -111,12 +111,15 @@ func TestDebtAdd_PartialFlagsIsUsageError(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, exitCode(err))
-	// Error must name only the missing flags, not the ones that were provided.
-	assert.Contains(t, out, "--problem")
-	assert.Contains(t, out, "--fix")
-	assert.Contains(t, out, "--category")
-	assert.NotContains(t, out, "--severity")
-	assert.NotContains(t, out, "--file")
+	// The error line must name only the missing flags, not the ones provided.
+	lines := strings.Split(out, "\n")
+	require.Greater(t, len(lines), 0)
+	errLine := lines[0]
+	assert.Contains(t, errLine, "--problem")
+	assert.Contains(t, errLine, "--fix")
+	assert.Contains(t, errLine, "--category")
+	assert.NotContains(t, errLine, "--severity")
+	assert.NotContains(t, errLine, "--file")
 }
 
 func TestPromptEntry_ReadsFieldsAndDefaults(t *testing.T) {
