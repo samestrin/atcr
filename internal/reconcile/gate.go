@@ -237,6 +237,14 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 	// the reports. No-op when opts.Root is empty.
 	jf := res.JSONFindings()
 	validateFindingPaths(ctx, jf, opts.Root)
+	// Stamp a "(symbol) " anchor onto each Problem cell from the finding's
+	// enclosing named AST block (epic 18.1), reusing the same grouper (its
+	// per-run tree cache is already warm from clustering). No-op when the grouper
+	// cannot resolve symbols (proximity-only / AST disabled) or opts.Root is empty;
+	// degrades per finding when no named block resolves. Stamped after merge and
+	// path validation, before Emit, so the anchor rides into findings.json and the
+	// downstream TD README.
+	stampSymbolAnchors(jf, grouper)
 	res.jsonFindings = jf
 
 	if err := ctx.Err(); err != nil {
