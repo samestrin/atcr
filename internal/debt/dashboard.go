@@ -51,7 +51,7 @@ func RenderDashboard(recs []Record, topN int) string {
 	} else {
 		b.WriteString("| Component | Items |\n|-----------|-------|\n")
 		for _, c := range sum.ByComponent {
-			fmt.Fprintf(&b, "| %s | %d |\n", c.Component, c.Total)
+			fmt.Fprintf(&b, "| %s | %d |\n", sanitizeCell(c.Component), c.Total)
 		}
 		b.WriteString("\n")
 	}
@@ -77,7 +77,7 @@ func RenderDashboard(recs []Record, topN int) string {
 		b.WriteString("| Severity | File | Est | Problem |\n|----------|------|-----|---------|\n")
 		for _, r := range sum.Top {
 			fmt.Fprintf(&b, "| %s | %s | %d | %s |\n",
-				r.Severity, r.File, r.EstMinutes, sanitizeCell(red.Redact(r.Problem)))
+				r.Severity, sanitizeCell(r.File), r.EstMinutes, sanitizeCell(red.Redact(r.Problem)))
 		}
 	}
 
