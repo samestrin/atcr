@@ -32,9 +32,10 @@ var debtStdinIsTTY = func(in io.Reader) bool {
 // wizardDefaults seeds the interactive prompts (and flag-mode section fields)
 // with sensible defaults that an empty answer falls back to.
 type wizardDefaults struct {
-	Date, SourceType, Label string
-	Group, Status, Source   string
-	Est                     int
+	Date, SourceType, Label                string
+	Group, Status, Source                  string
+	Severity, File, Problem, Fix, Category string
+	Est                                    int
 }
 
 func newDebtAddCmd() *cobra.Command {
@@ -68,6 +69,46 @@ func newDebtAddCmd() *cobra.Command {
 
 func todayUTC() string { return time.Now().UTC().Format("2006-01-02") }
 
+func validateDate(date string) error {
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		return usageError(fmt.Errorf("invalid date %q: expected YYYY-MM-DD", date))
+	}
+	return nil
+}
+
+func normalizeSeverity(s string) string { return strings.ToUpper(s) }
+func normalizeStatus(s string) string   { return strings.ToLower(s) }
+func normalizeSourceType(s string) string {
+	switch strings.ToLower(s) {
+	case "sprint":
+		return tdmigrate.SourceTypeSprint
+	case "review":
+		return tdmigrate.SourceTypeReview
+	default:
+		return s
+	}
+}
+
+func missingRequiredFlags(sev, file, problem, fix, category string) []string {
+	var missing []string
+	if sev == "" {
+		missing = append(missing, "--severity")
+	}
+	if file == "" {
+		missing = append(missing, "--file")
+	}
+	if problem == "" {
+		missing = append(missing, "--problem")
+	}
+	if fix == "" {
+		missing = append(missing, "--fix")
+	}
+	if category == "" {
+		missing = append(missing, "--category")
+	}
+	return missing
+}
+
 func runDebtAdd(cmd *cobra.Command, _ []string) error {
 	readme := mustFlag(cmd, "readme")
 	items := mustFlag(cmd, "items")
@@ -75,18 +116,21 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 	if date == "" {
 		date = todayUTC()
 	}
-	est, _ := cmd.Flags().GetInt("est")
-	def := wizardDefaults{
-		Date: date, SourceType: mustFlag(cmd, "source-type"), Label: mustFlag(cmd, "label"),
-		Group: mustFlag(cmd, "group"), Status: mustFlag(cmd, "status"), Source: mustFlag(cmd, "source"),
-		Est: est,
+	if err := validateDate(date); err != nil {
+		return err
 	}
-
+	est, _ := cmd.Flags().GetInt("est")
 	sev := mustFlag(cmd, "severity")
 	file := mustFlag(cmd, "file")
 	problem := mustFlag(cmd, "problem")
 	fix := mustFlag(cmd, "fix")
 	category := mustFlag(cmd, "category")
+	def := wizardDefaults{
+		Date: date, SourceType: mustFlag(cmd, "source-type"), Label: mustFlag(cmd, "label"),
+		Group: mustFlag(cmd, "group"), Status: mustFlag(cmd, "status"), Source: mustFlag(cmd, "source"),
+		Severity: sev, File: file, Problem: problem, Fix: fix, Category: category,
+		Est: est,
+	}
 
 	var (
 		sec debt.Section
@@ -95,21 +139,29 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 	switch {
 	case sev != "" && file != "" && problem != "" && fix != "" && category != "":
 		// Flag mode — the scriptable, primary contract.
-		sec = debt.Section{Date: def.Date, SourceType: def.SourceType, Label: def.Label}
+		sec = debt.Section{Date: def.Date, SourceType: normalizeSourceType(def.SourceType), Label: def.Label}
 		it = tdmigrate.Item{
-			Group: def.Group, Status: def.Status, Severity: strings.ToUpper(sev),
+			Group: def.Group, Status: normalizeStatus(def.Status), Severity: normalizeSeverity(sev),
 			File: file, Problem: problem, Fix: fix, Category: category,
 			EstMinutes: est, Source: def.Source,
 		}
 	case debtStdinIsTTY(cmd.InOrStdin()):
-		// Interactive wizard — only when we can actually prompt a human.
+		// Interactive wizard — only when we can actually prompt a human. Any
+		// required flags already supplied were seeded into def above, so partial
+		// flag input carries into the prompts instead of being discarded.
 		var err error
 		sec, it, err = promptEntry(cmd.InOrStdin(), cmd.OutOrStdout(), def)
 		if err != nil {
 			return err
 		}
+	case sev != "" || file != "" || problem != "" || fix != "" || category != "":
+		// Some but not all required flags were provided and there is no TTY to
+		// finish the rest; name the missing ones.
+		missing := missingRequiredFlags(sev, file, problem, fix, category)
+		return usageError(fmt.Errorf("missing required flags (%s)", strings.Join(missing, ", ")))
 	default:
-		return usageError(fmt.Errorf("missing required flags (--severity, --file, --problem, --fix, --category); provide them or run on an interactive terminal"))
+		missing := missingRequiredFlags(sev, file, problem, fix, category)
+		return usageError(fmt.Errorf("missing required flags (%s); provide them or run on an interactive terminal", strings.Join(missing, ", ")))
 	}
 
 	if err := debt.AppendItem(readme, items, sec, it, cmd.ErrOrStderr()); err != nil {
@@ -162,20 +214,26 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (debt.Section,
 	}
 
 	date := ask("Date (YYYY-MM-DD)", def.Date, false)
+	if err := validateDate(date); err != nil {
+		return debt.Section{}, tdmigrate.Item{}, err
+	}
 	stype := ask("Source type (Sprint|Review)", def.SourceType, false)
 	label := ask("Label", def.Label, true)
 	group := ask("Group", def.Group, false)
-	sev := ask("Severity (CRITICAL|HIGH|MEDIUM|LOW)", "", true)
-	file := ask("File (file:line)", "", true)
-	problem := ask("Problem", "", true)
-	fix := ask("Fix", "", true)
-	category := ask("Category", "", true)
+	sev := ask("Severity (CRITICAL|HIGH|MEDIUM|LOW)", def.Severity, true)
+	file := ask("File (file:line)", def.File, true)
+	problem := ask("Problem", def.Problem, true)
+	fix := ask("Fix", def.Fix, true)
+	category := ask("Category", def.Category, true)
 	estStr := ask("Est minutes", strconv.Itoa(def.Est), false)
 	status := ask("Status (open|deferred|resolved)", def.Status, false)
 	source := ask("Source", def.Source, false)
 
 	if perr != nil {
 		return debt.Section{}, tdmigrate.Item{}, perr
+	}
+	if err := sc.Err(); err != nil {
+		return debt.Section{}, tdmigrate.Item{}, fmt.Errorf("input read error: %w", err)
 	}
 
 	est := def.Est
@@ -185,9 +243,9 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (debt.Section,
 		_, _ = fmt.Fprintf(out, "  est %q is not an integer; using %d\n", estStr, def.Est)
 	}
 
-	sec := debt.Section{Date: date, SourceType: stype, Label: label}
+	sec := debt.Section{Date: date, SourceType: normalizeSourceType(stype), Label: label}
 	it := tdmigrate.Item{
-		Group: group, Status: status, Severity: strings.ToUpper(sev),
+		Group: group, Status: normalizeStatus(status), Severity: normalizeSeverity(sev),
 		File: file, Problem: problem, Fix: fix, Category: category,
 		EstMinutes: est, Source: source,
 	}

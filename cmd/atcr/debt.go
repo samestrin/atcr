@@ -56,8 +56,13 @@ func loadRecords(cmd *cobra.Command) ([]debt.Record, error) {
 	sync, _ := cmd.Flags().GetBool("sync")
 
 	if sync {
-		if err := debt.SyncShards(readme, items, cmd.ErrOrStderr()); err != nil {
-			return nil, err
+		// --check is a read-only verification mode; combining it with --sync
+		// would mutate the working tree while claiming to only verify drift.
+		check, _ := cmd.Flags().GetBool("check")
+		if !check {
+			if err := debt.SyncShards(readme, items, cmd.ErrOrStderr()); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return debt.Load(items)
@@ -138,6 +143,9 @@ func renderDebtTable(w io.Writer, recs []debt.Record) error {
 // anything, and collapses newlines to spaces so a multi-line problem stays on
 // one table row.
 func truncate(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
 	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", " "), "\n", " ")
 	r := []rune(s)
 	if len(r) <= n {

@@ -1,3 +1,18 @@
+## [Technical Debt] - 2026-07-03
+
+### Fixed
+
+- `atcr debt add`: seed the interactive wizard from partial flags when run on a TTY instead of discarding them.
+- `atcr debt add`: name the specific missing flags on a partial invocation rather than emitting a generic error.
+- `atcr debt add`: validate the `--date` value as `YYYY-MM-DD`, rejecting malformed dates that produced bogus month buckets.
+- `atcr debt add`: normalize status and source-type enums so casing no longer causes inconsistent values.
+- `atcr debt add`: surface scanner errors from the wizard prompt instead of silently ignoring them.
+- `internal/debt`: serialize `AppendItem` with a shared mkdir-based README lock, and roll back the README when a post-write shard sync or stats refresh fails.
+- `atcr debt dashboard`: distinguish a zero `--top` cap from an empty backlog, and reject the conflicting `--check --stdout` combination.
+- `atcr debt dashboard`: sanitize `File` and `Component` cells so table-breaking content is escaped, and distinguish filenames containing spaces from prose in the `Component` column.
+- `atcr debt`: guard the table truncation helper against a non-positive width, and skip shard sync when `--check` is set so a drift check no longer mutates the working tree.
+- `internal/tdmigrate`: preserve content between the Stats table and the Last Modified line in `RefreshStats`, validate the month prefix before bucketing in `monthHistogram`, and correct the `Sort` doc comment to match the implemented tiebreak chains.
+
 ## [18.0.0] - 2026-07-03
 
 Added an `atcr debt` command namespace for querying, capturing, and reporting technical debt directly from the Epic-12.1 sharded store, making the structured YAML shards a read source for the first time.

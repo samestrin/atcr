@@ -20,6 +20,9 @@ func TestComponent_DepthTwo(t *testing.T) {
 	assert.Equal(t, "main.go", Component("main.go:3"))
 	// Free text with no path separator is bucketed under a stable sentinel.
 	assert.Equal(t, "(unscoped)", Component("see the design doc"))
+	// A filename containing a space but carrying an extension is still a real
+	// file, not free-text prose.
+	assert.Equal(t, "my file.go", Component("my file.go:3"))
 }
 
 func TestSummarize_SeverityCounts(t *testing.T) {

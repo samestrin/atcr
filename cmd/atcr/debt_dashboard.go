@@ -50,6 +50,8 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 	toStdout, _ := cmd.Flags().GetBool("stdout")
 
 	switch {
+	case check && toStdout:
+		return usageError(fmt.Errorf("--check and --stdout are mutually exclusive"))
 	case check:
 		return checkDashboard(cmd, out, content)
 	case toStdout:
