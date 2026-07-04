@@ -1,3 +1,15 @@
+## [Technical Debt] - 2026-07-04
+
+### Fixed
+
+- `internal/reconcile`: bounded `review.md` reads and `extractSection` growth, and hardened matching against source-file drift, preventing unbounded memory growth and misattributed narratives when a `review.md` grows large or its filename drifts.
+- `internal/reconcile`: removed a dead tier-1 branch in `anchorTier` that could never execute.
+- `internal/reconcile`: rejected non-positive line numbers in `anchorTier`, preventing spurious proximity matches from line-zero anchors.
+- `internal/reconcile`: `extractSection` now absorbs a list-item marker line when the anchor sits on a continuation line, preventing malformed markdown extraction.
+- `internal/reconcile`: logged a warning when `review.md` narratives exist but match zero findings, surfacing a previously silent no-op.
+- `internal/reconcile`: pre-indexed `review.md` anchors so `matchNarrative` scans only candidate lines instead of rescanning the full narrative per finding, fixing an O(findings × narrativeBytes) performance issue.
+- `internal/reconcile`: switched per-line anchor dedup to a slice-based approach, avoiding a map allocation.
+
 ## [18.2.0] - 2026-07-04
 
 Enriched the shared reconciliation engine so each finding's originating `review.md` narrative survives past reconciliation, giving downstream technical-debt-resolution consumers the reviewer's reasoning without re-deriving it from raw review logs.

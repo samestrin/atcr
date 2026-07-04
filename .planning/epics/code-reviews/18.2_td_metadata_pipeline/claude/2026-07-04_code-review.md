@@ -1,0 +1,78 @@
+# Code Review Report: 18.2_td_metadata_pipeline
+
+## 1. Executive Summary
+- **Overall Result:** Pass
+- **Items Checked:** 4 / 4
+- **Approval Status:** Approved
+- **Review Date:** July 04, 2026
+- **Review Mode:** Epic (Acceptance Criteria + Adversarial) + Tests
+
+## 2. Checklist Changes Applied
+- **AC1** – `atcr reconcile` extracts the relevant `review.md` narrative section for a finding
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `internal/reconcile/justification.go:68,136,201,303`
+- **AC2** – `reconciled/findings.json` carries the narrative as a `justification` field
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `internal/reconcile/emit.go:141`, `internal/reconcile/gate.go:255-256`
+- **AC3** – Back-reference in reconciled JSON; never in README `Problem` cell
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `internal/reconcile/emit.go:147-160`
+- **AC4** – `docs/findings-format.md` documents new fields in both sections
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `docs/findings-format.md:90,128-138`
+
+## 3. Evidence Map
+- **AC1 — narrative extraction**
+  - Evidence: `internal/reconcile/justification.go:68` (stampJustifications), `:136` (matchNarrative), `:201` (anchorTier), `:303` (extractSection)
+  - Summary: Walks every `sources/**/review.md`, matches by file:line (tier ≥2 required, ±3 proximity window), extracts the enclosing Markdown block, truncated to 1000 runes. Wired into the single engine entry `RunReconcile` at `gate.go:255`.
+- **AC2 — justification field on findings.json**
+  - Evidence: `internal/reconcile/emit.go:131-141` (`Justification string json:"justification,omitempty"`), `gate.go:255-256` (stamp then cache to `res.jsonFindings`)
+  - Summary: Stamped after merge, path-validation, and symbol-anchoring, before `Emit`, so the field rides into findings.json via `RenderJSON`. `omitempty` keeps pre-18.2 output byte-identical.
+- **AC3 — source_report back-reference**
+  - Evidence: `internal/reconcile/emit.go:142-160` (`SourceReport{Path,Line,Section}`, `json:"source_report,omitempty"`)
+  - Summary: `Path` is review-dir-relative; stamped only onto JSONFinding records — no write path touches the TD README table, honoring Epic 18.1's frozen column structure.
+- **AC4 — documentation contract**
+  - Evidence: `docs/findings-format.md:128-138` (JSON form subsection), `:90` (Source discovery subsection)
+  - Summary: Both sections document the additive, backward-compatible fields; `justification` explicitly distinguished from `verification.notes`.
+
+## 4. Remaining Unchecked Items
+No remaining unchecked items - all verified.
+
+## 5. Manual Review Status
+- **Code Reviewed and Approved:** Checked
+- **Rationale:** All four acceptance criteria implemented and verified against merged code (commit 65efa52e). Full test suite passes, coverage 89.2%, all quality gates green. Adversarial review surfaced 6 non-blocking cleanup items (1 MEDIUM, 5 LOW), none affecting the delivered contract.
+
+## 6. Coverage Analysis
+- **Coverage:** 89.2%
+- **Baseline:** 80%
+- **Delta:** ↑9.2%
+- **Status:** PASSING
+
+## 7. Quality Checks
+| Check | Status | Command |
+|-------|--------|---------|
+| Lint | PASSING | golangci-lint run |
+| Types | PASSING | go vet ./... |
+| Format | PASSING | go fmt ./... |
+
+## 8. Adversarial Analysis
+- **Files Reviewed:** 4
+- **Issues Found:** 6 (Critical: 0, High: 0)
+
+### Issues by Severity
+
+**MEDIUM (1)**
+- `internal/reconcile/justification.go:315` — extractSection drops the list-item marker line when the file:line anchor lands on a continuation line of that item, so a finding referenced in an item body loses the sentence that names it. (maintainability, ~30m)
+
+**LOW (5)**
+- `internal/reconcile/justification.go:201` — anchorTier tier-1 branch is effectively dead code (minAnchorTier=2 never treats tier 1 as a match) yet runs a full substring scan per line. (maintainability, ~15m)
+- `internal/reconcile/justification.go:136` — O(findings × narrativeBytes) matching with no pre-index; bounded but wasteful. (performance, ~60m)
+- `internal/reconcile/justification.go:107` — review.md read/materialized with no size cap; the 1000-rune truncation happens after the full block is built, so peak memory is unbounded. (performance, ~30m)
+- `internal/reconcile/justification.go:222` — a finding with Line==0 (file-level) spuriously matches any review.md reference to lines 1-3 of that file via the ±3 proximity window. (error-handling, ~15m)
+- `internal/reconcile/justification.go:17` — `reviewFileName` const duplicated from internal/fanout to avoid an import cycle; silent drift risk with no compile/test failure (feature degrades to a no-op). (maintainability, ~30m)
+
+## 9. Follow-ups
+Run `/reconcile-code-review @.planning/epics/completed/18.2_td_metadata_pipeline.md` to merge the 6 adversarial findings into the technical-debt README with reviewer + confidence attribution. None are blocking; all are candidate TD items.
+
+---
+*Generated by /execute-code-review on July 04, 2026 02:52:31PM*

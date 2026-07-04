@@ -1,0 +1,14 @@
+{
+  "agent": "pace",
+  "status": "ok",
+  "findings_count": 3,
+  "duration_ms": 57333,
+  "payload_mode": "blocks",
+  "truncated": false,
+  "files_dropped": [],
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0,
+  "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+  "tokens_in": 30829,
+  "tokens_out": 8192
+}

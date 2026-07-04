@@ -1,0 +1,2 @@
+# atcr-findings/v1
+LOW|internal/reconcile/justification.go:381|isItemStart() doesn't handle ordered list markers without trailing space (e.g. "1.") correctly for all cases|Ensure consistent space check or use a regex for Markdown list markers|style|5|`i+1 == len(s) // s[i+1] == ' '` allows trailing dots without space but the preceding logic is brittle|otto

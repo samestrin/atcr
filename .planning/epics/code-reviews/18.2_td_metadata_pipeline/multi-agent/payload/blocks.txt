@@ -1,0 +1,1309 @@
+diff --git a/.planning/epics/active/18.0.1_debt-bulk-add.md b/.planning/epics/deferred/18.0.1_debt-bulk-add.md
+similarity index 100%
+rename from .planning/epics/active/18.0.1_debt-bulk-add.md
+rename to .planning/epics/deferred/18.0.1_debt-bulk-add.md
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index 9a50c6d1..2e72624d 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,16 +3,16 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 2 | 0 |
+ | MEDIUM | 0 | 30 | 0 |
+-| LOW | 0 | 32 | 0 |
++| LOW | 1 | 32 | 0 |
+ 
+-**Last Modified:** 2026-07-04 | **Open Items:** 0 | **Deferred Items:** 64 | **Resolved Items:** 0 | **Total Items:** 64
++**Last Modified:** 2026-07-04 | **Open Items:** 1 | **Deferred Items:** 64 | **Resolved Items:** 0 | **Total Items:** 65
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -62,246 +62,252 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
++### [2026-07-04] From Sprint: epic-18.2
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| U | [ ] | LOW | internal/reconcile/justification.go:60 | justification match rate is only logged at slog.Debug, so review.md format drift that silently breaks all matching goes unnoticed at default log verbosity | Log at Info/Warn (or surface matched/total in run metadata) when narratives exist but matched==0 | OBSERVABILITY | 15 | execute-epic-independent |
++
+ ### [2026-07-04] From Sprint: epic-18.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/reconcile/emit.go:211 | ambiguous.json gray-zone cluster Problem cells are not symbol-anchored while findings.json cells are - a now-harmless cosmetic asymmetry (debate correlation is anchor-insensitive as of the 18.1 HIGH fix) (Accepted: intentional by design — cluster members stay raw and StripSymbolAnchors normalizes for identity correlation, documented at symbol_anchor.go:82-90; no current ambiguous.json consumer needs the anchor. Revisit only if a TD ToC consumes ambiguous.json) | If the TD ToC ever consumes ambiguous.json, stamp toAmbiguousWire cluster problems via the same symbolResolver | CORRECTNESS | 30 | execute-epic-stage3 |
+ | 1 | [/] | LOW | internal/reconcile/symbol_anchor.go:56 | safeSymbolAnchor blacklists only table/parse-breakers (pipe, parens, whitespace), allowing markdown-active chars (backtick, brackets, angle) that render oddly but cannot corrupt the table or the parse (Accepted: leave permissive — no supported parser (Go, C-family, Python) can emit a name containing backtick/bracket/angle; generics and operators are stripped before Node.Name is set, so tightening guards unreachable input) | Leave permissive - a strict identifier whitelist would wrongly reject valid names like C++ Foo<T> or ~Dtor; revisit only if odd rendering is observed | SECURITY | 15 | execute-epic-independent |
+ 
+ ### [2026-07-03] From Sprint: 18.0_technical_debt_tooling
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | LOW | internal/debt/add.go:162 | A single AppendItem re-reads and re-parses the README three times and writes it twice, and SyncShards regenerates the entire shard store via a full migrate. Bulk-adding N items in a loop is effectively O(N) full-store rewrites and 2N shard-directory rewrites. (Deferred: Epic Plan 18.1) | Expose a batch-append that mutates the README once, syncs shards once, and refreshes stats once for a batch; keep the single-item path for the interactive case. Verify by benchmarking a 100-item batch against 100 single adds. | performance | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-03] From Sprint: 17.0_auto_merged_fixes
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 4 | [/] | MEDIUM | internal/verify/localvalidate.go:81 | exec.CommandContext SIGKILLs only the direct child on timeout; a validation command that spawns subprocesses (e.g. sh -c make ...) leaves grandchildren orphaned and still running after the deadline, as cmd.WaitDelay only force-closes the parent pipe fds and does not reap the process group (intent_note: deferred per sprint-plan §2.5 (TD-006)) (Deferred: TD-006 / sprint-plan.md:296 — document, do not implement process-group kill now) | Set cmd.SysProcAttr Setpgid true and kill the whole group (syscall.Kill(-pid, SIGKILL)) on the cancel/timeout path (unix build-tagged) so grandchildren are reaped too | performance | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-02] From Sprint: 15.1_leaderboard-cost-na-rendering
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/scorecard/export.go:275-281 | Export groups records by the scrubbed persona/model, and scrubField's absolute-path regexes can reduce an entirely path-like input string to empty. Two genuinely distinct reviewer identities that both happen to be path-like scrub to the same empty string and silently merge into one aggregated group, blending the costPer/SurvivedSkepticRate/FindingsRaisedAvg values this epic's change is meant to make trustworthy. Adjacent to, not caused by, this epic, but feeds the same grouping key costPer's group totals depend on. (Won't fix: by-design -- scrubField intentionally merges identities that scrub-equal, locked in by TestExport_DistinctIdentitiesMergeWhenTheyScrubEqual, export_test.go:296) | By-design behavior, not a bug: grouping keys off the scrubbed identity is deliberate (scrubField strips PII/paths/secrets before export), and TestExport_DistinctIdentitiesMergeWhenTheyScrubEqual locks the merge-on-equal-scrub as an anti-regression invariant. No source change. | error-handling | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-01] From Sprint: 14.3_diff_chunking_context
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | MEDIUM | internal/fanout/review.go:941 | After the T3 refactor extracted renderAgent, the add closure re-implements mode resolution (forceMode/EffectivePayloadMode, payload lookup, not-found/no-payload errors) at review.go:818-831, but buildAgent (line 941) still contains the identical resolution logic and now has NO production caller — only tests (retry_wiring_test.go, review_scope_inject_test.go, review_test.go, review_tools_test.go) reference it (verified: grep buildAgent internal/ excluding _test shows only the definition). This is dead production code plus two divergent copies of the same mode/payload-resolution logic that will silently drift. (Deferred 2026-07-01: Epic Plan 14.4_fanout_resolution_dedup — kept as-is; buildAgent has no production caller, duplication accepted for now.) | Either delete buildAgent and update the tests to drive buildSlots/renderAgent, or have the add closure call buildAgent for the single-chunk/bulk path so there is one resolution site. Verify no non-test caller exists before deleting and that fallback-wiring tests still pass. | maintainability | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-30] From Sprint: epic-14.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/fanout/grounding.go:54 | out-of-scope category is a blanket grounding-gate exemption in all modes, so an adversarial or hallucinating model can launder a fabricated finding past AC2 by tagging category=out-of-scope in diff/blocks mode | Restrict the out-of-scope exemption to files mode (or require the cited FILE:LINE/EVIDENCE to anchor before honoring it in diff/blocks) — DEFERRED: conflicts with clarification Q2 which chose blanket exemption because out-of-scope is annotated-not-promoted by the reconciler downstream | correctness | 30 | execute-epic-independent |
+ | 1 | [/] | MEDIUM | internal/fanout/grounding.go:47 | groundFindings ignores Result.Tools and Result.PayloadMode, so a tool-enabled or files-mode agent citing a real line it legitimately read outside the changed range is dropped unless it tags out-of-scope or quotes a changed line in EVIDENCE | Thread Tools/PayloadMode into the gate and relax the range/evidence requirement for tool/files agents — DEFERRED: the out-of-scope prompt convention already instructs such agents to tag read-but-unchanged citations, which the gate exempts | correctness | 45 | execute-epic-independent |
+ | 1 | [/] | LOW | internal/fanout/review.go:470 | computeGroundingData builds a fresh gitRunner and re-runs validateRange + --name-status + --unified=0 for a range the payload builder already diffed, duplicating ~4 git subprocesses per review and per resume | Reuse the payload builder's memoized rangeChunks/gitRunner for the same base..head instead of recomputing the zero-context diff | performance | 45 | execute-epic-independent |
+ 
+ ### [2026-06-29] From Sprint: 13.4_brace_language_parsers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:1 | Wasm ABI (alloc/free/parse/emit/pins) duplicated across three parser modules | Extract shared ABI into common guest package | maintainability | 60 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-28] From Sprint: epic-13.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/astgroup/parsers/src/braceparser/main.go:20 | The alloc/free/emit/pins guest ABI is duplicated across three parser sources (goparser, pyparser, braceparser); the threshold the existing code documents for extraction (parser count > 2) is now crossed | Extract the shared guest ABI into a package referenced via go.mod replace directives coordinated in build.sh | MAINTAINABILITY | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-28] From Sprint: epic-13.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | reconcile/pagerank.go:181 | Authority promotion is silent: no counter or Summary stat records that a HIGH came from authority rather than reviewer count, so a misfiring promotion is only derivable as HIGH-with-a-single-reviewer (Deferred: Epic Plan 13.4) | Add a Summary stat (e.g. AuthorityPromoted int) counting authority-promoted findings for observability; out of v1 scope since the clarification fixed the wire schema | OBSERVABILITY | 30 | execute-epic-independent |
+ 
+ ### [2026-06-27] From Sprint: 13.1_ast_plugin_architecture
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/astgroup/parsers/src/goparser/main.go:39 | The guest pins alloc'd buffers and hands the host int32(uintptr(unsafe.Pointer(&b[0]))) as a stable guest offset, valid only because the current Go GC is non-moving. This is an undocumented runtime invariant, not a language guarantee; a future moving GC makes the packed pointer a dangling offset with no detection. The unsafe alloc/free/emit/node boilerplate is copy-pasted across goparser, pyparser, and the 13.4 brace parsers, so any ABI fix must be applied N times. (Deferred: extraction premature at 2 parsers; epic scope fixed at Go+Python — a future-remedy note is in each parser's ABI section, revisit if parser count grows.) | Extract the shared alloc/free/emit/pins ABI into one internal guest package imported by every parser main.go, and add a build-time note pinning the GC assumption (or switch to an explicitly reserved arena). | maintainability | 120 | code-review | claude | MEDIUM |
+ | U | [/] | MEDIUM | internal/astgroup/parsers/src/pyparser/main.go:112 | scanTripleQuotes and stripComment are quote/escape-unaware. A triple-quote appearing inside a # comment, or a # appearing inside a string literal, flips the multi-line-string state machine the wrong way, so arbitrary spans of real code get classified as string content and dropped from significantLines, silently erasing blocks. The heuristic disclaimer documents the risk but does not bound it: on unusual source the structural hash diverges from the true AST. (Deferred: accepted PoC scope; heuristic limitation already documented at pyparser/main.go:72-78 and 152-156, degrades to proximity grouping.) | Run scanTripleQuotes only over the code portion (skip after an unquoted #) and skip triple-quotes occurring inside single-line strings. Add regression fixtures: a # containing a triple-quote, and a string literal containing #. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-26] From Sprint: 11.0_executing_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/tools/dispatch.go:146 | Tool gating for run_tests/run_script lives only in fanout.wireToolDefs (what the model is TOLD about); Dispatcher.Execute looks up d.handlers[name] with no check that the call was offered to the calling agent, and EnableExecution registers the exec handlers on the single dispatcher shared by the whole pool. The read-only guarantee for non-exec agents is therefore advisory, not structural — if any future caller enables exec non-uniformly across agents sharing one dispatcher, a non-exec agent could invoke run_script by simply naming it. No live exploit today: the sole exec caller, verify, sets exec uniformly for all skeptics. (Deferred: Epic Plan 11.1) | Pass the agent's allowed tool set (or Exec flag) into Execute and reject any call whose name was not offered to this agent, or gate the exec handlers behind a per-call capability rather than a globally-registered handler. Verify with a test where a non-exec agent emits a run_script tool_call and asserts it is refused. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-25] From Sprint: epic-11.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/tools/exec_tools.go:69 | Execution tools are gated per-agent only at the definition level (wireToolDefs); the shared per-run dispatcher will execute a run_tests/run_script call from any agent once EnableExecution is wired. The sandbox isolates every run identically so this is not a containment gap, but a non-designated agent could still incur execution cost. (Deferred: .planning/epics/active/11.1_dispatcher-structural-gating.md — exec_tools.go:69 is a data struct, not a gating point; the offering-layer gate is already structural, and a runtime per-call guard is the multi-file change scoped to Epic 11.1) | Thread agent exec-eligibility into the dispatcher (or add a per-call guard) so only designated agents execute, for precise cost attribution. | SECURITY | 30 | execute-epic-stage3 |
+ 
+ ### [2026-06-23] From Sprint: 8.0_reconciler_library
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | internal/reconcile/discover.go:25 | `internal/reconcile` keeps its discovery `Source` (Name + `[]stream.Finding` + Skipped + SkippedFiles); the library now defines a public `Source` (Name + `[]Finding`) | moved `Reconcile` takes the library `Source`; discovery output (`discover.Source`) is converted to `reconcile.Source` in the adapter/discovery layer | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | MEDIUM | unknown:0 | [Story 01 / Story 06] DoD item not implemented: both CI jobs (root ci.yml + reconcile-module PR-time job) must be marked as REQUIRED status checks on the main branch-protection rule. The CI workflow deliverables they depend on are all present and verified; only the protection-rule toggle is unset. The two story-level [ ] boxes (AC 01-06, AC 06-02) are the same single external action. (intent_note: deferred per sprint-plan Final Phase / dod-completion-summary.md (external repo-admin action)) | Configure branch protection in GitHub repo Settings -> Branches: add the root CI job and the reconcile-module PR-time job as required status checks. External repo-admin UI action (post-merge), not a source-tree change; documented deferred in dod-completion-summary.md. | docs | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: 7.3_github_action_pr_integration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 6 | [/] | MEDIUM | cmd/atcr/github.go:148-167 | Sequential inline comment posting is slow for PRs with many findings (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ | 6 | [/] | LOW | cmd/atcr/github.go:148-167 | Conclusion is computed twice for the same findings/failOn inputs (Deferred: Epic Plan 7.6) | Use GitHub's batch POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews endpoint | performance | 45 | code-review | bruce | MEDIUM |
+ 
+ ### [2026-06-22] From Sprint: epic-7.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/verify/syntaxguard.go:130 | An unfenced multi-line JSON/config snippet with block braces can still satisfy looksLikeGoCode and be parsed as Go, producing a spurious invalid_syntax flag on non-Go content (residual after heuristic hardening). | Detect obviously non-Go brace content (JSON object / key:value lines) before treating block braces as a Go signal; deferred as a separate design refinement (unfenced non-Go fixes are rare; fenced non-Go is already handled). [Deferred 2026-06-22 to Epic Plan 7.5 syntax-guard-refinements per clarification] | EDGE_CASES | 30 | execute-epic-independent |
+ 
+ ### [2026-06-22] From Sprint: 7.0.1_executor_model_configuration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 7 | [/] | LOW | internal/registry/config.go:524 | Potential prompt injection via system_prompt (Won't-fix: config.go:531–534 explicitly documents that control chars are intentionally NOT rejected in system_prompt; the --- delimiter added at executor.go:225 eliminates the CRLF metadata-forgery surface; otto's fix conflicts with the documented design decision) | Add control character validation to SystemPrompt | security | 15 | code-review | otto | MEDIUM |
+ 
+ ### [2026-06-21] From Sprint: epic-6.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | MEDIUM | internal/debate/debate.go:165 | Gray-zone cluster merge/separate rulings are recorded in debate.json but not physically applied to findings.json; clusters still resolve via the existing adjudication path (Deferred: Epic Plan 6.1) | Wire the judge cluster decision into the reconcile adjudication application so unattended runs auto-merge gray-zone clusters inline | INTEGRATION | 60 | execute-epic-stage3 |
+ 
+ ### [2026-06-20] From Sprint: epic-5.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/cache/store.go:115 | Eviction does a full ReadDir+Stat of the cache dir on every Put even when under the cap; O(n) per write scales poorly if the cache accumulates thousands of entries (Won't-fix 2026-06-21: scan runs serially under the store mutex and LLM calls dominate latency; no Epic 5.2 perf criterion requires O(1) Put — added state not justified at LOW) | Maintain a running total-size counter and skip the directory scan when it is under the cap, or evict only on a periodic/threshold basis | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-06-20] From Sprint: epic-5.0
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/report/render.go:317 | The "File not found" warning format string is duplicated across internal/reconcile/emit.go (writeFindingsList) and internal/report/render.go (writePathWarning) in separate packages | Extract a shared constant/helper only if a common low-level rendering package emerges; a cross-package dependency is not justified for one format string today (Won't-fix 2026-06-21: two independent format strings across packages with no shared dependency; the recorded fix confirms extraction is not justified at this scope) | CROSS_CUTTING | 15 | execute-epic-cumulative |
+ | U | [/] | MEDIUM | internal/reconcile/reconcile.go:26 | Validation root is hardcoded to "." at every call site, so "atcr reconcile <path>" for a review of another repo, or running from a non-repo-root CWD, falsely flags every finding as "file not found" | Thread the reviewed repo root explicitly or add a --repo flag, applied consistently with the verify stage which uses the same "." convention (Deferred 2026-06-21: the narrow Root: os.Getwd() variant is a no-op — filepath.Abs(".") already equals the CWD, so it would not fix the non-repo-root / other-repo case; the real fix is to plumb the reviewed-repo path explicitly via a --repo flag threaded through the reconcile and verify call sites, est 60) | EDGE_CASES | 60 | execute-epic-independent |
+ 
+ ### [2026-06-20] From Sprint: 4.7.1_backup-swap-hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:318 | backupExisting() unconditionally RemoveAll's <path>.bak.old and <path>.bak.new at entry, but forceBackupOutputDir() only calls guardForeignBackup(dir+".bak") — the two staging siblings are not guarded. On an arbitrary --output-dir a user who owns <output-dir>.bak.old or <output-dir>.bak.new has it silently deleted by --force, re-opening the Epic 4.7 "never silently delete user data" contract. NOTE: epic clarification Q4 deliberately scoped the guard to .bak only (atcr-internal suffixes); this finding re-raises that decision as worth reconsidering, not a defect against the recorded scope. (intent_note: deferred per epic §Clarifications Q4 — extending guardForeignBackup to .bak.old/.bak.new is out of scope) (Won't-fix 2026-06-20: binding Epic 4.7.1 Q4 — guard stays scoped to .bak; .bak.old/.bak.new are atcr-owned staging names cleared by entry-time RemoveAll; confirmed via /sprint-clarification 95%) | In forceBackupOutputDir() (reviewdir.go:440) extend the guard to guardForeignBackup(dir+".bak.old") and guardForeignBackup(dir+".bak.new") before backupExisting, or refuse if either exists non-empty. Add a test pre-creating a foreign <output-dir>.bak.old with user content and assert --force errors instead of deleting it. | security | 60 | code-review | claude | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:373 | The advertised "an interrupted swap never leaves the user with neither generation" invariant is conditional on a best-effort SILENT restore succeeding. If restorePriorBackup's os.Rename(backupOld,backup) fails (e.g. backup partially recreated, or perms change), the only surviving copy is stranded under .bak.old — which the very next run's entry-time RemoveAll(backupOld) (line 318) then deletes. Same pattern at the copy site swapStagedBackup (atomic.go:159-167) feeding atomic.go:97 RemoveAll(bakOld). (Won't-fix 2026-06-20: observability half done (restore failure now logged); the lone-.bak.old-as-generation redesign is rejected per Epic 4.7.1 Q3 — .bak.old is atcr-owned temp deleted at entry, one-generation contract + TestBackupExisting_CleansStaleStagingStragglers stand; confirmed via /sprint-clarification 95%) | Surface restore failures loudly (log/return) instead of dropping them, and/or do not auto-RemoveAll .bak.old at entry when .bak is absent — treat a lone .bak.old as the surviving generation to recover. Add a test where restore fails and a subsequent run is asserted not to delete the only surviving copy. | correctness | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir.go:388 | backupCrossDevice's inner os.Rename(backupNew,backup) relies on backupNew and backup sharing a filesystem, an invariant that holds only by naming coincidence (both are siblings of path). If anyone later relocates backupNew under path, the inner rename silently becomes cross-device and returns a raw EXDEV to the user. (Won't-fix 2026-06-20: same-fs invariant holds by construction — backup and backupNew are both siblings of path; a runtime guard would be unreachable dead code today and is already documented at reviewdir.go:415-419; confirmed via /sprint-clarification 90%) | Add a test that forces renameFn to return syscall.EXDEV and makes the copy fail (a copy seam, or unreadable src), staging a prior .bak first; assert the prior .bak content is restored intact, the live tree survives, and .bak.new is cleaned up. Cover the copy-failure leg at minimum. | testing | 120 | code-review | claude | MEDIUM |
+ | 3 | [/] | LOW | internal/fanout/reviewdir_test.go:458 | Test-coverage gaps in the failed-swap/cleanup paths: TestBackupExisting_FailedSwapPreservesPriorBak asserts no .bak.old straggler but not .bak.new; the non-ErrNotExist Lstat(backup) error branch (reviewdir.go:333-335) is untested; the entry-time RemoveAll straggler-cleanup failure legs (reviewdir.go:318-323) are untested. Each is a real error branch a regression could silently break. | Add assert.NoDirExists for src+".bak.new" at reviewdir_test.go:458; add a perms-based test forcing Lstat(backup) to fail with a non-ErrNotExist error; add a test where .bak.old cannot be removed and assert the typed "clearing stale staging backup" error. Skip on root/CI where perms are not enforced. (Partial 2026-06-21: gaps 1 (.bak.new assertion) and 3 (RemoveAll(.bak.old) failure) covered; gap 2 (non-ErrNotExist Lstat(backup)) deferred — needs an lstatFn production seam since the staging siblings share a parent dir so perms cannot isolate it) | testing | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-19] From Sprint: 4.7_idempotency
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:284 | backupExisting() does os.RemoveAll(backup) then os.Rename(path, backup); BackupToDotBak() does os.RemoveAll(bak) then copyTree. If the rename/copy fails (cross-filesystem EXDEV when --output-dir and its .bak sibling are on different mounts, disk-full mid-copy, or SIGKILL), the single prior backup generation is already destroyed while the new backup is absent or partial. The live/original tree is preserved (good), but the one recoverable prior .bak is lost for no benefit — counter to the safe-to-retry goal. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 4.7.1) | Stage the new backup first: copy/rename into <path>.bak.new (or rename old .bak aside to .bak.old), confirm it is complete, then swap and only then remove the old generation. For backupExisting, attempt os.Rename before RemoveAll so a failed rename leaves the old .bak intact; detect EXDEV and fall back to copy+remove. Add a fault-injection test asserting the prior .bak survives a failed swap. | correctness | 120 | code-review | code-reviewer, claude | HIGH |
+ 
+ ### [2026-06-19] From Sprint: 4.5_circuit_breaker
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | MEDIUM | internal/fanout/metrics.go:37 | recordAgentOutcome zeroes apiCalls for any result whose error unwraps to context.DeadlineExceeded/Canceled, assuming no request was made. But a per-agent timeout routinely fires AFTER real HTTP round-trips (and mid tool-loop after several Chat turns already hit the wire), so atcr_api_calls_total undercounts real provider traffic exactly when a provider is degraded. The no-request assumption is only provably safe for CircuitOpenError and pre-first-send cancellation. (Deferred: Epic Plan 4.11) | Use max(1, r.Turns) for the deadline case instead of a flat 0, or thread a real calls-attempted counter out of the client rather than inferring from the terminal error class. Keep the apiCalls=0 path only for CircuitOpenError. | performance | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-18] From Sprint: epic-4.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/validation/validation.go:62 | System-dir denylist covers only /etc, /proc, /sys, leaving /boot, /dev, /root, /var and ~/.ssh writable via --output-dir / --output (deliberate Option-B permissive choice) (Won't-fix: intended Option-B policy per epic 4.3 clarifications 2026-06-18; revisit only on a concrete isolation requirement) | If stronger isolation is later required, switch to an allowlist anchored at the repo/.atcr root instead of a denylist | SECURITY | 30 | execute-epic-independent |
+ | 1 | [/] | LOW | internal/validation/validation.go:86 | Severity and Enum validators are shipped but wired to nothing (ParseSeverity/ValidFormat remain the live paths); they exist only to satisfy AC5/AC7 and future use (Won't-fix: intentionally public for AC5/AC7 per epic 4.3 clarifications; deletion breaks ACs, wire-in out of scope) | Revisit and delete if no caller adopts them within a release, or wire them in where duplication can be removed | OVER_ENGINEERING | 15 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/registry/attribution.go:55 | attribute() recurses and reconstructs the join even for a single-error errors.Join (which still satisfies Unwrap() []error), a small avoidable cost on the load-time validation path | Optionally short-circuit when len(children)==1 if profiling ever flags it (WON'T-FIX 2026-06-18: trigger unmet — error-path only, never hit on normal load; no perf AC in epic 4.2) | INTEGRATION | 5 | execute-epic-independent |
+ 
+ ### [2026-06-18] From Sprint: epic-4.1.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/fanout/review.go:361 | If a server shutdown (or CLI SIGINT) fires after all agents already succeeded but before ExecuteReview's interrupted := errors.Is(ctx.Err(), context.Canceled) check, a fully-completed run is stamped Interrupted=true and status.go:216 overrides RunCompleted to RunInterrupted (a false interrupted; inverse of AC4). Pre-existing in the CLI-shared path, newly reachable via MCP shutdown. | Gate the interrupted marker on at least one agent ending in StatusTimeout/cancelled rather than purely on parent ctx.Err()==Canceled. NOTE: touches CLI-shared review.go (out of scope for epic 4.1.2's MCP-only change); window is microscopic and outcome benign (resume no-ops a complete run) - separate design. (WON'T-FIX 2026-06-18: --resume self-healing via ClearInterrupted (resume.go:220) already recovers a stale interrupted-on-complete; revisit in a backlog sprint if insufficient) | CORRECTNESS | 30 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: epic-4.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:88 | Serve-mode background fan-out runs under context.WithoutCancel(ctx) so a SIGINT to the MCP server never cancels or marks an in-flight detached review interrupted; it is allowed to finish (intended MCP design) but never gets the interrupted marker CLI mode promises. (Deferred: Epic Plan 4.1.2) | Decide whether detached MCP reviews should be marked interrupted on server shutdown; if so, thread a cancellable/interrupt-aware context or post-hoc marker into the background review path — a separate design from this CLI-focused epic. | REGRESSION_RISK | 60 | execute-epic-independent |
+ 
+ ### [2026-06-17] From Sprint: 4.0_structured_logging
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/review.go:172 | Both review entry points call `NewRedactor(root)` with ZERO configured secrets — cmd/atcr/review.go:172 and internal/mcp/handlers.go:87 pass only the path root, never the registry API keys. The exact-value secret-scrubbing loop in Redact is therefore dead in production; redaction relies entirely on the `sk-`/`Bearer` regexes, which miss raw provider keys that lack those prefixes (Google `AIzaSy...`, Azure `api-key`, JWTs `eyJ...`). The AC5 "no API key in log output" guarantee holds only for sk-/Bearer-shaped keys; the passing integration test likely uses an sk- key, masking the gap. (Deferred: Epic Plan 4.9 secret-value-redaction) | Thread resolved registry API key values into `NewRedactor(root, keys...)` at both review.go:172 and handlers.go:87 (keys are discoverable from prep.Slots / cfg.Registry). Add an integration test using a non-sk-shaped key (e.g. `AIzaSy...`) asserting it is redacted. | security | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: 3.5_severity-rank-consolidation
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:18 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:30 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestGrayZoneNormalizesMixedCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/severity_consolidation_test.go:42 | Test name too long (Won't fix: rejected by maintainer — breaks file's TestSubject_Behavior naming convention) | Shorten to TestMergeNoDisagreementOnCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+ 
+ ### [2026-06-16] From Sprint: epic-3.5
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | U | [/] | LOW | internal/stream/severity.go:20 | The canonical SeverityRank map carries a read-only-after-init invariant in a comment only, with no test guard preventing a future caller from mutating the shared map (which would race across concurrent fan-out agents). (Won't fix: structural guard — reconcile copy-on-init at merge.go:29-31 means no consumer writes stream.SeverityRank directly; grep confirms zero write sites across consumers. Snapshot test trips the over-simplification gate; Rank() accessor cascades to 14+ direct-lookup sites — both out of pure-consolidation scope.) | Add a stream test that snapshots the map and asserts it is unchanged after consumers run, or wrap it behind a Rank(sev) accessor. | OBSERVABILITY | 20 | execute-epic-independent |
+ 
+ ### [2026-06-16] From Sprint: 3.4_scorecard-diagnostics-writer
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:118 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; the diagnostic already routes to the injectable writer, only fmt.Fprintf's own return is dropped; propagating it breaks Emit's never-fail contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:199 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; Append loop already surfaces firstErr; propagating the Fprintf return breaks the best-effort contract) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:235 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verdictTallies already writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:248 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; verification-read-failed diagnostic writes to injectable w; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/scorecard.go:276 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; orphan-verdict diagnostic routes to injectable w, locked by TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/scorecard_test.go:291 | Epic 3.4 added unit tests proving EmitOpts.Diag / ReadOpts.Writer routing at the scorecard layer, but there is no test asserting the wiring itself — that the MCP handler passes a non-default writer or that the three CLI entry points pass cmd.ErrOrStderr(). This plumbing can silently regress (a future refactor swaps cmd.ErrOrStderr() back to a default and no test fails). (Deferred: Epic Plan 3.6 scorecard-wiring-tests) | Add a CLI-level test that drives a scorecard command against a deliberately-malformed store and asserts the read diagnostic reaches the command's ErrOrStderr buffer; once MCP diagnostics route through e.log, add a handler-level test asserting against a captured logger buffer. | testing | 60 | code-review | claude | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:114 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; over-long-line warning uses injectable w via diagWriter; read continues; AC2 satisfied) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:145 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; decodeRecord writes to injectable w then returns (Record,bool) — no error cascade) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:155 | Error from diagWriter is silently discarded (Wontfix: intentional best-effort `_, _ =` diagnostics discard; schema-version skip writes to injectable w; identical to malformed-record path) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | 1 | [/] | LOW | internal/scorecard/store.go:194 | Redundant call to diagWriter (Wontfix: FALSE POSITIVE — diagWriter is the required typed-nil guard for the nil-able opts.Writer interface, not redundant; removing it reintroduces the panic fixed by commit 476c6d1) | Remove diagWriter call and use opts.Writer directly since ReadRecords already resolves it | performance | 2 | code-review | otto | MEDIUM |
+ | 1 | [/] | MEDIUM | internal/scorecard/store.go:211 | Error from diagWriter is silently discarded (Wontfix: FALSE POSITIVE — `_, _ = fmt.Fprintf` is the documented best-effort never-panic diagnostics contract at store.go:22-24; returning the write error would regress a successful read on a broken sink and logging is circular; confirmed working as designed via /sprint-clarification 97%) | Log or return the error from fmt.Fprintf | error-handling | 5 | code-review | dax | MEDIUM |
+ | U | [/] | MEDIUM | internal/mcp/handlers.go:220 | The MCP engine carries a structured *slog.Logger (e.log) used for every other diagnostic in handleReconcile (e.g. the require_verified warning at line ~225), but scorecard diagnostics are routed to raw os.Stderr, so MCP-path scorecard write-failures/malformed-record/orphan-verdict warnings emit as unstructured plaintext that bypasses the logger's level filtering, formatting, and sink redirection. NOTE: this was a DELIBERATE, documented epic decision (Clarifications Q2: supply os.Stderr at the call site; adapting e.log to an io.Writer was explicitly OUT of scope), so this is enhancement debt, not a regression. (intent_note: deferred per epic Clarifications Q2 — adapting e.log to an io.Writer is out of scope) (Wontfix: ACCEPTED ENHANCEMENT DEBT — handlers.go:220 is an unconditional EmitOpts{Diag: os.Stderr} call, not deferred logic; all five Epic 3.4 ACs are met and the comment at handlers.go:214-219 satisfies AC4; e.log→io.Writer adaptation is out of scope per Clarifications Q2; confirmed via /sprint-clarification 97%) | If MCP observability is later desired, adapt e.log into an io.Writer shim (slog-backed at Warn level) and pass it as Diag instead of os.Stderr, so MCP-path scorecard diagnostics flow through the same structured pipeline as the rest of the handler. Defer unless/until structured MCP diagnostics are required. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-15] From Sprint: 3.3_per-run_scorecard
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go (FindByRunID adjacent-month notice; ReadRecords malformed-line notice); internal/scorecard/scorecard.go (Emit notices) | Store/emit diagnostics ("skipping malformed record", "run spans adjacent month files", "write failed") are written directly to the process-global `os.Stderr` rather than to a writer threaded from the cobra command (`cmd.ErrOrStderr()`). (Deferred: Epic Plan 3.4) | accept an `io.Writer` (or logger) on the store/emit entry points and have the CLI pass `cmd.ErrOrStderr()`, so warnings are capturable and redirectable. | ops | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-06-14] From Sprint: 3.2_disagreement_radar
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/reconcile/disagree.go:280 | Duplicate writeRadarSection rendering logic risks divergent escaping across packages (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Consolidate radar rendering into report package; reconcile should call report.writeRadarSection | security | 20 | code-review | greta | MEDIUM |
+ | 4 | [/] | LOW | internal/reconcile/disagree.go:350 | Duplicated radar section rendering logic (Deferred: Epic Plan 7.2) | Extract shared writeRadarSection to a common package | maintainability | 10 | code-review | bruce | MEDIUM |
+ | 4 | [/] | MEDIUM | internal/reconcile/disagree.go:354 | Duplicated radar markdown rendering diverges (Deferred: Epic Plan 7.2) | Extract shared writer or make reconcile use report package's escTrunc | maintainability | 10 | code-review | bruce | MEDIUM |
+ | U | [/] | LOW | internal/reconcile/disagree.go:413 | Redundant implementation of writeRadarSection (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Remove duplicate function from internal/reconcile and use internal/report | maintainability | 15 | code-review | otto | MEDIUM |
+ | 5 | [/] | MEDIUM | internal/report/disagree.go:47 | The radar markup is rendered by two divergent copies: writeRadarSection + formatScore in internal/report/disagree.go and a structurally different copy in internal/reconcile/disagree.go:389. They are intentionally not identical (report copy truncates via escTrunc + uses joinReviewers/reviewerOrUnknown; reconcile copy uses uncapped esc + joinOrNone), so a future markup change (new field, reordered bullets) must be made in both or the live `atcr report` radar and the archival reconciled/report.md silently drift. (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Extract one shared item renderer parameterized by a truncate-vs-verbatim flag and heading prefix; have both call sites delegate. Add a test that diffs the rendered markup of both paths on the same DisagreementsFile asserting the only intended difference is truncation. | correctness | 60 | code-review | bruce, claude | HIGH |
+ 
+ ### [2026-06-14] From Sprint: 2.2_code_review_fanout_hardening
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | MEDIUM | internal/fanout/postprocess.go:14 | The severity-rank rubric {CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1} is independently redefined in fanout/postprocess.go:17, reconcile/merge.go, verify, report, plus a set-form copy reviewSeverities in registry/config.go. postprocess looks up severityRank[strings.ToUpper(...)] while reconcile looks up the raw value, so a future severity change or non-canonical casing silently desyncs fan-out truncation from reconcile merging. The postprocess copy was newly added by Epic 2.2. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 3.5) | Extract a single canonical severity package (or export from internal/stream) exposing the ordered rank map plus normalizeSeverity, and have registry/fanout/reconcile/verify/report consume it. Verify by deleting the local maps and confirming the suite passes with one source of truth. | maintainability | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-06-14] From Review: llmclient OpenAI-compatible tool handling
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | U | [/] | LOW | internal/llmclient/chat.go:1 | No provider-conformance test matrix for the OpenAI-compatible surface. The client deliberately absorbs real wire divergence (string-encoded vs raw-object tool_call `arguments`, lenient finish_reason) but is exercised only against synthetic fixtures, so a regression against a specific provider's actual tool_call shape (OpenAI, litellm, Ollama, vLLM, Together) would not be caught. This is the robustness the official SDK is assumed to provide, achievable here without adopting it. | Add a recorded-fixture conformance suite: capture a real `tool_calls` response from each target provider and assert the parser (`ToolCallArguments`, `chatToolResponse` decode, finish_reason handling) yields identical engine-facing results. NOTE: scope is a few days, not a quick-win — consider promoting to a standalone test-remediation plan rather than resolving inline. | testing | 480 | review | claude | LOW |
+ 
+ ### [2026-06-14] From Sprint: 3.0_adversarial_verification
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 7 | [/] | LOW | internal/verify/pipeline.go:238 | The rich VerificationResult built in verifyFinding never populates TrippedBudgets (invokeSkeptic folds tripped budgets only into free-text Notes), base.Model is hard-coded to skeptics[0].Config.Model even when another skeptic produced the winning verdict, and the skip-already-verified rebuild (pipeline.go:199) re-synthesizes records from the compact on-disk block losing Model/DurationMs/TrippedBudgets — so verification.json's structured audit fields degrade or misattribute on multi-skeptic and no-op re-runs (extends the model-attribution gap of TD-011). Also: Model is empty on the no_eligible_skeptic / tool_harness_unavailable early-return paths. [intent: deferred per sprint-plan TD-011] | Thread the tripped-budget slice and the winning skeptic's model up from invokeSkeptic into base.TrippedBudgets/base.Model (join models when multiple voters agree, mirroring joinSkeptics), and carry Model/DurationMs/TrippedBudgets forward for skipped findings instead of synthesizing a lossy record. | correctness | 120 | execute-sprint | execute-sprint, claude | HIGH |
+ 
+ ### [2026-06-13] From Sprint: 2.0_tool_using_reviewers
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
+ | 5 | [/] | LOW | internal/tools/snapshot.go | AC 03-02 Scenario 5 and AC 03-03 Scenarios 4-5 require `manifest.json` `stages.review` to record `snapshot_mode` (live/worktree), `head_sha`, and `snapshot_worktree_path`. (intent_note: deferred per sprint-plan §2.5.A (manifest review-stage recording is Phase 5 work); Deferred to Epic Plan 2.1) | when wiring `SnapshotFor` into the agent loop, record `snapshot_mode`/`head_sha`/`snapshot_worktree_path` into `internal/payload/manifest.go` review stage and add the manifest assertion tests from AC 03-02/03-03. | testing | 0 | execute-sprint | execute-sprint | MEDIUM |
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 0add0c4b..0cdad07b 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,8 +1,23 @@
++## [18.2.0] - 2026-07-04
++
++Enriched the shared reconciliation engine so each finding's originating `review.md` narrative survives past reconciliation, giving downstream technical-debt-resolution consumers the reviewer's reasoning without re-deriving it from raw review logs.
++
++### Added
++
++- Reconciler: `reconciled/findings.json` findings now carry a `justification` field — the narrative section extracted best-effort from the finding's originating source `review.md`, matched by `FILE:LINE` — plus a `source_report` back-reference (`{path, line, section}`) pointing at that review.md section. Both are additive and `omitempty`, so a finding with no matched narrative stays byte-identical to prior output.
++- `docs/findings-format.md`: documents the new fields under the JSON form section, and notes under Source discovery that a source's `review.md` is now read at reconcile time.
++
++### Changed
++
++- The reconcile pipeline reads each source's `review.md` (alongside its `findings.txt`) and correlates it to findings by `FILE:LINE`. A line-level, proximity-bounded match is required, so an unrelated same-file mention never attaches a misleading narrative. The pair lands only in `findings.json` — never the technical-debt table's frozen `Problem` cell (per Epic 18.1's column-stability constraint).
++
++*Shipped via /execute-epic (epic 18.2)*
++
+ ## [Technical Debt] - 2026-07-04
+ 
+ ### Fixed
+ 
+ - `internal/reconcile`: logged a debug summary (anchored/total counts) of symbol anchors stamped in `stampSymbolAnchors`, closing a gap where anchoring outcomes were invisible without a debugger.
+ - `docs/technical-debt-format.md`: documented that the `(symbolName)` anchor is rendered verbatim by every in-repo consumer of `JSONFinding.Problem` — the GitHub Action PR comment, check-run summary table, and human-readable report — not only the technical-debt table.
+ 
+ ## [18.1.0] - 2026-07-04
+diff --git a/docs/findings-format.md b/docs/findings-format.md
+index 94a568a9..d0eee06d 100644
+--- a/docs/findings-format.md
++++ b/docs/findings-format.md
+@@ -87,17 +87,19 @@ Any directory under a review's `sources/` that contains a `findings.txt` is a re
+ 
+ Discovery is **leaf-preference**: a directory's `findings.txt` is an input only when no subdirectory beneath it also contains one. Per-agent raw files (`sources/pool/raw/agent/<name>/findings.txt`) are the pool inputs; the merged `sources/pool/findings.txt` is written for downstream convenience but is **not** re-discovered, so reviewers are never double-counted. `reconciled/` is output, never an input.
+ 
++A source's **`review.md`** — the human-readable narrative each reviewer (every pool agent and the host) writes alongside its `findings.txt` in the same leaf directory — is, as of Epic 18.2, also read at reconcile time. `atcr reconcile` correlates each finding to the `review.md` section that references its `FILE:LINE` (best-effort) and carries that narrative forward as the `justification` / `source_report` JSON fields (see [JSON form](#json-form) below). It is an **optional** input: a source with no `review.md` simply contributes no narrative, and `review.md` never itself yields findings — only `findings.txt` does.
++
+ ## JSON form
+ 
+ `reconciled/findings.json` carries the same records in structured form, plus run metadata, for scripting. Each finding may carry a per-finding `verification` block, **produced by the adversarial-verification stage (`atcr verify`, Epic 3.0)** and **absent from 1.x output** and from any review that has not been verified. Renderers and readers must tolerate both its absence and its presence: `atcr report` renders a finding with no block identically to pre-Epic-3.0 output, and renders the Skeptic section / v2 confidence only when the block is present.
+ 
+ ```json
+ {
+   "severity": "HIGH",
+   "file": "internal/auth/token.go",
+   "line": 42,
+   "problem": "JWT signature not verified before claims are read",
+   "confidence": "VERIFIED",
+   "verification": { "verdict": "confirmed", "skeptic": "otto", "notes": "read token.go:42 — jwt.Parse called without Verify" }
+ }
+ ```
+@@ -114,15 +116,27 @@ The block fields are:
+ When `verification` is present, readers must treat an absent or unrecognized `verdict` value (including `""`) as unverified rather than trusting it — the allowed enum is `confirmed | refuted | unverifiable`; any other value indicates a future format or a write error.
+ 
+ **Confidence v2.** When a finding is verified, its `confidence` is recomputed onto a four-tier axis, ordered `VERIFIED > HIGH > MEDIUM > LOW`: a `confirmed` verdict promotes the finding to `VERIFIED`, a `refuted` verdict demotes it to `LOW` (retained for audit, never deleted), and `unverifiable` leaves the v1 confidence unchanged. The v1 tiers (`HIGH`/`MEDIUM`/`LOW`, the reviewer-agreement signal) are unchanged for unverified findings. Full mechanics and gate semantics are in [verification.md](verification.md).
+ 
+ **Execution evidence (Epic 11.0).** A finding that was *reproduced by running code* in the sandbox carries an additive `evidence_exec` block — `{ "command": string, "exit_code": int, "output_excerpt": string }` — stamped **only** by the opt-in execution path (`atcr verify --exec` / `review --verify --exec`), never by `atcr reconcile`. It is `omitempty`, so a non-reproduced record stays byte-identical to pre-11.0 output. A reproduced finding is also marked `verification.verdict = "confirmed"` with `skeptic = "repro"`, so it is `VERIFIED` by the same confidence/gate rules above — execution does not add a new tier, it earns the existing confirmed verdict by demonstration. `atcr report` renders a "Reproduced" badge (the command, exit code, and a truncated output excerpt) when the block is present. The reproduction is only stamped `confirmed` when the failure reproduces **deterministically** (the command is run twice and must agree on a non-zero exit); a flaky or non-reproducing run is left `unverifiable` so flaky tests cannot poison the evidence. See [docs/execution.md](execution.md).
+ 
+ ```json
+   "evidence_exec": { "command": "go test ./calc", "exit_code": 1, "output_excerpt": "--- FAIL: TestAdd ... want 4 got 5" }
+ ```
+ 
+ **Inline-merge markers (Epic 6.1 / 6.2).** A finding produced by the cross-examination stage's gray-zone "merge" ruling (`atcr debate`) carries two additive fields: `cluster_merged` (`true` on the survivor that unioned a gray-zone cluster's members) and `cluster_id` (the stable, content-addressed id of that source cluster, which lets the debate radar key merge-idempotency on cluster identity rather than `FILE:LINE` alone). Both are `omitempty` and are stamped **only** by the debate apply path — never by `atcr reconcile` — so a non-merged or non-debated record stays byte-identical to pre-6.x output. Per the additive-only evolution policy below, they ride `atcr-findings/v1` with no version bump; a strict consumer that rejects unknown JSON keys (`DisallowUnknownFields`-style) must tolerate them as it must any additive v1 field.
+ 
++**Reconcile-time narrative (Epic 18.2).** Two additive fields carry the originating review's context past reconciliation, so a downstream technical-debt-resolution consumer inherits the reviewer's reasoning instead of re-deriving it from raw `review.md` files:
++
++- `justification` — the narrative section extracted from the finding's originating source `review.md`, matched **best-effort** by `FILE:LINE`. It is distinct from `verification.notes`: `justification` is the reviewer's *original* explanation captured at reconcile time, whereas `verification.notes` is the *adversarial* stage's later skeptic/judge reasoning. Omitted when no `review.md` section references the finding's `FILE:LINE` (a match requires a line-level reference, so a bare "no issues" file mention never attaches a misleading narrative).
++- `source_report` — the back-reference to that section: `{ "path": <review-dir-relative review.md path>, "line": <1-based anchor line>, "section": <nearest Markdown heading> }`, so a consumer can navigate to full detail without re-deriving the mapping. `path` is relative to the review directory (the same dir that holds `reconciled/findings.json`); `line` and `section` are omitted when absent.
++
++```json
++  "justification": "The handler calls jwt.Parse without jwt.Verify, so a forged token is accepted.",
++  "source_report": { "path": "sources/host/review.md", "line": 42, "section": "Findings" }
++```
++
++Both are stamped **only** by `atcr reconcile` (never by the verify or debate paths), are `omitempty` — so a finding with no matched narrative stays byte-identical to pre-18.2 output — and ride `atcr-findings/v1` with no version bump per the additive-only policy below. The pair lands **only** in `reconciled/findings.json`; neither is ever written into the technical-debt README table's `Problem` cell, whose column structure Epic 18.1 freezes.
++
+ ## Reserved fields in companion artifacts
+ 
+ The other v1 review artifacts carry reserved fields for the agentic stages on the same "parsed, not yet acted on" basis. Consumers must tolerate their presence and absence:
+diff --git a/internal/reconcile/emit.go b/internal/reconcile/emit.go
+index 89f0612e..4bb5c09c 100644
+--- a/internal/reconcile/emit.go
++++ b/internal/reconcile/emit.go
+@@ -53,84 +53,113 @@ const (
+ // JSONFinding is the findings.json record schema (AC 01-06). It is the stable,
+ // re-readable structured contract the report command renders views over.
+ // The schema is additively extended by later epics (path-validation 5.x,
+ // cross-examination 6.x); all such fields are omitempty for backward
+ // byte-compatibility with pre-extension findings.json.
+ //
+ // Verification carries the adversarial-verification block (Epic 3.0). It is
+ // populated by the verify stage and omitted from JSON output when nil
+ // (omitempty); reconcile-time producers leave it empty.
+ type JSONFinding struct {
+ 	Severity     string        `json:"severity"`
+ 	File         string        `json:"file"`
+ 	Line         int           `json:"line"`
+ 	Problem      string        `json:"problem"`
+ 	Fix          string        `json:"fix"`
+ 	Category     string        `json:"category"`
+ 	EstMinutes   int           `json:"est_minutes"`
+ 	Evidence     string        `json:"evidence"`
+ 	Reviewers    []string      `json:"reviewers"`
+ 	Confidence   string        `json:"confidence"`
+ 	Disagreement string        `json:"disagreement,omitempty"`
+ 	Verification *Verification `json:"verification,omitempty"` // populated by verify stage; omitted when nil
+ 	// PathValid / PathWarning carry file-existence validation (Epic 5.0). Both
+ 	// are omitempty so a finding that was never validated (or whose path exists)
+ 	// serializes byte-identically to pre-5.0 findings.json — only a flagged
+ 	// hallucinated path adds path_warning.
+ 	//
+ 	// CONTRACT: path_warning is the authoritative signal — a non-empty value
+ 	// means the path did not resolve under the reviewed repo root. path_valid is
+ 	// auxiliary and MUST NOT be read in isolation: under omitempty, "validated
+ 	// but missing" and "never validated" both serialize as an absent path_valid
+ 	// (false), so the two states are indistinguishable from path_valid alone.
+ 	// Consumers and the report layer key display off path_warning.
+ 	PathValid   bool   `json:"path_valid,omitempty"`
+ 	PathWarning string `json:"path_warning,omitempty"`
+ 	// PathSuggestion is the candidate-index correction for a hallucinated path
+ 	// (Epic 5.4): the real tracked file the finding most likely meant. omitempty
+ 	// keeps findings.json byte-identical to pre-5.4 output when no suggestion is
+ 	// present. It is advisory only — File (the original cited path) is never
+ 	// rewritten — and is set only alongside a non-empty path_warning.
+ 	PathSuggestion string `json:"path_suggestion,omitempty"`
+ 	// ClusterMerged marks the record that resulted from inline application of a
+ 	// judge gray-zone "merge" ruling (Epic 6.1): the cross-examination stage
+ 	// unioned a gray-zone cluster's members into this single finding. omitempty
+ 	// keeps every non-merged findings.json record byte-identical. It is the
+ 	// idempotency marker the debate radar filters on so a re-run never re-merges an
+ 	// already-applied cluster (AC4); it is never set by any reconcile-time path.
+ 	ClusterMerged bool `json:"cluster_merged,omitempty"`
+ 	// ClusterID is the stable, content-addressed AmbiguousCluster.ID of the
+ 	// gray-zone cluster that produced an inline-merged survivor (Epic 6.2). It is
+ 	// stamped alongside ClusterMerged by the cross-examination apply path
+ 	// (internal/debate/cluster.go applyOneClusterMerge) and read by the debate
+ 	// radar (internal/debate/cluster.go filterMergedClusters), which keys merge
+ 	// idempotency on cluster identity rather than File+Line alone — so a second
+ 	// DISTINCT cluster co-located at the same canonical File+Line is no longer
+ 	// over-suppressed once the first is merged. The cross-package symbols are
+ 	// named (not line-numbered) so the reference survives line shifts; grep them
+ 	// if either path moves. This field is intended ONLY for that debate inline-
+ 	// merge stamping: reconcile-time producers MUST leave it empty, and omitempty
+ 	// keeps every non-merged record byte-identical to pre-6.2 findings.json.
+ 	ClusterID string `json:"cluster_id,omitempty"`
+ 	// FixWarning records a non-fatal fix-generation warning (Epic 7.0): when the
+ 	// executor errors or returns an empty completion for a finding it was eligible
+ 	// to fix — or when the generated fix fails the local syntax guard (Epic 7.1),
+ 	// stamped as "invalid_syntax: <parser error>" while the attempted fix stays in
+ 	// Fix — the warning is stamped here instead of failing the run, so a downstream
+ 	// consumer (the report, the Epic 7.3 PR action) can see the fix was attempted
+ 	// and why it is absent or flagged. omitempty keeps every finding without a
+ 	// fix-generation warning byte-identical to pre-7.0 findings.json; reconcile-time
+ 	// producers MUST leave it empty (it is set only by the verify fix phase).
+ 	FixWarning string `json:"fix_warning,omitempty"`
+ 	// EvidenceExec carries the execution-reproduction block (Epic 11.0): the
+ 	// command a repro/skeptic agent ran in the sandbox, its exit code, and a
+ 	// truncated output excerpt. It is set ONLY by the repro write-back (a
+ 	// reproduced finding also gets Verification.Verdict=confirmed, skeptic="repro"),
+ 	// never by any reconcile-time path. omitempty keeps every non-reproduced record
+ 	// byte-identical to pre-11.0 findings.json.
+ 	EvidenceExec *EvidenceExec `json:"evidence_exec,omitempty"`
++	// Justification is the narrative context extracted at reconcile time from the
++	// originating source's review.md (Epic 18.2): the human-readable explanation a
++	// reviewer wrote alongside its terse findings.txt row, matched best-effort by
++	// file:line and carried forward so a downstream TD-resolution consumer inherits
++	// the reasoning instead of re-deriving it from raw review.md files. Set ONLY by
++	// stampJustifications on the reconcile path; distinct from Verification.Notes
++	// (skeptic/judge reasoning, a different concept). No match leaves it empty, and
++	// omitempty keeps a finding with no matched narrative byte-identical to pre-18.2
++	// findings.json. It lands ONLY here — never in the TD README table's Problem
++	// cell, whose column structure Epic 18.1 freezes.
++	Justification string `json:"justification,omitempty"`
++	// SourceReport is the back-reference to the review.md section the Justification
++	// was extracted from (Epic 18.2): path (review-dir-relative) plus the anchor
++	// line and nearest heading, so a consumer can navigate to full detail without
++	// re-deriving the mapping. Set alongside Justification by stampJustifications;
++	// nil (omitempty) when no narrative matched, keeping output byte-identical.
++	SourceReport *SourceReport `json:"source_report,omitempty"`
++}
++
++// SourceReport is the back-reference (Epic 18.2) from a reconciled finding to the
++// review.md narrative section its Justification was extracted from. Path is
++// relative to the review directory (e.g. "sources/host/review.md") so a consumer
++// can resolve it against the same review dir that holds reconciled/findings.json.
++// Line is the 1-based line in that review.md where the file:line match anchored;
++// Section is the nearest enclosing Markdown heading (both omitempty when absent).
++type SourceReport struct {
++	Path    string `json:"path"`
++	Line    int    `json:"line,omitempty"`
++	Section string `json:"section,omitempty"`
+ }
+ 
+ // EvidenceExec is the executable-evidence block attached to a finding that was
+ // reproduced by running code in the sandbox (Epic 11.0). It is the categorical
+ // upgrade from asserted to demonstrated: a finding carrying it cannot be a
+ // hallucination, and it hands the resolver a failing command to start from.
+diff --git a/internal/reconcile/emit_test.go b/internal/reconcile/emit_test.go
+index 96ee688f..c32697f6 100644
+--- a/internal/reconcile/emit_test.go
++++ b/internal/reconcile/emit_test.go
+@@ -351,45 +351,49 @@ func TestJSONFinding_EmptyVerdictLoadsDefensively(t *testing.T) {
+ // TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly is a reflection-based
+ // drift guard: JSONFindings() hand-copies fields from Merged into JSONFinding with
+ // no compiler help, so a field added to the source without a matching copy here
+ // would be silently dropped. Given a Merged with every source field set non-zero,
+ // every JSONFinding field must be populated EXCEPT the three output-only fields
+ // (FixWarning, ClusterMerged, ClusterID) that downstream stages — the verify fix
+ // phase and the debate cluster-merge — set directly, and that reconcile-time
+ // producers must leave empty (see the field comments). Adding a fourth such
+ // downstream-only field means extending the allowlist here deliberately.
+ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
+ 	// PathValid/PathWarning/PathSuggestion are stamped onto the JSONFinding AFTER
+ 	// JSONFindings() by validateFindingPaths (Epic 8.0 Phase 2 Clarification Q1) —
+ 	// the library Merged no longer carries them — so they join the other
+ 	// downstream-only fields that JSONFindings() must NOT populate.
+ 	downstreamOnly := map[string]bool{
+ 		"FixWarning": true, "ClusterMerged": true, "ClusterID": true,
+ 		"PathValid": true, "PathWarning": true, "PathSuggestion": true,
+ 		// EvidenceExec is stamped by the repro write-back (Epic 11.0), never by reconcile.
+ 		"EvidenceExec": true,
++		// Justification/SourceReport are stamped by stampJustifications (Epic 18.2)
++		// AFTER JSONFindings() from the source review.md narratives — the library
++		// Merged carries no narrative — so they are downstream-only here too.
++		"Justification": true, "SourceReport": true,
+ 	}
+ 	m := Merged{
+ 		Finding: Finding{
+ 			Severity: "HIGH", File: "a.go", Line: 7, Problem: "p", Fix: "f", Category: "c",
+ 			EstMinutes: 5, Evidence: "e", Reviewers: []string{"r"}, Confidence: "HIGH",
+ 			Disagreement: "LOW vs HIGH",
+ 			Verification: &Verification{Verdict: "confirmed"},
+ 		},
+ 	}
+ 	got := Result{Findings: []Merged{m}}.JSONFindings()
+ 	require.Len(t, got, 1)
+ 	v := reflect.ValueOf(got[0])
+ 	tp := v.Type()
+ 	for i := 0; i < tp.NumField(); i++ {
+ 		name := tp.Field(i).Name
+ 		if downstreamOnly[name] {
+ 			assert.True(t, v.Field(i).IsZero(), "%s is downstream-only and must not be populated by reconcile JSONFindings()", name)
+ 			continue
+ 		}
+ 		assert.False(t, v.Field(i).IsZero(), "JSONFindings() did not copy field %s from Merged — field-addition drift", name)
+ 	}
+ }
+ 
+ // TestJSONFindings_PreservesVerification verifies that a Merged finding with a
+ // non-nil Verification block is carried through JSONFindings into findings.json
+ // (Epic 3.0 forward-compatibility).
+diff --git a/internal/reconcile/gate.go b/internal/reconcile/gate.go
+index f7f02a61..dcb9f091 100644
+--- a/internal/reconcile/gate.go
++++ b/internal/reconcile/gate.go
+@@ -155,128 +155,136 @@ func ValidateRequireVerified(reviewDir string) error {
+ // RunReconcile discovers sources under reviewDir/sources, runs the deterministic
+ // pipeline, and writes the artifacts to reviewDir/reconciled, returning the
+ // Result. allow restricts which immediate source children are read (empty = open
+ // discovery). It is the single engine entry the CLI and MCP both call. ctx is
+ // checked between the Discover, Reconcile, and Emit stages so a client cancel or
+ // server shutdown aborts the pipeline without emitting partial artifacts.
+ //
+ // Adjudication re-invocation: if reviewDir/reconciled/adjudication.json exists
+ // (written by the Skill), its decisions are validated against the prior
+ // ambiguous.json, the merge decisions are applied, and the pre-adjudication
+ // ambiguous.json is preserved as ambiguous.original.json before re-emit (AC
+ // 05-04). An unknown cluster id or a malformed decisions file is a hard error.
+ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Options) (Result, error) {
+ 	if err := ctx.Err(); err != nil {
+ 		return Result{}, err
+ 	}
+ 	sources, err := Discover(filepath.Join(reviewDir, sourcesSubdir), allow)
+ 	if err != nil {
+ 		return Result{}, err
+ 	}
+ 	if err := ctx.Err(); err != nil {
+ 		return Result{}, err
+ 	}
+ 
+ 	reconDir := filepath.Join(reviewDir, reconciledSubdir)
+ 
+ 	adjudicating := false
+ 	if _, statErr := os.Stat(filepath.Join(reconDir, AdjudicationJSON)); statErr == nil {
+ 		adj, err := LoadAdjudication(filepath.Join(reconDir, AdjudicationJSON))
+ 		if err != nil {
+ 			return Result{}, err
+ 		}
+ 		// Validate decision ids against the baseline the Skill authored against:
+ 		// the preserved original sidecar once a prior adjudication ran, else the
+ 		// current ambiguous.json. Validating against the live (post-merge) sidecar
+ 		// would make re-invocation non-idempotent — after a merge shrinks the gray
+ 		// set, the still-present decision id would be wrongly rejected as unknown.
+ 		baseline := filepath.Join(reconDir, OriginalAmbiguousJSON)
+ 		if _, err := os.Stat(baseline); err != nil {
+ 			baseline = filepath.Join(reconDir, AmbiguousJSON)
+ 		}
+ 		baseData, err := os.ReadFile(baseline)
+ 		if err != nil {
+ 			return Result{}, fmt.Errorf("reading ambiguous baseline for adjudication: %w", err)
+ 		}
+ 		known, err := AmbiguousIDsFromBytes(baseData)
+ 		if err != nil {
+ 			return Result{}, fmt.Errorf("reading ambiguous baseline for adjudication: %w", err)
+ 		}
+ 		if len(known) == 0 {
+ 			return Result{}, fmt.Errorf("no clusters to adjudicate: %s has no ambiguous clusters", baseline)
+ 		}
+ 		// TD-024: refuse a decisions file authored against a different
+ 		// ambiguous.json generation — content-addressed ids may still match a
+ 		// stale prior-session file and would re-merge silently.
+ 		if got := HashBytes(baseData); got != adj.BaselineHash {
+ 			return Result{}, fmt.Errorf("adjudication baseline mismatch: decisions were authored against a different ambiguous.json generation (decisions carry %s, baseline %s is %s)", adj.BaselineHash, baseline, got)
+ 		}
+ 		if err := ValidateDecisions(adj, known); err != nil {
+ 			return Result{}, err
+ 		}
+ 		opts.Merges = adj.MergeSet()
+ 		adjudicating = true
+ 	}
+ 
+ 	// AST-isomorphism grouping (epic 13.1): the adopted primary clustering signal.
+ 	// Findings that map to the same logical AST block group together even when
+ 	// their line numbers drift, with line proximity as the fallback when no parser
+ 	// is available. Opt out via ATCR_DISABLE_AST_GROUPING. Degrades gracefully:
+ 	// missing source or an unloadable parser falls back to proximity per finding.
+ 	grouper, closeGrouper := astGrouperFor(opts.Root)
+ 	defer closeGrouper()
+ 	opts.Grouper = grouper
+ 
+ 	res := Reconcile(sources, opts)
+ 
+ 	// Flag findings whose file paths do not exist under the reviewed repo root
+ 	// (Epic 5.0). The extracted library Merged no longer carries path-validation
+ 	// fields, so stamping runs over the JSONFinding records, which are then cached
+ 	// on the result so every downstream consumer (Emit, the gate's inline failing
+ 	// list) sees the same path-stamped records (Epic 8.0 Phase 2 Clarification Q1).
+ 	// Stamped after merge, before Emit, so the warning rides into findings.json and
+ 	// the reports. No-op when opts.Root is empty.
+ 	jf := res.JSONFindings()
+ 	validateFindingPaths(ctx, jf, opts.Root)
+ 	// Stamp a "(symbol) " anchor onto each Problem cell from the finding's
+ 	// enclosing named AST block (epic 18.1), reusing the same grouper (its
+ 	// per-run tree cache is already warm from clustering). No-op when the grouper
+ 	// cannot resolve symbols (proximity-only / AST disabled) or opts.Root is empty;
+ 	// degrades per finding when no named block resolves. Stamped after merge and
+ 	// path validation, before Emit, so the anchor rides into findings.json and the
+ 	// downstream TD README.
+ 	stampSymbolAnchors(jf, grouper)
++	// Correlate each finding to the narrative its originating source wrote in
++	// review.md (Epic 18.2), stamping the extracted section onto Justification and
++	// a SourceReport back-reference. Best-effort file:line match against every
++	// review.md under reviewDir/sources; a finding with no matching narrative is
++	// left byte-identical. Stamped after merge, path validation, and symbol
++	// anchoring, before Emit, so the narrative rides into findings.json for the
++	// downstream TD-resolution consumer.
++	stampJustifications(jf, reviewDir)
+ 	res.jsonFindings = jf
+ 
+ 	if err := ctx.Err(); err != nil {
+ 		return Result{}, err
+ 	}
+ 
+ 	// Preserve the pre-adjudication sidecar before Emit overwrites ambiguous.json,
+ 	// so the audit chain (original gray-zone clusters) survives the re-invocation.
+ 	if adjudicating {
+ 		if err := preserveOriginalAmbiguous(reconDir); err != nil {
+ 			return Result{}, err
+ 		}
+ 	}
+ 
+ 	// Idempotency (Epic 4.7 AC4): snapshot the prior generation to reconciled.bak/
+ 	// before Emit overwrites it, so a failed or unwanted re-reconcile can be
+ 	// recovered. Taken here — after adjudication validation has succeeded and only
+ 	// when an overwrite is actually imminent — so a re-invocation that fails
+ 	// validation never pays a full-tree copy and never leaves a reconciled.bak/ of
+ 	// state that was never changed. It also keeps the un-cancellable copy as a
+ 	// tight tail with Emit (ctx is checked above, before Reconcile). Copy (not
+ 	// move) so the live dir stays intact for Emit below. Only a directory that
+ 	// already holds reconcile output (findings.json) is backed up — the empty
+ 	// scaffolded dir on a first run is skipped.
+ 	if _, statErr := os.Stat(filepath.Join(reconDir, FindingsJSON)); statErr == nil {
+ 		if _, err := atomicfs.BackupToDotBak(reconDir); err != nil {
+ 			return Result{}, fmt.Errorf("backing up prior reconciled output: %w", err)
+ 		}
+ 	}
+ 
+ 	if err := Emit(reconDir, res); err != nil {
+ 		return Result{}, err
+ 	}
+ 	return res, nil
+ }
+diff --git a/internal/reconcile/justification.go b/internal/reconcile/justification.go
+new file mode 100644
+index 00000000..386174bc
+--- /dev/null
++++ b/internal/reconcile/justification.go
+@@ -0,0 +1,392 @@
++package reconcile
++
++import (
++	"log/slog"
++	"os"
++	"path/filepath"
++	"sort"
++	"strconv"
++	"strings"
++)
++
++const (
++	// reviewFileName is the per-source narrative file each reviewer (pool agent
++	// and host) writes alongside its findings.txt. It mirrors internal/fanout's
++	// reviewFile; kept local to avoid an import cycle (fanout is a consumer, not a
++	// dependency, of this package).
++	reviewFileName = "review.md"
++	// justificationMaxRunes caps an extracted narrative so a verbose review.md
++	// section cannot bloat findings.json. The excerpt is the human-readable
++	// pointer; SourceReport is the precise back-reference to the full detail.
++	justificationMaxRunes = 1000
++	// minAnchorTier is the weakest anchorTier accepted as a match. A bare file
++	// mention (tier 1) is rejected: a file named only in an "Areas examined — no
++	// issues found" line would otherwise attach a misleading no-issue narrative to
++	// a real finding. A line-level reference (tier 2+) is required so the extracted
++	// section is genuinely about the finding, per AC1's "relevant narrative" and
++	// the plan's "match by file:line".
++	minAnchorTier = 2
++	// anchorLineProximity bounds a non-covering tier-2 match. A source's review.md
++	// and its findings.txt are written in the same review run, so a legitimate
++	// same-finding reference is exact (tier 3) or off by only the small divergence
++	// cluster-merge introduces when it adopts a neighboring reviewer's line as the
++	// merged line — the engine clusters findings by FILE:LINE ±3. A same-file
++	// reference to a line farther than this is a DIFFERENT finding in that file,
++	// not this one, so it must not attach its narrative here.
++	anchorLineProximity = 3
++)
++
++// reviewNarrative is one collected source review.md: its review-dir-relative path
++// (the SourceReport.Path a consumer resolves against the review dir), the leaf
++// directory name (host, or a pool agent name — used as a soft reviewer-match
++// tiebreak), and the file split into lines.
++type reviewNarrative struct {
++	relPath string
++	leaf    string
++	lines   []string
++}
++
++// narrativeMatch is the best-effort correlation of a finding to a review.md
++// section: the extracted (truncated) narrative plus the back-reference location.
++type narrativeMatch struct {
++	text    string
++	relPath string
++	line    int // 1-based line in the review.md where the file:line anchor matched
++	section string
++}
++
++// stampJustifications correlates each reconciled finding to the narrative its
++// originating source wrote in review.md (Epic 18.2) and stamps the extracted
++// section onto Justification, so a downstream TD-resolution consumer inherits the
++// reviewer's reasoning instead of re-deriving it from raw review.md files.
++//
++// The match is best-effort by file:line against every source review.md under
++// reviewDir/sources; a finding with no matching narrative is left untouched
++// (Justification stays empty), so findings.json is byte-identical to pre-18.2
++// output whenever no review.md pairs with a finding. It mutates jf in place and
++// is a no-op when reviewDir is empty, no review.md files exist, or jf is empty.
++func stampJustifications(jf []JSONFinding, reviewDir string) {
++	if reviewDir == "" || len(jf) == 0 {
++		return
++	}
++	narratives := collectReviewNarratives(filepath.Join(reviewDir, sourcesSubdir), reviewDir)
++	if len(narratives) == 0 {
++		return
++	}
++	matched := 0
++	for i := range jf {
++		m, ok := matchNarrative(narratives, jf[i].File, jf[i].Line, jf[i].Reviewers)
++		if !ok {
++			continue
++		}
++		jf[i].Justification = m.text
++		jf[i].SourceReport = &SourceReport{Path: m.relPath, Line: m.line, Section: m.section}
++		matched++
++	}
++	slog.Debug("justifications stamped", "matched", matched, "total", len(jf))
++}
++
++// collectReviewNarratives walks sourcesDir for every review.md and returns them
++// sorted by review-dir-relative path (deterministic ordering so findings.json is
++// reproducible run to run). Unreadable files/subtrees are skipped, not fatal —
++// sources/ is an open extension point, same resilience stance as Discover.
++func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
++	var out []reviewNarrative
++	_ = filepath.WalkDir(sourcesDir, func(path string, d os.DirEntry, err error) error {
++		if err != nil {
++			if d != nil && d.IsDir() {
++				return filepath.SkipDir
++			}
++			return nil
++		}
++		// IsRegular() excludes symlinks/FIFOs/devices named review.md, matching
++		// leafFindingsFiles' refusal to read a non-regular findings.txt.
++		if !d.Type().IsRegular() || d.Name() != reviewFileName {
++			return nil
++		}
++		data, rerr := os.ReadFile(path)
++		if rerr != nil {
++			return nil
++		}
++		rel, rerr := filepath.Rel(reviewDir, path)
++		if rerr != nil {
++			// Cannot express the path relative to the review dir (e.g. different
++			// volume). Skip it rather than leak an absolute filesystem path into
++			// source_report.path, whose documented contract is review-dir-relative.
++			return nil
++		}
++		out = append(out, reviewNarrative{
++			relPath: filepath.ToSlash(rel),
++			leaf:    filepath.Base(filepath.Dir(path)),
++			lines:   strings.Split(string(data), "\n"),
++		})
++		return nil
++	})
++	sort.Slice(out, func(i, j int) bool { return out[i].relPath < out[j].relPath })
++	return out
++}
++
++// matchNarrative finds the review.md section that best references file:line and
++// returns its extracted narrative + back-reference. Selection is deterministic:
++// highest anchor tier wins (a line/range covering the finding's exact line beats
++// a same-file-other-line reference beats a bare file mention); ties break toward
++// a narrative whose leaf dir is one of the finding's reviewers, then toward the
++// earliest narrative (sorted), then the earliest line. Returns ok=false when no
++// review.md mentions the finding's file at all.
++func matchNarrative(narratives []reviewNarrative, file string, line int, reviewers []string) (narrativeMatch, bool) {
++	if file == "" {
++		return narrativeMatch{}, false
++	}
++	revSet := toSet(reviewers)
++	bestTier, bestRev, bestNarr, bestLine := 0, false, -1, -1
++	for ni := range narratives {
++		revPref := revSet[narratives[ni].leaf]
++		for li, lt := range narratives[ni].lines {
++			tier := anchorTier(lt, file, line)
++			if tier < minAnchorTier {
++				continue
++			}
++			if beatsMatch(tier, revPref, ni, li, bestTier, bestRev, bestNarr, bestLine) {
++				bestTier, bestRev, bestNarr, bestLine = tier, revPref, ni, li
++			}
++		}
++	}
++	if bestNarr < 0 {
++		return narrativeMatch{}, false
++	}
++	text, section := extractSection(narratives[bestNarr].lines, bestLine)
++	if text == "" {
++		return narrativeMatch{}, false
++	}
++	return narrativeMatch{
++		text:    text,
++		relPath: narratives[bestNarr].relPath,
++		line:    bestLine + 1, // 1-based
++		section: section,
++	}, true
++}
++
++// beatsMatch reports whether a candidate anchor (tier/reviewer-preference/
++// narrative-index/line-index) is strictly better than the current best, applying
++// the deterministic tiebreak order documented on matchNarrative.
++func beatsMatch(tier int, revPref bool, ni, li, bTier int, bRev bool, bNi, bLi int) bool {
++	if bNi < 0 {
++		return true
++	}
++	if tier != bTier {
++		return tier > bTier
++	}
++	if revPref != bRev {
++		return revPref
++	}
++	if ni != bNi {
++		return ni < bNi
++	}
++	return li < bLi
++}
++
++// anchorTier scores how strongly a single review.md line references file:line:
++//
++//	3 — a `file:N` or `file:A-B` reference whose N (or range A..B) covers line
++//	2 — a `file:N` reference to the same file within anchorLineProximity of line
++//	1 — the file path appears with no nearby line number
++//	0 — the file path does not appear on this line
++//
++// The `file:` scan handles both a bare `internal/x.go:42` anchor and a range
++// `internal/x.go:65-102`; the char after the number is not required to be a
++// non-digit because parseLineRange consumes the full leading integer run. Each
++// `file:` occurrence is rejected when it is a suffix of a longer path token (the
++// char to its left is a path/identifier char), so a finding for "y.go" does not
++// falsely match a line referencing "internal/x/y.go:42".
++func anchorTier(s, file string, line int) int {
++	best := 0
++	if strings.Contains(s, file) {
++		best = 1 // file present, no covering line reference (yet)
++	}
++	needle := file + ":"
++	from := 0
++	for {
++		p := strings.Index(s[from:], needle)
++		if p < 0 {
++			break
++		}
++		abs := from + p
++		from = abs + len(needle)
++		if abs > 0 && isPathChar(s[abs-1]) {
++			continue // suffix of a longer path token — not this file
++		}
++		lo, hi, ok := parseLineRange(s[abs+len(needle):])
++		if !ok {
++			continue
++		}
++		if line >= lo && line <= hi {
++			return 3 // covering reference — best possible, stop early
++		}
++		// Non-covering same-file reference: a weaker match only within the small
++		// proximity window (beyond it, a different finding in the same file).
++		if best < 2 && lineDistance(line, lo, hi) <= anchorLineProximity {
++			best = 2
++		}
++	}
++	return best
++}
++
++// lineDistance returns how far line lies outside the inclusive [lo,hi] interval
++// (0 when inside).
++func lineDistance(line, lo, hi int) int {
++	switch {
++	case line < lo:
++		return lo - line
++	case line > hi:
++		return line - hi
++	default:
++		return 0
++	}
++}
++
++// isPathChar reports whether b can be part of a path/identifier token, used to
++// detect when a matched file path is actually the tail of a longer path.
++func isPathChar(b byte) bool {
++	switch {
++	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
++		return true
++	case b == '/' || b == '.' || b == '_' || b == '-':
++		return true
++	}
++	return false
++}
++
++// parseLineRange parses a leading integer, optionally followed by "-integer",
++// from s and returns the inclusive [lo,hi] plus ok. "166" → (166,166); "65-102"
++// → (65,102). A non-numeric prefix returns ok=false.
++func parseLineRange(s string) (lo, hi int, ok bool) {
++	lo, n := leadingInt(s)
++	if n == 0 {
++		return 0, 0, false
++	}
++	hi = lo
++	if rest := s[n:]; strings.HasPrefix(rest, "-") {
++		if h, n2 := leadingInt(rest[1:]); n2 > 0 {
++			hi = h
++		}
++	}
++	if hi < lo {
++		lo, hi = hi, lo
++	}
++	return lo, hi, true
++}
++
++// leadingInt returns the integer value of the leading ASCII-digit run of s and
++// its byte width (0 width when s does not start with a digit).
++func leadingInt(s string) (val, width int) {
++	i := 0
++	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
++		i++
++	}
++	if i == 0 {
++		return 0, 0
++	}
++	v, err := strconv.Atoi(s[:i])
++	if err != nil {
++		return 0, 0
++	}
++	return v, i
++}
++
++// extractSection returns the narrative block containing anchor line idx and the
++// nearest enclosing Markdown heading. The block is the run of contiguous
++// non-blank lines around idx bounded by a blank line, a heading, or a new list
++// item — so a per-finding list item or paragraph is captured without bleeding
++// into a sibling item (a tight, blank-line-free findings list) or the next
++// section. A heading or list-item marker may START the block but is never
++// crossed. The result is trimmed and truncated to justificationMaxRunes.
++func extractSection(lines []string, idx int) (text, section string) {
++	if idx < 0 || idx >= len(lines) {
++		return "", ""
++	}
++	for j := idx; j >= 0; j-- {
++		if h, ok := headingText(lines[j]); ok {
++			section = h
++			break
++		}
++	}
++	// Walk up until the current line begins the block (heading or list item) or
++	// the line above is a blank / heading / new list item.
++	start := idx
++	for start > 0 && !isHeadingLine(lines[start]) && !isItemStart(lines[start]) {
++		prev := lines[start-1]
++		if strings.TrimSpace(prev) == "" || isHeadingLine(prev) || isItemStart(prev) {
++			break
++		}
++		start--
++	}
++	// Walk down until the next line starts a new item/section or is blank.
++	end := idx
++	for end < len(lines)-1 {
++		next := lines[end+1]
++		if strings.TrimSpace(next) == "" || isHeadingLine(next) || isItemStart(next) {
++			break
++		}
++		end++
++	}
++	var b strings.Builder
++	for j := start; j <= end; j++ {
++		if j > start {
++			b.WriteByte('\n')
++		}
++		b.WriteString(strings.TrimRight(lines[j], "\r"))
++	}
++	return truncateRunes(strings.TrimSpace(b.String()), justificationMaxRunes), section
++}
++
++// isItemStart reports whether s begins a Markdown list item: an unordered bullet
++// ("- ", "* ", "+ ") or an ordered marker ("N." / "N)" optionally followed by a
++// space), after optional leading spaces. Used as a block boundary so one finding's
++// list item does not absorb its siblings when items are not blank-separated.
++func isItemStart(s string) bool {
++	s = strings.TrimLeft(s, " ")
++	if s == "" {
++		return false
++	}
++	if (s[0] == '-' || s[0] == '*' || s[0] == '+') && len(s) > 1 && s[1] == ' ' {
++		return true
++	}
++	i := 0
++	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
++		i++
++	}
++	if i > 0 && i < len(s) && (s[i] == '.' || s[i] == ')') {
++		return i+1 == len(s) || s[i+1] == ' '
++	}
++	return false
++}
++
++// isHeadingLine reports whether s is a Markdown ATX heading (1–6 leading '#'
++// followed by a space, after optional leading spaces).
++func isHeadingLine(s string) bool {
++	s = strings.TrimLeft(s, " ")
++	i := 0
++	for i < len(s) && s[i] == '#' {
++		i++
++	}
++	return i >= 1 && i <= 6 && i < len(s) && s[i] == ' '
++}
++
++// headingText returns the heading's text (leading '#'s and surrounding space
++// stripped) and whether s was a heading.
++func headingText(s string) (string, bool) {
++	if !isHeadingLine(s) {
++		return "", false
++	}
++	return strings.TrimSpace(strings.TrimLeft(strings.TrimLeft(s, " "), "#")), true
++}
++
++// truncateRunes returns s unchanged when it is at most max runes, else the first
++// max runes (re-trimmed) with a horizontal ellipsis appended.
++func truncateRunes(s string, max int) string {
++	r := []rune(s)
++	if len(r) <= max {
++		return s
++	}
++	return strings.TrimSpace(string(r[:max])) + "…"
++}
+diff --git a/internal/reconcile/justification_test.go b/internal/reconcile/justification_test.go
+new file mode 100644
+index 00000000..97c67d34
+--- /dev/null
++++ b/internal/reconcile/justification_test.go
+@@ -0,0 +1,232 @@
++package reconcile
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++// writeReview is a test helper: writes review.md at reviewDir/sources/<leaf>/review.md.
++func writeReview(t *testing.T, reviewDir, leaf, content string) {
++	t.Helper()
++	dir := filepath.Join(reviewDir, "sources", leaf)
++	require.NoError(t, os.MkdirAll(dir, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "review.md"), []byte(content), 0o644))
++}
++
++// TestJSONFinding_JustificationField verifies the additive justification field
++// (Epic 18.2): present under the "justification" key when set, and omitted
++// entirely when empty so findings.json stays byte-identical to pre-18.2 output.
++func TestJSONFinding_JustificationField(t *testing.T) {
++	b, err := json.Marshal(JSONFinding{Justification: "narrative context from review.md"})
++	require.NoError(t, err)
++	require.Contains(t, string(b), `"justification":"narrative context from review.md"`)
++
++	b2, err := json.Marshal(JSONFinding{})
++	require.NoError(t, err)
++	require.NotContains(t, string(b2), "justification")
++}
++
++// TestStampJustifications_MatchesFileLine is the core happy path (Epic 18.2 T2):
++// a finding whose file:line is anchored in a source review.md gets that section's
++// narrative extracted into Justification.
++func TestStampJustifications_MatchesFileLine(t *testing.T) {
++	reviewDir := t.TempDir()
++	writeReview(t, reviewDir, "host", "# Host review\n\n"+
++		"## Findings\n"+
++		"1. **`internal/auth/token.go:42` — JWT signature not verified.** The handler\n"+
++		"calls jwt.Parse without jwt.Verify, so a forged token is accepted.\n\n"+
++		"## Areas examined — no issues found\n"+
++		"- Cache eviction: fine.\n")
++
++	jf := []JSONFinding{{File: "internal/auth/token.go", Line: 42, Problem: "JWT sig", Reviewers: []string{"host"}}}
++	stampJustifications(jf, reviewDir)
++
++	require.NotEmpty(t, jf[0].Justification, "expected a matched narrative")
++	require.Contains(t, jf[0].Justification, "jwt.Verify")
++	require.Contains(t, jf[0].Justification, "forged token")
++	require.NotContains(t, jf[0].Justification, "Cache eviction", "must not bleed into the next section")
++}
++
++// TestStampJustifications_NoMatch_LeavesEmpty: a finding whose file is not
++// referenced in any review.md gets no Justification (byte-identical output).
++func TestStampJustifications_NoMatch_LeavesEmpty(t *testing.T) {
++	reviewDir := t.TempDir()
++	writeReview(t, reviewDir, "host", "# Host\n\n## Findings\n1. **`other/file.go:9` — bug.** narrative.\n")
++	jf := []JSONFinding{{File: "internal/auth/token.go", Line: 42}}
++	stampJustifications(jf, reviewDir)
++	require.Empty(t, jf[0].Justification)
++	require.Nil(t, jf[0].SourceReport)
++}
++
++// TestStampJustifications_BareFileMention_NoMatch: a file named without a line
++// reference (e.g. in an "Areas examined — no issues" section) must NOT attach a
++// misleading narrative (minAnchorTier guard).
++func TestStampJustifications_BareFileMention_NoMatch(t *testing.T) {
++	reviewDir := t.TempDir()
++	writeReview(t, reviewDir, "host", "# Host\n\n## Areas examined — no issues found\n- token.go: internal/auth/token.go looked fine, no problems.\n")
++	jf := []JSONFinding{{File: "internal/auth/token.go", Line: 42}}
++	stampJustifications(jf, reviewDir)
++	require.Empty(t, jf[0].Justification, "bare file mention (no line) must not match")
++}
++
++// TestStampJustifications_RangeAnchor: a `file:A-B` range covering the finding's
++// line matches.
++func TestStampJustifications_RangeAnchor(t *testing.T) {
++	reviewDir := t.TempDir()
++	writeReview(t, reviewDir, "claude", "# Review\n\n"+
++		"### Criterion: role separation.\n"+
++		"- **Evidence:** `internal/debate/cast.go:65-102` enforces three distinct models across the cast.\n")
++	jf := []JSONFinding{{File: "internal/debate/cast.go", Line: 80, Reviewers: []string{"claude"}}}
++	stampJustifications(jf, reviewDir)
++	require.Contains(t, jf[0].Justification, "three distinct models")
++}
++
++// TestStampJustifications_MissingSourcesDir_NoOp: no sources/ dir → clean no-op.
++func TestStampJustifications_MissingSourcesDir_NoOp(t *testing.T) {
++	reviewDir := t.TempDir() // no sources/ subtree
++	jf := []JSONFinding{{File: "a.go", Line: 1}}
++	stampJustifications(jf, reviewDir)
++	require.Empty(t, jf[0].Justification)
++	// Empty reviewDir and empty jf are also no-ops.
++	stampJustifications(jf, "")
++	stampJustifications(nil, reviewDir)
++	require.Empty(t, jf[0].Justification)
++}
++
++// TestStampJustifications_PrefersCoveringLine: given a same-file-other-line
++// reference and a covering reference across two narratives, the covering one
++// (tier 3) wins regardless of narrative order.
++func TestStampJustifications_PrefersCoveringLine(t *testing.T) {
++	reviewDir := t.TempDir()
++	writeReview(t, reviewDir, "aaa", "# A\n\n## Findings\n1. **`x/y.go:10` — unrelated other-line note about y.go.** other.\n")
++	writeReview(t, reviewDir, "zzz", "# Z\n\n## Findings\n1. **`x/y.go:42` — the exact-line finding.** the covering narrative here.\n")
++	jf := []JSONFinding{{File: "x/y.go", Line: 42}}
++	stampJustifications(jf, reviewDir)
++	require.Contains(t, jf[0].Justification, "covering narrative")
++	require.NotContains(t, jf[0].Justification, "unrelated other-line")
++}
++
++// TestAnchorTier covers the scoring tiers directly.
++func TestAnchorTier(t *testing.T) {
++	require.Equal(t, 0, anchorTier("no file here", "x/y.go", 42))
++	require.Equal(t, 1, anchorTier("mentions x/y.go with no line", "x/y.go", 42))
++	require.Equal(t, 1, anchorTier("x/y.go:10 far other line", "x/y.go", 42)) // far → below tier 2
++	require.Equal(t, 2, anchorTier("x/y.go:44 near line", "x/y.go", 42))      // within ±3 → tier 2
++	require.Equal(t, 3, anchorTier("`x/y.go:42` exact", "x/y.go", 42))
++	require.Equal(t, 3, anchorTier("`x/y.go:40-50` range", "x/y.go", 42))
++	require.Equal(t, 2, anchorTier("`x/y.go:43` off by one", "x/y.go", 42))
++}
++
++// TestStampJustifications_ReviewerTiebreak: two narratives reference the finding's
++// exact line at equal tier; the one whose leaf dir is a finding reviewer wins.
++func TestStampJustifications_ReviewerTiebreak(t *testing.T) {
++	reviewDir := t.TempDir()
++	// "aaa" sorts first but is not a reviewer; "greta" is the reviewer.
++	writeReview(t, reviewDir, "aaa", "# A\n\n## Findings\n1. **`x/y.go:42` — note.** narrative from the non-reviewer aaa.\n")
++	writeReview(t, reviewDir, "greta", "# G\n\n## Findings\n1. **`x/y.go:42` — note.** narrative from reviewer greta.\n")
++	jf := []JSONFinding{{File: "x/y.go", Line: 42, Reviewers: []string{"greta"}}}
++	stampJustifications(jf, reviewDir)
++	require.Contains(t, jf[0].Justification, "reviewer greta")
++	require.NotContains(t, jf[0].Justification, "non-reviewer aaa")
++}
++
++// TestStampJustifications_Truncates: an over-long narrative section is truncated
++// to justificationMaxRunes with an ellipsis.
++func TestStampJustifications_Truncates(t *testing.T) {
++	reviewDir := t.TempDir()
++	long := strings.Repeat("verylongword ", 300) // ~3900 chars, one paragraph
++	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n1. **`x/y.go:42`** "+long+"\n")
++	jf := []JSONFinding{{File: "x/y.go", Line: 42}}
++	stampJustifications(jf, reviewDir)
++	require.NotEmpty(t, jf[0].Justification)
++	require.LessOrEqual(t, len([]rune(jf[0].Justification)), justificationMaxRunes+1) // +1 for the ellipsis
++	require.True(t, strings.HasSuffix(jf[0].Justification, "…"))
++}
++
++// TestStampJustifications_SetsSourceReport verifies the back-reference (Epic 18.2
++// T3): path (review-dir-relative), 1-based anchor line, and nearest heading.
++func TestStampJustifications_SetsSourceReport(t *testing.T) {
++	reviewDir := t.TempDir()
++	writeReview(t, reviewDir, "host", "# Host review\n\n"+ // line 1
++		"## Findings\n"+ // line 3
++		"1. **`internal/auth/token.go:42` — JWT not verified.** narrative body.\n") // line 4
++	jf := []JSONFinding{{File: "internal/auth/token.go", Line: 42, Reviewers: []string{"host"}}}
++	stampJustifications(jf, reviewDir)
++
++	require.NotNil(t, jf[0].SourceReport, "expected a back-reference")
++	require.Equal(t, "sources/host/review.md", jf[0].SourceReport.Path)
++	require.Equal(t, 4, jf[0].SourceReport.Line, "1-based line of the anchor")
++	require.Equal(t, "Findings", jf[0].SourceReport.Section)
++
++	// And it round-trips through findings.json under the source_report key.
++	b, err := json.Marshal(jf[0])
++	require.NoError(t, err)
++	require.Contains(t, string(b), `"source_report"`)
++	require.Contains(t, string(b), `"path":"sources/host/review.md"`)
++}
++
++// TestStampJustifications_SuffixPathNoFalseMatch: a finding for "y.go" must NOT
++// match a line that only references a longer path ending in y.go (Epic 18.2
++// cumulative-review fix).
++func TestStampJustifications_SuffixPathNoFalseMatch(t *testing.T) {
++	reviewDir := t.TempDir()
++	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n1. **`internal/x/y.go:42` — a different file entirely.** wrong narrative.\n")
++	jf := []JSONFinding{{File: "y.go", Line: 42}}
++	stampJustifications(jf, reviewDir)
++	require.Empty(t, jf[0].Justification, "y.go must not match internal/x/y.go:42")
++
++	// The full path still matches its own anchor at the covering tier; the suffix
++	// "y.go" never reaches a matchable tier — its `y.go:` occurrence is a suffix of
++	// the longer path token, so it scores below minAnchorTier.
++	require.Equal(t, 3, anchorTier("`internal/x/y.go:42`", "internal/x/y.go", 42))
++	require.Less(t, anchorTier("`internal/x/y.go:42`", "y.go", 42), minAnchorTier)
++}
++
++// TestStampJustifications_FarSameFileLine_NoMatch: a same-file reference far from
++// the finding's line (beyond anchorLineProximity) is a different finding and must
++// not attach its narrative (independent-review MEDIUM #1).
++func TestStampJustifications_FarSameFileLine_NoMatch(t *testing.T) {
++	reviewDir := t.TempDir()
++	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n1. **`svc/a.go:200` — a totally different bug far away.** unrelated narrative.\n")
++	jf := []JSONFinding{{File: "svc/a.go", Line: 42}}
++	stampJustifications(jf, reviewDir)
++	require.Empty(t, jf[0].Justification, "line 200 is far from finding line 42 — different finding")
++
++	// A near line (within ±3, cluster-merge divergence) still matches at tier 2;
++	// a far same-file reference stays below the match threshold.
++	require.Equal(t, 2, anchorTier("`svc/a.go:44`", "svc/a.go", 42)) // off by 2 → near
++	require.Less(t, anchorTier("`svc/a.go:200`", "svc/a.go", 42), minAnchorTier)
++}
++
++// TestStampJustifications_TightListNoBleed: a blank-line-free numbered list must
++// not bleed sibling items into one finding's Justification (independent-review
++// MEDIUM #2).
++func TestStampJustifications_TightListNoBleed(t *testing.T) {
++	reviewDir := t.TempDir()
++	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n"+
++		"1. **`a/x.go:10` — first issue.** first narrative alpha.\n"+
++		"2. **`a/x.go:42` — second issue.** second narrative bravo.\n"+
++		"3. **`a/x.go:99` — third issue.** third narrative charlie.\n")
++	jf := []JSONFinding{{File: "a/x.go", Line: 42}}
++	stampJustifications(jf, reviewDir)
++	require.Contains(t, jf[0].Justification, "second narrative bravo")
++	require.NotContains(t, jf[0].Justification, "first narrative alpha")
++	require.NotContains(t, jf[0].Justification, "third narrative charlie")
++	require.NotNil(t, jf[0].SourceReport)
++	require.Equal(t, "Findings", jf[0].SourceReport.Section)
++}
++
++// TestIsItemStart covers the list-item boundary detector.
++func TestIsItemStart(t *testing.T) {
++	for _, s := range []string{"- bullet", "* star", "+ plus", "1. ordered", "12) paren", "  - indented", "3."} {
++		require.Truef(t, isItemStart(s), "%q should be an item start", s)
++	}
++	for _, s := range []string{"", "not a list", "-nospace", "word - dash", "#. heading-ish", "1x. not"} {
++		require.Falsef(t, isItemStart(s), "%q should NOT be an item start", s)
++	}
++}
