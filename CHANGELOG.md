@@ -1,3 +1,18 @@
+## [18.2.0] - 2026-07-04
+
+Enriched the shared reconciliation engine so each finding's originating `review.md` narrative survives past reconciliation, giving downstream technical-debt-resolution consumers the reviewer's reasoning without re-deriving it from raw review logs.
+
+### Added
+
+- Reconciler: `reconciled/findings.json` findings now carry a `justification` field — the narrative section extracted best-effort from the finding's originating source `review.md`, matched by `FILE:LINE` — plus a `source_report` back-reference (`{path, line, section}`) pointing at that review.md section. Both are additive and `omitempty`, so a finding with no matched narrative stays byte-identical to prior output.
+- `docs/findings-format.md`: documents the new fields under the JSON form section, and notes under Source discovery that a source's `review.md` is now read at reconcile time.
+
+### Changed
+
+- The reconcile pipeline reads each source's `review.md` (alongside its `findings.txt`) and correlates it to findings by `FILE:LINE`. A line-level, proximity-bounded match is required, so an unrelated same-file mention never attaches a misleading narrative. The pair lands only in `findings.json` — never the technical-debt table's frozen `Problem` cell (per Epic 18.1's column-stability constraint).
+
+*Shipped via /execute-epic (epic 18.2)*
+
 ## [Technical Debt] - 2026-07-04
 
 ### Fixed

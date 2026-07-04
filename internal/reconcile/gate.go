@@ -245,6 +245,14 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 	// path validation, before Emit, so the anchor rides into findings.json and the
 	// downstream TD README.
 	stampSymbolAnchors(jf, grouper)
+	// Correlate each finding to the narrative its originating source wrote in
+	// review.md (Epic 18.2), stamping the extracted section onto Justification and
+	// a SourceReport back-reference. Best-effort file:line match against every
+	// review.md under reviewDir/sources; a finding with no matching narrative is
+	// left byte-identical. Stamped after merge, path validation, and symbol
+	// anchoring, before Emit, so the narrative rides into findings.json for the
+	// downstream TD-resolution consumer.
+	stampJustifications(jf, reviewDir)
 	res.jsonFindings = jf
 
 	if err := ctx.Err(); err != nil {
