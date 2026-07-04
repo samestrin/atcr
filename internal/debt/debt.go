@@ -89,11 +89,16 @@ func (f Filter) Match(r Record) bool {
 	if f.Category != "" && !strings.Contains(strings.ToLower(r.Category), strings.ToLower(f.Category)) {
 		return false
 	}
-	if f.Group != "" && r.Group != f.Group {
+	if f.Group != "" && !strings.EqualFold(r.Group, f.Group) {
 		return false
 	}
-	if f.Component != "" && !strings.HasPrefix(filePath(r.File), f.Component) {
-		return false
+	if f.Component != "" {
+		fp := filePath(r.File)
+		// Require an exact component match or a path-segment prefix so that
+		// "cmd" does not also match "cmder/...".
+		if fp != f.Component && !strings.HasPrefix(fp, f.Component+"/") {
+			return false
+		}
 	}
 	return true
 }

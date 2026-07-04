@@ -75,6 +75,19 @@ func validateDate(date string) error {
 	return nil
 }
 
+func normalizeSeverity(s string) string { return strings.ToUpper(s) }
+func normalizeStatus(s string) string   { return strings.ToLower(s) }
+func normalizeSourceType(s string) string {
+	switch strings.ToLower(s) {
+	case "sprint":
+		return tdmigrate.SourceTypeSprint
+	case "review":
+		return tdmigrate.SourceTypeReview
+	default:
+		return s
+	}
+}
+
 func runDebtAdd(cmd *cobra.Command, _ []string) error {
 	readme := mustFlag(cmd, "readme")
 	items := mustFlag(cmd, "items")
@@ -105,9 +118,9 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 	switch {
 	case sev != "" && file != "" && problem != "" && fix != "" && category != "":
 		// Flag mode — the scriptable, primary contract.
-		sec = debt.Section{Date: def.Date, SourceType: def.SourceType, Label: def.Label}
+		sec = debt.Section{Date: def.Date, SourceType: normalizeSourceType(def.SourceType), Label: def.Label}
 		it = tdmigrate.Item{
-			Group: def.Group, Status: def.Status, Severity: strings.ToUpper(sev),
+			Group: def.Group, Status: normalizeStatus(def.Status), Severity: normalizeSeverity(sev),
 			File: file, Problem: problem, Fix: fix, Category: category,
 			EstMinutes: est, Source: def.Source,
 		}
@@ -198,9 +211,9 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (debt.Section,
 		_, _ = fmt.Fprintf(out, "  est %q is not an integer; using %d\n", estStr, def.Est)
 	}
 
-	sec := debt.Section{Date: date, SourceType: stype, Label: label}
+	sec := debt.Section{Date: date, SourceType: normalizeSourceType(stype), Label: label}
 	it := tdmigrate.Item{
-		Group: group, Status: status, Severity: strings.ToUpper(sev),
+		Group: group, Status: normalizeStatus(status), Severity: normalizeSeverity(sev),
 		File: file, Problem: problem, Fix: fix, Category: category,
 		EstMinutes: est, Source: source,
 	}
