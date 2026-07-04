@@ -229,6 +229,50 @@ func TestPromptEntry_InputTooLongErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "input read error")
 }
 
+func TestDebtAdd_PartialFlagsOnTTYSeedsWizard(t *testing.T) {
+	readme, items := emptyTDRepo(t)
+
+	// Force the interactive path without a real TTY.
+	orig := debtStdinIsTTY
+	debtStdinIsTTY = func(_ io.Reader) bool { return true }
+	t.Cleanup(func() { debtStdinIsTTY = orig })
+
+	// severity and file are supplied as flags; on a TTY the partial input must
+	// drop into the wizard with those values pre-seeded rather than erroring.
+	// Empty answers for severity/file take the seeded flag values; the user
+	// only types the still-missing fields.
+	answers := strings.Join([]string{
+		"2026-07-03",  // date
+		"Sprint",      // source-type
+		"wizard",      // label
+		"2",           // group
+		"",            // severity -> seeded default from --severity
+		"",            // file -> seeded default from --file
+		"leaky",       // problem
+		"close it",    // fix
+		"correctness", // category
+		"5",           // est
+		"open",        // status
+		"manual",      // source
+	}, "\n") + "\n"
+
+	cmd := newDebtCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetIn(strings.NewReader(answers))
+	cmd.SetArgs([]string{"add", "--readme", readme, "--items", items,
+		"--severity", "HIGH", "--file", "pkg/z.go:5"})
+	require.NoError(t, cmd.Execute())
+
+	recs, err := debt.Load(items)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "HIGH", recs[0].Severity)   // carried from --severity flag
+	assert.Equal(t, "pkg/z.go:5", recs[0].File) // carried from --file flag
+	assert.Equal(t, "leaky", recs[0].Problem)   // typed into the wizard
+}
+
 func TestDebtAdd_InteractiveEndToEnd(t *testing.T) {
 	readme, items := emptyTDRepo(t)
 
