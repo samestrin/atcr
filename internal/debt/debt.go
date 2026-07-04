@@ -146,8 +146,9 @@ func rankOf(sev string) int {
 
 // Sort orders recs in place by the given key. An unknown key is a hard error so
 // a typo'd --sort flag fails loudly instead of silently returning unsorted data.
-// Every ordering is total (ties broken by File then Date) so output is
-// deterministic across runs.
+// Every ordering is total so output is deterministic across runs; the tiebreak
+// chain is key-specific: SortSeverity breaks ties by Date then File, SortAge by
+// Date then File, SortEst by File, and SortFile by Date.
 func Sort(recs []Record, key string) error {
 	var less func(a, b Record) bool
 	switch key {
