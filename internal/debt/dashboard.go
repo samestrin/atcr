@@ -51,7 +51,7 @@ func RenderDashboard(recs []Record, topN int) string {
 	} else {
 		b.WriteString("| Component | Items |\n|-----------|-------|\n")
 		for _, c := range sum.ByComponent {
-			fmt.Fprintf(&b, "| %s | %d |\n", c.Component, c.Total)
+			fmt.Fprintf(&b, "| %s | %d |\n", sanitizeCell(c.Component), c.Total)
 		}
 		b.WriteString("\n")
 	}
@@ -71,13 +71,16 @@ func RenderDashboard(recs []Record, topN int) string {
 
 	// Top priority — most-severe, then oldest, unresolved items.
 	b.WriteString("## Top Priority\n\n")
-	if len(sum.Top) == 0 {
+	hasBacklog := sum.Open+sum.Deferred > 0
+	if !hasBacklog {
 		b.WriteString("_No unresolved items._\n")
+	} else if topN <= 0 {
+		b.WriteString("_(top list suppressed)_\n")
 	} else {
 		b.WriteString("| Severity | File | Est | Problem |\n|----------|------|-----|---------|\n")
 		for _, r := range sum.Top {
 			fmt.Fprintf(&b, "| %s | %s | %d | %s |\n",
-				r.Severity, r.File, r.EstMinutes, sanitizeCell(red.Redact(r.Problem)))
+				r.Severity, sanitizeCell(r.File), r.EstMinutes, sanitizeCell(red.Redact(r.Problem)))
 		}
 	}
 
@@ -90,8 +93,8 @@ type monthCount struct {
 }
 
 // monthHistogram counts unresolved items per shard month (the YYYY-MM prefix of
-// the shard date), sorted oldest month first. A date too short to carry a month
-// prefix is bucketed under "unknown", sorted last.
+// the shard date), sorted oldest month first. A date too short to carry a valid
+// month prefix is bucketed under "unknown", sorted last.
 func monthHistogram(recs []Record) []monthCount {
 	counts := map[string]int{}
 	for _, r := range recs {
@@ -100,7 +103,9 @@ func monthHistogram(recs []Record) []monthCount {
 		}
 		m := "unknown"
 		if len(r.Date) >= 7 {
-			m = r.Date[:7]
+			if _, err := time.Parse("2006-01", r.Date[:7]); err == nil {
+				m = r.Date[:7]
+			}
 		}
 		counts[m]++
 	}

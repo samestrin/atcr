@@ -2,10 +2,13 @@ package debt
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -168,6 +171,37 @@ func TestRefreshStats_NoStatsBlockIsNoOp(t *testing.T) {
 	assert.Equal(t, "# TD\n\nno stats here\n", string(got), "a README without a Stats block is left untouched")
 }
 
+func TestRefreshStats_PreservesContentBetweenStatsAndLastModified(t *testing.T) {
+	dir := t.TempDir()
+	readme := filepath.Join(dir, "README.md")
+	content := "# Technical Debt\n\n" +
+		"## Stats\n\n" +
+		"| Severity | Open | Deferred | Resolved |\n" +
+		"|----------|------|----------|----------|\n" +
+		"| CRITICAL | 0 | 0 | 0 |\n" +
+		"| HIGH | 0 | 0 | 0 |\n" +
+		"| MEDIUM | 0 | 0 | 0 |\n" +
+		"| LOW | 0 | 0 | 0 |\n\n" +
+		"**Note:** do not delete this intervening note\n\n" +
+		"**Last Modified:** 2026-01-01 | **Open Items:** 0 | **Deferred Items:** 0 | **Resolved Items:** 0 | **Total Items:** 0\n\n" +
+		"### [2026-06-30] From Sprint: prior\n\n" +
+		"| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |\n" +
+		"|-------|---|----------|------|---------|-----|----------|-------------|--------|\n" +
+		"| 1 | [ ] | MEDIUM | a.go:1 | old | oldfix | correctness | 5 | code-review |\n"
+	require.NoError(t, os.WriteFile(readme, []byte(content), 0o644))
+	require.NoError(t, RefreshStats(readme, "2026-07-03"))
+
+	got, err := os.ReadFile(readme)
+	require.NoError(t, err)
+	s := string(got)
+	assert.Contains(t, s, "**Note:** do not delete this intervening note",
+		"content between the Stats table and the Last Modified line must survive")
+	assert.Contains(t, s, "**Last Modified:** 2026-07-03")
+	// The refreshed README must still parse cleanly.
+	_, err = tdmigrate.ParseREADME(s)
+	require.NoError(t, err)
+}
+
 func TestAppendItem_WritesREADMEAndRegeneratesShards(t *testing.T) {
 	dir := t.TempDir()
 	readme := filepath.Join(dir, "README.md")
@@ -189,4 +223,81 @@ func TestAppendItem_WritesREADMEAndRegeneratesShards(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	assert.Equal(t, "HIGH", recs[0].Severity)
+}
+
+func TestAppendItem_RollsBackREADMEOnShardSyncFailure(t *testing.T) {
+	dir := t.TempDir()
+	readme := filepath.Join(dir, "README.md")
+	items := filepath.Join(dir, "items")
+	require.NoError(t, os.WriteFile(readme, []byte(readmeWithStats), 0o644))
+
+	// Make the items path a regular file so WriteShards cannot create a directory
+	// there and SyncShards fails after the README has already been updated.
+	require.NoError(t, os.WriteFile(items, []byte("not a directory"), 0o644))
+
+	sec := Section{Date: "2026-07-03", SourceType: "Sprint", Label: "manual"}
+	var stderr bytes.Buffer
+	err := AppendItem(readme, items, sec, newItemForAdd(), &stderr)
+	require.Error(t, err)
+
+	got, err := os.ReadFile(readme)
+	require.NoError(t, err)
+	assert.NotContains(t, string(got), "internal/x/y.go:12",
+		"README should be rolled back to pre-write bytes when shard sync fails")
+	assert.Contains(t, string(got), "## How to Use",
+		"intervening prose must survive the rollback")
+}
+
+func TestWithReadmeLock_SerializesConcurrentCallers(t *testing.T) {
+	dir := t.TempDir()
+	lockDir := filepath.Join(dir, ".planning", ".locks", "td-readme.lock")
+
+	var counter int
+	var wg sync.WaitGroup
+	errCh := make(chan error, 10)
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- withReadmeLock(dir, "test", func() error {
+				v := counter
+				time.Sleep(time.Millisecond)
+				counter = v + 1
+				return nil
+			})
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+	assert.Equal(t, 10, counter, "concurrent callers must be serialized")
+	_, err := os.Stat(lockDir)
+	assert.True(t, os.IsNotExist(err), "lock directory must be released after fn returns")
+}
+
+func TestAppendItem_ConcurrentAddsSurvive(t *testing.T) {
+	dir := t.TempDir()
+	readme := filepath.Join(dir, "README.md")
+	items := filepath.Join(dir, "items")
+	require.NoError(t, os.WriteFile(readme, []byte("# Technical Debt\n\n"), 0o644))
+
+	sec := Section{Date: "2026-07-03", SourceType: "Sprint", Label: "manual"}
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			it := newItemForAdd()
+			it.File = fmt.Sprintf("internal/x/y%d.go:12", n)
+			var stderr bytes.Buffer
+			require.NoError(t, AppendItem(readme, items, sec, it, &stderr))
+		}(i)
+	}
+	wg.Wait()
+
+	recs, err := Load(items)
+	require.NoError(t, err)
+	require.Len(t, recs, 5, "all concurrent adds must survive")
 }

@@ -48,6 +48,23 @@ func TestRenderDashboard_ScrubsSecretTokens(t *testing.T) {
 	assert.Contains(t, out, "[redacted]")
 }
 
+func TestRenderDashboard_SanitizesFileAndComponent(t *testing.T) {
+	recs := []Record{{
+		Date:  "2026-06-26",
+		Label: "sanitize",
+		Item:  mkItem("open", "CRITICAL"),
+	}}
+	recs[0].File = "internal/x | y.go:1"
+	recs[0].Problem = "pipe in file"
+
+	out := RenderDashboard(recs, 10)
+	// A literal pipe in the File cell would break the Markdown table column count.
+	assert.NotContains(t, out, "| internal/x | y.go:1 |")
+	assert.Contains(t, out, "| internal/x / y.go:1 |")
+	// The By Component rollup must sanitize the component label as well.
+	assert.Contains(t, out, "| internal/x / y.go | 1 |")
+}
+
 func TestRenderDashboard_TopRespectsLimitAndExcludesResolved(t *testing.T) {
 	out := RenderDashboard(Flatten(sampleShards()), 1)
 	// Only the single highest-priority (CRITICAL) item is listed in Top Priority.
@@ -56,9 +73,24 @@ func TestRenderDashboard_TopRespectsLimitAndExcludesResolved(t *testing.T) {
 	assert.NotContains(t, top, "internal/autofix/revert.go:41") // resolved LOW, excluded
 }
 
+func TestRenderDashboard_TopZeroShowsSuppressed(t *testing.T) {
+	out := RenderDashboard(Flatten(sampleShards()), 0)
+	// A zero cap hides the list but should not pretend the backlog is empty.
+	top := out[strings.Index(out, "## Top Priority"):]
+	assert.Contains(t, top, "(top list suppressed)")
+	assert.NotContains(t, top, "_No unresolved items._")
+}
+
 func TestRenderDashboard_AgeByMonthIsTimeInvariant(t *testing.T) {
 	out := RenderDashboard(Flatten(sampleShards()), 10)
 	age := out[strings.Index(out, "## By Age"):]
 	// Unresolved items are dated 2026-06 (CRITICAL, MEDIUM) — grouped by month.
 	require.Contains(t, age, "2026-06")
+}
+
+func TestMonthHistogram_MalformedDateGoesToUnknown(t *testing.T) {
+	recs := []Record{{Date: "2026-7x", Item: mkItem("open", "HIGH")}}
+	got := monthHistogram(recs)
+	require.Len(t, got, 1)
+	assert.Equal(t, "unknown", got[0].month)
 }

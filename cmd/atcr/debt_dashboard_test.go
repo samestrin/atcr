@@ -67,3 +67,40 @@ func TestDebtDashboard_CheckDetectsDriftThenClean(t *testing.T) {
 	_, err = runDebt(t, "dashboard", "--items", items, "--out", out, "--check")
 	require.Error(t, err, "a stale dashboard must fail --check")
 }
+
+func TestDebtDashboard_CheckAndStdoutAreMutuallyExclusive(t *testing.T) {
+	items := writeItems(t)
+	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
+
+	_, err := runDebt(t, "dashboard", "--items", items, "--out", out, "--check", "--stdout")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+}
+
+func TestDebtDashboard_CheckSkipsSync(t *testing.T) {
+	items := writeItems(t)
+	readme := filepath.Join(t.TempDir(), "README.md")
+	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
+
+	// Generate the dashboard that matches the existing items.
+	_, err := runDebt(t, "dashboard", "--items", items, "--out", out)
+	require.NoError(t, err)
+
+	// A conflicting README: if SyncShards ran, items/ would be overwritten.
+	content := "# TD\n\n" +
+		"### [2026-07-01] From Sprint: demo\n\n" +
+		"| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |\n" +
+		"|-------|---|----------|------|---------|-----|----------|-------------|--------|\n" +
+		"| 1 | [ ] | HIGH | pkg/x.go:1 | boom | fixit | correctness | 15 | code-review |\n"
+	require.NoError(t, os.WriteFile(readme, []byte(content), 0o644))
+
+	before, err := os.ReadDir(items)
+	require.NoError(t, err)
+
+	_, err = runDebt(t, "dashboard", "--items", items, "--readme", readme, "--out", out, "--check", "--sync")
+	require.NoError(t, err, "--check --sync must skip sync and pass when dashboard matches items")
+
+	after, err := os.ReadDir(items)
+	require.NoError(t, err)
+	require.Equal(t, len(before), len(after), "SyncShards must be skipped when --check is set")
+}

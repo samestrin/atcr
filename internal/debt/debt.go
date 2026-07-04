@@ -89,11 +89,16 @@ func (f Filter) Match(r Record) bool {
 	if f.Category != "" && !strings.Contains(strings.ToLower(r.Category), strings.ToLower(f.Category)) {
 		return false
 	}
-	if f.Group != "" && r.Group != f.Group {
+	if f.Group != "" && !strings.EqualFold(r.Group, f.Group) {
 		return false
 	}
-	if f.Component != "" && !strings.HasPrefix(filePath(r.File), f.Component) {
-		return false
+	if f.Component != "" {
+		fp := filePath(r.File)
+		// Require an exact component match or a path-segment prefix so that
+		// "cmd" does not also match "cmder/...".
+		if fp != f.Component && !strings.HasPrefix(fp, f.Component+"/") {
+			return false
+		}
 	}
 	return true
 }
@@ -141,8 +146,9 @@ func rankOf(sev string) int {
 
 // Sort orders recs in place by the given key. An unknown key is a hard error so
 // a typo'd --sort flag fails loudly instead of silently returning unsorted data.
-// Every ordering is total (ties broken by File then Date) so output is
-// deterministic across runs.
+// Every ordering is total so output is deterministic across runs; the tiebreak
+// chain is key-specific: SortSeverity breaks ties by Date then File, SortAge by
+// Date then File, SortEst by File, and SortFile by Date.
 func Sort(recs []Record, key string) error {
 	var less func(a, b Record) bool
 	switch key {
