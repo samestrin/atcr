@@ -108,6 +108,10 @@ func collectReviewNarratives(sourcesDir, reviewDir string) []reviewNarrative {
 		if !d.Type().IsRegular() || d.Name() != reviewFileName {
 			return nil
 		}
+		if fi, serr := os.Stat(path); serr == nil && fi.Size() > maxReviewBytes {
+			slog.Debug("skipping oversized review.md", "path", path, "size", fi.Size())
+			return nil
+		}
 		data, rerr := os.ReadFile(path)
 		if rerr != nil {
 			return nil
@@ -339,6 +343,12 @@ func extractSection(lines []string, idx int) (text, section string) {
 			b.WriteByte('\n')
 		}
 		b.WriteString(strings.TrimRight(lines[j], "\r"))
+		// Bound block growth: we only keep justificationMaxRunes runes, so stop
+		// accumulating once we are clearly over the limit. truncateRunes cleans up
+		// the exact boundary.
+		if b.Len() >= justificationMaxRunes {
+			break
+		}
 	}
 	return truncateRunes(strings.TrimSpace(b.String()), justificationMaxRunes), section
 }
