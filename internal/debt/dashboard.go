@@ -71,8 +71,11 @@ func RenderDashboard(recs []Record, topN int) string {
 
 	// Top priority — most-severe, then oldest, unresolved items.
 	b.WriteString("## Top Priority\n\n")
-	if len(sum.Top) == 0 {
+	hasBacklog := sum.Open+sum.Deferred > 0
+	if !hasBacklog {
 		b.WriteString("_No unresolved items._\n")
+	} else if topN <= 0 {
+		b.WriteString("_(top list suppressed)_\n")
 	} else {
 		b.WriteString("| Severity | File | Est | Problem |\n|----------|------|-----|---------|\n")
 		for _, r := range sum.Top {
