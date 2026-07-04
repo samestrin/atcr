@@ -1,0 +1,12 @@
+{
+  "agent": "greta",
+  "status": "timeout",
+  "findings_count": 0,
+  "duration_ms": 533858,
+  "payload_mode": "blocks",
+  "truncated": false,
+  "files_dropped": [],
+  "error": "request failed: Post \"http://192.168.68.109:4000/v1/chat/completions\": context deadline exceeded",
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0
+}

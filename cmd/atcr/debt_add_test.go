@@ -66,6 +66,24 @@ func TestDebtAdd_MissingRequiredNonTTYIsUsageError(t *testing.T) {
 	assert.Equal(t, exitUsage, exitCode(err))
 }
 
+func TestDebtAdd_MissingRequiredNamesSpecificFlags(t *testing.T) {
+	readme, items := emptyTDRepo(t)
+	out, err := runDebt(t, "add",
+		"--readme", readme, "--items", items,
+		"--severity", "HIGH",
+	)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	lines := strings.Split(out, "\n")
+	require.Greater(t, len(lines), 0)
+	errLine := lines[0]
+	assert.Contains(t, errLine, "--file")
+	assert.Contains(t, errLine, "--problem")
+	assert.Contains(t, errLine, "--fix")
+	assert.Contains(t, errLine, "--category")
+	assert.NotContains(t, errLine, "--severity")
+}
+
 func TestDebtAdd_InvalidSeverityIsError(t *testing.T) {
 	readme, items := emptyTDRepo(t)
 	_, err := runDebt(t, "add",
@@ -73,6 +91,53 @@ func TestDebtAdd_InvalidSeverityIsError(t *testing.T) {
 		"--severity", "URGENT", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c",
 	)
 	require.Error(t, err)
+}
+
+func TestDebtAdd_InvalidDateIsUsageError(t *testing.T) {
+	readme, items := emptyTDRepo(t)
+	_, err := runDebt(t, "add",
+		"--readme", readme, "--items", items,
+		"--date", "07-03-2026",
+		"--severity", "HIGH", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c",
+	)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+}
+
+func TestDebtAdd_CaseNormalizedEnums(t *testing.T) {
+	readme, items := emptyTDRepo(t)
+	_, err := runDebt(t, "add",
+		"--readme", readme, "--items", items,
+		"--date", "2026-07-03",
+		"--severity", "high", "--status", "Open", "--source-type", "sprint",
+		"--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c",
+	)
+	require.NoError(t, err)
+
+	recs, err := debt.Load(items)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "HIGH", recs[0].Severity)
+	assert.Equal(t, "open", recs[0].Status)
+}
+
+func TestDebtAdd_PartialFlagsIsUsageError(t *testing.T) {
+	readme, items := emptyTDRepo(t)
+	out, err := runDebt(t, "add",
+		"--readme", readme, "--items", items,
+		"--severity", "HIGH", "--file", "x.go",
+	)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	// The error line must name only the missing flags, not the ones provided.
+	lines := strings.Split(out, "\n")
+	require.Greater(t, len(lines), 0)
+	errLine := lines[0]
+	assert.Contains(t, errLine, "--problem")
+	assert.Contains(t, errLine, "--fix")
+	assert.Contains(t, errLine, "--category")
+	assert.NotContains(t, errLine, "--severity")
+	assert.NotContains(t, errLine, "--file")
 }
 
 func TestPromptEntry_ReadsFieldsAndDefaults(t *testing.T) {
@@ -119,6 +184,93 @@ func TestPromptEntry_RequiredFieldMissingAtEOFErrors(t *testing.T) {
 	def := wizardDefaults{Date: "2026-07-03", SourceType: "Sprint", Label: "manual", Group: "U", Status: "open", Source: "manual"}
 	_, _, err := promptEntry(strings.NewReader(answers), &out, def)
 	require.Error(t, err)
+}
+
+func TestPromptEntry_InvalidDateErrors(t *testing.T) {
+	answers := strings.Join([]string{
+		"07-03-2026", // invalid date
+		"Sprint",
+		"lbl",
+		"",
+		"MEDIUM",
+		"a.go:1",
+		"p",
+		"f",
+		"c",
+		"5",
+		"open",
+		"manual",
+	}, "\n") + "\n"
+	var out bytes.Buffer
+	def := wizardDefaults{Date: "2026-07-03", SourceType: "Sprint", Label: "manual", Group: "U", Status: "open", Source: "manual"}
+	_, _, err := promptEntry(strings.NewReader(answers), &out, def)
+	require.Error(t, err)
+}
+
+func TestPromptEntry_InputTooLongErrors(t *testing.T) {
+	answers := strings.Join([]string{
+		"2026-07-03",
+		"Sprint",
+		"lbl",
+		"",
+		"MEDIUM",
+		"a.go:1",
+		"p",
+		"f",
+		"c",
+		"5",
+		"open",
+		strings.Repeat("a", 2*1024*1024), // too-long final answer triggers bufio.ErrTooLong
+	}, "\n") + "\n"
+	var out bytes.Buffer
+	def := wizardDefaults{Date: "2026-07-03", SourceType: "Sprint", Label: "manual", Group: "U", Status: "open", Source: "manual"}
+	_, _, err := promptEntry(strings.NewReader(answers), &out, def)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "input read error")
+}
+
+func TestDebtAdd_PartialFlagsOnTTYSeedsWizard(t *testing.T) {
+	readme, items := emptyTDRepo(t)
+
+	// Force the interactive path without a real TTY.
+	orig := debtStdinIsTTY
+	debtStdinIsTTY = func(_ io.Reader) bool { return true }
+	t.Cleanup(func() { debtStdinIsTTY = orig })
+
+	// severity and file are supplied as flags; on a TTY the partial input must
+	// drop into the wizard with those values pre-seeded rather than erroring.
+	// Empty answers for severity/file take the seeded flag values; the user
+	// only types the still-missing fields.
+	answers := strings.Join([]string{
+		"2026-07-03",  // date
+		"Sprint",      // source-type
+		"wizard",      // label
+		"2",           // group
+		"",            // severity -> seeded default from --severity
+		"",            // file -> seeded default from --file
+		"leaky",       // problem
+		"close it",    // fix
+		"correctness", // category
+		"5",           // est
+		"open",        // status
+		"manual",      // source
+	}, "\n") + "\n"
+
+	cmd := newDebtCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetIn(strings.NewReader(answers))
+	cmd.SetArgs([]string{"add", "--readme", readme, "--items", items,
+		"--severity", "HIGH", "--file", "pkg/z.go:5"})
+	require.NoError(t, cmd.Execute())
+
+	recs, err := debt.Load(items)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "HIGH", recs[0].Severity)   // carried from --severity flag
+	assert.Equal(t, "pkg/z.go:5", recs[0].File) // carried from --file flag
+	assert.Equal(t, "leaky", recs[0].Problem)   // typed into the wizard
 }
 
 func TestDebtAdd_InteractiveEndToEnd(t *testing.T) {

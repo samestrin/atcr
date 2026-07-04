@@ -95,6 +95,28 @@ func TestFilter_Match(t *testing.T) {
 	}
 }
 
+func TestFilter_Match_GroupCaseInsensitive(t *testing.T) {
+	recs := []Record{{
+		Item: tdmigrate.Item{Group: "Foo", Status: "open", Severity: "HIGH",
+			File: "x.go:1", Problem: "p", Fix: "f", Category: "c", Source: "s"},
+	}}
+	got := Apply(recs, Filter{Group: "foo"})
+	assert.Len(t, got, 1)
+}
+
+func TestFilter_Match_ComponentBoundary(t *testing.T) {
+	recs := []Record{
+		{Item: tdmigrate.Item{Group: "1", Status: "open", Severity: "HIGH",
+			File: "cmd/atcr/review.go:1", Problem: "p", Fix: "f", Category: "c", Source: "s"}},
+		{Item: tdmigrate.Item{Group: "1", Status: "open", Severity: "HIGH",
+			File: "cmder/other.go:1", Problem: "p", Fix: "f", Category: "c", Source: "s"}},
+	}
+	// A bare "cmd" component must not also match the unrelated "cmder" prefix.
+	got := Apply(recs, Filter{Component: "cmd"})
+	require.Len(t, got, 1)
+	assert.Equal(t, "cmd/atcr/review.go:1", got[0].File)
+}
+
 func TestApply_ReturnsNonNilEmpty(t *testing.T) {
 	got := Apply(nil, Filter{Severity: "HIGH"})
 	assert.NotNil(t, got)

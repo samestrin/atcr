@@ -1,0 +1,14 @@
+{
+  "agent": "otto",
+  "status": "ok",
+  "findings_count": 3,
+  "duration_ms": 88007,
+  "payload_mode": "blocks",
+  "truncated": false,
+  "files_dropped": [],
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0,
+  "model": "gemma-4-31b",
+  "tokens_in": 68389,
+  "tokens_out": 292
+}

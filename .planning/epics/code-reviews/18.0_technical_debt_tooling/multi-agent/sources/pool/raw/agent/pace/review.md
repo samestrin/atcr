@@ -1,0 +1,3 @@
+
+
+No performance findings were identified in the changed code that meet the criteria for a performance review (measurable runtime cost in a hot path, algorithmic inefficiency, etc.). The changes primarily introduce new functionality for technical debt tooling (`atcr debt` command) and related documentation, which involve reading and processing small structured data files (YAML shards, README) with O(n) complexity where n is the number of debt items (expected to be small). No hot paths, repeated work, unnecessary allocations, or other performance issues with significant runtime impact were found in the diff. All new code paths are infrequently executed (CLI tooling) and operate on limited data scales. Therefore, no findings are emitted.
