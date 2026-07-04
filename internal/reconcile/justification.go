@@ -34,6 +34,10 @@ const (
 	// reference to a line farther than this is a DIFFERENT finding in that file,
 	// not this one, so it must not attach its narrative here.
 	anchorLineProximity = 3
+	// maxReviewBytes caps a single source review.md read. Review narratives are
+	// excerpts (justificationMaxRunes), so a multi-megabyte file under sources/
+	// (an open extension point) is not worth fully materializing.
+	maxReviewBytes = 1 << 20 // 1 MiB
 )
 
 // reviewNarrative is one collected source review.md: its review-dir-relative path

@@ -259,3 +259,18 @@ func TestReviewFileName_MatchesFanout(t *testing.T) {
 	require.Equal(t, fanoutName, reconcileName,
 		"internal/reconcile reviewFileName must stay in sync with internal/fanout reviewFile")
 }
+
+// TestCollectReviewNarratives_SkipsOversizedFiles verifies that a review.md
+// larger than maxReviewBytes is skipped rather than fully loaded into memory
+// (Epic 18.2 TD #2). The file contains a matching anchor; if it were read it
+// would produce a justification, so an empty result proves the skip.
+func TestCollectReviewNarratives_SkipsOversizedFiles(t *testing.T) {
+	reviewDir := t.TempDir()
+	// A file one byte over the cap must be ignored.
+	anchor := "1. **`a.go:1`** would match if read.\n"
+	padding := strings.Repeat("x\n", maxReviewBytes)
+	writeReview(t, reviewDir, "host", anchor+padding)
+	jf := []JSONFinding{{File: "a.go", Line: 1}}
+	stampJustifications(jf, reviewDir)
+	require.Empty(t, jf[0].Justification, "oversized review.md must be skipped")
+}
