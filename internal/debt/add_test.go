@@ -168,6 +168,37 @@ func TestRefreshStats_NoStatsBlockIsNoOp(t *testing.T) {
 	assert.Equal(t, "# TD\n\nno stats here\n", string(got), "a README without a Stats block is left untouched")
 }
 
+func TestRefreshStats_PreservesContentBetweenStatsAndLastModified(t *testing.T) {
+	dir := t.TempDir()
+	readme := filepath.Join(dir, "README.md")
+	content := "# Technical Debt\n\n" +
+		"## Stats\n\n" +
+		"| Severity | Open | Deferred | Resolved |\n" +
+		"|----------|------|----------|----------|\n" +
+		"| CRITICAL | 0 | 0 | 0 |\n" +
+		"| HIGH | 0 | 0 | 0 |\n" +
+		"| MEDIUM | 0 | 0 | 0 |\n" +
+		"| LOW | 0 | 0 | 0 |\n\n" +
+		"**Note:** do not delete this intervening note\n\n" +
+		"**Last Modified:** 2026-01-01 | **Open Items:** 0 | **Deferred Items:** 0 | **Resolved Items:** 0 | **Total Items:** 0\n\n" +
+		"### [2026-06-30] From Sprint: prior\n\n" +
+		"| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |\n" +
+		"|-------|---|----------|------|---------|-----|----------|-------------|--------|\n" +
+		"| 1 | [ ] | MEDIUM | a.go:1 | old | oldfix | correctness | 5 | code-review |\n"
+	require.NoError(t, os.WriteFile(readme, []byte(content), 0o644))
+	require.NoError(t, RefreshStats(readme, "2026-07-03"))
+
+	got, err := os.ReadFile(readme)
+	require.NoError(t, err)
+	s := string(got)
+	assert.Contains(t, s, "**Note:** do not delete this intervening note",
+		"content between the Stats table and the Last Modified line must survive")
+	assert.Contains(t, s, "**Last Modified:** 2026-07-03")
+	// The refreshed README must still parse cleanly.
+	_, err = tdmigrate.ParseREADME(s)
+	require.NoError(t, err)
+}
+
 func TestAppendItem_WritesREADMEAndRegeneratesShards(t *testing.T) {
 	dir := t.TempDir()
 	readme := filepath.Join(dir, "README.md")
