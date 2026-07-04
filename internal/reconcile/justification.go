@@ -207,6 +207,11 @@ func beatsMatch(tier int, revPref bool, ni, li, bTier int, bRev bool, bNi, bLi i
 // char to its left is a path/identifier char), so a finding for "y.go" does not
 // falsely match a line referencing "internal/x/y.go:42".
 func anchorTier(s, file string, line int) int {
+	if line <= 0 {
+		// File-level finding with no specific line: proximity/covering matching makes
+		// no sense and would attach arbitrary early-line narratives.
+		return 0
+	}
 	best := 0
 	needle := file + ":"
 	from := 0
