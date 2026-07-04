@@ -65,6 +65,28 @@ func TestInsertRow_AppendsToExistingSection(t *testing.T) {
 	assert.Contains(t, out, "## Trailing section")
 }
 
+func TestInsertRow_DoesNotCrossIntoLaterNonDatedTable(t *testing.T) {
+	// A dated section followed by a `##` section that ALSO has a pipe table. The
+	// new row must land in the dated section, never spliced into the later table.
+	content := "# TD\n\n" +
+		"### [2026-07-03] From Sprint: manual\n\n" +
+		"| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |\n" +
+		"|-------|---|----------|------|---------|-----|----------|-------------|--------|\n" +
+		"| 1 | [ ] | LOW | a.go:1 | old | oldfix | correctness | 5 | code-review |\n\n" +
+		"## Reference\n\n" +
+		"| Col A | Col B |\n|-------|-------|\n| x | y |\n"
+	sec := Section{Date: "2026-07-03", SourceType: "Sprint", Label: "manual"}
+
+	out, err := insertRow(content, sec, newItemForAdd())
+	require.NoError(t, err)
+
+	// The new row must appear before the `## Reference` heading, not spliced into
+	// the later table — the point of scanning to any `#` header, not just `### `.
+	assert.Less(t, strings.Index(out, "internal/x/y.go:12"), strings.Index(out, "## Reference"))
+	// The reference table is left untouched.
+	assert.Contains(t, out, "| Col A | Col B |")
+}
+
 func TestInsertRow_SanitizesPipesAndNewlines(t *testing.T) {
 	it := newItemForAdd()
 	it.Problem = "a | b\nc"
@@ -90,6 +112,60 @@ func TestInsertRow_RejectsInvalidItem(t *testing.T) {
 func TestInsertRow_RejectsInvalidSection(t *testing.T) {
 	_, err := insertRow("# TD\n", Section{Date: "2026-07-03", SourceType: "Bogus", Label: "l"}, newItemForAdd())
 	require.Error(t, err)
+}
+
+// readmeWithStats is a README carrying a Stats block plus one existing item, so
+// stat-refresh behavior can be asserted end-to-end.
+const readmeWithStats = "# Technical Debt\n\n" +
+	"## Stats\n\n" +
+	"| Severity | Open | Deferred | Resolved |\n" +
+	"|----------|------|----------|----------|\n" +
+	"| CRITICAL | 0 | 0 | 0 |\n" +
+	"| HIGH | 0 | 0 | 0 |\n" +
+	"| MEDIUM | 0 | 0 | 0 |\n" +
+	"| LOW | 0 | 0 | 0 |\n\n" +
+	"**Last Modified:** 2026-01-01 | **Open Items:** 0 | **Deferred Items:** 0 | **Resolved Items:** 0 | **Total Items:** 0\n\n" +
+	"## How to Use\n\nprose here\n\n" +
+	"### [2026-06-30] From Sprint: prior\n\n" +
+	"| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |\n" +
+	"|-------|---|----------|------|---------|-----|----------|-------------|--------|\n" +
+	"| 1 | [ ] | MEDIUM | a.go:1 | old | oldfix | correctness | 5 | code-review |\n"
+
+func TestAppendItem_RefreshesStats(t *testing.T) {
+	dir := t.TempDir()
+	readme := filepath.Join(dir, "README.md")
+	items := filepath.Join(dir, "items")
+	require.NoError(t, os.WriteFile(readme, []byte(readmeWithStats), 0o644))
+
+	sec := Section{Date: "2026-07-03", SourceType: "Sprint", Label: "manual"}
+	var stderr bytes.Buffer
+	require.NoError(t, AppendItem(readme, items, sec, newItemForAdd(), &stderr))
+
+	got, err := os.ReadFile(readme)
+	require.NoError(t, err)
+	s := string(got)
+
+	// Two items now: the prior open MEDIUM and the new open HIGH.
+	assert.Contains(t, s, "**Open Items:** 2")
+	assert.Contains(t, s, "**Total Items:** 2")
+	assert.Contains(t, s, "**Last Modified:** 2026-07-03")
+	// Per-severity row reflects the counts (HIGH now has 1 open).
+	assert.Contains(t, s, "| HIGH | 1 | 0 | 0 |")
+	assert.Contains(t, s, "| MEDIUM | 1 | 0 | 0 |")
+	// The intervening prose and prior section survive the stats rewrite.
+	assert.Contains(t, s, "prose here")
+	assert.Contains(t, s, "### [2026-06-30] From Sprint: prior")
+}
+
+func TestRefreshStats_NoStatsBlockIsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	readme := filepath.Join(dir, "README.md")
+	require.NoError(t, os.WriteFile(readme, []byte("# TD\n\nno stats here\n"), 0o644))
+	require.NoError(t, RefreshStats(readme, "2026-07-03"))
+
+	got, err := os.ReadFile(readme)
+	require.NoError(t, err)
+	assert.Equal(t, "# TD\n\nno stats here\n", string(got), "a README without a Stats block is left untouched")
 }
 
 func TestAppendItem_WritesREADMEAndRegeneratesShards(t *testing.T) {

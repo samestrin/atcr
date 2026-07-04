@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/samestrin/atcr/internal/tdmigrate"
 )
@@ -98,10 +99,13 @@ func insertRow(content string, sec Section, it tdmigrate.Item) (string, error) {
 	}
 
 	// Find the last table (pipe) line within this section: from just after the
-	// header until the next `### ` header or EOF.
+	// header until the next heading of ANY level (`#`, `##`, `###`) or EOF. Using
+	// any `#`-prefixed line as the boundary (not just `### `) means the scan can
+	// never cross into an unrelated following section's table if a dated section
+	// is not the trailing block.
 	lastPipe := -1
 	for i := secIdx + 1; i < len(lines); i++ {
-		if strings.HasPrefix(strings.TrimSpace(lines[i]), "### ") {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "#") {
 			break
 		}
 		if strings.HasPrefix(strings.TrimSpace(lines[i]), "|") {
@@ -164,11 +168,79 @@ func AppendItem(readmePath, itemsDir string, sec Section, it tdmigrate.Item, std
 	if err != nil {
 		return err
 	}
+	// Validate that the mutated README still parses cleanly BEFORE touching disk.
+	// The subsequent SyncShards re-migrates the whole README, so if any
+	// pre-existing drift elsewhere would make migrate fail, catch it here and
+	// abort with both README and shards untouched (no partial-write window).
+	if _, err := tdmigrate.ParseREADME(updated); err != nil {
+		return fmt.Errorf("refusing to write README: updated table does not parse cleanly (pre-existing drift elsewhere in the README?): %w", err)
+	}
 	if err := os.WriteFile(readmePath, []byte(updated), 0o644); err != nil {
 		return fmt.Errorf("write README: %w", err)
 	}
 	if err := SyncShards(readmePath, itemsDir, stderr); err != nil {
 		return fmt.Errorf("regenerate shards after add: %w", err)
 	}
+	// Keep the authoritative README self-consistent: refresh its Stats table and
+	// Last Modified summary so they agree with the row just appended. A README
+	// without a Stats block is left untouched.
+	if err := RefreshStats(readmePath, sec.Date); err != nil {
+		return fmt.Errorf("refresh README stats after add: %w", err)
+	}
 	return nil
+}
+
+// RefreshStats recomputes the README's `## Stats` table and `**Last Modified:**`
+// summary line from the items currently in the table, so they stay consistent
+// after an add. modDate stamps the Last Modified date. A README that has no
+// Stats block (or no Last Modified line) is left untouched — this is a
+// best-effort refresh of an existing summary, not an inserter.
+func RefreshStats(readmePath, modDate string) error {
+	data, err := os.ReadFile(readmePath)
+	if err != nil {
+		return fmt.Errorf("read README: %w", err)
+	}
+	content := string(data)
+
+	statsIdx := strings.Index(content, "## Stats")
+	lmIdx := strings.Index(content, "**Last Modified:**")
+	if statsIdx < 0 || lmIdx < 0 || lmIdx < statsIdx {
+		return nil // no recognizable stats block to refresh
+	}
+	// Extend the replaced span to the end of the Last Modified line.
+	lmLineEnd := lmIdx
+	if nl := strings.IndexByte(content[lmIdx:], '\n'); nl >= 0 {
+		lmLineEnd = lmIdx + nl
+	} else {
+		lmLineEnd = len(content)
+	}
+
+	shards, err := tdmigrate.ParseREADME(content)
+	if err != nil {
+		return fmt.Errorf("parse README for stats: %w", err)
+	}
+	sum := Summarize(Flatten(shards), time.Time{}, 0)
+
+	block := renderStatsBlock(sum, modDate)
+	updated := content[:statsIdx] + block + content[lmLineEnd:]
+	if err := os.WriteFile(readmePath, []byte(updated), 0o644); err != nil {
+		return fmt.Errorf("write README stats: %w", err)
+	}
+	return nil
+}
+
+// renderStatsBlock renders the `## Stats` table and the Last Modified summary
+// line (no trailing newline) from an aggregated Summary.
+func renderStatsBlock(sum Summary, modDate string) string {
+	var b strings.Builder
+	b.WriteString("## Stats\n\n")
+	b.WriteString("| Severity | Open | Deferred | Resolved |\n")
+	b.WriteString("|----------|------|----------|----------|\n")
+	for _, c := range sum.BySeverity {
+		fmt.Fprintf(&b, "| %s | %d | %d | %d |\n", c.Severity, c.Open, c.Deferred, c.Resolved)
+	}
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "**Last Modified:** %s | **Open Items:** %d | **Deferred Items:** %d | **Resolved Items:** %d | **Total Items:** %d",
+		modDate, sum.Open, sum.Deferred, sum.Resolved, sum.Total)
+	return b.String()
 }
