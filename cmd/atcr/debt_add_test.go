@@ -207,6 +207,28 @@ func TestPromptEntry_InvalidDateErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestPromptEntry_InputTooLongErrors(t *testing.T) {
+	answers := strings.Join([]string{
+		"2026-07-03",
+		"Sprint",
+		"lbl",
+		"",
+		"MEDIUM",
+		"a.go:1",
+		"p",
+		"f",
+		"c",
+		"5",
+		"open",
+		strings.Repeat("a", 2*1024*1024), // too-long final answer triggers bufio.ErrTooLong
+	}, "\n") + "\n"
+	var out bytes.Buffer
+	def := wizardDefaults{Date: "2026-07-03", SourceType: "Sprint", Label: "manual", Group: "U", Status: "open", Source: "manual"}
+	_, _, err := promptEntry(strings.NewReader(answers), &out, def)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "input read error")
+}
+
 func TestDebtAdd_InteractiveEndToEnd(t *testing.T) {
 	readme, items := emptyTDRepo(t)
 
