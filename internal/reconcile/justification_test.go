@@ -146,3 +146,25 @@ func TestStampJustifications_Truncates(t *testing.T) {
 	require.LessOrEqual(t, len([]rune(jf[0].Justification)), justificationMaxRunes+1) // +1 for the ellipsis
 	require.True(t, strings.HasSuffix(jf[0].Justification, "…"))
 }
+
+// TestStampJustifications_SetsSourceReport verifies the back-reference (Epic 18.2
+// T3): path (review-dir-relative), 1-based anchor line, and nearest heading.
+func TestStampJustifications_SetsSourceReport(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "host", "# Host review\n\n"+ // line 1
+		"## Findings\n"+ // line 3
+		"1. **`internal/auth/token.go:42` — JWT not verified.** narrative body.\n") // line 4
+	jf := []JSONFinding{{File: "internal/auth/token.go", Line: 42, Reviewers: []string{"host"}}}
+	stampJustifications(jf, reviewDir)
+
+	require.NotNil(t, jf[0].SourceReport, "expected a back-reference")
+	require.Equal(t, "sources/host/review.md", jf[0].SourceReport.Path)
+	require.Equal(t, 4, jf[0].SourceReport.Line, "1-based line of the anchor")
+	require.Equal(t, "Findings", jf[0].SourceReport.Section)
+
+	// And it round-trips through findings.json under the source_report key.
+	b, err := json.Marshal(jf[0])
+	require.NoError(t, err)
+	require.Contains(t, string(b), `"source_report"`)
+	require.Contains(t, string(b), `"path":"sources/host/review.md"`)
+}

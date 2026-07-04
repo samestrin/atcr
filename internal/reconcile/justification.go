@@ -72,6 +72,7 @@ func stampJustifications(jf []JSONFinding, reviewDir string) {
 			continue
 		}
 		jf[i].Justification = m.text
+		jf[i].SourceReport = &SourceReport{Path: m.relPath, Line: m.line, Section: m.section}
 		matched++
 	}
 	slog.Debug("justifications stamped", "matched", matched, "total", len(jf))
