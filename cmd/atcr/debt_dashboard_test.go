@@ -68,6 +68,15 @@ func TestDebtDashboard_CheckDetectsDriftThenClean(t *testing.T) {
 	require.Error(t, err, "a stale dashboard must fail --check")
 }
 
+func TestDebtDashboard_CheckAndStdoutAreMutuallyExclusive(t *testing.T) {
+	items := writeItems(t)
+	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
+
+	_, err := runDebt(t, "dashboard", "--items", items, "--out", out, "--check", "--stdout")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+}
+
 func TestDebtDashboard_CheckSkipsSync(t *testing.T) {
 	items := writeItems(t)
 	readme := filepath.Join(t.TempDir(), "README.md")
