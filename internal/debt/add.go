@@ -159,7 +159,22 @@ func appendNewSection(content, hdr, row string) string {
 // updated README so the item is immediately visible to the shard-reading
 // commands. It never writes a shard directly — a shard-only write would be
 // destroyed by the next migrate.
+//
+// AppendItem acquires the shared README lock used by the TD tooling so
+// concurrent writers (other atcr debt add processes, /resolve-td sessions,
+// group_td, etc.) serialize their read-modify-write cycles and never clobber
+// each other's rows.
 func AppendItem(readmePath, itemsDir string, sec Section, it tdmigrate.Item, stderr io.Writer) error {
+	repoRoot, err := repoRootFromReadme(readmePath)
+	if err != nil {
+		return fmt.Errorf("resolve repo root for README lock: %w", err)
+	}
+	return withReadmeLock(repoRoot, "atcr-debt-add", func() error {
+		return appendItemUnlocked(readmePath, itemsDir, sec, it, stderr)
+	})
+}
+
+func appendItemUnlocked(readmePath, itemsDir string, sec Section, it tdmigrate.Item, stderr io.Writer) error {
 	data, err := os.ReadFile(readmePath)
 	if err != nil {
 		return fmt.Errorf("read README: %w", err)

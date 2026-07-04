@@ -2,10 +2,13 @@ package debt
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -243,4 +246,58 @@ func TestAppendItem_RollsBackREADMEOnShardSyncFailure(t *testing.T) {
 		"README should be rolled back to pre-write bytes when shard sync fails")
 	assert.Contains(t, string(got), "## How to Use",
 		"intervening prose must survive the rollback")
+}
+
+func TestWithReadmeLock_SerializesConcurrentCallers(t *testing.T) {
+	dir := t.TempDir()
+	lockDir := filepath.Join(dir, ".planning", ".locks", "td-readme.lock")
+
+	var counter int
+	var wg sync.WaitGroup
+	errCh := make(chan error, 10)
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- withReadmeLock(dir, "test", func() error {
+				v := counter
+				time.Sleep(time.Millisecond)
+				counter = v + 1
+				return nil
+			})
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+	assert.Equal(t, 10, counter, "concurrent callers must be serialized")
+	_, err := os.Stat(lockDir)
+	assert.True(t, os.IsNotExist(err), "lock directory must be released after fn returns")
+}
+
+func TestAppendItem_ConcurrentAddsSurvive(t *testing.T) {
+	dir := t.TempDir()
+	readme := filepath.Join(dir, "README.md")
+	items := filepath.Join(dir, "items")
+	require.NoError(t, os.WriteFile(readme, []byte("# Technical Debt\n\n"), 0o644))
+
+	sec := Section{Date: "2026-07-03", SourceType: "Sprint", Label: "manual"}
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			it := newItemForAdd()
+			it.File = fmt.Sprintf("internal/x/y%d.go:12", n)
+			var stderr bytes.Buffer
+			require.NoError(t, AppendItem(readme, items, sec, it, &stderr))
+		}(i)
+	}
+	wg.Wait()
+
+	recs, err := Load(items)
+	require.NoError(t, err)
+	require.Len(t, recs, 5, "all concurrent adds must survive")
 }
