@@ -143,6 +143,9 @@ func renderDebtTable(w io.Writer, recs []debt.Record) error {
 // anything, and collapses newlines to spaces so a multi-line problem stays on
 // one table row.
 func truncate(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
 	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", " "), "\n", " ")
 	r := []rune(s)
 	if len(r) <= n {
