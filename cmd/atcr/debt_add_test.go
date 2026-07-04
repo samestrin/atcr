@@ -86,6 +86,23 @@ func TestDebtAdd_InvalidDateIsUsageError(t *testing.T) {
 	assert.Equal(t, exitUsage, exitCode(err))
 }
 
+func TestDebtAdd_CaseNormalizedEnums(t *testing.T) {
+	readme, items := emptyTDRepo(t)
+	_, err := runDebt(t, "add",
+		"--readme", readme, "--items", items,
+		"--date", "2026-07-03",
+		"--severity", "high", "--status", "Open", "--source-type", "sprint",
+		"--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c",
+	)
+	require.NoError(t, err)
+
+	recs, err := debt.Load(items)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "HIGH", recs[0].Severity)
+	assert.Equal(t, "open", recs[0].Status)
+}
+
 func TestPromptEntry_ReadsFieldsAndDefaults(t *testing.T) {
 	// Answers, in order: date (default), source-type (default), label,
 	// group (default), severity, file, problem, fix, category, est, status
