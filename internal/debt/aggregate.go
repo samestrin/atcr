@@ -18,14 +18,35 @@ func Component(file string) string {
 			return "(unscoped)"
 		}
 		// A bare filename (e.g. main.go:3 -> main.go) is a legitimate one-segment
-		// component; genuinely path-less prose is not.
-		if strings.Contains(p, " ") {
+		// component; genuinely path-less prose is not. Distinguish the two by
+		// looking for a file extension or a single free-form phrase.
+		if strings.Contains(p, " ") && !hasExtension(p) && wordCount(p) > 1 {
 			return "(unscoped)"
 		}
 		return p
 	}
 	segs := strings.SplitN(p, "/", 3)
 	return segs[0] + "/" + segs[1]
+}
+
+// hasExtension reports whether s ends with a dot-prefixed extension made of
+// letters or digits. It is a coarse signal for "this looks like a filename".
+func hasExtension(s string) bool {
+	i := strings.LastIndex(s, ".")
+	if i <= 0 || i == len(s)-1 {
+		return false
+	}
+	for _, r := range s[i+1:] {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
+// wordCount returns the number of whitespace-delimited words in s.
+func wordCount(s string) int {
+	return len(strings.Fields(s))
 }
 
 // SeverityCount is the open/deferred/resolved breakdown for one severity.
