@@ -178,7 +178,9 @@ func buildAnchorIndex(narratives []reviewNarrative) anchorIndex {
 // on one line yields a single ref (anchorTier already scans every occurrence on
 // the line for the best tier).
 func indexLineFiles(idx anchorIndex, lt string, ni, li int) {
-	var seen map[string]struct{}
+	var seen []string // files already recorded for this line; a line rarely holds
+	// more than one anchor, so a nil-until-needed slice with a linear dedup scan
+	// avoids allocating a map for the common 0-1 anchor case.
 	for c := 0; c < len(lt); c++ {
 		if lt[c] != ':' {
 			continue
@@ -196,15 +198,23 @@ func indexLineFiles(idx anchorIndex, lt string, ni, li int) {
 			continue // colon with no path token before it
 		}
 		file := lt[start:c]
-		if _, dup := seen[file]; dup {
+		if containsString(seen, file) {
 			continue
 		}
-		if seen == nil {
-			seen = make(map[string]struct{})
-		}
-		seen[file] = struct{}{}
+		seen = append(seen, file)
 		idx[file] = append(idx[file], anchorRef{ni: ni, li: li})
 	}
+}
+
+// containsString reports whether s appears in xs. Used for per-line anchor dedup
+// where xs is at most a couple of entries, so a linear scan beats a map.
+func containsString(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // matchNarrative finds the review.md section that best references file:line and
