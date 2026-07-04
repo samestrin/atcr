@@ -98,7 +98,7 @@ func Classify() {
 	require.NoError(t, os.WriteFile(path, []byte(src), 0o644))
 
 	g := NewGrouper(dir)
-	defer g.Close()
+	defer func() { _ = g.Close() }()
 
 	// Line 5 (x := 1) sits inside an if inside func Classify → "Classify".
 	require.Equal(t, "Classify", g.EnclosingSymbol(reconcile.Finding{File: "code.go", Line: 5}))
