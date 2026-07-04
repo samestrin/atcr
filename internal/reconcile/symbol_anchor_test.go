@@ -44,6 +44,28 @@ func TestSafeSymbolAnchor(t *testing.T) {
 	}
 }
 
+func TestStripSymbolAnchors(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"(classifyHeader) nil deref", "nil deref"}, // single anchor removed
+		{"(a) (b) problem", "problem"},              // greedy: multiple anchors removed
+		{"no anchor here", "no anchor here"},        // no anchor
+		{"", ""},                                    // empty
+		{"(x) ", ""},                                // anchor with empty remainder
+		{"(bad name) foo", "(bad name) foo"},        // space in name => not a well-formed anchor
+		{"(a|b) foo", "(a|b) foo"},                  // pipe in name => not well-formed
+		{"(unterminated foo", "(unterminated foo"},  // no closing paren
+		{"(x)nospace", "(x)nospace"},                // no space after ')'
+		{"()  foo", "()  foo"},                      // empty name => not well-formed
+	}
+	for _, c := range cases {
+		require.Equalf(t, c.want, StripSymbolAnchors(c.in), "StripSymbolAnchors(%q)", c.in)
+	}
+	// Round-trip: stripping exactly inverts stamping for any safe name.
+	orig := "boundary bug"
+	stamped := "(" + "parseValue" + ") " + orig
+	require.Equal(t, orig, StripSymbolAnchors(stamped))
+}
+
 func TestStampSymbolAnchors_PrependsSafeName(t *testing.T) {
 	jf := []JSONFinding{{File: "x.go", Line: 5, Problem: "nil deref possible"}}
 	stampSymbolAnchors(jf, fakeResolver{name: "classifyHeader"})

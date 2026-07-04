@@ -68,3 +68,47 @@ func safeSymbolAnchor(name string) bool {
 	}
 	return true
 }
+
+// StripSymbolAnchors removes any leading "(symbol) " anchors that stampSymbolAnchors
+// may have prepended to a Problem cell, returning the underlying problem text.
+//
+// Identity correlation across reconcile artifacts must compare underlying problems,
+// not display text: findings.json is symbol-anchored while ambiguous.json cluster
+// members stay raw, so a consumer matching a finding to its cluster member (e.g.
+// the debate gray-zone merge) must normalize away the anchor — it is a derived
+// annotation, not part of a finding's identity. Stripping is greedy and applied to
+// BOTH sides of such a comparison, so a problem that already began with a
+// parenthesized token before stamping normalizes identically whether or not it was
+// later stamped. Only a well-formed anchor — "(", a run of table-safe anchor
+// characters (see safeSymbolAnchor), ")", exactly one space — is removed; a leading
+// "(" that is not a well-formed anchor is left intact.
+func StripSymbolAnchors(problem string) string {
+	for {
+		rest, ok := stripOneAnchor(problem)
+		if !ok {
+			return problem
+		}
+		problem = rest
+	}
+}
+
+// stripOneAnchor removes a single leading "(name) " anchor from s and reports
+// whether one was removed. name must satisfy safeSymbolAnchor, which forbids ')',
+// so the first ')' unambiguously terminates the anchor.
+func stripOneAnchor(s string) (string, bool) {
+	if len(s) < 4 || s[0] != '(' {
+		return s, false
+	}
+	close := strings.IndexByte(s, ')')
+	if close < 0 {
+		return s, false
+	}
+	if !safeSymbolAnchor(s[1:close]) {
+		return s, false
+	}
+	after := s[close+1:]
+	if len(after) == 0 || after[0] != ' ' {
+		return s, false
+	}
+	return after[1:], true
+}
