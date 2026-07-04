@@ -106,3 +106,36 @@ func SmallestCovering(root Node, line int) *Node {
 	}
 	return &block
 }
+
+// EnclosingSymbolName returns the name of the nearest enclosing NAMED block
+// covering line: it walks the covering chain from the deepest covering block up
+// toward the root and returns the first node whose Name is non-empty — a
+// func/method/class/type. Unnamed control-flow blocks (if/for/while/switch/…) are
+// skipped, so a finding inside an `if` inside `classifyHeader` resolves to
+// "classifyHeader", not the anonymous `if`. ok is false when line falls outside
+// root or no covering node is named; the caller then omits the symbol prefix
+// (the AC2 graceful-degradation path).
+//
+// Unlike CoveringBlock's key, the returned name is a human-facing display anchor
+// (a stable RELOCATE_KEY for resolve-td), not a grouping key: duplicate names
+// within a file are harmless here.
+func EnclosingSymbolName(root Node, line int) (string, bool) {
+	if line < root.StartLine || line > root.EndLine {
+		return "", false
+	}
+	// coveringChain returns the block nodes BELOW root down to the deepest covering
+	// block, ordered shallow→deep; walk it deep→shallow so the tightest named scope
+	// around the finding wins.
+	chain, _ := coveringChain(root, line)
+	for i := len(chain) - 1; i >= 0; i-- {
+		if chain[i].Name != "" {
+			return chain[i].Name, true
+		}
+	}
+	// The chain excludes root itself; a named root (rare — file/module nodes are
+	// unnamed) is still a valid outermost anchor.
+	if root.Name != "" {
+		return root.Name, true
+	}
+	return "", false
+}

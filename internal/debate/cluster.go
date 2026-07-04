@@ -203,7 +203,10 @@ func applyOneClusterMerge(findings []reconcile.JSONFinding, c reclib.AmbiguousCl
 	memberExact := map[FindingKey]bool{}
 	memberLocs := map[string]bool{}
 	for _, mf := range c.Findings {
-		memberExact[FindingKey{File: mf.File, Line: mf.Line, Problem: mf.Problem}] = true
+		// findings.json is symbol-anchored (epic 18.1) while ambiguous.json members
+		// stay raw; strip the display anchor from both sides so exact matching keys
+		// on finding identity, not the derived "(symbol) " prefix.
+		memberExact[FindingKey{File: mf.File, Line: mf.Line, Problem: reconcile.StripSymbolAnchors(mf.Problem)}] = true
 		memberLocs[locationKey(mf.File, mf.Line)] = true
 	}
 
@@ -212,7 +215,7 @@ func applyOneClusterMerge(findings []reconcile.JSONFinding, c reclib.AmbiguousCl
 	exactMatchedLocs := map[string]bool{}
 	// Pass 1: exact member matches.
 	for i, f := range findings {
-		if memberExact[FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}] {
+		if memberExact[FindingKey{File: f.File, Line: f.Line, Problem: reconcile.StripSymbolAnchors(f.Problem)}] {
 			matched[i] = true
 			exactHits++
 			exactMatchedLocs[locationKey(f.File, f.Line)] = true

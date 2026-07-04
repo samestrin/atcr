@@ -210,6 +210,38 @@ func (g *Grouper) GroupKey(f reconcile.Finding) string {
 	return key
 }
 
+// EnclosingSymbol resolves f's file+line to the name of its nearest enclosing
+// named AST block (func/method/class/type), or "" to omit the anchor. It reuses
+// the same parser Host, per-file tree cache, and root-containment
+// canonicalization as GroupKey, so resolving a symbol for a finding a caller
+// already grouped costs only a tree walk.
+//
+// "" is returned — never an error — for a file-level finding (Line <= 0 or empty
+// File), an unsupported language, a path that escapes root, an absent or
+// unparseable file, or a line with no named covering block. This mirrors
+// GroupKey's proximity-fallback contract: symbol anchoring degrades silently to
+// "no prefix" rather than failing a reconcile.
+func (g *Grouper) EnclosingSymbol(f reconcile.Finding) string {
+	if f.Line <= 0 || f.File == "" {
+		return ""
+	}
+	file := filepath.Clean(f.File)
+	lang := LanguageForExt(strings.ToLower(filepath.Ext(file)))
+	if lang == "" {
+		return ""
+	}
+	path, ok := g.canonicalPath(file)
+	if !ok {
+		return ""
+	}
+	pf := g.treeFor(path, lang)
+	if !pf.ok {
+		return ""
+	}
+	name, _ := EnclosingSymbolName(pf.tree, f.Line)
+	return name
+}
+
 // rememberKey memoizes the computed group key for line under g.mu so repeat
 // findings on the same line short-circuit the tree walk and hash.
 func (g *Grouper) rememberKey(pf *parsedFile, line int, key string) {
