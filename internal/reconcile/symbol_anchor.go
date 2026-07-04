@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"log/slog"
 	"strings"
 
 	reclib "github.com/samestrin/atcr/reconcile"
@@ -32,6 +33,8 @@ func stampSymbolAnchors(jf []JSONFinding, g reclib.Grouper) {
 	if !ok || sr == nil {
 		return
 	}
+	total := len(jf)
+	anchored := 0
 	for i := range jf {
 		name := sr.EnclosingSymbol(reclib.Finding{File: jf[i].File, Line: jf[i].Line})
 		if !safeSymbolAnchor(name) {
@@ -39,10 +42,13 @@ func stampSymbolAnchors(jf []JSONFinding, g reclib.Grouper) {
 		}
 		prefix := "(" + name + ") "
 		if strings.HasPrefix(jf[i].Problem, prefix) {
+			anchored++
 			continue
 		}
 		jf[i].Problem = prefix + jf[i].Problem
+		anchored++
 	}
+	slog.Debug("symbol anchors stamped", "anchored", anchored, "total", total)
 }
 
 // safeSymbolAnchor reports whether name may be used as a "(name) " Problem-cell

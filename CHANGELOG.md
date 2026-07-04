@@ -1,3 +1,10 @@
+## [Technical Debt] - 2026-07-04
+
+### Fixed
+
+- `internal/reconcile`: logged a debug summary (anchored/total counts) of symbol anchors stamped in `stampSymbolAnchors`, closing a gap where anchoring outcomes were invisible without a debugger.
+- `docs/technical-debt-format.md`: documented that the `(symbolName)` anchor is rendered verbatim by every in-repo consumer of `JSONFinding.Problem` — the GitHub Action PR comment, check-run summary table, and human-readable report — not only the technical-debt table.
+
 ## [18.1.0] - 2026-07-04
 
 Anchored each reconciled finding to the name of its enclosing code symbol so technical-debt items keep a stable relocation key when intervening edits drift their line numbers.
