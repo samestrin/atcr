@@ -87,6 +87,8 @@ Any directory under a review's `sources/` that contains a `findings.txt` is a re
 
 Discovery is **leaf-preference**: a directory's `findings.txt` is an input only when no subdirectory beneath it also contains one. Per-agent raw files (`sources/pool/raw/agent/<name>/findings.txt`) are the pool inputs; the merged `sources/pool/findings.txt` is written for downstream convenience but is **not** re-discovered, so reviewers are never double-counted. `reconciled/` is output, never an input.
 
+A source's **`review.md`** — the human-readable narrative each reviewer (every pool agent and the host) writes alongside its `findings.txt` in the same leaf directory — is, as of Epic 18.2, also read at reconcile time. `atcr reconcile` correlates each finding to the `review.md` section that references its `FILE:LINE` (best-effort) and carries that narrative forward as the `justification` / `source_report` JSON fields (see [JSON form](#json-form) below). It is an **optional** input: a source with no `review.md` simply contributes no narrative, and `review.md` never itself yields findings — only `findings.txt` does.
+
 ## JSON form
 
 `reconciled/findings.json` carries the same records in structured form, plus run metadata, for scripting. Each finding may carry a per-finding `verification` block, **produced by the adversarial-verification stage (`atcr verify`, Epic 3.0)** and **absent from 1.x output** and from any review that has not been verified. Renderers and readers must tolerate both its absence and its presence: `atcr report` renders a finding with no block identically to pre-Epic-3.0 output, and renders the Skeptic section / v2 confidence only when the block is present.
@@ -122,6 +124,18 @@ When `verification` is present, readers must treat an absent or unrecognized `ve
 ```
 
 **Inline-merge markers (Epic 6.1 / 6.2).** A finding produced by the cross-examination stage's gray-zone "merge" ruling (`atcr debate`) carries two additive fields: `cluster_merged` (`true` on the survivor that unioned a gray-zone cluster's members) and `cluster_id` (the stable, content-addressed id of that source cluster, which lets the debate radar key merge-idempotency on cluster identity rather than `FILE:LINE` alone). Both are `omitempty` and are stamped **only** by the debate apply path — never by `atcr reconcile` — so a non-merged or non-debated record stays byte-identical to pre-6.x output. Per the additive-only evolution policy below, they ride `atcr-findings/v1` with no version bump; a strict consumer that rejects unknown JSON keys (`DisallowUnknownFields`-style) must tolerate them as it must any additive v1 field.
+
+**Reconcile-time narrative (Epic 18.2).** Two additive fields carry the originating review's context past reconciliation, so a downstream technical-debt-resolution consumer inherits the reviewer's reasoning instead of re-deriving it from raw `review.md` files:
+
+- `justification` — the narrative section extracted from the finding's originating source `review.md`, matched **best-effort** by `FILE:LINE`. It is distinct from `verification.notes`: `justification` is the reviewer's *original* explanation captured at reconcile time, whereas `verification.notes` is the *adversarial* stage's later skeptic/judge reasoning. Omitted when no `review.md` section references the finding's `FILE:LINE` (a match requires a line-level reference, so a bare "no issues" file mention never attaches a misleading narrative).
+- `source_report` — the back-reference to that section: `{ "path": <review-dir-relative review.md path>, "line": <1-based anchor line>, "section": <nearest Markdown heading> }`, so a consumer can navigate to full detail without re-deriving the mapping. `path` is relative to the review directory (the same dir that holds `reconciled/findings.json`); `line` and `section` are omitted when absent.
+
+```json
+  "justification": "The handler calls jwt.Parse without jwt.Verify, so a forged token is accepted.",
+  "source_report": { "path": "sources/host/review.md", "line": 42, "section": "Findings" }
+```
+
+Both are stamped **only** by `atcr reconcile` (never by the verify or debate paths), are `omitempty` — so a finding with no matched narrative stays byte-identical to pre-18.2 output — and ride `atcr-findings/v1` with no version bump per the additive-only policy below. The pair lands **only** in `reconciled/findings.json`; neither is ever written into the technical-debt README table's `Problem` cell, whose column structure Epic 18.1 freezes.
 
 ## Reserved fields in companion artifacts
 

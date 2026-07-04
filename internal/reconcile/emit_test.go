@@ -367,6 +367,10 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
 		"PathValid": true, "PathWarning": true, "PathSuggestion": true,
 		// EvidenceExec is stamped by the repro write-back (Epic 11.0), never by reconcile.
 		"EvidenceExec": true,
+		// Justification/SourceReport are stamped by stampJustifications (Epic 18.2)
+		// AFTER JSONFindings() from the source review.md narratives — the library
+		// Merged carries no narrative — so they are downstream-only here too.
+		"Justification": true, "SourceReport": true,
 	}
 	m := Merged{
 		Finding: Finding{
