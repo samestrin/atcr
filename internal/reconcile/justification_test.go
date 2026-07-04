@@ -3,6 +3,7 @@ package reconcile
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -301,6 +302,63 @@ func TestReviewFileName_MatchesFanout(t *testing.T) {
 	require.NotEmpty(t, fanoutName, "could not find reviewFile constant in fanout/artifacts.go")
 	require.Equal(t, fanoutName, reconcileName,
 		"internal/reconcile reviewFileName must stay in sync with internal/fanout reviewFile")
+}
+
+// TestStampJustifications_MultipleFindingsShareIndex stamps several findings in
+// one call, each anchored in a distinct list item, plus one finding with no
+// anchor. It locks in that the per-run anchor index (built once, shared across
+// findings) routes every finding to its own narrative and leaves the unmatched
+// one empty — the equivalence guard for the O(findings x narrativeBytes) → indexed
+// refactor (18.2 performance TD).
+func TestStampJustifications_MultipleFindingsShareIndex(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n"+
+		"1. **`a/x.go:10` — first.** narrative alpha.\n"+
+		"2. **`b/y.go:20` — second.** narrative bravo.\n"+
+		"3. **`c/z.go:30` — third.** narrative charlie.\n")
+	jf := []JSONFinding{
+		{File: "a/x.go", Line: 10},
+		{File: "b/y.go", Line: 20},
+		{File: "c/z.go", Line: 30},
+		{File: "d/none.go", Line: 5}, // not referenced anywhere → stays empty
+	}
+	stampJustifications(jf, reviewDir)
+	require.Contains(t, jf[0].Justification, "narrative alpha")
+	require.Contains(t, jf[1].Justification, "narrative bravo")
+	require.Contains(t, jf[2].Justification, "narrative charlie")
+	require.Empty(t, jf[3].Justification, "unreferenced finding must not match any narrative")
+}
+
+// BenchmarkStampJustifications exercises the many-findings x many-narratives hot
+// path the 18.2 performance TD targets: without a pre-index, matchNarrative
+// re-scans every narrative line for every finding (O(findings x narrativeBytes)).
+// The indexed path scans only the candidate lines that mention each finding's
+// file. Run: go test -bench=BenchmarkStampJustifications -benchmem ./internal/reconcile/
+func BenchmarkStampJustifications(b *testing.B) {
+	reviewDir := b.TempDir()
+	const narratives, linesPer = 8, 200
+	for n := 0; n < narratives; n++ {
+		var sb strings.Builder
+		sb.WriteString("# Review\n\n## Findings\n")
+		for l := 0; l < linesPer; l++ {
+			fmt.Fprintf(&sb, "%d. **`internal/pkg/file%d.go:%d` — issue.** narrative body %d with padding text here.\n", l+1, n, l+1, l)
+		}
+		dir := filepath.Join(reviewDir, "sources", fmt.Sprintf("agent%02d", n))
+		require.NoError(b, os.MkdirAll(dir, 0o755))
+		require.NoError(b, os.WriteFile(filepath.Join(dir, "review.md"), []byte(sb.String()), 0o644))
+	}
+	base := make([]JSONFinding, 0, narratives*linesPer)
+	for n := 0; n < narratives; n++ {
+		for l := 0; l < linesPer; l++ {
+			base = append(base, JSONFinding{File: fmt.Sprintf("internal/pkg/file%d.go", n), Line: l + 1})
+		}
+	}
+	work := make([]JSONFinding, len(base))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		copy(work, base) // reset Justification/SourceReport each iteration
+		stampJustifications(work, reviewDir)
+	}
 }
 
 // TestCollectReviewNarratives_SkipsOversizedFiles verifies that a review.md
