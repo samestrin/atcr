@@ -86,3 +86,12 @@ and path validation and before findings are emitted, using the AST parsers in
 itself; the anchor travels in the `problem` field into whatever store the caller
 builds downstream (see [code-review-backend.md](code-review-backend.md) for the
 backend-integration contract).
+
+Within atcr itself the stamp lands once on the shared `JSONFinding.Problem`
+field before Emit, so every in-repo consumer that reads that field renders the
+`(symbolName)` anchor verbatim — not only the `technical-debt` table but also
+the GitHub Action PR comment (`internal/ghaction/comments.go`), the check-run
+summary table (`internal/ghaction/render.go`), and the human-readable report
+(`internal/report/render.go`). This is intentional: confining the anchor to a
+TD-only surface would require a schema change the emit-layer injection point
+(epic 18.1 Q2) deliberately avoids.
