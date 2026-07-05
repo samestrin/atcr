@@ -105,6 +105,12 @@ type ReviewRequest struct {
 	// the unconstrained, diff-wide review for callers that do not set it (e.g. the
 	// MCP handler).
 	SprintPlanPath string
+	// PRNumber is the pull-request number this run reviews, stamped onto the
+	// run's append-only audit record (Epic 19.1). It is optional: 0 means "no PR
+	// context" (a local review, or CI without a PR ref), in which case the audit
+	// record omits the PR but is still written. The engine does not use it for
+	// review logic — it is pure provenance threaded through to the audit hook.
+	PRNumber int
 }
 
 // ReviewResult is the outcome of a completed review run.

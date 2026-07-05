@@ -1,3 +1,14 @@
+## [19.1.0] - 2026-07-05
+
+### Added
+
+- Audit trail: every `atcr review` run now appends one tamper-evident record — run timestamp, resolved base/head SHA, PR number, and a findings-by-severity summary — to an append-only `.atcr/audit.log.jsonl` compliance ledger (a repo-level accumulator, written regardless of `--output-dir`). Resumed reviews (`--resume`) record too.
+- `atcr review --pr <n>`: stamp a pull-request number on the run's audit record; falls back to parsing `GITHUB_REF` (`refs/pull/<n>/...`) when unset.
+- `atcr audit-report --pr <n>`: render a one-page markdown compliance report of a PR's recorded review runs (SHAs, timestamps, findings summary); a PR with no recorded runs exits non-zero with a clear message.
+- `internal/audit` package: audit record type with an append-only JSONL writer, a tolerant reader, per-run capture, and a markdown compliance-report renderer.
+
+*Shipped via /execute-epic (epic 19.1)*
+
 ## [Technical Debt] - 2026-07-05
 
 ### Fixed

@@ -41,6 +41,7 @@ var allowedInternalImports = map[string][]string{
 	"tdmigrate":      {},                                       // technical-debt storage migrator; yaml.v3 + stdlib only, imports no internal package (epic 12.1)
 	"debt":           {"tdmigrate", "log"},                     // `atcr debt` query/report layer over the 12.1 shard store; reuses tdmigrate's Item/Shard/loader/migrate, log.NewRedactor for the dashboard secret scrub (epic 18.0)
 	"history":        {"stream"},                               // Epic 19.0: parses pool findings.txt via stream.ParseSource to persist the append-only finding-history ledger; stream is the zero-dependency findings leaf
+	"audit":          {"stream"},                               // Epic 19.1: parses pool findings.txt via stream.ParseSource to summarize findings-by-severity into the append-only per-run audit ledger; stream is the zero-dependency findings leaf
 	"payload":        {"gitrange", "atomicfs", "log"},          // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
 	"llmclient":      {"registry", "errors", "circuitbreaker"}, // circuitbreaker: per-provider fail-fast on the API call path (epic 4.5)
 	"doctor":         {"llmclient", "registry"},

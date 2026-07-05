@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 3 | 0 |
-| MEDIUM | 0 | 30 | 0 |
-| LOW | 0 | 34 | 0 |
+| MEDIUM | 1 | 30 | 0 |
+| LOW | 5 | 34 | 0 |
 
-**Last Modified:** 2026-07-05 | **Open Items:** 0 | **Deferred Items:** 67 | **Resolved Items:** 0 | **Total Items:** 67
+**Last Modified:** 2026-07-05 | **Open Items:** 6 | **Deferred Items:** 67 | **Resolved Items:** 0 | **Total Items:** 73
 
 ## Directory Structure
 
@@ -62,6 +62,17 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table â†’ shards â
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-05] From Sprint: epic-19.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | cmd/atcr/review.go:384 | The audit hook re-reads sources/pool/findings.txt that the history hook read moments earlier in the same review, so the pool file is parsed twice per review run | Parse the pool findings once in the CLI layer and pass the finding set to both history.RecordReview and audit.RecordReview, or expose a shared parse result | PERFORMANCE | 30 | execute-epic-cumulative |
+| 1 | [ ] | MEDIUM | cmd/atcr/review.go:393 | Audit ledger write path is cwd-relative (req.Root=".") while audit-report reads via repoRoot() walk-up, so a review launched from a subdirectory writes records the report never finds (subdir-only AC1/AC2 gap) | Resolve repo-level ledger writes (history AND audit) against repoRoot() uniformly, as a cross-cutting change to the review command's Root handling | INTEGRATION | 60 | execute-epic-independent |
+| 1 | [ ] | LOW | cmd/atcr/audit_report.go:23 | MarkFlagRequired only checks --pr is set not its value so `audit-report --pr 0` matches every non-PR run (PR omitted via omitempty) and renders a bogus PR-0 report of all local runs | After GetInt reject pr <= 0 with a usageError requiring a positive PR number | EDGE_CASES | 10 | execute-epic-independent |
+| 1 | [ ] | LOW | cmd/atcr/review.go:394 | The audit hook lives only in runReview/runResume so reviews driven directly through the fanout engine (MCP handler) never append an audit record; AC1 holds for CLI runs only (mirrors the history hook precedent) | Document the CLI-only scope in the audit package doc, or move the hook into the engine so all review entry points record audit trails | INTEGRATION | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | cmd/atcr/review.go:394 | An audit write failure is swallowed as a Warn and the review still exits 0, so a systematically failing compliance ledger (permissions/full disk) leaves runs reporting success with only a log line | Consider a clearly visible stderr warning for this compliance-critical write (non-fatal design otherwise acceptable) | OBSERVABILITY | 15 | execute-epic-independent |
+| U | [ ] | LOW | internal/audit/render.go:57 | shortSHA truncates base/head to 12 chars in the rendered compliance report; full provenance remains only in the JSONL ledger | Render the full SHA (or make truncation opt-in) so the human-facing compliance report carries complete commit identity | CORRECTNESS | 15 | execute-epic-independent |
 
 ### [2026-07-05] From Review: pr-105-recovery
 
