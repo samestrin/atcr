@@ -4,7 +4,7 @@ atcr reads configuration from a user file, optional project files, and embedded 
 
 | File | Scope | Holds |
 |------|-------|-------|
-| `~/.config/atcr/registry.yaml` | User | Providers, agents, and user-level defaults for the shared review settings. Personas live as `.md` files beside it. |
+| `~/.config/atcr/registry.yaml` | User | Providers, agents, and user-level defaults for the shared review settings. Personas live as `.md` files beside it. Can instead be fetched from a shared URL — see [Shared team registry](#shared-team-registry-remote-registryyaml). |
 | `.atcr/config.yaml` | Project | The agent roster (which agents run, in which lane) and project defaults. Written by `atcr init`. |
 | `.atcr/registry.yaml` | Project (optional) | Project-defined providers and agents, merged over the user registry (project entries win by name). Lets a repo ship a self-contained review setup. See [Project registry overlay](#project-registry-overlay). |
 | `~/.config/atcr/trusted_providers.yaml` | User | Allow list pinning which project-defined providers may receive a key. Managed by `atcr trust`. |
@@ -70,6 +70,32 @@ initial_backoff_ms: 500
 | `max_context_lines` | `1500` | Per-agent cap on a single chunk's diff line count, used **only** when `review_strategy: chunked` (ignored in `bulk`). The fan-out bin-packs the persona's diff into chunks no larger than this and sends one call per chunk, so a lower value means smaller, more focused context (and more requests); a higher value packs more per call. When unset, inherits the `1500`-line default. Must be within `1..1000000`. A single file larger than this cap is sent as its own oversized chunk with a warning (a file is never split). |
 | `max_retries` | inherited | Per-agent retry budget for rate-limit/transient failures (429, 5xx, transport). When unset, inherits the resolved shared budget (default `5`); set it to override per agent. Must be within `0..10` (`0` = a single attempt, no retry). The `Retry-After` header is always honored regardless of this value. |
 | `initial_backoff_ms` | inherited | Per-agent base delay (ms) between retries when no server `Retry-After` is present; the schedule grows exponentially from here (×1.5, capped at 30s). When unset, inherits the resolved shared delay (default `500`). Must be within `1..30000`. |
+
+## Shared team registry (remote `registry.yaml`)
+
+A team can share **one** registry instead of every workstation maintaining its own. Set `ATCR_REGISTRY_URL` to the URL of a `registry.yaml` and atcr fetches the **user-level** registry over HTTP at load time instead of reading `~/.config/atcr/registry.yaml`:
+
+```bash
+export ATCR_REGISTRY_URL="https://raw.githubusercontent.com/acme/atcr-config/main/registry.yaml"
+atcr doctor        # loads providers/agents from the remote registry
+```
+
+**The config-repo pattern.** Commit a `registry.yaml` to a shared git repo (e.g. an internal `atcr-config` repository) and point every workstation and CI runner at its raw URL. A registry change — a new model, a re-tuned agent, an added skeptic — lands in one place and everyone picks it up on the next run. The remote file uses the **exact same shape** documented above (`providers:` / `agents:` / user-level defaults); it flows through the identical strict parser and validation, so a typo or a dangling `fallback` in the shared file fails the load the same way a local one would.
+
+**Only the user registry is remote.** The optional project overlay (`.atcr/registry.yaml`), the trust store (`~/.config/atcr/trusted_providers.yaml`), and personas stay local. The remote file is the *base*; a repo's local `.atcr/registry.yaml` still merges over it with the usual project-wins semantics ([overlay](#project-registry-overlay)).
+
+**Local vs. remote — resolved by whether the variable is set:**
+
+| `ATCR_REGISTRY_URL` | Source of the user registry |
+|---------------------|-----------------------------|
+| unset (or whitespace) | Local `~/.config/atcr/registry.yaml` (unchanged behavior). |
+| set to an `http`/`https` URL | Fetched over HTTP; the local file is **not** read. |
+
+**No silent fallback.** When the variable is set but the URL is unreachable, returns a non-2xx status, or serves invalid YAML, the load **fails with a clear error** — it does **not** quietly fall back to a local file. This is deliberate: a team sharing one registry should be told their shared source is broken, not silently diverge onto a stale local copy. The local read happens **only** when the variable is unset.
+
+**Keys are never read from the remote file.** The env-var contract is unchanged: a provider names an `api_key_env` (the *variable name*), and the key value is resolved from the **local** environment at invoke time — it never travels in any registry, remote or local. Because the schema has no `api_key` field and every registry is strictly parsed, a literal secret pasted into the shared file (`api_key: sk-…`) is an **unknown-field load error**, not a silently-honored credential. Keep secrets in each workstation's environment; share only the wiring.
+
+**Security posture.** Both `http` and `https` URLs are accepted, but a non-`https` URL draws a one-time warning on stderr — a shared registry is fully trusted (it defines the endpoints your local keys are sent to), so prefer `https` so it cannot be tampered with in transit. Any credentials embedded in the URL (`https://user:pass@…`) are redacted from warnings. The fetch is bounded by a short timeout and a response-size cap. Authentication beyond what a plain HTTP GET supports (bearer tokens, signed URLs, secrets managers) is out of scope; host the shared registry somewhere a simple GET can reach.
 
 ## `.atcr/config.yaml` (project level)
 
