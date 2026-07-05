@@ -1,9 +1,13 @@
 package reconcile
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -114,9 +118,9 @@ func TestStampJustifications_PrefersCoveringLine(t *testing.T) {
 // TestAnchorTier covers the scoring tiers directly.
 func TestAnchorTier(t *testing.T) {
 	require.Equal(t, 0, anchorTier("no file here", "x/y.go", 42))
-	require.Equal(t, 1, anchorTier("mentions x/y.go with no line", "x/y.go", 42))
-	require.Equal(t, 1, anchorTier("x/y.go:10 far other line", "x/y.go", 42)) // far → below tier 2
-	require.Equal(t, 2, anchorTier("x/y.go:44 near line", "x/y.go", 42))      // within ±3 → tier 2
+	require.Equal(t, 0, anchorTier("mentions x/y.go with no line", "x/y.go", 42)) // below minAnchorTier
+	require.Equal(t, 0, anchorTier("x/y.go:10 far other line", "x/y.go", 42))     // far → below tier 2
+	require.Equal(t, 2, anchorTier("x/y.go:44 near line", "x/y.go", 42))          // within ±3 → tier 2
 	require.Equal(t, 3, anchorTier("`x/y.go:42` exact", "x/y.go", 42))
 	require.Equal(t, 3, anchorTier("`x/y.go:40-50` range", "x/y.go", 42))
 	require.Equal(t, 2, anchorTier("`x/y.go:43` off by one", "x/y.go", 42))
@@ -221,6 +225,47 @@ func TestStampJustifications_TightListNoBleed(t *testing.T) {
 	require.Equal(t, "Findings", jf[0].SourceReport.Section)
 }
 
+// TestStampJustifications_LineZero_NoProximityMatch verifies that a file-level
+// finding with Line == 0 does not inherit the narrative of an early-line finding
+// via proximity (Epic 18.2 TD #5).
+func TestStampJustifications_LineZero_NoProximityMatch(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n1. **`a/x.go:2` — early line issue.** narrative.\n")
+	jf := []JSONFinding{{File: "a/x.go", Line: 0}}
+	stampJustifications(jf, reviewDir)
+	require.Empty(t, jf[0].Justification, "file-level finding (line 0) must not match via proximity")
+}
+
+// TestExtractSection_IncludesItemStartWhenAnchorOnContinuation verifies that the
+// list-item marker line is included when the file:line anchor falls on the item's
+// continuation line (Epic 18.2 TD #6).
+func TestExtractSection_IncludesItemStartWhenAnchorOnContinuation(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n1. **First line of item.**\n   `a/x.go:42` continuation line.\n")
+	jf := []JSONFinding{{File: "a/x.go", Line: 42}}
+	stampJustifications(jf, reviewDir)
+	require.Contains(t, jf[0].Justification, "First line of item", "must include the list-item marker line")
+	require.Contains(t, jf[0].Justification, "continuation line")
+}
+
+// TestStampJustifications_NoMatches_LogsWarning verifies that when review.md
+// narratives exist but none match any finding, the event is logged at Warn or
+// higher so review.md format drift does not go unnoticed (Epic 18.2 TD #8).
+func TestStampJustifications_NoMatches_LogsWarning(t *testing.T) {
+	var buf bytes.Buffer
+	h := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	old := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n1. **`other/file.go:1`** narrative.\n")
+	jf := []JSONFinding{{File: "a.go", Line: 1}}
+	stampJustifications(jf, reviewDir)
+
+	require.Contains(t, buf.String(), "level=WARN", "expected warning when narratives exist but matched==0")
+}
+
 // TestIsItemStart covers the list-item boundary detector.
 func TestIsItemStart(t *testing.T) {
 	for _, s := range []string{"- bullet", "* star", "+ plus", "1. ordered", "12) paren", "  - indented", "3."} {
@@ -229,4 +274,104 @@ func TestIsItemStart(t *testing.T) {
 	for _, s := range []string{"", "not a list", "-nospace", "word - dash", "#. heading-ish", "1x. not"} {
 		require.Falsef(t, isItemStart(s), "%q should NOT be an item start", s)
 	}
+}
+
+// TestReviewFileName_MatchesFanout guards against silent drift between the
+// review.md filename used by internal/reconcile (reviewFileName) and the one
+// used by internal/fanout (reviewFile). The two packages deliberately do not
+// import each other to avoid a cycle, so the contract is enforced by this
+// cross-package source test instead (Epic 18.2 TD #1).
+func TestReviewFileName_MatchesFanout(t *testing.T) {
+	reconcileSrc, err := os.ReadFile("justification.go")
+	require.NoError(t, err)
+	fanoutSrc, err := os.ReadFile("../fanout/artifacts.go")
+	require.NoError(t, err)
+
+	extract := func(src []byte, name string) string {
+		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\s*=\s*"([^"]+)"`)
+		m := re.FindSubmatch(src)
+		if m == nil {
+			return ""
+		}
+		return string(m[1])
+	}
+
+	reconcileName := extract(reconcileSrc, "reviewFileName")
+	fanoutName := extract(fanoutSrc, "reviewFile")
+	require.NotEmpty(t, reconcileName, "could not find reviewFileName constant in justification.go")
+	require.NotEmpty(t, fanoutName, "could not find reviewFile constant in fanout/artifacts.go")
+	require.Equal(t, fanoutName, reconcileName,
+		"internal/reconcile reviewFileName must stay in sync with internal/fanout reviewFile")
+}
+
+// TestStampJustifications_MultipleFindingsShareIndex stamps several findings in
+// one call, each anchored in a distinct list item, plus one finding with no
+// anchor. It locks in that the per-run anchor index (built once, shared across
+// findings) routes every finding to its own narrative and leaves the unmatched
+// one empty — the equivalence guard for the O(findings x narrativeBytes) → indexed
+// refactor (18.2 performance TD).
+func TestStampJustifications_MultipleFindingsShareIndex(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReview(t, reviewDir, "host", "# H\n\n## Findings\n"+
+		"1. **`a/x.go:10` — first.** narrative alpha.\n"+
+		"2. **`b/y.go:20` — second.** narrative bravo.\n"+
+		"3. **`c/z.go:30` — third.** narrative charlie.\n")
+	jf := []JSONFinding{
+		{File: "a/x.go", Line: 10},
+		{File: "b/y.go", Line: 20},
+		{File: "c/z.go", Line: 30},
+		{File: "d/none.go", Line: 5}, // not referenced anywhere → stays empty
+	}
+	stampJustifications(jf, reviewDir)
+	require.Contains(t, jf[0].Justification, "narrative alpha")
+	require.Contains(t, jf[1].Justification, "narrative bravo")
+	require.Contains(t, jf[2].Justification, "narrative charlie")
+	require.Empty(t, jf[3].Justification, "unreferenced finding must not match any narrative")
+}
+
+// BenchmarkStampJustifications exercises the many-findings x many-narratives hot
+// path the 18.2 performance TD targets: without a pre-index, matchNarrative
+// re-scans every narrative line for every finding (O(findings x narrativeBytes)).
+// The indexed path scans only the candidate lines that mention each finding's
+// file. Run: go test -bench=BenchmarkStampJustifications -benchmem ./internal/reconcile/
+func BenchmarkStampJustifications(b *testing.B) {
+	reviewDir := b.TempDir()
+	const narratives, linesPer = 8, 200
+	for n := 0; n < narratives; n++ {
+		var sb strings.Builder
+		sb.WriteString("# Review\n\n## Findings\n")
+		for l := 0; l < linesPer; l++ {
+			fmt.Fprintf(&sb, "%d. **`internal/pkg/file%d.go:%d` — issue.** narrative body %d with padding text here.\n", l+1, n, l+1, l)
+		}
+		dir := filepath.Join(reviewDir, "sources", fmt.Sprintf("agent%02d", n))
+		require.NoError(b, os.MkdirAll(dir, 0o755))
+		require.NoError(b, os.WriteFile(filepath.Join(dir, "review.md"), []byte(sb.String()), 0o644))
+	}
+	base := make([]JSONFinding, 0, narratives*linesPer)
+	for n := 0; n < narratives; n++ {
+		for l := 0; l < linesPer; l++ {
+			base = append(base, JSONFinding{File: fmt.Sprintf("internal/pkg/file%d.go", n), Line: l + 1})
+		}
+	}
+	work := make([]JSONFinding, len(base))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		copy(work, base) // reset Justification/SourceReport each iteration
+		stampJustifications(work, reviewDir)
+	}
+}
+
+// TestCollectReviewNarratives_SkipsOversizedFiles verifies that a review.md
+// larger than maxReviewBytes is skipped rather than fully loaded into memory
+// (Epic 18.2 TD #2). The file contains a matching anchor; if it were read it
+// would produce a justification, so an empty result proves the skip.
+func TestCollectReviewNarratives_SkipsOversizedFiles(t *testing.T) {
+	reviewDir := t.TempDir()
+	// A file one byte over the cap must be ignored.
+	anchor := "1. **`a.go:1`** would match if read.\n"
+	padding := strings.Repeat("x\n", maxReviewBytes)
+	writeReview(t, reviewDir, "host", anchor+padding)
+	jf := []JSONFinding{{File: "a.go", Line: 1}}
+	stampJustifications(jf, reviewDir)
+	require.Empty(t, jf[0].Justification, "oversized review.md must be skipped")
 }
