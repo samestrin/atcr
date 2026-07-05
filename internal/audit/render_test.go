@@ -9,6 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRenderReport_BlankSeverityAppearsAsUnknownInTotals(t *testing.T) {
+	gen := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
+	recs := []Record{
+		{Timestamp: gen, PR: 8, Base: "b", Head: "h", Findings: map[string]int{"": 3, "HIGH": 1}},
+	}
+	out := RenderReport(recs, 8, gen)
+	assert.Contains(t, out, "UNKNOWN")
+	assert.Contains(t, out, "4")        // 3 blank + 1 HIGH = 4 total
+	assert.NotContains(t, out, "| 3 |") // blank must not be silently dropped
+}
+
 func TestRenderReport_EmptyReturnsEmptyString(t *testing.T) {
 	gen := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
 	out := RenderReport(nil, 999, gen)
