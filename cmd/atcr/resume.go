@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samestrin/atcr/internal/audit"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/history"
@@ -112,6 +113,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			CommitCount:   res.CommitCount,
 		},
 		StartedAt: time.Now(),
+		PRNumber:  prNumberFromFlags(cmd),
 	}
 
 	prep, info, err := fanout.PrepareResume(ctx, cfg, dir, req)
@@ -147,6 +149,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			return err
 		}
 		recordResumeHistory(ctx, dir, req.StartedAt)
+		recordResumeAudit(ctx, dir, req.StartedAt, req.PRNumber, req.Range.Base, req.Range.Head)
 		return nil
 	}
 
@@ -198,6 +201,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		return err
 	}
 	recordResumeHistory(ctx, result.Dir, req.StartedAt)
+	recordResumeAudit(ctx, result.Dir, req.StartedAt, req.PRNumber, req.Range.Base, req.Range.Head)
 	return nil
 }
 
@@ -211,6 +215,20 @@ func recordResumeHistory(ctx context.Context, dir string, ts time.Time) {
 		log.FromContext(ctx).Warn("failed to append finding history", "error", err)
 	} else if n > 0 {
 		log.FromContext(ctx).Debug("appended finding history", "records", n, "path", histPath)
+	}
+}
+
+// recordResumeAudit appends a resumed review's audit record to the append-only
+// compliance ledger, mirroring the fresh-review hook in review.go so a resumed
+// run is recorded exactly once (Epic 19.1 AC1). Like the history write it is
+// non-fatal — a compliance write must never fail an otherwise-successful resume,
+// so it is logged and swallowed.
+func recordResumeAudit(ctx context.Context, dir string, ts time.Time, pr int, base, head string) {
+	auditPath := filepath.Join(".", ".atcr", "audit.log.jsonl")
+	if n, err := audit.RecordReview(auditPath, dir, ts, pr, base, head); err != nil {
+		log.FromContext(ctx).Warn("failed to append audit record", "error", err)
+	} else if n > 0 {
+		log.FromContext(ctx).Debug("appended audit record", "records", n, "pr", pr, "path", auditPath)
 	}
 }
 

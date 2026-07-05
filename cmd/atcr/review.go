@@ -7,9 +7,11 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/samestrin/atcr/internal/audit"
 	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
@@ -53,6 +55,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
 	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
 	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
+	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
 	addRangeFlags(cmd)
 	addAutoFixFlags(cmd)
 	return cmd
@@ -100,6 +103,43 @@ func sprintPlanPath(cmd *cobra.Command) string {
 		panic(fmt.Sprintf("sprintPlanPath: undefined flag %q: %v", "sprint-plan", err))
 	}
 	return strings.TrimSpace(v)
+}
+
+// prNumberFromFlags resolves the pull-request number to stamp on this run's
+// audit record. The explicit --pr flag wins (when set to a positive value);
+// otherwise it falls back to parsing the CI-provided GITHUB_REF, which GitHub
+// sets to refs/pull/<n>/merge (or /head) on pull-request events. This mirrors
+// atcr's flag-wins/env-fallback convention (--repo/GITHUB_REPOSITORY,
+// --token/GITHUB_TOKEN). A local run with neither yields 0 (no PR), which the
+// audit record omits — the run is still recorded, just without a PR.
+func prNumberFromFlags(cmd *cobra.Command) int {
+	if cmd.Flags().Changed("pr") {
+		if n, _ := cmd.Flags().GetInt("pr"); n > 0 {
+			return n
+		}
+	}
+	return prFromGitHubRef(os.Getenv("GITHUB_REF"))
+}
+
+// prFromGitHubRef extracts the PR number from a GitHub pull-request ref of the
+// form refs/pull/<n>/merge or refs/pull/<n>/head. Any other ref shape (a branch
+// ref, a tag, a malformed pull ref) yields 0 — atcr never guesses a PR number
+// from an ambiguous ref.
+func prFromGitHubRef(ref string) int {
+	const prefix = "refs/pull/"
+	if !strings.HasPrefix(ref, prefix) {
+		return 0
+	}
+	rest := ref[len(prefix):]
+	slash := strings.IndexByte(rest, '/')
+	if slash <= 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(rest[:slash])
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }
 
 // runReview resolves the range, loads config, and runs the full review flow.
@@ -254,6 +294,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		Force:          boolFlag(cmd, "force"),
 		NoCache:        boolFlag(cmd, "no-cache"),
 		SprintPlanPath: sprintPlanPath(cmd),
+		PRNumber:       prNumberFromFlags(cmd),
 	}
 
 	// Run the two review phases separately so build-phase failures (persona
@@ -341,6 +382,19 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		log.FromContext(ctx).Warn("failed to append finding history", "error", herr)
 	} else if n > 0 {
 		log.FromContext(ctx).Debug("appended finding history", "records", n, "path", histPath)
+	}
+
+	// Append this run's audit record to the append-only compliance ledger (Epic
+	// 19.1): run timestamp, resolved base/head SHAs, PR number (0 = none), and a
+	// findings-by-severity summary. Like the history ledger it always targets
+	// <root>/.atcr regardless of --output-dir (a repo-level accumulator) and its
+	// failure is non-fatal — a compliance write must never fail an otherwise
+	// successful review, so it is logged and swallowed.
+	auditPath := filepath.Join(req.Root, ".atcr", "audit.log.jsonl")
+	if n, aerr := audit.RecordReview(auditPath, result.Dir, now, req.PRNumber, req.Range.Base, req.Range.Head); aerr != nil {
+		log.FromContext(ctx).Warn("failed to append audit record", "error", aerr)
+	} else if n > 0 {
+		log.FromContext(ctx).Debug("appended audit record", "records", n, "pr", req.PRNumber, "path", auditPath)
 	}
 
 	// One-shot mode: reconcile in-process and gate on the threshold. Review
