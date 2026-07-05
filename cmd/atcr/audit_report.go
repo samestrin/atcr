@@ -29,6 +29,9 @@ func runAuditReport(cmd *cobra.Command, _ []string) error {
 		return usageError(fmt.Errorf("--pr is required"))
 	}
 	pr, _ := cmd.Flags().GetInt("pr")
+	if pr <= 0 {
+		return usageError(fmt.Errorf("--pr must be a positive PR number, got %d", pr))
+	}
 
 	root, err := repoRoot()
 	if err != nil {
