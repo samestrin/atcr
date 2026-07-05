@@ -60,9 +60,10 @@ func TestRenderReport_RendersPerRunTableWithTotals(t *testing.T) {
 	}
 	assert.Contains(t, out, "**Total**") // grand-total row
 
-	// SHAs are truncated to 12 chars for a readable one-page report.
-	assert.Contains(t, out, "basesha0001c")
-	assert.NotContains(t, out, "basesha0001cccccccc")
+	// SHAs render in full so the compliance report carries complete commit identity
+	// (the JSONL ledger is no longer the only place the full provenance survives).
+	assert.Contains(t, out, "basesha0001cccccccc")
+	assert.Contains(t, out, "headsha0002dddddddd")
 
 	// Runs render in ascending timestamp order (earlier run's row precedes later).
 	early := strings.Index(out, "2026-07-04T09:30:00Z")
