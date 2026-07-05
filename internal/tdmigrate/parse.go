@@ -67,7 +67,21 @@ func ParseREADME(content string) ([]Shard, error) {
 			return nil, fmt.Errorf("line %d: malformed section header (want `### [YYYY-MM-DD] From Sprint|Review: <label>`): %q",
 				n+1, strings.TrimSpace(line))
 		}
-		if cur == nil || !strings.HasPrefix(strings.TrimSpace(line), "|") {
+		if cur == nil {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "|") {
+			// Not a table row — but a row that lost its leading pipe (e.g. a
+			// copy-paste error) still has the right interior pipe-separated cell
+			// count and a trailing pipe. Catch that case loudly instead of
+			// silently treating it as prose.
+			if strings.HasSuffix(trimmed, "|") {
+				if cells := splitRow(trimmed); (len(cells) == 9 || len(cells) == 11) &&
+					!isHeaderRow(cells) && !isSeparatorRow(cells) {
+					return nil, fmt.Errorf("line %d: data row is missing its leading pipe: %q", n+1, trimmed)
+				}
+			}
 			continue
 		}
 		cells := splitRow(line)
