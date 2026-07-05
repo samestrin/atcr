@@ -97,6 +97,22 @@ func TestParseREADME_DriftHeaderFailsLoudly(t *testing.T) {
 	}
 }
 
+// TestParseREADME_ColonlessHeaderFailsLoudly proves a section header missing
+// the colon entirely (neither sectionHeader nor driftHeader matches) is a hard
+// error, not silently skipped with its data rows mis-attributed to whichever
+// shard was previously open.
+func TestParseREADME_ColonlessHeaderFailsLoudly(t *testing.T) {
+	colonless := `### [2026-06-26] From Sprint x
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|---|---|---|---|---|---|---|---|---|
+| 1 | [ ] | LOW | f.go:1 | p | fix | cat | 5 | src |
+`
+	if _, err := ParseREADME(colonless); err == nil {
+		t.Error("expected hard error for a colonless section header, got nil (rows would be silently mis-attributed or dropped)")
+	}
+}
+
 func TestParseREADME_BlankEstIsZero(t *testing.T) {
 	blank := `### [2026-06-26] From Sprint: x
 
