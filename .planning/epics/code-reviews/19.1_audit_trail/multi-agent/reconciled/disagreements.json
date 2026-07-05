@@ -1,0 +1,136 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/audit_report.go",
+      "line": 47,
+      "severity": "HIGH",
+      "problem": "--pr 0 matches every no-PR run because omitempty serializes PR=0 records without a \"pr\" field, so the loaded records all carry PR=0 and the filter r.PR == pr (pr=0) selects all of them",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/review.go",
+      "line": 387,
+      "severity": "HIGH",
+      "problem": "cross-directory write/read split: review writes via filepath.Join(req.Root,...) where req.Root=\".\" (CWD-relative) while audit-report reads via repoRoot() walk-up — a review launched from a subdirectory of the git root writes records the report will never find",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/review.go",
+      "line": 115,
+      "severity": "MEDIUM",
+      "problem": "prNumberFromFlags() uses os.Getenv() directly",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/review.go",
+      "line": 390,
+      "severity": "MEDIUM",
+      "problem": "audit write failure is swallowed as Warn and review still exits 0, so a systematically broken compliance ledger (full disk, read-only fs, .atcr/ perm denied) leaves runs reporting success with only a log line that CI rarely surfaces",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/audit/reader.go",
+      "line": 60,
+      "severity": "MEDIUM",
+      "problem": "oversized-line recovery uses unbounded bufio.NewReader.ReadString('\\n') which grows the buffer until a newline or EOF — a tampered or corrupted ledger with a multi-GB run-on line OOMs the audit-report command",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/audit/writer.go",
+      "line": 46,
+      "severity": "MEDIUM",
+      "problem": "Append does not fsync, so a crash or power loss between f.Write and Close loses the most recent record — undermining the \"tamper-evident compliance ledger\" framing in record.go and CHANGELOG",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/audit_pr_test.go",
+      "line": 45,
+      "severity": "LOW",
+      "problem": "intToStr() is a manual implementation of strconv.Itoa",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/audit_report.go",
+      "line": 39,
+      "severity": "LOW",
+      "problem": "RunE ignores error from fmt.Fprint",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/audit/capture.go",
+      "line": 75,
+      "severity": "LOW",
+      "problem": "finding key uses null bytes as separators",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/audit/render.go",
+      "line": 118,
+      "severity": "LOW",
+      "problem": "RenderReport uses a map for counts without ensuring key existence for canonical columns",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2162 @@
+diff --git a/.planning/.knowledge/clarifications-19.1_audit_trail-Q1.md b/.planning/.knowledge/clarifications-19.1_audit_trail-Q1.md
+new file mode 100644
+index 00000000..13a717af
+--- /dev/null
++++ b/.planning/.knowledge/clarifications-19.1_audit_trail-Q1.md
+@@ -0,0 +1,33 @@
++---
++id: mem-2026-07-05-2ada61
++question: "PR number source for atcr review audit records"
++created: 2026-07-05
++last_retrieved: ""
++sprints: []
++files: [cmd/atcr/github.go, cmd/atcr/autofix.go, internal/ghaction/client.go, internal/fanout/review.go]
++tags: [clarifications, epic-19.1_audit_trail, architecture, cli-conventions]
++retrievals: 0
++status: active
++type: clarifications
++---
++
++# PR number source for atcr review audit records
++
++## Decision
++
++Add a `--pr <n>` flag to `atcr review`, threaded onto `ReviewRequest`, falling back to parsing `GITHUB_REF` (format `refs/pull/<n>/merge`) when unset. This mirrors atcr's established `envOr(flagValue, "ENV_VAR")` convention already used for --repo/GITHUB_REPOSITORY, --token/GITHUB_TOKEN, --sha/GITHUB_SHA, --api-url/GITHUB_API_URL (cmd/atcr/github.go:55-71, cmd/atcr/autofix.go:52-54,168-180) — flag wins, env is the fallback, no API call needed. Note: internal/ghaction's PR lookup (FindOpenPullRequest, client.go:406-424) is a live GitHub API call keyed on branch, not an env-var read — do not assume it auto-detects from CI env vars.
++
++## Rationale
++
++- [from context]
++
++## Applies When
++
++- [conditions]
++
++## Code Reference
++
++- cmd/atcr/github.go
++- cmd/atcr/autofix.go
++- internal/ghaction/client.go
++- internal/fanout/review.go
+diff --git a/.planning/.knowledge/clarifications-19.1_audit_trail-Q2.md b/.planning/.knowledge/clarifications-19.1_audit_trail-Q2.md
+new file mode 100644
+index 00000000..ceb38cba
+--- /dev/null
++++ b/.planning/.knowledge/clarifications-19.1_audit_trail-Q2.md
+@@ -0,0 +1,31 @@
++---
++id: mem-2026-07-05-e0bdb7
++question: "Audit/history ledger records write unconditionally with empty optional fields, never skip"
++created: 2026-07-05
++last_retrieved: ""
++sprints: []
++files: [internal/history/capture.go, internal/gitrange/resolver.go]
++tags: [clarifications, epic-19.1_audit_trail, implementation, ledger-design]
++retrievals: 0
++status: active
++type: clarifications
++---
++
++# Audit/history ledger records write unconditionally with empt
++
++## Decision
++
++When an append-only ledger record has an optional field that can't always be resolved (e.g. PR number on a local, non-CI review run), still write the record with that field empty/zero rather than skipping the write. Precedent: internal/gitrange/resolver.go:56 uses `omitempty` for DefaultBranch when unknown, and Epic 19.0's history.RecordReview only skips writing when there is genuinely nothing to persist (no pool findings file) — never to omit a record for a real run just because one optional field is unavailable. This keeps "one record per run" invariants literally true and keeps downstream query commands (e.g. `--pr` filters) simple, since they just find nothing for non-matching runs instead of needing a "was this even logged" edge case.
++
++## Rationale
++
++- [from context]
++
++## Applies When
++
++- [conditions]
++
++## Code Reference
++
++- internal/history/capture.go
++- internal/gitrange/resolver.go
+diff --git a/.planning/.knowledge/clarifications-19.1_audit_trail-Q3.md b/.planning/.knowledge/clarifications-19.1_audit_trail-Q3.md
+new file mode 100644
+index 00000000..1a9fce37
+--- /dev/null
++++ b/.planning/.knowledge/clarifications-19.1_audit_trail-Q3.md
+@@ -0,0 +1,33 @@
++---
++id: mem-2026-07-05-78d81d
++question: "atcr append-only ledgers live at repo-level .atcr/, not inside per-run output dirs"
++created: 2026-07-05
++last_retrieved: ""
++sprints: []
++files: [cmd/atcr/review.go, cmd/atcr/resume.go, internal/history/record.go, internal/history/capture.go]
++tags: [clarifications, epic-19.1_audit_trail, architecture, ledger-design]
++retrievals: 0
++status: active
++type: clarifications
++---
++
++# atcr append-only ledgers live at repo-level .atcr/, not insi
++
++## Decision
++
++Cross-run accumulating ledgers (e.g. findings-history.jsonl, and by the same precedent audit.log.jsonl) always target `<repo-root>/.atcr/<name>.jsonl` regardless of `--output-dir` — they are repo-level accumulators, not part of the redirected per-run review tree. See cmd/atcr/review.go:335-339 (`histPath := filepath.Join(req.Root, ".atcr", "findings-history.jsonl")`), mirrored for resumed runs in cmd/atcr/resume.go:206-214, and documented in internal/history/record.go:5. `.atcr/` is the established repo-level convention already holding config.yaml, cache, registry.yaml, and latest-review pointers. Prefer this pattern over per-review-dir ledger files, which would force report commands to glob across every review directory.
++
++## Rationale
++
++- [from context]
++
++## Applies When
++
++- [conditions]
++
++## Code Reference
++
++- cmd/atcr/review.go
++- cmd/atcr/resume.go
++- internal/history/record.go
++- internal/history/capture.go
+diff --git a/.planning/epics/active/19.1_audit_trail.md b/.planning/epics/active/19.1_audit_trail.md
+index 0de5cffa..bde195d5 100644
+--- a/.planning/epics/active/19.1_audit_trail.md
++++ b/.planning/epics/active/19.1_audit_trail.md
+@@ -35,5 +35,32 @@ Compliance-minded teams need a tamper-evident record of what atcr reviewed and w
+ Cryptographic signing/notarization; external SIEM export; retention policy.
+ 
+ ## Dependencies
+ 
+ - Review output directory + PR-number plumbing (exists).
++
++## Clarifications
++
++### Recorded 2026-07-05 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- The `atcr review` pipeline has NO PR number today (PR numbers live only in `internal/ghaction` via a live GitHub API call, not env). The epic's "PR number in hand" premise is corrected: PR number must be threaded in explicitly.
++- Add a `--pr <n>` int flag to `atcr review`, threaded onto `ReviewRequest.PRNumber`; when unset, fall back to parsing `GITHUB_REF` (format `refs/pull/<n>/merge`). No new GitHub API client. Matches atcr's flag-wins/env-fallback convention (`--repo`/`GITHUB_REPOSITORY`, `--token`/`GITHUB_TOKEN`).
++- Every review run appends exactly one audit record even when the PR is unresolved; the PR field is stored as `json:"pr,omitempty"` (empty/zero), never skipping the write.
++- The audit ledger is a single repo-level accumulator at `.atcr/audit.log.jsonl` via `filepath.Join(req.Root, ".atcr", "audit.log.jsonl")`, written regardless of `--output-dir`, mirroring Epic 19.0's `findings-history.jsonl` pattern (hook near `cmd/atcr/review.go:335-339`).
++
++**Scope Boundaries:**
++- IN scope: `--pr` flag + `GITHUB_REF` fallback on `atcr review`; `ReviewRequest.PRNumber`; repo-level `.atcr/audit.log.jsonl` ledger; `internal/audit` package (record type + writer + reader); `atcr audit-report --pr <n>` command rendering one-page markdown.
++- OUT of scope: cryptographic signing/notarization; external SIEM export; retention policy; any new GitHub API client for PR resolution.
++
++**Technical Approach:**
++- Mirror `internal/history/` layout: record.go (types), writer.go (Append via O_APPEND), reader.go (Load), capture.go (hook), render.go (markdown). Respect `internal/boundaries_test.go` — add the minimal allowed dependency entry for `internal/audit`.
++- Severity summary counted over {CRITICAL, HIGH, MEDIUM, LOW}, sourced the same way `internal/history` sources findings from the review dir.
++- `audit-report` command modeled on `cmd/atcr/history.go`: `repoRoot()`, `usageArgs`, `cmd.OutOrStdout()`, `usageError` for exit-2; registered in `cmd/atcr/main.go`. Unknown `--pr` (no matching records) exits non-zero with a clear message.
++
++**Original Questions and Answers:**
++1. Q: How should a review run obtain the PR number to record?
++   A: (c) — add `--pr <n>` flag threaded onto `ReviewRequest.PRNumber`, falling back to parsing `GITHUB_REF` (`refs/pull/<n>/merge`) when unset. No new API client. (Note: epic's claim that this mirrors ghaction env auto-detection is inaccurate — ghaction uses a live API call.)
++2. Q: When a run has no PR available, still write the record or skip?
++   A: Always write the record with an empty/omitted PR field (`json:"pr,omitempty"`), never skip — matches the unconditional AC wording and the codebase's omitempty-for-optional pattern.
++3. Q: Ledger location — single repo-level accumulator or per-review-dir?
++   A: (a) — single repo-level `.atcr/audit.log.jsonl`, written regardless of `--output-dir`, mirroring `findings-history.jsonl`.
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index af8a0ea5..63d5fe68 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,16 +3,16 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 3 | 0 |
+-| MEDIUM | 0 | 30 | 0 |
+-| LOW | 0 | 34 | 0 |
++| MEDIUM | 1 | 30 | 0 |
++| LOW | 5 | 34 | 0 |
+ 
+-**Last Modified:** 2026-07-05 | **Open Items:** 0 | **Deferred Items:** 67 | **Resolved Items:** 0 | **Total Items:** 67
++**Last Modified:** 2026-07-05 | **Open Items:** 6 | **Deferred Items:** 67 | **Resolved Items:** 0 | **Total Items:** 73
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -62,7 +62,18 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
+ 
++### [2026-07-05] From Sprint: epic-19.1
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| 1 | [ ] | LOW | cmd/atcr/review.go:384 | The audit hook re-reads sources/pool/findings.txt that the history hook read moments earlier in the same review, so the pool file is parsed twice per review run | Parse the pool findings once in the CLI layer and pass the finding set to both history.RecordReview and audit.RecordReview, or expose a shared parse result | PERFORMANCE | 30 | execute-epic-cumulative |
++| 1 | [ ] | MEDIUM | cmd/atcr/review.go:393 | Audit ledger write path is cwd-relative (req.Root=".") while audit-report reads via repoRoot() walk-up, so a review launched from a subdirectory writes records the report never finds (subdir-only AC1/AC2 gap) | Resolve repo-level ledger writes (history AND audit) against repoRoot() uniformly, as a cross-cutting change to the review command's Root handling | INTEGRATION | 60 | execute-epic-independent |
++| 1 | [ ] | LOW | cmd/atcr/audit_report.go:23 | MarkFlagRequired only checks --pr is set not its value so `audit-report --pr 0` matches every non-PR run (PR omitted via omitempty) and renders a bogus PR-0 report of all local runs | After GetInt reject pr <= 0 with a usageError requiring a positive PR number | EDGE_CASES | 10 | execute-epic-independent |
++| 1 | [ ] | LOW | cmd/atcr/review.go:394 | The audit hook lives only in runReview/runResume so reviews driven directly through the fanout engine (MCP handler) never append an audit record; AC1 holds for CLI runs only (mirrors the history hook precedent) | Document the CLI-only scope in the audit package doc, or move the hook into the engine so all review entry points record audit trails | INTEGRATION | 30 | execute-epic-independent |
++| 1 | [ ] | LOW | cmd/atcr/review.go:394 | An audit write failure is swallowed as a Warn and the review still exits 0, so a systematically failing compliance ledger (permissions/full disk) leaves runs reporting success with only a log line | Consider a clearly visible stderr warning for this compliance-critical write (non-fatal design otherwise acceptable) | OBSERVABILITY | 15 | execute-epic-independent |
++| U | [ ] | LOW | internal/audit/render.go:57 | shortSHA truncates base/head to 12 chars in the rendered compliance report; full provenance remains only in the JSONL ledger | Render the full SHA (or make truncation opt-in) so the human-facing compliance report carries complete commit identity | CORRECTNESS | 15 | execute-epic-independent |
++
+ ### [2026-07-05] From Review: pr-105-recovery
+ 
+ Recovered from stale, never-merged PR #105 (`td/2026-06-26`, 46 commits, 9 days behind `main` and conflicting). Before closing that PR, each of its fixes was checked against current `main`; most were already independently re-implemented, but these were not — they are re-added here as fresh items for `/resolve-td` rather than merging the stale branch directly.
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 1d684541..a862d4b1 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,27 +1,38 @@
++## [19.1.0] - 2026-07-05
++
++### Added
++
++- Audit trail: every `atcr review` run now appends one tamper-evident record — run timestamp, resolved base/head SHA, PR number, and a findings-by-severity summary — to an append-only `.atcr/audit.log.jsonl` compliance ledger (a repo-level accumulator, written regardless of `--output-dir`). Resumed reviews (`--resume`) record too.
++- `atcr review --pr <n>`: stamp a pull-request number on the run's audit record; falls back to parsing `GITHUB_REF` (`refs/pull/<n>/...`) when unset.
++- `atcr audit-report --pr <n>`: render a one-page markdown compliance report of a PR's recorded review runs (SHAs, timestamps, findings summary); a PR with no recorded runs exits non-zero with a clear message.
++- `internal/audit` package: audit record type with an append-only JSONL writer, a tolerant reader, per-run capture, and a markdown compliance-report renderer.
++
++*Shipped via /execute-epic (epic 19.1)*
++
+ ## [Technical Debt] - 2026-07-05
+ 
+ ### Fixed
+ 
+ - `internal/tdmigrate`: `DecodeShardStrict` now rejects a shard file containing a second YAML document instead of silently truncating to the first (a harmless trailing `---` marker with no content is still accepted).
+ - `internal/tdmigrate`: `LoadShards` and `ValidateDir` now error on a missing shard directory instead of silently treating it as zero shards.
+ - `internal/tdmigrate`: `WriteShards` now rejects a shard `Date` that isn't in `YYYY-MM-DD` format instead of composing an invalid file path from it.
+ - `internal/tdmigrate`: `ParseREADME` now hard-errors on a malformed section header (bad date, or missing the colon after the source type) instead of silently skipping it.
+ - `internal/tdmigrate`: `ParseREADME` now hard-errors on a section with zero parseable data rows instead of silently dropping it.
+ - `internal/tdmigrate`: `ParseREADME` now hard-errors on a data row that lost its leading pipe instead of silently discarding it as prose.
+ - `internal/tdmigrate`: `Item.Validate` now reports the first blank required field in a fixed, deterministic order instead of a nondeterministic one.
+ - `td-migrate migrate/generate/validate`: `-h`/`--help` now exits 0 with usage on stdout instead of exiting 2 with usage on stderr.
+ 
+ ## [Technical Debt] - 2026-07-04
+ 
+ ### Fixed
+ 
+ - `internal/history`: `ParseSince` now rejects out-of-range duration values instead of silently accepting them.
+ - `internal/history`: `Load` no longer fails outright when the ledger contains an oversized line — it now skips the line instead.
+ - `internal/history`: deduplication now keeps the maximum severity for a repeated finding instead of whichever record happened to load first.
+ - `internal/history`: a warning is now logged when history capture skips a malformed pool row, instead of discarding it silently.
+ - `internal/history`: `review --resume` now appends its findings to the history ledger, closing a gap where resumed reviews were missing from the trend data.
+ - `atcr history` now works correctly when run from a subdirectory instead of only from the repo root.
+ - Corrected an overstated atomicity guarantee in the `Append` doc comment for O_APPEND writes.
+ - `RenderTable`: cell values now escape pipe and control characters, preventing markdown injection from unescaped input.
+ 
+ ## [19.0.0] - 2026-07-04
+diff --git a/README.md b/README.md
+index 23e9f0c9..05f0b2ca 100644
+--- a/README.md
++++ b/README.md
+@@ -59,32 +59,34 @@ atcr report --format md
+ New to atcr? `atcr quickstart` runs steps 2–3 interactively: it scaffolds `.atcr/`, sets up the synthetic provider, walks you through the API-key environment variable (the key is never written to atcr's config), and scaffolds a `.github/workflows/atcr.yml` — so you reach your first review without hand-editing `registry.yaml`.
+ 
+ `atcr doctor` is the recommended post-`atcr init` verification step: it invokes every configured model endpoint once with a trivial prompt and reports any misconfigured provider, model, key, or base URL — so a bad config is caught in seconds instead of mid-review. See [Commands](#commands) for its flags and exit codes.
+ 
+ `atcr review` resolves the range against the default branch, fans the change out to the roster, and records the review id in `.atcr/latest`. Every later command takes an id or path as its single anchor argument and defaults to `latest`, so the two-command pipeline above just works on a feature branch.
+ 
+ ## Commands
+ 
+ | Command | Purpose |
+ |---------|---------|
+ | `atcr review` | Resolve the git range, build payloads, fan out to the reviewer pool, write per-agent + merged findings |
+ | `atcr reconcile` | Discover sources, cluster, dedupe, score confidence, write reconciled artifacts |
+ | `atcr verify` | Run adversarial skeptics over reconciled findings; write verdicts and confidence v2 |
+ | `atcr debate` | Cross-examine disputed findings (proposer/challenger/judge); settle severity splits, gray-zone clusters, and verification disagreements |
+ | `atcr report` | Render md / json / checklist views over the reconciled findings |
+ | `atcr range` | Pre-flight base..head resolution only; prints resolution JSON |
+ | `atcr status` | Print a review's fan-out progress as JSON (roster + per-agent state) |
+ | `atcr init` | Write `.atcr/config.yaml` and the six default personas (editable) |
+ | `atcr quickstart` | Interactive onboarding: scaffold `.atcr/` (reusing `init`), set up the synthetic provider + API-key env var, and scaffold a CI workflow (`--open`, `--force`) |
+ | `atcr serve` | Run the MCP stdio server over the same engine |
+ | `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column |
+ | `atcr history` | Query the per-package finding-history ledger: trend counts by severity over a `--since` window and optional `--package` prefix |
+ | `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
+ | `atcr debt` | Query, capture, and report on technical debt (`list` / `add` / `dashboard`); see [docs/technical-debt.md](docs/technical-debt.md) |
++| `atcr audit-report` | Render a one-page markdown compliance report for a PR's review runs from the append-only `.atcr/audit.log.jsonl` ledger (`--pr <n>`) |
+ 
+ Key flags:
+ 
+-- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate) / `--resume <latest\|id\|path>` (finish an interrupted/failed review by running only its pending agents, then reconcile; see below) / `--force` (overwrite an existing `--id` or `--output-dir` collision, backing the prior tree up to `<dir>.bak` first; mutually exclusive with `--resume`) / `--no-cache` (bypass the diff cache read and force a fresh review; fresh results are still written back to `.atcr/cache`) / `--sprint-plan <path>` (inject a sprint/epic plan as a `SCOPE CONSTRAINT` before the diff so reviewers suppress findings unrelated to the plan's work items; a missing/empty plan is ignored, an unreadable one warns and proceeds)
++- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate) / `--resume <latest\|id\|path>` (finish an interrupted/failed review by running only its pending agents, then reconcile; see below) / `--force` (overwrite an existing `--id` or `--output-dir` collision, backing the prior tree up to `<dir>.bak` first; mutually exclusive with `--resume`) / `--no-cache` (bypass the diff cache read and force a fresh review; fresh results are still written back to `.atcr/cache`) / `--sprint-plan <path>` (inject a sprint/epic plan as a `SCOPE CONSTRAINT` before the diff so reviewers suppress findings unrelated to the plan's work items; a missing/empty plan is ignored, an unreadable one warns and proceeds) / `--pr <n>` (stamp the pull-request number on this run's audit record; falls back to `GITHUB_REF` when unset)
+ - `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs)
++- `atcr audit-report --pr <n>` (required — render the compliance report for that PR's recorded review runs; a PR with no recorded runs exits non-zero)
+ - `atcr report --format md|json|checklist` / `--output <file>` / `--disagreements` (focused disagreement-radar view — see [docs/disagreement-radar.md](docs/disagreement-radar.md))
+ - `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
+ 
+diff --git a/cmd/atcr/audit_pr_test.go b/cmd/atcr/audit_pr_test.go
+new file mode 100644
+index 00000000..2b7f915c
+--- /dev/null
++++ b/cmd/atcr/audit_pr_test.go
+@@ -0,0 +1,57 @@
++package main
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++)
++
++func TestPRNumberFromFlags(t *testing.T) {
++	tests := []struct {
++		name      string
++		flagSet   bool
++		flagVal   int
++		githubRef string
++		want      int
++	}{
++		{name: "flag set wins", flagSet: true, flagVal: 1234, githubRef: "refs/pull/9/merge", want: 1234},
++		{name: "github ref fallback (merge)", githubRef: "refs/pull/42/merge", want: 42},
++		{name: "github ref fallback (head)", githubRef: "refs/pull/7/head", want: 7},
++		{name: "neither flag nor env", want: 0},
++		{name: "non-pr ref ignored", githubRef: "refs/heads/main", want: 0},
++		{name: "malformed pull ref ignored", githubRef: "refs/pull/abc/merge", want: 0},
++		{name: "flag zero falls back to env", flagSet: false, githubRef: "refs/pull/3/merge", want: 3},
++	}
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			t.Setenv("GITHUB_REF", tc.githubRef)
++			cmd := newReviewCmd()
++			if tc.flagSet {
++				require := assert.New(t)
++				require.NoError(cmd.Flags().Set("pr", intToStr(tc.flagVal)))
++			}
++			got := prNumberFromFlags(cmd)
++			assert.Equal(t, tc.want, got)
++		})
++	}
++}
++
++func intToStr(n int) string {
++	// small local helper to avoid importing strconv just for the test table
++	if n == 0 {
++		return "0"
++	}
++	neg := n < 0
++	if neg {
++		n = -n
++	}
++	var b []byte
++	for n > 0 {
++		b = append([]byte{byte('0' + n%10)}, b...)
++		n /= 10
++	}
++	if neg {
++		b = append([]byte{'-'}, b...)
++	}
++	return string(b)
++}
+diff --git a/cmd/atcr/audit_report.go b/cmd/atcr/audit_report.go
+new file mode 100644
+index 00000000..371d9964
+--- /dev/null
++++ b/cmd/atcr/audit_report.go
+@@ -0,0 +1,55 @@
++package main
++
++import (
++	"fmt"
++	"path/filepath"
++	"time"
++
++	"github.com/samestrin/atcr/internal/audit"
++	"github.com/spf13/cobra"
++)
++
++// newAuditReportCmd builds `atcr audit-report --pr <n>`: read the append-only
++// audit ledger at .atcr/audit.log.jsonl, select the review runs recorded for the
++// given PR, and print a one-page markdown compliance report (Epic 19.1). A PR
++// with no recorded runs exits non-zero with a clear message (AC3).
++func newAuditReportCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "audit-report",
++		Short: "Render a one-page compliance report for a PR's review runs",
++		Args:  usageArgs(cobra.NoArgs),
++		RunE:  runAuditReport,
++	}
++	cmd.Flags().Int("pr", 0, "pull-request number to report on (required)")
++	_ = cmd.MarkFlagRequired("pr")
++	return cmd
++}
++
++func runAuditReport(cmd *cobra.Command, _ []string) error {
++	pr, _ := cmd.Flags().GetInt("pr")
++
++	root, err := repoRoot()
++	if err != nil {
++		return usageError(fmt.Errorf("resolving repo root: %w", err))
++	}
++	auditPath := filepath.Join(root, ".atcr", "audit.log.jsonl")
++	recs, err := audit.Load(auditPath)
++	if err != nil {
++		return usageError(err) // corrupt/unreadable ledger (exit 2)
++	}
++
++	forPR := make([]audit.Record, 0, len(recs))
++	for _, r := range recs {
++		if r.PR == pr {
++			forPR = append(forPR, r)
++		}
++	}
++	if len(forPR) == 0 {
++		// AC3: an unknown --pr (a PR with no recorded runs, or an absent ledger)
++		// exits non-zero with a clear, actionable message.
++		return fmt.Errorf("no audit records found for PR #%d — run 'atcr review --pr %d' first, or verify the PR number", pr, pr)
++	}
++
++	_, _ = fmt.Fprint(cmd.OutOrStdout(), audit.RenderReport(forPR, pr, time.Now()))
++	return nil
++}
+diff --git a/cmd/atcr/audit_report_test.go b/cmd/atcr/audit_report_test.go
+new file mode 100644
+index 00000000..0022d12c
+--- /dev/null
++++ b/cmd/atcr/audit_report_test.go
+@@ -0,0 +1,91 @@
++package main
++
++import (
++	"bytes"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func runAuditReportIn(t *testing.T, root string, args ...string) (string, error) {
++	t.Helper()
++	t.Chdir(root)
++	cmd := newAuditReportCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetErr(&out)
++	cmd.SetArgs(args)
++	err := cmd.Execute()
++	return out.String(), err
++}
++
++// writeAuditLedger lays down .atcr/audit.log.jsonl with the given records.
++func writeAuditLedger(t *testing.T, root string, lines ...map[string]any) {
++	t.Helper()
++	dir := filepath.Join(root, ".atcr")
++	require.NoError(t, os.MkdirAll(dir, 0o755))
++	var buf bytes.Buffer
++	enc := json.NewEncoder(&buf)
++	for _, l := range lines {
++		require.NoError(t, enc.Encode(l))
++	}
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "audit.log.jsonl"), buf.Bytes(), 0o644))
++}
++
++func TestAuditReportCmd_RendersReportForPR(t *testing.T) {
++	root := t.TempDir()
++	ts := time.Date(2026, 7, 4, 9, 30, 0, 0, time.UTC).Format(time.RFC3339)
++	writeAuditLedger(t, root,
++		map[string]any{"ts": ts, "pr": 1234, "base": "basesha0001", "head": "headsha0002", "findings": map[string]int{"HIGH": 1}},
++		map[string]any{"ts": ts, "pr": 5, "base": "otherbase", "head": "otherhead", "findings": map[string]int{"LOW": 1}},
++	)
++	out, err := runAuditReportIn(t, root, "--pr", "1234")
++	require.NoError(t, err)
++	assert.Contains(t, out, "# Audit Report")
++	assert.Contains(t, out, "1234")
++	assert.Contains(t, out, "basesha0001")
++	assert.NotContains(t, out, "otherbase") // the PR-5 run must not leak into the PR-1234 report
++}
++
++func TestAuditReportCmd_UnknownPRExitsNonZero(t *testing.T) {
++	root := t.TempDir()
++	ts := time.Date(2026, 7, 4, 9, 30, 0, 0, time.UTC).Format(time.RFC3339)
++	writeAuditLedger(t, root,
++		map[string]any{"ts": ts, "pr": 5, "base": "b", "head": "h"},
++	)
++	_, err := runAuditReportIn(t, root, "--pr", "9999")
++	require.Error(t, err) // AC3: unknown --pr exits non-zero
++	assert.NotEqual(t, 0, exitCode(err))
++	assert.Contains(t, err.Error(), "9999")
++}
++
++func TestAuditReportCmd_AbsentLedgerExitsNonZero(t *testing.T) {
++	root := t.TempDir()
++	_, err := runAuditReportIn(t, root, "--pr", "1")
++	require.Error(t, err) // no ledger at all => nothing for this PR => non-zero
++	assert.Contains(t, err.Error(), "1")
++}
++
++func TestAuditReportCmd_MissingPRFlagIsError(t *testing.T) {
++	root := t.TempDir()
++	_, err := runAuditReportIn(t, root)
++	require.Error(t, err) // --pr is required
++}
++
++func TestAuditReportCmd_ResolvesRepoRootFromSubdir(t *testing.T) {
++	root := t.TempDir()
++	ts := time.Date(2026, 7, 4, 9, 30, 0, 0, time.UTC).Format(time.RFC3339)
++	writeAuditLedger(t, root,
++		map[string]any{"ts": ts, "pr": 1234, "base": "basesha0001", "head": "headsha0002"},
++	)
++	sub := filepath.Join(root, "nested", "dir")
++	require.NoError(t, os.MkdirAll(sub, 0o755))
++	out, err := runAuditReportIn(t, sub, "--pr", "1234")
++	require.NoError(t, err) // walks up to the .atcr ledger
++	assert.Contains(t, out, "# Audit Report")
++}
+diff --git a/cmd/atcr/main.go b/cmd/atcr/main.go
+index a07a9c02..bffaf8a8 100644
+--- a/cmd/atcr/main.go
++++ b/cmd/atcr/main.go
+@@ -126,82 +126,83 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
+ // newRootCmd constructs the atcr command tree. All subcommands use RunE so
+ // errors bubble up to main() for centralized exit-code mapping.
+ func newRootCmd() *cobra.Command {
+ 	root := &cobra.Command{
+ 		Use:   "atcr",
+ 		Short: "Agent Team Code Review — a review panel, not a reviewer",
+ 		// Setting Version makes cobra auto-register the --version flag, which
+ 		// short-circuits before PersistentPreRunE (matching the comments on that
+ 		// hook below). A peer `version` subcommand is also registered for the
+ 		// `atcr version` convention; both render the same string.
+ 		Version: atcrVersion(),
+ 		Long: "atcr fans a code change out to a panel of heterogeneous LLM reviewer personas,\n" +
+ 			"then deterministically reconciles their findings into a single deduplicated,\n" +
+ 			"confidence-scored deliverable.\n\n" +
+ 			"Logging:\n" +
+ 			"  LOG_LEVEL      environment variable: debug, info, warn, error (default info).\n" +
+ 			"                 Set LOG_LEVEL=debug to diagnose a failing review.\n" +
+ 			"  --log-format   log output format: text or json (default text).\n" +
+ 			"                 Use json for machine-readable, newline-delimited logs in CI.",
+ 		SilenceUsage:  true,
+ 		SilenceErrors: true,
+ 		// An unknown subcommand is a usage error (exit 2), not the generic
+ 		// failure code: in CI, exit 1 specifically means "findings at/above
+ 		// threshold". Setting Args bypasses cobra's legacyArgs path (which
+ 		// returns an uncoded error from Find), and the RunE keeps bare `atcr`
+ 		// printing help with exit 0.
+ 		Args: usageArgs(cobra.NoArgs),
+ 		// PersistentPreRunE is inherited by every subcommand, so it is the single
+ 		// point where the root logger is constructed (from LOG_LEVEL and
+ 		// --log-format) and stored in the command context. No subcommand builds
+ 		// its own logger after this; they retrieve it via log.FromContext.
+ 		// Note: cobra's --help/-h and --version flags short-circuit before
+ 		// PersistentPreRunE runs, so no logger is stored in context on those
+ 		// paths. All consumers must use log.FromContext, which falls back to a
+ 		// shared discard logger on a miss — never assert logger presence directly.
+ 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+ 			return setupLogger(cmd)
+ 		},
+ 		RunE: func(cmd *cobra.Command, _ []string) error {
+ 			return cmd.Help()
+ 		},
+ 	}
+ 
+ 	// --log-format is a persistent flag so every subcommand inherits it; LOG_LEVEL
+ 	// is read from the environment (see logLevelFromEnv). Both feed setupLogger.
+ 	root.PersistentFlags().String("log-format", "text", "log output format: text or json")
+ 
+ 	// Flag-parse errors (unknown flags, bad values, violated flag groups)
+ 	// are usage errors: exit 2.
+ 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+ 		return usageError(err)
+ 	})
+ 
+ 	root.AddCommand(
+ 		newReviewCmd(),
+ 		newReconcileCmd(),
+ 		newVerifyCmd(),
+ 		newDebateCmd(),
+ 		newReportCmd(),
+ 		newGithubCmd(),
+ 		newRangeCmd(),
+ 		newStatusCmd(),
+ 		newInitCmd(),
+ 		newQuickstartCmd(),
+ 		newServeCmd(),
+ 		newDoctorCmd(),
+ 		newTrustCmd(),
+ 		newScorecardCmd(),
+ 		newLeaderboardCmd(),
+ 		newBenchmarkCmd(),
+ 		newPersonasCmd(),
+ 		newDebtCmd(),
+ 		newHistoryCmd(),
++		newAuditReportCmd(),
+ 		newVersionCmd(),
+ 	)
+ 	return root
+ }
+ 
+ // logLevelFromEnv returns the configured LOG_LEVEL, defaulting to "info" when the
+ // variable is unset or blank. LOG_LEVEL is read from the environment (not a flag)
+ // so operators can raise verbosity per-invocation without changing the command
+ // line; log.LevelFromString validates the value in setupLogger.
+diff --git a/cmd/atcr/main_test.go b/cmd/atcr/main_test.go
+index 041ba1f8..328272e2 100644
+--- a/cmd/atcr/main_test.go
++++ b/cmd/atcr/main_test.go
+@@ -43,19 +43,19 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
+ 	}
+ }
+ 
+-func TestRootCmd_HasExactlyTwentySubcommands(t *testing.T) {
+-	// The nineteen prior commands plus `history`, the finding-history query
+-	// namespace (Epic 19.0).
++func TestRootCmd_HasExactlyTwentyOneSubcommands(t *testing.T) {
++	// The twenty prior commands plus `audit-report`, the compliance-report
++	// namespace over the per-run audit ledger (Epic 19.1).
+ 	root := newRootCmd()
+ 	names := map[string]bool{}
+ 	for _, c := range root.Commands() {
+ 		if c.Hidden || c.Name() == "help" || c.Name() == "completion" {
+ 			continue
+ 		}
+ 		names[c.Name()] = true
+ 	}
+-	assert.Len(t, names, 20)
+-	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "debt", "history", "version"} {
++	assert.Len(t, names, 21)
++	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "debt", "history", "audit-report", "version"} {
+ 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
+ 	}
+ }
+diff --git a/cmd/atcr/resume.go b/cmd/atcr/resume.go
+index 53eb3cf5..1fadd317 100644
+--- a/cmd/atcr/resume.go
++++ b/cmd/atcr/resume.go
+@@ -3,27 +3,28 @@ package main
+ import (
+ 	"context"
+ 	"errors"
+ 	"fmt"
+ 	reclib "github.com/samestrin/atcr/reconcile"
+ 	"path/filepath"
+ 	"strings"
+ 	"time"
+ 
++	"github.com/samestrin/atcr/internal/audit"
+ 	"github.com/samestrin/atcr/internal/fanout"
+ 	"github.com/samestrin/atcr/internal/gitrange"
+ 	"github.com/samestrin/atcr/internal/history"
+ 	"github.com/samestrin/atcr/internal/llmclient"
+ 	"github.com/samestrin/atcr/internal/log"
+ 	"github.com/samestrin/atcr/internal/metrics"
+ 	"github.com/samestrin/atcr/internal/reconcile"
+ 	"github.com/spf13/cobra"
+ )
+ 
+ // resolveResumeDir maps the --resume anchor to a review directory. The literal
+ // "latest" (and an empty value) resolve the .atcr/latest pointer, matching the
+ // documented `atcr review --resume latest` form; any other value is delegated to
+ // resolveReviewDir, which accepts a bare review id (resolved under
+ // .atcr/reviews/) or an explicit path used verbatim, and verifies the directory
+ // holds a sources/ tree (otherwise a clear exit-2 usage error). Note that an
+ // explicit anchor of "latest" can never be a real id: ReviewID always prefixes
+ // the date (<YYYY-MM-DD>_<slug>), so reserving the word for the pointer is safe.
+@@ -38,183 +39,200 @@ func resolveResumeDir(anchor string) (string, error) {
+ // runResume drives `atcr review --resume <anchor>`: it resolves the target review
+ // directory, re-resolves the current git range (using any --base/--head/
+ // --merge-commit flags, exactly as a fresh review would), and hands both to
+ // PrepareResume, which locks the range and roster against the interrupted run.
+ // Every pre-fan-out validation problem — a changed range (AC3), a changed roster,
+ // a missing/corrupt manifest, or a bad config — is a usage error (exit 2). When
+ // every agent already completed, it re-runs reconciliation and exits clean (AC2);
+ // otherwise it fans out only the pending agents, then auto-reconciles. A
+ // SIGINT/SIGTERM during the resumed fan-out preserves the new partial results and
+ // the interrupted marker (AC7), exiting 1 with the same notice as a fresh review.
+ func runResume(cmd *cobra.Command, anchor string) error {
+ 	ctx := cmd.Context()
+ 
+ 	// --resume targets an existing review; --id and --output-dir only make sense
+ 	// when creating a new one, so reject the combination up front (exit 2).
+ 	if cmd.Flags().Changed("id") || cmd.Flags().Changed("output-dir") {
+ 		return usageError(errors.New("--resume cannot be combined with --id or --output-dir"))
+ 	}
+ 
+ 	// The one-shot gate/verify flags drive an exit-code gate on a fresh review;
+ 	// --resume always reconciles but deliberately does NOT re-implement that gate
+ 	// (out of scope). Silently ignoring them would let a CI pipeline resume a
+ 	// review and false-PASS despite surviving findings, so reject them fail-closed
+ 	// (exit 2) and point at the standalone gate commands.
+ 	for _, f := range []string{"fail-on", "verify", "require-verified"} {
+ 		if cmd.Flags().Changed(f) {
+ 			return usageError(fmt.Errorf("--resume does not support --%s; resume reconciles automatically — run `atcr reconcile --fail-on <severity>` or `atcr verify` afterward to gate", f))
+ 		}
+ 	}
+ 
+ 	// --fresh, --thorough, and --min-severity only apply to the --verify stage;
+ 	// --verify is already rejected above, so silently accepting them would
+ 	// discard the flag without any feedback to the user.
+ 	for _, f := range []string{"fresh", "thorough", "min-severity"} {
+ 		if cmd.Flags().Changed(f) {
+ 			return usageError(fmt.Errorf("--resume does not support --%s; this flag only applies to --verify, which is not supported with --resume", f))
+ 		}
+ 	}
+ 
+ 	dir, err := resolveResumeDir(anchor)
+ 	if err != nil {
+ 		return usageError(err)
+ 	}
+ 
+ 	base, _ := cmd.Flags().GetString("base")
+ 	head, _ := cmd.Flags().GetString("head")
+ 	mergeCommit, _ := cmd.Flags().GetString("merge-commit")
+ 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
+ 	if err != nil {
+ 		if errors.Is(ctx.Err(), context.Canceled) {
+ 			return interruptedBeforeFanout(cmd)
+ 		}
+ 		return usageError(fmt.Errorf("resume failed: %w", err))
+ 	}
+ 	if res == nil {
+ 		return usageError(errors.New("resume failed: git range returned no result"))
+ 	}
+ 
+ 	cfg, err := fanout.LoadReviewConfig(".", cliOverrides(cmd))
+ 	if err != nil {
+ 		return usageError(err)
+ 	}
+ 	if banner := cfg.Registry.ProjectProviderBanner(); banner != "" {
+ 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), banner)
+ 	}
+ 
+ 	req := fanout.ReviewRequest{
+ 		Repo: ".",
+ 		Root: ".",
+ 		Range: fanout.ReviewRange{
+ 			Base:          res.Base,
+ 			Head:          res.Head,
+ 			DetectionMode: res.DetectionMode,
+ 			DefaultBranch: res.DefaultBranch,
+ 			CommitCount:   res.CommitCount,
+ 		},
+ 		StartedAt: time.Now(),
++		PRNumber:  prNumberFromFlags(cmd),
+ 	}
+ 
+ 	prep, info, err := fanout.PrepareResume(ctx, cfg, dir, req)
+ 	if err != nil {
+ 		// Range/roster mismatch (AC3) and every other pre-fan-out validation
+ 		// problem is a usage/configuration error (exit 2). The interrupt path is not
+ 		// reachable here: PrepareResume performs no long-running work.
+ 		return usageError(err)
+ 	}
+ 
+ 	// Correlate every downstream log line by review id and enforce sink-level
+ 	// redaction (scrub secret-shaped tokens, relativize absolute paths under the
+ 	// repo root) for the resumed fan-out and reconcile — parity with the fresh
+ 	// review path so the resume flow never leaks secrets or absolute paths,
+ 	// including the resolved registry key values (epic 4.9). Shared with runReview
+ 	// via correlateAndRedact so the contract can't drift.
+ 	secrets, secretWarnings := prep.SecretValues()
+ 	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, secrets...)
+ 	for _, w := range secretWarnings {
+ 		log.FromContext(ctx).Debug(w)
+ 	}
+ 
+ 	// AC2: nothing pending — re-run reconciliation against the complete review and
+ 	// exit clean, never touching a provider. Clear any stale interrupt marker first
+ 	// so a review that was interrupted-but-actually-complete reports completed
+ 	// rather than interrupted (AC6).
+ 	if info.AllComplete() {
+ 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "All configured agents already completed. Re-running reconciliation...")
+ 		if err := fanout.ClearInterrupted(dir); err != nil {
+ 			return usageError(fmt.Errorf("resume failed: %w", err))
+ 		}
+ 		if err := resumeReconcile(ctx, cmd, dir); err != nil {
+ 			return err
+ 		}
+ 		recordResumeHistory(ctx, dir, req.StartedAt)
++		recordResumeAudit(ctx, dir, req.StartedAt, req.PRNumber, req.Range.Base, req.Range.Head)
+ 		return nil
+ 	}
+ 
+ 	if err := preflightAPIKeys(prep.Slots); err != nil {
+ 		return err // no pending slot can authenticate → exit 2 before any provider call
+ 	}
+ 
+ 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "resuming review %s: %d completed, %d pending (%s)\n",
+ 		prep.ID, len(info.Completed), len(info.Pending), strings.Join(info.Pending, ", "))
+ 
+ 	// Snapshot the summary counters before the resumed fan-out so the end-of-review
+ 	// summary reports only this resume's contribution, mirroring runReview.
+ 	metricsBaseline := snapshotSummaryMetrics(metrics.DefaultRegistry)
+ 
+ 	result, err := fanout.ExecuteResume(ctx, llmclient.New(), prep)
+ 
+ 	// Graceful interrupt during the resumed fan-out (AC7): the new partial results
+ 	// are already persisted and the manifest is re-marked interrupted, so report
+ 	// what was saved and stop. Checked before err so an interrupted resume is never
+ 	// reported as a clean completion. Exit 1, consistent with a fresh review.
+ 	if errors.Is(ctx.Err(), context.Canceled) {
+ 		return reportInterrupt(cmd, ctx, result, prep)
+ 	}
+ 
+ 	if result != nil {
+ 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
+ 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
+ 		// End-of-review metrics summary (Epic 4.4 AC3), mirroring runReview: emitted
+ 		// before the all-agents-failed error guard so a fully-failed resume still prints
+ 		// the breakdown. elapsed is measured from req.StartedAt (set just before
+ 		// PrepareResume), the resume's wall-clock start.
+ 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
+ 		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(req.StartedAt))
+ 	}
+ 	if err != nil {
+ 		// An empty union is a usage/state error (exit 2), consistent with the
+ 		// other pre-fan-out state errors above — not the exit-1 "agents failed"
+ 		// path. Effectively unreachable once there are pending slots, but mapped
+ 		// for consistency.
+ 		if errors.Is(err, fanout.ErrEmptyRoster) {
+ 			return usageError(err)
+ 		}
+ 		return err // every agent (union) failed → exit 1, artifacts preserved
+ 	}
+ 
+ 	// Auto-reconcile on successful completion (epic 4.1.1: a resumed run always
+ 	// produces a fresh reconciliation, mirroring the in-process one-shot path).
+ 	if err := resumeReconcile(ctx, cmd, result.Dir); err != nil {
+ 		return err
+ 	}
+ 	recordResumeHistory(ctx, result.Dir, req.StartedAt)
++	recordResumeAudit(ctx, result.Dir, req.StartedAt, req.PRNumber, req.Range.Base, req.Range.Head)
+ 	return nil
+ }
+ 
+ // recordResumeHistory persists a resumed review's pool findings to the
+ // append-only history ledger, mirroring the fresh-review hook in review.go. A
+ // history write failure is non-fatal: it must never fail an otherwise-successful
+ // resume, so it is logged and swallowed.
+ func recordResumeHistory(ctx context.Context, dir string, ts time.Time) {
+ 	histPath := filepath.Join(".", ".atcr", "findings-history.jsonl")
+ 	if n, err := history.RecordReview(histPath, dir, ts); err != nil {
+ 		log.FromContext(ctx).Warn("failed to append finding history", "error", err)
+ 	} else if n > 0 {
+ 		log.FromContext(ctx).Debug("appended finding history", "records", n, "path", histPath)
+ 	}
+ }
+ 
++// recordResumeAudit appends a resumed review's audit record to the append-only
++// compliance ledger, mirroring the fresh-review hook in review.go so a resumed
++// run is recorded exactly once (Epic 19.1 AC1). Like the history write it is
++// non-fatal — a compliance write must never fail an otherwise-successful resume,
++// so it is logged and swallowed.
++func recordResumeAudit(ctx context.Context, dir string, ts time.Time, pr int, base, head string) {
++	auditPath := filepath.Join(".", ".atcr", "audit.log.jsonl")
++	if n, err := audit.RecordReview(auditPath, dir, ts, pr, base, head); err != nil {
++		log.FromContext(ctx).Warn("failed to append audit record", "error", err)
++	} else if n > 0 {
++		log.FromContext(ctx).Debug("appended audit record", "records", n, "pr", pr, "path", auditPath)
++	}
++}
++
+ // resumeReconcile runs the deterministic reconcile pipeline against dir and prints
+ // the merged finding count, mapping a reconcile failure to a usage error (exit 2)
+ // with the on-disk review preserved for inspection. The partial flag is read from
+ // the just-finalized review so reconcile records the run's partial provenance.
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index b5c7661f..771f0cb3 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -3,64 +3,67 @@ package main
+ import (
+ 	"context"
+ 	"errors"
+ 	"fmt"
+ 	reclib "github.com/samestrin/atcr/reconcile"
+ 	"os"
+ 	"path/filepath"
++	"strconv"
+ 	"strings"
+ 	"time"
+ 
++	"github.com/samestrin/atcr/internal/audit"
+ 	"github.com/samestrin/atcr/internal/debate"
+ 	"github.com/samestrin/atcr/internal/fanout"
+ 	"github.com/samestrin/atcr/internal/gitrange"
+ 	"github.com/samestrin/atcr/internal/history"
+ 	"github.com/samestrin/atcr/internal/llmclient"
+ 	"github.com/samestrin/atcr/internal/log"
+ 	"github.com/samestrin/atcr/internal/metrics"
+ 	"github.com/samestrin/atcr/internal/reconcile"
+ 	"github.com/samestrin/atcr/internal/registry"
+ 	"github.com/samestrin/atcr/internal/sandbox"
+ 	"github.com/samestrin/atcr/internal/validation"
+ 	"github.com/samestrin/atcr/internal/verify"
+ 	"github.com/spf13/cobra"
+ )
+ 
+ // newReviewCmd builds `atcr review`: resolve the git range, build payloads,
+ // create the review directory, and fan out to the persona pool.
+ func newReviewCmd() *cobra.Command {
+ 	cmd := &cobra.Command{
+ 		Use:   "review",
+ 		Short: "Fan a code change out to the reviewer pool",
+ 		Args:  usageArgs(cobra.NoArgs),
+ 		RunE:  runReview,
+ 	}
+ 	cmd.Flags().String("id", "", "review id (default: <YYYY-MM-DD>_<branch-slug>)")
+ 	cmd.Flags().String("output-dir", "", "write the review tree to this path instead of .atcr/reviews/<id>/ (mutually exclusive with --id; does not update .atcr/latest)")
+ 	cmd.Flags().String("payload", "", "payload mode override: diff, blocks, or files")
+ 	cmd.Flags().Int("timeout", 0, "global timeout in seconds (overrides config)")
+ 	cmd.Flags().Int64("byte-budget", 0, "per-payload byte budget, 0 = unlimited (overrides config)")
+ 	cmd.Flags().Int("max-parallel", 0, "max concurrent parallel-lane agent calls, 0 = unbounded (default when unset: 10 from config, not unbounded)")
+ 	cmd.Flags().String("fail-on", "", "one-shot: review + reconcile, then exit 1 if any finding at/above this severity survives")
+ 	cmd.Flags().Bool("verify", false, "one-shot: chain review -> reconcile -> verify (adversarial skeptics) in a single run")
+ 	cmd.Flags().Bool("require-verified", false, "with --verify and --fail-on: gate counts only skeptic-confirmed (VERIFIED) findings — the strictest gate")
+ 	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict")
+ 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
+ 	cmd.Flags().Bool("exec", false, "with --verify: let skeptics reproduce findings in a sandbox (requires a [sandbox] block in .atcr/config.yaml that passes preflight); refuses otherwise")
+ 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
+ 	cmd.Flags().Bool("debate", false, "one-shot: chain a cross-examination stage (proposer/challenger/judge) after reconcile/verify, settling disputed findings")
+ 	cmd.Flags().Bool("single-model", false, "with --debate: allow the same-model persona fallback when fewer than 3 distinct models are available")
+ 	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
+ 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
+ 	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
+ 	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
++	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
+ 	addRangeFlags(cmd)
+ 	addAutoFixFlags(cmd)
+ 	return cmd
+ }
+ 
+ // outputDirFromFlags resolves the --output-dir override for `atcr review`. It
+ // returns "" when the flag is unset (the default .atcr/reviews/<id>/ layout). An
+ // explicit value is mutually exclusive with --id (the id is meaningless when the
+ // path is explicit) and must be non-empty; a relative path is resolved against
+ // CWD here, at flag-parse time, so PrepareReview receives an absolute path.
+ // Every rejection is a usageError so it maps to exit 2.
+@@ -92,357 +95,408 @@ func outputDirFromFlags(cmd *cobra.Command) (string, error) {
+ // sprintPlanPath returns the --sprint-plan flag value (trimmed). Empty when the
+ // flag is unset, which leaves the review diff-wide (Epic 12.2). The path is
+ // passed through verbatim (relative paths resolve against CWD when the engine
+ // reads the file); a missing/unreadable plan is handled in the engine, not here,
+ // so a bad path never blocks flag parsing.
+ func sprintPlanPath(cmd *cobra.Command) string {
+ 	v, err := cmd.Flags().GetString("sprint-plan")
+ 	if err != nil {
+ 		panic(fmt.Sprintf("sprintPlanPath: undefined flag %q: %v", "sprint-plan", err))
+ 	}
+ 	return strings.TrimSpace(v)
+ }
+ 
++// prNumberFromFlags resolves the pull-request number to stamp on this run's
++// audit record. The explicit --pr flag wins (when set to a positive value);
++// otherwise it falls back to parsing the CI-provided GITHUB_REF, which GitHub
++// sets to refs/pull/<n>/merge (or /head) on pull-request events. This mirrors
++// atcr's flag-wins/env-fallback convention (--repo/GITHUB_REPOSITORY,
++// --token/GITHUB_TOKEN). A local run with neither yields 0 (no PR), which the
++// audit record omits — the run is still recorded, just without a PR.
++func prNumberFromFlags(cmd *cobra.Command) int {
++	if cmd.Flags().Changed("pr") {
++		if n, _ := cmd.Flags().GetInt("pr"); n > 0 {
++			return n
++		}
++	}
++	return prFromGitHubRef(os.Getenv("GITHUB_REF"))
++}
++
++// prFromGitHubRef extracts the PR number from a GitHub pull-request ref of the
++// form refs/pull/<n>/merge or refs/pull/<n>/head. Any other ref shape (a branch
++// ref, a tag, a malformed pull ref) yields 0 — atcr never guesses a PR number
++// from an ambiguous ref.
++func prFromGitHubRef(ref string) int {
++	const prefix = "refs/pull/"
++	if !strings.HasPrefix(ref, prefix) {
++		return 0
++	}
++	rest := ref[len(prefix):]
++	slash := strings.IndexByte(rest, '/')
++	if slash <= 0 {
++		return 0
++	}
++	n, err := strconv.Atoi(rest[:slash])
++	if err != nil || n <= 0 {
++		return 0
++	}
++	return n
++}
++
+ // runReview resolves the range, loads config, and runs the full review flow.
+ // Range/config problems are usage errors (exit 2); an all-agents-failed review
+ // is a plain failure (exit 1) with the artifacts preserved on disk.
+ func runReview(cmd *cobra.Command, _ []string) error {
+ 	// --resume targets an existing review directory and runs only its pending
+ 	// agents (epic 4.1.1); it is a distinct flow from a fresh review, so branch
+ 	// before any new-review flag handling.
+ 	if cmd.Flags().Changed("resume") {
+ 		// --resume (continue an existing review non-destructively) and --force
+ 		// (back up and overwrite it) are opposite collision resolutions; passing
+ 		// both is a usage error (Epic 4.7 AC1b). Checked here, before the resume
+ 		// short-circuit, so the conflict fires regardless of flag order.
+ 		if cmd.Flags().Changed("force") {
+ 			return usageError(errors.New("--resume and --force are mutually exclusive"))
+ 		}
+ 		anchor, _ := cmd.Flags().GetString("resume")
+ 		return runResume(cmd, anchor)
+ 	}
+ 
+ 	ctx := cmd.Context()
+ 	base, _ := cmd.Flags().GetString("base")
+ 	head, _ := cmd.Flags().GetString("head")
+ 	mergeCommit, _ := cmd.Flags().GetString("merge-commit")
+ 	idOverride, _ := cmd.Flags().GetString("id")
+ 
+ 	// Resolve --output-dir (mutually exclusive with --id, relative→absolute)
+ 	// before any review work, so a bad flag combination is a usage error (exit 2)
+ 	// with no wasted API calls.
+ 	outputDir, err := outputDirFromFlags(cmd)
+ 	if err != nil {
+ 		return err
+ 	}
+ 
+ 	// Resolve the gate threshold (--fail-on flag > project config > registry)
+ 	// before any review work; a bad configured value is a usage error (exit 2).
+ 	threshold, err := resolveGateThreshold(cmd)
+ 	if err != nil {
+ 		return err
+ 	}
+ 
+ 	// --verify chains review -> reconcile -> verify (AC 04-02). Validate its
+ 	// --min-severity here too, before any API calls, so a bad value fails fast.
+ 	verifyFlag, _ := cmd.Flags().GetBool("verify")
+ 	// --exec only has consumers in the verify stage (skeptics/repro); reject the
+ 	// silent no-op of `review --exec` without --verify (Epic 11.0).
+ 	if execFlag, _ := cmd.Flags().GetBool("exec"); execFlag && !verifyFlag {
+ 		return usageError(errors.New("--exec requires --verify (execution reproduction runs in the adversarial verify stage)"))
+ 	}
+ 	verifyMinSev := ""
+ 	if verifyFlag {
+ 		if verifyMinSev, err = verifyMinSeverity(cmd); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	// execBackend is resolved AFTER gitrange.Resolve and LoadReviewConfig so that
+ 	// cheap local validation (bad range, invalid registry) fails fast without paying
+ 	// for a sandbox preflight container spawn. It is still resolved before any paid
+ 	// review API calls.
+ 	var execBackend sandbox.Backend
+ 	var execTestCmd []string
+ 	var execTimeout time.Duration
+ 
+ 	// --debate chains the cross-examination stage after reconcile (and verify, when
+ 	// present). It needs no extra validation: it runs on reconciled findings and is
+ 	// independent of --verify, though the canonical chain is --verify --debate.
+ 	debateFlag, _ := cmd.Flags().GetBool("debate")
+ 
+ 	// --require-verified hardens the one-shot gate to count only VERIFIED findings.
+ 	// It needs a gate (--fail-on) and a stage that produces confirmed verdicts:
+ 	// --verify, or --debate (a debate uphold/split writes verdict "confirmed",
+ 	// promoted to VERIFIED — debate alone genuinely yields verified findings, the
+ 	// same semantics the MCP handleDebate gates on). Without any verdict-producing
+ 	// stage a strict gate would silently pass everything, so fail fast as a usage
+ 	// error (parity with `atcr reconcile` and the MCP debate handler).
+ 	requireVerified, _ := cmd.Flags().GetBool("require-verified")
+ 	if requireVerified && (threshold == "" || (!verifyFlag && !debateFlag)) {
+ 		return usageError(errors.New("--require-verified requires --fail-on and --verify or --debate"))
+ 	}
+ 
+ 	// --single-model only affects the debate stage's casting (it opts into the
+ 	// same-model persona fallback). Without --debate it is silently a no-op, so a
+ 	// user setting it alone gets no effect and no feedback; fail fast as a usage
+ 	// error, mirroring the --require-verified guard.
+ 	singleModel, _ := cmd.Flags().GetBool("single-model")
+ 	if singleModel && !debateFlag {
+ 		return usageError(errors.New("--single-model requires --debate"))
+ 	}
+ 
+ 	// --auto-fix (Sprint 17.0, Story 6) is the opt-in write-back flow. Its
+ 	// refuse-without-backend gate is resolved after config load (it needs the
+ 	// project config) but before any fix is applied; afBackend carries the
+ 	// resolved backend forward to the post-reconcile orchestration.
+ 	autoFix := boolFlag(cmd, "auto-fix")
+ 	var afBackend autoFixBackend
+ 
+ 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
+ 	if err != nil {
+ 		// A SIGINT/SIGTERM during range resolution surfaces as context.Canceled
+ 		// here; route it to the graceful interrupt path (exit 1 + notice) rather
+ 		// than a confusing "review failed: context canceled" usage error (exit 2).
+ 		if errors.Is(ctx.Err(), context.Canceled) {
+ 			return interruptedBeforeFanout(cmd)
+ 		}
+ 		// A range failure aborts the pipeline before any agent runs — a usage
+ 		// error (exit 2), per AC 03-02 Error Scenario 2 ("review failed: ...").
+ 		return usageError(fmt.Errorf("review failed: %w", err))
+ 	}
+ 
+ 	cfg, err := fanout.LoadReviewConfig(".", cliOverrides(cmd))
+ 	if err != nil {
+ 		return usageError(err) // missing/invalid config → exit 2
+ 	}
+ 	if banner := cfg.Registry.ProjectProviderBanner(); banner != "" {
+ 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), banner)
+ 	}
+ 
+ 	// The --auto-fix backend must be fully configured before any review work so a
+ 	// half-configured run refuses fast (exit 2) instead of reviewing, applying,
+ 	// and stalling mid-flow. The gate is shape-only (no network/exec); "." is the
+ 	// working-tree root every review runs against.
+ 	if autoFix {
+ 		if afBackend, err = validateAutoFixBackend(cmd, cfg.Project, "."); err != nil {
+ 			return err
+ 		}
+ 	}
+ 
+ 	if verifyFlag {
+ 		if execBackend, execTestCmd, execTimeout, err = resolveExec(cmd, cfg.Project); err != nil {
+ 			return err // refuse-without-backend / preflight failure (exit 2)
+ 		}
+ 	}
+ 
+ 	now := time.Now()
+ 	req := fanout.ReviewRequest{
+ 		Repo: ".",
+ 		Root: ".",
+ 		Range: fanout.ReviewRange{
+ 			Base:          res.Base,
+ 			Head:          res.Head,
+ 			DetectionMode: res.DetectionMode,
+ 			DefaultBranch: res.DefaultBranch,
+ 			CommitCount:   res.CommitCount,
+ 		},
+ 		Branch:         gitrange.CurrentBranch(ctx, "."),
+ 		Date:           now.Format("2006-01-02"),
+ 		TimeSuffix:     now.Format("150405"),
+ 		StartedAt:      now,
+ 		IDOverride:     idOverride,
+ 		OutputDir:      outputDir,
+ 		Force:          boolFlag(cmd, "force"),
+ 		NoCache:        boolFlag(cmd, "no-cache"),
+ 		SprintPlanPath: sprintPlanPath(cmd),
++		PRNumber:       prNumberFromFlags(cmd),
+ 	}
+ 
+ 	// Run the two review phases separately so build-phase failures (persona
+ 	// resolution, unknown provider, prompt render — configuration errors per
+ 	// AC 03-02) map to exit 2, while an all-agents-failed execution stays the
+ 	// plain exit 1 with artifacts preserved on disk.
+ 	prep, err := fanout.PrepareReview(ctx, cfg, req)
+ 	if err != nil {
+ 		// An interrupt during payload build / scaffolding cancels the context; no
+ 		// review directory exists yet, so route to the graceful no-results path
+ 		// instead of a usage error.
+ 		if errors.Is(ctx.Err(), context.Canceled) {
+ 			return interruptedBeforeFanout(cmd)
+ 		}
+ 		return usageError(err)
+ 	}
+ 
+ 	// The review id is the earliest correlation anchor (it exists only after
+ 	// PrepareReview). correlateAndRedact attaches it to the context logger so every
+ 	// downstream stage — execute, reconcile, verify — emits log lines greppable by
+ 	// review_id (AC9), and installs sink-level redaction (AC5/AC6) for the whole
+ 	// review — including the resolved registry key values (epic 4.9) so non-sk-/
+ 	// non-Bearer keys are scrubbed by exact value, not only by token shape. Shared
+ 	// with runResume so the contract can't drift between paths. From here on use
+ 	// this correlated ctx, never cmd.Context() again.
+ 	secrets, secretWarnings := prep.SecretValues()
+ 	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, secrets...)
+ 	for _, w := range secretWarnings {
+ 		log.FromContext(ctx).Debug(w)
+ 	}
+ 
+ 	if err := preflightAPIKeys(prep.Slots); err != nil {
+ 		return err // no slot can authenticate → exit 2 before any provider call
+ 	}
+ 
+ 	// Snapshot the summary counters before fan-out so the end-of-review summary can
+ 	// diff against this baseline and report only this review's contribution, not the
+ 	// process-cumulative registry totals (correct even if a future process runs more
+ 	// than one review against the shared DefaultRegistry).
+ 	metricsBaseline := snapshotSummaryMetrics(metrics.DefaultRegistry)
+ 
+ 	result, err := fanout.ExecuteReview(ctx, llmclient.New(), prep)
+ 
+ 	// Graceful interrupt (SIGINT/SIGTERM cancelled the root context): completed
+ 	// agents are already persisted by WritePool and the manifest is marked
+ 	// interrupted, so report what was saved and stop — running reconcile/verify on
+ 	// a cancelled context would only fail. The check is on the parent ctx, the one
+ 	// signal that survives the engine's per-agent timeout classification. Exit 1
+ 	// (consistent with the 10s force-exit path); skips the normal success line so
+ 	// an interrupted run is never reported as "succeeded".
+ 	if errors.Is(ctx.Err(), context.Canceled) {
+ 		return reportInterrupt(cmd, ctx, result, prep)
+ 	}
+ 
+ 	// End-of-review status + metrics summary (Epic 4.4 AC3): the one-line outcome
+ 	// plus duration, agent outcome, API calls, and findings. Both are emitted before
+ 	// the all-agents-failed error guard below, so an exit-1 review (every agent
+ 	// failed, artifacts preserved) still prints the breakdown an operator most needs
+ 	// on a failure. The summary diffs the post-review registry against metricsBaseline
+ 	// so the counts reflect this review alone — the same metrics the MCP server exports.
+ 	// Note: time.Since(now) is CLI-level elapsed time (includes range resolution,
+ 	// config load, and scaffolding overhead); atcr_review_duration_seconds is
+ 	// engine-level (starts inside fanout.ExecuteReview). The two values measure
+ 	// slightly different spans and will rarely agree exactly — this is intentional.
+ 	if result != nil {
+ 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
+ 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
+ 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
+ 		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now))
+ 	}
+ 	if err != nil {
+ 		return err // all-agents-failed → exit 1, artifacts preserved
+ 	}
+ 
+ 	// Persist this run's findings to the append-only history ledger (Epic 19.0)
+ 	// so `atcr history` can answer per-package trend queries later. It runs on
+ 	// every successful review — before the conditional in-process reconcile
+ 	// below — reading the pool findings.txt that WritePool always writes, and
+ 	// always targets <root>/.atcr regardless of --output-dir (the ledger is a
+ 	// repo-level accumulator, not part of the redirected review tree). A history
+ 	// write failure is non-fatal: it must never fail an otherwise-successful
+ 	// review, so it is logged and swallowed.
+ 	histPath := filepath.Join(req.Root, ".atcr", "findings-history.jsonl")
+ 	if n, herr := history.RecordReview(histPath, result.Dir, now); herr != nil {
+ 		log.FromContext(ctx).Warn("failed to append finding history", "error", herr)
+ 	} else if n > 0 {
+ 		log.FromContext(ctx).Debug("appended finding history", "records", n, "path", histPath)
+ 	}
+ 
++	// Append this run's audit record to the append-only compliance ledger (Epic
++	// 19.1): run timestamp, resolved base/head SHAs, PR number (0 = none), and a
++	// findings-by-severity summary. Like the history ledger it always targets
++	// <root>/.atcr regardless of --output-dir (a repo-level accumulator) and its
++	// failure is non-fatal — a compliance write must never fail an otherwise
++	// successful review, so it is logged and swallowed.
++	auditPath := filepath.Join(req.Root, ".atcr", "audit.log.jsonl")
++	if n, aerr := audit.RecordReview(auditPath, result.Dir, now, req.PRNumber, req.Range.Base, req.Range.Head); aerr != nil {
++		log.FromContext(ctx).Warn("failed to append audit record", "error", aerr)
++	} else if n > 0 {
++		log.FromContext(ctx).Debug("appended audit record", "records", n, "pr", req.PRNumber, "path", auditPath)
++	}
++
+ 	// One-shot mode: reconcile in-process and gate on the threshold. Review
+ 	// artifacts are already on disk, so a reconcile failure (exit 2) preserves
+ 	// them for inspection (AC 03-02 Error Scenario 3).
+ 	//
+ 	// result.Summary.Partial is used directly (not ReadManifestPartial) because
+ 	// the `if err != nil { return err }` guard above ensures this block is only
+ 	// reached when ExecuteReview succeeded — a WritePool fault returns a non-nil
+ 	// error and short-circuits before this line. The FailureMarker correction in
+ 	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
+ 	// path that runs after the fact against the on-disk summary.json.
+ 	if threshold != "" || verifyFlag || debateFlag || autoFix {
+ 		rec, rerr := reconcile.RunReconcile(ctx, result.Dir, nil, reclib.Options{
+ 			ReconciledAt: time.Now(),
+ 			Partial:      result.Summary.Partial,
+ 			Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
+ 		})
+ 		if rerr != nil {
+ 			return usageError(fmt.Errorf("review failed: %w", rerr))
+ 		}
+ 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
+ 
+ 		// --verify chains the adversarial verify stage after the single reconcile
+ 		// (AC 04-02). --debate then chains the cross-examination stage. Both mutate
+ 		// the on-disk findings, so the one-shot gate runs LAST, on the post-chain
+ 		// findings — a refuted or overturned finding never blocks the gate.
+ 		if verifyFlag {
+ 			vres, verr := verify.Verify(ctx, ".", result.Dir, cfg.Registry, verify.Options{
+ 				Fresh:             boolFlag(cmd, "fresh"),
+ 				Thorough:          boolFlag(cmd, "thorough"),
+ 				MinSeverity:       verifyMinSev,
+ 				SharedTimeoutSecs: cfg.Settings.TimeoutSecs,
+ 				ExecBackend:       execBackend,
+ 				ExecTestCmd:       execTestCmd,
+ 				ExecTimeout:       execTimeout,
+ 				// Scrub the same review secrets the log sink redacts from reproduced
+ 				// exec evidence before it is persisted into findings.json (Epic 11.0).
+ 				Redactor: log.NewRedactor(resolveRedactRoot(ctx, prep.Repo), secrets...),
+ 			})
+ 			if verr != nil {
+ 				return verifyFailureError(verr)
+ 			}
+ 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+ 				"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable\n",
+ 				vres.FindingsProcessed, vres.VerdictCounts.Confirmed, vres.VerdictCounts.Refuted,
+ 				vres.VerdictCounts.Unverifiable)
+ 		}
+ 		// A debate failure here intentionally leaves the verify findings already
+ 		// written to disk: they are valid artifacts the operator can still inspect,
+ 		// and re-running --debate resumes from them. There is no cross-stage rollback;
+ 		// the failure is surfaced via debateFailureError. The debate stage's own
+ 		// internal write durability is tracked separately as TD at
+ 		// internal/debate/debate.go:146.
+ 		if debateFlag {
+ 			dres, derr := debate.Debate(ctx, ".", result.Dir, cfg.Registry, debate.Options{
+ 				SingleModel: boolFlag(cmd, "single-model"),
+ 			})
+ 			if derr != nil {
+ 				return debateFailureError(derr)
+ 			}
+ 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+ 				"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow)\n",
+ 				dres.Selected, dres.Upheld, dres.Overturned, dres.Split, dres.Unresolved, dres.Overflow)
+ 		}
+ 
+ 		// --auto-fix consumes the reconciled (and, when chained, verified/debated)
+ 		// findings: apply each selected fix, validate locally, and open a PR only
+ 		// if validation passes. It runs LAST so it operates on the post-chain
+ 		// findings, and it is terminal — the fail-on exit gate below is bypassed
+ 		// because the intent under --auto-fix is to remediate, not to fail CI.
+ 		if autoFix {
+ 			return orchestrateAutoFix(ctx, cmd.OutOrStdout(), afBackend, result.Dir, threshold, res.DefaultBranch)
+ 		}
+ 
+ 		// Gate on the post-chain findings.json when a stage rewrote it; otherwise
+ 		// gate the reconcile result directly.
+ 		if verifyFlag || debateFlag {
+ 			if threshold != "" {
+ 				findings, ferr := reconcile.ReadReconciledFindings(result.Dir)
+ 				if ferr != nil {
+ 					return usageError(ferr)
+ 				}
+ 				if n := reconcile.CountFailingJSON(findings, threshold, requireVerified); n > 0 {
+ 					// Keep the verify-only message stable (operators/CI may match on it);
+ 					// name cross-examination only when --debate actually ran.
+ 					stage := "verification"
+ 					if debateFlag {
+ 						stage = "cross-examination"
+ 					}
+ 					return fmt.Errorf("%d finding(s) at or above %s survived %s", n, threshold, stage)
+ 				}
+ 			}
+ 			return nil
+ 		}
+ 		return gateFindings(rec, threshold, false)
+ 	}
+ 	return nil
+ }
+ 
+ // interruptedBeforeFanout handles a SIGINT/SIGTERM that arrived before the
+ // fan-out started (during range resolution, config load, or scaffolding). No
+ // review directory exists yet, so there are no partial results to preserve — the
+ // notice just confirms the interrupt and exits 1, consistent with the post-fan-out
+ // interrupt path (and never the misleading exit-2 "review failed" usage error).
+diff --git a/internal/audit/capture.go b/internal/audit/capture.go
+new file mode 100644
+index 00000000..5961f40d
+--- /dev/null
++++ b/internal/audit/capture.go
+@@ -0,0 +1,100 @@
++package audit
++
++import (
++	"errors"
++	"fmt"
++	"io/fs"
++	"os"
++	"path/filepath"
++	"strconv"
++	"time"
++
++	"github.com/samestrin/atcr/internal/stream"
++)
++
++// poolFindingsRel is the review-directory-relative path to the merged, 8-column
++// per-source pool findings file that every review run writes via WritePool. It
++// is the single findings artifact guaranteed to exist on every run (reconciled
++// findings.json exists only when reconcile runs), so it is the audit summary's
++// source of truth — the same source internal/history reads.
++var poolFindingsRel = filepath.Join("sources", "pool", "findings.txt")
++
++// RecordReview builds exactly one audit Record for the review at reviewDir and
++// appends it to the ledger at auditPath, stamped with the run timestamp ts, the
++// pull-request number pr (0 = none), and the resolved base/head SHAs. The
++// Findings field summarizes the run's distinct findings counted by severity.
++//
++// Exactly one record is written per call, unconditionally (Epic 19.1 AC1): a
++// missing or empty pool findings file yields an empty severity summary, not a
++// skipped write, so the audit trail records every review run — including clean
++// ones and runs off the findings path. It returns the number of records
++// appended (always 1 on success).
++func RecordReview(auditPath, reviewDir string, ts time.Time, pr int, base, head string) (int, error) {
++	findings, err := summarize(reviewDir)
++	if err != nil {
++		return 0, err
++	}
++	rec := Record{
++		Timestamp: ts,
++		PR:        pr,
++		Base:      base,
++		Head:      head,
++		Findings:  findings,
++	}
++	if err := Append(auditPath, []Record{rec}); err != nil {
++		return 0, err
++	}
++	return 1, nil
++}
++
++// summarize reads the pool findings for the review at reviewDir and returns the
++// count of DISTINCT findings by normalized severity, or nil when there are none.
++// A finding caught by N reviewers appears N times in the pool; it is deduped by
++// (file,line,problem) keeping the highest severity, so the summary is not
++// inflated by reviewer multiplicity (mirrors internal/history.RecordReview so
++// the audit summary and the history ledger agree on distinct-finding counts).
++//
++// A missing pool file is treated as zero findings (nil, nil): an audit write
++// must never turn an otherwise-successful review into a failure. Malformed pool
++// rows are skipped with a stderr warning, matching the history hook.
++func summarize(reviewDir string) (map[string]int, error) {
++	data, err := os.ReadFile(filepath.Join(reviewDir, poolFindingsRel))
++	if err != nil {
++		if errors.Is(err, fs.ErrNotExist) {
++			return nil, nil
++		}
++		return nil, fmt.Errorf("reading pool findings: %w", err)
++	}
++
++	res, err := stream.ParseSource(data)
++	if err != nil {
++		return nil, fmt.Errorf("parsing pool findings: %w", err)
++	}
++	if len(res.Skipped) > 0 {
++		fmt.Fprintf(os.Stderr, "atcr: warning: audit: skipped %d malformed pool row(s); they will not appear in the audit summary\n", len(res.Skipped))
++	}
++
++	// Dedupe by (file,line,problem) keeping the highest severity per the canonical
++	// ranking, so a finding's stored severity is deterministic regardless of pool
++	// row order.
++	highest := make(map[string]string, len(res.Findings)) // finding key -> highest severity seen
++	for _, f := range res.Findings {
++		key := f.File + "\x00" + strconv.Itoa(f.Line) + "\x00" + f.Problem
++		if prev, ok := highest[key]; ok {
++			if stream.SeverityRank[stream.NormalizeSeverity(f.Severity)] > stream.SeverityRank[stream.NormalizeSeverity(prev)] {
++				highest[key] = f.Severity
++			}
++			continue
++		}
++		highest[key] = f.Severity
++	}
++	if len(highest) == 0 {
++		return nil, nil
++	}
++
++	counts := make(map[string]int, 4)
++	for _, sev := range highest {
++		counts[stream.NormalizeSeverity(sev)]++
++	}
++	return counts, nil
++}
+diff --git a/internal/audit/capture_test.go b/internal/audit/capture_test.go
+new file mode 100644
+index 00000000..3773d5e5
+--- /dev/null
++++ b/internal/audit/capture_test.go
+@@ -0,0 +1,81 @@
++package audit
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// writePoolFindings lays down a minimal review dir with an 8-column per-source
++// pool findings.txt (the artifact every review run writes via WritePool).
++func writePoolFindings(t *testing.T, reviewDir, body string) {
++	t.Helper()
++	poolDir := filepath.Join(reviewDir, "sources", "pool")
++	require.NoError(t, os.MkdirAll(poolDir, 0o755))
++	content := "# atcr-findings/v1\n" + body
++	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "findings.txt"), []byte(content), 0o644))
++}
++
++func TestRecordReview_WritesExactlyOneRecordWithSeveritySummary(t *testing.T) {
++	root := t.TempDir()
++	reviewDir := filepath.Join(root, ".atcr", "reviews", "r1")
++	writePoolFindings(t, reviewDir,
++		"HIGH|internal/registry/load.go:42|unchecked error|handle it|CORRECTNESS|15|ev|greta\n"+
++			"LOW|cmd/atcr/review.go:10|nit|rename|STYLE|5|ev|kai\n")
++
++	auditPath := filepath.Join(root, ".atcr", "audit.log.jsonl")
++	ts := time.Date(2026, 7, 5, 9, 30, 0, 0, time.UTC)
++	n, err := RecordReview(auditPath, reviewDir, ts, 1234, "basesha", "headsha")
++	require.NoError(t, err)
++	assert.Equal(t, 1, n) // AC1: exactly one audit record per run
++
++	recs, err := Load(auditPath)
++	require.NoError(t, err)
++	require.Len(t, recs, 1)
++	assert.Equal(t, 1234, recs[0].PR)
++	assert.Equal(t, "basesha", recs[0].Base)
++	assert.Equal(t, "headsha", recs[0].Head)
++	assert.True(t, ts.Equal(recs[0].Timestamp))
++	assert.Equal(t, map[string]int{"HIGH": 1, "LOW": 1}, recs[0].Findings)
++}
++
++func TestRecordReview_MissingPoolStillWritesOneRecord(t *testing.T) {
++	root := t.TempDir()
++	reviewDir := filepath.Join(root, ".atcr", "reviews", "empty") // no sources/pool
++	auditPath := filepath.Join(root, ".atcr", "audit.log.jsonl")
++
++	n, err := RecordReview(auditPath, reviewDir, time.Now(), 0, "b", "h")
++	require.NoError(t, err) // a missing pool file must never fail the review
++	assert.Equal(t, 1, n)   // still exactly one record (AC1)
++
++	recs, err := Load(auditPath)
++	require.NoError(t, err)
++	require.Len(t, recs, 1)
++	assert.Equal(t, "b", recs[0].Base)
++	assert.Empty(t, recs[0].Findings) // no findings summary, but the run is recorded
++	assert.Equal(t, 0, recs[0].PR)    // PR omitted for a non-PR run
++}
++
++func TestRecordReview_DedupesByFindingKeepingMaxSeverity(t *testing.T) {
++	root := t.TempDir()
++	reviewDir := filepath.Join(root, ".atcr", "reviews", "dup")
++	// The same finding reported by two reviewers at different severities: counts
++	// must reflect ONE distinct finding at the highest severity, order-independent.
++	writePoolFindings(t, reviewDir,
++		"LOW|internal/registry/load.go:42|unchecked error|handle it|CORRECTNESS|15|ev|greta\n"+
++			"HIGH|internal/registry/load.go:42|unchecked error|handle it|CORRECTNESS|15|ev|kai\n")
++
++	auditPath := filepath.Join(root, ".atcr", "audit.log.jsonl")
++	n, err := RecordReview(auditPath, reviewDir, time.Now(), 5, "b", "h")
++	require.NoError(t, err)
++	assert.Equal(t, 1, n)
++
++	recs, err := Load(auditPath)
++	require.NoError(t, err)
++	require.Len(t, recs, 1)
++	assert.Equal(t, map[string]int{"HIGH": 1}, recs[0].Findings)
++}
+diff --git a/internal/audit/reader.go b/internal/audit/reader.go
+new file mode 100644
+index 00000000..0298b82e
+--- /dev/null
++++ b/internal/audit/reader.go
+@@ -0,0 +1,75 @@
++package audit
++
++import (
++	"bufio"
++	"bytes"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"io/fs"
++	"os"
++)
++
++// Load reads the JSONL ledger at path and returns every record in file order.
++// An absent ledger returns (nil, nil): a project that has never run a review is
++// a valid empty audit trail, not an error. Blank lines and malformed (non-JSON)
++// lines are skipped rather than failing the whole read: the ledger is
++// append-only and the CLI offers no repair path, so a single torn write or stray
++// byte must not permanently brick `atcr audit-report`. Only an IO/scan failure
++// is an error.
++func Load(path string) ([]Record, error) {
++	f, err := os.Open(path)
++	if err != nil {
++		if errors.Is(err, fs.ErrNotExist) {
++			return nil, nil
++		}
++		return nil, fmt.Errorf("opening audit ledger: %w", err)
++	}
++	defer func() { _ = f.Close() }()
++
++	var records []Record
++	sc := bufio.NewScanner(f)
++	// Records are small, but raise the max token to 1MiB so a long line is never
++	// silently truncated into a parse error.
++	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
++	for sc.Scan() {
++		raw := bytes.TrimSpace(sc.Bytes())
++		if len(raw) == 0 {
++			continue
++		}
++		var rec Record
++		if err := json.Unmarshal(raw, &rec); err != nil {
++			continue // skip a malformed line so the rest of the ledger stays queryable
++		}
++		records = append(records, rec)
++	}
++	if err := sc.Err(); err != nil {
++		if !errors.Is(err, bufio.ErrTooLong) {
++			return nil, fmt.Errorf("reading audit ledger: %w", err)
++		}
++		// The scanner stopped at an oversized line. Continue with a reader that
++		// tolerates arbitrarily long lines so the rest of the ledger is still
++		// queryable; any unparseable fragment is skipped like other malformed data.
++		r := bufio.NewReader(f)
++		for {
++			line, rerr := r.ReadString('\n')
++			if len(line) > 0 {
++				raw := bytes.TrimSpace([]byte(line))
++				if len(raw) != 0 {
++					var rec Record
++					if jerr := json.Unmarshal(raw, &rec); jerr == nil {
++						records = append(records, rec)
++					}
++				}
++			}
++			if rerr != nil {
++				if errors.Is(rerr, io.EOF) {
++					break
++				}
++				return nil, fmt.Errorf("reading audit ledger: %w", rerr)
++			}
++		}
++	}
++	return records, nil
++}
+diff --git a/internal/audit/reader_test.go b/internal/audit/reader_test.go
+new file mode 100644
+index 00000000..afebfc8a
+--- /dev/null
++++ b/internal/audit/reader_test.go
+@@ -0,0 +1,58 @@
++package audit
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestLoad_AbsentLedgerIsEmptyNotError(t *testing.T) {
++	recs, err := Load(filepath.Join(t.TempDir(), "nope.jsonl"))
++	require.NoError(t, err) // a project that never ran a review is a valid empty audit trail
++	assert.Empty(t, recs)
++}
++
++func TestLoad_SkipsBlankAndMalformedLines(t *testing.T) {
++	root := t.TempDir()
++	path := filepath.Join(root, "audit.log.jsonl")
++	good := `{"ts":"2026-07-05T12:00:00Z","pr":7,"base":"aaa","head":"bbb","findings":{"HIGH":1}}`
++	content := strings.Join([]string{
++		good,
++		"",                // blank
++		"not json at all", // malformed
++		good,
++	}, "\n") + "\n"
++	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
++
++	recs, err := Load(path)
++	require.NoError(t, err) // one torn/stray line must not brick the whole read
++	require.Len(t, recs, 2)
++	assert.Equal(t, 7, recs[0].PR)
++	assert.Equal(t, "aaa", recs[0].Base)
++	assert.True(t, time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC).Equal(recs[0].Timestamp))
++}
++
++func TestLoad_RecoversRecordsAroundOversizedLine(t *testing.T) {
++	root := t.TempDir()
++	path := filepath.Join(root, "audit.log.jsonl")
++	rec := `{"ts":"2026-07-05T12:00:00Z","pr":7,"base":"aaa","head":"bbb"}`
++
++	var b strings.Builder
++	b.WriteString(rec + "\n")
++	b.WriteString(strings.Repeat("x", 2*1024*1024) + "\n") // > 1MiB: trips the scanner's token cap
++	b.WriteString(rec + "\n")
++	require.NoError(t, os.WriteFile(path, []byte(b.String()), 0o644))
++
++	// The record before AND after the oversized line are both recovered; the
++	// oversized fragment is skipped, not fatal.
++	recs, err := Load(path)
++	require.NoError(t, err)
++	require.Len(t, recs, 2)
++	assert.Equal(t, 7, recs[0].PR)
++	assert.Equal(t, 7, recs[1].PR)
++}
+diff --git a/internal/audit/record.go b/internal/audit/record.go
+new file mode 100644
+index 00000000..e002257d
+--- /dev/null
++++ b/internal/audit/record.go
+@@ -0,0 +1,33 @@
++// Package audit persists a tamper-evident, append-only record of every
++// `atcr review` run and renders a one-page compliance report for a given pull
++// request (Epic 19.1).
++//
++// Every review run appends exactly one JSON record to an append-only JSONL
++// ledger at .atcr/audit.log.jsonl, capturing the run timestamp, the resolved
++// base/head SHAs, the pull-request number (when known), and a summary of
++// findings counted by severity. The `atcr audit-report --pr <n>` command reads
++// that ledger back, selects the records for one PR, and renders a markdown
++// report suitable for a compliance archive.
++package audit
++
++import "time"
++
++// Record is one audit-trail entry for a single review run. It answers "what did
++// atcr review, at what commit range, for which PR, and how many findings did it
++// surface" — deliberately small and provenance-focused, not a reconstruction of
++// the findings themselves (the review directory holds those).
++type Record struct {
++	// Timestamp is the review run's start time (RFC3339 in JSON).
++	Timestamp time.Time `json:"ts"`
++	// PR is the pull-request number the run reviewed. It is optional: a local
++	// review with no PR context records the run with PR omitted (zero), so the
++	// ledger stays complete even off the PR path.
++	PR int `json:"pr,omitempty"`
++	// Base is the resolved base SHA of the reviewed range.
++	Base string `json:"base"`
++	// Head is the resolved head SHA of the reviewed range.
++	Head string `json:"head"`
++	// Findings is the count of distinct findings by severity for this run
++	// (e.g. {"HIGH": 2, "LOW": 3}). Empty/omitted when the run surfaced none.
++	Findings map[string]int `json:"findings,omitempty"`
++}
+diff --git a/internal/audit/render.go b/internal/audit/render.go
+new file mode 100644
+index 00000000..dc88edee
+--- /dev/null
++++ b/internal/audit/render.go
+@@ -0,0 +1,150 @@
++package audit
++
++import (
++	"fmt"
++	"sort"
++	"strings"
++	"time"
++	"unicode"
++)
++
++// canonicalSeverities is the fixed, high-to-low severity column order, matching
++// reconcile.SeverityRank. These columns are always rendered (even when zero) so
++// the report shape is stable across PRs; any non-canonical severity present in
++// the data is appended as an extra column after these.
++var canonicalSeverities = []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"}
++
++// normalizeSeverity upper-cases and trims a severity label so counting is
++// case-insensitive (mirrors reconcile.NormalizeSeverity).
++func normalizeSeverity(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
++
++// sanitizeCell makes an untrusted string safe to embed in a markdown table cell:
++// a literal pipe becomes "\|" (otherwise it opens a spurious column) and any
++// control character (newline, carriage return, tab, ...) becomes a space
++// (otherwise it splits or mangles the row). Base/head SHAs are git-derived and
++// normally safe, but the ledger is an on-disk artifact that could be tampered
++// with, so cells are never written raw (mirrors internal/history.sanitizeCell).
++func sanitizeCell(s string) string {
++	var b strings.Builder
++	b.Grow(len(s))
++	for _, r := range s {
++		switch {
++		case r == '|':
++			b.WriteString(`\|`)
++		case unicode.IsControl(r):
++			b.WriteByte(' ')
++		default:
++			b.WriteRune(r)
++		}
++	}
++	return b.String()
++}
++
++// shortSHA abbreviates a full SHA to 12 chars for a readable one-page report.
++func shortSHA(sha string) string {
++	if len(sha) > 12 {
++		return sha[:12]
++	}
++	return sha
++}
++
++// RenderReport renders a one-page markdown compliance report for the review runs
++// recorded against PR pr. Each record is one run: a table row with the run
++// timestamp (UTC, RFC3339), truncated base/head SHAs, and finding counts by
++// severity, followed by a grand-total row. Runs are ordered oldest-first so the
++// report reads as a chronological audit trail; generatedAt stamps the header.
++//
++// An empty record set renders a header plus a "no runs" note, but the command
++// handles the no-records case before calling this (it is an error condition per
++// Epic 19.1 AC3), so in practice recs is non-empty.
++func RenderReport(recs []Record, pr int, generatedAt time.Time) string {
++	var b strings.Builder
++	fmt.Fprintf(&b, "# Audit Report — PR #%d\n\n", pr)
++	fmt.Fprintf(&b, "_Generated %s_\n\n", generatedAt.UTC().Format(time.RFC3339))
++
++	if len(recs) == 0 {
++		b.WriteString("No review runs recorded for this PR.\n")
++		return b.String()
++	}
++
++	// Sort a copy oldest-first so the report is chronological and deterministic
++	// regardless of ledger order (the ledger is append order, but two concurrent
++	// runs can interleave).
++	sorted := make([]Record, len(recs))
++	copy(sorted, recs)
++	sort.SliceStable(sorted, func(i, j int) bool {
++		return sorted[i].Timestamp.Before(sorted[j].Timestamp)
++	})
++
++	// Columns: the four canonical severities always, plus any extra severities
++	// present in the data (sorted), matching internal/history.RenderTable.
++	canonical := map[string]bool{}
++	for _, s := range canonicalSeverities {
++		canonical[s] = true
++	}
++	extraSet := map[string]bool{}
++	for _, r := range sorted {
++		for sev := range r.Findings {
++			n := normalizeSeverity(sev)
++			if n != "" && !canonical[n] {
++				extraSet[n] = true
++			}
++		}
++	}
++	extras := make([]string, 0, len(extraSet))
++	for s := range extraSet {
++		extras = append(extras, s)
++	}
++	sort.Strings(extras)
++	columns := append(append([]string{}, canonicalSeverities...), extras...)
++
++	fmt.Fprintf(&b, "%d review run(s) recorded for PR #%d.\n\n", len(sorted), pr)
++
++	// Header row.
++	b.WriteString("| Run (UTC) | Base | Head |")
++	for _, c := range columns {
++		fmt.Fprintf(&b, " %s |", sanitizeCell(c))
++	}
++	b.WriteString(" Total |\n")
++
++	// Alignment row: text columns left, counts right-aligned.
++	b.WriteString("|-----------|------|------|")
++	for range columns {
++		b.WriteString("------:|")
++	}
++	b.WriteString("------:|\n")
++
++	// One row per run, plus a grand-total accumulator.
++	grand := map[string]int{}
++	grandTotal := 0
++	for _, r := range sorted {
++		// Normalize this run's findings into canonical-keyed counts so column
++		// lookups are case-insensitive.
++		counts := map[string]int{}
++		for sev, n := range r.Findings {
++			counts[normalizeSeverity(sev)] += n
++		}
++		fmt.Fprintf(&b, "| %s | %s | %s |",
++			sanitizeCell(r.Timestamp.UTC().Format(time.RFC3339)),
++			sanitizeCell(shortSHA(r.Base)),
++			sanitizeCell(shortSHA(r.Head)))
++		rowTotal := 0
++		for _, c := range columns {
++			n := counts[c]
++			fmt.Fprintf(&b, " %d |", n)
++			rowTotal += n
++			grand[c] += n
++		}
++		fmt.Fprintf(&b, " %d |\n", rowTotal)
++		grandTotal += rowTotal
++	}
++
++	// Grand-total row.
++	b.WriteString("| **Total** | | |")
++	for _, c := range columns {
++		fmt.Fprintf(&b, " %d |", grand[c])
++	}
++	fmt.Fprintf(&b, " %d |\n", grandTotal)
++
++	return b.String()
++}
+diff --git a/internal/audit/render_test.go b/internal/audit/render_test.go
+new file mode 100644
+index 00000000..347b5be4
+--- /dev/null
++++ b/internal/audit/render_test.go
+@@ -0,0 +1,51 @@
++package audit
++
++import (
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestRenderReport_RendersPerRunTableWithTotals(t *testing.T) {
++	gen := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
++	recs := []Record{
++		// Deliberately out of chronological order to prove the render sorts ascending.
++		{Timestamp: time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC), PR: 1234, Base: "basesha0003aaaaaaaa", Head: "headsha0004bbbbbbbb", Findings: map[string]int{"HIGH": 1}},
++		{Timestamp: time.Date(2026, 7, 4, 9, 30, 0, 0, time.UTC), PR: 1234, Base: "basesha0001cccccccc", Head: "headsha0002dddddddd", Findings: map[string]int{"HIGH": 1, "LOW": 2}},
++	}
++	out := RenderReport(recs, 1234, gen)
++
++	assert.Contains(t, out, "# Audit Report")
++	assert.Contains(t, out, "1234")                 // PR number in the heading
++	assert.Contains(t, out, "2026-07-05T00:00:00Z") // generated timestamp
++	for _, sev := range []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"} {
++		assert.Contains(t, out, sev) // all canonical severity columns present
++	}
++	assert.Contains(t, out, "**Total**") // grand-total row
++
++	// SHAs are truncated to 12 chars for a readable one-page report.
++	assert.Contains(t, out, "basesha0001c")
++	assert.NotContains(t, out, "basesha0001cccccccc")
++
++	// Runs render in ascending timestamp order (earlier run's row precedes later).
++	early := strings.Index(out, "2026-07-04T09:30:00Z")
++	late := strings.Index(out, "2026-07-05T10:00:00Z")
++	require.GreaterOrEqual(t, early, 0)
++	require.GreaterOrEqual(t, late, 0)
++	assert.Less(t, early, late)
++}
++
++func TestRenderReport_EscapesMarkdownInjectionInCells(t *testing.T) {
++	gen := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
++	// A crafted base value with a pipe + newline must not break the table shape.
++	recs := []Record{
++		{Timestamp: gen, PR: 7, Base: "aaa|bbb\nccc", Head: "hhh", Findings: nil},
++	}
++	out := RenderReport(recs, 7, gen)
++	assert.NotContains(t, out, "aaa|bbb") // raw pipe would open a spurious column
++	assert.Contains(t, out, `aaa\|bbb`)   // escaped instead
++	assert.NotContains(t, out, "\naaa")   // no embedded newline splitting the row
++}
+diff --git a/internal/audit/writer.go b/internal/audit/writer.go
+new file mode 100644
+index 00000000..44b794be
+--- /dev/null
++++ b/internal/audit/writer.go
+@@ -0,0 +1,51 @@
++package audit
++
++import (
++	"bytes"
++	"encoding/json"
++	"fmt"
++	"os"
++	"path/filepath"
++)
++
++// Append writes one JSON line per record to the ledger at path, creating parent
++// directories as needed. The file is opened in append mode so the ledger
++// accumulates across runs — an existing ledger is never truncated. An empty
++// records slice is a no-op (no file is created).
++//
++// The whole batch is serialized to memory first, then written in a single
++// f.Write call. A single review run appends exactly one small record, which the
++// kernel emits with one O_APPEND write() syscall and appends atomically, so two
++// concurrent `atcr review` runs interleave only at record boundaries. That is
++// not a hard guarantee — os.File.Write loops on short writes, so a large buffer
++// could split across several syscalls and a concurrent append could land between
++// them — but audit records are small (one per run), so the risk is negligible;
++// a caller needing a hard guarantee must serialize appends with an external file
++// lock (intentionally not done here, matching internal/history).
++func Append(path string, records []Record) error {
++	if len(records) == 0 {
++		return nil
++	}
++	var buf bytes.Buffer
++	enc := json.NewEncoder(&buf)
++	for i := range records {
++		if err := enc.Encode(records[i]); err != nil {
++			return fmt.Errorf("encoding audit record: %w", err)
++		}
++	}
++	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
++		return fmt.Errorf("creating audit dir: %w", err)
++	}
++	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
++	if err != nil {
++		return fmt.Errorf("opening audit ledger: %w", err)
++	}
++	if _, err := f.Write(buf.Bytes()); err != nil {
++		_ = f.Close()
++		return fmt.Errorf("writing audit ledger: %w", err)
++	}
++	if err := f.Close(); err != nil {
++		return fmt.Errorf("closing audit ledger: %w", err)
++	}
++	return nil
++}
+diff --git a/internal/audit/writer_test.go b/internal/audit/writer_test.go
+new file mode 100644
+index 00000000..52f2dff4
+--- /dev/null
++++ b/internal/audit/writer_test.go
+@@ -0,0 +1,57 @@
++package audit
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestAppend_WritesJSONLAndCreatesParentDirs(t *testing.T) {
++	root := t.TempDir()
++	path := filepath.Join(root, ".atcr", "audit.log.jsonl")
++	ts := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
++
++	recs := []Record{
++		{Timestamp: ts, PR: 1234, Base: "abc123", Head: "def456", Findings: map[string]int{"HIGH": 1, "LOW": 2}},
++	}
++	require.NoError(t, Append(path, recs))
++
++	// A second append must not truncate the first (append-only ledger).
++	require.NoError(t, Append(path, []Record{{Timestamp: ts, Base: "abc123", Head: "def456"}}))
++
++	loaded, err := Load(path)
++	require.NoError(t, err)
++	require.Len(t, loaded, 2)
++	assert.Equal(t, 1234, loaded[0].PR)
++	assert.Equal(t, "abc123", loaded[0].Base)
++	assert.Equal(t, 1, loaded[0].Findings["HIGH"])
++	assert.True(t, ts.Equal(loaded[0].Timestamp))
++	// The second record has no PR — omitempty leaves it zero on read.
++	assert.Equal(t, 0, loaded[1].PR)
++}
++
++func TestAppend_EmptySliceIsNoOp(t *testing.T) {
++	root := t.TempDir()
++	path := filepath.Join(root, ".atcr", "audit.log.jsonl")
++	require.NoError(t, Append(path, nil))
++	_, statErr := os.Stat(path)
++	assert.True(t, os.IsNotExist(statErr), "no file should be created for an empty batch")
++}
++
++func TestAppend_ErrorsWhenParentPathIsAFile(t *testing.T) {
++	root := t.TempDir()
++	// A regular file where a directory component must be: MkdirAll cannot create
++	// the parent, so Append surfaces the IO error instead of silently dropping
++	// the audit record.
++	blocker := filepath.Join(root, "blocker")
++	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
++	path := filepath.Join(blocker, "sub", "audit.log.jsonl")
++
++	err := Append(path, []Record{{Base: "a", Head: "b"}})
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "audit")
++}
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index 669367fd..819533f5 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -22,53 +22,54 @@ const modulePath = "github.com/samestrin/atcr"
+ // allowedInternalImports maps every top-level internal package to the set of
+ // internal packages it may import (subpackages inherit their top-level
+ // entry). Absence of a directory here fails the completeness check.
+ var allowedInternalImports = map[string][]string{
+ 	"atomicfs":       {},
+ 	"atomicwrite":    {"atomicfs"},
+ 	"cache":          {"atomicfs"}, // diff cache leaf; atomicfs for atomic entry writes (epic 5.2)
+ 	"stream":         {"metrics"},  // metrics: observability counters for a git-unavailable file index and indeterminate/unresolvable path validation (stdlib-only leaf, no cycle)
+ 	"gitrange":       {},
+ 	"log":            {},                                       // single diagnostic sink; stdlib-only (epic 4.0)
+ 	"errors":         {},                                       // error-classification taxonomy; stdlib-only (epic 4.0)
+ 	"registry":       {"stream"},                               // stream is the canonical zero-dependency severity leaf (epic 3.5)
+ 	"tools":          {"sandbox"},                              // sandbox: run_tests/run_script execute in the container backend (epic 11.0, opt-in --exec)
+ 	"sandbox":        {"log"},                                  // container-isolated executor for --exec reproduction; log: structured audit line per sandbox run (epic 11.0)
+ 	"repro":          {"reconcile", "sandbox"},                 // 2-run determinism + evidence_exec write-back: runs the sandbox, stamps reconcile findings (epic 11.0)
+ 	"metrics":        {},                                       // in-process metrics collector; stdlib-only leaf (epic 4.4)
+ 	"version":        {},                                       // build-version holder (atcr_version in the leaderboard submission); stdlib-only leaf, no imports (epic 10.0)
+ 	"circuitbreaker": {"metrics"},                              // per-provider breaker; pushes state to the metrics gauge (epic 4.5)
+ 	"validation":     {},                                       // user-input validators; stdlib-only leaf (epic 4.3)
+ 	"tdmigrate":      {},                                       // technical-debt storage migrator; yaml.v3 + stdlib only, imports no internal package (epic 12.1)
+ 	"debt":           {"tdmigrate", "log"},                     // `atcr debt` query/report layer over the 12.1 shard store; reuses tdmigrate's Item/Shard/loader/migrate, log.NewRedactor for the dashboard secret scrub (epic 18.0)
+ 	"history":        {"stream"},                               // Epic 19.0: parses pool findings.txt via stream.ParseSource to persist the append-only finding-history ledger; stream is the zero-dependency findings leaf
++	"audit":          {"stream"},                               // Epic 19.1: parses pool findings.txt via stream.ParseSource to summarize findings-by-severity into the append-only per-run audit ledger; stream is the zero-dependency findings leaf
+ 	"payload":        {"gitrange", "atomicfs", "log"},          // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
+ 	"llmclient":      {"registry", "errors", "circuitbreaker"}, // circuitbreaker: per-provider fail-fast on the API call path (epic 4.5)
+ 	"doctor":         {"llmclient", "registry"},
+ 	"fanout":         {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics", "circuitbreaker", "validation", "atomicfs", "cache"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4); circuitbreaker: provider threaded onto the call context (epic 4.5); validation: engine-level --output-dir system-path reject for non-CLI callers (stdlib-only leaf); atomicfs: CopyPath for the EXDEV copy-fallback in backupExisting's crash-safe swap, the shared low-level fs leaf reconcile/verify already import (epic 4.7.1); cache: diff-cache replay on the single-shot review path (epic 5.2)
+ 	"reconcile":      {"stream", "atomicfs", "astgroup"},                                                                                             // astgroup: AST-isomorphism grouper wired as the primary clustering signal (epic 13.1)
+ 	"scorecard":      {"llmclient", "reconcile", "fanout", "version"},                                                                                // version: atcr_version stamped into the public submission envelope (epic 10.0)
+ 	"personas":       {"registry", "payload"},                                                                                                        // community persona lifecycle: validates fetched YAML via registry.ValidateAgentYAML; built-in roster from top-level personas/ (non-internal) (epic 9.0); payload: TemplateFixtureRunner calls RenderPrompt to validate built-in templates against embedded fixtures (TD-012)
+ 	"report":         {"stream", "reconcile"},
+ 	"ghaction":       {"reconcile"},                                                                                                                        // GitHub Action renderer/client: reads reconciled findings, posts check runs (epic 7.3)
+ 	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log", "sandbox", "repro"}, // log: skeptic-failure routing (epic 4.0 phase 4.2); atomicwrite: shared group-write helper; sandbox: --exec backend resolution + dispatcher wiring (epic 11.0); repro: evidence_exec write-back stamping (epic 11.0)
+ 	"debate":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"},                     // cross-examination stage; mirrors verify's harness; atomicwrite shared group-write helper (epic 6.0)
+ 	"mcp":            {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "debate", "scorecard", "log", "metrics"},
+ 	"benchmark":      {"scorecard", "version"}, // standard-suite contract + suite-tagged submission envelope; reuses scorecard.PublicRecord for one public reviewer schema, version for atcr_version (epic 10.0)
+ 	"astgroup":       {},                       // AST-isomorphism grouper: wazero host + embedded .wasm parsers; imports the external reconcile library (Grouper seam) + wazero only, no internal package (epic 13.1)
+ 	"quickstart":     {},                       // `atcr quickstart` data layer: synthetic manifest + registry.yaml/workflow generators + refresh transform; stdlib + embed only, no internal package (epic 16.0)
+ 	// autofix is the --auto-fix local write-path (Sprint 17.0). apply.go wraps
+ 	// go-gitdiff behind ApplyPatch and consumes payload.FileEntry (input shape)
+ 	// and atomicfs (crash-safe backup + atomic write); revert.go (Phase 3) builds
+ 	// on the same two, plus log for the AC 03-04 restore-failure contract — a
+ 	// failed restore is both Warn-logged (operational visibility) and returned as
+ 	// a hard error, mirroring fanout's restorePriorBackup Warn-not-swallow precedent.
+ 	"autofix": {"payload", "atomicfs", "log"},
+ 	// integration holds only end-to-end _test.go files (no production code).
+ 	// The dependency-direction walk skips _test.go, so this entry exists to
+ 	// satisfy the allowlist-completeness check; it records the packages those
+ 	// tests exercise (epic 4.0 phase 5.2).
+ 	"integration": {"fanout", "llmclient", "log", "errors", "registry", "mcp"},
+ }
+ 
+ // repoRoot walks up from the working directory to the directory containing
+ // go.mod. Robust under -trimpath, unlike runtime.Caller paths.
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index 1d7ea196..4f5847e6 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -60,51 +60,57 @@ type ReviewRange struct {
+ // ReviewRequest is everything RunReview needs beyond the config: the repo/range,
+ // the branch + date used to derive the review id, the collision suffix, the run
+ // start time, and an optional id override.
+ type ReviewRequest struct {
+ 	Repo       string // git work tree to diff
+ 	Root       string // where .atcr lives (usually == Repo)
+ 	Range      ReviewRange
+ 	Branch     string
+ 	Date       string // YYYY-MM-DD
+ 	TimeSuffix string // HHMMSS collision suffix
+ 	StartedAt  time.Time
+ 	IDOverride string
+ 	// OutputDir, when non-empty, redirects the whole review tree to this
+ 	// (absolute) path instead of .atcr/reviews/<id>/, and suppresses the
+ 	// .atcr/latest update. The id is still derived (for provenance/output) but
+ 	// is not used for path construction. Mutually exclusive with IDOverride,
+ 	// enforced by the CLI before the request is built.
+ 	//
+ 	// Security: arbitrary absolute paths (including outside the repo root) are
+ 	// accepted by design; --output-dir is intended for trusted orchestrators that
+ 	// own their output destination. PrepareReview rejects paths inside ReviewsRoot
+ 	// to prevent invisible half-state reviews. Untrusted callers must validate the
+ 	// path before populating this field.
+ 	OutputDir string
+ 	// Force, when true, overwrites an existing review target instead of failing
+ 	// the collision (Epic 4.7 AC2): the prior tree is backed up to <dir>.bak and
+ 	// a fresh directory is scaffolded. It applies to the IDOverride path (a
+ 	// pre-existing .atcr/reviews/<id>/) and the non-empty OutputDir path; derived
+ 	// ids never collide (claimReviewDir auto-suffixes) so Force is a no-op there.
+ 	// Defaulting false preserves the safe fail-on-collision behavior for callers
+ 	// that do not opt in (e.g. the MCP handler).
+ 	Force bool
+ 	// NoCache bypasses diff-cache READS for this run (the --no-cache flag, Epic
+ 	// 5.2) while still WRITING fresh results, so the run refreshes any stale
+ 	// entries and every subsequent run benefits. Defaulting false keeps caching
+ 	// fully active for callers that do not opt out (e.g. the MCP handler).
+ 	NoCache bool
+ 	// SprintPlanPath, when non-empty, points at a markdown sprint/epic plan whose
+ 	// content is wrapped in a SCOPE CONSTRAINT block and prepended to every
+ 	// reviewer's payload, immediately before the diff (Epic 12.2). It scopes the
+ 	// review to the plan's active work items so reviewers suppress findings for
+ 	// unrelated changes in the diff. A missing or empty file is ignored (the
+ 	// review proceeds diff-wide); an unreadable file warns on stderr but does not
+ 	// abort. The constraint becomes part of the rendered prompt, so the diff-cache
+ 	// key invalidates correctly when the plan changes. Defaulting empty preserves
+ 	// the unconstrained, diff-wide review for callers that do not set it (e.g. the
+ 	// MCP handler).
+ 	SprintPlanPath string
++	// PRNumber is the pull-request number this run reviews, stamped onto the
++	// run's append-only audit record (Epic 19.1). It is optional: 0 means "no PR
++	// context" (a local review, or CI without a PR ref), in which case the audit
++	// record omits the PR but is still written. The engine does not use it for
++	// review logic — it is pure provenance threaded through to the audit hook.
++	PRNumber int
+ }
+ 
+ // ReviewResult is the outcome of a completed review run.

@@ -44,7 +44,17 @@ jobs:
           version: v2.12.2
 
       - name: Run Tests
-        run: go test -v -race -coverprofile=coverage.out ./...
+        # -race adds heavy overhead (internal/astgroup alone runs ~5x slower
+        # under it) and -coverprofile disables Go's test cache, so every PR
+        # push re-executes the entire suite uncached. Mirror reconcile-module.yml's
+        # existing PR-time precedent: fast plain `go test` for pull_request
+        # feedback, full -race + coverage gate on push (i.e. post-merge to main).
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            go test ./...
+          else
+            go test -v -race -coverprofile=coverage.out ./...
+          fi
 
       - name: Upload coverage profile
         uses: actions/upload-artifact@v4

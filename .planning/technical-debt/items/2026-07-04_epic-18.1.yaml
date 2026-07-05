@@ -1,0 +1,22 @@
+date: "2026-07-04"
+source_type: Sprint
+label: epic-18.1
+items:
+  - group: "1"
+    status: deferred
+    severity: LOW
+    file: internal/reconcile/emit.go:211
+    problem: 'ambiguous.json gray-zone cluster Problem cells are not symbol-anchored while findings.json cells are - a now-harmless cosmetic asymmetry (debate correlation is anchor-insensitive as of the 18.1 HIGH fix) (Accepted: intentional by design — cluster members stay raw and StripSymbolAnchors normalizes for identity correlation, documented at symbol_anchor.go:82-90; no current ambiguous.json consumer needs the anchor. Revisit only if a TD ToC consumes ambiguous.json)'
+    fix: If the TD ToC ever consumes ambiguous.json, stamp toAmbiguousWire cluster problems via the same symbolResolver
+    category: CORRECTNESS
+    est_minutes: 30
+    source: execute-epic-stage3
+  - group: "1"
+    status: deferred
+    severity: LOW
+    file: internal/reconcile/symbol_anchor.go:56
+    problem: 'safeSymbolAnchor blacklists only table/parse-breakers (pipe, parens, whitespace), allowing markdown-active chars (backtick, brackets, angle) that render oddly but cannot corrupt the table or the parse (Accepted: leave permissive — no supported parser (Go, C-family, Python) can emit a name containing backtick/bracket/angle; generics and operators are stripped before Node.Name is set, so tightening guards unreachable input)'
+    fix: Leave permissive - a strict identifier whitelist would wrongly reject valid names like C++ Foo<T> or ~Dtor; revisit only if odd rendering is observed
+    category: SECURITY
+    est_minutes: 15
+    source: execute-epic-independent

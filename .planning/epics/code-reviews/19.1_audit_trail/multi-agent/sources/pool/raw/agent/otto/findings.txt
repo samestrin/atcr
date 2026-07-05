@@ -1,0 +1,6 @@
+# atcr-findings/v1
+LOW|cmd/atcr/audit_pr_test.go:45|intToStr() is a manual implementation of strconv.Itoa|Use strconv.Itoa|idiom|2|manual byte-slice loop for integer conversion|otto
+LOW|cmd/atcr/audit_report.go:39|RunE ignores error from fmt.Fprint|Use a proper logger or handle the return error if the output stream is closed|style|2|_, _ = fmt.Fprint(cmd.OutOrStdout(), audit.RenderReport(forPR, pr, time.Now()))|otto
+MEDIUM|cmd/atcr/review.go:115|prNumberFromFlags() uses os.Getenv() directly|Pass the environment map or a getter to the function to make it testable without global state|structure|10|return prFromGitHubRef(os.Getenv("GITHUB_REF"))|otto
+LOW|internal/audit/capture.go:75|finding key uses null bytes as separators|Use a structured key or a joined string with a standard delimiter like a pipe|style|5|key := f.File + "\x00" + strconv.Itoa(f.Line) + "\x00" + f.Problem|otto
+LOW|internal/audit/render.go:118|RenderReport uses a map for counts without ensuring key existence for canonical columns|The logic is correct but relies on the zero-value of int; a more explicit check or default value would improve readability|style|5|n := counts[c]|otto

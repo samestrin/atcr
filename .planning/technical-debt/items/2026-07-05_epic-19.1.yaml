@@ -1,0 +1,58 @@
+date: "2026-07-05"
+source_type: Sprint
+label: epic-19.1
+items:
+  - group: "1"
+    status: deferred
+    severity: LOW
+    file: cmd/atcr/review.go:384
+    problem: The audit hook re-reads sources/pool/findings.txt that the history hook read moments earlier in the same review, so the pool file is parsed twice per review run
+    fix: 'Parse the pool findings once in the CLI layer and pass the finding set to both history.RecordReview and audit.RecordReview, or expose a shared parse result (Won''t-fix: accepted — the duplicate parse mirrors internal/history''s independent capture pattern per epic design; not worth a cross-package signature refactor for a sub-ms, once-per-run gain.)'
+    category: PERFORMANCE
+    est_minutes: 30
+    source: execute-epic-cumulative
+  - group: "1"
+    status: resolved
+    severity: MEDIUM
+    file: cmd/atcr/review.go:393
+    problem: Audit ledger write path is cwd-relative (req.Root=".") while audit-report reads via repoRoot() walk-up, so a review launched from a subdirectory writes records the report never finds (subdir-only AC1/AC2 gap)
+    fix: 'Resolve repo-level ledger writes (history AND audit) against repoRoot() uniformly, as a cross-cutting change to the review command''s Root handling (Resolved: duplicate of audit_report.go:35 — documented CWD==repo-root assumption per decision (b); full migration tracked as TD-019.)'
+    category: INTEGRATION
+    est_minutes: 60
+    source: execute-epic-independent
+  - group: "1"
+    status: resolved
+    severity: LOW
+    file: cmd/atcr/audit_report.go:23
+    problem: MarkFlagRequired only checks --pr is set not its value so `audit-report --pr 0` matches every non-PR run (PR omitted via omitempty) and renders a bogus PR-0 report of all local runs
+    fix: After GetInt reject pr <= 0 with a usageError requiring a positive PR number
+    category: EDGE_CASES
+    est_minutes: 10
+    source: execute-epic-independent
+  - group: u
+    status: resolved
+    severity: LOW
+    file: cmd/atcr/review.go:394
+    problem: The audit hook lives only in runReview/runResume so reviews driven directly through the fanout engine (MCP handler) never append an audit record; AC1 holds for CLI runs only (mirrors the history hook precedent)
+    fix: Document the CLI-only scope in the audit package doc, or move the hook into the engine so all review entry points record audit trails
+    category: INTEGRATION
+    est_minutes: 30
+    source: execute-epic-independent
+  - group: "1"
+    status: resolved
+    severity: LOW
+    file: cmd/atcr/review.go:394
+    problem: An audit write failure is swallowed as a Warn and the review still exits 0, so a systematically failing compliance ledger (permissions/full disk) leaves runs reporting success with only a log line
+    fix: Consider a clearly visible stderr warning for this compliance-critical write (non-fatal design otherwise acceptable)
+    category: OBSERVABILITY
+    est_minutes: 15
+    source: execute-epic-independent
+  - group: U
+    status: resolved
+    severity: LOW
+    file: internal/audit/render.go:57
+    problem: shortSHA truncates base/head to 12 chars in the rendered compliance report; full provenance remains only in the JSONL ledger
+    fix: Render the full SHA (or make truncation opt-in) so the human-facing compliance report carries complete commit identity
+    category: CORRECTNESS
+    est_minutes: 15
+    source: execute-epic-independent

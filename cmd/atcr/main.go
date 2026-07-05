@@ -137,6 +137,12 @@ func newRootCmd() *cobra.Command {
 		Long: "atcr fans a code change out to a panel of heterogeneous LLM reviewer personas,\n" +
 			"then deterministically reconciles their findings into a single deduplicated,\n" +
 			"confidence-scored deliverable.\n\n" +
+			"Working directory:\n" +
+			"  Run atcr from the repository root. Subcommands resolve project config\n" +
+			"  (.atcr/config.yaml), the git range, and the history/audit ledgers (.atcr/)\n" +
+			"  relative to the current working directory; running from a subdirectory can\n" +
+			"  write ledger records that `atcr audit-report` and `atcr history` (which walk\n" +
+			"  up to the repo root) will not find.\n\n" +
 			"Logging:\n" +
 			"  LOG_LEVEL      environment variable: debug, info, warn, error (default info).\n" +
 			"                 Set LOG_LEVEL=debug to diagnose a failing review.\n" +

@@ -1,0 +1,152 @@
+[
+  {
+    "severity": "HIGH",
+    "file": "cmd/atcr/audit_report.go",
+    "line": 47,
+    "problem": "--pr 0 matches every no-PR run because omitempty serializes PR=0 records without a \"pr\" field, so the loaded records all carry PR=0 and the filter r.PR == pr (pr=0) selects all of them",
+    "fix": "Reject pr \u003c= 0 after GetInt via a usageError; MarkFlagRequired only checks presence not value",
+    "category": "edge_cases",
+    "est_minutes": 10,
+    "evidence": "filter `if r.PR == pr { forPR = append(forPR, r) }` with pr=0 returns every local (no-PR) record under a bogus \"PR #0\" report",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "HIGH",
+    "file": "cmd/atcr/review.go",
+    "line": 387,
+    "problem": "cross-directory write/read split: review writes via filepath.Join(req.Root,...) where req.Root=\".\" (CWD-relative) while audit-report reads via repoRoot() walk-up — a review launched from a subdirectory of the git root writes records the report will never find",
+    "fix": "Resolve auditPath through repoRoot() in runReview/runResume, matching audit-report",
+    "category": "integration",
+    "est_minutes": 60,
+    "evidence": "auditPath uses req.Root=\".\"; audit_report.go:34 uses repoRoot(). On CI run from \u003croot\u003e/subdir, the two paths diverge and AC1/AC2 silently fail",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/review.go",
+    "line": 115,
+    "problem": "prNumberFromFlags() uses os.Getenv() directly",
+    "fix": "Pass the environment map or a getter to the function to make it testable without global state",
+    "category": "structure",
+    "est_minutes": 10,
+    "evidence": "return prFromGitHubRef(os.Getenv(\"GITHUB_REF\"))",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/review.go",
+    "line": 390,
+    "problem": "audit write failure is swallowed as Warn and review still exits 0, so a systematically broken compliance ledger (full disk, read-only fs, .atcr/ perm denied) leaves runs reporting success with only a log line that CI rarely surfaces",
+    "fix": "Mirror the warn on stderr from the CLI so the compliance-write failure is visible regardless of log-level capture",
+    "category": "observability",
+    "est_minutes": 15,
+    "evidence": "log.FromContext(ctx).Warn(\"failed to append audit record\", \"error\", aerr) then control falls through to the gate path and a successful exit",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/audit/reader.go",
+    "line": 60,
+    "problem": "oversized-line recovery uses unbounded bufio.NewReader.ReadString('\\n') which grows the buffer until a newline or EOF — a tampered or corrupted ledger with a multi-GB run-on line OOMs the audit-report command",
+    "fix": "Read fixed-size chunks and split on '\\n' with a per-line cap (e.g. 4MiB) so any further oversized line is truncated + skipped with a stderr note",
+    "category": "performance",
+    "est_minutes": 20,
+    "evidence": "for { line, rerr := r.ReadString('\\n'); ... } allocates without limit on tampered input",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/audit/writer.go",
+    "line": 46,
+    "problem": "Append does not fsync, so a crash or power loss between f.Write and Close loses the most recent record — undermining the \"tamper-evident compliance ledger\" framing in record.go and CHANGELOG",
+    "fix": "Add an explicit f.Sync() before Close",
+    "category": "",
+    "est_minutes": 0,
+    "evidence": "",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "cmd/atcr/audit_pr_test.go",
+    "line": 45,
+    "problem": "intToStr() is a manual implementation of strconv.Itoa",
+    "fix": "Use strconv.Itoa",
+    "category": "idiom",
+    "est_minutes": 2,
+    "evidence": "manual byte-slice loop for integer conversion",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "cmd/atcr/audit_report.go",
+    "line": 39,
+    "problem": "RunE ignores error from fmt.Fprint",
+    "fix": "Use a proper logger or handle the return error if the output stream is closed",
+    "category": "style",
+    "est_minutes": 2,
+    "evidence": "_, _ = fmt.Fprint(cmd.OutOrStdout(), audit.RenderReport(forPR, pr, time.Now()))",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/audit/capture.go",
+    "line": 75,
+    "problem": "finding key uses null bytes as separators",
+    "fix": "Use a structured key or a joined string with a standard delimiter like a pipe",
+    "category": "style",
+    "est_minutes": 5,
+    "evidence": "key := f.File + \"\\x00\" + strconv.Itoa(f.Line) + \"\\x00\" + f.Problem",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/audit/render.go",
+    "line": 118,
+    "problem": "RenderReport uses a map for counts without ensuring key existence for canonical columns",
+    "fix": "The logic is correct but relies on the zero-value of int; a more explicit check or default value would improve readability",
+    "category": "style",
+    "est_minutes": 5,
+    "evidence": "n := counts[c]",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  }
+]
