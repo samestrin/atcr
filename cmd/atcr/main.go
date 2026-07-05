@@ -196,6 +196,7 @@ func newRootCmd() *cobra.Command {
 		newPersonasCmd(),
 		newDebtCmd(),
 		newHistoryCmd(),
+		newAuditReportCmd(),
 		newVersionCmd(),
 	)
 	return root
