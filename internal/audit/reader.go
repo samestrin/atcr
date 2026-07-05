@@ -18,6 +18,14 @@ import (
 // append-only and the CLI offers no repair path, so a single torn write or stray
 // byte must not permanently brick `atcr audit-report`. Only an IO/scan failure
 // is an error.
+//
+// Load holds the whole ledger in memory and audit-report then linearly scans it
+// (audit_report.go), so memory and per-report time grow linearly with the total
+// number of review runs recorded. The ledger has no rotation or compaction — it
+// is an unbounded append-only accumulator. Records are tiny (one line each), so
+// this is tolerable for realistic run counts; a deployment expecting very high
+// volume should archive or truncate .atcr/audit.log.jsonl out of band rather than
+// rely on the reader to window it.
 func Load(path string) ([]Record, error) {
 	f, err := os.Open(path)
 	if err != nil {

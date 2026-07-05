@@ -1,13 +1,20 @@
-// Package audit persists a tamper-evident, append-only record of every
+// Package audit persists an append-only record of every
 // `atcr review` run and renders a one-page compliance report for a given pull
 // request (Epic 19.1).
 //
-// Every review run appends exactly one JSON record to an append-only JSONL
-// ledger at .atcr/audit.log.jsonl, capturing the run timestamp, the resolved
-// base/head SHAs, the pull-request number (when known), and a summary of
-// findings counted by severity. The `atcr audit-report --pr <n>` command reads
-// that ledger back, selects the records for one PR, and renders a markdown
-// report suitable for a compliance archive.
+// Each successfully completed CLI review run (the `review` and `resume` commands)
+// appends exactly one JSON record to an append-only JSONL ledger at
+// .atcr/audit.log.jsonl, capturing the run timestamp, the resolved base/head
+// SHAs, the pull-request number (when known), and a summary of findings counted
+// by severity. Runs that do not complete successfully append no record: an
+// all-agents-failed run (exit 1) and an interrupted run preserve their artifacts
+// on disk but are not stamped in the ledger, and a resume that finds every agent
+// already complete performs no new review work and appends nothing. The hook is
+// also not wired into non-CLI entry points such as the MCP fanout engine, so AC1
+// holds for successfully completed command-line runs only. The
+// `atcr audit-report --pr <n>` command reads that ledger back, selects the
+// records for one PR, and renders a markdown report suitable for a compliance
+// archive.
 package audit
 
 import "time"

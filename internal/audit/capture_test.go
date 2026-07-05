@@ -60,6 +60,26 @@ func TestRecordReview_MissingPoolStillWritesOneRecord(t *testing.T) {
 	assert.Equal(t, 0, recs[0].PR)    // PR omitted for a non-PR run
 }
 
+func TestRecordReview_BadHeaderStillWritesOneRecord(t *testing.T) {
+	root := t.TempDir()
+	reviewDir := filepath.Join(root, ".atcr", "reviews", "badheader")
+	poolDir := filepath.Join(reviewDir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	// A torn or tampered first line that lacks a valid version header must not
+	// cause RecordReview to return an error; AC1 requires exactly one record.
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "findings.txt"), []byte("garbage header\nHIGH|a.go:1|p|f|C|1|e|greta\n"), 0o644))
+
+	auditPath := filepath.Join(root, ".atcr", "audit.log.jsonl")
+	n, err := RecordReview(auditPath, reviewDir, time.Now(), 7, "b", "h")
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	recs, err := Load(auditPath)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Empty(t, recs[0].Findings)
+}
+
 func TestRecordReview_DedupesByFindingKeepingMaxSeverity(t *testing.T) {
 	root := t.TempDir()
 	reviewDir := filepath.Join(root, ".atcr", "reviews", "dup")

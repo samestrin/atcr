@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/audit"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/payload"
@@ -241,6 +242,30 @@ func TestResume_AppendsFindingHistory(t *testing.T) {
 	require.Greater(t, len(after), len(before), "resume must append its own records to the finding history")
 }
 
+func TestResume_AllCompleteDoesNotAppendAudit(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	// A fresh review appends exactly one audit record (Epic 19.1 AC1).
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
+	auditPath := filepath.Join(".", ".atcr", "audit.log.jsonl")
+	before, err := audit.Load(auditPath)
+	require.NoError(t, err)
+	require.Len(t, before, 1, "fresh review appends exactly one audit record")
+
+	// AllComplete re-reconcile performs no new review work; it must not append
+	// another record (mirrors recordResumeHistory guarding below).
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, out)
+
+	after, err := audit.Load(auditPath)
+	require.NoError(t, err)
+	require.Len(t, after, len(before), "AllComplete resume must not append duplicate audit records")
+}
+
 func TestResume_RunsPendingAgentThenReconciles(t *testing.T) {
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")
@@ -263,6 +288,29 @@ func TestResume_RunsPendingAgentThenReconciles(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fanout.RunCompleted, st.Status)
 	require.False(t, st.Partial)
+}
+
+// TestResume_PendingAgentAppendsExactlyOneAudit pins Epic 19.1 AC1 at the resume
+// wiring layer: a resume that runs a pending agent to completion (the post-fanout
+// path, distinct from the AllComplete no-work path) appends exactly one audit
+// record — no more (double-record) and no less (dropped record).
+func TestResume_PendingAgentAppendsExactlyOneAudit(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce", "robin")
+	base := gitRevParse(t, "HEAD^")
+	head := gitRevParse(t, "HEAD")
+	// bruce already completed; robin is pending. Resume runs robin, then records audit.
+	writeResumeReviewFixture(t, "2026-06-18_demo", base, head, []string{"bruce", "robin"}, []string{"bruce"})
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, out)
+
+	recs, err := audit.Load(filepath.Join(".", ".atcr", "audit.log.jsonl"))
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "a resume that completes a pending agent appends exactly one audit record")
 }
 
 func TestResume_FailOnFlagIsExit2(t *testing.T) {

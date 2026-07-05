@@ -9,6 +9,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRenderReport_BlankSeverityAppearsAsUnknownInTotals(t *testing.T) {
+	gen := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
+	recs := []Record{
+		{Timestamp: gen, PR: 8, Base: "b", Head: "h", Findings: map[string]int{"": 3, "HIGH": 1}},
+	}
+	out := RenderReport(recs, 8, gen)
+	assert.Contains(t, out, "UNKNOWN")
+	// 3 blank + 1 HIGH = 4 total; the row and grand totals must reflect this.
+	assert.Contains(t, out, "| 3 |") // UNKNOWN column shows the 3 blank-severity findings
+	assert.Contains(t, out, "| 4 |") // total column includes all findings
+}
+
+func TestRenderReport_EmptyReturnsEmptyString(t *testing.T) {
+	gen := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
+	out := RenderReport(nil, 999, gen)
+	assert.Empty(t, out)
+}
+
+func TestSanitizeCell_EscapesBackslashBeforePipe(t *testing.T) {
+	// A literal backslash followed by a pipe must escape both, otherwise the
+	// pipe would still open a spurious column after the backslash was written raw.
+	assert.Equal(t, `\\\|`, sanitizeCell(`\|`))
+	assert.Equal(t, `a\\b`, sanitizeCell(`a\b`))
+}
+
+func TestSanitizeCell_NeutralizesHTMLAndBacktick(t *testing.T) {
+	// Raw HTML tags and backticks in a tampered ledger cell must be neutralized so
+	// the rendered compliance report cannot carry stored injection into a permissive
+	// markdown viewer — the tamper-safety the doc comment promises. Entities render
+	// as their literal characters, so legitimate content is unchanged visually.
+	assert.Equal(t, "&lt;img onerror=x&gt;", sanitizeCell("<img onerror=x>"))
+	assert.Equal(t, "a&#96;b", sanitizeCell("a`b"))
+}
+
 func TestRenderReport_RendersPerRunTableWithTotals(t *testing.T) {
 	gen := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
 	recs := []Record{
@@ -26,9 +60,10 @@ func TestRenderReport_RendersPerRunTableWithTotals(t *testing.T) {
 	}
 	assert.Contains(t, out, "**Total**") // grand-total row
 
-	// SHAs are truncated to 12 chars for a readable one-page report.
-	assert.Contains(t, out, "basesha0001c")
-	assert.NotContains(t, out, "basesha0001cccccccc")
+	// SHAs render in full so the compliance report carries complete commit identity
+	// (the JSONL ledger is no longer the only place the full provenance survives).
+	assert.Contains(t, out, "basesha0001cccccccc")
+	assert.Contains(t, out, "headsha0002dddddddd")
 
 	// Runs render in ascending timestamp order (earlier run's row precedes later).
 	early := strings.Index(out, "2026-07-04T09:30:00Z")

@@ -21,6 +21,8 @@ func TestPRNumberFromFlags(t *testing.T) {
 		{name: "non-pr ref ignored", githubRef: "refs/heads/main", want: 0},
 		{name: "malformed pull ref ignored", githubRef: "refs/pull/abc/merge", want: 0},
 		{name: "flag zero falls back to env", flagSet: false, githubRef: "refs/pull/3/merge", want: 3},
+		{name: "explicit flag zero wins over env", flagSet: true, flagVal: 0, githubRef: "refs/pull/9/merge", want: 0},
+		{name: "explicit negative flag wins over env", flagSet: true, flagVal: -1, githubRef: "refs/pull/9/merge", want: 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
