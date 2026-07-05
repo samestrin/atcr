@@ -114,3 +114,15 @@ func TestStrictLoad_RejectsSchemaViolation(t *testing.T) {
 		t.Error("expected schema rejection for invalid severity enum")
 	}
 }
+
+// TestStrictLoad_RejectsMultiDocument proves a shard file containing a second
+// `---`-separated YAML document is rejected rather than silently decoding only
+// the first document and discarding the rest.
+func TestStrictLoad_RejectsMultiDocument(t *testing.T) {
+	twoDocs := "date: \"2026-06-26\"\nsource_type: Sprint\nlabel: x\nitems:\n  - group: \"1\"\n    status: deferred\n    severity: LOW\n    file: f.go:1\n    problem: p\n    fix: f\n    category: c\n    est_minutes: 5\n    source: s\n" +
+		"---\n" +
+		"date: \"2026-06-27\"\nsource_type: Sprint\nlabel: y\nitems: []\n"
+	if _, err := DecodeShardStrict([]byte(twoDocs)); err == nil {
+		t.Error("expected rejection of a shard file containing a second YAML document")
+	}
+}
