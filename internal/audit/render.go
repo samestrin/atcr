@@ -56,18 +56,16 @@ func shortSHA(sha string) string {
 // severity, followed by a grand-total row. Runs are ordered oldest-first so the
 // report reads as a chronological audit trail; generatedAt stamps the header.
 //
-// An empty record set renders a header plus a "no runs" note, but the command
-// handles the no-records case before calling this (it is an error condition per
-// Epic 19.1 AC3), so in practice recs is non-empty.
+// An empty record set renders the empty string — the caller handles the
+// no-records case as an error (Epic 19.1 AC3), matching internal/history.RenderTable.
 func RenderReport(recs []Record, pr int, generatedAt time.Time) string {
+	if len(recs) == 0 {
+		return ""
+	}
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Audit Report — PR #%d\n\n", pr)
 	fmt.Fprintf(&b, "_Generated %s_\n\n", generatedAt.UTC().Format(time.RFC3339))
-
-	if len(recs) == 0 {
-		b.WriteString("No review runs recorded for this PR.\n")
-		return b.String()
-	}
 
 	// Sort a copy oldest-first so the report is chronological and deterministic
 	// regardless of ledger order (the ledger is append order, but two concurrent
