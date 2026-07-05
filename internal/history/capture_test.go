@@ -113,3 +113,23 @@ func TestRecordReview_EmptyFindingsAppendsNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
 }
+
+func TestRecordReview_DedupeTakesMaxSeverity(t *testing.T) {
+	root := t.TempDir()
+	reviewDir := filepath.Join(root, ".atcr", "reviews", "2026-07-04_y")
+	// Same finding reported by two reviewers with different severities; order must
+	// not determine the stored severity.
+	writePoolFindings(t, reviewDir,
+		"LOW|internal/registry/load.go:42|unchecked error|handle it|CORRECTNESS|15|ev|greta\n"+
+			"HIGH|internal/registry/load.go:42|unchecked error|handle it|CORRECTNESS|15|ev|kai\n")
+
+	histPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+	n, err := RecordReview(histPath, reviewDir, time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	recs, err := Load(histPath)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "HIGH", recs[0].Severity)
+}
