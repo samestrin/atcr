@@ -114,9 +114,11 @@ func sprintPlanPath(cmd *cobra.Command) string {
 // audit record omits — the run is still recorded, just without a PR.
 func prNumberFromFlags(cmd *cobra.Command) int {
 	if cmd.Flags().Changed("pr") {
-		if n, _ := cmd.Flags().GetInt("pr"); n > 0 {
-			return n
+		n, _ := cmd.Flags().GetInt("pr")
+		if n < 0 {
+			n = 0
 		}
+		return n
 	}
 	return prFromGitHubRef(os.Getenv("GITHUB_REF"))
 }
