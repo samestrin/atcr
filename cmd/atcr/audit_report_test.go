@@ -79,6 +79,20 @@ func TestAuditReportCmd_MissingPRFlagIsUsageError(t *testing.T) {
 	assert.Equal(t, exitUsage, exitCode(err)) // missing required user input is a usage error
 }
 
+func TestAuditReportCmd_ZeroPRIsUsageError(t *testing.T) {
+	root := t.TempDir()
+	ts := time.Date(2026, 7, 4, 9, 30, 0, 0, time.UTC).Format(time.RFC3339)
+	// A non-PR run omits the "pr" field, which unmarshals as 0. Without explicit
+	// validation, --pr 0 would match all local runs and render a bogus report.
+	writeAuditLedger(t, root,
+		map[string]any{"ts": ts, "base": "basesha0001", "head": "headsha0002", "findings": map[string]int{"LOW": 1}},
+	)
+	_, err := runAuditReportIn(t, root, "--pr", "0")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err)) // invalid user-supplied PR is a usage error
+	assert.Contains(t, err.Error(), "positive PR number")
+}
+
 func TestAuditReportCmd_ResolvesRepoRootFromSubdir(t *testing.T) {
 	root := t.TempDir()
 	ts := time.Date(2026, 7, 4, 9, 30, 0, 0, time.UTC).Format(time.RFC3339)
