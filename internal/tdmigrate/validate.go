@@ -33,11 +33,16 @@ func DecodeShardStrict(data []byte) (Shard, error) {
 		return Shard{}, fmt.Errorf("schema: %w", err)
 	}
 	var extra yaml.Node
-	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return Shard{}, fmt.Errorf("yaml decode: shard file contains more than one YAML document")
-		}
+	switch err := dec.Decode(&extra); {
+	case errors.Is(err, io.EOF):
+		// No second document — the common, expected case.
+	case err != nil:
 		return Shard{}, fmt.Errorf("yaml decode: %w", err)
+	case len(extra.Content) == 1 && extra.Content[0].Kind == yaml.ScalarNode && extra.Content[0].Tag == "!!null":
+		// A bare trailing `---` with nothing after it decodes as an empty null
+		// document, not a real second document — harmless, do not reject it.
+	default:
+		return Shard{}, fmt.Errorf("yaml decode: shard file contains more than one YAML document")
 	}
 	return s, nil
 }

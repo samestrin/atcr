@@ -126,3 +126,15 @@ func TestStrictLoad_RejectsMultiDocument(t *testing.T) {
 		t.Error("expected rejection of a shard file containing a second YAML document")
 	}
 }
+
+// TestStrictLoad_AllowsBareTrailingDocumentMarker proves a harmless trailing
+// `---` with nothing after it (a bare document-end marker some editors and YAML
+// tools append) is NOT rejected as a second document — it decodes as an empty
+// null document, not real content.
+func TestStrictLoad_AllowsBareTrailingDocumentMarker(t *testing.T) {
+	trailing := "date: \"2026-06-26\"\nsource_type: Sprint\nlabel: x\nitems:\n  - group: \"1\"\n    status: deferred\n    severity: LOW\n    file: f.go:1\n    problem: p\n    fix: f\n    category: c\n    est_minutes: 5\n    source: s\n" +
+		"---\n"
+	if _, err := DecodeShardStrict([]byte(trailing)); err != nil {
+		t.Errorf("expected a bare trailing document marker to be accepted, got %v", err)
+	}
+}
