@@ -68,7 +68,8 @@ func summarize(reviewDir string) (map[string]int, error) {
 
 	res, err := stream.ParseSource(data)
 	if err != nil {
-		return nil, fmt.Errorf("parsing pool findings: %w", err)
+		fmt.Fprintf(os.Stderr, "atcr: warning: audit: %v; writing empty severity summary\n", err)
+		return nil, nil
 	}
 	if len(res.Skipped) > 0 {
 		fmt.Fprintf(os.Stderr, "atcr: warning: audit: skipped %d malformed pool row(s); they will not appear in the audit summary\n", len(res.Skipped))
