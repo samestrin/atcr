@@ -9,6 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRenderReport_EmptyReturnsEmptyString(t *testing.T) {
+	gen := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
+	out := RenderReport(nil, 999, gen)
+	assert.Empty(t, out)
+}
+
 func TestSanitizeCell_EscapesBackslashBeforePipe(t *testing.T) {
 	// A literal backslash followed by a pipe must escape both, otherwise the
 	// pipe would still open a spurious column after the backslash was written raw.
