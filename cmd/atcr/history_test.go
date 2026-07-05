@@ -101,3 +101,17 @@ func TestHistoryCmd_DefaultSinceWhenUnset(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "| Package |")
 }
+
+func TestHistoryCmd_ResolvesRepoRootFromSubdir(t *testing.T) {
+	root := t.TempDir()
+	recent := time.Now().Add(-1 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	writeHistoryLedger(t, root, map[string]any{
+		"ts": recent, "package": "a", "severity": "HIGH", "id": "1", "file": "a/x.go", "category": "C",
+	})
+	sub := filepath.Join(root, "subdir")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	// Run from a subdirectory; the command must walk up to find the .atcr ledger.
+	out, err := runHistoryIn(t, sub)
+	require.NoError(t, err)
+	assert.Contains(t, out, "| Package |")
+}
