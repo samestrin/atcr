@@ -41,3 +41,17 @@ func TestAppend_EmptySliceIsNoOp(t *testing.T) {
 	_, statErr := os.Stat(path)
 	assert.True(t, os.IsNotExist(statErr), "no file should be created for an empty batch")
 }
+
+func TestAppend_ErrorsWhenParentPathIsAFile(t *testing.T) {
+	root := t.TempDir()
+	// A regular file where a directory component must be: MkdirAll cannot create
+	// the parent, so Append surfaces the IO error instead of silently dropping
+	// the audit record.
+	blocker := filepath.Join(root, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+	path := filepath.Join(blocker, "sub", "audit.log.jsonl")
+
+	err := Append(path, []Record{{Base: "a", Head: "b"}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "audit")
+}
