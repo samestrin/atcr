@@ -11,12 +11,12 @@ import (
 	"github.com/samestrin/atcr/internal/stream"
 )
 
-// PoolFindingsRel is the review-directory-relative path to the merged, 8-column
+// poolFindingsRel is the review-directory-relative path to the merged, 8-column
 // per-source pool findings file that every review run writes via WritePool. It
 // is the single findings artifact guaranteed to exist on every run (reconciled
 // findings.json exists only when reconcile runs), so it is the history hook's
 // source of truth.
-var PoolFindingsRel = filepath.Join("sources", "pool", "findings.txt")
+var poolFindingsRel = filepath.Join("sources", "pool", "findings.txt")
 
 // RecordReview reads the pool findings for the review at reviewDir, derives one
 // Record per finding (stamped with run time ts), and appends them to the history
@@ -27,7 +27,7 @@ var PoolFindingsRel = filepath.Join("sources", "pool", "findings.txt")
 // A findings file that parses to zero findings appends nothing and creates no
 // ledger file.
 func RecordReview(histPath, reviewDir string, ts time.Time) (int, error) {
-	data, err := os.ReadFile(filepath.Join(reviewDir, PoolFindingsRel))
+	data, err := os.ReadFile(filepath.Join(reviewDir, poolFindingsRel))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return 0, nil
