@@ -1,3 +1,18 @@
+## [19.0.0] - 2026-07-04
+
+Persisted review findings to a durable, queryable ledger and added an `atcr history` command so a package's finding trend can be inspected over time.
+
+### Added
+
+- `atcr history`: query the finding-history ledger with `--since` (a duration window that supports `d`/`w` units in addition to Go's `h`/`m`/`s`) and `--package` (a separator-aware path-prefix filter), rendering a markdown table of finding counts by severity per package. Absent or fully-filtered history exits 0 with a "no history" notice rather than an error.
+- `internal/history`: an append-only JSONL ledger at `.atcr/findings-history.jsonl` recording one record per finding per review run — run timestamp, package, severity, a stable content id (hash of file+line+problem, severity-independent), file, and category — deduped by id within a run.
+
+### Changed
+
+- `atcr review`: every successful run now appends its findings to `.atcr/findings-history.jsonl`. The write is non-fatal (a history failure never fails an otherwise-successful review) and always targets the repo-level `.atcr/`, independent of `--output-dir`.
+
+*Shipped via /execute-epic (epic 19.0)*
+
 ## [Technical Debt] - 2026-07-04
 
 ### Fixed
