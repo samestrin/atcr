@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/audit"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/payload"
@@ -239,6 +240,30 @@ func TestResume_AppendsFindingHistory(t *testing.T) {
 	after, err := history.Load(histPath)
 	require.NoError(t, err)
 	require.Greater(t, len(after), len(before), "resume must append its own records to the finding history")
+}
+
+func TestResume_AllCompleteDoesNotAppendAudit(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	// A fresh review appends exactly one audit record (Epic 19.1 AC1).
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
+	auditPath := filepath.Join(".", ".atcr", "audit.log.jsonl")
+	before, err := audit.Load(auditPath)
+	require.NoError(t, err)
+	require.Len(t, before, 1, "fresh review appends exactly one audit record")
+
+	// AllComplete re-reconcile performs no new review work; it must not append
+	// another record (mirrors recordResumeHistory guarding below).
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, out)
+
+	after, err := audit.Load(auditPath)
+	require.NoError(t, err)
+	require.Len(t, after, len(before), "AllComplete resume must not append duplicate audit records")
 }
 
 func TestResume_RunsPendingAgentThenReconciles(t *testing.T) {
