@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 1 | 30 | 0 |
-| LOW | 4 | 32 | 0 |
+| MEDIUM | 0 | 30 | 0 |
+| LOW | 0 | 34 | 0 |
 
-**Last Modified:** 2026-07-04 | **Open Items:** 5 | **Deferred Items:** 64 | **Resolved Items:** 0 | **Total Items:** 69
+**Last Modified:** 2026-07-04 | **Open Items:** 0 | **Deferred Items:** 66 | **Resolved Items:** 0 | **Total Items:** 66
 
 ## Directory Structure
 
@@ -62,15 +62,13 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards �
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
 ### [2026-07-04] From Sprint: epic-19.0
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | MEDIUM | cmd/atcr/resume.go:46 | atcr review --resume completes a partial review via runResume but does not append to the finding-history ledger, so resumed runs are absent from history | Add a history.RecordReview call in runResume after its in-process reconcile, mirroring the fresh-review hook in review.go | CORRECTNESS | 30 | execute-epic-stage3 |
-| U | [ ] | LOW | README.md:1 | README and docs/ command lists do not mention the new 'atcr history' subcommand | Add 'atcr history' to the command reference during the epic 24.0 documentation sweep | DOCS | 15 | execute-epic-cumulative |
-| U | [ ] | LOW | internal/history/reader.go:14 | Load reads the entire findings-history.jsonl into memory with no rotation/retention, so an unbounded ledger grows memory use over time | Add optional retention/rotation or streaming aggregation if ledgers grow large (retention explicitly out of scope for epic 19.0) | PERFORMANCE | 60 | execute-epic-cumulative |
-| U | [ ] | LOW | internal/history/writer.go:35 | Append relies on a single O_APPEND write being atomic across concurrent atcr review runs; POSIX does not guarantee atomicity for multi-KB writes on regular files so simultaneous runs could interleave a JSONL line | Take an advisory flock around the append (mirror the mkdir-flock pattern used for the TD README) or bound batch write size | EDGE_CASES | 45 | execute-epic-independent |
-| U | [ ] | LOW | cmd/atcr/history.go:44 | atcr history resolves .atcr relative to cwd (consistent with review/status/report) so running it from a subdirectory reports no history; a tool-wide run-from-repo-root convention rather than a 19.0 regression | Resolve repo root once (shared helper) for all atcr commands so cwd no longer matters | INTEGRATION | 30 | execute-epic-independent |
+| U | [/] | LOW | internal/history/reader.go:14 | Load reads the entire findings-history.jsonl into memory with no rotation/retention, so an unbounded ledger grows memory use over time (Deferred 2026-07-04: covered by epic 19.4 history_time_sharding; retention/rotation is out of scope for epic 19.0.) | Add optional retention/rotation or streaming aggregation if ledgers grow large (retention explicitly out of scope for epic 19.0) | PERFORMANCE | 60 | execute-epic-cumulative |
+| U | [/] | LOW | internal/history/writer.go:35 | Append relies on a single O_APPEND write being atomic across concurrent atcr review runs; POSIX does not guarantee atomicity for multi-KB writes on regular files so simultaneous runs could interleave a JSONL line (Accepted 2026-07-04: won't-fix — cross-platform flock is out of scope for epic 19.0, which only requires sequential appends; the writer.go:38 doc-comment fix documents the risk.) | Take an advisory flock around the append (mirror the mkdir-flock pattern used for the TD README) or bound batch write size | EDGE_CASES | 45 | execute-epic-independent |
 
 ### [2026-07-04] From Sprint: epic-18.1
 

@@ -1,0 +1,5 @@
+LOW|cmd/atcr/history.go:43|histPath is hardcoded to relative "." which fails if run from subdirectory|Use a shared repo-root resolution helper to locate .atcr/ independently of CWD|structure|15|histPath := filepath.Join(".", ".atcr", "findings-history.jsonl")
+
+MEDIUM|internal/history/writer.go:21|Append assumes O_APPEND atomicity for multi-KB batches|Use a file lock (flock) or a temporary-swap pattern to prevent interleaved JSONL lines during concurrent review runs|idiom|30|The whole batch is serialized to memory first, then written with a single O_APPEND write() call.
+
+LOW|internal/history/render.go:35|normalizeSeverity is a duplicate of reconcile.NormalizeSeverity|Import and use reconcile.NormalizeSeverity to ensure consistent casing logic|consistency|5|func normalizeSeverity(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
