@@ -7,11 +7,11 @@ This file is a staging area for small technical debt items discovered during dev
 | Severity | Open | Deferred | Resolved |
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
-| HIGH | 2 | 2 | 0 |
+| HIGH | 1 | 3 | 0 |
 | MEDIUM | 5 | 30 | 0 |
 | LOW | 2 | 34 | 0 |
 
-**Last Modified:** 2026-07-05 | **Open Items:** 9 | **Deferred Items:** 66 | **Resolved Items:** 0 | **Total Items:** 75
+**Last Modified:** 2026-07-05 | **Open Items:** 8 | **Deferred Items:** 67 | **Resolved Items:** 0 | **Total Items:** 75
 
 ## Directory Structure
 
@@ -69,7 +69,7 @@ Recovered from stale, never-merged PR #105 (`td/2026-06-26`, 46 commits, 9 days 
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | HIGH | internal/tdmigrate/shard.go:116 | WriteShards prunes every `*.yaml` file already present in dir before renaming staged shards into place, without checking whether a given file is actually shard output — a manually placed or unrelated `.yaml` file in the same directory is silently deleted on the next migrate run | Skip files that don't parse as a valid shard (or otherwise verify a file is this tool's own prior output) before removing an existing `*.yaml` during the prune step | CORRECTNESS | 30 | pr-105-recovery |
+| 1 | [/] | HIGH | internal/tdmigrate/shard.go:116 | WriteShards prunes every `*.yaml` file already present in dir before renaming staged shards into place, without checking whether a given file is actually shard output (Accepted 2026-07-05: won't-fix — PR #107 (merged, squash 9bd724d7) independently revisited this exact function on 2026-06-27 (adding the atomic tmp+rename staging), and reaffirmed rather than changed the "dir is owned entirely by this tool" doc comment; `TestWriteShards_IdempotentPrune` already encodes whole-directory ownership as the intended contract. `items/` is documented in SCHEMA.md as exclusively used for TD shards, so this is a deliberate design choice, not a gap.) | Skip files that don't parse as a valid shard (or otherwise verify a file is this tool's own prior output) before removing an existing `*.yaml` during the prune step | CORRECTNESS | 30 | pr-105-recovery |
 | 1 | [ ] | HIGH | internal/tdmigrate/validate.go:22 | DecodeShardStrict decodes only the first YAML document via a single `dec.Decode` call, so a shard file that accidentally contains a second `---`-separated document silently truncates to the first — the trailing document is lost with no error | Call `dec.Decode` again after the first successful decode and error unless it returns `io.EOF`, rejecting multi-document shard files | CORRECTNESS | 30 | pr-105-recovery |
 | 1 | [ ] | MEDIUM | internal/tdmigrate/shard.go:140, internal/tdmigrate/validate.go:45 | LoadShards and ValidateDir both call `filepath.Glob` directly on dir — Go's Glob returns `(nil, nil)` for a missing directory, so a mistyped or missing `items/` path is silently treated as "0 shards" instead of failing | Stat dir first and return an error if it does not exist (or is not a directory) before globbing | EDGE_CASES | 25 | pr-105-recovery |
 | 1 | [ ] | MEDIUM | internal/tdmigrate/shard.go:73 | WriteShards never validates that a Shard's Date field matches `YYYY-MM-DD` before using it to compose the shard's filename | Validate `s.Date` against the same date-format pattern used by `sectionHeader` before calling ShardFilename, and error on mismatch | EDGE_CASES | 20 | pr-105-recovery |
