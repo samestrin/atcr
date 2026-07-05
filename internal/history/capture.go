@@ -39,6 +39,9 @@ func RecordReview(histPath, reviewDir string, ts time.Time) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("parsing pool findings: %w", err)
 	}
+	if len(res.Skipped) > 0 {
+		fmt.Fprintf(os.Stderr, "atcr: warning: history: skipped %d malformed pool row(s); they will not appear in the trend ledger\n", len(res.Skipped))
+	}
 
 	// The pool findings.txt is the concatenation of every reviewer's rows, so a
 	// finding caught by N reviewers appears N times. Dedupe by id within this run
