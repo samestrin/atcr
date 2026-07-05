@@ -86,7 +86,10 @@ func RenderReport(recs []Record, pr int, generatedAt time.Time) string {
 	for _, r := range sorted {
 		for sev := range r.Findings {
 			n := normalizeSeverity(sev)
-			if n != "" && !canonical[n] {
+			if n == "" {
+				n = "UNKNOWN"
+			}
+			if !canonical[n] {
 				extraSet[n] = true
 			}
 		}
@@ -119,10 +122,15 @@ func RenderReport(recs []Record, pr int, generatedAt time.Time) string {
 	grandTotal := 0
 	for _, r := range sorted {
 		// Normalize this run's findings into canonical-keyed counts so column
-		// lookups are case-insensitive.
+		// lookups are case-insensitive. Blank/whitespace severities become UNKNOWN
+		// so they are included in the column set and totals instead of dropped.
 		counts := map[string]int{}
 		for sev, n := range r.Findings {
-			counts[normalizeSeverity(sev)] += n
+			key := normalizeSeverity(sev)
+			if key == "" {
+				key = "UNKNOWN"
+			}
+			counts[key] += n
 		}
 		fmt.Fprintf(&b, "| %s | %s | %s |",
 			sanitizeCell(r.Timestamp.UTC().Format(time.RFC3339)),

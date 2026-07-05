@@ -16,8 +16,9 @@ func TestRenderReport_BlankSeverityAppearsAsUnknownInTotals(t *testing.T) {
 	}
 	out := RenderReport(recs, 8, gen)
 	assert.Contains(t, out, "UNKNOWN")
-	assert.Contains(t, out, "4")        // 3 blank + 1 HIGH = 4 total
-	assert.NotContains(t, out, "| 3 |") // blank must not be silently dropped
+	// 3 blank + 1 HIGH = 4 total; the row and grand totals must reflect this.
+	assert.Contains(t, out, "| 3 |") // UNKNOWN column shows the 3 blank-severity findings
+	assert.Contains(t, out, "| 4 |") // total column includes all findings
 }
 
 func TestRenderReport_EmptyReturnsEmptyString(t *testing.T) {
