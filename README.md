@@ -77,6 +77,7 @@ New to atcr? `atcr quickstart` runs steps 2–3 interactively: it scaffolds `.at
 | `atcr quickstart` | Interactive onboarding: scaffold `.atcr/` (reusing `init`), set up the synthetic provider + API-key env var, and scaffold a CI workflow (`--open`, `--force`) |
 | `atcr serve` | Run the MCP stdio server over the same engine |
 | `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column |
+| `atcr history` | Query the per-package finding-history ledger: trend counts by severity over a `--since` window and optional `--package` prefix |
 | `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
 | `atcr debt` | Query, capture, and report on technical debt (`list` / `add` / `dashboard`); see [docs/technical-debt.md](docs/technical-debt.md) |
 

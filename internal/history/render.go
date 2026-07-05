@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // canonicalSeverities is the fixed, high-to-low severity column order, matching
@@ -15,6 +16,29 @@ var canonicalSeverities = []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"}
 // normalizeSeverity upper-cases and trims a severity label so counting is
 // case-insensitive (mirrors reconcile.NormalizeSeverity).
 func normalizeSeverity(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
+
+// sanitizeCell makes an untrusted string safe to embed in a markdown table cell.
+// A literal pipe is escaped to "\|" (otherwise it opens a spurious column) and
+// any control character — newline, carriage return, tab, and the rest — becomes
+// a space (otherwise it splits or mangles the row). Package names derive from
+// finding file paths, which on POSIX may legally contain a pipe or newline, and
+// severity labels are reviewer/model-generated free text, so neither may be
+// written raw.
+func sanitizeCell(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '|':
+			b.WriteString(`\|`)
+		case unicode.IsControl(r):
+			b.WriteByte(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
 
 // RenderTable renders a markdown table of finding counts by severity (columns)
 // per package (rows), with a per-package Total column and a grand-Total row.
@@ -67,7 +91,7 @@ func RenderTable(recs []Record) string {
 	// Header row.
 	b.WriteString("| Package |")
 	for _, c := range columns {
-		fmt.Fprintf(&b, " %s |", c)
+		fmt.Fprintf(&b, " %s |", sanitizeCell(c))
 	}
 	b.WriteString(" Total |\n")
 
@@ -82,7 +106,7 @@ func RenderTable(recs []Record) string {
 	grand := map[string]int{}
 	grandTotal := 0
 	for _, p := range packages {
-		fmt.Fprintf(&b, "| %s |", p)
+		fmt.Fprintf(&b, "| %s |", sanitizeCell(p))
 		rowTotal := 0
 		for _, c := range columns {
 			n := counts[p][c]
