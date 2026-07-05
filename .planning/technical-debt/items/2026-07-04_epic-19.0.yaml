@@ -1,0 +1,22 @@
+date: "2026-07-04"
+source_type: Sprint
+label: epic-19.0
+items:
+  - group: U
+    status: deferred
+    severity: LOW
+    file: internal/history/reader.go:14
+    problem: 'Load reads the entire findings-history.jsonl into memory with no rotation/retention, so an unbounded ledger grows memory use over time (Deferred 2026-07-04: covered by epic 19.4 history_time_sharding; retention/rotation is out of scope for epic 19.0.)'
+    fix: Add optional retention/rotation or streaming aggregation if ledgers grow large (retention explicitly out of scope for epic 19.0)
+    category: PERFORMANCE
+    est_minutes: 60
+    source: execute-epic-cumulative
+  - group: U
+    status: deferred
+    severity: LOW
+    file: internal/history/writer.go:35
+    problem: 'Append relies on a single O_APPEND write being atomic across concurrent atcr review runs; POSIX does not guarantee atomicity for multi-KB writes on regular files so simultaneous runs could interleave a JSONL line (Accepted 2026-07-04: won''t-fix — cross-platform flock is out of scope for epic 19.0, which only requires sequential appends; the writer.go:38 doc-comment fix documents the risk.)'
+    fix: Take an advisory flock around the append (mirror the mkdir-flock pattern used for the TD README) or bound batch write size
+    category: EDGE_CASES
+    est_minutes: 45
+    source: execute-epic-independent

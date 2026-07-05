@@ -2,24 +2,12 @@ date: "2026-06-23"
 source_type: Sprint
 label: 8.0_reconciler_library
 items:
-  - group: "2"
-    status: deferred
-    severity: HIGH
-    file: internal/reconcile/discover.go:25
-    problem: '`internal/reconcile` keeps its discovery `Source` (Name + `[]stream.Finding` + Skipped + SkippedFiles); the library now defines a public `Source` (Name + `[]Finding`)'
-    fix: moved `Reconcile` takes the library `Source`; discovery output (`discover.Source`) is converted to `reconcile.Source` in the adapter/discovery layer
-    category: correctness
-    est_minutes: 0
-    source: execute-sprint
-    reviewers:
-      - execute-sprint
-    confidence: MEDIUM
   - group: U
     status: deferred
     severity: MEDIUM
     file: unknown:0
-    problem: '[Story 01 / Story 06] DoD item not implemented: both CI jobs (root ci.yml + reconcile-module PR-time job) must be marked as REQUIRED status checks on the main branch-protection rule. The CI workflow deliverables they depend on are all present and verified; only the protection-rule toggle is unset. The two story-level [ ] boxes (AC 01-06, AC 06-02) are the same single external action. (intent_note: deferred per sprint-plan Final Phase / dod-completion-summary.md (external repo-admin action))'
-    fix: 'Configure branch protection in GitHub repo Settings -> Branches: add the root CI job and the reconcile-module PR-time job as required status checks. External repo-admin UI action (post-merge), not a source-tree change; documented deferred in dod-completion-summary.md.'
+    problem: '[Story 01 / Story 06] DoD item not implemented: both CI jobs (root ci.yml + reconcile-module PR-time job) must be marked as REQUIRED status checks on the main branch-protection rule. The CI workflow deliverables they depend on are all present and verified; only the protection-rule toggle is unset. The two story-level [ ] boxes (AC 01-06, AC 06-02) are the same single external action. (External action — one-click GitHub repo Settings -> Branches toggle, not epic-sized code work; no epic plan needed. See dod-completion-summary.md for original context.)'
+    fix: 'Configure branch protection in GitHub repo Settings -> Branches: add the root CI job and the reconcile-module PR-time job as required status checks. External repo-admin UI action (post-merge), not a source-tree change.'
     category: docs
     est_minutes: 15
     source: code-review
