@@ -2,7 +2,9 @@ package tdmigrate
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +17,11 @@ import (
 // semantics: unknown fields are rejected (KnownFields), tabs in indentation and
 // other malformed YAML surface as decode errors, and the decoded shard is
 // schema-validated. This converts "silent bad YAML" into a loud error.
+//
+// A shard file is required to contain exactly one YAML document: a trailing
+// `---`-separated document is rejected rather than silently discarded, since
+// yaml.v3's Decode only ever reads the first document and would otherwise
+// truncate a malformed multi-document shard without error.
 func DecodeShardStrict(data []byte) (Shard, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -24,6 +31,18 @@ func DecodeShardStrict(data []byte) (Shard, error) {
 	}
 	if err := s.Validate(); err != nil {
 		return Shard{}, fmt.Errorf("schema: %w", err)
+	}
+	var extra yaml.Node
+	switch err := dec.Decode(&extra); {
+	case errors.Is(err, io.EOF):
+		// No second document — the common, expected case.
+	case err != nil:
+		return Shard{}, fmt.Errorf("yaml decode: %w", err)
+	case len(extra.Content) == 1 && extra.Content[0].Kind == yaml.ScalarNode && extra.Content[0].Tag == "!!null":
+		// A bare trailing `---` with nothing after it decodes as an empty null
+		// document, not a real second document — harmless, do not reject it.
+	default:
+		return Shard{}, fmt.Errorf("yaml decode: shard file contains more than one YAML document")
 	}
 	return s, nil
 }
@@ -42,6 +61,11 @@ func (e *ValidationError) Error() string {
 // ValidateDir strict-loads and schema-checks every *.yaml shard in dir. It
 // returns a *ValidationError listing each failure, or nil if all shards pass.
 func ValidateDir(dir string) (int, error) {
+	if info, err := os.Stat(dir); err != nil {
+		return 0, fmt.Errorf("shard directory %s: %w", dir, err)
+	} else if !info.IsDir() {
+		return 0, fmt.Errorf("shard directory %s: not a directory", dir)
+	}
 	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
 	if err != nil {
 		return 0, err

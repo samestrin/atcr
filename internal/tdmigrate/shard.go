@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	nonSlugChars = regexp.MustCompile(`[^a-z0-9._-]+`)
-	dashRuns     = regexp.MustCompile(`-{2,}`)
+	nonSlugChars    = regexp.MustCompile(`[^a-z0-9._-]+`)
+	dashRuns        = regexp.MustCompile(`-{2,}`)
+	shardDateFormat = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 )
 
 // sanitizeLabel turns a free-text section label into a filesystem-safe slug.
@@ -94,6 +95,10 @@ func WriteShards(dir string, shards []Shard) ([]string, error) {
 	used := map[string]bool{}
 	var written []string
 	for _, s := range shards {
+		if !shardDateFormat.MatchString(s.Date) {
+			cleanup()
+			return nil, fmt.Errorf("shard %q: date %q does not match YYYY-MM-DD format", s.Label, s.Date)
+		}
 		data, err := MarshalShard(s)
 		if err != nil {
 			cleanup()
@@ -137,6 +142,11 @@ func WriteShards(dir string, shards []Shard) ([]string, error) {
 // LoadShards strict-loads every *.yaml shard in dir (unknown fields rejected,
 // schema validated) and returns them sorted by filename for determinism.
 func LoadShards(dir string) ([]Shard, error) {
+	if info, err := os.Stat(dir); err != nil {
+		return nil, fmt.Errorf("shard directory %s: %w", dir, err)
+	} else if !info.IsDir() {
+		return nil, fmt.Errorf("shard directory %s: not a directory", dir)
+	}
 	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
 	if err != nil {
 		return nil, err

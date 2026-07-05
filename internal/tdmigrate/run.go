@@ -1,6 +1,7 @@
 package tdmigrate
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -51,6 +52,19 @@ Usage:
   td-migrate generate [--items DIR]                   shards -> regenerated ToC table (stdout)
   td-migrate validate [--items DIR]                   strict-load + schema-check shards`
 
+// hasHelp reports whether args requests help (-h/--help). Checked before
+// fs.Parse so the flag set's output can be redirected to stdout first: flag's
+// own ErrHelp handling calls fs.Usage() internally using whatever writer was
+// set via SetOutput, so the redirect must happen before Parse runs, not after.
+func hasHelp(args []string) bool {
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
 func newFlags(name string, args []string, stderr io.Writer) (*flag.FlagSet, *string, *string) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -73,7 +87,13 @@ func newItemsFlags(name string, stderr io.Writer) (*flag.FlagSet, *string) {
 func runMigrate(args []string, stdout, stderr io.Writer) int {
 	fs, readme, items := newFlags("migrate", args, stderr)
 	allowEmpty := fs.Bool("allow-empty", false, "permit writing when the README parses to zero sections (wipes the shard store)")
+	if hasHelp(args) {
+		fs.SetOutput(stdout)
+	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	data, err := os.ReadFile(*readme)
@@ -111,7 +131,13 @@ func runMigrate(args []string, stdout, stderr io.Writer) int {
 
 func runGenerate(args []string, stdout, stderr io.Writer) int {
 	fs, items := newItemsFlags("generate", stderr)
+	if hasHelp(args) {
+		fs.SetOutput(stdout)
+	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	shards, err := LoadShards(*items)
@@ -135,7 +161,13 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	fs, items := newItemsFlags("validate", stderr)
+	if hasHelp(args) {
+		fs.SetOutput(stdout)
+	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	count, err := ValidateDir(*items)

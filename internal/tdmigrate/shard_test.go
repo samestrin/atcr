@@ -64,6 +64,20 @@ func TestWriteAndLoadShards_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestWriteShards_RejectsBadDateFormat(t *testing.T) {
+	dir := t.TempDir()
+	shards := []Shard{{
+		Date: "20260705", SourceType: "Sprint", Label: "x",
+		Items: []Item{{
+			Group: "1", Status: StatusOpen, Severity: "LOW", File: "f.go:1",
+			Problem: "p", Fix: "fix", Category: "correctness", EstMinutes: 5, Source: "s",
+		}},
+	}}
+	if _, err := WriteShards(dir, shards); err == nil {
+		t.Fatal("want error for a Date not in YYYY-MM-DD format, got nil")
+	}
+}
+
 func TestWriteShards_IdempotentPrune(t *testing.T) {
 	dir := t.TempDir()
 	// A stale shard from a hypothetical prior run must be pruned.

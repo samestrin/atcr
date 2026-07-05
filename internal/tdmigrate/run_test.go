@@ -27,6 +27,21 @@ func TestRun_NoArgsAndUnknown(t *testing.T) {
 	}
 }
 
+// TestRun_SubcommandHelpExitsZeroToStdout proves `-h` on each subcommand exits 0
+// with usage on stdout (the conventional flag.ErrHelp behavior), not exit 2
+// with usage on stderr like a genuine parse error.
+func TestRun_SubcommandHelpExitsZeroToStdout(t *testing.T) {
+	for _, sub := range []string{"migrate", "generate", "validate"} {
+		code, out, errb := run(t, sub, "-h")
+		if code != 0 {
+			t.Errorf("%s -h: want exit 0, got %d (stderr=%q)", sub, code, errb)
+		}
+		if out == "" {
+			t.Errorf("%s -h: want usage on stdout, got empty stdout (stderr=%q)", sub, errb)
+		}
+	}
+}
+
 // writeREADME drops a minimal valid README into a temp dir for CLI tests.
 func writeREADME(t *testing.T, dir string) string {
 	t.Helper()
