@@ -1,3 +1,22 @@
+## [Technical Debt] - 2026-07-05
+
+### Fixed
+
+- `atcr audit-report`: no longer accepts `--pr 0` and silently aggregates unrelated local (non-PR) runs under a bogus "PR #0" report — non-positive PR numbers are now rejected as a usage error.
+- `atcr audit-report`: an unknown `--pr` and a missing `--pr` flag now both exit with the same usage-error exit code as sibling commands, instead of a plain exit-1 error.
+- Audit ledger writes that fail now print a visible stderr warning in addition to the existing log warning, so a systematically failing compliance ledger (permissions/full disk) is no longer silent.
+- `atcr review --resume` no longer appends a duplicate audit record when re-running an already-complete review.
+- An explicit `--pr 0` or `--pr -1` on `atcr review` no longer loses to a `GITHUB_REF`-derived PR number — an explicit flag always wins.
+- The audit compliance report no longer silently drops findings with a blank/whitespace severity from its totals; they are now counted under an `UNKNOWN` column, matching `atcr history`'s behavior.
+- The audit compliance report's empty-input handling now matches `atcr history`'s contract instead of carrying an unreachable, contradictory empty-state branch.
+- Fixed a `sanitizeCell` escaping gap in the audit report renderer that could let a backslash-pipe sequence corrupt the rendered table.
+- Fixed unescaped HTML and backticks in audit report cells (stored-injection hardening for a compliance artifact).
+- Audit records are no longer silently dropped when the reviewed pool findings file has a malformed or unrecognized version header.
+- The audit compliance report now renders full base/head commit SHAs instead of a truncated 12-character prefix.
+- Corrected the audit package's documentation to no longer overstate tamper-evidence guarantees it does not implement, and documented the audit ledger's CLI-only hook scope and unbounded-growth read tradeoff.
+- Documented the CWD==repo-root operating assumption for `atcr` subcommands (config load, git-range resolution, and audit/history ledger writes all assume the command runs from the repository root).
+- Technical-debt README: audited and corrected deferral citations — genuinely deferred items now cite a real epic plan (added epics for process-group reaping on validation timeout, `reconcile`/`verify` `--repo` threading, shared Wasm guest ABI extraction, quote-aware `pyparser` scanning, grounding gitrunner reuse, and a backup-swap test seam), two mis-citations were corrected, and 23 rows citing already-completed work were removed.
+
 ## [19.1.0] - 2026-07-05
 
 ### Added

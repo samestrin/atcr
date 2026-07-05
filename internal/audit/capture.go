@@ -24,11 +24,13 @@ var poolFindingsRel = filepath.Join("sources", "pool", "findings.txt")
 // pull-request number pr (0 = none), and the resolved base/head SHAs. The
 // Findings field summarizes the run's distinct findings counted by severity.
 //
-// Exactly one record is written per call, unconditionally (Epic 19.1 AC1): a
-// missing or empty pool findings file yields an empty severity summary, not a
-// skipped write, so the audit trail records every review run — including clean
-// ones and runs off the findings path. It returns the number of records
-// appended (always 1 on success).
+// Exactly one record is written per call, unconditionally: a missing or empty
+// pool findings file yields an empty severity summary, not a skipped write, so a
+// clean run (no findings) and a run off the findings path are still recorded when
+// this function is called. Whether the CLI invokes RecordReview at all on a given
+// run — it does not on all-agents-failed, interrupted, or no-work resume runs — is
+// the caller's decision; see the package doc for the wiring contract (Epic 19.1
+// AC1). It returns the number of records appended (always 1 on success).
 func RecordReview(auditPath, reviewDir string, ts time.Time, pr int, base, head string) (int, error) {
 	findings, err := summarize(reviewDir)
 	if err != nil {
@@ -68,7 +70,8 @@ func summarize(reviewDir string) (map[string]int, error) {
 
 	res, err := stream.ParseSource(data)
 	if err != nil {
-		return nil, fmt.Errorf("parsing pool findings: %w", err)
+		fmt.Fprintf(os.Stderr, "atcr: warning: audit: %v; writing empty severity summary\n", err)
+		return nil, nil
 	}
 	if len(res.Skipped) > 0 {
 		fmt.Fprintf(os.Stderr, "atcr: warning: audit: skipped %d malformed pool row(s); they will not appear in the audit summary\n", len(res.Skipped))
