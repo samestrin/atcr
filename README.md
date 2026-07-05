@@ -62,6 +62,8 @@ New to atcr? `atcr quickstart` runs steps 2–3 interactively: it scaffolds `.at
 
 `atcr review` resolves the range against the default branch, fans the change out to the roster, and records the review id in `.atcr/latest`. Every later command takes an id or path as its single anchor argument and defaults to `latest`, so the two-command pipeline above just works on a feature branch.
 
+> **Run atcr from the repository root.** Subcommands resolve project config (`.atcr/config.yaml`), the git range, and the history/audit ledgers (`.atcr/`) relative to the current working directory. Running from a subdirectory can write ledger records that `atcr audit-report` and `atcr history` — which walk up to the repo root — will not find.
+
 ## Commands
 
 | Command | Purpose |
