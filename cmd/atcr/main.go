@@ -195,6 +195,7 @@ func newRootCmd() *cobra.Command {
 		newBenchmarkCmd(),
 		newPersonasCmd(),
 		newDebtCmd(),
+		newHistoryCmd(),
 		newVersionCmd(),
 	)
 	return root
