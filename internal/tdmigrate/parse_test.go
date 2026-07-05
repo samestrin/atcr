@@ -113,6 +113,23 @@ func TestParseREADME_ColonlessHeaderFailsLoudly(t *testing.T) {
 	}
 }
 
+// TestParseREADME_EmptySectionFailsLoudly proves a section header with zero
+// parseable data rows beneath it is a hard error, not silently dropped from the
+// parsed shard list.
+func TestParseREADME_EmptySectionFailsLoudly(t *testing.T) {
+	empty := `### [2026-06-26] From Sprint: x
+
+### [2026-06-27] From Sprint: y
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|---|---|---|---|---|---|---|---|---|
+| 1 | [ ] | LOW | f.go:1 | p | fix | cat | 5 | src |
+`
+	if _, err := ParseREADME(empty); err == nil {
+		t.Error("expected hard error for a section with zero data rows, got nil (section would be silently dropped)")
+	}
+}
+
 func TestParseREADME_BlankEstIsZero(t *testing.T) {
 	blank := `### [2026-06-26] From Sprint: x
 
