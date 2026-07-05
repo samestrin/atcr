@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -189,4 +190,95 @@ func TestFetchRemoteRegistry_HTTPSNoWarning(t *testing.T) {
 	// scheme check runs first and must not warn for https.
 	_, _ = fetchRemoteRegistry("https://127.0.0.1:1/registry.yaml")
 	assert.Empty(t, buf.String(), "https must not warn")
+}
+
+// --- Task 2: validate/merge the remote registry + env-var-only key guarantee ---
+
+// TestRemoteRegistry_MergesWithLocalProjectOverlay proves the remote user
+// registry is a first-class input to the merged loader: a LOCAL project overlay
+// (.atcr/registry.yaml) still merges over it, adding a project agent that binds a
+// remote-defined user provider (no trust gate — the provider is user-defined).
+func TestRemoteRegistry_MergesWithLocalProjectOverlay(t *testing.T) {
+	t.Setenv("ATCR_REGISTRY_URL", serveRegistry(t, http.StatusOK, validRegistry))
+
+	root := t.TempDir()
+	writeProjectRegistry(t, root, `
+agents:
+  team-extra:
+    provider: openai   # a provider defined only in the remote user registry
+    model: gpt-4
+`)
+	bogusLocal := filepath.Join(root, "registry.yaml") // ignored: URL wins
+
+	reg, err := LoadMergedRegistry(bogusLocal, root)
+	require.NoError(t, err)
+	// Remote user entries present…
+	assert.Contains(t, reg.Agents, "bruce")
+	assert.Equal(t, SourceUser, reg.AgentTier("bruce"))
+	// …and the local project overlay merged over the remote base.
+	assert.Contains(t, reg.Agents, "team-extra")
+	assert.Equal(t, SourceProject, reg.AgentTier("team-extra"))
+}
+
+// TestRemoteRegistry_LiteralAPIKeyRejected proves a secret placed directly in the
+// remote file cannot be loaded: the schema has no api_key field and decoding is
+// strict, so the unknown field is a hard load error — the key is never read.
+func TestRemoteRegistry_LiteralAPIKeyRejected(t *testing.T) {
+	remote := `
+providers:
+  p:
+    api_key_env: ATCR_TEST_REMOTE_KEY
+    api_key: sk-should-never-be-read
+agents:
+  a:
+    provider: p
+    model: m
+`
+	t.Setenv("ATCR_REGISTRY_URL", serveRegistry(t, http.StatusOK, remote))
+	_, err := LoadRegistry(writeRegistry(t, validRegistry))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "api_key", "the literal key field must be rejected as an unknown field")
+}
+
+// TestRemoteRegistry_KeyReferencedNotStored proves the env-var contract is
+// unchanged across the remote path: the remote file carries only the api_key_env
+// NAME, and loading succeeds whether or not that variable is set locally (the
+// value is resolved from the local environment at invoke time, never at load).
+func TestRemoteRegistry_KeyReferencedNotStored(t *testing.T) {
+	remote := `
+providers:
+  p:
+    api_key_env: ATCR_TEST_REMOTE_KEY
+agents:
+  a:
+    provider: p
+    model: m
+`
+	// Deliberately unset locally: load must still succeed.
+	require.NoError(t, os.Unsetenv("ATCR_TEST_REMOTE_KEY"))
+	t.Setenv("ATCR_REGISTRY_URL", serveRegistry(t, http.StatusOK, remote))
+
+	reg, err := LoadRegistry(writeRegistry(t, validRegistry))
+	require.NoError(t, err)
+	assert.Equal(t, "ATCR_TEST_REMOTE_KEY", reg.Providers["p"].APIKeyEnv)
+}
+
+// TestRemoteRegistry_ValidationRunsOverRemote proves schema validation runs over
+// the fetched content, not just the local file: a dangling fallback in the remote
+// registry fails the load exactly as a local one would.
+func TestRemoteRegistry_ValidationRunsOverRemote(t *testing.T) {
+	remote := `
+providers:
+  p:
+    api_key_env: ATCR_TEST_REMOTE_KEY
+agents:
+  a:
+    provider: p
+    model: m
+    fallback: does-not-exist
+`
+	t.Setenv("ATCR_REGISTRY_URL", serveRegistry(t, http.StatusOK, remote))
+	_, err := LoadRegistry(writeRegistry(t, validRegistry))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does-not-exist")
 }
