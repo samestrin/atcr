@@ -43,9 +43,9 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
 	}
 }
 
-func TestRootCmd_HasExactlyTwentySubcommands(t *testing.T) {
-	// The nineteen prior commands plus `history`, the finding-history query
-	// namespace (Epic 19.0).
+func TestRootCmd_HasExactlyTwentyOneSubcommands(t *testing.T) {
+	// The twenty prior commands plus `audit-report`, the compliance-report
+	// namespace over the per-run audit ledger (Epic 19.1).
 	root := newRootCmd()
 	names := map[string]bool{}
 	for _, c := range root.Commands() {
@@ -54,8 +54,8 @@ func TestRootCmd_HasExactlyTwentySubcommands(t *testing.T) {
 		}
 		names[c.Name()] = true
 	}
-	assert.Len(t, names, 20)
-	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "debt", "history", "version"} {
+	assert.Len(t, names, 21)
+	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "debt", "history", "audit-report", "version"} {
 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
 	}
 }
