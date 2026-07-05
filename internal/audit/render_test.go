@@ -9,6 +9,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSanitizeCell_EscapesBackslashBeforePipe(t *testing.T) {
+	// A literal backslash followed by a pipe must escape both, otherwise the
+	// pipe would still open a spurious column after the backslash was written raw.
+	assert.Equal(t, `\\\|`, sanitizeCell(`\|`))
+	assert.Equal(t, `a\\b`, sanitizeCell(`a\b`))
+}
+
 func TestRenderReport_RendersPerRunTableWithTotals(t *testing.T) {
 	gen := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
 	recs := []Record{
