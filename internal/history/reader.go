@@ -1,0 +1,51 @@
+package history
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+)
+
+// Load reads the JSONL ledger at path and returns every record in file order.
+// An absent ledger returns (nil, nil): a project that has never persisted
+// history is a valid empty history, not an error. Blank lines and malformed
+// (non-JSON) lines are skipped rather than failing the whole read: the ledger is
+// append-only and the CLI offers no repair path, so a single torn write or stray
+// byte must not permanently brick `atcr history`. Only an IO/scan failure is an
+// error.
+func Load(path string) ([]Record, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("opening history ledger: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	var records []Record
+	sc := bufio.NewScanner(f)
+	// A single finding record is small, but Problem/Evidence-derived fields keep
+	// the default 64KiB token cap comfortable; raise the max to 1MiB so a long
+	// line is never silently truncated into a parse error.
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		raw := bytes.TrimSpace(sc.Bytes())
+		if len(raw) == 0 {
+			continue
+		}
+		var rec Record
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			continue // skip a malformed line so the rest of the ledger stays queryable
+		}
+		records = append(records, rec)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("reading history ledger: %w", err)
+	}
+	return records, nil
+}
