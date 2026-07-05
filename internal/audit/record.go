@@ -1,4 +1,4 @@
-// Package audit persists a tamper-evident, append-only record of every
+// Package audit persists an append-only record of every
 // `atcr review` run and renders a one-page compliance report for a given pull
 // request (Epic 19.1).
 //
