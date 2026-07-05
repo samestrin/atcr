@@ -290,6 +290,29 @@ func TestResume_RunsPendingAgentThenReconciles(t *testing.T) {
 	require.False(t, st.Partial)
 }
 
+// TestResume_PendingAgentAppendsExactlyOneAudit pins Epic 19.1 AC1 at the resume
+// wiring layer: a resume that runs a pending agent to completion (the post-fanout
+// path, distinct from the AllComplete no-work path) appends exactly one audit
+// record — no more (double-record) and no less (dropped record).
+func TestResume_PendingAgentAppendsExactlyOneAudit(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce", "robin")
+	base := gitRevParse(t, "HEAD^")
+	head := gitRevParse(t, "HEAD")
+	// bruce already completed; robin is pending. Resume runs robin, then records audit.
+	writeResumeReviewFixture(t, "2026-06-18_demo", base, head, []string{"bruce", "robin"}, []string{"bruce"})
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, out)
+
+	recs, err := audit.Load(filepath.Join(".", ".atcr", "audit.log.jsonl"))
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "a resume that completes a pending agent appends exactly one audit record")
+}
+
 func TestResume_FailOnFlagIsExit2(t *testing.T) {
 	isolate(t)
 	code, out := execResume(t, "review", "--resume", "latest", "--fail-on", "high")

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/audit"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
@@ -583,4 +584,24 @@ func TestWriteAuditRecord_EmitsStderrWarningOnFailure(t *testing.T) {
 	require.Equal(t, 0, n, "a failed audit write appends zero records")
 	assert.Contains(t, stderr.String(), "warning: failed to append audit record:",
 		"stderr must carry a visible warning when the audit ledger cannot be written")
+}
+
+// TestRunReview_AllAgentsFailedAppendsNoAudit pins the wiring contract documented
+// in internal/audit/record.go: the audit hook sits after the all-agents-failed
+// error guard, so a review where every agent failed (exit 1, artifacts preserved)
+// stamps no compliance-ledger record. A future refactor that moved the hook above
+// the guard — recording failed runs — would break this and must be a deliberate
+// choice, not an accident.
+func TestRunReview_AllAgentsFailedAppendsNoAudit(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	writeReviewFixtureConfig(t) // bruce -> unreachable URL, so every agent fails
+
+	code, _ := execCmdCapture(t, "review", "--base", "HEAD^")
+	require.Equal(t, 1, code, "all agents failed -> exit 1")
+
+	recs, err := audit.Load(filepath.Join(".", ".atcr", "audit.log.jsonl"))
+	require.NoError(t, err)
+	require.Empty(t, recs, "an all-agents-failed review must append no audit record")
 }
