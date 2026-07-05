@@ -40,13 +40,24 @@ func RecordReview(histPath, reviewDir string, ts time.Time) (int, error) {
 		return 0, fmt.Errorf("parsing pool findings: %w", err)
 	}
 
+	// The pool findings.txt is the concatenation of every reviewer's rows, so a
+	// finding caught by N reviewers appears N times. Dedupe by id within this run
+	// so the ledger holds one record per distinct finding per run ("one JSON
+	// record per finding", per the plan) and the severity table is not inflated
+	// by reviewer multiplicity. The first occurrence wins.
 	records := make([]Record, 0, len(res.Findings))
+	seen := make(map[string]bool, len(res.Findings))
 	for _, f := range res.Findings {
+		id := FindingID(f.File, f.Line, f.Problem)
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		records = append(records, Record{
 			Timestamp: ts,
 			Package:   PackageOf(f.File),
 			Severity:  f.Severity,
-			ID:        FindingID(f.File, f.Line, f.Problem),
+			ID:        id,
 			File:      f.File,
 			Category:  f.Category,
 		})

@@ -12,8 +12,11 @@ import (
 
 // Load reads the JSONL ledger at path and returns every record in file order.
 // An absent ledger returns (nil, nil): a project that has never persisted
-// history is a valid empty history, not an error. Blank lines are skipped; a
-// malformed (non-JSON) line is a parse error naming the 1-based line number.
+// history is a valid empty history, not an error. Blank lines and malformed
+// (non-JSON) lines are skipped rather than failing the whole read: the ledger is
+// append-only and the CLI offers no repair path, so a single torn write or stray
+// byte must not permanently brick `atcr history`. Only an IO/scan failure is an
+// error.
 func Load(path string) ([]Record, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -30,16 +33,14 @@ func Load(path string) ([]Record, error) {
 	// the default 64KiB token cap comfortable; raise the max to 1MiB so a long
 	// line is never silently truncated into a parse error.
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	line := 0
 	for sc.Scan() {
-		line++
 		raw := bytes.TrimSpace(sc.Bytes())
 		if len(raw) == 0 {
 			continue
 		}
 		var rec Record
 		if err := json.Unmarshal(raw, &rec); err != nil {
-			return nil, fmt.Errorf("parsing history ledger line %d: %w", line, err)
+			continue // skip a malformed line so the rest of the ledger stays queryable
 		}
 		records = append(records, rec)
 	}

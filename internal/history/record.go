@@ -49,7 +49,10 @@ func FindingID(file string, line int, problem string) string {
 }
 
 // PackageOf returns the package path for a finding file: its directory
-// component. A bare filename with no directory yields ".".
+// component, slash-normalized. A bare filename with no directory yields ".".
+// ToSlash is applied AFTER filepath.Dir: on Windows filepath.Dir emits
+// backslash separators, so normalizing afterward is what actually makes the
+// stored package slash-normalized (the invariant Filter's prefix match relies on).
 func PackageOf(file string) string {
-	return filepath.Dir(filepath.ToSlash(file))
+	return filepath.ToSlash(filepath.Dir(file))
 }
