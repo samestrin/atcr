@@ -130,6 +130,22 @@ func TestParseREADME_EmptySectionFailsLoudly(t *testing.T) {
 	}
 }
 
+// TestParseREADME_MissingLeadingPipeFailsLoudly proves a data row that lost its
+// leading pipe (e.g. a copy-paste error) but still has the right interior
+// pipe-separated cell count is a hard error, not silently dropped as prose.
+func TestParseREADME_MissingLeadingPipeFailsLoudly(t *testing.T) {
+	missingPipe := `### [2026-06-26] From Sprint: x
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|---|---|---|---|---|---|---|---|---|
+| 1 | [ ] | LOW | g.go:2 | ok row | fix | cat | 5 | src |
+1 | [ ] | LOW | f.go:1 | p | fix | cat | 5 | src |
+`
+	if _, err := ParseREADME(missingPipe); err == nil {
+		t.Error("expected hard error for a data row missing its leading pipe, got nil (row would be silently dropped as prose)")
+	}
+}
+
 func TestParseREADME_BlankEstIsZero(t *testing.T) {
 	blank := `### [2026-06-26] From Sprint: x
 
