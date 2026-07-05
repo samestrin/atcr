@@ -53,6 +53,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
 	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
 	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
+	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
 	addRangeFlags(cmd)
 	addAutoFixFlags(cmd)
 	return cmd
@@ -100,6 +101,12 @@ func sprintPlanPath(cmd *cobra.Command) string {
 		panic(fmt.Sprintf("sprintPlanPath: undefined flag %q: %v", "sprint-plan", err))
 	}
 	return strings.TrimSpace(v)
+}
+
+// prNumberFromFlags is stubbed for the RED stage: it always returns 0, so the
+// resolver tests fail until the GREEN implementation lands.
+func prNumberFromFlags(cmd *cobra.Command) int {
+	return 0
 }
 
 // runReview resolves the range, loads config, and runs the full review flow.
