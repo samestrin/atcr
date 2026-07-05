@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	reclib "github.com/samestrin/atcr/reconcile"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
+	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -141,7 +143,11 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		if err := fanout.ClearInterrupted(dir); err != nil {
 			return usageError(fmt.Errorf("resume failed: %w", err))
 		}
-		return resumeReconcile(ctx, cmd, dir)
+		if err := resumeReconcile(ctx, cmd, dir); err != nil {
+			return err
+		}
+		recordResumeHistory(ctx, dir, req.StartedAt)
+		return nil
 	}
 
 	if err := preflightAPIKeys(prep.Slots); err != nil {
@@ -188,7 +194,24 @@ func runResume(cmd *cobra.Command, anchor string) error {
 
 	// Auto-reconcile on successful completion (epic 4.1.1: a resumed run always
 	// produces a fresh reconciliation, mirroring the in-process one-shot path).
-	return resumeReconcile(ctx, cmd, result.Dir)
+	if err := resumeReconcile(ctx, cmd, result.Dir); err != nil {
+		return err
+	}
+	recordResumeHistory(ctx, result.Dir, req.StartedAt)
+	return nil
+}
+
+// recordResumeHistory persists a resumed review's pool findings to the
+// append-only history ledger, mirroring the fresh-review hook in review.go. A
+// history write failure is non-fatal: it must never fail an otherwise-successful
+// resume, so it is logged and swallowed.
+func recordResumeHistory(ctx context.Context, dir string, ts time.Time) {
+	histPath := filepath.Join(".", ".atcr", "findings-history.jsonl")
+	if n, err := history.RecordReview(histPath, dir, ts); err != nil {
+		log.FromContext(ctx).Warn("failed to append finding history", "error", err)
+	} else if n > 0 {
+		log.FromContext(ctx).Debug("appended finding history", "records", n, "path", histPath)
+	}
 }
 
 // resumeReconcile runs the deterministic reconcile pipeline against dir and prints
