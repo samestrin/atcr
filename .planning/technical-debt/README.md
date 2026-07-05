@@ -7,11 +7,11 @@ This file is a staging area for small technical debt items discovered during dev
 | Severity | Open | Deferred | Resolved |
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
-| HIGH | 0 | 2 | 0 |
+| HIGH | 0 | 3 | 0 |
 | MEDIUM | 0 | 30 | 0 |
 | LOW | 0 | 34 | 0 |
 
-**Last Modified:** 2026-07-04 | **Open Items:** 0 | **Deferred Items:** 66 | **Resolved Items:** 0 | **Total Items:** 66
+**Last Modified:** 2026-07-05 | **Open Items:** 0 | **Deferred Items:** 67 | **Resolved Items:** 0 | **Total Items:** 67
 
 ## Directory Structure
 
@@ -62,6 +62,14 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards �
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-05] From Review: pr-105-recovery
+
+Recovered from stale, never-merged PR #105 (`td/2026-06-26`, 46 commits, 9 days behind `main` and conflicting). Before closing that PR, each of its fixes was checked against current `main`; most were already independently re-implemented, but these were not — they are re-added here as fresh items for `/resolve-td` rather than merging the stale branch directly.
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [/] | HIGH | internal/tdmigrate/shard.go:116 | WriteShards prunes every `*.yaml` file already present in dir before renaming staged shards into place, without checking whether a given file is actually shard output (Accepted 2026-07-05: won't-fix — PR #107 (merged, squash 9bd724d7) independently revisited this exact function on 2026-06-27 (adding the atomic tmp+rename staging), and reaffirmed rather than changed the "dir is owned entirely by this tool" doc comment; `TestWriteShards_IdempotentPrune` already encodes whole-directory ownership as the intended contract. `items/` is documented in SCHEMA.md as exclusively used for TD shards, so this is a deliberate design choice, not a gap.) | Skip files that don't parse as a valid shard (or otherwise verify a file is this tool's own prior output) before removing an existing `*.yaml` during the prune step | CORRECTNESS | 30 | pr-105-recovery |
 
 ### [2026-07-04] From Sprint: epic-19.0
 

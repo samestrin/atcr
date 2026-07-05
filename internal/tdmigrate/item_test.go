@@ -95,6 +95,28 @@ func TestItemValidate_Rejections(t *testing.T) {
 	}
 }
 
+// TestItemValidate_RequiredFieldOrderDeterministic proves that when 2+ required
+// fields are blank, Validate() always reports the same field first — ranging
+// over a map for the required-field check makes the reported field
+// nondeterministic across calls (Go randomizes map iteration order).
+func TestItemValidate_RequiredFieldOrderDeterministic(t *testing.T) {
+	it := validItem()
+	it.Group = ""
+	it.Source = ""
+	var first string
+	for i := 0; i < 50; i++ {
+		err := it.Validate()
+		if err == nil {
+			t.Fatal("expected validation error for blank required fields")
+		}
+		if i == 0 {
+			first = err.Error()
+		} else if err.Error() != first {
+			t.Fatalf("nondeterministic required-field order: run %d got %q, run 0 got %q", i, err.Error(), first)
+		}
+	}
+}
+
 func TestShardValidate_OK(t *testing.T) {
 	s := Shard{Date: "2026-06-26", SourceType: "Sprint", Label: "epic-1.0", Items: []Item{validItem()}}
 	if err := s.Validate(); err != nil {

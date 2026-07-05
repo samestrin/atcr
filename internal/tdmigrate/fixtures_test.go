@@ -1,6 +1,7 @@
 package tdmigrate
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -112,5 +113,49 @@ func TestStrictLoad_RejectsSchemaViolation(t *testing.T) {
 	badEnum := "date: \"2026-06-26\"\nsource_type: Sprint\nlabel: x\nitems:\n  - group: \"1\"\n    status: deferred\n    severity: SPICY\n    file: f.go:1\n    problem: p\n    fix: f\n    category: c\n    est_minutes: 5\n    source: s\n"
 	if _, err := DecodeShardStrict([]byte(badEnum)); err == nil {
 		t.Error("expected schema rejection for invalid severity enum")
+	}
+}
+
+// TestStrictLoad_RejectsMultiDocument proves a shard file containing a second
+// `---`-separated YAML document is rejected rather than silently decoding only
+// the first document and discarding the rest.
+func TestStrictLoad_RejectsMultiDocument(t *testing.T) {
+	twoDocs := "date: \"2026-06-26\"\nsource_type: Sprint\nlabel: x\nitems:\n  - group: \"1\"\n    status: deferred\n    severity: LOW\n    file: f.go:1\n    problem: p\n    fix: f\n    category: c\n    est_minutes: 5\n    source: s\n" +
+		"---\n" +
+		"date: \"2026-06-27\"\nsource_type: Sprint\nlabel: y\nitems: []\n"
+	if _, err := DecodeShardStrict([]byte(twoDocs)); err == nil {
+		t.Error("expected rejection of a shard file containing a second YAML document")
+	}
+}
+
+// TestLoadShards_MissingDirErrors proves LoadShards fails loudly on a missing
+// directory instead of returning zero shards (Go's filepath.Glob returns
+// (nil, nil) for a nonexistent dir, which otherwise looks identical to "0
+// shards, directory present but empty").
+func TestLoadShards_MissingDirErrors(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	if _, err := LoadShards(missing); err == nil {
+		t.Error("expected LoadShards to error on a missing directory")
+	}
+}
+
+// TestValidateDir_MissingDirErrors mirrors TestLoadShards_MissingDirErrors for
+// ValidateDir, which has the same filepath.Glob-on-missing-dir gap.
+func TestValidateDir_MissingDirErrors(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	if _, err := ValidateDir(missing); err == nil {
+		t.Error("expected ValidateDir to error on a missing directory")
+	}
+}
+
+// TestStrictLoad_AllowsBareTrailingDocumentMarker proves a harmless trailing
+// `---` with nothing after it (a bare document-end marker some editors and YAML
+// tools append) is NOT rejected as a second document — it decodes as an empty
+// null document, not real content.
+func TestStrictLoad_AllowsBareTrailingDocumentMarker(t *testing.T) {
+	trailing := "date: \"2026-06-26\"\nsource_type: Sprint\nlabel: x\nitems:\n  - group: \"1\"\n    status: deferred\n    severity: LOW\n    file: f.go:1\n    problem: p\n    fix: f\n    category: c\n    est_minutes: 5\n    source: s\n" +
+		"---\n"
+	if _, err := DecodeShardStrict([]byte(trailing)); err != nil {
+		t.Errorf("expected a bare trailing document marker to be accepted, got %v", err)
 	}
 }

@@ -97,6 +97,55 @@ func TestParseREADME_DriftHeaderFailsLoudly(t *testing.T) {
 	}
 }
 
+// TestParseREADME_ColonlessHeaderFailsLoudly proves a section header missing
+// the colon entirely (neither sectionHeader nor driftHeader matches) is a hard
+// error, not silently skipped with its data rows mis-attributed to whichever
+// shard was previously open.
+func TestParseREADME_ColonlessHeaderFailsLoudly(t *testing.T) {
+	colonless := `### [2026-06-26] From Sprint x
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|---|---|---|---|---|---|---|---|---|
+| 1 | [ ] | LOW | f.go:1 | p | fix | cat | 5 | src |
+`
+	if _, err := ParseREADME(colonless); err == nil {
+		t.Error("expected hard error for a colonless section header, got nil (rows would be silently mis-attributed or dropped)")
+	}
+}
+
+// TestParseREADME_EmptySectionFailsLoudly proves a section header with zero
+// parseable data rows beneath it is a hard error, not silently dropped from the
+// parsed shard list.
+func TestParseREADME_EmptySectionFailsLoudly(t *testing.T) {
+	empty := `### [2026-06-26] From Sprint: x
+
+### [2026-06-27] From Sprint: y
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|---|---|---|---|---|---|---|---|---|
+| 1 | [ ] | LOW | f.go:1 | p | fix | cat | 5 | src |
+`
+	if _, err := ParseREADME(empty); err == nil {
+		t.Error("expected hard error for a section with zero data rows, got nil (section would be silently dropped)")
+	}
+}
+
+// TestParseREADME_MissingLeadingPipeFailsLoudly proves a data row that lost its
+// leading pipe (e.g. a copy-paste error) but still has the right interior
+// pipe-separated cell count is a hard error, not silently dropped as prose.
+func TestParseREADME_MissingLeadingPipeFailsLoudly(t *testing.T) {
+	missingPipe := `### [2026-06-26] From Sprint: x
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|---|---|---|---|---|---|---|---|---|
+| 1 | [ ] | LOW | g.go:2 | ok row | fix | cat | 5 | src |
+1 | [ ] | LOW | f.go:1 | p | fix | cat | 5 | src |
+`
+	if _, err := ParseREADME(missingPipe); err == nil {
+		t.Error("expected hard error for a data row missing its leading pipe, got nil (row would be silently dropped as prose)")
+	}
+}
+
 func TestParseREADME_BlankEstIsZero(t *testing.T) {
 	blank := `### [2026-06-26] From Sprint: x
 

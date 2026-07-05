@@ -1,3 +1,16 @@
+## [Technical Debt] - 2026-07-05
+
+### Fixed
+
+- `internal/tdmigrate`: `DecodeShardStrict` now rejects a shard file containing a second YAML document instead of silently truncating to the first (a harmless trailing `---` marker with no content is still accepted).
+- `internal/tdmigrate`: `LoadShards` and `ValidateDir` now error on a missing shard directory instead of silently treating it as zero shards.
+- `internal/tdmigrate`: `WriteShards` now rejects a shard `Date` that isn't in `YYYY-MM-DD` format instead of composing an invalid file path from it.
+- `internal/tdmigrate`: `ParseREADME` now hard-errors on a malformed section header (bad date, or missing the colon after the source type) instead of silently skipping it.
+- `internal/tdmigrate`: `ParseREADME` now hard-errors on a section with zero parseable data rows instead of silently dropping it.
+- `internal/tdmigrate`: `ParseREADME` now hard-errors on a data row that lost its leading pipe instead of silently discarding it as prose.
+- `internal/tdmigrate`: `Item.Validate` now reports the first blank required field in a fixed, deterministic order instead of a nondeterministic one.
+- `td-migrate migrate/generate/validate`: `-h`/`--help` now exits 0 with usage on stdout instead of exiting 2 with usage on stderr.
+
 ## [Technical Debt] - 2026-07-04
 
 ### Fixed
