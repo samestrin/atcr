@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -563,4 +564,23 @@ func TestRunReview_SummaryPrintsOnAllAgentsFailed(t *testing.T) {
 	require.Equal(t, 1, code, "all agents failed -> exit 1")
 	require.Contains(t, out, "Total elapsed:", "AC3 summary must print on the all-agents-failed path")
 	require.Contains(t, out, "Agents: 0/", "summary reports zero successes when every agent failed")
+}
+
+// TestWriteAuditRecord_EmitsStderrWarningOnFailure verifies that a compliance-
+// ledger write failure is surfaced on stderr in addition to the structured log,
+// so a systematically failing audit trail cannot be missed in log-only output.
+func TestWriteAuditRecord_EmitsStderrWarningOnFailure(t *testing.T) {
+	var stderr bytes.Buffer
+	dir := t.TempDir()
+	// Make the audit path's parent directory read-only so Append cannot create
+	// the ledger file, forcing a write failure without relying on platform specifics.
+	badDir := filepath.Join(dir, "readonly")
+	require.NoError(t, os.Mkdir(badDir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(badDir, 0o755) })
+
+	auditPath := filepath.Join(badDir, "audit.log.jsonl")
+	n := writeAuditRecord(&stderr, context.Background(), auditPath, dir, time.Now(), 1, "base", "head")
+	require.Equal(t, 0, n, "a failed audit write appends zero records")
+	assert.Contains(t, stderr.String(), "warning: failed to append audit record:",
+		"stderr must carry a visible warning when the audit ledger cannot be written")
 }

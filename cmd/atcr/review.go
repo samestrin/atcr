@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	reclib "github.com/samestrin/atcr/reconcile"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,6 +27,25 @@ import (
 	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
 )
+
+// writeAuditRecord appends one audit record for the review at reviewDir to
+// auditPath. On failure it logs the error and writes a visible stderr warning so
+// a systematically failing compliance ledger is not silent. It returns the number
+// of records appended (0 on failure).
+func writeAuditRecord(stderr io.Writer, ctx context.Context, auditPath, reviewDir string, ts time.Time, pr int, base, head string) int {
+	n, err := audit.RecordReview(auditPath, reviewDir, ts, pr, base, head)
+	if err != nil {
+		log.FromContext(ctx).Warn("failed to append audit record", "error", err)
+		if stderr != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: failed to append audit record: %v\n", err)
+		}
+		return 0
+	}
+	if n > 0 {
+		log.FromContext(ctx).Debug("appended audit record", "records", n, "pr", pr, "path", auditPath)
+	}
+	return n
+}
 
 // newReviewCmd builds `atcr review`: resolve the git range, build payloads,
 // create the review directory, and fan out to the persona pool.
@@ -393,11 +413,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// failure is non-fatal — a compliance write must never fail an otherwise
 	// successful review, so it is logged and swallowed.
 	auditPath := filepath.Join(req.Root, ".atcr", "audit.log.jsonl")
-	if n, aerr := audit.RecordReview(auditPath, result.Dir, now, req.PRNumber, req.Range.Base, req.Range.Head); aerr != nil {
-		log.FromContext(ctx).Warn("failed to append audit record", "error", aerr)
-	} else if n > 0 {
-		log.FromContext(ctx).Debug("appended audit record", "records", n, "pr", req.PRNumber, "path", auditPath)
-	}
+	writeAuditRecord(cmd.ErrOrStderr(), ctx, auditPath, result.Dir, now, req.PRNumber, req.Range.Base, req.Range.Head)
 
 	// One-shot mode: reconcile in-process and gate on the threshold. Review
 	// artifacts are already on disk, so a reconcile failure (exit 2) preserves
