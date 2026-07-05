@@ -91,8 +91,8 @@ var remoteFetchTimeout = 10 * time.Second
 
 // remoteRegistryBodyLimit caps the fetched body to guard against a hostile or
 // misconfigured endpoint streaming an unbounded response. A registry.yaml is a
-// few KB; 5 MB is far above any realistic size.
-const remoteRegistryBodyLimit int64 = 5 * 1024 * 1024
+// few KB; 5 MB is far above any realistic size. A var so tests can lower it.
+var remoteRegistryBodyLimit int64 = 5 * 1024 * 1024
 
 // insecureRegistryWarnWriter is the sink for the one-time non-https warning; a
 // var so tests can capture it. insecureRegistryWarnOnce keeps the warning to a
