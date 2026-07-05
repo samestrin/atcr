@@ -1,11 +1,17 @@
 package registry
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Source tiers for an effective registry entry after the project overlay
@@ -71,19 +77,43 @@ func DefaultProjectRegistryPath(root string) string {
 	return filepath.Join(root, ".atcr", "registry.yaml")
 }
 
+// registryURLEnv, when set to an http/https URL, makes parseRegistryFile fetch
+// the user registry over the network instead of reading the local file. This is
+// the "shared team registry" seam (Epic 19.2): a team points every workstation
+// at one registry.yaml in a config repo. Only the *user* registry is remote —
+// the project overlay (.atcr/registry.yaml) and the trust store stay local.
+const registryURLEnv = "ATCR_REGISTRY_URL"
+
+// remoteFetchTimeout bounds a single registry fetch. It is deliberately shorter
+// than llmclient's completion budget (that budgets a whole chat completion; this
+// is a one-shot YAML GET) and is a var so tests can lower it.
+var remoteFetchTimeout = 10 * time.Second
+
+// remoteRegistryBodyLimit caps the fetched body to guard against a hostile or
+// misconfigured endpoint streaming an unbounded response. A registry.yaml is a
+// few KB; 5 MB is far above any realistic size. A var so tests can lower it.
+var remoteRegistryBodyLimit int64 = 5 * 1024 * 1024
+
+// insecureRegistryWarnWriter is the sink for the one-time non-https warning; a
+// var so tests can capture it. insecureRegistryWarnOnce keeps the warning to a
+// single emission per process regardless of how many times the registry loads.
+var (
+	insecureRegistryWarnWriter io.Writer = os.Stderr
+	insecureRegistryWarnOnce   sync.Once
+)
+
 // parseRegistryFile reads and strictly parses a user-level registry, stamping
 // every entry with the user source tier. Validation is the caller's job — done
 // standalone by LoadRegistry, or over the merged view by LoadMergedRegistry.
+//
+// The bytes come from the remote URL in ATCR_REGISTRY_URL when it is set, or the
+// local path otherwise; see loadRegistryBytes.
 func parseRegistryFile(path string) (*Registry, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("registry not found at %s: run 'atcr init' and create your provider/agent registry (see docs/registry.md)", path)
-	}
+	data, base, err := loadRegistryBytes(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading registry: %w", err)
+		return nil, err
 	}
 
-	base := filepath.Base(path)
 	var reg Registry
 	if err := decodeStrictYAML(data, &reg); err != nil {
 		if errors.Is(err, errEmptyDocument) {
@@ -93,6 +123,127 @@ func parseRegistryFile(path string) (*Registry, error) {
 	}
 	reg.stampSource(SourceUser)
 	return &reg, nil
+}
+
+// loadRegistryBytes returns the raw user-registry bytes and a display label for
+// error attribution. When ATCR_REGISTRY_URL is set the registry is fetched over
+// HTTP and the local path is ignored; otherwise the local file is read.
+//
+// There is NO silent fallback to the local file when a set URL is unreachable or
+// invalid — a present-but-broken remote source is an unconditional error, so a
+// team never diverges onto a stale local copy without noticing. The local read
+// is reached only when the env var is unset (matching Epic 19.2's "falling back
+// ... when unset").
+func loadRegistryBytes(path string) (data []byte, label string, err error) {
+	if rawURL := strings.TrimSpace(os.Getenv(registryURLEnv)); rawURL != "" {
+		data, err = fetchRemoteRegistry(rawURL)
+		return data, remoteRegistryLabel(rawURL), err
+	}
+
+	data, err = os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, "", fmt.Errorf("registry not found at %s: run 'atcr init' and create your provider/agent registry (see docs/registry.md)", path)
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("reading registry: %w", err)
+	}
+	return data, filepath.Base(path), nil
+}
+
+// fetchRemoteRegistry GETs the user registry from rawURL, returning its body on
+// a 2xx response. The scheme must be http or https; a non-https URL draws a
+// one-time warning (the fetched registry is fully trusted, unlike a project
+// provider). Errors reference the env var name, never the URL value, so a token
+// embedded in a query string cannot leak into an error message.
+func fetchRemoteRegistry(rawURL string) ([]byte, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", registryURLEnv, err)
+	}
+	switch u.Scheme {
+	case "https":
+	case "http":
+		warnInsecureRegistryURLOnce(rawURL)
+	default:
+		return nil, fmt.Errorf("%s must be an http or https URL (got scheme %q)", registryURLEnv, u.Scheme)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), remoteFetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building %s request: %w", registryURLEnv, err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		// A *url.Error stringifies with the full request URL — query string and
+		// all — so wrapping it verbatim would leak a token embedded in the URL
+		// even over https. Unwrap to the underlying cause so the message names
+		// only the env var, honoring the redaction guarantee above.
+		cause := err
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			cause = ue.Err
+		}
+		return nil, fmt.Errorf("fetching registry from %s: %w", registryURLEnv, cause)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("fetching registry from %s: unexpected status %s", registryURLEnv, resp.Status)
+	}
+
+	// Read at most one byte past the limit so an oversized body is detectable.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, remoteRegistryBodyLimit+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading registry from %s: %w", registryURLEnv, err)
+	}
+	if int64(len(body)) > remoteRegistryBodyLimit {
+		return nil, fmt.Errorf("registry from %s exceeds the %d-byte limit", registryURLEnv, remoteRegistryBodyLimit)
+	}
+	return body, nil
+}
+
+// warnInsecureRegistryURLOnce emits a single stderr warning when the registry is
+// fetched over plaintext http. The URL is redacted of any embedded credentials
+// before it is shown.
+func warnInsecureRegistryURLOnce(rawURL string) {
+	insecureRegistryWarnOnce.Do(func() {
+		_, _ = fmt.Fprintf(insecureRegistryWarnWriter,
+			"warning: %s uses insecure http (%s); prefer https for a shared registry\n",
+			registryURLEnv, redactRegistryURL(rawURL))
+	})
+}
+
+// redactRegistryURL returns a display-safe form of rawURL with any embedded
+// userinfo (user:password@), query string, and fragment removed, so neither a
+// basic-auth credential nor a query-string token can reach a warning or error
+// message. Mirrors resolveEndpoint's defensive redaction, extended to the query.
+func redactRegistryURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+// remoteRegistryLabel derives a short file label from a registry URL for error
+// attribution (e.g. "registry.yaml"), falling back to the standard user label
+// when the URL has no usable path segment. The query string is excluded, so a
+// token there never reaches an error message.
+func remoteRegistryLabel(rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil && u.Path != "" {
+		if i := strings.LastIndex(u.Path, "/"); i >= 0 && i+1 < len(u.Path) {
+			return u.Path[i+1:]
+		}
+		if u.Path != "/" {
+			return u.Path
+		}
+	}
+	return userRegistryLabel
 }
 
 // LoadProjectRegistry reads and strictly parses the project registry overlay
