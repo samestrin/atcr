@@ -14,6 +14,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMain neutralizes ATCR_REGISTRY_URL from the ambient environment so this
+// package's many registry-loading tests stay hermetic — a dev or CI shell that
+// happened to export it must not redirect unrelated tests to the network. Tests
+// that exercise the remote path set it explicitly via t.Setenv.
+func TestMain(m *testing.M) {
+	_ = os.Unsetenv("ATCR_REGISTRY_URL")
+	os.Exit(m.Run())
+}
+
 // serveRegistry starts an httptest server that returns body with the given
 // status for every request, and registers cleanup. It returns the URL of a
 // registry.yaml served by it.
@@ -71,7 +80,7 @@ func resetInsecureWarn(t *testing.T, buf *bytes.Buffer) {
 // and the fetch cannot connect.
 func TestFetchRemoteRegistry_Unreachable_HardError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	url := srv.URL + "/registry.yaml"
+	url := srv.URL + "/registry.yaml?token=leak-me-not"
 	srv.Close() // now nothing is listening -> connection refused, fast
 
 	t.Setenv("ATCR_REGISTRY_URL", url)
@@ -83,6 +92,9 @@ func TestFetchRemoteRegistry_Unreachable_HardError(t *testing.T) {
 	// No silent fallback: the local-file "registry not found" path was not taken,
 	// and the readable local file was not loaded.
 	assert.NotContains(t, err.Error(), "registry not found at")
+	// The wrapped transport error must not leak a query-string token embedded in
+	// the URL — the message names only the env var and the underlying cause.
+	assert.NotContains(t, err.Error(), "leak-me-not")
 }
 
 // TestFetchRemoteRegistry_Non200_HardError covers server-error and 404 statuses:
@@ -155,21 +167,27 @@ func TestWarnInsecureRegistryURL_OnceAndRedacted(t *testing.T) {
 	var buf bytes.Buffer
 	resetInsecureWarn(t, &buf)
 
-	warnInsecureRegistryURLOnce("http://user:supersecret@team.example/registry.yaml")
-	warnInsecureRegistryURLOnce("http://user:supersecret@team.example/registry.yaml")
+	insecure := "http://user:supersecret@team.example/registry.yaml?token=tok-secret"
+	warnInsecureRegistryURLOnce(insecure)
+	warnInsecureRegistryURLOnce(insecure)
 
 	out := buf.String()
 	assert.Equal(t, 1, strings.Count(out, "warning:"), "warning must fire once")
 	assert.Contains(t, out, "team.example")
 	assert.NotContains(t, out, "supersecret", "password must be redacted")
+	assert.NotContains(t, out, "tok-secret", "query-string token must be redacted")
 }
 
-// TestRedactRegistryURL strips userinfo and is a no-op for a clean URL.
+// TestRedactRegistryURL strips userinfo, query, and fragment, and is a no-op for
+// a clean URL.
 func TestRedactRegistryURL(t *testing.T) {
 	assert.Equal(t, "https://team.example/registry.yaml",
 		redactRegistryURL("https://user:pw@team.example/registry.yaml"))
 	assert.Equal(t, "https://team.example/registry.yaml",
 		redactRegistryURL("https://team.example/registry.yaml"))
+	// A token in the query string (or a fragment) must not survive redaction.
+	assert.Equal(t, "https://team.example/registry.yaml",
+		redactRegistryURL("https://user:pw@team.example/registry.yaml?token=secret#frag"))
 }
 
 // TestRemoteRegistryLabel derives a file label from the URL path, ignoring the

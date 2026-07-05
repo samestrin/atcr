@@ -176,7 +176,16 @@ func fetchRemoteRegistry(rawURL string) ([]byte, error) {
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetching registry from %s: %w", registryURLEnv, err)
+		// A *url.Error stringifies with the full request URL — query string and
+		// all — so wrapping it verbatim would leak a token embedded in the URL
+		// even over https. Unwrap to the underlying cause so the message names
+		// only the env var, honoring the redaction guarantee above.
+		cause := err
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			cause = ue.Err
+		}
+		return nil, fmt.Errorf("fetching registry from %s: %w", registryURLEnv, cause)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -206,14 +215,19 @@ func warnInsecureRegistryURLOnce(rawURL string) {
 	})
 }
 
-// redactRegistryURL strips any userinfo (user:password@) from rawURL so it is
-// safe to show in a warning, mirroring resolveEndpoint's defensive redaction.
+// redactRegistryURL returns a display-safe form of rawURL with any embedded
+// userinfo (user:password@), query string, and fragment removed, so neither a
+// basic-auth credential nor a query-string token can reach a warning or error
+// message. Mirrors resolveEndpoint's defensive redaction, extended to the query.
 func redactRegistryURL(rawURL string) string {
-	if u, err := url.Parse(rawURL); err == nil && u.User != nil {
-		u.User = nil
-		return u.String()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
 	}
-	return rawURL
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
 
 // remoteRegistryLabel derives a short file label from a registry URL for error
