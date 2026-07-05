@@ -1,9 +1,9 @@
 {
-  "skill": "create-documentation",
-  "args": "@.planning/plans/active/17.0_auto_merged_fixes/",
-  "invocation": "/create-documentation @.planning/plans/active/17.0_auto_merged_fixes/",
+  "skill": "resolve-td",
+  "args": "--focus pr-105-recovery",
+  "invocation": "/resolve-td --focus pr-105-recovery",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "251286a3-a6ec-42ce-9975-40a721694275",
-  "timestamp": "2026-07-03T05:10:41.634Z"
+  "session_id": "266d6e5a-a72d-4775-bfeb-bafa1a878b14",
+  "timestamp": "2026-07-05T12:38:20.248Z"
 }
