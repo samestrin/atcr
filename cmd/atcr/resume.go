@@ -149,7 +149,8 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			return err
 		}
 		recordResumeHistory(ctx, dir, req.StartedAt)
-		recordResumeAudit(ctx, dir, req.StartedAt, req.PRNumber, req.Range.Base, req.Range.Head)
+		// AllComplete re-reconciles an already-completed review; no new review work
+		// was performed, so do not append another audit record.
 		return nil
 	}
 
