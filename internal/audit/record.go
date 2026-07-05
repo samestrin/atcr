@@ -2,12 +2,14 @@
 // `atcr review` run and renders a one-page compliance report for a given pull
 // request (Epic 19.1).
 //
-// Every review run appends exactly one JSON record to an append-only JSONL
-// ledger at .atcr/audit.log.jsonl, capturing the run timestamp, the resolved
-// base/head SHAs, the pull-request number (when known), and a summary of
-// findings counted by severity. The `atcr audit-report --pr <n>` command reads
-// that ledger back, selects the records for one PR, and renders a markdown
-// report suitable for a compliance archive.
+// Every CLI review run (the `review` and `resume` commands) appends exactly one
+// JSON record to an append-only JSONL ledger at .atcr/audit.log.jsonl, capturing
+// the run timestamp, the resolved base/head SHAs, the pull-request number (when
+// known), and a summary of findings counted by severity. The hook is not wired
+// into non-CLI entry points such as the MCP fanout engine, so AC1 holds for
+// command-line runs only. The `atcr audit-report --pr <n>` command reads that
+// ledger back, selects the records for one PR, and renders a markdown report
+// suitable for a compliance archive.
 package audit
 
 import "time"
