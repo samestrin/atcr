@@ -1,6 +1,7 @@
 package tdmigrate
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -124,6 +125,26 @@ func TestStrictLoad_RejectsMultiDocument(t *testing.T) {
 		"date: \"2026-06-27\"\nsource_type: Sprint\nlabel: y\nitems: []\n"
 	if _, err := DecodeShardStrict([]byte(twoDocs)); err == nil {
 		t.Error("expected rejection of a shard file containing a second YAML document")
+	}
+}
+
+// TestLoadShards_MissingDirErrors proves LoadShards fails loudly on a missing
+// directory instead of returning zero shards (Go's filepath.Glob returns
+// (nil, nil) for a nonexistent dir, which otherwise looks identical to "0
+// shards, directory present but empty").
+func TestLoadShards_MissingDirErrors(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	if _, err := LoadShards(missing); err == nil {
+		t.Error("expected LoadShards to error on a missing directory")
+	}
+}
+
+// TestValidateDir_MissingDirErrors mirrors TestLoadShards_MissingDirErrors for
+// ValidateDir, which has the same filepath.Glob-on-missing-dir gap.
+func TestValidateDir_MissingDirErrors(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	if _, err := ValidateDir(missing); err == nil {
+		t.Error("expected ValidateDir to error on a missing directory")
 	}
 }
 
