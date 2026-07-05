@@ -2,7 +2,9 @@ package tdmigrate
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +17,11 @@ import (
 // semantics: unknown fields are rejected (KnownFields), tabs in indentation and
 // other malformed YAML surface as decode errors, and the decoded shard is
 // schema-validated. This converts "silent bad YAML" into a loud error.
+//
+// A shard file is required to contain exactly one YAML document: a trailing
+// `---`-separated document is rejected rather than silently discarded, since
+// yaml.v3's Decode only ever reads the first document and would otherwise
+// truncate a malformed multi-document shard without error.
 func DecodeShardStrict(data []byte) (Shard, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -24,6 +31,13 @@ func DecodeShardStrict(data []byte) (Shard, error) {
 	}
 	if err := s.Validate(); err != nil {
 		return Shard{}, fmt.Errorf("schema: %w", err)
+	}
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return Shard{}, fmt.Errorf("yaml decode: shard file contains more than one YAML document")
+		}
+		return Shard{}, fmt.Errorf("yaml decode: %w", err)
 	}
 	return s, nil
 }
