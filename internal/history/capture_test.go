@@ -1,6 +1,8 @@
 package history
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +11,22 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+
+	fn()
+	require.NoError(t, w.Close())
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, r)
+	require.NoError(t, err)
+	return buf.String()
+}
 
 func TestFindingID_StableAndSeverityIndependent(t *testing.T) {
 	// Same file/line/problem => same id, regardless of severity (severity is
@@ -132,4 +150,29 @@ func TestRecordReview_DedupeTakesMaxSeverity(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, recs, 1)
 	assert.Equal(t, "HIGH", recs[0].Severity)
+}
+
+func TestRecordReview_LogsSkippedRows(t *testing.T) {
+	root := t.TempDir()
+	reviewDir := filepath.Join(root, ".atcr", "reviews", "2026-07-04_z")
+	// One valid row and one malformed row (too many columns).
+	writePoolFindings(t, reviewDir,
+		"HIGH|internal/registry/load.go:42|unchecked error|handle it|CORRECTNESS|15|ev|greta|extra\n"+
+			"LOW|cmd/atcr/review.go:10|nit|rename|STYLE|5|ev|kai\n")
+
+	histPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+	var n int
+	stderr := captureStderr(t, func() {
+		var err error
+		n, err = RecordReview(histPath, reviewDir, time.Now())
+		require.NoError(t, err)
+	})
+
+	assert.Equal(t, 1, n)
+	recs, err := Load(histPath)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "cmd/atcr/review.go", recs[0].File)
+	assert.Contains(t, stderr, "1")
+	assert.Contains(t, stderr, "skipped")
 }
