@@ -13,6 +13,7 @@ import (
 	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
+	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -325,6 +326,21 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	}
 	if err != nil {
 		return err // all-agents-failed → exit 1, artifacts preserved
+	}
+
+	// Persist this run's findings to the append-only history ledger (Epic 19.0)
+	// so `atcr history` can answer per-package trend queries later. It runs on
+	// every successful review — before the conditional in-process reconcile
+	// below — reading the pool findings.txt that WritePool always writes, and
+	// always targets <root>/.atcr regardless of --output-dir (the ledger is a
+	// repo-level accumulator, not part of the redirected review tree). A history
+	// write failure is non-fatal: it must never fail an otherwise-successful
+	// review, so it is logged and swallowed.
+	histPath := filepath.Join(req.Root, ".atcr", "findings-history.jsonl")
+	if n, herr := history.RecordReview(histPath, result.Dir, now); herr != nil {
+		log.FromContext(ctx).Warn("failed to append finding history", "error", herr)
+	} else if n > 0 {
+		log.FromContext(ctx).Debug("appended finding history", "records", n, "path", histPath)
 	}
 
 	// One-shot mode: reconcile in-process and gate on the threshold. Review
