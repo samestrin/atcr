@@ -34,6 +34,15 @@ func TestSanitizeCell_EscapesBackslashBeforePipe(t *testing.T) {
 	assert.Equal(t, `a\\b`, sanitizeCell(`a\b`))
 }
 
+func TestSanitizeCell_NeutralizesHTMLAndBacktick(t *testing.T) {
+	// Raw HTML tags and backticks in a tampered ledger cell must be neutralized so
+	// the rendered compliance report cannot carry stored injection into a permissive
+	// markdown viewer — the tamper-safety the doc comment promises. Entities render
+	// as their literal characters, so legitimate content is unchanged visually.
+	assert.Equal(t, "&lt;img onerror=x&gt;", sanitizeCell("<img onerror=x>"))
+	assert.Equal(t, "a&#96;b", sanitizeCell("a`b"))
+}
+
 func TestRenderReport_RendersPerRunTableWithTotals(t *testing.T) {
 	gen := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
 	recs := []Record{
