@@ -1,0 +1,62 @@
+[
+  {
+    "severity": "HIGH",
+    "file": "internal/reconcile/justification.go",
+    "line": 76,
+    "problem": "Triple nested loop over findings, review.md files, and lines causes O(N*M*L) repeated work; same lines scanned for every finding",
+    "fix": "Precompute an index mapping (file, line) to matching narrative sections per review.md to reduce to O(N log M) or better",
+    "category": "performance",
+    "est_minutes": 30,
+    "evidence": "The inner loop over lines (line 76) runs for each finding and each review.md file, leading to O(N*M*L) work. For example, 1000 findings × 10 sources × 100 lines = 1,000,000 iterations with string searches per iteration.",
+    "reviewers": [
+      "pace"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "HIGH",
+    "file": "internal/reconcile/justification.go",
+    "line": 76,
+    "problem": "Triple nested loop over findings, review.md files, and lines causes O(N*M*L) repeated work; same lines scanned for every finding",
+    "fix": "Precompute an index mapping (file, line) to matching narrative sections per review.md to reduce to O(N log M) or better",
+    "category": "performance",
+    "est_minutes": 30,
+    "evidence": "Inner loop over lines (line 76) executes for each finding and each review.md file, causing O(N*M*L) repeated work. e.g., 1k findings × 10 sources × 100 lines = 1M iterations.",
+    "reviewers": [
+      "pace"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "HIGH",
+    "file": "internal/reconcile/justification.go",
+    "line": 76,
+    "problem": "Triple nested loop over findings, review.md files, and lines causes O(N*M*L) repeated work; same lines scanned for every finding",
+    "fix": "Precompute an index mapping (file, line) to matching narrative sections per review.md to reduce to O(N log M) or better",
+    "category": "performance",
+    "est_minutes": 30,
+    "evidence": "Inner loop over lines (line 76) executes for each finding and each review.md file, causing O(N*M*L) repeated work. e.g., 1k findings × 10 sources × 100 lines = 1M iterations.",
+    "reviewers": [
+      "pace"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/reconcile/justification.go",
+    "line": 381,
+    "problem": "isItemStart() doesn't handle ordered list markers without trailing space (e.g. \"1.\") correctly for all cases",
+    "fix": "Ensure consistent space check or use a regex for Markdown list markers",
+    "category": "style",
+    "est_minutes": 5,
+    "evidence": "`i+1 == len(s) // s[i+1] == ' '` allows trailing dots without space but the preceding logic is brittle",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  }
+]

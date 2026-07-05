@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 30 | 0 |
-| LOW | 1 | 32 | 0 |
+| LOW | 0 | 32 | 0 |
 
-**Last Modified:** 2026-07-04 | **Open Items:** 1 | **Deferred Items:** 64 | **Resolved Items:** 0 | **Total Items:** 65
+**Last Modified:** 2026-07-04 | **Open Items:** 0 | **Deferred Items:** 64 | **Resolved Items:** 0 | **Total Items:** 64
 
 ## Directory Structure
 
@@ -61,12 +61,6 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
-
-### [2026-07-04] From Sprint: epic-18.2
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | LOW | internal/reconcile/justification.go:60 | justification match rate is only logged at slog.Debug, so review.md format drift that silently breaks all matching goes unnoticed at default log verbosity | Log at Info/Warn (or surface matched/total in run metadata) when narratives exist but matched==0 | OBSERVABILITY | 15 | execute-epic-independent |
 
 ### [2026-07-04] From Sprint: epic-18.1
 

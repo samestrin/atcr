@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "internal/reconcile/justification.go",
+      "line": 76,
+      "severity": "HIGH",
+      "problem": "Triple nested loop over findings, review.md files, and lines causes O(N*M*L) repeated work; same lines scanned for every finding",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "pace"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/reconcile/justification.go",
+      "line": 76,
+      "severity": "HIGH",
+      "problem": "Triple nested loop over findings, review.md files, and lines causes O(N*M*L) repeated work; same lines scanned for every finding",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "pace"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/reconcile/justification.go",
+      "line": 76,
+      "severity": "HIGH",
+      "problem": "Triple nested loop over findings, review.md files, and lines causes O(N*M*L) repeated work; same lines scanned for every finding",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "pace"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/reconcile/justification.go",
+      "line": 381,
+      "severity": "LOW",
+      "problem": "isItemStart() doesn't handle ordered list markers without trailing space (e.g. \"1.\") correctly for all cases",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ]
+    }
+  ]
+}
