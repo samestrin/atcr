@@ -42,7 +42,11 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 	}
 	pkg, _ := cmd.Flags().GetString("package")
 
-	histPath := filepath.Join(".", ".atcr", "findings-history.jsonl")
+	root, err := repoRoot()
+	if err != nil {
+		return usageError(fmt.Errorf("resolving repo root: %w", err))
+	}
+	histPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
 	recs, err := history.Load(histPath)
 	if err != nil {
 		return usageError(err) // corrupt/unreadable ledger (exit 2)
