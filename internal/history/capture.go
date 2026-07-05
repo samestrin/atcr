@@ -39,20 +39,28 @@ func RecordReview(histPath, reviewDir string, ts time.Time) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("parsing pool findings: %w", err)
 	}
+	if len(res.Skipped) > 0 {
+		fmt.Fprintf(os.Stderr, "atcr: warning: history: skipped %d malformed pool row(s); they will not appear in the trend ledger\n", len(res.Skipped))
+	}
 
 	// The pool findings.txt is the concatenation of every reviewer's rows, so a
 	// finding caught by N reviewers appears N times. Dedupe by id within this run
 	// so the ledger holds one record per distinct finding per run ("one JSON
 	// record per finding", per the plan) and the severity table is not inflated
-	// by reviewer multiplicity. The first occurrence wins.
+	// by reviewer multiplicity. When the same id appears with different
+	// severities, keep the highest per the canonical severity ranking so the
+	// stored value is deterministic regardless of pool row order.
 	records := make([]Record, 0, len(res.Findings))
-	seen := make(map[string]bool, len(res.Findings))
+	seen := make(map[string]int, len(res.Findings)) // id -> index in records
 	for _, f := range res.Findings {
 		id := FindingID(f.File, f.Line, f.Problem)
-		if seen[id] {
+		if idx, ok := seen[id]; ok {
+			if stream.SeverityRank[stream.NormalizeSeverity(f.Severity)] > stream.SeverityRank[stream.NormalizeSeverity(records[idx].Severity)] {
+				records[idx].Severity = f.Severity
+			}
 			continue
 		}
-		seen[id] = true
+		seen[id] = len(records)
 		records = append(records, Record{
 			Timestamp: ts,
 			Package:   PackageOf(f.File),

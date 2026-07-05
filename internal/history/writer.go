@@ -13,10 +13,15 @@ import (
 // accumulates across runs — an existing ledger is never truncated. An empty
 // records slice is a no-op (no file is created).
 //
-// The whole batch is serialized to memory first, then written with a single
-// O_APPEND write() call. On a local POSIX filesystem that append is atomic, so
-// two concurrent `atcr review` runs writing the same ledger interleave at batch
-// boundaries (never mid-line) rather than corrupting a JSON line.
+// The whole batch is serialized to memory first, then written in a single
+// f.Write call. In practice a small batch is emitted by one O_APPEND write()
+// syscall, which the kernel appends atomically, so two concurrent `atcr review`
+// runs usually interleave only at batch boundaries. That is not guaranteed,
+// though: os.File.Write loops on short writes, so a large buffer can be split
+// across several write() syscalls and a concurrent append may land between them,
+// tearing a JSONL line. Records are small, so the risk is low in practice; a
+// caller needing a hard guarantee must serialize appends with an external file
+// lock (intentionally not done here).
 func Append(path string, records []Record) error {
 	if len(records) == 0 {
 		return nil

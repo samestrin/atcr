@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/require"
 )
@@ -217,6 +218,27 @@ func TestResume_AllCompleteReconcilesAndExitsZero(t *testing.T) {
 	require.Equal(t, 0, code, "AC2: all agents already completed -> clean exit")
 	require.Contains(t, out, "All configured agents already completed")
 	require.Contains(t, out, "reconciled")
+}
+
+func TestResume_AppendsFindingHistory(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
+	histPath := filepath.Join(".", ".atcr", "findings-history.jsonl")
+	before, err := history.Load(histPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, before, "fresh review should have appended history")
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, out)
+
+	after, err := history.Load(histPath)
+	require.NoError(t, err)
+	require.Greater(t, len(after), len(before), "resume must append its own records to the finding history")
 }
 
 func TestResume_RunsPendingAgentThenReconciles(t *testing.T) {

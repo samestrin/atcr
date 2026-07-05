@@ -1,3 +1,16 @@
+## [Technical Debt] - 2026-07-04
+
+### Fixed
+
+- `internal/history`: `ParseSince` now rejects out-of-range duration values instead of silently accepting them.
+- `internal/history`: `Load` no longer fails outright when the ledger contains an oversized line — it now skips the line instead.
+- `internal/history`: deduplication now keeps the maximum severity for a repeated finding instead of whichever record happened to load first.
+- `internal/history`: a warning is now logged when history capture skips a malformed pool row, instead of discarding it silently.
+- `internal/history`: `review --resume` now appends its findings to the history ledger, closing a gap where resumed reviews were missing from the trend data.
+- `atcr history` now works correctly when run from a subdirectory instead of only from the repo root.
+- Corrected an overstated atomicity guarantee in the `Append` doc comment for O_APPEND writes.
+- `RenderTable`: cell values now escape pipe and control characters, preventing markdown injection from unescaped input.
+
 ## [19.0.0] - 2026-07-04
 
 Persisted review findings to a durable, queryable ledger and added an `atcr history` command so a package's finding trend can be inspected over time.

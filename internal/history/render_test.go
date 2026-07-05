@@ -76,6 +76,24 @@ func TestRenderTable_UnknownSeverityGetsColumn(t *testing.T) {
 	assert.Regexp(t, `\|\s*a\s*\|.*\|\s*2\s*\|`, out)
 }
 
+func TestRenderTable_EscapesPipeAndControlChars(t *testing.T) {
+	ts := time.Now()
+	recs := []Record{
+		{Timestamp: ts, Package: "pkg|evil", Severity: "HIGH", ID: "1"},
+		{Timestamp: ts, Package: "safe", Severity: "HIGH | INJECTED", ID: "2"},
+		{Timestamp: ts, Package: "pkg\nnewline", Severity: "LOW", ID: "3"},
+	}
+	out := RenderTable(recs)
+
+	// A literal pipe in a package name is escaped so it cannot spawn a column.
+	assert.Contains(t, out, `pkg\|evil`)
+	assert.NotContains(t, out, "pkg|evil")
+	// A pipe inside a reviewer-supplied severity label is escaped in its header.
+	assert.Contains(t, out, `HIGH \| INJECTED`)
+	// A newline in a cell is neutralized so it cannot split the row.
+	assert.NotContains(t, out, "pkg\nnewline")
+}
+
 func indexOfLine(lines []string, target string) int {
 	for i, l := range lines {
 		if l == target {

@@ -2,6 +2,7 @@ package history
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -25,11 +26,18 @@ func ParseSince(s string) (time.Duration, error) {
 		if err != nil {
 			return 0, fmt.Errorf("invalid duration %q: want a number before %q (e.g. 30%c)", s, string(unit), unit)
 		}
+		if math.IsInf(n, 0) || math.IsNaN(n) {
+			return 0, fmt.Errorf("invalid duration %q: must be finite", s)
+		}
 		per := 24 * time.Hour
 		if unit == 'w' {
 			per = 7 * 24 * time.Hour
 		}
-		d = time.Duration(n * float64(per))
+		nanos := n * float64(per)
+		if nanos >= float64(math.MaxInt64) || nanos <= 0 {
+			return 0, fmt.Errorf("duration %q is out of range", s)
+		}
+		d = time.Duration(nanos)
 	default:
 		parsed, err := time.ParseDuration(s)
 		if err != nil {

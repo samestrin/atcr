@@ -34,6 +34,13 @@ func TestParseSince_Invalid(t *testing.T) {
 	}
 }
 
+func TestParseSince_OutOfRange(t *testing.T) {
+	for _, in := range []string{"Infd", "1e30d", "200000d"} {
+		_, err := ParseSince(in)
+		assert.Error(t, err, "input %q should be rejected as out of range", in)
+	}
+}
+
 func recAt(pkg string, days int, now time.Time) Record {
 	return Record{
 		Timestamp: now.Add(-time.Duration(days) * 24 * time.Hour),

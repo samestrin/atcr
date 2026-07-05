@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 )
@@ -45,7 +46,34 @@ func Load(path string) ([]Record, error) {
 		records = append(records, rec)
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("reading history ledger: %w", err)
+		if !errors.Is(err, bufio.ErrTooLong) {
+			return nil, fmt.Errorf("reading history ledger: %w", err)
+		}
+		// The scanner stopped at an oversized line. Continue with a reader that
+		// tolerates arbitrarily long lines so the rest of the ledger is still
+		// queryable; any unparseable fragment (including the tail of the oversized
+		// line) is skipped like other malformed data.
+		r := bufio.NewReader(f)
+		for {
+			line, rerr := r.ReadString('\n')
+			if len(line) > 0 {
+				raw := bytes.TrimSpace([]byte(line))
+				if len(raw) == 0 {
+					continue
+				}
+				var rec Record
+				if jerr := json.Unmarshal(raw, &rec); jerr != nil {
+					continue
+				}
+				records = append(records, rec)
+			}
+			if rerr != nil {
+				if errors.Is(rerr, io.EOF) {
+					break
+				}
+				return nil, fmt.Errorf("reading history ledger: %w", rerr)
+			}
+		}
 	}
 	return records, nil
 }
