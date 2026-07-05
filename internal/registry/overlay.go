@@ -200,7 +200,7 @@ func fetchRemoteRegistry(rawURL string) ([]byte, error) {
 // before it is shown.
 func warnInsecureRegistryURLOnce(rawURL string) {
 	insecureRegistryWarnOnce.Do(func() {
-		fmt.Fprintf(insecureRegistryWarnWriter,
+		_, _ = fmt.Fprintf(insecureRegistryWarnWriter,
 			"warning: %s uses insecure http (%s); prefer https for a shared registry\n",
 			registryURLEnv, redactRegistryURL(rawURL))
 	})
