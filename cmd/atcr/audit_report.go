@@ -21,11 +21,13 @@ func newAuditReportCmd() *cobra.Command {
 		RunE:  runAuditReport,
 	}
 	cmd.Flags().Int("pr", 0, "pull-request number to report on (required)")
-	_ = cmd.MarkFlagRequired("pr")
 	return cmd
 }
 
 func runAuditReport(cmd *cobra.Command, _ []string) error {
+	if !cmd.Flags().Changed("pr") {
+		return usageError(fmt.Errorf("--pr is required"))
+	}
 	pr, _ := cmd.Flags().GetInt("pr")
 
 	root, err := repoRoot()
@@ -47,7 +49,7 @@ func runAuditReport(cmd *cobra.Command, _ []string) error {
 	if len(forPR) == 0 {
 		// AC3: an unknown --pr (a PR with no recorded runs, or an absent ledger)
 		// exits non-zero with a clear, actionable message.
-		return fmt.Errorf("no audit records found for PR #%d — run 'atcr review --pr %d' first, or verify the PR number", pr, pr)
+		return usageError(fmt.Errorf("no audit records found for PR #%d — run 'atcr review --pr %d' first, or verify the PR number", pr, pr))
 	}
 
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), audit.RenderReport(forPR, pr, time.Now()))
