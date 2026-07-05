@@ -16,25 +16,46 @@ var sectionHeader = regexp.MustCompile(`^### \[(\d{4}-\d{2}-\d{2})\] From (Sprin
 // (loud-failure mandate) rather than silently skipped.
 var driftHeader = regexp.MustCompile(`^### \[\d{4}-\d{2}-\d{2}\] From ([^:]+):`)
 
+// malformedHeader matches any dated section header line that neither
+// sectionHeader nor driftHeader recognized — e.g. one missing the colon after
+// the source type entirely, or with a badly formed date. Without this catch-all,
+// such a line is silently skipped (not recognized as a section boundary), and
+// any data rows beneath it get mis-attributed to whichever shard was previously
+// open, or dropped entirely if none was.
+var malformedHeader = regexp.MustCompile(`^### \[`)
+
 // ParseREADME parses the technical-debt README table into per-source shards.
 // Anything before the first section header (title, Stats table, How-to-Use) is
 // ignored. A data row that does not split into exactly 9 or 11 cells, or whose
 // checkbox/est_minutes cannot be parsed, is a hard error (zero-data-loss: a
-// malformed row must fail loudly, never be silently dropped).
+// malformed row must fail loudly, never be silently dropped). A malformed
+// section header (bad date, or missing the colon after the source type) is
+// likewise a hard error rather than being silently skipped.
 func ParseREADME(content string) ([]Shard, error) {
 	var shards []Shard
 	var cur *Shard
 
-	flush := func() {
-		if cur != nil && len(cur.Items) > 0 {
+	// flush closes out the currently open section. A section with zero
+	// parseable data rows is a hard error rather than being silently dropped:
+	// an empty section usually means every row beneath it failed to parse as
+	// expected (e.g. a wrong header/table shape), which would otherwise look
+	// identical to "this section legitimately has no items."
+	flush := func() error {
+		if cur != nil {
+			if len(cur.Items) == 0 {
+				return fmt.Errorf("section %q (%s) has zero parseable data rows", cur.Label, cur.Date)
+			}
 			shards = append(shards, *cur)
 		}
 		cur = nil
+		return nil
 	}
 
 	for n, line := range strings.Split(content, "\n") {
 		if m := sectionHeader.FindStringSubmatch(line); m != nil {
-			flush()
+			if err := flush(); err != nil {
+				return nil, fmt.Errorf("line %d: %w", n+1, err)
+			}
 			cur = &Shard{Date: m[1], SourceType: m[2], Label: strings.TrimSpace(m[3])}
 			continue
 		}
@@ -42,7 +63,25 @@ func ParseREADME(content string) ([]Shard, error) {
 			return nil, fmt.Errorf("line %d: unrecognized section source type %q (want Sprint|Review): %q",
 				n+1, strings.TrimSpace(dm[1]), strings.TrimSpace(line))
 		}
-		if cur == nil || !strings.HasPrefix(strings.TrimSpace(line), "|") {
+		if malformedHeader.MatchString(line) {
+			return nil, fmt.Errorf("line %d: malformed section header (want `### [YYYY-MM-DD] From Sprint|Review: <label>`): %q",
+				n+1, strings.TrimSpace(line))
+		}
+		if cur == nil {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "|") {
+			// Not a table row — but a row that lost its leading pipe (e.g. a
+			// copy-paste error) still has the right interior pipe-separated cell
+			// count and a trailing pipe. Catch that case loudly instead of
+			// silently treating it as prose.
+			if strings.HasSuffix(trimmed, "|") {
+				if cells := splitRow(trimmed); (len(cells) == 9 || len(cells) == 11) &&
+					!isHeaderRow(cells) && !isSeparatorRow(cells) {
+					return nil, fmt.Errorf("line %d: data row is missing its leading pipe: %q", n+1, trimmed)
+				}
+			}
 			continue
 		}
 		cells := splitRow(line)
@@ -55,7 +94,9 @@ func ParseREADME(content string) ([]Shard, error) {
 		}
 		cur.Items = append(cur.Items, it)
 	}
-	flush()
+	if err := flush(); err != nil {
+		return nil, err
+	}
 	return shards, nil
 }
 
