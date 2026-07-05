@@ -35,16 +35,27 @@ func ParseREADME(content string) ([]Shard, error) {
 	var shards []Shard
 	var cur *Shard
 
-	flush := func() {
-		if cur != nil && len(cur.Items) > 0 {
+	// flush closes out the currently open section. A section with zero
+	// parseable data rows is a hard error rather than being silently dropped:
+	// an empty section usually means every row beneath it failed to parse as
+	// expected (e.g. a wrong header/table shape), which would otherwise look
+	// identical to "this section legitimately has no items."
+	flush := func() error {
+		if cur != nil {
+			if len(cur.Items) == 0 {
+				return fmt.Errorf("section %q (%s) has zero parseable data rows", cur.Label, cur.Date)
+			}
 			shards = append(shards, *cur)
 		}
 		cur = nil
+		return nil
 	}
 
 	for n, line := range strings.Split(content, "\n") {
 		if m := sectionHeader.FindStringSubmatch(line); m != nil {
-			flush()
+			if err := flush(); err != nil {
+				return nil, fmt.Errorf("line %d: %w", n+1, err)
+			}
 			cur = &Shard{Date: m[1], SourceType: m[2], Label: strings.TrimSpace(m[3])}
 			continue
 		}
@@ -69,7 +80,9 @@ func ParseREADME(content string) ([]Shard, error) {
 		}
 		cur.Items = append(cur.Items, it)
 	}
-	flush()
+	if err := flush(); err != nil {
+		return nil, err
+	}
 	return shards, nil
 }
 
