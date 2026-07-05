@@ -18,12 +18,17 @@ var canonicalSeverities = []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"}
 // case-insensitive (mirrors reconcile.NormalizeSeverity).
 func normalizeSeverity(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
 
-// sanitizeCell makes an untrusted string safe to embed in a markdown table cell:
-// a literal pipe becomes "\|" (otherwise it opens a spurious column) and any
+// sanitizeCell makes an untrusted string safe to embed in a markdown table cell.
+// A literal pipe becomes "\|" (otherwise it opens a spurious column) and any
 // control character (newline, carriage return, tab, ...) becomes a space
-// (otherwise it splits or mangles the row). Base/head SHAs are git-derived and
-// normally safe, but the ledger is an on-disk artifact that could be tampered
-// with, so cells are never written raw (mirrors internal/history.sanitizeCell).
+// (otherwise it splits or mangles the row). Because the ledger is an on-disk
+// artifact that could be tampered with and the report may be viewed in a
+// permissive markdown renderer, the markup metacharacters that would otherwise
+// carry stored injection are also neutralized: '<' and '>' become HTML entities
+// (&lt;/&gt;) so a raw tag cannot render, and a backtick becomes &#96; so it
+// cannot open a code span. Each entity renders as its literal character, so
+// legitimate git-derived SHAs and severity labels are visually unchanged. This
+// strengthens internal/history.sanitizeCell (which escapes only pipe + control).
 func sanitizeCell(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -33,6 +38,12 @@ func sanitizeCell(s string) string {
 			b.WriteString(`\\`)
 		case r == '|':
 			b.WriteString(`\|`)
+		case r == '<':
+			b.WriteString("&lt;")
+		case r == '>':
+			b.WriteString("&gt;")
+		case r == '`':
+			b.WriteString("&#96;")
 		case unicode.IsControl(r):
 			b.WriteByte(' ')
 		default:
