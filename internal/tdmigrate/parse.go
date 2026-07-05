@@ -16,11 +16,21 @@ var sectionHeader = regexp.MustCompile(`^### \[(\d{4}-\d{2}-\d{2})\] From (Sprin
 // (loud-failure mandate) rather than silently skipped.
 var driftHeader = regexp.MustCompile(`^### \[\d{4}-\d{2}-\d{2}\] From ([^:]+):`)
 
+// malformedHeader matches any dated section header line that neither
+// sectionHeader nor driftHeader recognized — e.g. one missing the colon after
+// the source type entirely, or with a badly formed date. Without this catch-all,
+// such a line is silently skipped (not recognized as a section boundary), and
+// any data rows beneath it get mis-attributed to whichever shard was previously
+// open, or dropped entirely if none was.
+var malformedHeader = regexp.MustCompile(`^### \[`)
+
 // ParseREADME parses the technical-debt README table into per-source shards.
 // Anything before the first section header (title, Stats table, How-to-Use) is
 // ignored. A data row that does not split into exactly 9 or 11 cells, or whose
 // checkbox/est_minutes cannot be parsed, is a hard error (zero-data-loss: a
-// malformed row must fail loudly, never be silently dropped).
+// malformed row must fail loudly, never be silently dropped). A malformed
+// section header (bad date, or missing the colon after the source type) is
+// likewise a hard error rather than being silently skipped.
 func ParseREADME(content string) ([]Shard, error) {
 	var shards []Shard
 	var cur *Shard
@@ -41,6 +51,10 @@ func ParseREADME(content string) ([]Shard, error) {
 		if dm := driftHeader.FindStringSubmatch(line); dm != nil {
 			return nil, fmt.Errorf("line %d: unrecognized section source type %q (want Sprint|Review): %q",
 				n+1, strings.TrimSpace(dm[1]), strings.TrimSpace(line))
+		}
+		if malformedHeader.MatchString(line) {
+			return nil, fmt.Errorf("line %d: malformed section header (want `### [YYYY-MM-DD] From Sprint|Review: <label>`): %q",
+				n+1, strings.TrimSpace(line))
 		}
 		if cur == nil || !strings.HasPrefix(strings.TrimSpace(line), "|") {
 			continue
