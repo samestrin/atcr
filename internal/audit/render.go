@@ -53,19 +53,14 @@ func sanitizeCell(s string) string {
 	return b.String()
 }
 
-// shortSHA abbreviates a full SHA to 12 chars for a readable one-page report.
-func shortSHA(sha string) string {
-	if len(sha) > 12 {
-		return sha[:12]
-	}
-	return sha
-}
-
 // RenderReport renders a one-page markdown compliance report for the review runs
 // recorded against PR pr. Each record is one run: a table row with the run
-// timestamp (UTC, RFC3339), truncated base/head SHAs, and finding counts by
-// severity, followed by a grand-total row. Runs are ordered oldest-first so the
-// report reads as a chronological audit trail; generatedAt stamps the header.
+// timestamp (UTC, RFC3339), the full base/head SHAs, and finding counts by
+// severity, followed by a grand-total row. The SHAs are rendered in full (not
+// abbreviated) so the human-facing compliance report carries complete commit
+// identity on its own, rather than leaving full provenance only in the JSONL
+// ledger. Runs are ordered oldest-first so the report reads as a chronological
+// audit trail; generatedAt stamps the header.
 //
 // An empty record set renders the empty string — the caller handles the
 // no-records case as an error (Epic 19.1 AC3), matching internal/history.RenderTable.
@@ -145,8 +140,8 @@ func RenderReport(recs []Record, pr int, generatedAt time.Time) string {
 		}
 		fmt.Fprintf(&b, "| %s | %s | %s |",
 			sanitizeCell(r.Timestamp.UTC().Format(time.RFC3339)),
-			sanitizeCell(shortSHA(r.Base)),
-			sanitizeCell(shortSHA(r.Head)))
+			sanitizeCell(r.Base),
+			sanitizeCell(r.Head))
 		rowTotal := 0
 		for _, c := range columns {
 			n := counts[c]
