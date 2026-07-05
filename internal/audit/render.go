@@ -29,6 +29,8 @@ func sanitizeCell(s string) string {
 	b.Grow(len(s))
 	for _, r := range s {
 		switch {
+		case r == '\\':
+			b.WriteString(`\\`)
 		case r == '|':
 			b.WriteString(`\|`)
 		case unicode.IsControl(r):
