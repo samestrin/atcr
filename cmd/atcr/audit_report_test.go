@@ -52,29 +52,31 @@ func TestAuditReportCmd_RendersReportForPR(t *testing.T) {
 	assert.NotContains(t, out, "otherbase") // the PR-5 run must not leak into the PR-1234 report
 }
 
-func TestAuditReportCmd_UnknownPRExitsNonZero(t *testing.T) {
+func TestAuditReportCmd_UnknownPRExitsUsageError(t *testing.T) {
 	root := t.TempDir()
 	ts := time.Date(2026, 7, 4, 9, 30, 0, 0, time.UTC).Format(time.RFC3339)
 	writeAuditLedger(t, root,
 		map[string]any{"ts": ts, "pr": 5, "base": "b", "head": "h"},
 	)
 	_, err := runAuditReportIn(t, root, "--pr", "9999")
-	require.Error(t, err) // AC3: unknown --pr exits non-zero
-	assert.NotEqual(t, 0, exitCode(err))
+	require.Error(t, err)                     // AC3: unknown --pr exits non-zero
+	assert.Equal(t, exitUsage, exitCode(err)) // user-supplied PR is a usage error
 	assert.Contains(t, err.Error(), "9999")
 }
 
-func TestAuditReportCmd_AbsentLedgerExitsNonZero(t *testing.T) {
+func TestAuditReportCmd_AbsentLedgerExitsUsageError(t *testing.T) {
 	root := t.TempDir()
 	_, err := runAuditReportIn(t, root, "--pr", "1")
-	require.Error(t, err) // no ledger at all => nothing for this PR => non-zero
+	require.Error(t, err)                     // no ledger at all => nothing for this PR => non-zero
+	assert.Equal(t, exitUsage, exitCode(err)) // user-supplied PR is a usage error
 	assert.Contains(t, err.Error(), "1")
 }
 
-func TestAuditReportCmd_MissingPRFlagIsError(t *testing.T) {
+func TestAuditReportCmd_MissingPRFlagIsUsageError(t *testing.T) {
 	root := t.TempDir()
 	_, err := runAuditReportIn(t, root)
-	require.Error(t, err) // --pr is required
+	require.Error(t, err)                     // --pr is required
+	assert.Equal(t, exitUsage, exitCode(err)) // missing required user input is a usage error
 }
 
 func TestAuditReportCmd_ResolvesRepoRootFromSubdir(t *testing.T) {
