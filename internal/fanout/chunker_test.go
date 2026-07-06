@@ -235,3 +235,30 @@ func TestMergeResultGroupFallbackFromDistinct(t *testing.T) {
 	assert.Contains(t, merged.FallbackFrom, "primary-a", "first fallback source should be recorded")
 	assert.Contains(t, merged.FallbackFrom, "primary-b", "second fallback source should be recorded")
 }
+
+func TestMergeResultGroup_AggregatesResponseTruncated(t *testing.T) {
+	t.Run("later chunk truncated is preserved", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, ResponseTruncated: false},
+			{Agent: "reviewer", Status: StatusOK, ResponseTruncated: true},
+		}
+		merged := mergeResultGroup(g, nil)
+		assert.True(t, merged.ResponseTruncated, "any truncated chunk must mark the whole persona as truncated")
+	})
+	t.Run("first chunk truncated is preserved", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, ResponseTruncated: true},
+			{Agent: "reviewer", Status: StatusOK, ResponseTruncated: false},
+		}
+		merged := mergeResultGroup(g, nil)
+		assert.True(t, merged.ResponseTruncated, "any truncated chunk must mark the whole persona as truncated")
+	})
+	t.Run("no truncation stays false", func(t *testing.T) {
+		g := []Result{
+			{Agent: "reviewer", Status: StatusOK, ResponseTruncated: false},
+			{Agent: "reviewer", Status: StatusOK, ResponseTruncated: false},
+		}
+		merged := mergeResultGroup(g, nil)
+		assert.False(t, merged.ResponseTruncated, "clean chunks should not fabricate a truncated marker")
+	})
+}
