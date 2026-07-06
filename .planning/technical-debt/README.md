@@ -68,7 +68,7 @@ table with zero data loss) is proven by the Go test suite in
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
 | U | [ ] | MEDIUM | internal/fanout/engine.go:549 | Truncation failover gates on raw stream.ParseModelOutput(r.Content) count while the persisted FindingsCount and truncated_zero_findings tally use the post-grounding/min-severity/max-findings effective count; a truncated response whose only parseable rows are ungrounded hallucinations or sub-severity stays StatusOK (silent clean) yet is counted as truncated_zero_findings | Thread the effective/grounded finding set (changed ChangedLines) into invokeSlot so the demotion and telemetry agree, or gate failover on the same filter findingsFor applies (needs an engine API change - deferred) | CORRECTNESS | 60 | execute-epic-independent |
-| U | [ ] | LOW | internal/fanout/engine.go:549 | Failover gate re-parses r.Content via ParseModelOutput even though findingsFor parses the identical content again downstream in writePool, duplicating the parse per truncated slot | Carry a parsed-findings count on Result computed once and reuse it in both invokeSlot and findingsFor | EFFICIENCY | 30 | execute-epic-independent |
+| U | [x] | LOW | internal/fanout/engine.go:549 | Failover gate re-parses r.Content via ParseModelOutput even though findingsFor parses the identical content again downstream in writePool, duplicating the parse per truncated slot | Carry a parsed-findings count on Result computed once and reuse it in both invokeSlot and findingsFor | EFFICIENCY | 30 | execute-epic-independent |
 
 ### [2026-07-05] From Sprint: 19.4_history_time_sharding
 
