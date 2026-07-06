@@ -208,3 +208,36 @@ func TestWritePool_CountsTruncatedZeroFindings(t *testing.T) {
 	assert.Equal(t, 1, byAgent["partial"].FindingsCount)
 	assert.False(t, byAgent["clean"].ResponseTruncated)
 }
+
+// TestResult_ParsedFindingCount verifies that the engine computes the number of
+// parseable findings once when a result is built. The cached count is shared by
+// the truncation-failover gate and findingsFor instead of each path parsing
+// Content independently (TD-019).
+func TestResult_ParsedFindingCount(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    int
+	}{
+		{"zero findings", "ramble, no findings", 0},
+		{"one finding", "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := NewEngine(&metaTruncatingCompleter{content: tt.content, truncated: true})
+			r := e.invokeAgent(context.Background(), Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}})
+			assert.Equal(t, tt.want, r.ParsedFindingCount(), "parsed finding count should be computed on result construction")
+		})
+	}
+}
+
+func TestToolLoop_ParsedFindingCount(t *testing.T) {
+	sc := &scriptedChat{turns: []chatTurn{{content: "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce", truncated: true}}}
+	e := NewEngine(sc, WithDispatcher(&fakeDispatcher{}))
+	r := e.invokeAgent(context.Background(), Agent{
+		Name: "ronin", Tools: true, SupportsFC: true,
+		Invocation: llmclient.Invocation{Model: "m"},
+	})
+	assert.Equal(t, StatusOK, r.Status)
+	assert.Equal(t, 1, r.ParsedFindingCount(), "tool-loop result should carry the parsed finding count")
+}

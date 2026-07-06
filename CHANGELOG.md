@@ -1,3 +1,15 @@
+## [Technical Debt] - 2026-07-06
+
+### Fixed
+
+- Reviewer runs no longer parse a truncated model response twice — the parsed-finding count is now cached on the result and reused instead of being recomputed on each lookup.
+- `mergeResultGroup` now aggregates the `ResponseTruncated` flag across all chunks in a group instead of only reflecting the first chunk's truncation state.
+- `ResponseTruncated` is now always serialized in `status.json`/`summary.json`, even when false, so downstream field-presence checks can distinguish "not truncated" from "field missing."
+- The snippet-generation fix path now prioritizes a truncated-response flag over a generic error, so a truncated fix is reported as truncated rather than as an unrelated failure.
+- `mergeResultGroup` no longer drops chunked findings due to a stale parsed-finding memo.
+- Corrected comments describing `truncated_zero_findings` to state it tracks GROUNDED vs RAW count divergence, and resolved two related documentation technical-debt items.
+- Disabled `actions/setup-go`'s network cache on self-hosted gauntlet CI runners.
+
 ## [19.5.0] - 2026-07-06
 
 Detect a truncated model response (`finish_reason=length`) that yields no usable output and route it into the existing fallback chain, instead of silently recording it as a clean "no issues found" review or an empty fix.
