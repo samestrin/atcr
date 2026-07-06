@@ -262,3 +262,30 @@ func TestMergeResultGroup_AggregatesResponseTruncated(t *testing.T) {
 		assert.False(t, merged.ResponseTruncated, "clean chunks should not fabricate a truncated marker")
 	})
 }
+
+// TestMergeResultGroup_InvalidatesMemoOnRebuild reproduces the memo-drift bug at
+// chunker.go:189: mergeResultGroup byte-copies the memoized parsedFindingCount/
+// parsedFindingCountSet from chunk[0] (out := g[0]) but rebuilds out.Content from
+// ALL chunks. When a chunked persona's FIRST chunk truncated to zero findings —
+// the epic failover gate having cached its count as 0/set — that stale zero memo
+// rides into the merged result, so ParsedFindingCount short-circuits and
+// findingsFor silently drops EVERY finding the persona's other chunks produced.
+func TestMergeResultGroup_InvalidatesMemoOnRebuild(t *testing.T) {
+	// chunk[0]: truncated to zero findings; the failover gate demoted it and cached
+	// the zero count (parsedFindingCountSet=true, parsedFindingCount=0).
+	chunk0 := Result{Agent: "reviewer", Status: StatusFailed, Content: "truncated ramble, no findings", ResponseTruncated: true}
+	chunk0.parsedFindingCount = 0
+	chunk0.parsedFindingCountSet = true
+
+	// chunk[1]: produced a real finding.
+	chunk1 := Result{Agent: "reviewer", Status: StatusOK, Content: "HIGH|a.go:1|bug|fix|correctness|5|ev|reviewer"}
+
+	merged := mergeResultGroup([]Result{chunk0, chunk1}, nil)
+
+	assert.Equal(t, 1, merged.ParsedFindingCount(),
+		"merged result must re-count findings from the rebuilt content, not inherit chunk[0]'s stale zero memo")
+
+	fr := findingsFor(merged, nil)
+	assert.Len(t, fr.Findings, 1,
+		"merged persona must retain the finding from chunk[1], not short-circuit findingsFor on chunk[0]'s stale zero memo")
+}
