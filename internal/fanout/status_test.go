@@ -317,7 +317,7 @@ func TestStatusJSON_ResponseTruncatedAlwaysPresent(t *testing.T) {
 
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), `"response_truncated":false`, "false must be present for field-presence detection")
+	assert.Contains(t, string(data), `"response_truncated": false`, "false must be present for field-presence detection")
 
 	var got AgentStatus
 	require.NoError(t, json.Unmarshal(data, &got))

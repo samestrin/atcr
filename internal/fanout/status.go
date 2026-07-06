@@ -302,7 +302,7 @@ type AgentStatus struct {
 	// responses; a truncated agent with findings_count 0 is a truncated_zero_findings
 	// event tallied at the run level in PoolSummary (Epic 19.5). omitempty keeps it
 	// absent from the common non-truncated status.json.
-	ResponseTruncated bool `json:"response_truncated,omitempty"`
+	ResponseTruncated bool `json:"response_truncated"`
 
 	// Post-processing enforcement counters (Epic 2.2). Always present so a
 	// zero is distinguishable from an older status.json that predates the field.
