@@ -2,8 +2,10 @@ package history
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -30,9 +32,20 @@ func ShardPath(dir string, ts time.Time) string {
 // Malformed lines inside a shard are skipped by Load; an unreadable shard is a
 // hard error.
 func LoadShards(dir string) ([]Record, error) {
-	matches, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("globbing history shards: %w", err)
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading history shards: %w", err)
+	}
+
+	var matches []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		matches = append(matches, filepath.Join(dir, e.Name()))
 	}
 	sort.Strings(matches)
 
