@@ -189,7 +189,7 @@ func testExecProviderVal() registry.Provider {
 }
 
 func TestInvokeExecutor_Success(t *testing.T) {
-	fix, warn := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
 		eligibleFinding()[0], finalChat(`{"fix": "x", "explanation": "y"}`), okDispatcher(), 0)
 	assert.Equal(t, "x", fix)
 	assert.Equal(t, "", warn)
@@ -197,7 +197,7 @@ func TestInvokeExecutor_Success(t *testing.T) {
 
 func TestInvokeExecutor_ProviderErrorReturnsWarn(t *testing.T) {
 	cc := &fakeChatCompleter{turns: []chatTurn{{err: errors.New("boom")}}}
-	fix, warn := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
 		eligibleFinding()[0], cc, okDispatcher(), 0)
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "agent_mode failed")
@@ -213,7 +213,7 @@ func TestInvokeExecutor_TrippedBudgetStillEmitsFix(t *testing.T) {
 		toolCallTurn("read_file"),
 		{content: `{"fix": "guard the nil deref", "explanation": "forced final answer"}`},
 	}}
-	fix, warn := invokeExecutor(context.Background(), ex, testExecProviderVal(),
+	fix, warn, _ := invokeExecutor(context.Background(), ex, testExecProviderVal(),
 		eligibleFinding()[0], cc, okDispatcher(), 0)
 	assert.Equal(t, "guard the nil deref", fix)
 	assert.Equal(t, "", warn)
@@ -225,7 +225,7 @@ func TestInvokeExecutor_TimeoutReturnsWarn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"fix": "x"}`, delay: 100 * time.Millisecond}}}
-	fix, warn := invokeExecutor(ctx, agentExecConfig(), testExecProviderVal(),
+	fix, warn, _ := invokeExecutor(ctx, agentExecConfig(), testExecProviderVal(),
 		eligibleFinding()[0], cc, okDispatcher(), 0)
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "status: timeout")
@@ -233,7 +233,7 @@ func TestInvokeExecutor_TimeoutReturnsWarn(t *testing.T) {
 }
 
 func TestInvokeExecutor_ParseErrorReturnsWarn(t *testing.T) {
-	fix, warn := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
 		eligibleFinding()[0], finalChat("I could not find a fix"), okDispatcher(), 0)
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "agent_mode parse error")
@@ -347,7 +347,7 @@ func swapFanoutEngine(fake fanoutRunner) func() {
 func TestInvokeExecutor_ZeroResults_Warns(t *testing.T) {
 	restore := swapFanoutEngine(zeroResultEngine{})
 	defer restore()
-	fix, warn := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
 		eligibleFinding()[0], finalChat("unused"), okDispatcher(), 0)
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "engine returned no result")

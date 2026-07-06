@@ -210,11 +210,17 @@ func clampNonNegative(n json.Number) int {
 	return int(v)
 }
 
+// chatChoice is one decoded choice. FinishReason carries the provider's stop
+// reason so the single-shot path can detect a "length" (token-budget) truncation,
+// mirroring what the Chat (tool-loop) path already reads.
+type chatChoice struct {
+	Message      message `json:"message"`
+	FinishReason string  `json:"finish_reason"`
+}
+
 type chatResponse struct {
-	Choices []struct {
-		Message message `json:"message"`
-	} `json:"choices"`
-	Usage UsageData `json:"usage"`
+	Choices []chatChoice `json:"choices"`
+	Usage   UsageData    `json:"usage"`
 }
 
 // CallRecord is per-attempt telemetry for one c.attempt() invocation. dispatch
@@ -248,9 +254,34 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 // mid-flight timeout still reports its wire attempt; it is nil only when no HTTP
 // attempt was made (key/marshal failure, or a circuit-open fail-fast).
 func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string, UsageData, []CallRecord, error) {
+	comp, err := c.CompleteWithMeta(ctx, inv)
+	return comp.Content, comp.Usage, comp.CallRecords, err
+}
+
+// Completion is the single-shot result plus the response metadata a caller needs
+// to tell a clean completion from a truncated one. Truncated is true when the
+// provider reported finish_reason "length" (token budget exhausted): the content
+// may be partial, or a salvaged reasoning_content, so it must NOT be treated as a
+// complete answer. Usage/CallRecords mirror CompleteWithUsage.
+type Completion struct {
+	Content     string
+	Usage       UsageData
+	CallRecords []CallRecord
+	Truncated   bool
+}
+
+// CompleteWithMeta is CompleteWithUsage plus the truncation signal: it reports
+// whether the provider stopped on finish_reason "length". CompleteWithUsage and
+// Complete delegate to it, so the decode logic — including the reasoning_content
+// salvage — lives in exactly one place. Truncated is preserved even on the salvage
+// path (empty content, reasoning_content used) and on the both-empty error path,
+// so a caller inspecting the returned Completion always sees whether the budget
+// was exhausted. Error/CallRecord semantics are identical to the prior
+// CompleteWithUsage body.
+func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completion, error) {
 	key, err := resolveKey(inv)
 	if err != nil {
-		return "", UsageData{}, nil, err
+		return Completion{}, err
 	}
 	body, err := json.Marshal(chatRequest{
 		Model:       inv.Model,
@@ -259,34 +290,36 @@ func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string,
 		MaxTokens:   inv.MaxTokens,
 	})
 	if err != nil {
-		return "", UsageData{}, nil, fmt.Errorf("encoding request: %w", err)
+		return Completion{}, fmt.Errorf("encoding request: %w", err)
 	}
 	raw, records, err := c.send(ctx, resolveEndpoint(inv.BaseURL), key, body)
 	if err != nil {
-		return "", UsageData{}, records, err
+		return Completion{CallRecords: records}, err
 	}
 	var parsed chatResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return "", UsageData{}, records, fmt.Errorf("failed to parse response: %w", err)
+		return Completion{CallRecords: records}, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", UsageData{}, records, fmt.Errorf("failed to parse response: no choices returned")
+		return Completion{CallRecords: records}, fmt.Errorf("failed to parse response: no choices returned")
 	}
-	msg := parsed.Choices[0].Message
-	content := msg.Content
+	ch := parsed.Choices[0]
+	truncated := ch.FinishReason == "length"
+	content := ch.Message.Content
 	if content == "" {
 		// Reasoning model that ran out of output budget mid-thought: salvage the
 		// chain-of-thought so the reviewer still contributes instead of returning
-		// an empty review.
-		content = msg.ReasoningContent
+		// an empty review. Truncated (captured above) is preserved so the caller
+		// still knows this salvaged content is partial.
+		content = ch.Message.ReasoningContent
 	}
 	if content == "" {
 		// Both content and reasoning_content are empty: the provider said nothing.
 		// Fail loudly so callers cannot mistake silence for a clean/empty review.
 		// Non-retryable — a re-request with the same budget would repeat the result.
-		return "", UsageData{}, records, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning_content)"))
+		return Completion{CallRecords: records, Truncated: truncated}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning_content)"))
 	}
-	return content, parsed.Usage, records, nil
+	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated}, nil
 }
 
 // resolveKey reads the invocation's API key env var; the value is never logged.

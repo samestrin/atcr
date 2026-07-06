@@ -295,6 +295,15 @@ type AgentStatus struct {
 	FallbackFrom  string   `json:"fallback_from,omitempty"`
 	Error         string   `json:"error,omitempty"`
 
+	// ResponseTruncated marks that this agent's model response was cut off on
+	// finish_reason "length" (token budget exhausted) — DISTINCT from Truncated
+	// above (byte-budget PAYLOAD truncation) and TruncatedByMaxFindings (the
+	// max_findings cap). It is the per-agent observability marker for runaway
+	// responses; a truncated agent with findings_count 0 is a truncated_zero_findings
+	// event tallied at the run level in PoolSummary (Epic 19.5). omitempty keeps it
+	// absent from the common non-truncated status.json.
+	ResponseTruncated bool `json:"response_truncated,omitempty"`
+
 	// Post-processing enforcement counters (Epic 2.2). Always present so a
 	// zero is distinguishable from an older status.json that predates the field.
 	DroppedByMinSeverity   int `json:"dropped_by_min_severity"`
