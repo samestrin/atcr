@@ -162,3 +162,19 @@ func TestLoadAll_DoesNotMutateLegacyFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, before, after, "legacy ledger must be read-only")
 }
+
+// An unreadable legacy file propagates as an error from LoadAll.
+func TestLoadAll_UnreadableLegacyIsError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read 000-permission files")
+	}
+	root := t.TempDir()
+	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+	ts := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, Append(legacyPath, []Record{{Timestamp: ts, ID: "legacy1", File: "b.go"}}))
+	require.NoError(t, os.Chmod(legacyPath, 0o000))
+	defer os.Chmod(legacyPath, 0o644) // ensure cleanup can remove the file
+
+	_, err := LoadAll(filepath.Join(root, ".planning", "history"), legacyPath)
+	require.Error(t, err)
+}
