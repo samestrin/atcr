@@ -210,7 +210,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 // history write failure is non-fatal: it must never fail an otherwise-successful
 // resume, so it is logged and swallowed.
 func recordResumeHistory(ctx context.Context, dir string, ts time.Time) {
-	histPath := filepath.Join(".", ".atcr", "findings-history.jsonl")
+	histPath := history.ShardPath(filepath.Join(".", ".planning", "history"), ts)
 	if n, err := history.RecordReview(histPath, dir, ts); err != nil {
 		log.FromContext(ctx).Warn("failed to append finding history", "error", err)
 	} else if n > 0 {

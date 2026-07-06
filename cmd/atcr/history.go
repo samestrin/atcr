@@ -14,11 +14,12 @@ import (
 // enough (90 days) to be useful by default, while still bounding the table.
 const defaultHistorySince = 90 * 24 * time.Hour
 
-// newHistoryCmd builds `atcr history`: read the append-only finding ledger at
-// .atcr/findings-history.jsonl, filter it by a time window (--since) and package
-// prefix (--package), and print a markdown table of counts by severity per
-// package. An absent or fully-filtered history is not an error — it exits 0 with
-// a "no history" notice (Epic 19.0 AC3).
+// newHistoryCmd builds `atcr history`: read the append-only finding history —
+// the monthly shards under .planning/history plus the legacy .atcr flat ledger
+// (Epic 19.4) — filter it by a time window (--since) and package prefix
+// (--package), and print a markdown table of counts by severity per package. An
+// absent or fully-filtered history is not an error — it exits 0 with a "no
+// history" notice (Epic 19.0 AC3).
 func newHistoryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "history",
@@ -46,8 +47,9 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return usageError(fmt.Errorf("resolving repo root: %w", err))
 	}
-	histPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
-	recs, err := history.Load(histPath)
+	shardDir := filepath.Join(root, ".planning", "history")
+	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+	recs, err := history.LoadAll(shardDir, legacyPath)
 	if err != nil {
 		return usageError(err) // corrupt/unreadable ledger (exit 2)
 	}
