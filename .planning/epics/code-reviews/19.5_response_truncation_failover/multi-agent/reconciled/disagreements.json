@@ -1,0 +1,136 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/response_truncation_test.go",
+      "line": 1,
+      "severity": "MEDIUM",
+      "problem": "No test covers invokeSingleShot fallback to UsageCompleter when MetaCompleter is absent",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/response_truncation_test.go",
+      "line": 1,
+      "severity": "MEDIUM",
+      "problem": "No test covers invokeSingleShot fallback to plain Complete when neither MetaCompleter nor UsageCompleter is present",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/response_truncation_test.go",
+      "line": 1,
+      "severity": "MEDIUM",
+      "problem": "No test covers invokeSlot truncation failover when the primary is truncated-empty AND the fallback also truncates empty",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/response_truncation_test.go",
+      "line": 1,
+      "severity": "MEDIUM",
+      "problem": "No test covers the MetaCompleter error path in invokeSingleShot",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/response_truncation_test.go",
+      "line": 1,
+      "severity": "MEDIUM",
+      "problem": "No test covers the tool-loop path where requestFinalAnswer returns a truncated response",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/llmclient/truncation_test.go",
+      "line": 1,
+      "severity": "MEDIUM",
+      "problem": "No test covers CompleteWithMeta when JSON unmarshal fails",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/llmclient/truncation_test.go",
+      "line": 1,
+      "severity": "MEDIUM",
+      "problem": "No test covers CompleteWithMeta when the response has an empty choices array",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/verify/executor_truncation_test.go",
+      "line": 1,
+      "severity": "MEDIUM",
+      "problem": "No test covers the snippet-path truncation when the completer does NOT implement metaCompleter",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/response_truncation_e2e_test.go",
+      "line": 1,
+      "severity": "LOW",
+      "problem": "E2E test for scenario (a) does not assert the primary's ResponseTruncated marker is preserved in status.json",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/response_truncation_test.go",
+      "line": 1,
+      "severity": "LOW",
+      "problem": "TestWritePool_CountsTruncatedZeroFindings passes a nil changed to WritePool but the grounding gate is never tested",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    }
+  ]
+}

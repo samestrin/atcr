@@ -1,0 +1,1 @@
+MEDIUM|internal/fanout/engine.go:517|`stream.ParseModelOutput` is called on `r.Content` every time a slot is invoked with truncation failover, even though the content is parsed again in `writePool`|Compute the parsed findings once and store the count in `Result`|efficiency|15|`len(stream.ParseModelOutput([]byte(r.Content))) == 0`

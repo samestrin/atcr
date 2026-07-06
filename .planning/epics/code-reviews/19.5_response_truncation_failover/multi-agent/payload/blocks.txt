@@ -1,0 +1,2301 @@
+diff --git a/.planning/epics/active/19.5_response_truncation_failover.md b/.planning/epics/active/19.5_response_truncation_failover.md
+index 5bc1c28a..f0a080ab 100644
+--- a/.planning/epics/active/19.5_response_truncation_failover.md
++++ b/.planning/epics/active/19.5_response_truncation_failover.md
+@@ -71,22 +71,44 @@ No automatic corrections were applied.
+ No items need user confirmation.
+ 
+ ### Advisory observations (1)
+ 
+ - ℹ️ **Verified path accuracy:** Checked all cited files (`internal/llmclient/chat.go`, `internal/fanout/engine.go`, `internal/verify/executor.go`, `internal/fanout/review.go`) and confirmed that they exist and contain the correct line ranges and constants as cited.
+ 
+ ### Verification context
+ 
+ - Refinement depth: deep
+ - Derived TASK_COUNT: 5 (limit: 6)
+ - Derived COMPONENT_COUNT: 2 (limit: 2)
+ - COMPONENTS_TOUCHED: [internal/fanout, internal/verify]
+ - VISUAL_SURFACE: false
+ - HAS_GATED_WORK: false
+ - HAS_CROSS_SYSTEM: false
+ - Cited references checked: 9
+ - Codebase search queries (spot-check): ["internal/llmclient/chat.go", "internal/fanout/engine.go", "internal/verify/executor.go", "internal/fanout/review.go"]
+ - Deep discovery method: semantic
+ - Deep discovery queries: ["slot result classification engineStatus", "StatusFailed StatusOK Truncated finish_reason", "ChatResponse Truncated finish_reason length", "executor generateFixes fallback warning"]
+ - Deep discovery match count: 20
+ - Deep discovery snapshot: /Users/samestrin/Documents/GitHub/atcr/.planning/.temp/refine-epic/codebase-discovery.json (temp-only — not committed)
+ 
++## Clarifications
++
++### Recorded 2026-07-06 (rubber duck — /execute-epic --strong)
++
++**Key Decisions:**
++- The plan's premise "internal/llmclient is signal-source-only (no logic change)" is accurate only for the tool-loop path (`Chat()` sets `resp.Truncated`, loop.go:146). It is INCOMPLETE for the reviewer SINGLE-SHOT path (engine.go:590 `invokeCachedSingleShot` → `invokeSingleShot` → `CompleteWithUsage`) and the executor snippet path (executor.go:229 `callExecutor` → `Complete`), which both drop `finish_reason` entirely. `CompleteWithUsage` (client.go:250-290) additionally salvages `reasoning_content` when content is empty — the exact mechanism that turns a runaway `<think>` model into "non-empty content, zero findings, StatusOK" (the measured 3/15 false-cleans).
++- Therefore a small signal-plumbing change to `internal/llmclient` IS required: surface `finish_reason=length` / truncation out of `CompleteWithUsage` (+ its `UsageCompleter` interface in fanout, and the executor's completer). This makes the epic a 3-component change (fanout, verify, llmclient), accommodated by re-invoking with `--strong` (≤3 components).
++
++**Scope Boundaries:**
++- IN scope: fanout slot classification (truncated+0 findings → StatusFailed; truncated+≥1 → StatusOK + marker); per-agent + run-level truncation telemetry; executor truncation handling; the minimal llmclient signal-plumbing to make the single-shot + executor paths observe truncation.
++- OUT of scope (per plan): max_tokens sizing, persona tightening (operator registry.yaml), guided/structured decoding, changing `defaultMaxTokens`, inventing a new executor fallback chain.
++
++**Technical Approach:**
++- "Truncated warning marker" (Task 2) = a new typed bool field on `fanout.Result` surfaced into `AgentStatus` (mirroring the `ToolsDegraded` / `TrippedBudgets` typed-marker pattern) — Result has no free-form warning channel, so a typed field is added rather than a string bag. Kept clearly distinct from the existing byte-budget `Truncated` / `TruncatedByMaxFindings` fields (a different concept).
++- Telemetry (Task 4): per-agent `response_truncated` bool on `AgentStatus` + a run-level `truncated_zero_findings` count on `PoolSummary`.
++- Executor (Task 3): executor.go has NO cross-agent fallback chain (single `ExecutorConfig`). "Fail over instead of a silent no-op" = detect a truncated-with-no-usable-patch fix and stamp a `FixWarning` (mirroring the existing empty-completion handling at executor.go:183-187) so the truncated fix is visible/non-silent rather than a false success; agent-mode fixes additionally get the engine degrade path. No new fallback mechanism is built.
++
++**Original Questions and Answers:**
++1. Q: The single-shot reviewer path (and executor snippet path) cannot see finish_reason today — fixing the measured runaway correctly needs a small llmclient signal-plumbing change, making this a 3-component change. How to proceed?
++   A: Re-invoked with `--strong` (option a) — raises cap to ≤3 components; session model (Opus 4.8) qualifies as flagship-tier. Proceed with the llmclient signal change in scope.
++2. Q: Confirm the executor interpretation — since executor.go has no cross-agent fallback chain, "fail over instead of a silent no-op" means stamping a FixWarning on a truncated/empty fix (mirroring existing empty-completion handling) rather than building a new fallback mechanism?
++   A: Confirmed (proceeding with the recommended minimum-code approach; re-invocation to proceed signals acceptance).
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index 3089d8a8..4a5340fe 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,16 +3,16 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 2 | 0 |
+-| MEDIUM | 0 | 20 | 0 |
+-| LOW | 0 | 27 | 0 |
++| MEDIUM | 1 | 20 | 0 |
++| LOW | 1 | 27 | 0 |
+ 
+-**Last Modified:** 2026-07-06 | **Open Items:** 0 | **Deferred Items:** 49 | **Resolved Items:** 0 | **Total Items:** 49
++**Last Modified:** 2026-07-06 | **Open Items:** 2 | **Deferred Items:** 49 | **Resolved Items:** 0 | **Total Items:** 51
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -62,25 +62,32 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
+ 
++### [2026-07-06] From Sprint: epic-19.5
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| U | [ ] | MEDIUM | internal/fanout/engine.go:549 | Truncation failover gates on raw stream.ParseModelOutput(r.Content) count while the persisted FindingsCount and truncated_zero_findings tally use the post-grounding/min-severity/max-findings effective count; a truncated response whose only parseable rows are ungrounded hallucinations or sub-severity stays StatusOK (silent clean) yet is counted as truncated_zero_findings | Thread the effective/grounded finding set (changed ChangedLines) into invokeSlot so the demotion and telemetry agree, or gate failover on the same filter findingsFor applies (needs an engine API change - deferred) | CORRECTNESS | 60 | execute-epic-independent |
++| U | [ ] | LOW | internal/fanout/engine.go:549 | Failover gate re-parses r.Content via ParseModelOutput even though findingsFor parses the identical content again downstream in writePool, duplicating the parse per truncated slot | Carry a parsed-findings count on Result computed once and reuse it in both invokeSlot and findingsFor | EFFICIENCY | 30 | execute-epic-independent |
++
+ ### [2026-07-05] From Sprint: 19.4_history_time_sharding
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | cmd/atcr/review.go:285 | Multiple concurrent atcr review processes will append to the same YYYY-MM.jsonl simultaneously without synchronization, causing interleaved JSON lines and ledger corruption (Accepted 2026-07-06: won't-fix — concurrent-append O_APPEND safety is a project-wide TD-004 tradeoff shared by all 5 append-only ledgers (audit, debate, scorecard, tools, history), outside epic 19.4's scope; matches the identical writer.go precedent accepted 2026-07-04 at README:112. Low probability (small per-batch writes are atomic on Linux/macOS O_APPEND) and low impact (a torn line is skipped by Load, no cross-data corruption); a cross-platform lock dependency is not justified for one ledger.) | Acquire a file lock (flock) on the shard or a dedicated lockfile before opening for append | concurrency | 40 | code-review | brad | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/history/shard.go:32 | LoadAll/LoadShards read and JSON-unmarshal every monthly shard on disk, then Filter discards records older than the --since cutoff. The justification for monthly sharding is the YYYY-MM filenames, but the read path throws that structure away: a repo with years of history running the common --since 30d (or the 90d default) still parses every archived month it will immediately drop. (Deferred 2026-07-06: not worth doing now — LOW-value perf optimization; the epic's 1-2yr history bound caps the scan at 12-24 small files. If revisited, add an additive LoadShardsSince(dir, cutoff) variant rather than changing LoadShards/LoadAll signatures, which would ripple into 7+ existing test call sites for no measured benefit.) | Prune glob results in LoadShards by comparing each shard's YYYY-MM stem against the cutoff month before calling Load; pass a lower-bound month into LoadShards/LoadAll (or add a windowed variant) so shards entirely before the window are never opened. Verify with a benchmark over 60 seeded shards and --since 30d reading at most 1-2 files. | performance | 60 | code-review | claude, dax, brad | HIGH |
+ | 3 | [/] | LOW | internal/history/writer.go:39 | Append does an unlocked O_APPEND write and documents that a large buffer split across multiple write() syscalls can be torn by a concurrent append. Epic 19.4 does not change the mechanism but changes exposure: history is now git-tracked and the project is run as multiple concurrent sessions appending to the same YYYY-MM.jsonl within a month. A torn line is silently dropped by Load's malformed-line skip, so lost findings are invisible; sharding by month did not reduce intra-month contention. (Accepted 2026-07-06: won't-fix — same history.Append write site and same decision as cmd/atcr/review.go:285 (resolved in lockstep); no cross-platform lock dependency added. Mirrors the 2026-07-04 accepted precedent for this exact O_APPEND pattern.) | If a hard guarantee is wanted wrap the shard write in an advisory file lock (flock) consistent with the mkdir-flock pattern used in the planning tooling; otherwise document that concurrent same-month runs can lose records. Verify with a stress test of N concurrent Appends and a line-count assertion. | error-handling | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: epic-19.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/history/shard.go:32 | LoadShards loads every shard into memory before Filter applies --since, so a narrow window still reads all shards (acceptable within the stated 1-2yr bound; no month-prefix pruning) (Deferred 2026-07-06: duplicate of the MEDIUM month-pruning item at this same line; same decision — defer, add LoadShardsSince additively if ever picked up.) | Skip shard files whose YYYY-MM stem is entirely older than now-since before loading, to keep long histories fast | UNDER_ENGINEERING | 30 | execute-epic-independent |
+ 
+ ### [2026-07-05] From Sprint: epic-19.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | cmd/atcr/review.go:384 | The audit hook re-reads sources/pool/findings.txt that the history hook read moments earlier in the same review, so the pool file is parsed twice per review run | Parse the pool findings once in the CLI layer and pass the finding set to both history.RecordReview and audit.RecordReview, or expose a shared parse result (Won't-fix: accepted — the duplicate parse mirrors internal/history's independent capture pattern per epic design; not worth a cross-package signature refactor for a sub-ms, once-per-run gain.) | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-07-05] From Review: pr-105-recovery
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index cf48efd6..b9ce3d7c 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,9 +1,25 @@
++## [19.5.0] - 2026-07-06
++
++Detect a truncated model response (`finish_reason=length`) that yields no usable output and route it into the existing fallback chain, instead of silently recording it as a clean "no issues found" review or an empty fix.
++
++### Added
++
++- Reviewer runs now fail over on a truncated, zero-finding response: a reviewer whose reply hit the token ceiling with nothing parseable is marked failed so the slot's fallback agent runs, instead of recording a silent false all-clear. A truncated reply that still parsed at least one finding keeps its findings and is flagged.
++- Per-agent `response_truncated` marker and a run-level `truncated_zero_findings` count in `status.json`/`summary.json`, so runaway rates are observable across runs.
++
++### Fixed
++
++- The fixer/executor no longer silently emits a no-op "success" when its response is truncated: a cut-off fix is flagged (`fix generation truncated`) and never presented as a usable patch.
++- A truncated runaway response is no longer written to the diff cache, so it cannot be replayed as a clean review on a later same-diff run.
++
++*Shipped via /execute-epic (epic 19.5)*
++
+ ## [Technical Debt] - 2026-07-06
+ 
+ ### Fixed
+ 
+ - `internal/history/shard.go`: `LoadAll` now returns legacy and sharded history entries in correct chronological order instead of interleaving them incorrectly.
+ - `internal/history/shard.go`: `LoadShards` no longer silently skips unreadable shard files, and glob metacharacters in shard paths are now handled correctly.
+ - `atcr review`/`atcr resume`: deduplicated the history-recording logic into a shared `recordHistory` helper backed by centralized `history.ShardDir`/`LegacyLedgerPath`, so `atcr history` correctly merges legacy and sharded entries without mutating the legacy ledger.
+ 
+ ## [19.4.0] - 2026-07-05
+diff --git a/internal/fanout/artifacts.go b/internal/fanout/artifacts.go
+index 812f8c44..7c83cbbc 100644
+--- a/internal/fanout/artifacts.go
++++ b/internal/fanout/artifacts.go
+@@ -28,43 +28,51 @@ const (
+ // PoolSummary is the fan-out run record written to sources/pool/summary.json:
+ // every agent's status plus the aggregate tally. Partial mirrors Summary.Partial
+ // (≥1 failed but ≥1 succeeded).
+ type PoolSummary struct {
+ 	Agents        []AgentStatus `json:"agents"`
+ 	Total         int           `json:"total"`
+ 	Succeeded     int           `json:"succeeded"`
+ 	Failed        int           `json:"failed"`
+ 	Partial       bool          `json:"partial"`
+ 	TotalFindings int           `json:"total_findings"`
++	// TruncatedZeroFindings counts agents whose model response was truncated on
++	// finish_reason "length" AND yielded zero parseable findings — the runaway rate
++	// the reviewer truncation-failover guard reacts to (Epic 19.5). It is the
++	// run-level tally of the per-agent AgentStatus.ResponseTruncated marker for
++	// zero-finding agents; a truncated agent that still kept >=1 finding is NOT
++	// counted (its partial findings landed). Always present so a 0 is
++	// distinguishable from an older summary.json that predates the field.
++	TruncatedZeroFindings int `json:"truncated_zero_findings"`
+ 	// FailureMarker is true only when writeFailureSummary produced this record
+ 	// after a WritePool I/O fault, never when WritePool wrote a real run. It
+ 	// makes the summary unambiguously a best-effort marker: a write-phase
+ 	// failure can leave Partial=false (every agent ran) while only a subset of
+ 	// per-agent artifacts reached disk, so readers that walk the surviving
+ 	// artifacts (reconcile via ReadManifestPartial) must treat such a run as
+ 	// partial. omitempty keeps it absent from real summaries, so older readers
+ 	// correctly see the zero value (false).
+ 	FailureMarker bool `json:"failure_marker,omitempty"`
+ 	// GroundingEnabled records whether the Epic 14.1 grounding gate was active for
+ 	// this run (true) or disabled/fail-open (false) — the audit signal that a git
+ 	// failure or a range-less diff-ingestion run let findings through without the
+ 	// anti-hallucination check. A pointer so a rebuilt summary (RebuildPool cannot
+ 	// know the run's grounding state from on-disk artifacts) and pre-14.1 readers
+ 	// omit it rather than falsely asserting false.
+ 	GroundingEnabled *bool `json:"grounding_enabled,omitempty"`
+ 	// GroundingDisabledReason explains WHY grounding was off (a git failure vs.
+ 	// intentional diff ingestion) when GroundingEnabled is false; empty when the
+ 	// gate was enabled, so omitempty keeps it absent from grounded runs.
+ 	GroundingDisabledReason string `json:"grounding_disabled_reason,omitempty"`
+ }
+ 
+ // WritePool persists every agent's artifacts under poolDir, the merged pool
+ // findings.txt, and summary.json, returning the aggregate Summary. It writes a
+ // full set even when every agent failed (artifacts are preserved on disk for
+ // inspection, AC 03-02); the all-agents-failed gate is the caller's via Outcome.
+ // Each file is written atomically (temp + rename) so a crash never leaves a
+ // half-written artifact; pool-level writing is not transactional, so an I/O
+ // failure mid-run surfaces as an error with whatever per-agent files already
+ // landed left intact for inspection. The merged findings.txt is intentionally
+ // placed at the pool root, above the per-agent raw/ files, so leaf-preference
+ // discovery treats the raw files as the inputs and never double-counts the
+ // merged aggregate.
+@@ -75,67 +83,77 @@ func WritePool(poolDir string, results []Result, changed payload.ChangedLines) (
+ // writePool is WritePool with the grounding audit reason threaded in (empty when
+ // the gate was enabled or no reason was supplied). ExecuteReview calls it directly
+ // so summary.json records why grounding was disabled (a git failure vs. range-less
+ // diff ingestion); every other caller uses the WritePool wrapper.
+ func writePool(poolDir string, results []Result, changed payload.ChangedLines, groundingDisabledReason string) (Summary, error) {
+ 	if err := os.MkdirAll(poolDir, 0o755); err != nil {
+ 		return Summary{}, fmt.Errorf("creating pool dir: %w", err)
+ 	}
+ 
+ 	var merged []stream.Finding
+ 	statuses := make([]AgentStatus, 0, len(results))
+ 	seen := make(map[string]bool, len(results))
+ 
+ 	for _, r := range results {
+ 		dir, err := agentDirName(r.Agent)
+ 		if err != nil {
+ 			return Summary{}, err
+ 		}
+ 		// Two agents collapsing to the same on-disk dir would clobber each other
+ 		// silently; reject rather than lose artifacts. Roster validation makes
+ 		// names unique upstream, but the writer does not rely on that.
+ 		if seen[dir] {
+ 			return Summary{}, fmt.Errorf("duplicate agent directory %q (from agent %q)", dir, r.Agent)
+ 		}
+ 		seen[dir] = true
+ 
+ 		fr := findingsFor(r, changed)
+ 		merged = append(merged, fr.Findings...)
+ 
+ 		if err := writeAgentArtifacts(poolDir, dir, r, fr); err != nil {
+ 			return Summary{}, err
+ 		}
+ 		statuses = append(statuses, statusFor(r, fr))
+ 	}
+ 
+ 	// Findings metrics (Epic 4.4): count the raw findings the agents emitted, in
+ 	// total and by severity, before they are merged to disk.
+ 	recordFindingMetrics(merged)
+ 
+ 	// Merged pool findings (8-col, REVIEWER per row) for downstream convenience.
+ 	if err := writeFindings(filepath.Join(poolDir, findingsFile), merged); err != nil {
+ 		return Summary{}, err
+ 	}
+ 
+ 	sum := summarize(results)
+ 	groundingEnabled := len(changed) > 0
++	// Run-level runaway tally (Epic 19.5): an agent whose response was truncated on
++	// finish_reason=length with zero parseable findings. Derived from the per-agent
++	// statuses so the count and the markers cannot drift.
++	truncatedZeroFindings := 0
++	for _, st := range statuses {
++		if st.ResponseTruncated && st.FindingsCount == 0 {
++			truncatedZeroFindings++
++		}
++	}
+ 	ps := PoolSummary{
+ 		Agents:                  statuses,
+ 		Total:                   sum.Total,
+ 		Succeeded:               sum.Succeeded,
+ 		Failed:                  sum.Failed,
+ 		Partial:                 sum.Partial,
+ 		TotalFindings:           len(merged),
++		TruncatedZeroFindings:   truncatedZeroFindings,
+ 		GroundingEnabled:        &groundingEnabled,
+ 		GroundingDisabledReason: groundingDisabledReason,
+ 	}
+ 	if err := writeJSON(filepath.Join(poolDir, summaryFile), ps); err != nil {
+ 		return Summary{}, err
+ 	}
+ 	return sum, nil
+ }
+ 
+ // ReadPoolSummary loads <reviewDir>/sources/pool/summary.json — the run record
+ // carrying every agent's AgentStatus (model, token usage, latency). The
+ // reconcile-time scorecard emitter reads it to source per-reviewer metadata. A
+ // missing file returns the raw os error (callers degrade to no usage data); a
+ // present-but-unparseable file is a parse error.
+@@ -244,48 +262,49 @@ func writeAgentArtifacts(poolDir, dir string, r Result, fr findingsResult) error
+ // statusFor builds the per-agent status.json record from a result.
+ func statusFor(r Result, fr findingsResult) AgentStatus {
+ 	st := AgentStatus{
+ 		Agent:                  r.Agent,
+ 		Status:                 r.Status,
+ 		FindingsCount:          len(fr.Findings),
+ 		DurationMS:             r.DurationMS,
+ 		PayloadMode:            r.PayloadMode,
+ 		Truncated:              r.Truncation.Truncated,
+ 		FilesDropped:           r.Truncation.FilesDropped,
+ 		FallbackUsed:           r.FallbackUsed,
+ 		FallbackFrom:           r.FallbackFrom,
+ 		DroppedByMinSeverity:   fr.Dropped,
+ 		TruncatedByMaxFindings: fr.Truncated,
++		ResponseTruncated:      r.ResponseTruncated,
+ 		CacheHit:               r.CacheHit,
+ 		UnreviewedChunks:       r.UnreviewedChunks,
+ 	}
+ 	if r.Err != nil {
+ 		st.Error = r.Err.Error()
+ 	}
+ 	// Persist usage only when the provider reported token counts (Epic 3.3). A
+ 	// zero-usage result (a failed agent, or a completer that reports no usage)
+ 	// leaves the omitempty fields absent, so status.json stays byte-identical to
+ 	// the pre-3.3 shape for those runs. The model is recorded alongside the
+ 	// tokens it priced so a $0 cost remains auditable.
+ 	if r.TokensIn > 0 || r.TokensOut > 0 {
+ 		st.Model = r.Model
+ 		st.TokensIn = r.TokensIn
+ 		st.TokensOut = r.TokensOut
+ 	}
+ 	// Tool-loop accounting: emit the counters (as explicit, possibly-zero
+ 	// pointers) only for tool-enabled agents, so a pure 1.x single-shot agent's
+ 	// status.json is byte-for-byte unchanged (the pointers stay nil/omitted). A
+ 	// degraded tool agent still reports zeros and tools_degraded (AC 02-04 EC3).
+ 	if r.Tools {
+ 		turns, calls, bytes := r.Turns, r.ToolCalls, r.ToolBytes
+ 		st.Turns = &turns
+ 		st.ToolCalls = &calls
+ 		st.ToolBytes = &bytes
+ 		st.ToolsDegraded = r.ToolsDegraded
+ 		st.ToolsRequested = r.ToolsRequested
+ 		st.TrippedBudgets = r.TrippedBudgets
+ 	}
+ 	return st
+ }
+ 
+ // writeFindings serializes findings to path in the per-source 8-column v1 format
+ // (header + rows), written atomically.
+diff --git a/internal/fanout/engine.go b/internal/fanout/engine.go
+index c0c385d0..2d93f661 100644
+--- a/internal/fanout/engine.go
++++ b/internal/fanout/engine.go
+@@ -3,21 +3,28 @@ package fanout
+ import (
+ 	"context"
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
+ 	"log/slog"
+ 	"sync"
+ 	"time"
+ 
+ 	"github.com/samestrin/atcr/internal/circuitbreaker"
+ 	"github.com/samestrin/atcr/internal/llmclient"
+ 	"github.com/samestrin/atcr/internal/log"
+ 	"github.com/samestrin/atcr/internal/metrics"
+ 	"github.com/samestrin/atcr/internal/payload"
++	"github.com/samestrin/atcr/internal/stream"
+ 	"github.com/samestrin/atcr/internal/tools"
+ )
+ 
++// errTruncatedZeroFindings marks a reviewer slot demoted by the truncation-
++// failover policy: the response hit finish_reason=length with zero parsed
++// findings, so it is failed (not recorded as a clean review) to engage the
++// fallback chain (Epic 19.5).
++var errTruncatedZeroFindings = errors.New("response truncated (finish_reason=length) with zero parsed findings")
++
+ // Completer abstracts the LLM chat call so the engine can be driven by a fake in
+ // tests (deterministic concurrency/fallback assertions) while production uses
+ // *llmclient.Client. The engine consumes the interface; the client returns a
+ // concrete type.
+@@ -28,16 +35,28 @@ type Completer interface {
+ // UsageCompleter is the optional usage-reporting extension of Completer: it
+ // returns the same content plus the provider's token usage for the call. The
+ // single-shot path type-asserts for it (the same pattern as ChatCompleter) so a
+ // completer that does not implement it degrades to the plain Complete path with
+ // zero usage. *llmclient.Client satisfies it via CompleteWithUsage.
+ type UsageCompleter interface {
+ 	CompleteWithUsage(ctx context.Context, inv llmclient.Invocation) (string, llmclient.UsageData, []llmclient.CallRecord, error)
+ }
+ 
++// MetaCompleter is the truncation-aware extension of Completer: it returns the
++// content plus the provider's response metadata (token usage, per-call records,
++// and whether the response was truncated on finish_reason "length"). The
++// single-shot path type-asserts for it FIRST — before UsageCompleter — so a
++// completer that reports truncation surfaces it onto the Result; a completer that
++// implements only UsageCompleter or Complete degrades gracefully with
++// ResponseTruncated false and zero usage. *llmclient.Client satisfies it via
++// CompleteWithMeta (Epic 19.5).
++type MetaCompleter interface {
++	CompleteWithMeta(ctx context.Context, inv llmclient.Invocation) (llmclient.Completion, error)
++}
++
+ // ChatCompleter is the multi-turn extension of Completer: it carries a message
+ // history plus tool definitions and returns the assistant turn (which may
+ // request tool_calls). The engine selects it via a type assertion only when an
+ // agent has Tools enabled; a completer that does not implement it (or a missing
+ // dispatcher) degrades the agent to the single-shot Complete path. *llmclient.Client
+ // implements both Complete and Chat, so production agents loop while the doctor
+ // package's separate Completer is unaffected.
+@@ -147,109 +166,126 @@ type Slot struct {
+ // Result is the outcome of one slot after fallback resolution. Status is one of
+ // StatusOK/StatusFailed/StatusTimeout. FallbackUsed/FallbackFrom record which
+ // agent actually answered when a fallback took over. Agent names the agent that
+ // produced the result (the primary's name — attribution follows the slot, not
+ // the substitute), while FallbackFrom records the primary when a fallback ran.
+ type Result struct {
+ 	Agent        string
+ 	Content      string
+ 	Status       string
+ 	Err          error
+ 	DurationMS   int64
+ 	FallbackUsed bool
+ 	FallbackFrom string
+ 	PayloadMode  string
+ 	Truncation   payload.Truncation
+ 
+ 	// Review-constraint guardrails (Epic 2.2), threaded from the resolved
+ 	// AgentConfig by renderAgent so findingsFor can enforce them per source.
+ 	// MinSeverity drops findings below the floor; MaxFindings caps the count
+ 	// (severity-sorted). Both empty/nil mean "no constraint".
+ 	MinSeverity string
+ 	MaxFindings *int
+ 
++	// ResponseTruncated is true when the provider stopped this agent's
++	// content-bearing response on finish_reason "length" (token budget exhausted),
++	// as reported by the single-shot MetaCompleter path or the tool loop's final
++	// Chat turn. It is DISTINCT from Truncation above (byte-budget payload
++	// truncation): this marks the MODEL response as cut off. The reviewer
++	// truncation-failover policy (WithTruncationFailover) uses it to demote a
++	// truncated-and-empty slot to StatusFailed so the fallback chain engages, and
++	// statusFor surfaces it as the per-agent response_truncated marker (Epic 19.5).
++	ResponseTruncated bool
++
+ 	// Tool-loop accounting (Epic 2.0). Tools records that this was a tool-enabled
+ 	// agent (so status.json emits explicit zero counters even on the degrade
+ 	// path, while pure single-shot agents keep them absent). Turns/ToolCalls/
+ 	// ToolBytes are the actual loop usage; ToolsDegraded marks a tool agent that
+ 	// fell back to single-shot; TrippedBudgets names every budget that halted the
+ 	// loop ("max_turns", "tool_budget_bytes", "timeout_secs"). ToolsRequested
+ 	// preserves the original tools:true intent even when the agent degraded, so
+ 	// status.json can show what was asked for versus what ran.
+ 	Tools          bool
+ 	Turns          int
+ 	ToolCalls      int
+ 	ToolBytes      int64
+ 	ToolsDegraded  bool
+ 	ToolsRequested bool
+ 	TrippedBudgets []string
+ 
+ 	// CacheHit marks a result served from the diff cache (Epic 5.2) instead of a
+ 	// live API call. The replayed result carries the cached Content with zero
+ 	// token usage and no CallRecords, so the run's API-call and cost metrics
+ 	// reflect that no provider round-trip happened.
+ 	CacheHit bool
+ 
+ 	// UnreviewedChunks is the number of a chunked persona's bins (Epic 14.3) that
+ 	// failed so their files went unreviewed, while the persona still reports
+ 	// StatusOK because at least one chunk succeeded. Zero for the common
+ 	// full-coverage and bulk-strategy cases. mergeResultGroup sets it; statusFor
+ 	// surfaces it in status.json/summary.json so a CI gate can react to partial
+ 	// coverage instead of trusting a green status that hid unreviewed files.
+ 	UnreviewedChunks int
+ 
+ 	// Per-agent usage accounting (Epic 3.3 scorecard). Model is the configured
+ 	// model id; TokensIn/TokensOut are the provider-reported token counts,
+ 	// accumulated across every Chat() turn on the tool-loop path and taken from
+ 	// the single CompleteWithUsage() call on the single-shot path. They are
+ 	// persisted into status.json (AgentStatus) so the reconcile-time scorecard
+ 	// emitter — which runs in a separate process from the review — can source
+ 	// per-reviewer model/tokens and derive cost. Zero when the completer does not
+ 	// report usage (graceful degradation, never an error).
+ 	Model     string
+ 	TokensIn  int
+ 	TokensOut int
+ 
+ 	// Per-call client telemetry (Epic 4.11). CallRecords holds one entry per HTTP
+ 	// attempt the client made for this agent — retries included, accumulated across
+ 	// every Chat() turn on the tool-loop path and taken from the single
+ 	// CompleteWithUsage() call on the single-shot path. recordAgentOutcome derives
+ 	// the API-call count (records that ReachedWire) and the per-call latency
+ 	// histogram from it. Nil when the completer surfaces no per-call data (a
+ 	// Complete-only test double, or a circuit-open fail-fast), in which case
+ 	// recordAgentOutcome falls back to the Turns-based count.
+ 	CallRecords []llmclient.CallRecord
+ }
+ 
+ // Engine fans a review out to a roster across a parallel lane (default) and a
+ // serial lane (rate-limited providers), both running concurrently.
+ type Engine struct {
+ 	completer Completer
+ 	// maxParallel bounds concurrent parallel-lane agent calls; 0 (the default)
+ 	// means unbounded, preserving the original goroutine-per-slot behavior.
+ 	maxParallel int
+ 	// dispatcher executes tool calls for tool-enabled agents. nil (the default)
+ 	// means no tool harness is wired, so a tool-enabled agent degrades to
+ 	// single-shot. It is shared across all agents in a review (one snapshot).
+ 	dispatcher toolDispatcher
+ 	// transcript builds a per-agent transcript writer for the tool loop. nil (the
+ 	// default) disables transcript recording — the loop runs exactly as before.
+ 	// Each agent gets its own writer (concurrent loops, separate files); the loop
+ 	// closes it when the agent finishes (Epic 2.0, AC 05-01/05-02).
+ 	transcript func(agentName string) *tools.Transcript
+ 	// log is the engine's diagnostic logger. nil (the default) falls back to a
+ 	// no-op discard logger via logger(). ExecuteReview injects the review_id-
+ 	// correlated context logger via WithLogger, so invokeAgent's per-agent
+ 	// WithAgent scoping produces lines carrying both review_id and agent_name.
+ 	log *slog.Logger
+ 	// cache is the optional diff cache (Epic 5.2). nil (the default) disables
+ 	// caching, preserving the pre-5.2 always-live behavior. Only non-tool
+ 	// (single-shot) agents with a cache key are cached; tool-loop agents read
+ 	// live code and are never cached.
+ 	cache reviewCache
+ 	// cacheNoRead, when true, bypasses cache READS (the --no-cache flag) while
+ 	// still WRITING fresh results, so a flagged run refreshes stale entries and
+ 	// every subsequent run benefits. No effect when cache is nil.
+ 	cacheNoRead bool
++	// truncationFailover, when true, makes invokeSlot demote a reviewer response
++	// that was truncated (finish_reason=length) AND parsed to zero findings to
++	// StatusFailed, so the fallback chain engages instead of recording a silent
++	// false "no issues found". Only the review pipeline enables it via
++	// WithTruncationFailover; the executor's engine leaves it false and handles
++	// fixer truncation itself (Epic 19.5).
++	truncationFailover bool
+ }
+ 
+ // EngineOption configures an Engine at construction.
+@@ -287,17 +323,28 @@ func WithTranscript(f func(agentName string) *tools.Transcript) EngineOption {
+ // WithCache wires the diff cache (Epic 5.2). When set, a non-tool agent whose
+ // payload+model+persona key already has a stored result replays it instead of
+ // calling the provider; a fresh successful result is stored. noRead bypasses
+ // the read (the --no-cache flag) but still writes. Without this option the
+ // engine never touches a cache and always calls live.
+ func WithCache(c reviewCache, noRead bool) EngineOption {
+ 	return func(e *Engine) {
+ 		e.cache = c
+ 		e.cacheNoRead = noRead
+ 	}
+ }
+ 
++// WithTruncationFailover makes invokeSlot treat a reviewer response that was
++// truncated on finish_reason "length" AND parsed to zero findings as a failure
++// (StatusFailed), so the slot's fallback chain runs instead of the run recording
++// a silent false "no issues found". A truncated response that still parsed >=1
++// finding is left StatusOK — its partial findings are kept and its
++// ResponseTruncated marker is preserved. Only the review pipeline enables this;
++// the executor's engine does not (it classifies fixer truncation itself). Epic 19.5.
++func WithTruncationFailover() EngineOption {
++	return func(e *Engine) { e.truncationFailover = true }
++}
++
+ // WithLogger injects the engine's diagnostic logger. Pass the review_id-
+ // correlated logger from the request context (log.FromContext) so every agent
+ // log line is greppable by review. Without it, the engine logs to a no-op
+ // discard sink (logger()), preserving the original silent behavior in tests
+ // that construct an Engine without a logger.
+@@ -464,52 +511,66 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
+ // invokeSlot tries the primary agent, then each fallback in order, until one
+ // succeeds. The first success wins; if all fail, the last real failure is
+ // reported with the slot marked failed (or timeout when ctx expired before any
+ // attempt ran). Attribution stays with the primary agent name;
+ // FallbackUsed/FallbackFrom record the substitution. On failure the primary's
+ // payload provenance is always recorded so status.json reflects the slot, not a
+ // substitute that may have seen a different payload. DurationMS covers the
+ // whole chain — a failed primary's wall time counts toward the slot, so a slow
+ // primary plus fast fallback is not misreported as a fast slot.
+ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
+ 	start := time.Now()
+ 	chain := append([]Agent{s.Primary}, s.Fallbacks...)
+ 	var last Result
+ 	for i, a := range chain {
+ 		// Stop descending the chain once the context is done — further attempts
+ 		// would only fail the same way and waste the remaining budget. Preserve a
+ 		// prior real failure's diagnostics; only synthesize a timeout/cancel
+ 		// result when no attempt has run yet.
+ 		if err := ctx.Err(); err != nil {
+ 			if last.Err == nil {
+ 				last = Result{Agent: s.Primary.Name, Status: classifyStatus(err), Err: err}
+ 			}
+ 			break
+ 		}
+ 		r := e.invokeAgent(ctx, a)
+ 		if i > 0 {
+ 			r.FallbackUsed = true
+ 			r.FallbackFrom = s.Primary.Name
+ 			r.Agent = s.Primary.Name // attribution follows the slot, not the substitute
+ 		}
++		// Truncation failover (Epic 19.5): a reviewer response that hit
++		// finish_reason=length with zero parsed findings is a runaway that would
++		// otherwise be recorded as a silent clean review. Demote it to StatusFailed
++		// so the loop descends to the next agent in the chain. A truncated response
++		// that still parsed >=1 finding stays StatusOK (its ResponseTruncated marker
++		// is preserved for status.json). Applied per attempt, so a truncated fallback
++		// also fails over to the next one.
++		if e.truncationFailover && r.Status == StatusOK && r.ResponseTruncated &&
++			len(stream.ParseModelOutput([]byte(r.Content))) == 0 {
++			r.Status = StatusFailed
++			r.Err = errTruncatedZeroFindings
++			log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
++				"agent", a.Name, "model", a.Invocation.Model)
++		}
+ 		if r.Status == StatusOK {
+ 			r.DurationMS = time.Since(start).Milliseconds()
+ 			return r
+ 		}
+ 		last = r
+ 	}
+ 	// Slot failed: stamp the primary's identity and payload provenance.
+ 	last.Agent = s.Primary.Name
+ 	last.PayloadMode = s.Primary.PayloadMode
+ 	last.Truncation = s.Primary.Truncation
+ 	last.MinSeverity = s.Primary.MinSeverity
+ 	last.MaxFindings = s.Primary.MaxFindings
+ 	last.DurationMS = time.Since(start).Milliseconds()
+ 	return last
+ }
+ 
+ // invokeAgent performs a single agent's LLM call and classifies the outcome on
+ // the actual error returned (not ambient ctx state): a context deadline/cancel
+ // surfaces as StatusTimeout, any other error as StatusFailed. Classifying on the
+ // error itself avoids mislabeling a genuine failure (auth, malformed response)
+ // as a timeout just because a sibling slot's deadline happened to fire. The raw
+ // assistant content is returned on success for the artifact layer to persist.
+@@ -593,101 +654,119 @@ func (e *Engine) dispatchAgent(ctx context.Context, a Agent) Result {
+ // invokeCachedSingleShot wraps the single-shot path with the diff cache (Epic
+ // 5.2). It is the only cache integration point: tool agents (live or degraded)
+ // never reach it. With no cache wired, or an agent with no cache key, it is a
+ // transparent pass-through to invokeSingleShot, preserving the pre-5.2 behavior.
+ //
+ // On a cache hit it returns a synthesized OK result carrying the cached Content
+ // with zero token usage and no CallRecords — the agent is still counted by the
+ // invokeAgent metrics wrapper (it produced a result), but no provider round-trip
+ // is recorded, which is the whole point. On a miss it calls live and stores a
+ // successful result; a failed/timed-out review is never cached.
+ func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
+ 	if e.cache == nil || a.CacheKey == "" {
+ 		return e.invokeSingleShot(ctx, a)
+ 	}
+ 	key := a.CacheKey
+ 	if !e.cacheNoRead {
+ 		content, hit, err := e.cache.Get(key)
+ 		if err != nil {
+ 			// A cache read fault is never fatal: log and fall through to a live
+ 			// call so a corrupt/unreadable cache degrades to the uncached path.
+ 			log.FromContext(ctx).Warn("diff cache read failed; calling live", "agent", a.Name, "err", err)
+ 		} else if hit {
+ 			log.FromContext(ctx).Debug("diff cache hit; replaying without API call", "agent", a.Name, "model", a.Invocation.Model)
+ 			return Result{
+ 				Agent:       a.Name,
+ 				Content:     content,
+ 				Status:      StatusOK,
+ 				PayloadMode: a.PayloadMode,
+ 				Truncation:  a.Truncation,
+ 				MinSeverity: a.MinSeverity,
+ 				MaxFindings: a.MaxFindings,
+ 				// Mirror invokeSingleShot's OK shape: it always carries
+ 				// ToolsRequested (=a.Tools) so a degraded tool agent reports it.
+ 				// Only non-tool agents reach this cached path today (a.Tools is
+ 				// false), so this is shape-consistency insurance against drift if
+ 				// the cache scope ever widens — not an observable behavior change.
+ 				ToolsRequested: a.Tools,
+ 				Model:          a.Invocation.Model,
+ 				CacheHit:       true,
+ 			}
+ 		}
+ 	}
+ 	r := e.invokeSingleShot(ctx, a)
+-	if r.Status == StatusOK {
++	// Never cache a truncated response (Epic 19.5). invokeSingleShot returns a
++	// truncated runaway as StatusOK here — the truncation-failover demotion happens
++	// LATER in invokeSlot — so caching on StatusOK alone would persist the runaway
++	// content and replay it on a later same-diff run as a clean StatusOK review with
++	// ResponseTruncated unset, bypassing the failover gate (the exact silent
++	// all-clean the epic prevents). A truncated-with-findings response is likewise
++	// skipped so its partial content is re-fetched fresh rather than replayed as
++	// clean. Only a clean, complete StatusOK result is cacheable.
++	if r.Status == StatusOK && !r.ResponseTruncated {
+ 		if err := e.cache.Put(key, r.Content); err != nil {
+ 			// A write fault only forfeits the future speed-up; the live result is
+ 			// already correct, so the review proceeds.
+ 			log.FromContext(ctx).Warn("diff cache write failed", "agent", a.Name, "err", err)
+ 		}
+ 	}
+ 	return r
+ }
+ 
+ // invokeSingleShot performs one chat completion and classifies the outcome on
+ // the actual error returned (a context deadline/cancel → StatusTimeout, any
+ // other error → StatusFailed). This is the unchanged 1.x path.
+ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
+ 	start := time.Now()
+ 	// Capture usage when the completer reports it (CompleteWithUsage); otherwise
+ 	// take the plain content-only path with zero usage. Same optional-interface
+ 	// pattern as the tool-loop ChatCompleter.
+ 	var (
+-		content string
+-		usage   llmclient.UsageData
+-		records []llmclient.CallRecord
+-		err     error
++		content   string
++		usage     llmclient.UsageData
++		records   []llmclient.CallRecord
++		truncated bool
++		err       error
+ 	)
+-	if uc, ok := e.completer.(UsageCompleter); ok {
++	// Prefer the truncation-aware MetaCompleter so a finish_reason=length response
++	// is observable on the Result; fall back to UsageCompleter (usage only) and then
++	// plain Complete. Only the Meta path can set truncated — the others leave it
++	// false (no signal available).
++	if mc, ok := e.completer.(MetaCompleter); ok {
++		var comp llmclient.Completion
++		comp, err = mc.CompleteWithMeta(ctx, a.Invocation)
++		content, usage, records, truncated = comp.Content, comp.Usage, comp.CallRecords, comp.Truncated
++	} else if uc, ok := e.completer.(UsageCompleter); ok {
+ 		content, usage, records, err = uc.CompleteWithUsage(ctx, a.Invocation)
+ 	} else {
+ 		content, err = e.completer.Complete(ctx, a.Invocation)
+ 	}
+ 	r := Result{
+-		Agent:       a.Name,
+-		DurationMS:  time.Since(start).Milliseconds(),
+-		PayloadMode: a.PayloadMode,
+-		Truncation:  a.Truncation,
+-		MinSeverity: a.MinSeverity,
+-		MaxFindings: a.MaxFindings,
++		Agent:             a.Name,
++		DurationMS:        time.Since(start).Milliseconds(),
++		PayloadMode:       a.PayloadMode,
++		Truncation:        a.Truncation,
++		MinSeverity:       a.MinSeverity,
++		MaxFindings:       a.MaxFindings,
++		ResponseTruncated: truncated,
+ 		// Preserve the original tool request even on the single-shot path so a
+ 		// degraded tool agent (invokeDegraded reuses this) reports tools_requested.
+ 		ToolsRequested: a.Tools,
+ 		Model:          a.Invocation.Model,
+ 		TokensIn:       usage.PromptTokens,
+ 		TokensOut:      usage.CompletionTokens,
+ 		CallRecords:    records,
+ 	}
+ 	if err != nil {
+ 		r.Err = err
+ 		r.Status = classifyStatus(err)
+ 		return r
+ 	}
+ 	r.Content = content
+ 	r.Status = StatusOK
+ 	return r
+ }
+ 
+ // invokeDegraded runs a tool-enabled agent through the single-shot path because
+ // the harness is unavailable (the completer is not a ChatCompleter, or no
+ // dispatcher was wired). The result is marked Tools+ToolsDegraded so status.json
+ // records the degrade with explicit zero counters (AC 01-05, AC 02-04 EC3).
+diff --git a/internal/fanout/engine_tools_test.go b/internal/fanout/engine_tools_test.go
+index 4f52b3fe..86e44f93 100644
+--- a/internal/fanout/engine_tools_test.go
++++ b/internal/fanout/engine_tools_test.go
+@@ -20,15 +20,16 @@ import (
+ // chatTurn scripts one Chat response. When toolCalls is non-empty the response
+ // is an assistant tool-call turn (content null); otherwise it is a final message
+ // carrying content.
+ type chatTurn struct {
+ 	toolCalls   []llmclient.ToolCall
+ 	content     string
+ 	err         error
+ 	delay       time.Duration
+ 	callRecords []llmclient.CallRecord // per-turn HTTP attempt telemetry (Epic 4.11)
++	truncated   bool                   // final content turn hit finish_reason=length (Epic 19.5)
+ }
+ 
+ // scriptedChat implements both Completer (single-shot) and ChatCompleter
+ // (multi-turn). Each Chat call pops the next scripted turn; calls past the end
+ // return a default final message so a tripped loop's final-answer request always
+ // resolves.
+@@ -55,56 +56,59 @@ func (s *scriptedChat) Complete(_ context.Context, _ llmclient.Invocation) (stri
+ func (s *scriptedChat) Chat(ctx context.Context, _ llmclient.Invocation, messages []llmclient.Message, toolDefs []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+ 	// Faithfully reject a malformed conversation the way an OpenAI-compatible
+ 	// provider does: every assistant tool_call id must be answered by a later
+ 	// role:"tool" message before the next request. This guards the loop's
+ 	// well-formedness invariant (a dangling tool_call_id is an HTTP 400).
+ 	if err := assertToolCallsAnswered(messages); err != nil {
+ 		return nil, err
+ 	}
+ 	s.mu.Lock()
+ 	call := s.idx
+ 	s.idx++
+ 	s.chatCalls++
+ 	s.toolsSeen = append(s.toolsSeen, len(toolDefs) > 0)
+ 	s.msgsSeen = append(s.msgsSeen, append([]llmclient.Message(nil), messages...))
+ 	var turn chatTurn
+ 	if call < len(s.turns) {
+ 		turn = s.turns[call]
+ 	} else {
+ 		turn = chatTurn{content: "FINAL"}
+ 	}
+ 	onChat := s.onChat
+ 	cancel := s.cancel
+ 	s.mu.Unlock()
+ 
+ 	if onChat != nil {
+ 		onChat(call, cancel)
+ 	}
+ 	if turn.delay > 0 {
+ 		select {
+ 		case <-time.After(turn.delay):
+ 		case <-ctx.Done():
+ 			return nil, ctx.Err()
+ 		}
+ 	}
+ 	if err := ctx.Err(); err != nil {
+ 		return nil, err
+ 	}
+ 	if turn.err != nil {
+ 		// Mirror the real *Client.Chat contract: an errored turn still surfaces the
+ 		// per-attempt telemetry for any wire attempt it made (Epic 4.11).
+ 		return &llmclient.ChatResponse{CallRecords: turn.callRecords}, turn.err
+ 	}
+ 	msg := llmclient.Message{Role: "assistant", ToolCalls: turn.toolCalls}
+ 	fr := "stop"
+ 	if len(turn.toolCalls) > 0 {
+ 		fr = "tool_calls"
+ 	} else {
+ 		c := turn.content
+ 		msg.Content = &c
++		if turn.truncated {
++			fr = "length"
++		}
+ 	}
+-	return &llmclient.ChatResponse{Message: msg, FinishReason: fr, CallRecords: turn.callRecords}, nil
++	return &llmclient.ChatResponse{Message: msg, FinishReason: fr, CallRecords: turn.callRecords, Truncated: turn.truncated}, nil
+ }
+ 
+ // assertToolCallsAnswered returns an error when any assistant tool_call lacks a
+ // matching role:"tool" answer in the conversation — the malformed shape real
+ // providers reject with HTTP 400.
+diff --git a/internal/fanout/loop.go b/internal/fanout/loop.go
+index 0458f37b..2b50857e 100644
+--- a/internal/fanout/loop.go
++++ b/internal/fanout/loop.go
+@@ -113,115 +113,118 @@ func (e *Engine) invokeToolLoop(ctx context.Context, a Agent, cc ChatCompleter,
+ func (l *toolLoop) run(ctx context.Context) Result {
+ 	// Carry this agent's exec eligibility into every dispatch the loop makes. The
+ 	// dispatcher's structural gate (Epic 11.1) admits run_tests/run_script only for
+ 	// an exec-enabled agent and refuses them for every read-only agent, even when
+ 	// the whole pool shares one exec-wired dispatcher. wireToolDefs(a.Exec) already
+ 	// gates the OFFERING; this gates the DISPATCH so the boundary is structural,
+ 	// not merely advisory.
+ 	//
+ 	// l.agent.Exec is fixed for the loop's lifetime: it is set once when the
+ 	// toolLoop is constructed (invokeToolLoop) and never mutated thereafter, so
+ 	// eligibility is derived once here — before the loop — rather than re-read on
+ 	// each iteration. Every turn deliberately shares this one eligibility value;
+ 	// this is an immutability invariant, not a per-iteration computation.
+ 	ctx = tools.WithExecEligibility(ctx, l.agent.Exec)
+ 	// Inject an operator-side refusal sink: when the dispatcher refuses an exec-gated
+ 	// tool a read-only agent named, the refusal otherwise reaches only the model as a
+ 	// tool result. The sink is wired here — fanout may import internal/log, the tools
+ 	// package may not — following the WithExecEligibility context-key pattern. The
+ 	// logger is snapshotted so the closure does not capture the reassigned ctx.
+ 	refusalLog, refusalAgent := log.FromContext(ctx), l.agent.Name
+ 	ctx = tools.WithRefusalLogger(ctx, func(tool string) {
+ 		refusalLog.Warn("exec tool refused: execution eligibility not granted to this agent",
+ 			"tool", tool, "agent", refusalAgent)
+ 	})
+ 	for {
+ 		// Honor cancellation/deadline before each turn so a tripped clock halts
+ 		// the loop with the partial results gathered so far rather than firing
+ 		// another provider request.
+ 		if err := ctx.Err(); err != nil {
+ 			l.res.addTripped(budgetTimeout)
+ 			return l.finalize(classifyStatus(err), err)
+ 		}
+ 
+ 		resp, err := l.cc.Chat(ctx, l.agent.Invocation, l.messages, l.toolDefs)
+ 		if err != nil {
+ 			// A Chat error ends the loop. A deadline/cancel records the timeout
+ 			// budget; any other provider error is a plain failure. Partial
+ 			// counters already accumulated in res are preserved either way. An
+ 			// errored turn still carries the per-attempt telemetry for any HTTP
+ 			// attempt that reached the wire (Epic 4.11), so count it before exiting —
+ 			// a mid-flight timeout that did one round-trip must not undercount.
+ 			if resp != nil {
+ 				l.res.addCallRecords(resp.CallRecords)
+ 			}
+ 			status := classifyStatus(err)
+ 			if status == StatusTimeout {
+ 				l.res.addTripped(budgetTimeout)
+ 			}
+ 			return l.finalize(status, err)
+ 		}
+ 		l.res.Turns++
+ 		l.res.addUsage(resp.Usage)
+ 		l.res.addCallRecords(resp.CallRecords)
+ 		l.messages = append(l.messages, resp.Message)
+ 
+ 		// Final message (no tool_calls): the model finished within budget.
+ 		if len(resp.Message.ToolCalls) == 0 {
+ 			// A model that reached this loop was declared function-calling-capable
+ 			// (supports_function_calling=true gated entry in invokeAgent). If it never
+ 			// calls a tool on its FIRST turn, that declaration is likely wrong — warn
+ 			// once as a hint (NOT a failure; the loop still returns the answer) so a
+ 			// roster misconfiguration is visible (AC 04-01 Error Scenario 1).
+ 			if l.res.Turns == 1 {
+ 				fmt.Fprintf(os.Stderr, "atcr: warning: agent %s: model %s declared supports_function_calling=true but first response has no tool_calls — possible misconfiguration\n", l.agent.Name, l.agent.Invocation.Model)
+ 			}
+ 			l.res.Content = derefContent(resp.Message.Content)
++			// finish_reason=length on the final content turn: the answer is cut off.
++			// Surface it so the reviewer truncation-failover policy can react (Epic 19.5).
++			l.res.ResponseTruncated = resp.Truncated
+ 			l.tr.RecordFinal(l.res.Turns, l.res.Content)
+ 			return l.finalize(StatusOK, nil)
+ 		}
+ 
+ 		// Record the requested tool_calls before deciding whether to execute them,
+ 		// so the transcript is a faithful record even when the turn is skipped by a
+ 		// budget trip below.
+ 		l.tr.RecordToolCalls(l.res.Turns, toolCallRecords(resp.Message.ToolCalls))
+ 
+ 		// Model wants tools but there is no budget for another round-trip to feed
+ 		// the results back (Model A, sprint clarification 2026-06-13): do NOT
+ 		// execute this turn's calls; trip max_turns and request a final answer.
+ 		if l.res.Turns >= l.maxTurns {
+ 			l.res.addTripped(budgetMaxTurns)
+ 			// The assistant turn carries tool_calls we will not execute; answer
+ 			// every one so the conversation stays well-formed (OpenAI-compatible
+ 			// providers reject a final request with a dangling tool_call_id,
+ 			// which would discard the partial findings).
+ 			l.answerSkipped(l.res.Turns, resp.Message.ToolCalls, "skipped: turn budget reached; provide your final answer now")
+ 			return l.requestFinalAnswer(ctx)
+ 		}
+ 
+ 		halt := l.dispatchTurn(ctx, l.res.Turns, resp.Message.ToolCalls)
+ 
+ 		// Cancellation during tool execution halts with partial results and takes
+ 		// precedence over the byte-budget check below (AC 02-02 Error 2).
+ 		if cerr := ctx.Err(); cerr != nil {
+ 			l.res.addTripped(budgetTimeout)
+ 			return l.finalize(classifyStatus(cerr), cerr)
+ 		}
+ 		if halt {
+ 			l.res.addTripped(budgetLoopHygiene)
+ 			return l.requestFinalAnswer(ctx)
+ 		}
+ 		// End-of-turn byte-budget check: the current turn's results were delivered
+ 		// in full; trip only after they are in hand (deferred trip, AC 02-02).
+ 		if l.agent.ToolBudgetBytes > 0 && l.res.ToolBytes > l.agent.ToolBudgetBytes {
+ 			l.res.addTripped(budgetToolBytes)
+ 			return l.requestFinalAnswer(ctx)
+ 		}
+ 	}
+ }
+ 
+ // dispatchTurn processes one turn's tool calls: it skips/nudges identical
+ // repeats, rejects malformed arguments before they reach the dispatcher, and
+ // executes the rest, appending every outcome as a role:"tool" result. It returns
+ // true when loop hygiene requires halting (a repeat seen in sigHistory, or a
+ // second consecutive malformed turn). It updates sigHistory/nudgedSigs/malformedPrev
+ // for the next turn.
+@@ -299,33 +302,35 @@ func (l *toolLoop) dispatchTurn(ctx context.Context, turn int, calls []llmclient
+ // requestFinalAnswer asks the model for its review after a trip/halt with a
+ // no-tools Chat (unbudgeted — it is not counted as a turn). A failure here keeps
+ // whatever was gathered: a timeout records the timeout budget, any other error
+ // fails the agent, but the accumulated counters survive on res.
+ func (l *toolLoop) requestFinalAnswer(ctx context.Context) Result {
+ 	// If the deadline already passed between the trip check and here, skip the
+ 	// doomed provider round-trip and finalize with the partial result.
+ 	if err := ctx.Err(); err != nil {
+ 		l.res.addTripped(budgetTimeout)
+ 		return l.finalize(classifyStatus(err), err)
+ 	}
+ 	l.appendUser(finalAnswerMessage)
+ 	resp, err := l.cc.Chat(ctx, l.agent.Invocation, l.messages, nil)
+ 	if err != nil {
+ 		// Count the final-answer call's wire attempt(s) even on error (Epic 4.11),
+ 		// mirroring the per-turn path above.
+ 		if resp != nil {
+ 			l.res.addCallRecords(resp.CallRecords)
+ 		}
+ 		status := classifyStatus(err)
+ 		if status == StatusTimeout {
+ 			l.res.addTripped(budgetTimeout)
+ 		}
+ 		return l.finalize(status, err)
+ 	}
+ 	// The final-answer call is unbudgeted as a turn, but its tokens and HTTP
+ 	// attempts are real and must count toward the agent's usage and call telemetry.
+ 	l.res.addUsage(resp.Usage)
+ 	l.res.addCallRecords(resp.CallRecords)
+ 	l.res.Content = derefContent(resp.Message.Content)
++	// A truncated forced final-answer is still cut off; surface it (Epic 19.5).
++	l.res.ResponseTruncated = resp.Truncated
+ 	l.tr.RecordFinal(l.res.Turns, l.res.Content)
+ 	return l.finalize(StatusOK, nil)
+ }
+diff --git a/internal/fanout/response_truncation_e2e_test.go b/internal/fanout/response_truncation_e2e_test.go
+new file mode 100644
+index 00000000..5c7fcc72
+--- /dev/null
++++ b/internal/fanout/response_truncation_e2e_test.go
+@@ -0,0 +1,76 @@
++package fanout
++
++import (
++	"context"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// These tests exercise the three Epic 19.5 acceptance scenarios end-to-end,
++// through the public Engine.Run + WritePool chain (not just invokeSlot), so the
++// persisted status.json — the surface the acceptance criteria name — is asserted.
++// Scenario (c) (executor truncation) lives in internal/verify/executor_truncation_test.go.
++
++// AC scenario (a): a reviewer response with finish_reason=length and zero parsed
++// findings is failed over to the slot's fallback (FallbackUsed=true), and no
++// silent clean review is recorded.
++func TestE2E_TruncatedZeroFindings_FailsOverAndRecords(t *testing.T) {
++	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
++		"primary":  {Content: "I kept thinking but never emitted a finding", Truncated: true},
++		"fallback": {Content: "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce"},
++	}}
++	e := NewEngine(c, WithTruncationFailover())
++	slots := []Slot{{
++		Primary:   Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "primary"}},
++		Fallbacks: []Agent{{Name: "bruce-fb", Invocation: llmclient.Invocation{Model: "fallback"}}},
++	}}
++	results := e.Run(context.Background(), slots)
++	require.Len(t, results, 1)
++	assert.Equal(t, StatusOK, results[0].Status, "the fallback rescued the slot")
++	assert.True(t, results[0].FallbackUsed, "AC(a): the slot's fallback agent runs")
++	assert.Contains(t, results[0].Content, "HIGH|a.go:1")
++
++	pool := filepath.Join(t.TempDir(), "pool")
++	_, err := WritePool(pool, results, nil)
++	require.NoError(t, err)
++	st := readAgentStatus(t, pool, "bruce")
++	assert.Equal(t, StatusOK, st.Status)
++	assert.True(t, st.FallbackUsed)
++}
++
++// AC scenario (b): a reviewer response with finish_reason=length and >=1 parsed
++// finding stays StatusOK, keeps its findings, and carries the response_truncated
++// marker in status.json.
++func TestE2E_TruncatedWithFindings_KeptWithMarkerInStatusJSON(t *testing.T) {
++	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
++		"primary": {Content: "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce\ntrailing thought cut off mid-", Truncated: true},
++	}}
++	e := NewEngine(c, WithTruncationFailover())
++	slots := []Slot{{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "primary"}}}}
++	results := e.Run(context.Background(), slots)
++	require.Len(t, results, 1)
++	assert.Equal(t, StatusOK, results[0].Status)
++	assert.False(t, results[0].FallbackUsed, "no fallback needed — partial findings landed")
++
++	pool := filepath.Join(t.TempDir(), "pool")
++	_, err := WritePool(pool, results, nil)
++	require.NoError(t, err)
++	st := readAgentStatus(t, pool, "bruce")
++	assert.True(t, st.ResponseTruncated, "AC(b): a truncated marker rides the slot record / status.json")
++	assert.Equal(t, 1, st.FindingsCount, "AC(b): partial findings are preserved")
++}
++
++func readAgentStatus(t *testing.T, pool, agent string) AgentStatus {
++	t.Helper()
++	data, err := os.ReadFile(filepath.Join(pool, "raw", "agent", agent, "status.json"))
++	require.NoError(t, err)
++	var st AgentStatus
++	require.NoError(t, json.Unmarshal(data, &st))
++	return st
++}
+diff --git a/internal/fanout/response_truncation_test.go b/internal/fanout/response_truncation_test.go
+new file mode 100644
+index 00000000..28f6951e
+--- /dev/null
++++ b/internal/fanout/response_truncation_test.go
+@@ -0,0 +1,210 @@
++package fanout
++
++import (
++	"context"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// metaTruncatingCompleter implements MetaCompleter so the single-shot path can
++// observe a finish_reason=length truncation on the returned Result. It also
++// satisfies Completer (Complete) for the degrade path.
++type metaTruncatingCompleter struct {
++	content   string
++	truncated bool
++}
++
++func (m *metaTruncatingCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
++	return m.content, nil
++}
++
++func (m *metaTruncatingCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
++	return llmclient.Completion{Content: m.content, Truncated: m.truncated}, nil
++}
++
++// --- Task 1: the truncation signal reaches the Result on both paths ----------
++
++func TestSingleShot_SetsResponseTruncated(t *testing.T) {
++	e := NewEngine(&metaTruncatingCompleter{content: "ramble, no findings", truncated: true})
++	r := e.invokeAgent(context.Background(), Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}})
++	assert.Equal(t, StatusOK, r.Status)
++	assert.True(t, r.ResponseTruncated, "single-shot must surface finish_reason=length onto the Result")
++	assert.Equal(t, "ramble, no findings", r.Content)
++}
++
++func TestSingleShot_NoTruncationWhenClean(t *testing.T) {
++	e := NewEngine(&metaTruncatingCompleter{content: "HIGH|a.go:1|b|f|correctness|5|e|bruce", truncated: false})
++	r := e.invokeAgent(context.Background(), Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}})
++	assert.Equal(t, StatusOK, r.Status)
++	assert.False(t, r.ResponseTruncated)
++}
++
++// A completer implementing only UsageCompleter (no MetaCompleter) still works —
++// ResponseTruncated stays false (graceful degradation, no signal available).
++func TestSingleShot_UsageOnlyCompleterLeavesTruncationFalse(t *testing.T) {
++	e := NewEngine(&usageCompleter{})
++	r := e.invokeAgent(context.Background(), Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "claude"}})
++	assert.Equal(t, StatusOK, r.Status)
++	assert.False(t, r.ResponseTruncated)
++}
++
++func TestToolLoop_SetsResponseTruncatedOnFinalTurn(t *testing.T) {
++	// A tool-capable agent whose FINAL content-bearing turn hit finish_reason=length.
++	sc := &scriptedChat{turns: []chatTurn{{content: "ramble", truncated: true}}}
++	e := NewEngine(sc, WithDispatcher(&fakeDispatcher{}))
++	r := e.invokeAgent(context.Background(), Agent{
++		Name: "ronin", Tools: true, SupportsFC: true,
++		Invocation: llmclient.Invocation{Model: "m"},
++	})
++	assert.Equal(t, StatusOK, r.Status)
++	assert.True(t, r.ResponseTruncated, "tool loop must surface a truncated final answer onto the Result")
++}
++
++// mapMetaCompleter returns a per-model scripted Completion, so a slot's primary
++// and fallback agents (distinguished by Invocation.Model) can be driven with
++// different truncation/finding shapes.
++type mapMetaCompleter struct {
++	byModel map[string]llmclient.Completion
++}
++
++func (m *mapMetaCompleter) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
++	return m.byModel[inv.Model].Content, nil
++}
++
++func (m *mapMetaCompleter) CompleteWithMeta(_ context.Context, inv llmclient.Invocation) (llmclient.Completion, error) {
++	return m.byModel[inv.Model], nil
++}
++
++// --- Task 2 / AC scenario (a): truncated + 0 findings -> fail + fallback ------
++
++func TestInvokeSlot_TruncatedZeroFindings_FailsAndFallsBack(t *testing.T) {
++	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
++		"primary":  {Content: "I was thinking hard but never emitted a finding", Truncated: true}, // 0 parseable findings
++		"fallback": {Content: "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce"},                       // 1 finding
++	}}
++	e := NewEngine(c, WithTruncationFailover())
++	slot := Slot{
++		Primary:   Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "primary"}},
++		Fallbacks: []Agent{{Name: "bruce-fb", Invocation: llmclient.Invocation{Model: "fallback"}}},
++	}
++	r := e.invokeSlot(context.Background(), slot)
++	assert.Equal(t, StatusOK, r.Status, "fallback rescued the slot")
++	assert.True(t, r.FallbackUsed, "the truncated primary must trigger the fallback chain")
++	assert.Equal(t, "bruce", r.Agent, "attribution follows the slot's primary")
++	assert.Contains(t, r.Content, "HIGH|a.go:1", "the fallback's findings win")
++}
++
++// When every agent in the chain truncates empty, the slot fails (no false clean).
++func TestInvokeSlot_AllTruncatedEmpty_SlotFails(t *testing.T) {
++	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
++		"primary":  {Content: "ramble one", Truncated: true},
++		"fallback": {Content: "ramble two", Truncated: true},
++	}}
++	e := NewEngine(c, WithTruncationFailover())
++	slot := Slot{
++		Primary:   Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "primary"}},
++		Fallbacks: []Agent{{Name: "bruce-fb", Invocation: llmclient.Invocation{Model: "fallback"}}},
++	}
++	r := e.invokeSlot(context.Background(), slot)
++	assert.Equal(t, StatusFailed, r.Status)
++	assert.True(t, r.ResponseTruncated, "the surviving failed result stays marked truncated")
++}
++
++// --- Task 2 / AC scenario (b): truncated + >=1 finding -> StatusOK + marker ---
++
++func TestInvokeSlot_TruncatedWithFindings_StaysOKWithMarker(t *testing.T) {
++	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
++		"primary": {Content: "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce\nMORE ramble cut off mid", Truncated: true},
++	}}
++	e := NewEngine(c, WithTruncationFailover())
++	slot := Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "primary"}}}
++	r := e.invokeSlot(context.Background(), slot)
++	assert.Equal(t, StatusOK, r.Status, "partial findings are kept, not discarded")
++	assert.False(t, r.FallbackUsed)
++	assert.True(t, r.ResponseTruncated, "the truncated marker is preserved on the kept result")
++	assert.Contains(t, r.Content, "HIGH|a.go:1")
++}
++
++// The policy is opt-in: an engine WITHOUT WithTruncationFailover (e.g. the
++// executor's) keeps prior behavior — a truncated-empty response stays StatusOK.
++func TestInvokeSlot_NoFailoverOption_TruncatedEmptyStaysOK(t *testing.T) {
++	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
++		"primary": {Content: "ramble no findings", Truncated: true},
++	}}
++	e := NewEngine(c) // no WithTruncationFailover
++	slot := Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "primary"}}}
++	r := e.invokeSlot(context.Background(), slot)
++	assert.Equal(t, StatusOK, r.Status, "without the option the demotion does not fire")
++}
++
++// memCache is an in-memory reviewCache for the cache-poisoning regression test.
++type memCache struct{ m map[string]string }
++
++func (c *memCache) Get(k string) (string, bool, error) { v, ok := c.m[k]; return v, ok, nil }
++func (c *memCache) Put(k, v string) error              { c.m[k] = v; return nil }
++
++// A truncated, zero-finding runaway must NEVER be written to the diff cache:
++// otherwise a later same-diff run replays it as a clean StatusOK review with the
++// failover gate bypassed — the exact silent all-clean the epic prevents, served
++// from cache (independent-review HIGH).
++func TestCache_DoesNotCacheTruncatedRunaway(t *testing.T) {
++	cache := &memCache{m: map[string]string{}}
++	c := &metaTruncatingCompleter{content: "I rambled but emitted no finding", truncated: true}
++	e := NewEngine(c, WithCache(cache, false), WithTruncationFailover())
++	slot := Slot{Primary: Agent{Name: "bruce", CacheKey: "k1", Invocation: llmclient.Invocation{Model: "m"}}}
++
++	r := e.invokeSlot(context.Background(), slot)
++	assert.Equal(t, StatusFailed, r.Status, "truncated+zero demotes to failed")
++
++	_, cached := cache.m["k1"]
++	assert.False(t, cached, "a truncated runaway must not be written to the diff cache")
++}
++
++// --- Task 4: telemetry markers ------------------------------------------------
++
++func TestStatusFor_SetsResponseTruncated(t *testing.T) {
++	st := statusFor(Result{Agent: "bruce", Status: StatusFailed, ResponseTruncated: true}, findingsResult{})
++	assert.True(t, st.ResponseTruncated)
++}
++
++func TestStatusFor_ResponseTruncatedFalseWhenClean(t *testing.T) {
++	st := statusFor(Result{Agent: "bruce", Status: StatusOK}, findingsResult{})
++	assert.False(t, st.ResponseTruncated)
++}
++
++func TestWritePool_CountsTruncatedZeroFindings(t *testing.T) {
++	pool := filepath.Join(t.TempDir(), "pool")
++	results := []Result{
++		// truncated, zero parseable findings -> counted + per-agent marker
++		{Agent: "runaway", Status: StatusFailed, ResponseTruncated: true, Content: "I rambled but emitted no finding", Err: errTruncatedZeroFindings},
++		// truncated, but kept a finding -> per-agent marker, NOT counted in the run tally
++		{Agent: "partial", Status: StatusOK, ResponseTruncated: true, Content: "HIGH|a.go:1|b|f|correctness|5|e|partial"},
++		// clean -> neither
++		{Agent: "clean", Status: StatusOK, Content: "HIGH|b.go:2|b|f|correctness|5|e|clean"},
++	}
++	_, err := WritePool(pool, results, nil)
++	require.NoError(t, err)
++
++	data, err := os.ReadFile(filepath.Join(pool, "summary.json"))
++	require.NoError(t, err)
++	var ps PoolSummary
++	require.NoError(t, json.Unmarshal(data, &ps))
++
++	assert.Equal(t, 1, ps.TruncatedZeroFindings, "only the truncated zero-finding agent is counted")
++
++	byAgent := map[string]AgentStatus{}
++	for _, a := range ps.Agents {
++		byAgent[a.Agent] = a
++	}
++	assert.True(t, byAgent["runaway"].ResponseTruncated)
++	assert.Equal(t, 0, byAgent["runaway"].FindingsCount)
++	assert.True(t, byAgent["partial"].ResponseTruncated)
++	assert.Equal(t, 1, byAgent["partial"].FindingsCount)
++	assert.False(t, byAgent["clean"].ResponseTruncated)
++}
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index 4f5847e6..d60e20d9 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -504,111 +504,116 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
+ // runEngine wires the optional read-only tool harness for p's tool-enabled slots
+ // (a head snapshot → path jail → dispatcher, shared across the run, plus a
+ // per-agent transcript writer under poolDir), runs the fan-out under p's timeout,
+ // and returns the per-agent results together with the manifest review-stage entry
+ // (snapshot provenance already stamped). Best-effort harness setup: a snapshot or
+ // jail failure logs and degrades tool agents to single-shot rather than failing
+ // the review. Extracted from ExecuteReview so ExecuteResume runs the identical
+ // engine setup; the two differ only in how they persist the results.
+ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, poolDir string) ([]Result, *payload.ReviewStage) {
+ 	runCtx := ctx
+ 	if p.TimeoutSec > 0 {
+ 		var cancel context.CancelFunc
+ 		runCtx, cancel = context.WithTimeout(ctx, time.Duration(p.TimeoutSec)*time.Second)
+ 		defer cancel()
+ 	}
+ 
+ 	// Snapshot provenance for the manifest review stage (AC 03-02 / 03-03). Zero
+ 	// unless a snapshot actually runs and succeeds below.
+ 	var snapMode, snapHeadSHA, snapWorktreePath string
+ 	// Seed the engine with the review_id-correlated context logger so every agent
+ 	// log line is greppable by review (AC9 + AC10). FromContext returns a never-nil
+ 	// discard logger if none is set.
+ 	opts := []EngineOption{WithMaxParallel(p.MaxParallel), WithLogger(log.FromContext(ctx))}
+ 	// Hand the diff cache to the engine (Epic 5.2). Non-tool agents whose
+ 	// payload+model+persona key already has a stored result replay it instead of
+ 	// calling the provider; nil cache (direct construction) leaves caching off.
+ 	if p.cache != nil {
+ 		opts = append(opts, WithCache(p.cache, p.cacheNoRead))
+ 	}
+ 	if anyToolAgent(p.Slots) && p.Head != "" {
+ 		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
+ 			log.FromContext(ctx).Warn("tool harness disabled (snapshot); tool agents degrade to single-shot", "head", p.Head, "err", err)
+ 			snapMode = "failed" // snapshot attempted but failed; distinguishable from no-snapshot-attempted
+ 		} else {
+ 			defer cleanup()
+ 			// A successful SnapshotFor call fixes the mode/head/path the tool harness
+ 			// reviewed at (AC 03-02 Scenario 5), recorded even if the jail below fails.
+ 			// Resolve the head to a full SHA for the manifest even if the caller passed
+ 			// a symbolic ref or short SHA (e.g., tests constructing PreparedReview directly).
+ 			// A resolution failure is logged but does not abort the review; the original
+ 			// value is preserved as a best-effort fallback.
+ 			headSHA := p.Head
+ 			if resolved, err := resolveHeadSHA(p.Repo, p.Head); err == nil {
+ 				headSHA = resolved
+ 			} else {
+ 				log.FromContext(ctx).Warn("could not resolve head SHA for manifest", "err", err)
+ 			}
+ 			snapMode, snapHeadSHA, snapWorktreePath = snapshotManifestFields(root, p.Repo, headSHA)
+ 			if jail, jerr := tools.NewJail(root); jerr != nil {
+ 				log.FromContext(ctx).Warn("tool harness disabled (jail); tool agents degrade to single-shot", "err", jerr)
+ 			} else {
+ 				disp := tools.NewDispatcher(jail, tools.DefaultLimits())
+ 				rawBase := filepath.Join(poolDir, poolRawAgentDir)
+ 				opts = append(opts, WithDispatcher(disp), WithTranscript(func(agent string) *tools.Transcript {
+ 					dir := filepath.Join(rawBase, transcriptAgentDir(agent))
+ 					if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+ 						log.FromContext(ctx).Warn("transcript dir creation failed", "agent", agent, "err", mkErr)
+ 					}
+ 					return tools.OpenTranscript(filepath.Join(dir, "transcript.jsonl"), agent)
+ 				}))
+ 			}
+ 		}
+ 	}
+ 
++	// Reviewer runs get truncation failover (Epic 19.5): a truncated, zero-finding
++	// response fails over to the slot's fallback instead of being recorded as a
++	// silent clean review. The executor builds its own engine without this option.
++	opts = append(opts, WithTruncationFailover())
++
+ 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
+ 
+ 	// Chunked strategy (Epic 14.3): a persona fanned out into N chunk-slots comes
+ 	// back as N results under the same Agent name; collapse them into one result
+ 	// per persona BEFORE any downstream step so stage classification, the summary
+ 	// tallies, and writePool (which rejects duplicate agent dirs) all see a single
+ 	// logical source with Reviewer=<persona>. In bulk strategy names are unique, so
+ 	// this is a no-op.
+ 	//
+ 	// Serial-lane personas run their chunk-slots sequentially, so their true
+ 	// wall-clock duration is the sum of chunk durations; parallel-lane personas
+ 	// take the maximum. Pass the serial set so mergeChunkResults can distinguish.
+ 	serialAgents := make(map[string]bool, len(p.Slots))
+ 	for _, s := range p.Slots {
+ 		if s.Serial {
+ 			serialAgents[s.Primary.Name] = true
+ 		}
+ 	}
+ 	results = mergeChunkResults(results, serialAgents)
+ 
+ 	// Classify the run into the manifest's review-stage entry and stamp the
+ 	// snapshot provenance (nil when no agent ran with tools).
+ 	stage := reviewStageFor(results)
+ 	if stage != nil {
+ 		stage.SnapshotMode = snapMode
+ 		stage.HeadSHA = snapHeadSHA
+ 		stage.SnapshotWorktreePath = snapWorktreePath
+ 	}
+ 	return results, stage
+ }
+ 
+ // ExecuteReview runs phase two: fan out the prepared roster under the global
+ // timeout, then write per-agent artifacts, the merged pool, summary.json, and
+ // the finalized manifest (Partial reflecting the outcome). The completer is
+ // injected so the CLI uses the real HTTP client and tests use a fake/httptest.
+ //
+ // Artifacts are always persisted, even when every agent fails; in that case the
+ // populated *ReviewResult is still returned alongside the wrapped
+ // ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
+ // remains for inspection. The background MCP path discards the error (status is
+ // read from disk) while the CLI maps it to the process exit code.
+ //
+ // Graceful-shutdown note: cooperative shutdown preserves agents that finished
+ // before the signal; in-flight agents share the cancelled parent ctx and are cut
+ // off (classified as timeout). Truly completing in-flight work would require
+ // running them on an uncancelled child ctx — a deliberate engine change out of
+ // scope here.
+diff --git a/internal/fanout/status.go b/internal/fanout/status.go
+index ac22ec3a..ad221c74 100644
+--- a/internal/fanout/status.go
++++ b/internal/fanout/status.go
+@@ -281,64 +281,73 @@ func EnsureReviewComplete(reviewDir, id string) error {
+ // AgentStatus is the per-agent status.json record. It is always written —
+ // regardless of outcome — so post-hoc analysis can see which reviewers
+ // participated. Truncated/FilesDropped record byte-budget truncation and are
+ // never silent (AC 06-03): when an agent's payload was truncated, Truncated is
+ // true and FilesDropped lists the dropped paths.
+ type AgentStatus struct {
+ 	Agent         string   `json:"agent"`
+ 	Status        string   `json:"status"`
+ 	FindingsCount int      `json:"findings_count"`
+ 	DurationMS    int64    `json:"duration_ms"`
+ 	PayloadMode   string   `json:"payload_mode"`
+ 	Truncated     bool     `json:"truncated"`
+ 	FilesDropped  []string `json:"files_dropped"`
+ 	FallbackUsed  bool     `json:"fallback_used,omitempty"`
+ 	FallbackFrom  string   `json:"fallback_from,omitempty"`
+ 	Error         string   `json:"error,omitempty"`
+ 
++	// ResponseTruncated marks that this agent's model response was cut off on
++	// finish_reason "length" (token budget exhausted) — DISTINCT from Truncated
++	// above (byte-budget PAYLOAD truncation) and TruncatedByMaxFindings (the
++	// max_findings cap). It is the per-agent observability marker for runaway
++	// responses; a truncated agent with findings_count 0 is a truncated_zero_findings
++	// event tallied at the run level in PoolSummary (Epic 19.5). omitempty keeps it
++	// absent from the common non-truncated status.json.
++	ResponseTruncated bool `json:"response_truncated,omitempty"`
++
+ 	// Post-processing enforcement counters (Epic 2.2). Always present so a
+ 	// zero is distinguishable from an older status.json that predates the field.
+ 	DroppedByMinSeverity   int `json:"dropped_by_min_severity"`
+ 	TruncatedByMaxFindings int `json:"truncated_by_max_findings"`
+ 
+ 	// Per-agent usage (Epic 3.3 scorecard): the model id and provider-reported
+ 	// token counts, persisted so the reconcile-time scorecard emitter can source
+ 	// per-reviewer model/tokens (and derive cost) from a separate process.
+ 	// omitempty so a zero-usage run (a failed agent, or a fake completer in tests
+ 	// that reports no usage) keeps status.json byte-identical to the pre-3.3
+ 	// shape; statusFor only sets them when real usage was reported.
+ 	Model     string `json:"model,omitempty"`
+ 	TokensIn  int    `json:"tokens_in,omitempty"`
+ 	TokensOut int    `json:"tokens_out,omitempty"`
+ 
+ 	// Per-agent counters for the agentic stages (Epic 2.0 tool loop). Pointers +
+ 	// omitempty so they are absent from every 1.x status.json (no tool loop ran),
+ 	// yet a tool-enabled agent records an explicit zero even when it degraded or
+ 	// tripped before any tool ran (statusFor sets them iff the agent was
+ 	// tool-enabled). ToolsDegraded marks a tool agent that fell back to
+ 	// single-shot; TrippedBudgets names every budget that halted the loop.
+ 	Turns          *int     `json:"turns,omitempty"`
+ 	ToolCalls      *int     `json:"tool_calls,omitempty"`
+ 	ToolBytes      *int64   `json:"tool_bytes,omitempty"`
+ 	ToolsDegraded  bool     `json:"tools_degraded,omitempty"`
+ 	ToolsRequested bool     `json:"tools_requested,omitempty"`
+ 	TrippedBudgets []string `json:"tripped_budgets,omitempty"`
+ 
+ 	// CacheHit marks a result replayed from the diff cache (Epic 5.2) instead of
+ 	// a live API call. omitempty so a live review's status.json is byte-identical
+ 	// to the pre-5.2 shape; only a cached replay records cache_hit:true, making a
+ 	// stale-serve auditable in the artifacts rather than invisible.
+ 	CacheHit bool `json:"cache_hit,omitempty"`
+ 
+ 	// UnreviewedChunks is the count of a chunked persona's bins that failed so
+ 	// their files went unreviewed even though the persona reports OK (Epic 14.3
+ 	// partial coverage). omitempty so a full-coverage or bulk run keeps
+ 	// status.json/summary.json byte-identical to the pre-field shape; statusFor
+ 	// sets it only when the merged result recorded partial coverage, making an
+ 	// otherwise-green (but incomplete) CI gate auditable.
+ 	UnreviewedChunks int `json:"unreviewed_chunks,omitempty"`
+ }
+ 
+ // WriteStatus serializes s to path as indented JSON, writing atomically (temp
+ // file + rename) so a crash never leaves a half-written status. FilesDropped is
+ // normalized to a non-nil slice so truncation state is always explicit (never
+ // silent). Per AC 06-03 a write failure names the agent.
+diff --git a/internal/llmclient/client.go b/internal/llmclient/client.go
+index 90ff75d8..07c046cb 100644
+--- a/internal/llmclient/client.go
++++ b/internal/llmclient/client.go
+@@ -210,18 +210,24 @@ func clampNonNegative(n json.Number) int {
+ 	return int(v)
+ }
+ 
++// chatChoice is one decoded choice. FinishReason carries the provider's stop
++// reason so the single-shot path can detect a "length" (token-budget) truncation,
++// mirroring what the Chat (tool-loop) path already reads.
++type chatChoice struct {
++	Message      message `json:"message"`
++	FinishReason string  `json:"finish_reason"`
++}
++
+ type chatResponse struct {
+-	Choices []struct {
+-		Message message `json:"message"`
+-	} `json:"choices"`
+-	Usage UsageData `json:"usage"`
++	Choices []chatChoice `json:"choices"`
++	Usage   UsageData    `json:"usage"`
+ }
+ 
+ // CallRecord is per-attempt telemetry for one c.attempt() invocation. dispatch
+ // accumulates one record per attempt — retries included — so callers can count
+ // real HTTP round-trips and observe per-attempt latency. ReachedWire reports
+ // whether the request was written to the wire (detected via httptrace): it is
+ // false when the call never left the process (a context cancel before the bytes
+ // were sent, or a request-construction failure) and true once any bytes were
+ // written, even if the attempt then failed mid-flight. Duration is the wall-clock
+ // time the attempt took, recorded for every attempt regardless of ReachedWire.
+@@ -243,50 +249,77 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
+ // CompleteWithUsage is Complete plus the provider's token usage and the per-call
+ // telemetry for the dispatch (one CallRecord per HTTP attempt, retries included).
+ // Usage is the zero value when the provider omits the `usage` block. All error
+ // paths return an empty UsageData, never partial counts. The CallRecord slice is
+ // surfaced on every path that reached dispatch — including error paths — so a
+ // mid-flight timeout still reports its wire attempt; it is nil only when no HTTP
+ // attempt was made (key/marshal failure, or a circuit-open fail-fast).
+ func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string, UsageData, []CallRecord, error) {
++	comp, err := c.CompleteWithMeta(ctx, inv)
++	return comp.Content, comp.Usage, comp.CallRecords, err
++}
++
++// Completion is the single-shot result plus the response metadata a caller needs
++// to tell a clean completion from a truncated one. Truncated is true when the
++// provider reported finish_reason "length" (token budget exhausted): the content
++// may be partial, or a salvaged reasoning_content, so it must NOT be treated as a
++// complete answer. Usage/CallRecords mirror CompleteWithUsage.
++type Completion struct {
++	Content     string
++	Usage       UsageData
++	CallRecords []CallRecord
++	Truncated   bool
++}
++
++// CompleteWithMeta is CompleteWithUsage plus the truncation signal: it reports
++// whether the provider stopped on finish_reason "length". CompleteWithUsage and
++// Complete delegate to it, so the decode logic — including the reasoning_content
++// salvage — lives in exactly one place. Truncated is preserved even on the salvage
++// path (empty content, reasoning_content used) and on the both-empty error path,
++// so a caller inspecting the returned Completion always sees whether the budget
++// was exhausted. Error/CallRecord semantics are identical to the prior
++// CompleteWithUsage body.
++func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completion, error) {
+ 	key, err := resolveKey(inv)
+ 	if err != nil {
+-		return "", UsageData{}, nil, err
++		return Completion{}, err
+ 	}
+ 	body, err := json.Marshal(chatRequest{
+ 		Model:       inv.Model,
+ 		Messages:    []message{{Role: "user", Content: inv.Prompt}},
+ 		Temperature: inv.Temperature,
+ 		MaxTokens:   inv.MaxTokens,
+ 	})
+ 	if err != nil {
+-		return "", UsageData{}, nil, fmt.Errorf("encoding request: %w", err)
++		return Completion{}, fmt.Errorf("encoding request: %w", err)
+ 	}
+ 	raw, records, err := c.send(ctx, resolveEndpoint(inv.BaseURL), key, body)
+ 	if err != nil {
+-		return "", UsageData{}, records, err
++		return Completion{CallRecords: records}, err
+ 	}
+ 	var parsed chatResponse
+ 	if err := json.Unmarshal(raw, &parsed); err != nil {
+-		return "", UsageData{}, records, fmt.Errorf("failed to parse response: %w", err)
++		return Completion{CallRecords: records}, fmt.Errorf("failed to parse response: %w", err)
+ 	}
+ 	if len(parsed.Choices) == 0 {
+-		return "", UsageData{}, records, fmt.Errorf("failed to parse response: no choices returned")
++		return Completion{CallRecords: records}, fmt.Errorf("failed to parse response: no choices returned")
+ 	}
+-	msg := parsed.Choices[0].Message
+-	content := msg.Content
++	ch := parsed.Choices[0]
++	truncated := ch.FinishReason == "length"
++	content := ch.Message.Content
+ 	if content == "" {
+ 		// Reasoning model that ran out of output budget mid-thought: salvage the
+ 		// chain-of-thought so the reviewer still contributes instead of returning
+-		// an empty review.
+-		content = msg.ReasoningContent
++		// an empty review. Truncated (captured above) is preserved so the caller
++		// still knows this salvaged content is partial.
++		content = ch.Message.ReasoningContent
+ 	}
+ 	if content == "" {
+ 		// Both content and reasoning_content are empty: the provider said nothing.
+ 		// Fail loudly so callers cannot mistake silence for a clean/empty review.
+ 		// Non-retryable — a re-request with the same budget would repeat the result.
+-		return "", UsageData{}, records, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning_content)"))
++		return Completion{CallRecords: records, Truncated: truncated}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning_content)"))
+ 	}
+-	return content, parsed.Usage, records, nil
++	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated}, nil
+ }
+ 
+ // resolveKey reads the invocation's API key env var; the value is never logged.
+diff --git a/internal/llmclient/client_test.go b/internal/llmclient/client_test.go
+index b8059bc4..27cd165f 100644
+--- a/internal/llmclient/client_test.go
++++ b/internal/llmclient/client_test.go
+@@ -25,10 +25,8 @@ const testKey = "sk-secret-value-123"
+ // okResponse writes a minimal valid chat-completions response.
+ func okResponse(w http.ResponseWriter, content string) {
+ 	resp := chatResponse{}
+-	resp.Choices = append(resp.Choices, struct {
+-		Message message `json:"message"`
+-	}{Message: message{Role: "assistant", Content: content}})
++	resp.Choices = append(resp.Choices, chatChoice{Message: message{Role: "assistant", Content: content}})
+ 	_ = json.NewEncoder(w).Encode(resp)
+ }
+ 
+ // fastRetry builds a client whose backoff is negligible so tests do not sleep.
+@@ -59,21 +57,19 @@ func TestComplete_Success(t *testing.T) {
+ func TestComplete_FallsBackToReasoningWhenContentEmpty(t *testing.T) {
+ 	// A reasoning model that exhausts its output budget mid-thought returns an
+ 	// empty content with the chain-of-thought in reasoning_content. The reviewer
+ 	// must salvage the reasoning (its draft findings are recoverable downstream)
+ 	// rather than contribute an empty review.
+ 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+ 		resp := chatResponse{}
+-		resp.Choices = append(resp.Choices, struct {
+-			Message message `json:"message"`
+-		}{Message: message{Role: "assistant", Content: "", ReasoningContent: "HIGH|a.go:1|bug|fix|correctness|5|evidence|greta"}})
++		resp.Choices = append(resp.Choices, chatChoice{Message: message{Role: "assistant", Content: "", ReasoningContent: "HIGH|a.go:1|bug|fix|correctness|5|evidence|greta"}})
+ 		_ = json.NewEncoder(w).Encode(resp)
+ 	}))
+ 	defer srv.Close()
+ 	t.Setenv("TEST_KEY", testKey)
+ 
+ 	out, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+ 		BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review this",
+ 	})
+ 	require.NoError(t, err)
+ 	assert.Contains(t, out, "HIGH|a.go:1|bug")
+ }
+@@ -81,19 +77,17 @@ func TestComplete_FallsBackToReasoningWhenContentEmpty(t *testing.T) {
+ func TestComplete_ContentWinsOverReasoning(t *testing.T) {
+ 	// When both arrive, visible content is authoritative and the reasoning
+ 	// chain-of-thought must not leak into the returned review.
+ 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+ 		resp := chatResponse{}
+-		resp.Choices = append(resp.Choices, struct {
+-			Message message `json:"message"`
+-		}{Message: message{Role: "assistant", Content: "CLEAN REVIEW", ReasoningContent: "private thoughts"}})
++		resp.Choices = append(resp.Choices, chatChoice{Message: message{Role: "assistant", Content: "CLEAN REVIEW", ReasoningContent: "private thoughts"}})
+ 		_ = json.NewEncoder(w).Encode(resp)
+ 	}))
+ 	defer srv.Close()
+ 	t.Setenv("TEST_KEY", testKey)
+ 
+ 	out, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+ 		BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review this",
+ 	})
+ 	require.NoError(t, err)
+ 	assert.Equal(t, "CLEAN REVIEW", out)
+ }
+@@ -939,21 +933,19 @@ func TestWithHTTPClient_PreservesNoRedirectGuard(t *testing.T) {
+ func TestCompleteWithUsage_EmptyCompletionReturnsError(t *testing.T) {
+ 	// When both content and reasoning_content are empty, the call must fail
+ 	// loudly so callers do not propagate an empty review as success.
+ 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+ 		resp := chatResponse{}
+-		resp.Choices = append(resp.Choices, struct {
+-			Message message `json:"message"`
+-		}{Message: message{Role: "assistant", Content: "", ReasoningContent: ""}})
++		resp.Choices = append(resp.Choices, chatChoice{Message: message{Role: "assistant", Content: "", ReasoningContent: ""}})
+ 		_ = json.NewEncoder(w).Encode(resp)
+ 	}))
+ 	defer srv.Close()
+ 	t.Setenv("TEST_KEY", testKey)
+ 
+ 	out, _, _, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+ 		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+ 	})
+ 	require.Error(t, err)
+ 	assert.Empty(t, out)
+ 	assert.Contains(t, err.Error(), "empty completion")
+ 	assert.False(t, atcrerrors.IsRetryable(err), "an empty completion must not be retryable")
+ }
+diff --git a/internal/llmclient/truncation_test.go b/internal/llmclient/truncation_test.go
+new file mode 100644
+index 00000000..dac1a4f6
+--- /dev/null
++++ b/internal/llmclient/truncation_test.go
+@@ -0,0 +1,90 @@
++package llmclient
++
++import (
++	"context"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// respondJSON writes a raw chat-completions JSON body so these tests are
++// independent of the decode struct's exact Go shape (they assert the wire
++// contract: finish_reason=length ⇒ Truncated).
++func respondJSON(w http.ResponseWriter, body string) {
++	w.Header().Set("Content-Type", "application/json")
++	_, _ = w.Write([]byte(body))
++}
++
++func TestCompleteWithMeta_TruncatedOnLength(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		respondJSON(w, `{"choices":[{"message":{"role":"assistant","content":"partial ramble with no findings"},"finish_reason":"length"}]}`)
++	}))
++	defer srv.Close()
++	t.Setenv("TEST_KEY", testKey)
++
++	c := fastRetry(srv.Client())
++	comp, err := c.CompleteWithMeta(context.Background(), Invocation{
++		BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "p",
++	})
++	require.NoError(t, err)
++	assert.Equal(t, "partial ramble with no findings", comp.Content)
++	assert.True(t, comp.Truncated, "finish_reason=length must set Truncated")
++}
++
++func TestCompleteWithMeta_NotTruncatedOnStop(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		respondJSON(w, `{"choices":[{"message":{"role":"assistant","content":"HIGH|a.go:1|bug|fix|correctness|5|ev|bruce"},"finish_reason":"stop"}]}`)
++	}))
++	defer srv.Close()
++	t.Setenv("TEST_KEY", testKey)
++
++	c := fastRetry(srv.Client())
++	comp, err := c.CompleteWithMeta(context.Background(), Invocation{
++		BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "p",
++	})
++	require.NoError(t, err)
++	assert.False(t, comp.Truncated)
++}
++
++// TruncatedWithSalvagedReasoning is the exact runaway scenario: budget burned in
++// the <think> block, finish_reason=length, content empty but reasoning_content
++// carries the ramble. The salvage must still surface Truncated=true so callers
++// cannot mistake the salvaged content for a clean completion.
++func TestCompleteWithMeta_TruncatedWithSalvagedReasoning(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		respondJSON(w, `{"choices":[{"message":{"role":"assistant","content":"","reasoning_content":"thinking... no findings emitted"},"finish_reason":"length"}]}`)
++	}))
++	defer srv.Close()
++	t.Setenv("TEST_KEY", testKey)
++
++	c := fastRetry(srv.Client())
++	comp, err := c.CompleteWithMeta(context.Background(), Invocation{
++		BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "p",
++	})
++	require.NoError(t, err)
++	assert.Equal(t, "thinking... no findings emitted", comp.Content)
++	assert.True(t, comp.Truncated)
++}
++
++// CompleteWithUsage must keep its existing four-value contract after being
++// refactored to delegate to CompleteWithMeta (regression guard for the mocks and
++// callers that still use it).
++func TestCompleteWithUsage_StillReturnsContentAndUsage(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		respondJSON(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`)
++	}))
++	defer srv.Close()
++	t.Setenv("TEST_KEY", testKey)
++
++	c := fastRetry(srv.Client())
++	content, usage, _, err := c.CompleteWithUsage(context.Background(), Invocation{
++		BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "p",
++	})
++	require.NoError(t, err)
++	assert.Equal(t, "ok", content)
++	assert.Equal(t, 10, usage.PromptTokens)
++	assert.Equal(t, 5, usage.CompletionTokens)
++}
+diff --git a/internal/verify/executor.go b/internal/verify/executor.go
+index a7d2a2fb..256cea99 100644
+--- a/internal/verify/executor.go
++++ b/internal/verify/executor.go
+@@ -21,10 +21,20 @@ import (
+ // executorCompleter is the single-shot model call the fix-generation phase needs.
+ // *llmclient.Client satisfies it. It is the seam that lets tests drive fix
+ // generation with a scripted completer instead of a real provider.
+ type executorCompleter interface {
+ 	Complete(ctx context.Context, inv llmclient.Invocation) (string, error)
+ }
+ 
++// metaCompleter is the optional truncation-aware extension of executorCompleter:
++// it reports whether the fix response was truncated on finish_reason "length".
++// callExecutor type-asserts for it so a truncated (incomplete) fix is never
++// silently presented as a clean patch. *llmclient.Client satisfies it via
++// CompleteWithMeta; a completer that does not implement it degrades to Complete
++// with truncated=false (Epic 19.5).
++type metaCompleter interface {
++	CompleteWithMeta(ctx context.Context, inv llmclient.Invocation) (llmclient.Completion, error)
++}
++
+ // newExecutorClient builds the production executor completer. It is a package-level
+ // seam (rather than a runVerify parameter) so the executor wiring does not churn
+ // runVerify's many call sites; tests override it via swapExecutorClient.
+@@ -67,175 +77,198 @@ func anyFixEligible(findings []reconcile.JSONFinding, ex *registry.ExecutorConfi
+ // generateFixes is the fix-generation phase (Epic 7.0). For every finding whose
+ // confidence is HIGH-or-better (so VERIFIED — the tier the verify stage promotes
+ // confirmed findings to — is included) AND whose severity meets the executor's
+ // min_severity_for_fix floor, it reads a code snippet around the finding from the
+ // review snapshot (via the read-only dispatcher) and asks the single executor model
+ // for a minimal fix, writing it into the finding's Fix column and appending
+ // "fix by <name>" to Evidence.
+ //
+ // It mutates findings in place and is run after verdict application / confidence
+ // recompute and before the artifacts are serialized, so fixes ride into
+ // findings.json. Eligible findings are processed by a bounded worker pool (cap
+ // reg.Verify.MaxParallel, default 4) rather than serially — each fix is an
+ // independent executor round-trip — and every worker mutates only its own
+ // findings element, the same per-index-write invariant the skeptic stage relies
+ // on, so no mutex is needed. Failure isolation mirrors the verify stage: a snippet read
+ // failure, an executor error, or an empty completion leaves that finding's existing
+ // Fix/Evidence untouched and is logged, never returned — fix generation never fails
+ // the run. A nil executor, completer, or registry is a no-op; disp may be nil (snapshot
+ // unavailable), in which case the snippet is omitted and the executor works from the
+ // finding text alone.
+ // cc is the multi-turn ChatCompleter the skeptics use; it is non-nil only when the
+ // tool harness was built (at least one skeptic ran). Agent
+ // mode (Epic 7.4) borrows it and disp to drive a read-only tool loop per finding
+ // (invokeExecutor) instead of the single-shot snippet path. When ex.AgentMode is
+ // set but cc or disp is nil (harness unavailable), generateFixes degrades to the
+ // snippet path with a logged warning rather than dropping the fix — agent_mode=false
+ // is the unchanged Epic 7.0 path regardless of cc.
+ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *registry.ExecutorConfig, reg *registry.Registry, complete executorCompleter, cc fanout.ChatCompleter, disp Dispatcher, sharedTimeoutSecs int) {
+ 	if ex == nil || complete == nil || reg == nil {
+ 		return
+ 	}
+ 	// Defense-in-depth: registry validation already guarantees the executor's
+ 	// provider is defined, so this guard never fires on a validated registry. It
+ 	// protects the direct-call path (e.g. tests building a Registry in memory) from
+ 	// a nil-map panic and documents the invariant rather than assuming it.
+ 	prov, ok := reg.Providers[ex.Provider]
+ 	if !ok {
+ 		logPipelineWarning(log.FromContext(ctx), "executor_unknown_provider", ex.Provider)
+ 		return
+ 	}
+ 	minSev := ex.EffectiveFixMinSeverity()
+ 	// Bounded worker pool (mirrors the skeptic stage in pipeline.go): the
+ 	// eligibility filters below are cheap and stay on the calling goroutine, but
+ 	// each eligible finding's snippet read + executor round-trip + writes run in
+ 	// their own goroutine under a semaphore capped at reg.Verify.MaxParallel.
+ 	maxPar := reg.Verify.MaxParallel
+ 	if maxPar <= 0 {
+ 		maxPar = 4
+ 	}
+ 	sem := make(chan struct{}, maxPar)
+ 	var wg sync.WaitGroup
+ 	for i := range findings {
+ 		// Bail promptly on cancellation: without this the loop keeps enqueuing
+ 		// every remaining finding even after ctx is done, and a nil fix_timeout
+ 		// can leave each callExecutor blocked on a provider that ignores ctx.
+ 		if ctx.Err() != nil {
+ 			break
+ 		}
+ 		f := &findings[i]
+ 		if !reclib.ConfidenceAtOrAbove(f.Confidence, reclib.ConfHigh) {
+ 			continue
+ 		}
+ 		if !meetsSeverityFloor(f.Severity, minSev) {
+ 			continue
+ 		}
+ 		// Idempotency + cost control: a finding this executor already attributed (a
+ 		// prior verify run generated its fix) is not re-generated. The guard matches
+ 		// a delimited "; "-token, not a raw substring, so a name that is a strict
+ 		// prefix of another ("op" vs "opus") or unrelated evidence prose containing
+ 		// "fix by <name>" mid-sentence does not silently suppress generation.
+ 		if hasFixAttribution(f.Evidence, ex.Name) {
+ 			continue
+ 		}
+ 		wg.Add(1)
+ 		sem <- struct{}{}
+ 		go func(f *reconcile.JSONFinding) {
+ 			defer wg.Done()
+ 			defer func() { <-sem }()
+ 			// Two fix-generation paths share one set of post-processing rules below
+ 			// (empty-check, attribution, syntax guard): out carries the raw fix text;
+ 			// warn carries a non-empty failure reason that short-circuits to FixWarning.
+ 			var out, warn string
++			var truncated bool
+ 			if ex.AgentMode && cc != nil && disp != nil {
+ 				// Agent mode (Epic 7.4): drive the read-only tool loop, reusing the
+ 				// dispatcher the skeptics use. invokeExecutor never errors — a failure
+ 				// (provider error, tripped budget, parse failure) comes back as warn.
+-				out, warn = invokeExecutor(ctx, ex, prov, *f, cc, disp, sharedTimeoutSecs)
++				out, warn, truncated = invokeExecutor(ctx, ex, prov, *f, cc, disp, sharedTimeoutSecs)
+ 			} else {
+ 				if ex.AgentMode {
+ 					// Agent mode requested but the harness is unavailable (no skeptics
+ 					// ran and no snapshot was built). Degrade to the snippet path rather
+ 					// than dropping the fix (AC6).
+ 					missing := []string{}
+ 					if cc == nil {
+ 						missing = append(missing, "chat")
+ 					}
+ 					if disp == nil {
+ 						missing = append(missing, "dispatcher")
+ 					}
+ 					logPipelineWarning(log.FromContext(ctx), "executor_agent_mode_fallback", fmt.Sprintf("%s:%d: %s unavailable, using snippet path", f.File, f.Line, strings.Join(missing, "/")))
+ 				}
+ 				snippet := readFixSnippet(ctx, disp, f.File, f.Line)
+ 				prompt := buildFixPrompt(*f, snippet, ex)
+-				o, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs)
++				o, tr, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs)
+ 				if err != nil {
+ 					warn = "fix generation failed: " + err.Error()
+ 				} else {
+ 					out = o
++					truncated = tr
+ 				}
+ 			}
+ 			if warn != "" {
+ 				logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %s", f.File, f.Line, warn))
+ 				f.FixWarning = warn
+ 				return
+ 			}
++			// Response truncation (Epic 19.5): a fix cut off on finish_reason=length is
++			// incomplete by construction. Never present it as a clean patch — flag it
++			// (non-silent) and drop the partial text so a truncated runaway fails over
++			// visibly instead of landing a silent no-op "success". Takes priority over
++			// the empty-completion branch below (truncation is the more specific cause).
++			if truncated {
++				logPipelineWarning(log.FromContext(ctx), "executor_truncated_fix", fmt.Sprintf("%s:%d", f.File, f.Line))
++				f.FixWarning = "fix generation truncated (finish_reason=length); no usable patch"
++				return
++			}
+ 			fix := strings.TrimSpace(out)
+ 			if fix == "" {
+ 				logPipelineWarning(log.FromContext(ctx), "executor_empty_fix", fmt.Sprintf("%s:%d", f.File, f.Line))
+ 				f.FixWarning = "fix generation returned an empty completion"
+ 				return
+ 			}
+ 			f.Fix = fix
+ 			f.Evidence = appendFixAttribution(f.Evidence, ex.Name)
+ 			// Local syntax guard (Epic 7.1): parse the generated fix before it is
+ 			// presented. A fix that is plausibly Go code yet fails to parse is flagged
+ 			// via FixWarning while the attempted fix stays visible; prose change-
+ 			// instructions and valid code clear any warning a prior failed/empty/invalid
+ 			// run left, so a finding never carries both a good Fix and a stale warning.
+ 			//
+ 			// Ownership: generateFixes owns FixWarning end-to-end. The valid-syntax
+ 			// branch clears it unconditionally, so this stage assumes any prior value is
+ 			// its own (a failed/empty/invalid attempt from an earlier run). No current
+ 			// caller pre-seeds FixWarning; one that wanted to carry a non-syntax warning
+ 			// would need this clear narrowed to only generateFixes-owned prefixes.
+ 			if synErr := validateGoFixSyntax(fix); synErr != nil {
+ 				logPipelineWarning(log.FromContext(ctx), "executor_invalid_syntax", fmt.Sprintf("%s:%d: %v", f.File, f.Line, synErr))
+ 				f.FixWarning = "invalid_syntax: " + synErr.Error()
+ 			} else {
+ 				f.FixWarning = ""
+ 			}
+ 		}(f)
+ 	}
+ 	wg.Wait()
+ }
+ 
+ // callExecutor invokes the executor model for one finding, applying a per-call
+ // deadline scoped to this single call. The deadline is the executor's own
+ // fix_timeout when set, otherwise the resolved shared verify timeout (600s
+ // default) — see ExecutorConfig.EffectiveExecutorTimeoutSecs. It is applied
+ // unconditionally so a default executor (nil fix_timeout) against a hung provider
+ // cannot block the verify run unbounded.
+-func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string, sharedTimeoutSecs int) (string, error) {
++// callExecutor returns the fix content, whether the response was truncated on
++// finish_reason=length, and any error. The truncation bool is only ever true via
++// the MetaCompleter path; a Complete-only completer reports false.
++func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string, sharedTimeoutSecs int) (string, bool, error) {
+ 	// EffectiveExecutorTimeoutSecs only consults Settings.TimeoutSecs, so a partial
+ 	// Settings literal is sufficient here.
+ 	timeout := ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs})
+ 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+ 	defer cancel()
+ 	// Temperature is sent on every executor call (Epic 7.0.1): the resolver supplies
+ 	// the deterministic 0.0 default when temperature is unset, so fixes are
+ 	// predictable rather than inheriting the provider's own (often higher) default.
+ 	// Bind to a local so its address outlives this expression.
+ 	temp := ex.EffectiveExecutorTemperature()
+-	return complete.Complete(callCtx, llmclient.Invocation{
++	inv := llmclient.Invocation{
+ 		BaseURL:     prov.BaseURL,
+ 		APIKeyEnv:   prov.APIKeyEnv,
+ 		Model:       ex.Model,
+ 		Temperature: &temp,
+ 		Prompt:      prompt,
+-	})
++	}
++	// Prefer the truncation-aware path so a finish_reason=length fix is observable
++	// and never silently accepted as a clean patch (Epic 19.5).
++	if mc, ok := complete.(metaCompleter); ok {
++		comp, err := mc.CompleteWithMeta(callCtx, inv)
++		return comp.Content, comp.Truncated, err
++	}
++	content, err := complete.Complete(callCtx, inv)
++	return content, false, err
+ }
+ 
+ // readFixSnippet reads up to fixSnippetRadius lines on each side of line from file
+ // in the review snapshot, via the read-only read_file tool on the dispatcher. It
+ // returns "" (best-effort) when the dispatcher is unavailable, the file is empty,
+ // or the read fails — the executor then works from the finding text alone.
+@@ -354,63 +387,67 @@ func appendFixAttribution(evidence, name string) string {
+ // invokeExecutor runs the executor in agent mode (Epic 7.4): it drives a read-only
+ // tool loop against disp (the same dispatcher skeptics use), then parses the JSON fix
+ // response. It NEVER returns an error — every failure (engine halt, provider error,
+ // tripped budget, malformed output) becomes a non-empty warn string the caller folds
+ // into FixWarning, so the run continues and the finding is never dropped. On success
+ // it returns (fix, ""); on failure ("", warn).
+ //
+ // It mirrors invokeSkeptic structurally: a single tool-enabled fanout.Agent run
+ // through a throwaway fanout.Engine wired to cc + disp. The difference is the goal —
+ // generate a fix, not issue a verdict — and the simpler response schema.
+ //
+ // Budget handling differs deliberately from invokeSkeptic. A skeptic that trips its
+ // turn budget yields "unverifiable" (a partial investigation must not become a
+ // confident verdict). The executor does the opposite: when the max_tool_calls cap is
+ // reached the engine forces a best-effort final answer (requestFinalAnswer), and AC3
+ // requires the executor to emit THAT fix "from available context" rather than discard
+ // it. So only a non-OK status (provider error, or a timeout that halted the loop) is a
+ // failure (AC4: timeout/error → FixWarning); a StatusOK result with a tripped budget
+ // flows into the fix parser below. max_tool_calls → the agent's MaxTurns budget.
+-func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov registry.Provider, finding reconcile.JSONFinding, cc fanout.ChatCompleter, disp Dispatcher, sharedTimeoutSecs int) (string, string) {
++// invokeExecutor returns the parsed fix, a non-empty warn describing any failure,
++// and whether the underlying response was truncated on finish_reason=length. The
++// truncation flag is surfaced on every path so generateFixes can refuse a
++// truncated (incomplete) patch even when it otherwise parsed cleanly (Epic 19.5).
++func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov registry.Provider, finding reconcile.JSONFinding, cc fanout.ChatCompleter, disp Dispatcher, sharedTimeoutSecs int) (string, string, bool) {
+ 	logger := log.FromContext(ctx)
+ 	logger.Debug("agent-mode executor entry", "file", finding.File, "line", finding.Line, "max_tool_calls", ex.EffectiveMaxToolCalls())
+ 	prompt := buildExecutorAgentPrompt(finding)
+ 	agent := buildExecutorAgent(ex, prov, prompt, sharedTimeoutSecs)
+ 	engine := newFanoutEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(logger))
+ 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
+ 	// One slot yields one result; guard the index so a zero-length return cannot
+ 	// panic (a panic would violate the never-fail-the-run contract).
+ 	if len(results) == 0 {
+-		return "", "agent_mode failed: engine returned no result"
++		return "", "agent_mode failed: engine returned no result", false
+ 	}
+ 	res := results[0]
+ 	// Only a non-OK status is a hard failure (provider error → StatusFailed; a
+ 	// deadline that halted the loop → StatusTimeout). A StatusOK result that tripped
+ 	// the max_tool_calls cap is NOT a failure: res.Content carries the engine's forced
+ 	// final answer, which AC3 requires the executor to emit. The tripped budget is
+ 	// surfaced in the warn only on the failure path for diagnostics.
+ 	if res.Status != fanout.StatusOK {
+ 		var b strings.Builder
+ 		fmt.Fprintf(&b, "agent_mode failed: tool loop halted (status: %s)", res.Status)
+ 		if len(res.TrippedBudgets) > 0 {
+ 			b.WriteString("; tripped budgets: " + strings.Join(res.TrippedBudgets, ", "))
+ 		}
+ 		if res.Err != nil {
+ 			b.WriteString("; error: " + res.Err.Error())
+ 		}
+-		return "", b.String()
++		return "", b.String(), res.ResponseTruncated
+ 	}
+ 	fix, err := parseExecutorResponse(res.Content)
+ 	if err != nil {
+-		return "", "agent_mode parse error: " + err.Error()
++		return "", "agent_mode parse error: " + err.Error(), res.ResponseTruncated
+ 	}
+-	return fix, ""
++	return fix, "", res.ResponseTruncated
+ }
+ 
+ // buildExecutorAgent assembles the tool-enabled fanout.Agent for agent-mode fix
+ // generation (Epic 7.4), mirroring buildSkepticAgent. Tools and SupportsFC are both
+ // forced true: opting into agent_mode asserts a tool-capable model, so the loop
+ // fires; a model that genuinely lacks function calling degrades to single-shot in the
+ // engine rather than failing every call. MaxTurns is the resolved max_tool_calls
+ // budget (default 10). TimeoutSecs is the executor's resolved fix deadline so a hung
+ // provider cannot block the loop unbounded. Temperature defaults to the deterministic
+ // 0.0 (EffectiveExecutorTemperature). Provider BaseURL/APIKeyEnv route the call.
+diff --git a/internal/verify/executor_agent_test.go b/internal/verify/executor_agent_test.go
+index 109b81f9..3cbb5abe 100644
+--- a/internal/verify/executor_agent_test.go
++++ b/internal/verify/executor_agent_test.go
+@@ -189,54 +189,54 @@ func testExecProviderVal() registry.Provider {
+ }
+ 
+ func TestInvokeExecutor_Success(t *testing.T) {
+-	fix, warn := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
++	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+ 		eligibleFinding()[0], finalChat(`{"fix": "x", "explanation": "y"}`), okDispatcher(), 0)
+ 	assert.Equal(t, "x", fix)
+ 	assert.Equal(t, "", warn)
+ }
+ 
+ func TestInvokeExecutor_ProviderErrorReturnsWarn(t *testing.T) {
+ 	cc := &fakeChatCompleter{turns: []chatTurn{{err: errors.New("boom")}}}
+-	fix, warn := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
++	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+ 		eligibleFinding()[0], cc, okDispatcher(), 0)
+ 	assert.Equal(t, "", fix)
+ 	assert.Contains(t, warn, "agent_mode failed")
+ 	assert.Contains(t, warn, "boom")
+ }
+ 
+ // AC3 tripped budget: a StatusOK result that exhausted max_tool_calls still emits
+ // the forced final answer and produces no FixWarning.
+ func TestInvokeExecutor_TrippedBudgetStillEmitsFix(t *testing.T) {
+ 	ex := agentExecConfig()
+ 	ex.MaxToolCalls = intPtr(1)
+ 	cc := &fakeChatCompleter{turns: []chatTurn{
+ 		toolCallTurn("read_file"),
+ 		{content: `{"fix": "guard the nil deref", "explanation": "forced final answer"}`},
+ 	}}
+-	fix, warn := invokeExecutor(context.Background(), ex, testExecProviderVal(),
++	fix, warn, _ := invokeExecutor(context.Background(), ex, testExecProviderVal(),
+ 		eligibleFinding()[0], cc, okDispatcher(), 0)
+ 	assert.Equal(t, "guard the nil deref", fix)
+ 	assert.Equal(t, "", warn)
+ }
+ 
+ // AC4 timeout: a deadline that halts the tool loop yields StatusTimeout and the
+ // warn carries both the status and the tripped-budget marker.
+ func TestInvokeExecutor_TimeoutReturnsWarn(t *testing.T) {
+ 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+ 	defer cancel()
+ 	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"fix": "x"}`, delay: 100 * time.Millisecond}}}
+-	fix, warn := invokeExecutor(ctx, agentExecConfig(), testExecProviderVal(),
++	fix, warn, _ := invokeExecutor(ctx, agentExecConfig(), testExecProviderVal(),
+ 		eligibleFinding()[0], cc, okDispatcher(), 0)
+ 	assert.Equal(t, "", fix)
+ 	assert.Contains(t, warn, "status: timeout")
+ 	assert.Contains(t, warn, "tripped budgets: timeout")
+ }
+ 
+ func TestInvokeExecutor_ParseErrorReturnsWarn(t *testing.T) {
+-	fix, warn := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
++	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+ 		eligibleFinding()[0], finalChat("I could not find a fix"), okDispatcher(), 0)
+ 	assert.Equal(t, "", fix)
+ 	assert.Contains(t, warn, "agent_mode parse error")
+ }
+ 
+ // --- parseExecutorResponse unit tests ---
+@@ -345,15 +345,15 @@ func swapFanoutEngine(fake fanoutRunner) func() {
+ // Defensive guard: when the engine returns zero results the run must not panic
+ // and must report a warn — never-fail-the-run contract.
+ func TestInvokeExecutor_ZeroResults_Warns(t *testing.T) {
+ 	restore := swapFanoutEngine(zeroResultEngine{})
+ 	defer restore()
+-	fix, warn := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
++	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+ 		eligibleFinding()[0], finalChat("unused"), okDispatcher(), 0)
+ 	assert.Equal(t, "", fix)
+ 	assert.Contains(t, warn, "engine returned no result")
+ }
+ 
+ // TestBuildExecutorAgentPromptWithSentinel_InjectedCloseTagStaysInsideBlock pins the
+ // injection-defense contract: a reviewer-authored </sentinel> inside finding.Problem
+ // must stay inside the data block and not prematurely close it. Uses a fixed sentinel
+ // so the open/close positions are deterministic.
+diff --git a/internal/verify/executor_truncation_test.go b/internal/verify/executor_truncation_test.go
+new file mode 100644
+index 00000000..26e09f9e
+--- /dev/null
++++ b/internal/verify/executor_truncation_test.go
+@@ -0,0 +1,67 @@
++package verify
++
++import (
++	"context"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/reconcile"
++	"github.com/stretchr/testify/assert"
++)
++
++// truncatingExecutor is a snippet-path executorCompleter whose CompleteWithMeta
++// reports a finish_reason=length truncation with non-empty (rambling) content —
++// the runaway fixer scenario the fix must NOT silently accept.
++type truncatingExecutor struct {
++	content string
++}
++
++func (t *truncatingExecutor) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
++	return t.content, nil
++}
++
++func (t *truncatingExecutor) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
++	return llmclient.Completion{Content: t.content, Truncated: true}, nil
++}
++
++func truncFinding() reconcile.JSONFinding {
++	return reconcile.JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified}
++}
++
++// Snippet path (AC scenario c): a truncated fix must be flagged non-silently and
++// NOT presented as a usable patch — no silent no-op success.
++func TestGenerateFixes_SnippetTruncated_FlagsNoUsablePatch(t *testing.T) {
++	findings := []reconcile.JSONFinding{truncFinding()}
++	// Prose-ish content that would otherwise pass the syntax guard and be accepted
++	// as a clean fix; truncation must override that.
++	rec := &truncatingExecutor{content: "change the query to use a parameterized statement instead of str"}
++	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
++	f := findings[0]
++	assert.Empty(t, f.Fix, "a truncated fix must NOT be presented as a usable patch")
++	assert.Contains(t, f.FixWarning, "truncated", "the truncation must be surfaced non-silently")
++}
++
++// Agent-mode path: a truncated agent-mode fix (parseable, so no parse warn masks
++// it) must also be flagged and dropped.
++func TestGenerateFixes_AgentModeTruncated_FlagsNoUsablePatch(t *testing.T) {
++	findings := []reconcile.JSONFinding{truncFinding()}
++	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"fix":"partial patch that got cut off"}`, truncated: true}}}
++	generateFixes(context.Background(), findings, agentExecConfig(), execRegistry("MEDIUM"), &recordingExecutor{}, cc, okDispatcher(), 0)
++	f := findings[0]
++	assert.Empty(t, f.Fix, "a truncated agent-mode fix must NOT be presented as a usable patch")
++	assert.Contains(t, f.FixWarning, "truncated")
++}
++
++// Regression: a NON-truncated snippet fix still lands normally (the truncation
++// guard does not disturb the clean path).
++func TestGenerateFixes_SnippetNotTruncated_StillLands(t *testing.T) {
++	findings := []reconcile.JSONFinding{truncFinding()}
++	rec := &truncatingExecutor{content: "use a parameterized query"}
++	// Override to a clean (non-truncated) completer by using recordingExecutor.
++	_ = rec
++	clean := &recordingExecutor{out: "use a parameterized query"}
++	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), clean, nil, okDispatcher(), 0)
++	f := findings[0]
++	assert.Equal(t, "use a parameterized query", f.Fix)
++	assert.Empty(t, f.FixWarning)
++}
+diff --git a/internal/verify/mock_test.go b/internal/verify/mock_test.go
+index 8a3690a8..bc278fc2 100644
+--- a/internal/verify/mock_test.go
++++ b/internal/verify/mock_test.go
+@@ -13,17 +13,18 @@ import (
+ // chatTurn scripts one Chat response. A non-empty toolCalls makes the turn an
+ // assistant tool-call turn (content null); otherwise it is a final message
+ // carrying content. err makes the turn fail; delay blocks until the delay
+ // elapses or the context is cancelled (timeout simulation).
+ type chatTurn struct {
+ 	toolCalls []llmclient.ToolCall
+ 	content   string
+ 	err       error
+ 	delay     time.Duration
++	truncated bool // final content turn hit finish_reason=length (Epic 19.5)
+ }
+ 
+ // fakeChatCompleter implements fanout.ChatCompleter (Complete + Chat). Each Chat
+ // call pops the next scripted turn; calls past the end return a default final
+ // message so a tripped loop's final-answer request always resolves. Complete
+ // returns the first turn's content (or empty if no turns) so the single-shot
+ // degrade path returns a real verdict — tests can assert the outcome, not just
+ // "unverifiable". Safe for concurrent use.
+@@ -46,41 +47,44 @@ func (f *fakeChatCompleter) Complete(_ context.Context, _ llmclient.Invocation)
+ func (f *fakeChatCompleter) Chat(ctx context.Context, _ llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+ 	f.mu.Lock()
+ 	call := f.idx
+ 	f.idx++
+ 	f.chatCalls++
+ 	var turn chatTurn
+ 	if call < len(f.turns) {
+ 		turn = f.turns[call]
+ 	} else {
+ 		// Past the script: a final no-tools answer so a budget-trip final request
+ 		// always resolves. Default to a parseable unverifiable verdict.
+ 		turn = chatTurn{content: `{"verdict":"unverifiable","reasoning":"default final answer"}`}
+ 	}
+ 	f.mu.Unlock()
+ 
+ 	if turn.delay > 0 {
+ 		select {
+ 		case <-time.After(turn.delay):
+ 		case <-ctx.Done():
+ 			return nil, ctx.Err()
+ 		}
+ 	}
+ 	if err := ctx.Err(); err != nil {
+ 		return nil, err
+ 	}
+ 	if turn.err != nil {
+ 		return nil, turn.err
+ 	}
+ 	msg := llmclient.Message{Role: "assistant"}
+ 	fr := "stop"
+ 	if len(turn.toolCalls) > 0 {
+ 		msg.ToolCalls = turn.toolCalls
+ 		fr = "tool_calls"
+ 	} else {
+ 		c := turn.content
+ 		msg.Content = &c
++		if turn.truncated {
++			fr = "length"
++		}
+ 	}
+-	return &llmclient.ChatResponse{Message: msg, FinishReason: fr}, nil
++	return &llmclient.ChatResponse{Message: msg, FinishReason: fr, Truncated: turn.truncated}, nil
+ }
+ 
+ // finalChat returns a completer that answers with content on its first turn.
