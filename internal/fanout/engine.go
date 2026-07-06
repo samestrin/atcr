@@ -695,7 +695,7 @@ func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 			log.FromContext(ctx).Warn("diff cache read failed; calling live", "agent", a.Name, "err", err)
 		} else if hit {
 			log.FromContext(ctx).Debug("diff cache hit; replaying without API call", "agent", a.Name, "model", a.Invocation.Model)
-			r := Result{
+			return Result{
 				Agent:       a.Name,
 				Content:     content,
 				Status:      StatusOK,
@@ -712,8 +712,6 @@ func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 				Model:          a.Invocation.Model,
 				CacheHit:       true,
 			}
-			r.ParsedFindingCount() // cache the count so findingsFor can reuse it
-			return r
 		}
 	}
 	r := e.invokeSingleShot(ctx, a)
@@ -786,7 +784,6 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 	}
 	r.Content = content
 	r.Status = StatusOK
-	r.ParsedFindingCount() // compute and cache the parsed-finding count once
 	return r
 }
 
