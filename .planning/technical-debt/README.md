@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 0 | 19 | 0 |
-| LOW | 3 | 25 | 0 |
+| LOW | 3 | 25 | 1 |
 
-**Last Modified:** 2026-07-05 | **Open Items:** 3 | **Deferred Items:** 45 | **Resolved Items:** 0 | **Total Items:** 48
+**Last Modified:** 2026-07-05 | **Open Items:** 3 | **Deferred Items:** 45 | **Resolved Items:** 1 | **Total Items:** 49
 
 ## Directory Structure
 
@@ -63,11 +63,17 @@ table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
 
+### [2026-07-05] From Sprint: 19.2_shared_registry_remote
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| U | [ ] | LOW | internal/registry/overlay.go:163 | fetchRemoteRegistry validates the http/https scheme and emits the one-time insecure warning only on the INITIAL rawURL, but http.DefaultClient.Do follows redirects by default. An https registry URL that 30x-redirects to an http (or unexpected-host) location is followed without re-checking the scheme or warning, so the transport can be silently downgraded to plaintext despite the code's deliberate http-vs-https handling. Threat is limited because ATCR_REGISTRY_URL points at a team-trusted source, but a compromised/misconfigured redirect bypasses the insecure-URL guard. | Set a CheckRedirect on a dedicated http.Client (the Clarifications already called for a dedicated client rather than http.DefaultClient) that re-runs the scheme check on each hop and either rejects an https->http downgrade or routes it through warnInsecureRegistryURLOnce. Add a redirect test using two httptest servers. | security | 30 | code-review | claude | MEDIUM |
+
 ### [2026-07-05] From Sprint: epic-19.2
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | LOW | internal/registry/overlay.go:warnInsecureRegistryURLOnce | The non-https warning uses a process-global sync.Once, so a long-lived process that loads two different insecure http registry URLs (env changed between loads) warns only for the first and silently accepts later insecure URLs | Key the warning on the distinct URL (e.g. a sync.Map of seen URLs) instead of a single process-global Once | OBSERVABILITY | 20 | execute-epic-independent |
+| 1 | [x] | LOW | internal/registry/overlay.go:warnInsecureRegistryURLOnce | The non-https warning uses a process-global sync.Once, so a long-lived process that loads two different insecure http registry URLs (env changed between loads) warns only for the first and silently accepts later insecure URLs | Key the warning on the distinct URL (e.g. a sync.Map of seen URLs) instead of a single process-global Once | OBSERVABILITY | 20 | execute-epic-independent |
 | 1 | [ ] | LOW | internal/registry/overlay.go:fetchRemoteRegistry | Scheme validation checks only the initial URL; http.DefaultClient follows redirects, so an https registry URL that 30x-redirects to http or an internal host is fetched without re-validating scheme or warning | Set http.Client.CheckRedirect to re-run the http/https scheme check (and insecure warning) on each redirect hop | SECURITY | 30 | execute-epic-independent |
 | 1 | [ ] | LOW | internal/registry/overlay.go:remoteFetchTimeout | remoteFetchTimeout/remoteRegistryBodyLimit/insecureRegistryWarnWriter are package-level mutable vars used only as test seams; no prod race today but a future t.Parallel test mutating them would race concurrent loads | Inject via a config struct or function params, or enforce that mutating tests never run in parallel | UNDER_ENGINEERING | 30 | execute-epic-independent |
 
