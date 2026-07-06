@@ -99,6 +99,21 @@ func TestLoadShards_UnreadableShardIsError(t *testing.T) {
 	require.Error(t, err)
 }
 
+// A shard directory path containing glob metacharacters must be treated
+// literally, not as a pattern.
+func TestLoadShards_GlobMetacharactersInDirPath(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "[brackets]")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, Append(ShardPath(dir, ts), []Record{{Timestamp: ts, ID: "meta", File: "a.go"}}))
+
+	recs, err := LoadShards(dir)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "meta", recs[0].ID)
+}
+
 // Only *.jsonl files are shards; unrelated files in the dir are ignored.
 func TestLoadShards_IgnoresNonJSONLFiles(t *testing.T) {
 	dir := t.TempDir()
