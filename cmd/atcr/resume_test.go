@@ -229,7 +229,10 @@ func TestResume_AppendsFindingHistory(t *testing.T) {
 	liveReviewConfig(t, srv.URL, "bruce")
 
 	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
-	histPath := filepath.Join(".", ".atcr", "findings-history.jsonl")
+	// History now shards by month under .planning/history (Epic 19.4); the review
+	// and the resume below both run in the current month, so they append to the
+	// same shard. Read that shard directly.
+	histPath := history.ShardPath(filepath.Join(".", ".planning", "history"), time.Now())
 	before, err := history.Load(histPath)
 	require.NoError(t, err)
 	require.NotEmpty(t, before, "fresh review should have appended history")
