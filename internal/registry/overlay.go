@@ -95,11 +95,11 @@ var remoteFetchTimeout = 10 * time.Second
 var remoteRegistryBodyLimit int64 = 5 * 1024 * 1024
 
 // insecureRegistryWarnWriter is the sink for the one-time non-https warning; a
-// var so tests can capture it. insecureRegistryWarnOnce keeps the warning to a
-// single emission per process regardless of how many times the registry loads.
+// var so tests can capture it. insecureRegistryWarnSeen tracks URLs that have
+// already drawn the warning so each distinct insecure registry URL warns once.
 var (
 	insecureRegistryWarnWriter io.Writer = os.Stderr
-	insecureRegistryWarnOnce   sync.Once
+	insecureRegistryWarnSeen   sync.Map
 )
 
 // parseRegistryFile reads and strictly parses a user-level registry, stamping
@@ -206,13 +206,15 @@ func fetchRemoteRegistry(rawURL string) ([]byte, error) {
 
 // warnInsecureRegistryURLOnce emits a single stderr warning when the registry is
 // fetched over plaintext http. The URL is redacted of any embedded credentials
-// before it is shown.
+// before it is shown; each distinct redacted URL warns once.
 func warnInsecureRegistryURLOnce(rawURL string) {
-	insecureRegistryWarnOnce.Do(func() {
-		_, _ = fmt.Fprintf(insecureRegistryWarnWriter,
-			"warning: %s uses insecure http (%s); prefer https for a shared registry\n",
-			registryURLEnv, redactRegistryURL(rawURL))
-	})
+	redacted := redactRegistryURL(rawURL)
+	if _, loaded := insecureRegistryWarnSeen.LoadOrStore(redacted, true); loaded {
+		return
+	}
+	_, _ = fmt.Fprintf(insecureRegistryWarnWriter,
+		"warning: %s uses insecure http (%s); prefer https for a shared registry\n",
+		registryURLEnv, redacted)
 }
 
 // redactRegistryURL returns a display-safe form of rawURL with any embedded

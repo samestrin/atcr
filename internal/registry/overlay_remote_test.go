@@ -62,15 +62,15 @@ func TestParseRegistryFile_URLUnset_ReadsLocal(t *testing.T) {
 }
 
 // resetInsecureWarn swaps the insecure-http warning sink to buf and resets the
-// one-time guard so a test can observe the warning deterministically.
+// seen-URL set so a test can observe the warning deterministically.
 func resetInsecureWarn(t *testing.T, buf *bytes.Buffer) {
 	t.Helper()
 	prevWriter := insecureRegistryWarnWriter
 	insecureRegistryWarnWriter = buf
-	insecureRegistryWarnOnce = sync.Once{}
+	insecureRegistryWarnSeen = sync.Map{}
 	t.Cleanup(func() {
 		insecureRegistryWarnWriter = prevWriter
-		insecureRegistryWarnOnce = sync.Once{}
+		insecureRegistryWarnSeen = sync.Map{}
 	})
 }
 
