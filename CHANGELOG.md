@@ -1,3 +1,19 @@
+## [19.5.0] - 2026-07-06
+
+Detect a truncated model response (`finish_reason=length`) that yields no usable output and route it into the existing fallback chain, instead of silently recording it as a clean "no issues found" review or an empty fix.
+
+### Added
+
+- Reviewer runs now fail over on a truncated, zero-finding response: a reviewer whose reply hit the token ceiling with nothing parseable is marked failed so the slot's fallback agent runs, instead of recording a silent false all-clear. A truncated reply that still parsed at least one finding keeps its findings and is flagged.
+- Per-agent `response_truncated` marker and a run-level `truncated_zero_findings` count in `status.json`/`summary.json`, so runaway rates are observable across runs.
+
+### Fixed
+
+- The fixer/executor no longer silently emits a no-op "success" when its response is truncated: a cut-off fix is flagged (`fix generation truncated`) and never presented as a usable patch.
+- A truncated runaway response is no longer written to the diff cache, so it cannot be replayed as a clean review on a later same-diff run.
+
+*Shipped via /execute-epic (epic 19.5)*
+
 ## [Technical Debt] - 2026-07-06
 
 ### Fixed

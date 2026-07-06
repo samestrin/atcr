@@ -25,6 +25,16 @@ type executorCompleter interface {
 	Complete(ctx context.Context, inv llmclient.Invocation) (string, error)
 }
 
+// metaCompleter is the optional truncation-aware extension of executorCompleter:
+// it reports whether the fix response was truncated on finish_reason "length".
+// callExecutor type-asserts for it so a truncated (incomplete) fix is never
+// silently presented as a clean patch. *llmclient.Client satisfies it via
+// CompleteWithMeta; a completer that does not implement it degrades to Complete
+// with truncated=false (Epic 19.5).
+type metaCompleter interface {
+	CompleteWithMeta(ctx context.Context, inv llmclient.Invocation) (llmclient.Completion, error)
+}
+
 // newExecutorClient builds the production executor completer. It is a package-level
 // seam (rather than a runVerify parameter) so the executor wiring does not churn
 // runVerify's many call sites; tests override it via swapExecutorClient.
@@ -146,11 +156,12 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// (empty-check, attribution, syntax guard): out carries the raw fix text;
 			// warn carries a non-empty failure reason that short-circuits to FixWarning.
 			var out, warn string
+			var truncated bool
 			if ex.AgentMode && cc != nil && disp != nil {
 				// Agent mode (Epic 7.4): drive the read-only tool loop, reusing the
 				// dispatcher the skeptics use. invokeExecutor never errors — a failure
 				// (provider error, tripped budget, parse failure) comes back as warn.
-				out, warn = invokeExecutor(ctx, ex, prov, *f, cc, disp, sharedTimeoutSecs)
+				out, warn, truncated = invokeExecutor(ctx, ex, prov, *f, cc, disp, sharedTimeoutSecs)
 			} else {
 				if ex.AgentMode {
 					// Agent mode requested but the harness is unavailable (no skeptics
@@ -167,16 +178,27 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				}
 				snippet := readFixSnippet(ctx, disp, f.File, f.Line)
 				prompt := buildFixPrompt(*f, snippet, ex)
-				o, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs)
+				o, tr, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs)
 				if err != nil {
 					warn = "fix generation failed: " + err.Error()
 				} else {
 					out = o
+					truncated = tr
 				}
 			}
 			if warn != "" {
 				logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %s", f.File, f.Line, warn))
 				f.FixWarning = warn
+				return
+			}
+			// Response truncation (Epic 19.5): a fix cut off on finish_reason=length is
+			// incomplete by construction. Never present it as a clean patch — flag it
+			// (non-silent) and drop the partial text so a truncated runaway fails over
+			// visibly instead of landing a silent no-op "success". Takes priority over
+			// the empty-completion branch below (truncation is the more specific cause).
+			if truncated {
+				logPipelineWarning(log.FromContext(ctx), "executor_truncated_fix", fmt.Sprintf("%s:%d", f.File, f.Line))
+				f.FixWarning = "fix generation truncated (finish_reason=length); no usable patch"
 				return
 			}
 			fix := strings.TrimSpace(out)
@@ -215,7 +237,10 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 // default) — see ExecutorConfig.EffectiveExecutorTimeoutSecs. It is applied
 // unconditionally so a default executor (nil fix_timeout) against a hung provider
 // cannot block the verify run unbounded.
-func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string, sharedTimeoutSecs int) (string, error) {
+// callExecutor returns the fix content, whether the response was truncated on
+// finish_reason=length, and any error. The truncation bool is only ever true via
+// the MetaCompleter path; a Complete-only completer reports false.
+func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string, sharedTimeoutSecs int) (string, bool, error) {
 	// EffectiveExecutorTimeoutSecs only consults Settings.TimeoutSecs, so a partial
 	// Settings literal is sufficient here.
 	timeout := ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs})
@@ -226,13 +251,21 @@ func callExecutor(ctx context.Context, complete executorCompleter, prov registry
 	// predictable rather than inheriting the provider's own (often higher) default.
 	// Bind to a local so its address outlives this expression.
 	temp := ex.EffectiveExecutorTemperature()
-	return complete.Complete(callCtx, llmclient.Invocation{
+	inv := llmclient.Invocation{
 		BaseURL:     prov.BaseURL,
 		APIKeyEnv:   prov.APIKeyEnv,
 		Model:       ex.Model,
 		Temperature: &temp,
 		Prompt:      prompt,
-	})
+	}
+	// Prefer the truncation-aware path so a finish_reason=length fix is observable
+	// and never silently accepted as a clean patch (Epic 19.5).
+	if mc, ok := complete.(metaCompleter); ok {
+		comp, err := mc.CompleteWithMeta(callCtx, inv)
+		return comp.Content, comp.Truncated, err
+	}
+	content, err := complete.Complete(callCtx, inv)
+	return content, false, err
 }
 
 // readFixSnippet reads up to fixSnippetRadius lines on each side of line from file
@@ -370,7 +403,11 @@ func appendFixAttribution(evidence, name string) string {
 // it. So only a non-OK status (provider error, or a timeout that halted the loop) is a
 // failure (AC4: timeout/error → FixWarning); a StatusOK result with a tripped budget
 // flows into the fix parser below. max_tool_calls → the agent's MaxTurns budget.
-func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov registry.Provider, finding reconcile.JSONFinding, cc fanout.ChatCompleter, disp Dispatcher, sharedTimeoutSecs int) (string, string) {
+// invokeExecutor returns the parsed fix, a non-empty warn describing any failure,
+// and whether the underlying response was truncated on finish_reason=length. The
+// truncation flag is surfaced on every path so generateFixes can refuse a
+// truncated (incomplete) patch even when it otherwise parsed cleanly (Epic 19.5).
+func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov registry.Provider, finding reconcile.JSONFinding, cc fanout.ChatCompleter, disp Dispatcher, sharedTimeoutSecs int) (string, string, bool) {
 	logger := log.FromContext(ctx)
 	logger.Debug("agent-mode executor entry", "file", finding.File, "line", finding.Line, "max_tool_calls", ex.EffectiveMaxToolCalls())
 	prompt := buildExecutorAgentPrompt(finding)
@@ -380,7 +417,7 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 	// One slot yields one result; guard the index so a zero-length return cannot
 	// panic (a panic would violate the never-fail-the-run contract).
 	if len(results) == 0 {
-		return "", "agent_mode failed: engine returned no result"
+		return "", "agent_mode failed: engine returned no result", false
 	}
 	res := results[0]
 	// Only a non-OK status is a hard failure (provider error → StatusFailed; a
@@ -397,13 +434,13 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 		if res.Err != nil {
 			b.WriteString("; error: " + res.Err.Error())
 		}
-		return "", b.String()
+		return "", b.String(), res.ResponseTruncated
 	}
 	fix, err := parseExecutorResponse(res.Content)
 	if err != nil {
-		return "", "agent_mode parse error: " + err.Error()
+		return "", "agent_mode parse error: " + err.Error(), res.ResponseTruncated
 	}
-	return fix, ""
+	return fix, "", res.ResponseTruncated
 }
 
 // buildExecutorAgent assembles the tool-enabled fanout.Agent for agent-mode fix
