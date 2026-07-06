@@ -36,11 +36,17 @@ type PoolSummary struct {
 	Partial       bool          `json:"partial"`
 	TotalFindings int           `json:"total_findings"`
 	// TruncatedZeroFindings counts agents whose model response was truncated on
-	// finish_reason "length" AND yielded zero parseable findings — the runaway rate
-	// the reviewer truncation-failover guard reacts to (Epic 19.5). It is the
-	// run-level tally of the per-agent AgentStatus.ResponseTruncated marker for
-	// zero-finding agents; a truncated agent that still kept >=1 finding is NOT
-	// counted (its partial findings landed). Always present so a 0 is
+	// finish_reason "length" AND kept zero findings after grounding + per-source
+	// constraints — the GROUNDED AgentStatus.FindingsCount, NOT the raw
+	// ParseModelOutput count (Epic 19.5). It is the run-level tally of truncated
+	// agents that contributed nothing to the merged pool; a truncated agent that
+	// kept >=1 GROUNDED finding is NOT counted (its partial findings landed).
+	// NOTE: this tally is a DIFFERENT signal from the per-attempt
+	// truncation-failover guard (engine.go invokeSlot), which demotes on the RAW
+	// parsed count before grounding. A truncated response that raw-parses >=1
+	// finding but has them all dropped as ungrounded/below-min-severity stays
+	// StatusOK (the guard does not fire) yet is counted here. Reconciling the two
+	// is deferred TD, not addressed in this epic. Always present so a 0 is
 	// distinguishable from an older summary.json that predates the field.
 	TruncatedZeroFindings int `json:"truncated_zero_findings"`
 	// FailureMarker is true only when writeFailureSummary produced this record
