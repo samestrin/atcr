@@ -178,6 +178,21 @@ func TestWarnInsecureRegistryURL_OnceAndRedacted(t *testing.T) {
 	assert.NotContains(t, out, "tok-secret", "query-string token must be redacted")
 }
 
+// TestWarnInsecureRegistryURL_PerDistinctURL proves the warning is keyed per
+// distinct insecure URL, so changing ATCR_REGISTRY_URL to a different plaintext
+// registry still draws a warning rather than being silently accepted.
+func TestWarnInsecureRegistryURL_PerDistinctURL(t *testing.T) {
+	var buf bytes.Buffer
+	resetInsecureWarn(t, &buf)
+
+	warnInsecureRegistryURLOnce("http://a.example/registry.yaml")
+	warnInsecureRegistryURLOnce("http://b.example/registry.yaml")
+	warnInsecureRegistryURLOnce("http://a.example/registry.yaml") // duplicate, must not re-warn
+
+	out := buf.String()
+	assert.Equal(t, 2, strings.Count(out, "warning:"), "each distinct insecure URL must warn once")
+}
+
 // TestRedactRegistryURL strips userinfo, query, and fragment, and is a no-op for
 // a clean URL.
 func TestRedactRegistryURL(t *testing.T) {
