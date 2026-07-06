@@ -1,11 +1,13 @@
 // Package history persists code-review findings across runs and answers
 // time-windowed, per-package queries against that ledger (Epic 19.0).
 //
-// Every `atcr review` run appends one JSON record per finding to an append-only
-// JSONL ledger at .atcr/findings-history.jsonl. The `atcr history` command reads
-// that ledger back, filtered by a duration window (--since) and a package path
-// prefix (--package), and renders a markdown table of counts by severity per
-// package.
+// Every `atcr review` run appends one JSON record per finding to the current
+// month's shard, an append-only JSONL file at .planning/history/YYYY-MM.jsonl
+// (Epic 19.4 — sharding by month keeps the version-controlled history from
+// churning one ever-growing blob). The `atcr history` command reads every shard
+// back, merged with the legacy pre-19.4 flat ledger at .atcr/findings-history.jsonl
+// if present, filtered by a duration window (--since) and a package path prefix
+// (--package), and renders a markdown table of counts by severity per package.
 package history
 
 import (

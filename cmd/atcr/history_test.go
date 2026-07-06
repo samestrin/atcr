@@ -38,6 +38,57 @@ func writeHistoryLedger(t *testing.T, root string, lines ...map[string]any) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "findings-history.jsonl"), buf.Bytes(), 0o644))
 }
 
+// writeHistoryShard lays down a monthly shard .planning/history/<YYYY-MM>.jsonl
+// (Epic 19.4) with the given records. It also drops a .git marker so repoRoot()
+// resolves to root even when no .atcr tree is present.
+func writeHistoryShard(t *testing.T, root string, ts time.Time, lines ...map[string]any) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	dir := filepath.Join(root, ".planning", "history")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	for _, l := range lines {
+		require.NoError(t, enc.Encode(l))
+	}
+	shard := filepath.Join(dir, ts.UTC().Format("2006-01")+".jsonl")
+	require.NoError(t, os.WriteFile(shard, buf.Bytes(), 0o644))
+}
+
+// AC2: `atcr history` reads monthly shards under .planning/history without the
+// caller naming a shard.
+func TestHistoryCmd_ReadsMonthlyShards(t *testing.T) {
+	root := t.TempDir()
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	writeHistoryShard(t, root, recent, map[string]any{
+		"ts": recent.UTC().Format(time.RFC3339), "package": "internal/registry", "severity": "HIGH",
+		"id": "s1", "file": "internal/registry/a.go", "category": "C",
+	})
+	out, err := runHistoryIn(t, root)
+	require.NoError(t, err)
+	assert.Contains(t, out, "| Package |")
+	assert.Contains(t, out, "internal/registry")
+}
+
+// Legacy migration: the pre-19.4 flat .atcr ledger and the new shards are merged
+// into one query result.
+func TestHistoryCmd_MergesLegacyAndShards(t *testing.T) {
+	root := t.TempDir()
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	writeHistoryLedger(t, root, map[string]any{
+		"ts": recent.UTC().Format(time.RFC3339), "package": "legacy/pkg", "severity": "HIGH",
+		"id": "L1", "file": "legacy/pkg/a.go", "category": "C",
+	})
+	writeHistoryShard(t, root, recent, map[string]any{
+		"ts": recent.UTC().Format(time.RFC3339), "package": "shard/pkg", "severity": "MEDIUM",
+		"id": "S1", "file": "shard/pkg/b.go", "category": "C",
+	})
+	out, err := runHistoryIn(t, root)
+	require.NoError(t, err)
+	assert.Contains(t, out, "legacy/pkg")
+	assert.Contains(t, out, "shard/pkg")
+}
+
 func TestHistoryCmd_AbsentHistoryExitsZeroWithMessage(t *testing.T) {
 	root := t.TempDir()
 	out, err := runHistoryIn(t, root)

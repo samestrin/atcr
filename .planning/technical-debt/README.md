@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 0 | 19 | 0 |
-| LOW | 0 | 25 | 0 |
+| MEDIUM | 1 | 19 | 0 |
+| LOW | 4 | 25 | 0 |
 
-**Last Modified:** 2026-07-05 | **Open Items:** 0 | **Deferred Items:** 45 | **Resolved Items:** 0 | **Total Items:** 45
+**Last Modified:** 2026-07-05 | **Open Items:** 5 | **Deferred Items:** 45 | **Resolved Items:** 0 | **Total Items:** 50
 
 ## Directory Structure
 
@@ -62,6 +62,16 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards �
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-05] From Sprint: epic-19.4
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/history/shard.go:33 | LoadShards builds a glob pattern from the dir path, so a repo path containing filepath.Glob metacharacters (e.g. a [1] segment) is parsed as a character class and matches no shards, silently returning empty history instead of the real records | Use os.ReadDir + strings.HasSuffix(name, .jsonl) so the directory path is treated literally | EDGE_CASES | 20 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/history/shard.go:43 | A single unreadable shard (permission/IO) aborts LoadShards/LoadAll and fails atcr history with exit 2, so one bad monthly file bricks all trend queries (deliberate exit-2-on-corrupt contract, but harsher now that history spans many files) | Log-and-skip an unreadable individual shard so the remaining shards stay queryable, mirroring Load's torn-line tolerance | ERROR_PATHS | 20 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/history/shard.go:32 | LoadShards loads every shard into memory before Filter applies --since, so a narrow window still reads all shards (acceptable within the stated 1-2yr bound; no month-prefix pruning) | Skip shard files whose YYYY-MM stem is entirely older than now-since before loading, to keep long histories fast | UNDER_ENGINEERING | 30 | execute-epic-independent |
+| U | [ ] | LOW | cmd/atcr/history.go:50 | History ledger path segments (.planning/history shard dir and legacy .atcr/findings-history.jsonl) are duplicated across review.go, resume.go, and history.go | Centralize as history.ShardDir(root) + history.LegacyLedgerPath(root) helpers so the storage layout lives in one place | CROSS_CUTTING | 15 | execute-epic-cumulative |
+| U | [ ] | MEDIUM | cmd/atcr/resume.go:213 | recordResumeHistory writes shards to a cwd-relative ./.planning/history while review.go uses req.Root and atcr history reads via repoRoot(), so a resume run from a subdirectory writes shards history never reads (pre-existing; resume also writes its audit ledger cwd-relative at resume.go:228 — DEFERRED as out of scope: a resume-wide root-resolution fix spanning the Epic 19.1 audit path) | Resolve repoRoot() once in runResume and pass it to both recordResumeHistory and recordResumeAudit so all resume ledger writes and the read path agree on location | REGRESSION_RISK | 30 | execute-epic-independent |
 
 ### [2026-07-05] From Sprint: epic-19.1
 
