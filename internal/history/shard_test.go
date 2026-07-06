@@ -83,6 +83,22 @@ func TestLoadShards_AbsentDirIsEmptyNotError(t *testing.T) {
 	assert.Empty(t, recs)
 }
 
+// A single unreadable shard currently surfaces as a hard error from LoadShards.
+func TestLoadShards_UnreadableShardIsError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read 000-permission files")
+	}
+	dir := t.TempDir()
+	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	path := ShardPath(dir, ts)
+	require.NoError(t, Append(path, []Record{{Timestamp: ts, ID: "x", File: "a.go"}}))
+	require.NoError(t, os.Chmod(path, 0o000))
+	defer os.Chmod(path, 0o644) // ensure cleanup can remove the file
+
+	_, err := LoadShards(dir)
+	require.Error(t, err)
+}
+
 // Only *.jsonl files are shards; unrelated files in the dir are ignored.
 func TestLoadShards_IgnoresNonJSONLFiles(t *testing.T) {
 	dir := t.TempDir()
