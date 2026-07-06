@@ -1,0 +1,14 @@
+{
+  "agent": "brad",
+  "status": "ok",
+  "findings_count": 0,
+  "duration_ms": 32864,
+  "payload_mode": "blocks",
+  "truncated": false,
+  "files_dropped": [],
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0,
+  "model": "openai/qwen-3.7-plus",
+  "tokens_in": 3408,
+  "tokens_out": 1743
+}
