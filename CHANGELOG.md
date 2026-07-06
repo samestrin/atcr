@@ -1,3 +1,11 @@
+## [Technical Debt] - 2026-07-06
+
+### Fixed
+
+- `internal/history/shard.go`: `LoadAll` now returns legacy and sharded history entries in correct chronological order instead of interleaving them incorrectly.
+- `internal/history/shard.go`: `LoadShards` no longer silently skips unreadable shard files, and glob metacharacters in shard paths are now handled correctly.
+- `atcr review`/`atcr resume`: deduplicated the history-recording logic into a shared `recordHistory` helper backed by centralized `history.ShardDir`/`LegacyLedgerPath`, so `atcr history` correctly merges legacy and sharded entries without mutating the legacy ledger.
+
 ## [19.4.0] - 2026-07-05
 
 Time-based sharding for the findings history so it can be committed to version control (Team Edition) without a single, ever-growing file bloating the repo.

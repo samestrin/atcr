@@ -2,8 +2,10 @@ package history
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -30,9 +32,20 @@ func ShardPath(dir string, ts time.Time) string {
 // Malformed lines inside a shard are skipped by Load; an unreadable shard is a
 // hard error.
 func LoadShards(dir string) ([]Record, error) {
-	matches, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("globbing history shards: %w", err)
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading history shards: %w", err)
+	}
+
+	var matches []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		matches = append(matches, filepath.Join(dir, e.Name()))
 	}
 	sort.Strings(matches)
 
@@ -40,7 +53,10 @@ func LoadShards(dir string) ([]Record, error) {
 	for _, path := range matches {
 		recs, err := Load(path)
 		if err != nil {
-			return nil, err
+			// Skip an unreadable individual shard so the remaining shards stay
+			// queryable, mirroring Load's line-level tolerance.
+			_, _ = fmt.Fprintf(os.Stderr, "warning: skipping unreadable history shard %s: %v\n", path, err)
+			continue
 		}
 		all = append(all, recs...)
 	}
@@ -63,5 +79,5 @@ func LoadAll(shardDir, legacyPath string) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(shards, legacy...), nil
+	return append(legacy, shards...), nil
 }

@@ -83,6 +83,43 @@ func TestLoadShards_AbsentDirIsEmptyNotError(t *testing.T) {
 	assert.Empty(t, recs)
 }
 
+// An unreadable shard is skipped so the remaining shards stay queryable,
+// mirroring Load's line-level tolerance for torn writes.
+func TestLoadShards_SkipsUnreadableShard(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read 000-permission files")
+	}
+	dir := t.TempDir()
+	july := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	aug := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	bad := ShardPath(dir, july)
+	good := ShardPath(dir, aug)
+	require.NoError(t, Append(bad, []Record{{Timestamp: july, ID: "bad", File: "a.go"}}))
+	require.NoError(t, Append(good, []Record{{Timestamp: aug, ID: "good", File: "b.go"}}))
+	require.NoError(t, os.Chmod(bad, 0o000))
+	defer func() { _ = os.Chmod(bad, 0o644) }() // ensure cleanup can remove the file
+
+	recs, err := LoadShards(dir)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "good", recs[0].ID)
+}
+
+// A shard directory path containing glob metacharacters must be treated
+// literally, not as a pattern.
+func TestLoadShards_GlobMetacharactersInDirPath(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "[brackets]")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, Append(ShardPath(dir, ts), []Record{{Timestamp: ts, ID: "meta", File: "a.go"}}))
+
+	recs, err := LoadShards(dir)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "meta", recs[0].ID)
+}
+
 // Only *.jsonl files are shards; unrelated files in the dir are ignored.
 func TestLoadShards_IgnoresNonJSONLFiles(t *testing.T) {
 	dir := t.TempDir()
@@ -116,6 +153,9 @@ func TestLoadAll_MergesShardsAndLegacy(t *testing.T) {
 		ids[r.ID] = true
 	}
 	assert.Equal(t, map[string]bool{"shard1": true, "legacy1": true}, ids)
+	// Chronological ordering: the legacy ledger (pre-19.4) precedes monthly shards.
+	assert.Equal(t, "legacy1", recs[0].ID)
+	assert.Equal(t, "shard1", recs[1].ID)
 }
 
 // Absent shard dir and absent legacy file is a valid empty history.
@@ -142,4 +182,20 @@ func TestLoadAll_DoesNotMutateLegacyFile(t *testing.T) {
 	after, err := os.ReadFile(legacyPath)
 	require.NoError(t, err)
 	assert.Equal(t, before, after, "legacy ledger must be read-only")
+}
+
+// An unreadable legacy file propagates as an error from LoadAll.
+func TestLoadAll_UnreadableLegacyIsError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read 000-permission files")
+	}
+	root := t.TempDir()
+	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+	ts := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, Append(legacyPath, []Record{{Timestamp: ts, ID: "legacy1", File: "b.go"}}))
+	require.NoError(t, os.Chmod(legacyPath, 0o000))
+	defer func() { _ = os.Chmod(legacyPath, 0o644) }() // ensure cleanup can remove the file
+
+	_, err := LoadAll(filepath.Join(root, ".planning", "history"), legacyPath)
+	require.Error(t, err)
 }

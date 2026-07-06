@@ -135,6 +135,16 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		log.FromContext(ctx).Debug(w)
 	}
 
+	// Resolve the repo root once so both the AllComplete re-reconcile path and the
+	// normal completion path append history to the same repo-root-relative shard
+	// the `atcr history` read path uses — never a CWD-relative dir a subdir run
+	// writes but never reads back. Fall back to CWD on resolution failure,
+	// preserving the prior behavior.
+	histRoot, herr := repoRoot()
+	if herr != nil {
+		histRoot = "."
+	}
+
 	// AC2: nothing pending — re-run reconciliation against the complete review and
 	// exit clean, never touching a provider. Clear any stale interrupt marker first
 	// so a review that was interrupted-but-actually-complete reports completed
@@ -147,7 +157,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		if err := resumeReconcile(ctx, cmd, dir); err != nil {
 			return err
 		}
-		recordResumeHistory(ctx, dir, req.StartedAt)
+		recordHistory(ctx, histRoot, dir, req.StartedAt)
 		// AllComplete re-reconciles an already-completed review; no new review work
 		// was performed, so do not append another audit record.
 		return nil
@@ -200,17 +210,21 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	if err := resumeReconcile(ctx, cmd, result.Dir); err != nil {
 		return err
 	}
-	recordResumeHistory(ctx, result.Dir, req.StartedAt)
+	recordHistory(ctx, histRoot, result.Dir, req.StartedAt)
 	recordResumeAudit(cmd, ctx, result.Dir, req.StartedAt, req.PRNumber, req.Range.Base, req.Range.Head)
 	return nil
 }
 
-// recordResumeHistory persists a resumed review's pool findings to the
-// append-only history ledger, mirroring the fresh-review hook in review.go. A
-// history write failure is non-fatal: it must never fail an otherwise-successful
-// resume, so it is logged and swallowed.
-func recordResumeHistory(ctx context.Context, dir string, ts time.Time) {
-	histPath := history.ShardPath(filepath.Join(".", ".planning", "history"), ts)
+// recordHistory persists a review's pool findings (from dir) to the append-only
+// monthly history shard under root, shared by `atcr review` and `atcr resume` so
+// the two paths cannot drift on shard location, root resolution, or logging. The
+// shard dir is derived from root — the resolved repo root — so writes land where
+// `atcr history` reads (the read path resolves the same root via ShardDir),
+// regardless of the caller's CWD. A history write failure is non-fatal: it must
+// never fail an otherwise-successful review or resume, so it is logged and
+// swallowed.
+func recordHistory(ctx context.Context, root, dir string, ts time.Time) {
+	histPath := history.ShardPath(history.ShardDir(root), ts)
 	if n, err := history.RecordReview(histPath, dir, ts); err != nil {
 		log.FromContext(ctx).Warn("failed to append finding history", "error", err)
 	} else if n > 0 {

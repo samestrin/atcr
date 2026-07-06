@@ -16,7 +16,6 @@ import (
 	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
-	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -401,12 +400,11 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// the version-controlled history stops churning one ever-growing blob. A
 	// history write failure is non-fatal: it must never fail an
 	// otherwise-successful review, so it is logged and swallowed.
-	histPath := history.ShardPath(filepath.Join(req.Root, ".planning", "history"), now)
-	if n, herr := history.RecordReview(histPath, result.Dir, now); herr != nil {
-		log.FromContext(ctx).Warn("failed to append finding history", "error", herr)
-	} else if n > 0 {
-		log.FromContext(ctx).Debug("appended finding history", "records", n, "path", histPath)
+	histRoot, rerr := repoRoot()
+	if rerr != nil {
+		histRoot = req.Root // fall back to the review root on resolution failure
 	}
+	recordHistory(ctx, histRoot, result.Dir, now)
 
 	// Append this run's audit record to the append-only compliance ledger (Epic
 	// 19.1): run timestamp, resolved base/head SHAs, PR number (0 = none), and a
