@@ -232,6 +232,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		out.Tools = out.Tools || r.Tools
 		out.ToolsRequested = out.ToolsRequested || r.ToolsRequested
 		out.ToolsDegraded = out.ToolsDegraded || r.ToolsDegraded
+		out.ResponseTruncated = out.ResponseTruncated || r.ResponseTruncated
 		allCacheHit = allCacheHit && r.CacheHit
 		switch r.Status {
 		case StatusOK:
