@@ -61,3 +61,80 @@ func TestToolLoop_SetsResponseTruncatedOnFinalTurn(t *testing.T) {
 	assert.Equal(t, StatusOK, r.Status)
 	assert.True(t, r.ResponseTruncated, "tool loop must surface a truncated final answer onto the Result")
 }
+
+// mapMetaCompleter returns a per-model scripted Completion, so a slot's primary
+// and fallback agents (distinguished by Invocation.Model) can be driven with
+// different truncation/finding shapes.
+type mapMetaCompleter struct {
+	byModel map[string]llmclient.Completion
+}
+
+func (m *mapMetaCompleter) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
+	return m.byModel[inv.Model].Content, nil
+}
+
+func (m *mapMetaCompleter) CompleteWithMeta(_ context.Context, inv llmclient.Invocation) (llmclient.Completion, error) {
+	return m.byModel[inv.Model], nil
+}
+
+// --- Task 2 / AC scenario (a): truncated + 0 findings -> fail + fallback ------
+
+func TestInvokeSlot_TruncatedZeroFindings_FailsAndFallsBack(t *testing.T) {
+	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
+		"primary":  {Content: "I was thinking hard but never emitted a finding", Truncated: true}, // 0 parseable findings
+		"fallback": {Content: "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce"},                       // 1 finding
+	}}
+	e := NewEngine(c, WithTruncationFailover())
+	slot := Slot{
+		Primary:   Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "primary"}},
+		Fallbacks: []Agent{{Name: "bruce-fb", Invocation: llmclient.Invocation{Model: "fallback"}}},
+	}
+	r := e.invokeSlot(context.Background(), slot)
+	assert.Equal(t, StatusOK, r.Status, "fallback rescued the slot")
+	assert.True(t, r.FallbackUsed, "the truncated primary must trigger the fallback chain")
+	assert.Equal(t, "bruce", r.Agent, "attribution follows the slot's primary")
+	assert.Contains(t, r.Content, "HIGH|a.go:1", "the fallback's findings win")
+}
+
+// When every agent in the chain truncates empty, the slot fails (no false clean).
+func TestInvokeSlot_AllTruncatedEmpty_SlotFails(t *testing.T) {
+	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
+		"primary":  {Content: "ramble one", Truncated: true},
+		"fallback": {Content: "ramble two", Truncated: true},
+	}}
+	e := NewEngine(c, WithTruncationFailover())
+	slot := Slot{
+		Primary:   Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "primary"}},
+		Fallbacks: []Agent{{Name: "bruce-fb", Invocation: llmclient.Invocation{Model: "fallback"}}},
+	}
+	r := e.invokeSlot(context.Background(), slot)
+	assert.Equal(t, StatusFailed, r.Status)
+	assert.True(t, r.ResponseTruncated, "the surviving failed result stays marked truncated")
+}
+
+// --- Task 2 / AC scenario (b): truncated + >=1 finding -> StatusOK + marker ---
+
+func TestInvokeSlot_TruncatedWithFindings_StaysOKWithMarker(t *testing.T) {
+	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
+		"primary": {Content: "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce\nMORE ramble cut off mid", Truncated: true},
+	}}
+	e := NewEngine(c, WithTruncationFailover())
+	slot := Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "primary"}}}
+	r := e.invokeSlot(context.Background(), slot)
+	assert.Equal(t, StatusOK, r.Status, "partial findings are kept, not discarded")
+	assert.False(t, r.FallbackUsed)
+	assert.True(t, r.ResponseTruncated, "the truncated marker is preserved on the kept result")
+	assert.Contains(t, r.Content, "HIGH|a.go:1")
+}
+
+// The policy is opt-in: an engine WITHOUT WithTruncationFailover (e.g. the
+// executor's) keeps prior behavior — a truncated-empty response stays StatusOK.
+func TestInvokeSlot_NoFailoverOption_TruncatedEmptyStaysOK(t *testing.T) {
+	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
+		"primary": {Content: "ramble no findings", Truncated: true},
+	}}
+	e := NewEngine(c) // no WithTruncationFailover
+	slot := Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "primary"}}}
+	r := e.invokeSlot(context.Background(), slot)
+	assert.Equal(t, StatusOK, r.Status, "without the option the demotion does not fire")
+}

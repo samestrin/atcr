@@ -14,8 +14,15 @@ import (
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/samestrin/atcr/internal/tools"
 )
+
+// errTruncatedZeroFindings marks a reviewer slot demoted by the truncation-
+// failover policy: the response hit finish_reason=length with zero parsed
+// findings, so it is failed (not recorded as a clean review) to engage the
+// fallback chain (Epic 19.5).
+var errTruncatedZeroFindings = errors.New("response truncated (finish_reason=length) with zero parsed findings")
 
 // Completer abstracts the LLM chat call so the engine can be driven by a fake in
 // tests (deterministic concurrency/fallback assertions) while production uses
@@ -272,6 +279,13 @@ type Engine struct {
 	// still WRITING fresh results, so a flagged run refreshes stale entries and
 	// every subsequent run benefits. No effect when cache is nil.
 	cacheNoRead bool
+	// truncationFailover, when true, makes invokeSlot demote a reviewer response
+	// that was truncated (finish_reason=length) AND parsed to zero findings to
+	// StatusFailed, so the fallback chain engages instead of recording a silent
+	// false "no issues found". Only the review pipeline enables it via
+	// WithTruncationFailover; the executor's engine leaves it false and handles
+	// fixer truncation itself (Epic 19.5).
+	truncationFailover bool
 }
 
 // EngineOption configures an Engine at construction.
@@ -316,6 +330,17 @@ func WithCache(c reviewCache, noRead bool) EngineOption {
 		e.cache = c
 		e.cacheNoRead = noRead
 	}
+}
+
+// WithTruncationFailover makes invokeSlot treat a reviewer response that was
+// truncated on finish_reason "length" AND parsed to zero findings as a failure
+// (StatusFailed), so the slot's fallback chain runs instead of the run recording
+// a silent false "no issues found". A truncated response that still parsed >=1
+// finding is left StatusOK — its partial findings are kept and its
+// ResponseTruncated marker is preserved. Only the review pipeline enables this;
+// the executor's engine does not (it classifies fixer truncation itself). Epic 19.5.
+func WithTruncationFailover() EngineOption {
+	return func(e *Engine) { e.truncationFailover = true }
 }
 
 // WithLogger injects the engine's diagnostic logger. Pass the review_id-
@@ -512,6 +537,20 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			r.FallbackUsed = true
 			r.FallbackFrom = s.Primary.Name
 			r.Agent = s.Primary.Name // attribution follows the slot, not the substitute
+		}
+		// Truncation failover (Epic 19.5): a reviewer response that hit
+		// finish_reason=length with zero parsed findings is a runaway that would
+		// otherwise be recorded as a silent clean review. Demote it to StatusFailed
+		// so the loop descends to the next agent in the chain. A truncated response
+		// that still parsed >=1 finding stays StatusOK (its ResponseTruncated marker
+		// is preserved for status.json). Applied per attempt, so a truncated fallback
+		// also fails over to the next one.
+		if e.truncationFailover && r.Status == StatusOK && r.ResponseTruncated &&
+			len(stream.ParseModelOutput([]byte(r.Content))) == 0 {
+			r.Status = StatusFailed
+			r.Err = errTruncatedZeroFindings
+			log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
+				"agent", a.Name, "model", a.Invocation.Model)
 		}
 		if r.Status == StatusOK {
 			r.DurationMS = time.Since(start).Milliseconds()

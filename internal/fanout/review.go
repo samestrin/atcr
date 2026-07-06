@@ -565,6 +565,11 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 		}
 	}
 
+	// Reviewer runs get truncation failover (Epic 19.5): a truncated, zero-finding
+	// response fails over to the slot's fallback instead of being recorded as a
+	// silent clean review. The executor builds its own engine without this option.
+	opts = append(opts, WithTruncationFailover())
+
 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
 
 	// Chunked strategy (Epic 14.3): a persona fanned out into N chunk-slots comes
