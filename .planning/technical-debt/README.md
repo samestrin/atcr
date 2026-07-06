@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 0 | 19 | 0 |
-| LOW | 3 | 25 | 1 |
+| LOW | 2 | 25 | 2 |
 
-**Last Modified:** 2026-07-05 | **Open Items:** 3 | **Deferred Items:** 45 | **Resolved Items:** 1 | **Total Items:** 49
+**Last Modified:** 2026-07-05 | **Open Items:** 2 | **Deferred Items:** 45 | **Resolved Items:** 2 | **Total Items:** 49
 
 ## Directory Structure
 
@@ -75,7 +75,7 @@ table with zero data loss) is proven by the Go test suite in
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
 | 1 | [x] | LOW | internal/registry/overlay.go:warnInsecureRegistryURLOnce | The non-https warning uses a process-global sync.Once, so a long-lived process that loads two different insecure http registry URLs (env changed between loads) warns only for the first and silently accepts later insecure URLs | Key the warning on the distinct URL (e.g. a sync.Map of seen URLs) instead of a single process-global Once | OBSERVABILITY | 20 | execute-epic-independent |
 | 1 | [ ] | LOW | internal/registry/overlay.go:fetchRemoteRegistry | Scheme validation checks only the initial URL; http.DefaultClient follows redirects, so an https registry URL that 30x-redirects to http or an internal host is fetched without re-validating scheme or warning | Set http.Client.CheckRedirect to re-run the http/https scheme check (and insecure warning) on each redirect hop | SECURITY | 30 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/registry/overlay.go:remoteFetchTimeout | remoteFetchTimeout/remoteRegistryBodyLimit/insecureRegistryWarnWriter are package-level mutable vars used only as test seams; no prod race today but a future t.Parallel test mutating them would race concurrent loads | Inject via a config struct or function params, or enforce that mutating tests never run in parallel | UNDER_ENGINEERING | 30 | execute-epic-independent |
+| 1 | [x] | LOW | internal/registry/overlay.go:remoteFetchTimeout | remoteFetchTimeout/remoteRegistryBodyLimit/insecureRegistryWarnWriter are package-level mutable vars used only as test seams; no prod race today but a future t.Parallel test mutating them would race concurrent loads | Inject via a config struct or function params, or enforce that mutating tests never run in parallel | UNDER_ENGINEERING | 30 | execute-epic-independent |
 
 ### [2026-07-05] From Sprint: epic-19.1
 
