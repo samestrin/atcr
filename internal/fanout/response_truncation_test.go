@@ -2,10 +2,14 @@ package fanout
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // metaTruncatingCompleter implements MetaCompleter so the single-shot path can
@@ -137,4 +141,47 @@ func TestInvokeSlot_NoFailoverOption_TruncatedEmptyStaysOK(t *testing.T) {
 	slot := Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "primary"}}}
 	r := e.invokeSlot(context.Background(), slot)
 	assert.Equal(t, StatusOK, r.Status, "without the option the demotion does not fire")
+}
+
+// --- Task 4: telemetry markers ------------------------------------------------
+
+func TestStatusFor_SetsResponseTruncated(t *testing.T) {
+	st := statusFor(Result{Agent: "bruce", Status: StatusFailed, ResponseTruncated: true}, findingsResult{})
+	assert.True(t, st.ResponseTruncated)
+}
+
+func TestStatusFor_ResponseTruncatedFalseWhenClean(t *testing.T) {
+	st := statusFor(Result{Agent: "bruce", Status: StatusOK}, findingsResult{})
+	assert.False(t, st.ResponseTruncated)
+}
+
+func TestWritePool_CountsTruncatedZeroFindings(t *testing.T) {
+	pool := filepath.Join(t.TempDir(), "pool")
+	results := []Result{
+		// truncated, zero parseable findings -> counted + per-agent marker
+		{Agent: "runaway", Status: StatusFailed, ResponseTruncated: true, Content: "I rambled but emitted no finding", Err: errTruncatedZeroFindings},
+		// truncated, but kept a finding -> per-agent marker, NOT counted in the run tally
+		{Agent: "partial", Status: StatusOK, ResponseTruncated: true, Content: "HIGH|a.go:1|b|f|correctness|5|e|partial"},
+		// clean -> neither
+		{Agent: "clean", Status: StatusOK, Content: "HIGH|b.go:2|b|f|correctness|5|e|clean"},
+	}
+	_, err := WritePool(pool, results, nil)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(pool, "summary.json"))
+	require.NoError(t, err)
+	var ps PoolSummary
+	require.NoError(t, json.Unmarshal(data, &ps))
+
+	assert.Equal(t, 1, ps.TruncatedZeroFindings, "only the truncated zero-finding agent is counted")
+
+	byAgent := map[string]AgentStatus{}
+	for _, a := range ps.Agents {
+		byAgent[a.Agent] = a
+	}
+	assert.True(t, byAgent["runaway"].ResponseTruncated)
+	assert.Equal(t, 0, byAgent["runaway"].FindingsCount)
+	assert.True(t, byAgent["partial"].ResponseTruncated)
+	assert.Equal(t, 1, byAgent["partial"].FindingsCount)
+	assert.False(t, byAgent["clean"].ResponseTruncated)
 }
