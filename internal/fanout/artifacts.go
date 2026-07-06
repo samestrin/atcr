@@ -208,6 +208,12 @@ func findingsFor(r Result, changed payload.ChangedLines) findingsResult {
 	if r.Content == "" {
 		return findingsResult{}
 	}
+	// Reuse the cached count computed when the result was built. A cached zero
+	// count lets us skip a redundant parse for truncated-empty responses that
+	// invokeSlot already demoted (TD-019).
+	if r.parsedFindingCountSet && r.parsedFindingCount == 0 {
+		return findingsResult{}
+	}
 	findings := stream.ParseModelOutput([]byte(r.Content))
 	for i := range findings {
 		findings[i].Reviewer = r.Agent

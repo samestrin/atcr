@@ -247,6 +247,27 @@ type Result struct {
 	// Complete-only test double, or a circuit-open fail-fast), in which case
 	// recordAgentOutcome falls back to the Turns-based count.
 	CallRecords []llmclient.CallRecord
+
+	// parsedFindingCount caches the number of findings produced by
+	// stream.ParseModelOutput(Content) so the truncation-failover gate and
+	// findingsFor can share a single parse instead of each parsing the content
+	// independently (TD-019).
+	parsedFindingCount    int
+	parsedFindingCountSet bool
+}
+
+// ParsedFindingCount returns the number of parseable findings in r.Content,
+// computing and caching the count on first use.
+func (r *Result) ParsedFindingCount() int {
+	if r.Content == "" {
+		return 0
+	}
+	if r.parsedFindingCountSet {
+		return r.parsedFindingCount
+	}
+	r.parsedFindingCount = len(stream.ParseModelOutput([]byte(r.Content)))
+	r.parsedFindingCountSet = true
+	return r.parsedFindingCount
 }
 
 // Engine fans a review out to a roster across a parallel lane (default) and a
@@ -546,7 +567,7 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		// is preserved for status.json). Applied per attempt, so a truncated fallback
 		// also fails over to the next one.
 		if e.truncationFailover && r.Status == StatusOK && r.ResponseTruncated &&
-			len(stream.ParseModelOutput([]byte(r.Content))) == 0 {
+			r.ParsedFindingCount() == 0 {
 			r.Status = StatusFailed
 			r.Err = errTruncatedZeroFindings
 			log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
@@ -674,7 +695,7 @@ func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 			log.FromContext(ctx).Warn("diff cache read failed; calling live", "agent", a.Name, "err", err)
 		} else if hit {
 			log.FromContext(ctx).Debug("diff cache hit; replaying without API call", "agent", a.Name, "model", a.Invocation.Model)
-			return Result{
+			r := Result{
 				Agent:       a.Name,
 				Content:     content,
 				Status:      StatusOK,
@@ -691,6 +712,8 @@ func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 				Model:          a.Invocation.Model,
 				CacheHit:       true,
 			}
+			r.ParsedFindingCount() // cache the count so findingsFor can reuse it
+			return r
 		}
 	}
 	r := e.invokeSingleShot(ctx, a)
@@ -763,6 +786,7 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 	}
 	r.Content = content
 	r.Status = StatusOK
+	r.ParsedFindingCount() // compute and cache the parsed-finding count once
 	return r
 }
 

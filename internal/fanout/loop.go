@@ -176,6 +176,7 @@ func (l *toolLoop) run(ctx context.Context) Result {
 				fmt.Fprintf(os.Stderr, "atcr: warning: agent %s: model %s declared supports_function_calling=true but first response has no tool_calls — possible misconfiguration\n", l.agent.Name, l.agent.Invocation.Model)
 			}
 			l.res.Content = derefContent(resp.Message.Content)
+			l.res.ParsedFindingCount() // cache the count so findingsFor can reuse it
 			// finish_reason=length on the final content turn: the answer is cut off.
 			// Surface it so the reviewer truncation-failover policy can react (Epic 19.5).
 			l.res.ResponseTruncated = resp.Truncated
