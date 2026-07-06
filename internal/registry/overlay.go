@@ -106,6 +106,31 @@ var (
 	insecureRegistryWarnSeen   sync.Map
 )
 
+// remoteRegistryClient fetches the registry with a redirect policy that
+// re-validates the scheme on every hop (see checkRegistryRedirect), so an
+// https->http downgrade — or a redirect to a plaintext/other-scheme host —
+// cannot bypass the scheme guard fetchRemoteRegistry applies to the initial URL.
+var remoteRegistryClient = &http.Client{CheckRedirect: checkRegistryRedirect}
+
+// checkRegistryRedirect re-applies fetchRemoteRegistry's scheme policy to each
+// redirect hop: https is followed silently, http draws the per-URL insecure
+// warning (so a downgrade is never silent), and any other scheme is rejected
+// before the hop is taken. It also preserves the 10-redirect cap that
+// http.DefaultClient enforces by default.
+func checkRegistryRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("%s: stopped after 10 redirects", registryURLEnv)
+	}
+	switch req.URL.Scheme {
+	case "https":
+	case "http":
+		warnInsecureRegistryURLOnce(req.URL.String())
+	default:
+		return fmt.Errorf("%s redirected to a non-http(s) URL (scheme %q)", registryURLEnv, req.URL.Scheme)
+	}
+	return nil
+}
+
 // parseRegistryFile reads and strictly parses a user-level registry, stamping
 // every entry with the user source tier. Validation is the caller's job — done
 // standalone by LoadRegistry, or over the merged view by LoadMergedRegistry.
@@ -178,7 +203,7 @@ func fetchRemoteRegistry(rawURL string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building %s request: %w", registryURLEnv, err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := remoteRegistryClient.Do(req)
 	if err != nil {
 		// A *url.Error stringifies with the full request URL — query string and
 		// all — so wrapping it verbatim would leak a token embedded in the URL
