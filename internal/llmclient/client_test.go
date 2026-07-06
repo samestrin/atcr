@@ -25,9 +25,7 @@ const testKey = "sk-secret-value-123"
 // okResponse writes a minimal valid chat-completions response.
 func okResponse(w http.ResponseWriter, content string) {
 	resp := chatResponse{}
-	resp.Choices = append(resp.Choices, struct {
-		Message message `json:"message"`
-	}{Message: message{Role: "assistant", Content: content}})
+	resp.Choices = append(resp.Choices, chatChoice{Message: message{Role: "assistant", Content: content}})
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
@@ -63,9 +61,7 @@ func TestComplete_FallsBackToReasoningWhenContentEmpty(t *testing.T) {
 	// rather than contribute an empty review.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resp := chatResponse{}
-		resp.Choices = append(resp.Choices, struct {
-			Message message `json:"message"`
-		}{Message: message{Role: "assistant", Content: "", ReasoningContent: "HIGH|a.go:1|bug|fix|correctness|5|evidence|greta"}})
+		resp.Choices = append(resp.Choices, chatChoice{Message: message{Role: "assistant", Content: "", ReasoningContent: "HIGH|a.go:1|bug|fix|correctness|5|evidence|greta"}})
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
@@ -83,9 +79,7 @@ func TestComplete_ContentWinsOverReasoning(t *testing.T) {
 	// chain-of-thought must not leak into the returned review.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resp := chatResponse{}
-		resp.Choices = append(resp.Choices, struct {
-			Message message `json:"message"`
-		}{Message: message{Role: "assistant", Content: "CLEAN REVIEW", ReasoningContent: "private thoughts"}})
+		resp.Choices = append(resp.Choices, chatChoice{Message: message{Role: "assistant", Content: "CLEAN REVIEW", ReasoningContent: "private thoughts"}})
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
@@ -941,9 +935,7 @@ func TestCompleteWithUsage_EmptyCompletionReturnsError(t *testing.T) {
 	// loudly so callers do not propagate an empty review as success.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resp := chatResponse{}
-		resp.Choices = append(resp.Choices, struct {
-			Message message `json:"message"`
-		}{Message: message{Role: "assistant", Content: "", ReasoningContent: ""}})
+		resp.Choices = append(resp.Choices, chatChoice{Message: message{Role: "assistant", Content: "", ReasoningContent: ""}})
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()

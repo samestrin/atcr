@@ -34,6 +34,18 @@ type UsageCompleter interface {
 	CompleteWithUsage(ctx context.Context, inv llmclient.Invocation) (string, llmclient.UsageData, []llmclient.CallRecord, error)
 }
 
+// MetaCompleter is the truncation-aware extension of Completer: it returns the
+// content plus the provider's response metadata (token usage, per-call records,
+// and whether the response was truncated on finish_reason "length"). The
+// single-shot path type-asserts for it FIRST — before UsageCompleter — so a
+// completer that reports truncation surfaces it onto the Result; a completer that
+// implements only UsageCompleter or Complete degrades gracefully with
+// ResponseTruncated false and zero usage. *llmclient.Client satisfies it via
+// CompleteWithMeta (Epic 19.5).
+type MetaCompleter interface {
+	CompleteWithMeta(ctx context.Context, inv llmclient.Invocation) (llmclient.Completion, error)
+}
+
 // ChatCompleter is the multi-turn extension of Completer: it carries a message
 // history plus tool definitions and returns the assistant turn (which may
 // request tool_calls). The engine selects it via a type assertion only when an
@@ -166,6 +178,16 @@ type Result struct {
 	// (severity-sorted). Both empty/nil mean "no constraint".
 	MinSeverity string
 	MaxFindings *int
+
+	// ResponseTruncated is true when the provider stopped this agent's
+	// content-bearing response on finish_reason "length" (token budget exhausted),
+	// as reported by the single-shot MetaCompleter path or the tool loop's final
+	// Chat turn. It is DISTINCT from Truncation above (byte-budget payload
+	// truncation): this marks the MODEL response as cut off. The reviewer
+	// truncation-failover policy (WithTruncationFailover) uses it to demote a
+	// truncated-and-empty slot to StatusFailed so the fallback chain engages, and
+	// statusFor surfaces it as the per-agent response_truncated marker (Epic 19.5).
+	ResponseTruncated bool
 
 	// Tool-loop accounting (Epic 2.0). Tools records that this was a tool-enabled
 	// agent (so status.json emits explicit zero counters even on the degrade
@@ -652,23 +674,33 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 	// take the plain content-only path with zero usage. Same optional-interface
 	// pattern as the tool-loop ChatCompleter.
 	var (
-		content string
-		usage   llmclient.UsageData
-		records []llmclient.CallRecord
-		err     error
+		content   string
+		usage     llmclient.UsageData
+		records   []llmclient.CallRecord
+		truncated bool
+		err       error
 	)
-	if uc, ok := e.completer.(UsageCompleter); ok {
+	// Prefer the truncation-aware MetaCompleter so a finish_reason=length response
+	// is observable on the Result; fall back to UsageCompleter (usage only) and then
+	// plain Complete. Only the Meta path can set truncated — the others leave it
+	// false (no signal available).
+	if mc, ok := e.completer.(MetaCompleter); ok {
+		var comp llmclient.Completion
+		comp, err = mc.CompleteWithMeta(ctx, a.Invocation)
+		content, usage, records, truncated = comp.Content, comp.Usage, comp.CallRecords, comp.Truncated
+	} else if uc, ok := e.completer.(UsageCompleter); ok {
 		content, usage, records, err = uc.CompleteWithUsage(ctx, a.Invocation)
 	} else {
 		content, err = e.completer.Complete(ctx, a.Invocation)
 	}
 	r := Result{
-		Agent:       a.Name,
-		DurationMS:  time.Since(start).Milliseconds(),
-		PayloadMode: a.PayloadMode,
-		Truncation:  a.Truncation,
-		MinSeverity: a.MinSeverity,
-		MaxFindings: a.MaxFindings,
+		Agent:             a.Name,
+		DurationMS:        time.Since(start).Milliseconds(),
+		PayloadMode:       a.PayloadMode,
+		Truncation:        a.Truncation,
+		MinSeverity:       a.MinSeverity,
+		MaxFindings:       a.MaxFindings,
+		ResponseTruncated: truncated,
 		// Preserve the original tool request even on the single-shot path so a
 		// degraded tool agent (invokeDegraded reuses this) reports tools_requested.
 		ToolsRequested: a.Tools,

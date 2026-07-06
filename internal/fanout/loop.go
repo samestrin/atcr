@@ -176,6 +176,9 @@ func (l *toolLoop) run(ctx context.Context) Result {
 				fmt.Fprintf(os.Stderr, "atcr: warning: agent %s: model %s declared supports_function_calling=true but first response has no tool_calls — possible misconfiguration\n", l.agent.Name, l.agent.Invocation.Model)
 			}
 			l.res.Content = derefContent(resp.Message.Content)
+			// finish_reason=length on the final content turn: the answer is cut off.
+			// Surface it so the reviewer truncation-failover policy can react (Epic 19.5).
+			l.res.ResponseTruncated = resp.Truncated
 			l.tr.RecordFinal(l.res.Turns, l.res.Content)
 			return l.finalize(StatusOK, nil)
 		}
@@ -326,6 +329,8 @@ func (l *toolLoop) requestFinalAnswer(ctx context.Context) Result {
 	l.res.addUsage(resp.Usage)
 	l.res.addCallRecords(resp.CallRecords)
 	l.res.Content = derefContent(resp.Message.Content)
+	// A truncated forced final-answer is still cut off; surface it (Epic 19.5).
+	l.res.ResponseTruncated = resp.Truncated
 	l.tr.RecordFinal(l.res.Turns, l.res.Content)
 	return l.finalize(StatusOK, nil)
 }
