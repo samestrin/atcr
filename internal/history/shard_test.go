@@ -83,20 +83,26 @@ func TestLoadShards_AbsentDirIsEmptyNotError(t *testing.T) {
 	assert.Empty(t, recs)
 }
 
-// A single unreadable shard currently surfaces as a hard error from LoadShards.
-func TestLoadShards_UnreadableShardIsError(t *testing.T) {
+// An unreadable shard is skipped so the remaining shards stay queryable,
+// mirroring Load's line-level tolerance for torn writes.
+func TestLoadShards_SkipsUnreadableShard(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root can read 000-permission files")
 	}
 	dir := t.TempDir()
-	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
-	path := ShardPath(dir, ts)
-	require.NoError(t, Append(path, []Record{{Timestamp: ts, ID: "x", File: "a.go"}}))
-	require.NoError(t, os.Chmod(path, 0o000))
-	defer os.Chmod(path, 0o644) // ensure cleanup can remove the file
+	july := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	aug := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	bad := ShardPath(dir, july)
+	good := ShardPath(dir, aug)
+	require.NoError(t, Append(bad, []Record{{Timestamp: july, ID: "bad", File: "a.go"}}))
+	require.NoError(t, Append(good, []Record{{Timestamp: aug, ID: "good", File: "b.go"}}))
+	require.NoError(t, os.Chmod(bad, 0o000))
+	defer os.Chmod(bad, 0o644) // ensure cleanup can remove the file
 
-	_, err := LoadShards(dir)
-	require.Error(t, err)
+	recs, err := LoadShards(dir)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "good", recs[0].ID)
 }
 
 // A shard directory path containing glob metacharacters must be treated
