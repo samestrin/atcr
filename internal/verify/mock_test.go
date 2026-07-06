@@ -19,6 +19,7 @@ type chatTurn struct {
 	content   string
 	err       error
 	delay     time.Duration
+	truncated bool // final content turn hit finish_reason=length (Epic 19.5)
 }
 
 // fakeChatCompleter implements fanout.ChatCompleter (Complete + Chat). Each Chat
@@ -79,8 +80,11 @@ func (f *fakeChatCompleter) Chat(ctx context.Context, _ llmclient.Invocation, _ 
 	} else {
 		c := turn.content
 		msg.Content = &c
+		if turn.truncated {
+			fr = "length"
+		}
 	}
-	return &llmclient.ChatResponse{Message: msg, FinishReason: fr}, nil
+	return &llmclient.ChatResponse{Message: msg, FinishReason: fr, Truncated: turn.truncated}, nil
 }
 
 // finalChat returns a completer that answers with content on its first turn.

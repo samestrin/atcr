@@ -14,8 +14,15 @@ import (
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/samestrin/atcr/internal/tools"
 )
+
+// errTruncatedZeroFindings marks a reviewer slot demoted by the truncation-
+// failover policy: the response hit finish_reason=length with zero parsed
+// findings, so it is failed (not recorded as a clean review) to engage the
+// fallback chain (Epic 19.5).
+var errTruncatedZeroFindings = errors.New("response truncated (finish_reason=length) with zero parsed findings")
 
 // Completer abstracts the LLM chat call so the engine can be driven by a fake in
 // tests (deterministic concurrency/fallback assertions) while production uses
@@ -32,6 +39,18 @@ type Completer interface {
 // zero usage. *llmclient.Client satisfies it via CompleteWithUsage.
 type UsageCompleter interface {
 	CompleteWithUsage(ctx context.Context, inv llmclient.Invocation) (string, llmclient.UsageData, []llmclient.CallRecord, error)
+}
+
+// MetaCompleter is the truncation-aware extension of Completer: it returns the
+// content plus the provider's response metadata (token usage, per-call records,
+// and whether the response was truncated on finish_reason "length"). The
+// single-shot path type-asserts for it FIRST — before UsageCompleter — so a
+// completer that reports truncation surfaces it onto the Result; a completer that
+// implements only UsageCompleter or Complete degrades gracefully with
+// ResponseTruncated false and zero usage. *llmclient.Client satisfies it via
+// CompleteWithMeta (Epic 19.5).
+type MetaCompleter interface {
+	CompleteWithMeta(ctx context.Context, inv llmclient.Invocation) (llmclient.Completion, error)
 }
 
 // ChatCompleter is the multi-turn extension of Completer: it carries a message
@@ -167,6 +186,16 @@ type Result struct {
 	MinSeverity string
 	MaxFindings *int
 
+	// ResponseTruncated is true when the provider stopped this agent's
+	// content-bearing response on finish_reason "length" (token budget exhausted),
+	// as reported by the single-shot MetaCompleter path or the tool loop's final
+	// Chat turn. It is DISTINCT from Truncation above (byte-budget payload
+	// truncation): this marks the MODEL response as cut off. The reviewer
+	// truncation-failover policy (WithTruncationFailover) uses it to demote a
+	// truncated-and-empty slot to StatusFailed so the fallback chain engages, and
+	// statusFor surfaces it as the per-agent response_truncated marker (Epic 19.5).
+	ResponseTruncated bool
+
 	// Tool-loop accounting (Epic 2.0). Tools records that this was a tool-enabled
 	// agent (so status.json emits explicit zero counters even on the degrade
 	// path, while pure single-shot agents keep them absent). Turns/ToolCalls/
@@ -250,6 +279,13 @@ type Engine struct {
 	// still WRITING fresh results, so a flagged run refreshes stale entries and
 	// every subsequent run benefits. No effect when cache is nil.
 	cacheNoRead bool
+	// truncationFailover, when true, makes invokeSlot demote a reviewer response
+	// that was truncated (finish_reason=length) AND parsed to zero findings to
+	// StatusFailed, so the fallback chain engages instead of recording a silent
+	// false "no issues found". Only the review pipeline enables it via
+	// WithTruncationFailover; the executor's engine leaves it false and handles
+	// fixer truncation itself (Epic 19.5).
+	truncationFailover bool
 }
 
 // EngineOption configures an Engine at construction.
@@ -294,6 +330,17 @@ func WithCache(c reviewCache, noRead bool) EngineOption {
 		e.cache = c
 		e.cacheNoRead = noRead
 	}
+}
+
+// WithTruncationFailover makes invokeSlot treat a reviewer response that was
+// truncated on finish_reason "length" AND parsed to zero findings as a failure
+// (StatusFailed), so the slot's fallback chain runs instead of the run recording
+// a silent false "no issues found". A truncated response that still parsed >=1
+// finding is left StatusOK — its partial findings are kept and its
+// ResponseTruncated marker is preserved. Only the review pipeline enables this;
+// the executor's engine does not (it classifies fixer truncation itself). Epic 19.5.
+func WithTruncationFailover() EngineOption {
+	return func(e *Engine) { e.truncationFailover = true }
 }
 
 // WithLogger injects the engine's diagnostic logger. Pass the review_id-
@@ -491,6 +538,20 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			r.FallbackFrom = s.Primary.Name
 			r.Agent = s.Primary.Name // attribution follows the slot, not the substitute
 		}
+		// Truncation failover (Epic 19.5): a reviewer response that hit
+		// finish_reason=length with zero parsed findings is a runaway that would
+		// otherwise be recorded as a silent clean review. Demote it to StatusFailed
+		// so the loop descends to the next agent in the chain. A truncated response
+		// that still parsed >=1 finding stays StatusOK (its ResponseTruncated marker
+		// is preserved for status.json). Applied per attempt, so a truncated fallback
+		// also fails over to the next one.
+		if e.truncationFailover && r.Status == StatusOK && r.ResponseTruncated &&
+			len(stream.ParseModelOutput([]byte(r.Content))) == 0 {
+			r.Status = StatusFailed
+			r.Err = errTruncatedZeroFindings
+			log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
+				"agent", a.Name, "model", a.Invocation.Model)
+		}
 		if r.Status == StatusOK {
 			r.DurationMS = time.Since(start).Milliseconds()
 			return r
@@ -633,7 +694,15 @@ func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 		}
 	}
 	r := e.invokeSingleShot(ctx, a)
-	if r.Status == StatusOK {
+	// Never cache a truncated response (Epic 19.5). invokeSingleShot returns a
+	// truncated runaway as StatusOK here — the truncation-failover demotion happens
+	// LATER in invokeSlot — so caching on StatusOK alone would persist the runaway
+	// content and replay it on a later same-diff run as a clean StatusOK review with
+	// ResponseTruncated unset, bypassing the failover gate (the exact silent
+	// all-clean the epic prevents). A truncated-with-findings response is likewise
+	// skipped so its partial content is re-fetched fresh rather than replayed as
+	// clean. Only a clean, complete StatusOK result is cacheable.
+	if r.Status == StatusOK && !r.ResponseTruncated {
 		if err := e.cache.Put(key, r.Content); err != nil {
 			// A write fault only forfeits the future speed-up; the live result is
 			// already correct, so the review proceeds.
@@ -652,23 +721,33 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 	// take the plain content-only path with zero usage. Same optional-interface
 	// pattern as the tool-loop ChatCompleter.
 	var (
-		content string
-		usage   llmclient.UsageData
-		records []llmclient.CallRecord
-		err     error
+		content   string
+		usage     llmclient.UsageData
+		records   []llmclient.CallRecord
+		truncated bool
+		err       error
 	)
-	if uc, ok := e.completer.(UsageCompleter); ok {
+	// Prefer the truncation-aware MetaCompleter so a finish_reason=length response
+	// is observable on the Result; fall back to UsageCompleter (usage only) and then
+	// plain Complete. Only the Meta path can set truncated — the others leave it
+	// false (no signal available).
+	if mc, ok := e.completer.(MetaCompleter); ok {
+		var comp llmclient.Completion
+		comp, err = mc.CompleteWithMeta(ctx, a.Invocation)
+		content, usage, records, truncated = comp.Content, comp.Usage, comp.CallRecords, comp.Truncated
+	} else if uc, ok := e.completer.(UsageCompleter); ok {
 		content, usage, records, err = uc.CompleteWithUsage(ctx, a.Invocation)
 	} else {
 		content, err = e.completer.Complete(ctx, a.Invocation)
 	}
 	r := Result{
-		Agent:       a.Name,
-		DurationMS:  time.Since(start).Milliseconds(),
-		PayloadMode: a.PayloadMode,
-		Truncation:  a.Truncation,
-		MinSeverity: a.MinSeverity,
-		MaxFindings: a.MaxFindings,
+		Agent:             a.Name,
+		DurationMS:        time.Since(start).Milliseconds(),
+		PayloadMode:       a.PayloadMode,
+		Truncation:        a.Truncation,
+		MinSeverity:       a.MinSeverity,
+		MaxFindings:       a.MaxFindings,
+		ResponseTruncated: truncated,
 		// Preserve the original tool request even on the single-shot path so a
 		// degraded tool agent (invokeDegraded reuses this) reports tools_requested.
 		ToolsRequested: a.Tools,

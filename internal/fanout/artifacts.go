@@ -35,6 +35,14 @@ type PoolSummary struct {
 	Failed        int           `json:"failed"`
 	Partial       bool          `json:"partial"`
 	TotalFindings int           `json:"total_findings"`
+	// TruncatedZeroFindings counts agents whose model response was truncated on
+	// finish_reason "length" AND yielded zero parseable findings — the runaway rate
+	// the reviewer truncation-failover guard reacts to (Epic 19.5). It is the
+	// run-level tally of the per-agent AgentStatus.ResponseTruncated marker for
+	// zero-finding agents; a truncated agent that still kept >=1 finding is NOT
+	// counted (its partial findings landed). Always present so a 0 is
+	// distinguishable from an older summary.json that predates the field.
+	TruncatedZeroFindings int `json:"truncated_zero_findings"`
 	// FailureMarker is true only when writeFailureSummary produced this record
 	// after a WritePool I/O fault, never when WritePool wrote a real run. It
 	// makes the summary unambiguously a best-effort marker: a write-phase
@@ -118,6 +126,15 @@ func writePool(poolDir string, results []Result, changed payload.ChangedLines, g
 
 	sum := summarize(results)
 	groundingEnabled := len(changed) > 0
+	// Run-level runaway tally (Epic 19.5): an agent whose response was truncated on
+	// finish_reason=length with zero parseable findings. Derived from the per-agent
+	// statuses so the count and the markers cannot drift.
+	truncatedZeroFindings := 0
+	for _, st := range statuses {
+		if st.ResponseTruncated && st.FindingsCount == 0 {
+			truncatedZeroFindings++
+		}
+	}
 	ps := PoolSummary{
 		Agents:                  statuses,
 		Total:                   sum.Total,
@@ -125,6 +142,7 @@ func writePool(poolDir string, results []Result, changed payload.ChangedLines, g
 		Failed:                  sum.Failed,
 		Partial:                 sum.Partial,
 		TotalFindings:           len(merged),
+		TruncatedZeroFindings:   truncatedZeroFindings,
 		GroundingEnabled:        &groundingEnabled,
 		GroundingDisabledReason: groundingDisabledReason,
 	}
@@ -255,6 +273,7 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		FallbackFrom:           r.FallbackFrom,
 		DroppedByMinSeverity:   fr.Dropped,
 		TruncatedByMaxFindings: fr.Truncated,
+		ResponseTruncated:      r.ResponseTruncated,
 		CacheHit:               r.CacheHit,
 		UnreviewedChunks:       r.UnreviewedChunks,
 	}

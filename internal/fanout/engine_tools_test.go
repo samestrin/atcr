@@ -26,6 +26,7 @@ type chatTurn struct {
 	err         error
 	delay       time.Duration
 	callRecords []llmclient.CallRecord // per-turn HTTP attempt telemetry (Epic 4.11)
+	truncated   bool                   // final content turn hit finish_reason=length (Epic 19.5)
 }
 
 // scriptedChat implements both Completer (single-shot) and ChatCompleter
@@ -101,8 +102,11 @@ func (s *scriptedChat) Chat(ctx context.Context, _ llmclient.Invocation, message
 	} else {
 		c := turn.content
 		msg.Content = &c
+		if turn.truncated {
+			fr = "length"
+		}
 	}
-	return &llmclient.ChatResponse{Message: msg, FinishReason: fr, CallRecords: turn.callRecords}, nil
+	return &llmclient.ChatResponse{Message: msg, FinishReason: fr, CallRecords: turn.callRecords, Truncated: turn.truncated}, nil
 }
 
 // assertToolCallsAnswered returns an error when any assistant tool_call lacks a
