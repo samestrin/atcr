@@ -63,5 +63,5 @@ func LoadAll(shardDir, legacyPath string) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(shards, legacy...), nil
+	return append(legacy, shards...), nil
 }

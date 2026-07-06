@@ -97,15 +97,15 @@ func TestHistoryCmd_MergesLegacyAndShards(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, before, after, "legacy ledger must not be mutated")
 
-	// Verify merged record ordering: shards precede legacy in the raw LoadAll result.
+	// Verify merged record ordering: legacy precedes shards in the raw LoadAll result.
 	recs, err := history.LoadAll(
 		filepath.Join(root, ".planning", "history"),
 		legacyPath,
 	)
 	require.NoError(t, err)
 	require.Len(t, recs, 2)
-	assert.Equal(t, "shard/pkg", recs[0].Package, "first record should be from shard")
-	assert.Equal(t, "legacy/pkg", recs[1].Package, "second record should be from legacy")
+	assert.Equal(t, "legacy/pkg", recs[0].Package, "first record should be from legacy")
+	assert.Equal(t, "shard/pkg", recs[1].Package, "second record should be from shard")
 }
 
 func TestHistoryCmd_AbsentHistoryExitsZeroWithMessage(t *testing.T) {
