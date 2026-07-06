@@ -1,3 +1,15 @@
+## [19.2.0] - 2026-07-05
+
+### Added
+
+- `ATCR_REGISTRY_URL`: point atcr at a remote `registry.yaml` to share one team registry. When set, the user-level registry is fetched over HTTP (the config-repo pattern — commit `registry.yaml` to a shared repo and point every workstation and CI runner at its raw URL) instead of read from `~/.config/atcr/registry.yaml`; unset keeps the local-file behavior unchanged.
+
+### Changed
+
+- The remote registry flows through the same strict parser, validation, and env-var key contract as a local one: API keys are never read from the registry file (only `api_key_env` names travel — a literal `api_key` is a hard load error), and a set-but-unreachable/invalid URL fails loudly with no silent fallback to a local copy. Only the user registry is remote; the project overlay and trust store stay local. A non-`https` registry URL draws a one-time warning, and fetch errors and warnings redact embedded credentials and query-string tokens.
+
+*Shipped via /execute-epic (epic 19.2)*
+
 ## [Technical Debt] - 2026-07-05
 
 ### Fixed
