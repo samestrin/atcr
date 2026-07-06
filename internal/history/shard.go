@@ -53,7 +53,10 @@ func LoadShards(dir string) ([]Record, error) {
 	for _, path := range matches {
 		recs, err := Load(path)
 		if err != nil {
-			return nil, err
+			// Skip an unreadable individual shard so the remaining shards stay
+			// queryable, mirroring Load's line-level tolerance.
+			_, _ = fmt.Fprintf(os.Stderr, "warning: skipping unreadable history shard %s: %v\n", path, err)
+			continue
 		}
 		all = append(all, recs...)
 	}
