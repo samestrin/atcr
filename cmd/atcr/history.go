@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -47,9 +46,7 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return usageError(fmt.Errorf("resolving repo root: %w", err))
 	}
-	shardDir := filepath.Join(root, ".planning", "history")
-	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
-	recs, err := history.LoadAll(shardDir, legacyPath)
+	recs, err := history.LoadAll(history.ShardDir(root), history.LegacyLedgerPath(root))
 	if err != nil {
 		return usageError(err) // corrupt/unreadable ledger (exit 2)
 	}
