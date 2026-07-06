@@ -97,7 +97,7 @@ func TestLoadShards_SkipsUnreadableShard(t *testing.T) {
 	require.NoError(t, Append(bad, []Record{{Timestamp: july, ID: "bad", File: "a.go"}}))
 	require.NoError(t, Append(good, []Record{{Timestamp: aug, ID: "good", File: "b.go"}}))
 	require.NoError(t, os.Chmod(bad, 0o000))
-	defer os.Chmod(bad, 0o644) // ensure cleanup can remove the file
+	defer func() { _ = os.Chmod(bad, 0o644) }() // ensure cleanup can remove the file
 
 	recs, err := LoadShards(dir)
 	require.NoError(t, err)
@@ -194,7 +194,7 @@ func TestLoadAll_UnreadableLegacyIsError(t *testing.T) {
 	ts := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	require.NoError(t, Append(legacyPath, []Record{{Timestamp: ts, ID: "legacy1", File: "b.go"}}))
 	require.NoError(t, os.Chmod(legacyPath, 0o000))
-	defer os.Chmod(legacyPath, 0o644) // ensure cleanup can remove the file
+	defer func() { _ = os.Chmod(legacyPath, 0o644) }() // ensure cleanup can remove the file
 
 	_, err := LoadAll(filepath.Join(root, ".planning", "history"), legacyPath)
 	require.Error(t, err)
