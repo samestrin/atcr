@@ -1,7 +1,9 @@
 package history
 
 import (
+	"fmt"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -18,4 +20,29 @@ const shardMonthLayout = "2006-01"
 // from churning fresh git blobs once the month rolls over (Epic 19.4 AC3).
 func ShardPath(dir string, ts time.Time) string {
 	return filepath.Join(dir, ts.UTC().Format(shardMonthLayout)+".jsonl")
+}
+
+// LoadShards reads every monthly shard (*.jsonl) under dir and returns the
+// merged records across all months, ordered by shard file name — which, for the
+// YYYY-MM naming, is chronological. A missing or empty dir is a valid empty
+// history, not an error (mirroring Load), so `atcr history` answers a query
+// across whatever shards exist without the caller naming one (Epic 19.4 AC2).
+// Malformed lines inside a shard are skipped by Load; an unreadable shard is a
+// hard error.
+func LoadShards(dir string) ([]Record, error) {
+	matches, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	if err != nil {
+		return nil, fmt.Errorf("globbing history shards: %w", err)
+	}
+	sort.Strings(matches)
+
+	var all []Record
+	for _, path := range matches {
+		recs, err := Load(path)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, recs...)
+	}
+	return all, nil
 }

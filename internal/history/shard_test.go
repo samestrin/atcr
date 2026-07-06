@@ -52,3 +52,47 @@ func TestShardPath_RolloverWritesSeparateFiles(t *testing.T) {
 	require.Len(t, julyRecs, 1)
 	assert.Equal(t, "a", julyRecs[0].ID)
 }
+
+// AC2: a query loads across every monthly shard without the caller naming one.
+func TestLoadShards_MergesAllMonthlyFiles(t *testing.T) {
+	dir := t.TempDir()
+	july := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	aug := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, Append(ShardPath(dir, july), []Record{
+		{Timestamp: july, ID: "j1", File: "a.go", Package: "a", Severity: "HIGH"},
+	}))
+	require.NoError(t, Append(ShardPath(dir, aug), []Record{
+		{Timestamp: aug, ID: "a1", File: "b.go", Package: "b", Severity: "LOW"},
+		{Timestamp: aug, ID: "a2", File: "c.go", Package: "c", Severity: "MEDIUM"},
+	}))
+
+	recs, err := LoadShards(dir)
+	require.NoError(t, err)
+	require.Len(t, recs, 3)
+	ids := map[string]bool{}
+	for _, r := range recs {
+		ids[r.ID] = true
+	}
+	assert.Equal(t, map[string]bool{"j1": true, "a1": true, "a2": true}, ids)
+}
+
+// An absent shard dir is a valid empty history, not an error (mirrors Load).
+func TestLoadShards_AbsentDirIsEmptyNotError(t *testing.T) {
+	recs, err := LoadShards(filepath.Join(t.TempDir(), "does-not-exist"))
+	require.NoError(t, err)
+	assert.Empty(t, recs)
+}
+
+// Only *.jsonl files are shards; unrelated files in the dir are ignored.
+func TestLoadShards_IgnoresNonJSONLFiles(t *testing.T) {
+	dir := t.TempDir()
+	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, Append(ShardPath(dir, ts), []Record{{Timestamp: ts, ID: "x", File: "a.go"}}))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("not a shard"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("garbage"), 0o644))
+
+	recs, err := LoadShards(dir)
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "x", recs[0].ID)
+}
