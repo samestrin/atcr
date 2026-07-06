@@ -84,6 +84,10 @@ func DefaultProjectRegistryPath(root string) string {
 // the project overlay (.atcr/registry.yaml) and the trust store stay local.
 const registryURLEnv = "ATCR_REGISTRY_URL"
 
+// The following vars are test seams for remote registry fetching. Tests that
+// mutate them must not call t.Parallel(), because concurrent mutations would
+// race. No production code currently calls these in parallel.
+
 // remoteFetchTimeout bounds a single registry fetch. It is deliberately shorter
 // than llmclient's completion budget (that budgets a whole chat completion; this
 // is a one-shot YAML GET) and is a var so tests can lower it.
