@@ -7,11 +7,11 @@ This file is a staging area for small technical debt items discovered during dev
 | Severity | Open | Deferred | Resolved |
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
-| HIGH | 0 | 1 | 0 |
-| MEDIUM | 1 | 19 | 0 |
-| LOW | 4 | 25 | 0 |
+| HIGH | 0 | 2 | 0 |
+| MEDIUM | 0 | 20 | 0 |
+| LOW | 0 | 27 | 0 |
 
-**Last Modified:** 2026-07-05 | **Open Items:** 5 | **Deferred Items:** 45 | **Resolved Items:** 0 | **Total Items:** 50
+**Last Modified:** 2026-07-06 | **Open Items:** 0 | **Deferred Items:** 49 | **Resolved Items:** 0 | **Total Items:** 49
 
 ## Directory Structure
 
@@ -63,15 +63,19 @@ table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
 
+### [2026-07-05] From Sprint: 19.4_history_time_sharding
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| 2 | [/] | HIGH | cmd/atcr/review.go:285 | Multiple concurrent atcr review processes will append to the same YYYY-MM.jsonl simultaneously without synchronization, causing interleaved JSON lines and ledger corruption (Accepted 2026-07-06: won't-fix — concurrent-append O_APPEND safety is a project-wide TD-004 tradeoff shared by all 5 append-only ledgers (audit, debate, scorecard, tools, history), outside epic 19.4's scope; matches the identical writer.go precedent accepted 2026-07-04 at README:112. Low probability (small per-batch writes are atomic on Linux/macOS O_APPEND) and low impact (a torn line is skipped by Load, no cross-data corruption); a cross-platform lock dependency is not justified for one ledger.) | Acquire a file lock (flock) on the shard or a dedicated lockfile before opening for append | concurrency | 40 | code-review | brad | MEDIUM |
+| 3 | [/] | MEDIUM | internal/history/shard.go:32 | LoadAll/LoadShards read and JSON-unmarshal every monthly shard on disk, then Filter discards records older than the --since cutoff. The justification for monthly sharding is the YYYY-MM filenames, but the read path throws that structure away: a repo with years of history running the common --since 30d (or the 90d default) still parses every archived month it will immediately drop. (Deferred 2026-07-06: not worth doing now — LOW-value perf optimization; the epic's 1-2yr history bound caps the scan at 12-24 small files. If revisited, add an additive LoadShardsSince(dir, cutoff) variant rather than changing LoadShards/LoadAll signatures, which would ripple into 7+ existing test call sites for no measured benefit.) | Prune glob results in LoadShards by comparing each shard's YYYY-MM stem against the cutoff month before calling Load; pass a lower-bound month into LoadShards/LoadAll (or add a windowed variant) so shards entirely before the window are never opened. Verify with a benchmark over 60 seeded shards and --since 30d reading at most 1-2 files. | performance | 60 | code-review | claude, dax, brad | HIGH |
+| 3 | [/] | LOW | internal/history/writer.go:39 | Append does an unlocked O_APPEND write and documents that a large buffer split across multiple write() syscalls can be torn by a concurrent append. Epic 19.4 does not change the mechanism but changes exposure: history is now git-tracked and the project is run as multiple concurrent sessions appending to the same YYYY-MM.jsonl within a month. A torn line is silently dropped by Load's malformed-line skip, so lost findings are invisible; sharding by month did not reduce intra-month contention. (Accepted 2026-07-06: won't-fix — same history.Append write site and same decision as cmd/atcr/review.go:285 (resolved in lockstep); no cross-platform lock dependency added. Mirrors the 2026-07-04 accepted precedent for this exact O_APPEND pattern.) | If a hard guarantee is wanted wrap the shard write in an advisory file lock (flock) consistent with the mkdir-flock pattern used in the planning tooling; otherwise document that concurrent same-month runs can lose records. Verify with a stress test of N concurrent Appends and a line-count assertion. | error-handling | 60 | code-review | claude | MEDIUM |
+
 ### [2026-07-05] From Sprint: epic-19.4
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | LOW | internal/history/shard.go:33 | LoadShards builds a glob pattern from the dir path, so a repo path containing filepath.Glob metacharacters (e.g. a [1] segment) is parsed as a character class and matches no shards, silently returning empty history instead of the real records | Use os.ReadDir + strings.HasSuffix(name, .jsonl) so the directory path is treated literally | EDGE_CASES | 20 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/history/shard.go:43 | A single unreadable shard (permission/IO) aborts LoadShards/LoadAll and fails atcr history with exit 2, so one bad monthly file bricks all trend queries (deliberate exit-2-on-corrupt contract, but harsher now that history spans many files) | Log-and-skip an unreadable individual shard so the remaining shards stay queryable, mirroring Load's torn-line tolerance | ERROR_PATHS | 20 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/history/shard.go:32 | LoadShards loads every shard into memory before Filter applies --since, so a narrow window still reads all shards (acceptable within the stated 1-2yr bound; no month-prefix pruning) | Skip shard files whose YYYY-MM stem is entirely older than now-since before loading, to keep long histories fast | UNDER_ENGINEERING | 30 | execute-epic-independent |
-| U | [ ] | LOW | cmd/atcr/history.go:50 | History ledger path segments (.planning/history shard dir and legacy .atcr/findings-history.jsonl) are duplicated across review.go, resume.go, and history.go | Centralize as history.ShardDir(root) + history.LegacyLedgerPath(root) helpers so the storage layout lives in one place | CROSS_CUTTING | 15 | execute-epic-cumulative |
-| U | [ ] | MEDIUM | cmd/atcr/resume.go:213 | recordResumeHistory writes shards to a cwd-relative ./.planning/history while review.go uses req.Root and atcr history reads via repoRoot(), so a resume run from a subdirectory writes shards history never reads (pre-existing; resume also writes its audit ledger cwd-relative at resume.go:228 — DEFERRED as out of scope: a resume-wide root-resolution fix spanning the Epic 19.1 audit path) | Resolve repoRoot() once in runResume and pass it to both recordResumeHistory and recordResumeAudit so all resume ledger writes and the read path agree on location | REGRESSION_RISK | 30 | execute-epic-independent |
+| 1 | [/] | LOW | internal/history/shard.go:32 | LoadShards loads every shard into memory before Filter applies --since, so a narrow window still reads all shards (acceptable within the stated 1-2yr bound; no month-prefix pruning) (Deferred 2026-07-06: duplicate of the MEDIUM month-pruning item at this same line; same decision — defer, add LoadShardsSince additively if ever picked up.) | Skip shard files whose YYYY-MM stem is entirely older than now-since before loading, to keep long histories fast | UNDER_ENGINEERING | 30 | execute-epic-independent |
 
 ### [2026-07-05] From Sprint: epic-19.1
 

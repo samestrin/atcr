@@ -1,0 +1,2 @@
+# atcr-findings/v1
+MEDIUM|cmd/atcr/resume.go:211|recordResumeHistory uses cwd-relative path for history shards|Pass repo root from runResume to recordResumeHistory to ensure shards are written to the project root rather than the current working directory|structure|15|histPath := history.ShardPath(filepath.Join(".", ".planning", "history"), ts)|otto

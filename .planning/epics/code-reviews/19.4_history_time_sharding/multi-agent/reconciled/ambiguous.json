@@ -1,0 +1,98 @@
+[
+  {
+    "id": "amb-17c488895244eb48e027896ba73db650",
+    "file": "cmd/atcr/history_test.go",
+    "line": 84,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "cmd/atcr/history_test.go",
+        "Line": 84,
+        "Problem": "TestHistoryCmd_MergesLegacyAndShards does not verify the merged order (shards before legacy) or that the legacy file is not mutated",
+        "Fix": "Assert record ordering and verify legacy file content is unchanged after query",
+        "Category": "correctness",
+        "EstMinutes": 10,
+        "Evidence": "Test only asserts both packages appear in output, not order or non-mutation",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-dcd71ea6a7b24092924ecc857002a99b",
+    "file": "internal/history/shard_test.go",
+    "line": 1,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "internal/history/shard_test.go",
+        "Line": 1,
+        "Problem": "No test exercises LoadAll when the legacy file exists but is unreadable",
+        "Fix": "Add a test with an unreadable legacy file and assert the error propagation",
+        "Category": "error_paths",
+        "EstMinutes": 15,
+        "Evidence": "TestLoadAll_MergesShardsAndLegacy only tests happy path; TestLoadAll_AbsentBothIsEmpty tests absent files",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-47aa69445baa84c78fefe9bf74188fd7",
+    "file": "internal/history/shard_test.go",
+    "line": 1,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "internal/history/shard_test.go",
+        "Line": 1,
+        "Problem": "No test exercises LoadShards with a dir path containing glob metacharacters",
+        "Fix": "Add a test with a dir containing [brackets] and verify records are still found",
+        "Category": "edge_cases",
+        "EstMinutes": 15,
+        "Evidence": "TestLoadShards_MergesAllMonthlyFiles uses plain t.TempDir() paths",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-1f68e4c3c1b657d2219aa7eff3e6a55d",
+    "file": "internal/history/shard_test.go",
+    "line": 1,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "internal/history/shard_test.go",
+        "Line": 1,
+        "Problem": "No test exercises an unreadable shard file (permission error) to verify LoadShards behavior",
+        "Fix": "Add a test case with a 000-permission .jsonl file and assert the error or skip behavior",
+        "Category": "error_paths",
+        "EstMinutes": 15,
+        "Evidence": "TestLoadShards_MergesAllMonthlyFiles and siblings only test happy paths and absent dir",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  }
+]
