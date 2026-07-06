@@ -143,6 +143,29 @@ func TestInvokeSlot_NoFailoverOption_TruncatedEmptyStaysOK(t *testing.T) {
 	assert.Equal(t, StatusOK, r.Status, "without the option the demotion does not fire")
 }
 
+// memCache is an in-memory reviewCache for the cache-poisoning regression test.
+type memCache struct{ m map[string]string }
+
+func (c *memCache) Get(k string) (string, bool, error) { v, ok := c.m[k]; return v, ok, nil }
+func (c *memCache) Put(k, v string) error              { c.m[k] = v; return nil }
+
+// A truncated, zero-finding runaway must NEVER be written to the diff cache:
+// otherwise a later same-diff run replays it as a clean StatusOK review with the
+// failover gate bypassed — the exact silent all-clean the epic prevents, served
+// from cache (independent-review HIGH).
+func TestCache_DoesNotCacheTruncatedRunaway(t *testing.T) {
+	cache := &memCache{m: map[string]string{}}
+	c := &metaTruncatingCompleter{content: "I rambled but emitted no finding", truncated: true}
+	e := NewEngine(c, WithCache(cache, false), WithTruncationFailover())
+	slot := Slot{Primary: Agent{Name: "bruce", CacheKey: "k1", Invocation: llmclient.Invocation{Model: "m"}}}
+
+	r := e.invokeSlot(context.Background(), slot)
+	assert.Equal(t, StatusFailed, r.Status, "truncated+zero demotes to failed")
+
+	_, cached := cache.m["k1"]
+	assert.False(t, cached, "a truncated runaway must not be written to the diff cache")
+}
+
 // --- Task 4: telemetry markers ------------------------------------------------
 
 func TestStatusFor_SetsResponseTruncated(t *testing.T) {

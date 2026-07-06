@@ -694,7 +694,15 @@ func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 		}
 	}
 	r := e.invokeSingleShot(ctx, a)
-	if r.Status == StatusOK {
+	// Never cache a truncated response (Epic 19.5). invokeSingleShot returns a
+	// truncated runaway as StatusOK here — the truncation-failover demotion happens
+	// LATER in invokeSlot — so caching on StatusOK alone would persist the runaway
+	// content and replay it on a later same-diff run as a clean StatusOK review with
+	// ResponseTruncated unset, bypassing the failover gate (the exact silent
+	// all-clean the epic prevents). A truncated-with-findings response is likewise
+	// skipped so its partial content is re-fetched fresh rather than replayed as
+	// clean. Only a clean, complete StatusOK result is cacheable.
+	if r.Status == StatusOK && !r.ResponseTruncated {
 		if err := e.cache.Put(key, r.Content); err != nil {
 			// A write fault only forfeits the future speed-up; the live result is
 			// already correct, so the review proceeds.
