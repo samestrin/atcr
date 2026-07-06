@@ -1,3 +1,11 @@
+## [Technical Debt] - 2026-07-05
+
+### Fixed
+
+- `internal/registry/overlay.go`: the insecure-registry warning is now keyed per distinct URL instead of a single process-global `sync.Once`, so a long-lived process that loads two different insecure `http` registry URLs warns for both instead of only the first.
+- `internal/registry/overlay.go`: registry-fetch redirects now re-validate the URL scheme (and re-emit the insecure-URL warning) on every hop instead of only the initial URL, closing a path where an `https` registry could be silently downgraded to `http` via a redirect.
+- `internal/registry/overlay.go`: documented that the package-level test seams (`remoteFetchTimeout`, `remoteRegistryBodyLimit`, `insecureRegistryWarnWriter`) must not be mutated by parallel tests.
+
 ## [19.2.0] - 2026-07-05
 
 ### Added
