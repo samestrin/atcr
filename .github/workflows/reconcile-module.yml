@@ -39,7 +39,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-          cache: true
+          # gauntlet runners are persistent dedicated hardware, not ephemeral
+          # GitHub-hosted VMs -- see the matching rationale comment in ci.yml.
+          cache: false
 
       - name: Verify Formatted
         run: |

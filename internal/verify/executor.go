@@ -179,7 +179,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				snippet := readFixSnippet(ctx, disp, f.File, f.Line)
 				prompt := buildFixPrompt(*f, snippet, ex)
 				o, tr, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs)
-				if err != nil {
+				if err != nil && !tr {
 					warn = "fix generation failed: " + err.Error()
 				} else {
 					out = o

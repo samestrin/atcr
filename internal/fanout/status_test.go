@@ -307,6 +307,23 @@ func TestStatusJSON_NoTruncation(t *testing.T) {
 	assert.Equal(t, 5, got.FindingsCount)
 }
 
+// TestStatusJSON_ResponseTruncatedAlwaysPresent verifies that response_truncated
+// is serialized even when false, matching the Epic 2.2 counters so consumers can
+// distinguish a false value from a pre-19.5 status.json that predates the field.
+func TestStatusJSON_ResponseTruncatedAlwaysPresent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	s := &AgentStatus{Agent: "greta", Status: StatusOK, ResponseTruncated: false}
+	require.NoError(t, WriteStatus(path, s))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"response_truncated": false`, "false must be present for field-presence detection")
+
+	var got AgentStatus
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.False(t, got.ResponseTruncated)
+}
+
 // --- Epic 1.1: reserved per-agent status counters (absent in 1.x) ---
 
 // TestStatusJSON_ReservedCountersOmittedIn1x verifies a 1.x status.json omits

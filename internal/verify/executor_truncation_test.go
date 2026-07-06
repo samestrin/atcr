@@ -65,3 +65,29 @@ func TestGenerateFixes_SnippetNotTruncated_StillLands(t *testing.T) {
 	assert.Equal(t, "use a parameterized query", f.Fix)
 	assert.Empty(t, f.FixWarning)
 }
+
+// truncatingErrorExecutor returns both an error and truncated=true, mirroring a
+// provider that stops on finish_reason=length with an empty/partial response.
+type truncatingErrorExecutor struct {
+	content string
+	err     error
+}
+
+func (t *truncatingErrorExecutor) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return t.content, t.err
+}
+
+func (t *truncatingErrorExecutor) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
+	return llmclient.Completion{Content: t.content, Truncated: true}, t.err
+}
+
+// Regression: when the snippet path returns an error alongside truncated=true,
+// the truncation flag must not be discarded in favor of the generic error warning.
+func TestGenerateFixes_SnippetTruncatedWithError_FlagsNoUsablePatch(t *testing.T) {
+	findings := []reconcile.JSONFinding{truncFinding()}
+	rec := &truncatingErrorExecutor{content: "", err: context.DeadlineExceeded}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+	f := findings[0]
+	assert.Empty(t, f.Fix, "a truncated fix must NOT be presented as a usable patch")
+	assert.Contains(t, f.FixWarning, "truncated", "truncation must take priority over the generic error warning")
+}
