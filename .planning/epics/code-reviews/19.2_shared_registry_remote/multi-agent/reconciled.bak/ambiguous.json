@@ -1,0 +1,266 @@
+[
+  {
+    "id": "amb-fe90617b451584c62b644888e4532256",
+    "file": ".planning/epics/active/19.6_community_registry_hub.md",
+    "line": 16,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": ".planning/epics/active/19.6_community_registry_hub.md",
+        "Line": 16,
+        "Problem": "In-repo quickstart docs will reference personas authored in a separate repository without a stated coordination gate",
+        "Fix": "Add an acceptance criterion that docs changes merge only after the `atcr/personas` index.json is live",
+        "Category": "coupling",
+        "EstMinutes": 15,
+        "Evidence": "\"Cross-repo note: ... Tasks 1-2 ... in the separate `atcr/personas` community repo ... Only Task 3 (documentation) is an in-repo change\"",
+        "Reviewer": "kai",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-9d33e7d91bf6e4790811cc967be236a3",
+    "file": ".planning/epics/active/19.6_community_registry_hub.md",
+    "line": 26,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": ".planning/epics/active/19.6_community_registry_hub.md",
+        "Line": 26,
+        "Problem": "Cross-repo content tasks (1-2) have no verifiable acceptance path within this repo",
+        "Fix": "Add a CI check or smoke test that validates the external personas repo index.json is fetchable and parsable",
+        "Category": "testing",
+        "EstMinutes": 15,
+        "Evidence": "\"Tasks 1–2 below) is authored and published in the separate atcr/personas community repo, not in this codebase\"",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-4aa8b0eafbf51b73fe9167c7690c3534",
+    "file": ".planning/epics/active/19.6_community_registry_hub.md",
+    "line": 26,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": ".planning/epics/active/19.6_community_registry_hub.md",
+        "Line": 26,
+        "Problem": "No error-path coverage for persona install failure when external repo is unreachable",
+        "Fix": "Document expected failure modes or add a negative test case for network-unreachable install",
+        "Category": "testing",
+        "EstMinutes": 10,
+        "Evidence": "\"fetching persona YAML from a configurable URL\"",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-c2ed7ac782c49c374a9ab1a0080b9a73",
+    "file": ".planning/epics/active/19.6_community_registry_hub.md",
+    "line": 65,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": ".planning/epics/active/19.6_community_registry_hub.md",
+        "Line": 65,
+        "Problem": "Section header \"Items needing user confirmation (6)\" is a contract violation — all 6 listed items are prefixed with \"✅\" and conclude \"Resolved\", so none actually need user confirmation",
+        "Fix": "Rename the section to \"Resolved items\" or \"Items previously needing confirmation (6, all resolved)\" so the header matches the content",
+        "Category": "clarity",
+        "EstMinutes": 10,
+        "Evidence": "### Items needing user confirmation (6) ... - ✅ **Missed component(s) ...:** Resolved. ... - ✅ **Cross-system hosting gap ...:** Resolved. ...",
+        "Reviewer": "bruce",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-8f0051738e8126dc6eaa8f5c482e3d8f",
+    "file": ".planning/epics/active/19.6_community_registry_hub.md",
+    "line": 74,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": ".planning/epics/active/19.6_community_registry_hub.md",
+        "Line": 74,
+        "Problem": "COMPONENTS_TOUCHED includes `internal/registry` as an in-repo component but the plan's refinements explicitly dropped all registry work — line 44 states \"no longer touches `ATCR_REGISTRY_URL` or `registry.yaml` hosting\" and line 15 says \"Only Task 3 (documentation) is an in-repo change\"",
+        "Fix": "Remove `internal/registry` from COMPONENTS_TOUCHED and correct COMPONENT_COUNT from 2 to 1",
+        "Category": "logic",
+        "EstMinutes": 3,
+        "Evidence": "COMPONENTS_TOUCHED: [internal/registry, docs] — contradicted by line 44: \"this epic no longer touches `ATCR_REGISTRY_URL` or `registry.yaml` hosting\"",
+        "Reviewer": "archer",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-0c909436f34287223d604bb377f746f1",
+    "file": ".planning/epics/active/19.6_community_registry_hub.md",
+    "line": 79,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": ".planning/epics/active/19.6_community_registry_hub.md",
+        "Line": 79,
+        "Problem": "Refinement metadata lists `internal/registry` as a touched component despite plan limiting in-repo work to docs",
+        "Fix": "Reconcile `COMPONENTS_TOUCHED` with the actual scope or document why registry code must change",
+        "Category": "correctness",
+        "EstMinutes": 10,
+        "Evidence": "\"COMPONENTS_TOUCHED: [internal/registry, docs]\"",
+        "Reviewer": "kai",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-a4e2a4b87ec7a2cf02b4b52e1d8cefaf",
+    "file": ".planning/epics/active/19.6_community_registry_hub.md",
+    "line": 1,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": ".planning/epics/active/19.6_community_registry_hub.md",
+        "Line": 1,
+        "Problem": "Epic title \"Default Model-Tuned Community Personas\" contradicts the filename \"19.6_community_registry_hub.md\"",
+        "Fix": "Rename file to match the new focus on personas rather than a registry hub",
+        "Category": "style",
+        "EstMinutes": 2,
+        "Evidence": "filename is registry_hub but title is Model-Tuned Community Personas",
+        "Reviewer": "otto",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-bf9ba8f04fafc1d21524e182d7d7da08",
+    "file": ".planning/epics/active/19.6_community_registry_hub.md",
+    "line": 1,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": ".planning/epics/active/19.6_community_registry_hub.md",
+        "Line": 1,
+        "Problem": "File path retains \"registry_hub\" naming after epic was rescoped to personas",
+        "Fix": "Rename file to `19.6_community_personas.md` to match the new content",
+        "Category": "naming",
+        "EstMinutes": 5,
+        "Evidence": "path `.planning/epics/active/19.6_community_registry_hub.md` vs title \"Default Model-Tuned Community Personas\"",
+        "Reviewer": "kai",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-d04fc2b2c17be3e9277ac64b22b94880",
+    "file": ".planning/epics/active/19.6_community_registry_hub.md",
+    "line": 49,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": ".planning/epics/active/19.6_community_registry_hub.md",
+        "Line": 49,
+        "Problem": "Acceptance criteria reference fixture convention but no test for fixture validity against schema",
+        "Fix": "Add a schema-validation step in the persona-authoring checklist or CI",
+        "Category": "testing",
+        "EstMinutes": 10,
+        "Evidence": "\"Each new persona has a passing fixture per the existing contribution checklist\"",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-9f9f40c3120b9fc463766e99d0532e96",
+    "file": ".planning/epics/active/19.6_community_registry_hub.md",
+    "line": 60,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": ".planning/epics/active/19.6_community_registry_hub.md",
+        "Line": 60,
+        "Problem": "Refinements timestamp reads \"2026-07-05 04:14:59PM\" — date is in the future and the 12-hour suffix on a precise timestamp is non-standard",
+        "Fix": "Verify intended date (likely 2025-07-05) and normalize to ISO 8601 (`2025-07-05T16:14:59`) so the refinement record is grep-friendly and not future-dated",
+        "Category": "clarity",
+        "EstMinutes": 5,
+        "Evidence": "### Refinements (2026-07-05)\\n\\nThis section records findings from `/refine-epic` run on July 05, 2026 04:14:59PM.",
+        "Reviewer": "bruce",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-face6c15cb75ae2b5afb4376204a5704",
+    "file": ".planning/epics/active/19.6_community_registry_hub.md",
+    "line": 63,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": ".planning/epics/active/19.6_community_registry_hub.md",
+        "Line": 63,
+        "Problem": "\"Auto-applied corrections (0) ... No automatic corrections were applied.\" section is empty boilerplate that adds no information",
+        "Fix": "Delete the subsection, or merge into the \"Verification context\" block if a count field is needed",
+        "Category": "clarity",
+        "EstMinutes": 5,
+        "Evidence": "### Auto-applied corrections (0)\\n\\nNo automatic corrections were applied.",
+        "Reviewer": "bruce",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  }
+]

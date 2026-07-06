@@ -1,0 +1,1 @@
+We need to find API contract changes. But this is a markdown file change; no code. No API changes. So likely no findings. However we need to consider if any API changes? The diff is only docs. So none. Output nothing.

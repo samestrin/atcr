@@ -1,0 +1,237 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "gray_zone",
+      "file": ".planning/epics/active/19.6_community_registry_hub.md",
+      "line": 16,
+      "severity": "MEDIUM",
+      "problem": "In-repo quickstart docs will reference personas authored in a separate repository without a stated coordination gate",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "kai"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "kai",
+          "severity": "MEDIUM",
+          "problem": "In-repo quickstart docs will reference personas authored in a separate repository without a stated coordination gate"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": ".planning/epics/active/19.6_community_registry_hub.md",
+      "line": 26,
+      "severity": "MEDIUM",
+      "problem": "Cross-repo content tasks (1-2) have no verifiable acceptance path within this repo",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "MEDIUM",
+          "problem": "Cross-repo content tasks (1-2) have no verifiable acceptance path within this repo"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": ".planning/epics/active/19.6_community_registry_hub.md",
+      "line": 26,
+      "severity": "MEDIUM",
+      "problem": "No error-path coverage for persona install failure when external repo is unreachable",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "MEDIUM",
+          "problem": "No error-path coverage for persona install failure when external repo is unreachable"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": ".planning/epics/active/19.6_community_registry_hub.md",
+      "line": 65,
+      "severity": "MEDIUM",
+      "problem": "Section header \"Items needing user confirmation (6)\" is a contract violation — all 6 listed items are prefixed with \"✅\" and conclude \"Resolved\", so none actually need user confirmation",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "bruce"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "bruce",
+          "severity": "MEDIUM",
+          "problem": "Section header \"Items needing user confirmation (6)\" is a contract violation — all 6 listed items are prefixed with \"✅\" and conclude \"Resolved\", so none actually need user confirmation"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": ".planning/epics/active/19.6_community_registry_hub.md",
+      "line": 74,
+      "severity": "MEDIUM",
+      "problem": "COMPONENTS_TOUCHED includes `internal/registry` as an in-repo component but the plan's refinements explicitly dropped all registry work — line 44 states \"no longer touches `ATCR_REGISTRY_URL` or `registry.yaml` hosting\" and line 15 says \"Only Task 3 (documentation) is an in-repo change\"",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "archer"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "archer",
+          "severity": "MEDIUM",
+          "problem": "COMPONENTS_TOUCHED includes `internal/registry` as an in-repo component but the plan's refinements explicitly dropped all registry work — line 44 states \"no longer touches `ATCR_REGISTRY_URL` or `registry.yaml` hosting\" and line 15 says \"Only Task 3 (documentation) is an in-repo change\""
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": ".planning/epics/active/19.6_community_registry_hub.md",
+      "line": 79,
+      "severity": "MEDIUM",
+      "problem": "Refinement metadata lists `internal/registry` as a touched component despite plan limiting in-repo work to docs",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "kai"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "kai",
+          "severity": "MEDIUM",
+          "problem": "Refinement metadata lists `internal/registry` as a touched component despite plan limiting in-repo work to docs"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": ".planning/epics/active/19.6_community_registry_hub.md",
+      "line": 1,
+      "severity": "LOW",
+      "problem": "Epic title \"Default Model-Tuned Community Personas\" contradicts the filename \"19.6_community_registry_hub.md\"",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "otto",
+          "severity": "LOW",
+          "problem": "Epic title \"Default Model-Tuned Community Personas\" contradicts the filename \"19.6_community_registry_hub.md\""
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": ".planning/epics/active/19.6_community_registry_hub.md",
+      "line": 1,
+      "severity": "LOW",
+      "problem": "File path retains \"registry_hub\" naming after epic was rescoped to personas",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "kai"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "kai",
+          "severity": "LOW",
+          "problem": "File path retains \"registry_hub\" naming after epic was rescoped to personas"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": ".planning/epics/active/19.6_community_registry_hub.md",
+      "line": 49,
+      "severity": "LOW",
+      "problem": "Acceptance criteria reference fixture convention but no test for fixture validity against schema",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "LOW",
+          "problem": "Acceptance criteria reference fixture convention but no test for fixture validity against schema"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": ".planning/epics/active/19.6_community_registry_hub.md",
+      "line": 60,
+      "severity": "LOW",
+      "problem": "Refinements timestamp reads \"2026-07-05 04:14:59PM\" — date is in the future and the 12-hour suffix on a precise timestamp is non-standard",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "bruce"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "bruce",
+          "severity": "LOW",
+          "problem": "Refinements timestamp reads \"2026-07-05 04:14:59PM\" — date is in the future and the 12-hour suffix on a precise timestamp is non-standard"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": ".planning/epics/active/19.6_community_registry_hub.md",
+      "line": 63,
+      "severity": "LOW",
+      "problem": "\"Auto-applied corrections (0) ... No automatic corrections were applied.\" section is empty boilerplate that adds no information",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "bruce"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "bruce",
+          "severity": "LOW",
+          "problem": "\"Auto-applied corrections (0) ... No automatic corrections were applied.\" section is empty boilerplate that adds no information"
+        }
+      ]
+    }
+  ]
+}

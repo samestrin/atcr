@@ -1,0 +1,11 @@
+
+
+MEDIUM|.planning/epics/active/19.6_community_registry_hub.md:65|Section header "Items needing user confirmation (6)" is a contract violation — all 6 listed items are prefixed with "✅" and conclude "Resolved", so none actually need user confirmation|Rename the section to "Resolved items" or "Items previously needing confirmation (6, all resolved)" so the header matches the content|clarity|10|### Items needing user confirmation (6) ... - ✅ **Missed component(s) ...:** Resolved. ... - ✅ **Cross-system hosting gap ...:** Resolved. ...
+
+LOW|.planning/epics/active/19.6_community_registry_hub.md:115|Derived TASK_COUNT reports 4 but Proposed Solution enumerates only 3 numbered items (Author content, Publish via index.json, Update docs)|Either add the missing 4th task or correct the derivation count to 3|correctness|5|### Proposed Solution / 1. ... 2. ... 3. ... \n\n ## Verification context / Derived TASK_COUNT: 4 (limit: 6)
+
+LOW|.planning/epics/active/19.6_community_registry_hub.md:117|COMPONENTS_TOUCHED includes `internal/registry` and Derived COMPONENT_COUNT says 2 in-repo, but the rescoped plan only mutates `docs/` in this repo (Tasks 1–2 are explicitly cross-repo to `atcr/personas`)|Remove `internal/registry` from COMPONENTS_TOUCHED and set COMPONENT_COUNT to 1, or document why the registry component is still in scope|correctness|5|Cross-repo note: Tasks 1–2 ... in the separate `atcr/personas` community repo ... Only Task 3 (documentation) is an in-repo change
+
+LOW|.planning/epics/active/19.6_community_registry_hub.md:60|Refinements timestamp reads "2026-07-05 04:14:59PM" — date is in the future and the 12-hour suffix on a precise timestamp is non-standard|Verify intended date (likely 2025-07-05) and normalize to ISO 8601 (`2025-07-05T16:14:59`) so the refinement record is grep-friendly and not future-dated|clarity|5|### Refinements (2026-07-05)\n\nThis section records findings from `/refine-epic` run on July 05, 2026 04:14:59PM.
+
+LOW|.planning/epics/active/19.6_community_registry_hub.md:63|"Auto-applied corrections (0) ... No automatic corrections were applied." section is empty boilerplate that adds no information|Delete the subsection, or merge into the "Verification context" block if a count field is needed|clarity|5|### Auto-applied corrections (0)\n\nNo automatic corrections were applied.

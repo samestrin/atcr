@@ -1,0 +1,2 @@
+# atcr-findings/v1
+LOW|.planning/epics/active/19.6_community_registry_hub.md:1|Epic title "Default Model-Tuned Community Personas" contradicts the filename "19.6_community_registry_hub.md"|Rename file to match the new focus on personas rather than a registry hub|style|2|filename is registry_hub but title is Model-Tuned Community Personas|otto

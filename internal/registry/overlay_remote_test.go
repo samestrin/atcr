@@ -62,15 +62,15 @@ func TestParseRegistryFile_URLUnset_ReadsLocal(t *testing.T) {
 }
 
 // resetInsecureWarn swaps the insecure-http warning sink to buf and resets the
-// one-time guard so a test can observe the warning deterministically.
+// seen-URL set so a test can observe the warning deterministically.
 func resetInsecureWarn(t *testing.T, buf *bytes.Buffer) {
 	t.Helper()
 	prevWriter := insecureRegistryWarnWriter
 	insecureRegistryWarnWriter = buf
-	insecureRegistryWarnOnce = sync.Once{}
+	insecureRegistryWarnSeen = sync.Map{}
 	t.Cleanup(func() {
 		insecureRegistryWarnWriter = prevWriter
-		insecureRegistryWarnOnce = sync.Once{}
+		insecureRegistryWarnSeen = sync.Map{}
 	})
 }
 
@@ -176,6 +176,21 @@ func TestWarnInsecureRegistryURL_OnceAndRedacted(t *testing.T) {
 	assert.Contains(t, out, "team.example")
 	assert.NotContains(t, out, "supersecret", "password must be redacted")
 	assert.NotContains(t, out, "tok-secret", "query-string token must be redacted")
+}
+
+// TestWarnInsecureRegistryURL_PerDistinctURL proves the warning is keyed per
+// distinct insecure URL, so changing ATCR_REGISTRY_URL to a different plaintext
+// registry still draws a warning rather than being silently accepted.
+func TestWarnInsecureRegistryURL_PerDistinctURL(t *testing.T) {
+	var buf bytes.Buffer
+	resetInsecureWarn(t, &buf)
+
+	warnInsecureRegistryURLOnce("http://a.example/registry.yaml")
+	warnInsecureRegistryURLOnce("http://b.example/registry.yaml")
+	warnInsecureRegistryURLOnce("http://a.example/registry.yaml") // duplicate, must not re-warn
+
+	out := buf.String()
+	assert.Equal(t, 2, strings.Count(out, "warning:"), "each distinct insecure URL must warn once")
 }
 
 // TestRedactRegistryURL strips userinfo, query, and fragment, and is a no-op for
@@ -299,4 +314,60 @@ agents:
 	_, err := LoadRegistry(writeRegistry(t, validRegistry))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does-not-exist")
+}
+
+// --- Redirect scheme re-validation (TD: overlay.go:163) ---
+
+// TestCheckRegistryRedirect_SchemePolicy proves the redirect policy re-applies
+// the initial-URL scheme rules to every hop: https is silent, http draws the
+// one-time insecure warning (so an https->http downgrade is never silent), and
+// any other scheme is rejected before the hop is followed.
+func TestCheckRegistryRedirect_SchemePolicy(t *testing.T) {
+	var buf bytes.Buffer
+	resetInsecureWarn(t, &buf)
+
+	mk := func(raw string) *http.Request {
+		req, err := http.NewRequest(http.MethodGet, raw, nil)
+		require.NoError(t, err)
+		return req
+	}
+
+	// https hop: allowed, no warning.
+	require.NoError(t, checkRegistryRedirect(mk("https://h/registry.yaml"), nil))
+	assert.Empty(t, buf.String(), "https hop must not warn")
+
+	// http hop: allowed, but the insecure warning fires (closing the silent-downgrade gap).
+	require.NoError(t, checkRegistryRedirect(mk("http://h/registry.yaml"), nil))
+	assert.Contains(t, buf.String(), "warning:", "an http redirect hop must warn")
+
+	// other scheme: rejected outright.
+	err := checkRegistryRedirect(mk("ftp://h/registry.yaml"), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "non-http(s)")
+}
+
+// TestCheckRegistryRedirect_TooManyRedirects proves the 10-hop cap that
+// http.DefaultClient applies by default is preserved by the custom policy.
+func TestCheckRegistryRedirect_TooManyRedirects(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://h/registry.yaml", nil)
+	require.NoError(t, err)
+	loopErr := checkRegistryRedirect(req, make([]*http.Request, 10))
+	require.Error(t, loopErr)
+	assert.Contains(t, loopErr.Error(), "10 redirects")
+}
+
+// TestFetchRemoteRegistry_FollowsRedirect proves the dedicated client still
+// follows a normal redirect to the final registry (the CheckRedirect policy
+// re-validates without breaking legitimate redirects).
+func TestFetchRemoteRegistry_FollowsRedirect(t *testing.T) {
+	final := serveRegistry(t, http.StatusOK, validRegistry)
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, final, http.StatusFound)
+	}))
+	t.Cleanup(redirector.Close)
+
+	t.Setenv("ATCR_REGISTRY_URL", redirector.URL+"/registry.yaml")
+	reg, err := LoadRegistry(filepath.Join(t.TempDir(), "nope.yaml"))
+	require.NoError(t, err)
+	assert.Contains(t, reg.Providers, "openai")
 }

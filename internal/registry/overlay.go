@@ -84,6 +84,10 @@ func DefaultProjectRegistryPath(root string) string {
 // the project overlay (.atcr/registry.yaml) and the trust store stay local.
 const registryURLEnv = "ATCR_REGISTRY_URL"
 
+// The following vars are test seams for remote registry fetching. Tests that
+// mutate them must not call t.Parallel(), because concurrent mutations would
+// race. No production code currently calls these in parallel.
+
 // remoteFetchTimeout bounds a single registry fetch. It is deliberately shorter
 // than llmclient's completion budget (that budgets a whole chat completion; this
 // is a one-shot YAML GET) and is a var so tests can lower it.
@@ -95,12 +99,37 @@ var remoteFetchTimeout = 10 * time.Second
 var remoteRegistryBodyLimit int64 = 5 * 1024 * 1024
 
 // insecureRegistryWarnWriter is the sink for the one-time non-https warning; a
-// var so tests can capture it. insecureRegistryWarnOnce keeps the warning to a
-// single emission per process regardless of how many times the registry loads.
+// var so tests can capture it. insecureRegistryWarnSeen tracks URLs that have
+// already drawn the warning so each distinct insecure registry URL warns once.
 var (
 	insecureRegistryWarnWriter io.Writer = os.Stderr
-	insecureRegistryWarnOnce   sync.Once
+	insecureRegistryWarnSeen   sync.Map
 )
+
+// remoteRegistryClient fetches the registry with a redirect policy that
+// re-validates the scheme on every hop (see checkRegistryRedirect), so an
+// https->http downgrade — or a redirect to a plaintext/other-scheme host —
+// cannot bypass the scheme guard fetchRemoteRegistry applies to the initial URL.
+var remoteRegistryClient = &http.Client{CheckRedirect: checkRegistryRedirect}
+
+// checkRegistryRedirect re-applies fetchRemoteRegistry's scheme policy to each
+// redirect hop: https is followed silently, http draws the per-URL insecure
+// warning (so a downgrade is never silent), and any other scheme is rejected
+// before the hop is taken. It also preserves the 10-redirect cap that
+// http.DefaultClient enforces by default.
+func checkRegistryRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("%s: stopped after 10 redirects", registryURLEnv)
+	}
+	switch req.URL.Scheme {
+	case "https":
+	case "http":
+		warnInsecureRegistryURLOnce(req.URL.String())
+	default:
+		return fmt.Errorf("%s redirected to a non-http(s) URL (scheme %q)", registryURLEnv, req.URL.Scheme)
+	}
+	return nil
+}
 
 // parseRegistryFile reads and strictly parses a user-level registry, stamping
 // every entry with the user source tier. Validation is the caller's job — done
@@ -174,7 +203,7 @@ func fetchRemoteRegistry(rawURL string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building %s request: %w", registryURLEnv, err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := remoteRegistryClient.Do(req)
 	if err != nil {
 		// A *url.Error stringifies with the full request URL — query string and
 		// all — so wrapping it verbatim would leak a token embedded in the URL
@@ -206,13 +235,15 @@ func fetchRemoteRegistry(rawURL string) ([]byte, error) {
 
 // warnInsecureRegistryURLOnce emits a single stderr warning when the registry is
 // fetched over plaintext http. The URL is redacted of any embedded credentials
-// before it is shown.
+// before it is shown; each distinct redacted URL warns once.
 func warnInsecureRegistryURLOnce(rawURL string) {
-	insecureRegistryWarnOnce.Do(func() {
-		_, _ = fmt.Fprintf(insecureRegistryWarnWriter,
-			"warning: %s uses insecure http (%s); prefer https for a shared registry\n",
-			registryURLEnv, redactRegistryURL(rawURL))
-	})
+	redacted := redactRegistryURL(rawURL)
+	if _, loaded := insecureRegistryWarnSeen.LoadOrStore(redacted, true); loaded {
+		return
+	}
+	_, _ = fmt.Fprintf(insecureRegistryWarnWriter,
+		"warning: %s uses insecure http (%s); prefer https for a shared registry\n",
+		registryURLEnv, redacted)
 }
 
 // redactRegistryURL returns a display-safe form of rawURL with any embedded
