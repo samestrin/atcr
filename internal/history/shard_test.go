@@ -116,6 +116,9 @@ func TestLoadAll_MergesShardsAndLegacy(t *testing.T) {
 		ids[r.ID] = true
 	}
 	assert.Equal(t, map[string]bool{"shard1": true, "legacy1": true}, ids)
+	// Chronological ordering: the legacy ledger (pre-19.4) precedes monthly shards.
+	assert.Equal(t, "legacy1", recs[0].ID)
+	assert.Equal(t, "shard1", recs[1].ID)
 }
 
 // Absent shard dir and absent legacy file is a valid empty history.
