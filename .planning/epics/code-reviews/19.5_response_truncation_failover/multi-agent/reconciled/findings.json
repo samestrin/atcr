@@ -1,0 +1,202 @@
+[
+  {
+    "severity": "MEDIUM",
+    "file": "internal/fanout/response_truncation_test.go",
+    "line": 1,
+    "problem": "No test covers invokeSingleShot fallback to UsageCompleter when MetaCompleter is absent",
+    "fix": "Add test with a UsageCompleter-only mock and assert the result carries content and usage but ResponseTruncated=false",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "the else-if branch at engine.go invokeSingleShot is exercised only by TestSingleShot_UsageOnlyCompleterLeavesTruncationFalse which uses a usageCompleter that returns empty content — the content+usage path is untested",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/fanout/response_truncation_test.go:1|No test covers the MetaCompleter error path in invokeSingleShot|Add test where CompleteWithMeta returns an error and assert Result.ResponseTruncated is false|testing|10|invokeSingleShot sets ResponseTruncated from comp.Truncated only on the success path; the error branch (line ~700) returns r without ever setting ResponseTruncated — it stays false by zero value, which is correct but untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test covers invokeSingleShot fallback to UsageCompleter when MetaCompleter is absent|Add test with a UsageCompleter-only mock and assert the result carries content and usage but ResponseTruncated=false|testing|10|the else-if branch at engine.go invokeSingleShot is exercised only by TestSingleShot_UsageOnlyCompleterLeavesTruncationFalse which uses a usageCompleter that returns empty content — the content+usage path is untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test cover…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 1
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/fanout/response_truncation_test.go",
+    "line": 1,
+    "problem": "No test covers invokeSingleShot fallback to plain Complete when neither MetaCompleter nor UsageCompleter is present",
+    "fix": "Add test with a Completer-only mock and assert StatusOK with ResponseTruncated=false",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "the final else branch at engine.go invokeSingleShot (content, err = e.completer.Complete(...)) has zero coverage",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/fanout/response_truncation_test.go:1|No test covers the MetaCompleter error path in invokeSingleShot|Add test where CompleteWithMeta returns an error and assert Result.ResponseTruncated is false|testing|10|invokeSingleShot sets ResponseTruncated from comp.Truncated only on the success path; the error branch (line ~700) returns r without ever setting ResponseTruncated — it stays false by zero value, which is correct but untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test covers invokeSingleShot fallback to UsageCompleter when MetaCompleter is absent|Add test with a UsageCompleter-only mock and assert the result carries content and usage but ResponseTruncated=false|testing|10|the else-if branch at engine.go invokeSingleShot is exercised only by TestSingleShot_UsageOnlyCompleterLeavesTruncationFalse which uses a usageCompleter that returns empty content — the content+usage path is untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test cover…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 1
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/fanout/response_truncation_test.go",
+    "line": 1,
+    "problem": "No test covers invokeSlot truncation failover when the primary is truncated-empty AND the fallback also truncates empty",
+    "fix": "Add test with both primary and fallback returning truncated-empty and assert StatusFailed",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "TestInvokeSlot_AllTruncatedEmpty_SlotFails covers this but does not assert the fallback's ResponseTruncated is true — only the last result's marker is checked",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/fanout/response_truncation_test.go:1|No test covers the MetaCompleter error path in invokeSingleShot|Add test where CompleteWithMeta returns an error and assert Result.ResponseTruncated is false|testing|10|invokeSingleShot sets ResponseTruncated from comp.Truncated only on the success path; the error branch (line ~700) returns r without ever setting ResponseTruncated — it stays false by zero value, which is correct but untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test covers invokeSingleShot fallback to UsageCompleter when MetaCompleter is absent|Add test with a UsageCompleter-only mock and assert the result carries content and usage but ResponseTruncated=false|testing|10|the else-if branch at engine.go invokeSingleShot is exercised only by TestSingleShot_UsageOnlyCompleterLeavesTruncationFalse which uses a usageCompleter that returns empty content — the content+usage path is untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test cover…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 1
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/fanout/response_truncation_test.go",
+    "line": 1,
+    "problem": "No test covers the MetaCompleter error path in invokeSingleShot",
+    "fix": "Add test where CompleteWithMeta returns an error and assert Result.ResponseTruncated is false",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "invokeSingleShot sets ResponseTruncated from comp.Truncated only on the success path; the error branch (line ~700) returns r without ever setting ResponseTruncated — it stays false by zero value, which is correct but untested",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/fanout/response_truncation_test.go:1|No test covers the MetaCompleter error path in invokeSingleShot|Add test where CompleteWithMeta returns an error and assert Result.ResponseTruncated is false|testing|10|invokeSingleShot sets ResponseTruncated from comp.Truncated only on the success path; the error branch (line ~700) returns r without ever setting ResponseTruncated — it stays false by zero value, which is correct but untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test covers invokeSingleShot fallback to UsageCompleter when MetaCompleter is absent|Add test with a UsageCompleter-only mock and assert the result carries content and usage but ResponseTruncated=false|testing|10|the else-if branch at engine.go invokeSingleShot is exercised only by TestSingleShot_UsageOnlyCompleterLeavesTruncationFalse which uses a usageCompleter that returns empty content — the content+usage path is untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test cover…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 1
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/fanout/response_truncation_test.go",
+    "line": 1,
+    "problem": "No test covers the tool-loop path where requestFinalAnswer returns a truncated response",
+    "fix": "Add test where the loop trips a budget, requestFinalAnswer fires, and the Chat response has Truncated=true",
+    "category": "testing",
+    "est_minutes": 15,
+    "evidence": "requestFinalAnswer sets l.res.ResponseTruncated = resp.Truncated but no test drives a budget trip that reaches this assignment",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/fanout/response_truncation_test.go:1|No test covers the MetaCompleter error path in invokeSingleShot|Add test where CompleteWithMeta returns an error and assert Result.ResponseTruncated is false|testing|10|invokeSingleShot sets ResponseTruncated from comp.Truncated only on the success path; the error branch (line ~700) returns r without ever setting ResponseTruncated — it stays false by zero value, which is correct but untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test covers invokeSingleShot fallback to UsageCompleter when MetaCompleter is absent|Add test with a UsageCompleter-only mock and assert the result carries content and usage but ResponseTruncated=false|testing|10|the else-if branch at engine.go invokeSingleShot is exercised only by TestSingleShot_UsageOnlyCompleterLeavesTruncationFalse which uses a usageCompleter that returns empty content — the content+usage path is untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test cover…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 1
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/llmclient/truncation_test.go",
+    "line": 1,
+    "problem": "No test covers CompleteWithMeta when JSON unmarshal fails",
+    "fix": "Add test with a malformed JSON body and assert error + CallRecords populated",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "the json.Unmarshal error path in CompleteWithMeta returns Completion{CallRecords: records} — untested",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/fanout/response_truncation_test.go:1|No test covers the MetaCompleter error path in invokeSingleShot|Add test where CompleteWithMeta returns an error and assert Result.ResponseTruncated is false|testing|10|invokeSingleShot sets ResponseTruncated from comp.Truncated only on the success path; the error branch (line ~700) returns r without ever setting ResponseTruncated — it stays false by zero value, which is correct but untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test covers invokeSingleShot fallback to UsageCompleter when MetaCompleter is absent|Add test with a UsageCompleter-only mock and assert the result carries content and usage but ResponseTruncated=false|testing|10|the else-if branch at engine.go invokeSingleShot is exercised only by TestSingleShot_UsageOnlyCompleterLeavesTruncationFalse which uses a usageCompleter that returns empty content — the content+usage path is untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test cover…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 4
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/llmclient/truncation_test.go",
+    "line": 1,
+    "problem": "No test covers CompleteWithMeta when the response has an empty choices array",
+    "fix": "Add test with choices:[] and assert an error is returned with Truncated=false",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "the len(parsed.Choices)==0 error path in CompleteWithMeta returns Completion{CallRecords: records} with Truncated=false — untested",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/fanout/response_truncation_test.go:1|No test covers the MetaCompleter error path in invokeSingleShot|Add test where CompleteWithMeta returns an error and assert Result.ResponseTruncated is false|testing|10|invokeSingleShot sets ResponseTruncated from comp.Truncated only on the success path; the error branch (line ~700) returns r without ever setting ResponseTruncated — it stays false by zero value, which is correct but untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test covers invokeSingleShot fallback to UsageCompleter when MetaCompleter is absent|Add test with a UsageCompleter-only mock and assert the result carries content and usage but ResponseTruncated=false|testing|10|the else-if branch at engine.go invokeSingleShot is exercised only by TestSingleShot_UsageOnlyCompleterLeavesTruncationFalse which uses a usageCompleter that returns empty content — the content+usage path is untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test cover…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 4
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/verify/executor_truncation_test.go",
+    "line": 1,
+    "problem": "No test covers the snippet-path truncation when the completer does NOT implement metaCompleter",
+    "fix": "Add test with an executorCompleter-only mock and assert the fix lands normally with no truncation flag",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "callExecutor's else branch (content, err := complete.Complete(...)) returns truncated=false — untested",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/fanout/response_truncation_test.go:1|No test covers the MetaCompleter error path in invokeSingleShot|Add test where CompleteWithMeta returns an error and assert Result.ResponseTruncated is false|testing|10|invokeSingleShot sets ResponseTruncated from comp.Truncated only on the success path; the error branch (line ~700) returns r without ever setting ResponseTruncated — it stays false by zero value, which is correct but untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test covers invokeSingleShot fallback to UsageCompleter when MetaCompleter is absent|Add test with a UsageCompleter-only mock and assert the result carries content and usage but ResponseTruncated=false|testing|10|the else-if branch at engine.go invokeSingleShot is exercised only by TestSingleShot_UsageOnlyCompleterLeavesTruncationFalse which uses a usageCompleter that returns empty content — the content+usage path is untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test cover…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 6
+    }
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/fanout/response_truncation_e2e_test.go",
+    "line": 1,
+    "problem": "E2E test for scenario (a) does not assert the primary's ResponseTruncated marker is preserved in status.json",
+    "fix": "Add assertion that the primary agent's ResponseTruncated=true even though the fallback rescued the slot",
+    "category": "testing",
+    "est_minutes": 5,
+    "evidence": "the test reads the fallback agent's status.json but never checks whether the primary's truncated marker was recorded",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/fanout/response_truncation_test.go:1|No test covers the MetaCompleter error path in invokeSingleShot|Add test where CompleteWithMeta returns an error and assert Result.ResponseTruncated is false|testing|10|invokeSingleShot sets ResponseTruncated from comp.Truncated only on the success path; the error branch (line ~700) returns r without ever setting ResponseTruncated — it stays false by zero value, which is correct but untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test covers invokeSingleShot fallback to UsageCompleter when MetaCompleter is absent|Add test with a UsageCompleter-only mock and assert the result carries content and usage but ResponseTruncated=false|testing|10|the else-if branch at engine.go invokeSingleShot is exercised only by TestSingleShot_UsageOnlyCompleterLeavesTruncationFalse which uses a usageCompleter that returns empty content — the content+usage path is untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test cover…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 10
+    }
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/fanout/response_truncation_test.go",
+    "line": 1,
+    "problem": "TestWritePool_CountsTruncatedZeroFindings passes a nil changed to WritePool but the grounding gate is never tested",
+    "fix": "Add a variant with non-empty changed to assert GroundingEnabled is true in the summary",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "WritePool with nil changed sets groundingEnabled=false; the test never asserts the GroundingEnabled field",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/fanout/response_truncation_test.go:1|No test covers the MetaCompleter error path in invokeSingleShot|Add test where CompleteWithMeta returns an error and assert Result.ResponseTruncated is false|testing|10|invokeSingleShot sets ResponseTruncated from comp.Truncated only on the success path; the error branch (line ~700) returns r without ever setting ResponseTruncated — it stays false by zero value, which is correct but untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test covers invokeSingleShot fallback to UsageCompleter when MetaCompleter is absent|Add test with a UsageCompleter-only mock and assert the result carries content and usage but ResponseTruncated=false|testing|10|the else-if branch at engine.go invokeSingleShot is exercised only by TestSingleShot_UsageOnlyCompleterLeavesTruncationFalse which uses a usageCompleter that returns empty content — the content+usage path is untested\nMEDIUM|internal/fanout/response_truncation_test.go:1|No test cover…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 1
+    }
+  }
+]

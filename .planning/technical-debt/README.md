@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 1 | 20 | 0 |
-| LOW | 1 | 27 | 0 |
+| MEDIUM | 0 | 20 | 0 |
+| LOW | 0 | 28 | 0 |
 
-**Last Modified:** 2026-07-06 | **Open Items:** 2 | **Deferred Items:** 49 | **Resolved Items:** 0 | **Total Items:** 51
+**Last Modified:** 2026-07-06 | **Open Items:** 0 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 50
 
 ## Directory Structure
 
@@ -63,12 +63,11 @@ table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
 
-### [2026-07-06] From Sprint: epic-19.5
+### [2026-07-06] From Sprint: 19.5_response_truncation_failover
 
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | MEDIUM | internal/fanout/engine.go:549 | Truncation failover gates on raw stream.ParseModelOutput(r.Content) count while the persisted FindingsCount and truncated_zero_findings tally use the post-grounding/min-severity/max-findings effective count; a truncated response whose only parseable rows are ungrounded hallucinations or sub-severity stays StatusOK (silent clean) yet is counted as truncated_zero_findings | Thread the effective/grounded finding set (changed ChangedLines) into invokeSlot so the demotion and telemetry agree, or gate failover on the same filter findingsFor applies (needs an engine API change - deferred) | CORRECTNESS | 60 | execute-epic-independent |
-| U | [ ] | LOW | internal/fanout/engine.go:549 | Failover gate re-parses r.Content via ParseModelOutput even though findingsFor parses the identical content again downstream in writePool, duplicating the parse per truncated slot | Carry a parsed-findings count on Result computed once and reuse it in both invokeSlot and findingsFor | EFFICIENCY | 30 | execute-epic-independent |
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| 1 | [/] | LOW | internal/fanout/artifacts.go:214 | The TD-019 memo short-circuit only fires for parsedFindingCount==0, so a truncated-with-findings result (memo set to >=1 by the failover gate) re-runs stream.ParseModelOutput at line 217 — the redundant parse the refactor aimed to remove, though bounded to the rare truncated-with-findings path. | Cache the parsed []Finding slice on Result rather than only its length so findingsFor can reuse it, or accept the bounded cost. (Won't fix 2026-07-06: accepted the bounded re-parse cost — the parsedFindingCount memo already avoids the redundant parse on the common truncated+zero-finding path; caching the full slice risks aliasing via findingsFor's in-place Finding.Reviewer mutation and downstream grounding/constraint filtering.) | performance | 15 | code-review | claude | MEDIUM |
 
 ### [2026-07-05] From Sprint: 19.4_history_time_sharding
 

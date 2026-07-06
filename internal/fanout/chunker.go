@@ -195,6 +195,13 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out.TrippedBudgets = nil
 	out.FallbackUsed = false
 	out.FallbackFrom = ""
+	// Invalidate the parsed-finding memo copied from g[0]. out.Content is rebuilt
+	// below from ALL chunks, so chunk[0]'s cached count is stale — and when chunk[0]
+	// truncated to zero findings the failover gate cached 0/set, which would make
+	// findingsFor short-circuit and silently drop every finding the other chunks
+	// produced. Reset so ParsedFindingCount recomputes from the merged content.
+	out.parsedFindingCount = 0
+	out.parsedFindingCountSet = false
 
 	isSerial := serialSet[out.Agent]
 
@@ -232,6 +239,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		out.Tools = out.Tools || r.Tools
 		out.ToolsRequested = out.ToolsRequested || r.ToolsRequested
 		out.ToolsDegraded = out.ToolsDegraded || r.ToolsDegraded
+		out.ResponseTruncated = out.ResponseTruncated || r.ResponseTruncated
 		allCacheHit = allCacheHit && r.CacheHit
 		switch r.Status {
 		case StatusOK:

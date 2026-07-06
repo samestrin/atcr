@@ -1,0 +1,18 @@
+{
+  "sources": ["claude"],
+  "raw_count": 6,
+  "merged_count": 6,
+  "clusters_collapsed": {
+    "input_rows": 6,
+    "merged_clusters": 5,
+    "post_adjudication": 6
+  },
+  "severity_disagreements": 1,
+  "intent_annotations": 1,
+  "validated_count": 6,
+  "pruned_count": 0,
+  "corrected_count": 0,
+  "annotated_count": 0,
+  "claude_role": "intent_verifier",
+  "timestamp": "2026-07-06T20:49:07Z"
+}

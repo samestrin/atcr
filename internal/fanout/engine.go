@@ -247,6 +247,27 @@ type Result struct {
 	// Complete-only test double, or a circuit-open fail-fast), in which case
 	// recordAgentOutcome falls back to the Turns-based count.
 	CallRecords []llmclient.CallRecord
+
+	// parsedFindingCount caches the number of findings produced by
+	// stream.ParseModelOutput(Content) so the truncation-failover gate and
+	// findingsFor can share a single parse instead of each parsing the content
+	// independently (TD-019).
+	parsedFindingCount    int
+	parsedFindingCountSet bool
+}
+
+// ParsedFindingCount returns the number of parseable findings in r.Content,
+// computing and caching the count on first use.
+func (r *Result) ParsedFindingCount() int {
+	if r.Content == "" {
+		return 0
+	}
+	if r.parsedFindingCountSet {
+		return r.parsedFindingCount
+	}
+	r.parsedFindingCount = len(stream.ParseModelOutput([]byte(r.Content)))
+	r.parsedFindingCountSet = true
+	return r.parsedFindingCount
 }
 
 // Engine fans a review out to a roster across a parallel lane (default) and a
@@ -539,14 +560,20 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			r.Agent = s.Primary.Name // attribution follows the slot, not the substitute
 		}
 		// Truncation failover (Epic 19.5): a reviewer response that hit
-		// finish_reason=length with zero parsed findings is a runaway that would
-		// otherwise be recorded as a silent clean review. Demote it to StatusFailed
-		// so the loop descends to the next agent in the chain. A truncated response
-		// that still parsed >=1 finding stays StatusOK (its ResponseTruncated marker
-		// is preserved for status.json). Applied per attempt, so a truncated fallback
-		// also fails over to the next one.
+		// finish_reason=length with zero RAW parsed findings (stream.ParseModelOutput,
+		// before grounding) is a runaway that would otherwise be recorded as a silent
+		// clean review. Demote it to StatusFailed so the loop descends to the next
+		// agent in the chain. A truncated response that still parsed >=1 finding stays
+		// StatusOK (its ResponseTruncated marker is preserved for status.json).
+		// NOTE: this gate keys on the RAW parsed count, whereas the run-level
+		// truncated_zero_findings tally (artifacts.go) keys on the GROUNDED
+		// FindingsCount; a response that raw-parses >=1 finding later dropped as
+		// ungrounded/below-min-severity stays StatusOK here yet is tallied there. That
+		// divergence is deferred TD (no ChangedLines at this call site to ground
+		// against), not reconciled in this epic. Applied per attempt, so a truncated
+		// fallback also fails over to the next one.
 		if e.truncationFailover && r.Status == StatusOK && r.ResponseTruncated &&
-			len(stream.ParseModelOutput([]byte(r.Content))) == 0 {
+			r.ParsedFindingCount() == 0 {
 			r.Status = StatusFailed
 			r.Err = errTruncatedZeroFindings
 			log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",

@@ -26,7 +26,14 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-          cache: true
+          # gauntlet runners are persistent dedicated hardware, not ephemeral
+          # GitHub-hosted VMs -- GOCACHE/GOMODCACHE already survive between jobs
+          # on local disk. actions/setup-go's cache:true instead round-trips a
+          # ~2GB tarball through GitHub's network Actions Cache on every run
+          # (confirmed via step logs: it re-downloads files already present
+          # locally, sometimes causing 10+ min stalls when concurrent jobs
+          # fight over the cache-save step).
+          cache: false
 
       - name: Verify Formatted
         run: |
@@ -90,7 +97,8 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-          cache: true
+          # see cache:false rationale in the `ci` job above
+          cache: false
 
       - name: Run Module Tests
         # root `go test ./...` does NOT cross ./reconcile's go.mod boundary
@@ -121,7 +129,8 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-          cache: true
+          # see cache:false rationale in the `ci` job above
+          cache: false
 
       - name: Run Module Tests
         run: go test ./...

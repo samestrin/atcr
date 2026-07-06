@@ -1,0 +1,14 @@
+{
+  "agent": "bruce",
+  "status": "ok",
+  "findings_count": 0,
+  "duration_ms": 68016,
+  "payload_mode": "blocks",
+  "truncated": false,
+  "files_dropped": [],
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0,
+  "model": "minimax-m3-mira",
+  "tokens_in": 32446,
+  "tokens_out": 8192
+}

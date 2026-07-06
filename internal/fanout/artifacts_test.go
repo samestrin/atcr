@@ -231,3 +231,17 @@ func TestWritePool_ConstrainedAgentPersistsDroppedCounts(t *testing.T) {
 	assert.Equal(t, float64(0), raw["truncated_by_max_findings"],
 		"truncated_by_max_findings must be zero when no max_findings cap applied")
 }
+
+// TestFindingsFor_UsesCachedCount verifies that findingsFor reuses a cached zero
+// parsed-finding count rather than re-parsing Content (TD-019).
+func TestFindingsFor_UsesCachedCount(t *testing.T) {
+	// Content has one parseable finding, but the cached count says zero.
+	r := Result{
+		Agent:                 "bruce",
+		Content:               "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce",
+		parsedFindingCount:    0,
+		parsedFindingCountSet: true,
+	}
+	fr := findingsFor(r, nil)
+	assert.Empty(t, fr.Findings, "findingsFor should trust the cached zero count")
+}

@@ -1,0 +1,10 @@
+{"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/fanout","severity":"MEDIUM","id":"4a3564a689467748","file":"internal/fanout/response_truncation_test.go","category":"testing"}
+{"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/fanout","severity":"MEDIUM","id":"36f0532e751602a6","file":"internal/fanout/response_truncation_test.go","category":"testing"}
+{"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/fanout","severity":"MEDIUM","id":"21973ea0f4d805a8","file":"internal/fanout/response_truncation_test.go","category":"testing"}
+{"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/llmclient","severity":"MEDIUM","id":"bc71f3f6e4047213","file":"internal/llmclient/truncation_test.go","category":"testing"}
+{"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/llmclient","severity":"MEDIUM","id":"6452e86b80bbf85e","file":"internal/llmclient/truncation_test.go","category":"testing"}
+{"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/verify","severity":"MEDIUM","id":"4dbda08e5a2387ec","file":"internal/verify/executor_truncation_test.go","category":"testing"}
+{"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/fanout","severity":"MEDIUM","id":"3fe1af79e6ffc09c","file":"internal/fanout/response_truncation_test.go","category":"testing"}
+{"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/fanout","severity":"MEDIUM","id":"0b53ab5f60cc00e3","file":"internal/fanout/response_truncation_test.go","category":"testing"}
+{"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/fanout","severity":"LOW","id":"995c54d622a29ca5","file":"internal/fanout/response_truncation_test.go","category":"testing"}
+{"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/fanout","severity":"LOW","id":"e4b8238cc04217b7","file":"internal/fanout/response_truncation_e2e_test.go","category":"testing"}
