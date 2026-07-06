@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 0 | 20 | 0 |
-| LOW | 0 | 27 | 0 |
+| MEDIUM | 1 | 20 | 0 |
+| LOW | 1 | 27 | 0 |
 
-**Last Modified:** 2026-07-06 | **Open Items:** 0 | **Deferred Items:** 49 | **Resolved Items:** 0 | **Total Items:** 49
+**Last Modified:** 2026-07-06 | **Open Items:** 2 | **Deferred Items:** 49 | **Resolved Items:** 0 | **Total Items:** 51
 
 ## Directory Structure
 
@@ -62,6 +62,13 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table â†’ shards â
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-06] From Sprint: epic-19.5
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | MEDIUM | internal/fanout/engine.go:549 | Truncation failover gates on raw stream.ParseModelOutput(r.Content) count while the persisted FindingsCount and truncated_zero_findings tally use the post-grounding/min-severity/max-findings effective count; a truncated response whose only parseable rows are ungrounded hallucinations or sub-severity stays StatusOK (silent clean) yet is counted as truncated_zero_findings | Thread the effective/grounded finding set (changed ChangedLines) into invokeSlot so the demotion and telemetry agree, or gate failover on the same filter findingsFor applies (needs an engine API change - deferred) | CORRECTNESS | 60 | execute-epic-independent |
+| U | [ ] | LOW | internal/fanout/engine.go:549 | Failover gate re-parses r.Content via ParseModelOutput even though findingsFor parses the identical content again downstream in writePool, duplicating the parse per truncated slot | Carry a parsed-findings count on Result computed once and reuse it in both invokeSlot and findingsFor | EFFICIENCY | 30 | execute-epic-independent |
 
 ### [2026-07-05] From Sprint: 19.4_history_time_sharding
 
