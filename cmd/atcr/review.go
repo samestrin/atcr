@@ -395,11 +395,13 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// so `atcr history` can answer per-package trend queries later. It runs on
 	// every successful review — before the conditional in-process reconcile
 	// below — reading the pool findings.txt that WritePool always writes, and
-	// always targets <root>/.atcr regardless of --output-dir (the ledger is a
-	// repo-level accumulator, not part of the redirected review tree). A history
-	// write failure is non-fatal: it must never fail an otherwise-successful
-	// review, so it is logged and swallowed.
-	histPath := filepath.Join(req.Root, ".atcr", "findings-history.jsonl")
+	// always targets <root>/.planning/history regardless of --output-dir (the
+	// ledger is a repo-level accumulator, not part of the redirected review
+	// tree). Findings are appended to the current month's shard (Epic 19.4) so
+	// the version-controlled history stops churning one ever-growing blob. A
+	// history write failure is non-fatal: it must never fail an
+	// otherwise-successful review, so it is logged and swallowed.
+	histPath := history.ShardPath(filepath.Join(req.Root, ".planning", "history"), now)
 	if n, herr := history.RecordReview(histPath, result.Dir, now); herr != nil {
 		log.FromContext(ctx).Warn("failed to append finding history", "error", herr)
 	} else if n > 0 {

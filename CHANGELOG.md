@@ -1,3 +1,18 @@
+## [19.4.0] - 2026-07-05
+
+Time-based sharding for the findings history so it can be committed to version control (Team Edition) without a single, ever-growing file bloating the repo.
+
+### Added
+
+- Findings history is now sharded by month: each `atcr review`/`atcr resume` run appends to `.planning/history/YYYY-MM.jsonl` (the month is derived from the run time in UTC). Once a month rolls over, its shard stops receiving writes, so old shards no longer churn new git blobs.
+- `atcr history` transparently queries across every monthly shard — no need to name a shard — before applying the `--since` and `--package` filters.
+
+### Changed
+
+- Findings history moved from the git-ignored `.atcr/findings-history.jsonl` to the version-controlled `.planning/history/` directory, so a team can commit and share trend data. A pre-existing `.atcr/findings-history.jsonl` is still read in place as read-only legacy data and merged into query results; it is never moved or rewritten.
+
+*Shipped via /execute-epic (epic 19.4)*
+
 ## [Technical Debt] - 2026-07-05
 
 ### Fixed
