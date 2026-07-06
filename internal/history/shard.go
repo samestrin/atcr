@@ -46,3 +46,22 @@ func LoadShards(dir string) ([]Record, error) {
 	}
 	return all, nil
 }
+
+// LoadAll returns the full queryable history: every monthly shard under shardDir
+// (LoadShards) merged with the legacy flat ledger at legacyPath, if it still
+// exists. The legacy file — the pre-19.4 .atcr/findings-history.jsonl — is read
+// in place and read-only; it is never moved or rewritten (Epic 19.4: "no complex
+// write-migrations"), so a project that accrued history before sharding keeps
+// that data visible alongside new shards. An absent shard dir or legacy file is
+// simply empty history, not an error.
+func LoadAll(shardDir, legacyPath string) ([]Record, error) {
+	shards, err := LoadShards(shardDir)
+	if err != nil {
+		return nil, err
+	}
+	legacy, err := Load(legacyPath)
+	if err != nil {
+		return nil, err
+	}
+	return append(shards, legacy...), nil
+}

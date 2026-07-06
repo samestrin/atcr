@@ -96,3 +96,50 @@ func TestLoadShards_IgnoresNonJSONLFiles(t *testing.T) {
 	require.Len(t, recs, 1)
 	assert.Equal(t, "x", recs[0].ID)
 }
+
+// Legacy migration: LoadAll returns monthly shards merged with the pre-19.4 flat
+// ledger, so history that accrued before sharding stays queryable.
+func TestLoadAll_MergesShardsAndLegacy(t *testing.T) {
+	root := t.TempDir()
+	shardDir := filepath.Join(root, ".planning", "history")
+	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+
+	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, Append(ShardPath(shardDir, ts), []Record{{Timestamp: ts, ID: "shard1", File: "a.go"}}))
+	require.NoError(t, Append(legacyPath, []Record{{Timestamp: ts, ID: "legacy1", File: "b.go"}}))
+
+	recs, err := LoadAll(shardDir, legacyPath)
+	require.NoError(t, err)
+	require.Len(t, recs, 2)
+	ids := map[string]bool{}
+	for _, r := range recs {
+		ids[r.ID] = true
+	}
+	assert.Equal(t, map[string]bool{"shard1": true, "legacy1": true}, ids)
+}
+
+// Absent shard dir and absent legacy file is a valid empty history.
+func TestLoadAll_AbsentBothIsEmpty(t *testing.T) {
+	root := t.TempDir()
+	recs, err := LoadAll(filepath.Join(root, ".planning", "history"), filepath.Join(root, ".atcr", "findings-history.jsonl"))
+	require.NoError(t, err)
+	assert.Empty(t, recs)
+}
+
+// The legacy ledger is read in place and read-only — LoadAll must never rewrite
+// it (Epic 19.4: "no complex write-migrations will be performed").
+func TestLoadAll_DoesNotMutateLegacyFile(t *testing.T) {
+	root := t.TempDir()
+	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+	ts := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, Append(legacyPath, []Record{{Timestamp: ts, ID: "legacy1", File: "b.go"}}))
+	before, err := os.ReadFile(legacyPath)
+	require.NoError(t, err)
+
+	_, err = LoadAll(filepath.Join(root, ".planning", "history"), legacyPath)
+	require.NoError(t, err)
+
+	after, err := os.ReadFile(legacyPath)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "legacy ledger must be read-only")
+}
