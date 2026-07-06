@@ -1,0 +1,100 @@
+[
+  {
+    "severity": "HIGH",
+    "file": "cmd/atcr/resume.go",
+    "line": 210,
+    "problem": "recordResumeHistory hardcodes cwd-relative ./.planning/history, so running atcr review --resume from a subdirectory writes shards to a location that atcr history (which uses repoRoot()) never reads",
+    "fix": "Pass repo root from runResume to recordResumeHistory to ensure shards are written to the project root rather than the current working directory",
+    "category": "correctness",
+    "est_minutes": 20,
+    "evidence": "[greta] histPath := history.ShardPath(filepath.Join(\".\", \".planning\", \"history\"), ts) / [brad] histPath := history.ShardPath(filepath.Join(\".\", \".planning\", \"history\"), ts) / [otto] histPath := history.ShardPath(filepath.Join(\".\", \".planning\", \"history\"), ts)",
+    "reviewers": [
+      "brad",
+      "greta",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "MEDIUM vs HIGH",
+    "path_valid": true
+  },
+  {
+    "severity": "HIGH",
+    "file": "cmd/atcr/review.go",
+    "line": 285,
+    "problem": "Multiple concurrent atcr review processes will append to the same YYYY-MM.jsonl simultaneously without synchronization, causing interleaved JSON lines and ledger corruption",
+    "fix": "Acquire a file lock (flock) on the shard or a dedicated lockfile before opening for append",
+    "category": "concurrency",
+    "est_minutes": 40,
+    "evidence": "histPath := history.ShardPath(filepath.Join(req.Root, \".planning\", \"history\"), now) / history.RecordReview(histPath, dir, now)",
+    "reviewers": [
+      "brad"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true
+  },
+  {
+    "severity": "HIGH",
+    "file": "internal/history/shard.go",
+    "line": 33,
+    "problem": "LoadShards uses filepath.Glob on the directory path, so a repo path containing glob metacharacters (e.g. a [1] segment) is parsed as a character class and silently returns empty history instead of the real records",
+    "fix": "Replace filepath.Glob with os.ReadDir + strings.HasSuffix(name, \".jsonl\") so the directory path is treated literally",
+    "category": "edge_cases",
+    "est_minutes": 20,
+    "evidence": "`matches, err := filepath.Glob(filepath.Join(dir, \"*.jsonl\"))` treats metacharacters in dir as glob syntax",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "HIGH",
+    "file": "internal/history/shard.go",
+    "line": 43,
+    "problem": "LoadShards loads every monthly shard into memory before any --since filtering is applied, causing unbounded heap growth on repos with long histories even for narrow queries",
+    "fix": "Log-and-skip an unreadable individual shard so remaining shards stay queryable, mirroring Load's torn-line tolerance",
+    "category": "error_paths",
+    "est_minutes": 25,
+    "evidence": "[brad] var all []Record / for _, path := range matches { recs, err := Load(path) ... all = append(all, recs...) } / [dax] `if err != nil { return nil, err }` inside the shard loop hard-fails on the first unreadable shard",
+    "reviewers": [
+      "brad",
+      "dax"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "MEDIUM vs HIGH",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/history/shard.go",
+    "line": 32,
+    "problem": "LoadShards loads every shard into memory before Filter applies --since, so a narrow time window still reads all shards (acceptable within 1-2yr bound but no month-prefix pruning)",
+    "fix": "Replace filepath.Glob with os.ReadDir and filter using strings.HasSuffix(name, \".jsonl\") to treat the directory path literally",
+    "category": "correctness",
+    "est_minutes": 30,
+    "evidence": "[brad] matches, err := filepath.Glob(filepath.Join(dir, \"*.jsonl\")) / [dax] `for _, path := range matches { recs, err := Load(path) ... }` loads all shards unconditionally / [greta] matches, err := filepath.Glob(filepath.Join(dir, \"*.jsonl\"))",
+    "reviewers": [
+      "brad",
+      "dax",
+      "greta"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "LOW vs MEDIUM",
+    "path_valid": true
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/history/shard.go",
+    "line": 40,
+    "problem": "A single unreadable or corrupt shard aborts the entire LoadShards loop and fails atcr history, making one bad month brick all trend queries",
+    "fix": "Wrap Load in a conditional that logs the error and continues so remaining shards stay queryable",
+    "category": "error",
+    "est_minutes": 20,
+    "evidence": "if err != nil { return nil, err } inside the for _, path := range matches loop",
+    "reviewers": [
+      "brad"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true
+  }
+]

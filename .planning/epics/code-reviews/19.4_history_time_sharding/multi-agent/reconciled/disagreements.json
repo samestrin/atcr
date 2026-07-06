@@ -1,0 +1,176 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "severity_split",
+      "file": "cmd/atcr/resume.go",
+      "line": 210,
+      "severity": "HIGH",
+      "problem": "recordResumeHistory hardcodes cwd-relative ./.planning/history, so running atcr review --resume from a subdirectory writes shards to a location that atcr history (which uses repoRoot()) never reads",
+      "score": 3,
+      "spread": 1,
+      "independence": 3,
+      "reviewers": [
+        "brad",
+        "greta",
+        "otto"
+      ],
+      "disagreement": "MEDIUM vs HIGH"
+    },
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/review.go",
+      "line": 285,
+      "severity": "HIGH",
+      "problem": "Multiple concurrent atcr review processes will append to the same YYYY-MM.jsonl simultaneously without synchronization, causing interleaved JSON lines and ledger corruption",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "brad"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/history/shard.go",
+      "line": 33,
+      "severity": "HIGH",
+      "problem": "LoadShards uses filepath.Glob on the directory path, so a repo path containing glob metacharacters (e.g. a [1] segment) is parsed as a character class and silently returns empty history instead of the real records",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "severity_split",
+      "file": "internal/history/shard.go",
+      "line": 32,
+      "severity": "MEDIUM",
+      "problem": "LoadShards loads every shard into memory before Filter applies --since, so a narrow time window still reads all shards (acceptable within 1-2yr bound but no month-prefix pruning)",
+      "score": 3,
+      "spread": 1,
+      "independence": 3,
+      "reviewers": [
+        "brad",
+        "dax",
+        "greta"
+      ],
+      "disagreement": "LOW vs MEDIUM"
+    },
+    {
+      "kind": "severity_split",
+      "file": "internal/history/shard.go",
+      "line": 43,
+      "severity": "HIGH",
+      "problem": "LoadShards loads every monthly shard into memory before any --since filtering is applied, causing unbounded heap growth on repos with long histories even for narrow queries",
+      "score": 2,
+      "spread": 1,
+      "independence": 2,
+      "reviewers": [
+        "brad",
+        "dax"
+      ],
+      "disagreement": "MEDIUM vs HIGH"
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/history/shard.go",
+      "line": 40,
+      "severity": "MEDIUM",
+      "problem": "A single unreadable or corrupt shard aborts the entire LoadShards loop and fails atcr history, making one bad month brick all trend queries",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "brad"
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "cmd/atcr/history_test.go",
+      "line": 84,
+      "severity": "LOW",
+      "problem": "TestHistoryCmd_MergesLegacyAndShards does not verify the merged order (shards before legacy) or that the legacy file is not mutated",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "LOW",
+          "problem": "TestHistoryCmd_MergesLegacyAndShards does not verify the merged order (shards before legacy) or that the legacy file is not mutated"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/history/shard_test.go",
+      "line": 1,
+      "severity": "LOW",
+      "problem": "No test exercises LoadAll when the legacy file exists but is unreadable",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "LOW",
+          "problem": "No test exercises LoadAll when the legacy file exists but is unreadable"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/history/shard_test.go",
+      "line": 1,
+      "severity": "LOW",
+      "problem": "No test exercises LoadShards with a dir path containing glob metacharacters",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "LOW",
+          "problem": "No test exercises LoadShards with a dir path containing glob metacharacters"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/history/shard_test.go",
+      "line": 1,
+      "severity": "LOW",
+      "problem": "No test exercises an unreadable shard file (permission error) to verify LoadShards behavior",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "LOW",
+          "problem": "No test exercises an unreadable shard file (permission error) to verify LoadShards behavior"
+        }
+      ]
+    }
+  ]
+}

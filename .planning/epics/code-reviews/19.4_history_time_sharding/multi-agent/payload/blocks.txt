@@ -1,0 +1,1042 @@
+diff --git a/.planning/.knowledge/clarifications-19.4_history_time_sharding-Q1.md b/.planning/.knowledge/clarifications-19.4_history_time_sharding-Q1.md
+new file mode 100644
+index 00000000..a3026074
+--- /dev/null
++++ b/.planning/.knowledge/clarifications-19.4_history_time_sharding-Q1.md
+@@ -0,0 +1,34 @@
++---
++id: mem-2026-07-05-892056
++question: "Where should committed, team-shared data (like sharded findings history) live vs. gitignored workspace/runtime state, in this repo?"
++created: 2026-07-05
++last_retrieved: ""
++sprints: []
++files: [.gitignore, cmd/atcr/review.go, cmd/atcr/history.go, internal/history/record.go, .planning/epics/active/19.4_history_time_sharding.md]
++tags: [clarifications, epic-19.4_history_time_sharding, architecture]
++retrievals: 0
++status: active
++type: clarifications
++---
++
++# Where should committed, team-shared data (like sharded findi
++
++## Decision
++
++Committed, team-shared artifacts belong under `.planning/` (tracked by git as a whole, with only specific subpaths like `.planning/.temp/`, `.planning/.memory/`, `.planning/.locks/` ignored per .gitignore's "Planning Specific Files" section). Gitignored, per-developer workspace/runtime output belongs under `.atcr/` (fully excluded via a bare `.atcr/` rule). Deciding where a new artifact lives requires checking whether its purpose is team-visibility (→ `.planning/`) or local/ephemeral workspace state (→ `.atcr/`); do not assume an existing sibling artifact's location sets precedent without checking .gitignore directly, since `.atcr/` categorically blocks git tracking regardless of subdirectory depth.
++
++## Rationale
++
++- [from context]
++
++## Applies When
++
++- [conditions]
++
++## Code Reference
++
++- .gitignore
++- cmd/atcr/review.go
++- cmd/atcr/history.go
++- internal/history/record.go
++- .planning/epics/active/19.4_history_time_sharding.md
+diff --git a/.planning/epics/active/19.4_history_time_sharding.md b/.planning/epics/active/19.4_history_time_sharding.md
+index 593c5069..fc8da6e3 100644
+--- a/.planning/epics/active/19.4_history_time_sharding.md
++++ b/.planning/epics/active/19.4_history_time_sharding.md
+@@ -37,32 +37,56 @@ Implement time-based sharding for the findings history:
+ This section records findings from `/refine-epic` run on July 05, 2026 01:12:42PM. It is additive — original plan content above is preserved.
+ 
+ ### Auto-applied corrections (2)
+ 
+ - **Clarified sharded file directory in AC1**: Added `.planning/history/` directory context.
+ - **Clarified path of `history_test.go` in AC4**: Prefixed with `cmd/atcr/` to locate the test file precisely.
+ 
+ ### Items needing user confirmation (2)
+ 
+ - ⏸️ **Ambiguity/Decision Deferral on Legacy Migration:** The plan states `If a flat findings-history.jsonl exists... it should either be read as legacy data or automatically migrated...`. Suggested action: Resolve this deferral by explicitly specifying that legacy history files will be read transparently as read-only legacy data. This simplifies the writing logic by avoiding complex migrations.
+ - ⏸️ **TBD Tasks/Components Metadata Header:** The plan lists `- **Tasks/Components**: TBD`. Derived counts are `3 / 2` (3 tasks, 2 components: `internal/history`, `cmd/atcr`). Suggested action: Update the metadata header to `- **Tasks/Components**: 3/2`.
+ 
+ ### Advisory observations (1)
+ 
+ - ℹ️ **Optional execute-epic promotion:** The plan has derived `TASK_COUNT` = 3, and `COMPONENT_COUNT` = 2. This is well within `/execute-epic`'s scope limit (limit: 6 tasks, 2 components). Instead of running the full sprint pipeline with `/init-plan`, this change could be executed directly as a single epic with `/execute-epic`. If you decide to do this, change `Execution: init-plan` to `Execution: execute-epic` (or `execute-epic --strong`).
+ 
+ ### Verification context
+ 
+ - Refinement depth: deep
+ - Derived TASK_COUNT: 3 (limit: 6)
+ - Derived COMPONENT_COUNT: 2 (limit: 2)
+ - COMPONENTS_TOUCHED: [internal/history, cmd/atcr]
+ - VISUAL_SURFACE: false
+ - HAS_GATED_WORK: false
+ - HAS_CROSS_SYSTEM: false
+ - Cited references checked: 5
+ - Codebase search queries (spot-check): ["findings-history.jsonl", "internal/history", "cmd/atcr/history.go"]
+ - Deep discovery method: semantic
+ - Deep discovery queries: ["findings history write path", "glob history files jsonl", "load findings history reader", "legacy findings history migration"]
+ - Deep discovery match count: 20
+ - Deep discovery snapshot: /Users/samestrin/Documents/GitHub/atcr/.planning/.temp/refine-epic/codebase-discovery.json (temp-only — not committed)
+ 
++## Clarifications
++
++### Recorded 2026-07-05 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- New monthly shards are written to `.planning/history/YYYY-MM.jsonl` (a git-tracked directory), NOT `.atcr/` — `.atcr/` is gitignored (`.gitignore:66`), so sharding there would silently defeat the epic's version-control/Team-Edition motivation.
++- The legacy flat ledger is read transparently in place at its historical location `.atcr/findings-history.jsonl`. It is merged read-only into query results; it is never moved or rewritten (honoring the "no complex write-migrations" constraint).
++- `.gitignore` is left untouched. `.planning/` is tracked and no rule excludes `.planning/history/` or `*.jsonl`, so monthly shards are committed by default — matching the team-visibility goal.
++
++**Scope Boundaries:**
++- IN scope: monthly-shard write path (`.planning/history/`), glob-based read path that merges all shards + the legacy `.atcr/` flat file, updating the three ledger-path call sites (`cmd/atcr/review.go`, `cmd/atcr/resume.go`, `cmd/atcr/history.go`), keeping all existing history tests green (AC4).
++- OUT of scope: write-migration/move of the legacy file, any `.gitignore` change, any config/flag for the shard location, changes to the `Record` schema.
++
++**Technical Approach:**
++- Add a shard-path helper + a directory-loading reader in `internal/history` alongside the existing single-file `Load` (kept for its tested API and for reading the legacy file). Writes target the current-month shard derived from the run timestamp (UTC); reads glob `*.jsonl` in the shard dir, merge the legacy `.atcr/findings-history.jsonl` if present, then apply the existing `Filter`.
++
++**Original Questions and Answers:**
++1. Q: New shard directory — `.planning/history/YYYY-MM.jsonl` (tracked) or `.atcr/history/YYYY-MM.jsonl` (gitignored)?
++   A: (a) `.planning/history/YYYY-MM.jsonl` — the epic's motivation is committing history to VCS; `.atcr/` is gitignored and would defeat that. (90%)
++2. Q: Legacy flat-file read location — `.atcr/findings-history.jsonl` (in place) or alongside the new shards?
++   A: (a) `.atcr/findings-history.jsonl` — its only historical location; "no complex write-migrations" rules out moving it. (95%)
++3. Q: `.gitignore` for `.planning/history/` — leave untouched or ignore shards?
++   A: Leave untouched. `.planning/` is tracked, nothing excludes the shards, so they commit by default — matching team visibility. (95%)
++
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index e1c23a71..735e4f9a 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,16 +3,16 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 1 | 0 |
+-| MEDIUM | 0 | 19 | 0 |
+-| LOW | 0 | 25 | 0 |
++| MEDIUM | 1 | 19 | 0 |
++| LOW | 4 | 25 | 0 |
+ 
+-**Last Modified:** 2026-07-05 | **Open Items:** 0 | **Deferred Items:** 45 | **Resolved Items:** 0 | **Total Items:** 45
++**Last Modified:** 2026-07-05 | **Open Items:** 5 | **Deferred Items:** 45 | **Resolved Items:** 0 | **Total Items:** 50
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -62,11 +62,21 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
+ 
++### [2026-07-05] From Sprint: epic-19.4
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| 1 | [ ] | LOW | internal/history/shard.go:33 | LoadShards builds a glob pattern from the dir path, so a repo path containing filepath.Glob metacharacters (e.g. a [1] segment) is parsed as a character class and matches no shards, silently returning empty history instead of the real records | Use os.ReadDir + strings.HasSuffix(name, .jsonl) so the directory path is treated literally | EDGE_CASES | 20 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/history/shard.go:43 | A single unreadable shard (permission/IO) aborts LoadShards/LoadAll and fails atcr history with exit 2, so one bad monthly file bricks all trend queries (deliberate exit-2-on-corrupt contract, but harsher now that history spans many files) | Log-and-skip an unreadable individual shard so the remaining shards stay queryable, mirroring Load's torn-line tolerance | ERROR_PATHS | 20 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/history/shard.go:32 | LoadShards loads every shard into memory before Filter applies --since, so a narrow window still reads all shards (acceptable within the stated 1-2yr bound; no month-prefix pruning) | Skip shard files whose YYYY-MM stem is entirely older than now-since before loading, to keep long histories fast | UNDER_ENGINEERING | 30 | execute-epic-independent |
++| U | [ ] | LOW | cmd/atcr/history.go:50 | History ledger path segments (.planning/history shard dir and legacy .atcr/findings-history.jsonl) are duplicated across review.go, resume.go, and history.go | Centralize as history.ShardDir(root) + history.LegacyLedgerPath(root) helpers so the storage layout lives in one place | CROSS_CUTTING | 15 | execute-epic-cumulative |
++| U | [ ] | MEDIUM | cmd/atcr/resume.go:213 | recordResumeHistory writes shards to a cwd-relative ./.planning/history while review.go uses req.Root and atcr history reads via repoRoot(), so a resume run from a subdirectory writes shards history never reads (pre-existing; resume also writes its audit ledger cwd-relative at resume.go:228 — DEFERRED as out of scope: a resume-wide root-resolution fix spanning the Epic 19.1 audit path) | Resolve repoRoot() once in runResume and pass it to both recordResumeHistory and recordResumeAudit so all resume ledger writes and the read path agree on location | REGRESSION_RISK | 30 | execute-epic-independent |
++
+ ### [2026-07-05] From Sprint: epic-19.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | cmd/atcr/review.go:384 | The audit hook re-reads sources/pool/findings.txt that the history hook read moments earlier in the same review, so the pool file is parsed twice per review run | Parse the pool findings once in the CLI layer and pass the finding set to both history.RecordReview and audit.RecordReview, or expose a shared parse result (Won't-fix: accepted — the duplicate parse mirrors internal/history's independent capture pattern per epic design; not worth a cross-package signature refactor for a sub-ms, once-per-run gain.) | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-07-05] From Review: pr-105-recovery
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index d03ffb27..18dc5671 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,77 +1,92 @@
++## [19.4.0] - 2026-07-05
++
++Time-based sharding for the findings history so it can be committed to version control (Team Edition) without a single, ever-growing file bloating the repo.
++
++### Added
++
++- Findings history is now sharded by month: each `atcr review`/`atcr resume` run appends to `.planning/history/YYYY-MM.jsonl` (the month is derived from the run time in UTC). Once a month rolls over, its shard stops receiving writes, so old shards no longer churn new git blobs.
++- `atcr history` transparently queries across every monthly shard — no need to name a shard — before applying the `--since` and `--package` filters.
++
++### Changed
++
++- Findings history moved from the git-ignored `.atcr/findings-history.jsonl` to the version-controlled `.planning/history/` directory, so a team can commit and share trend data. A pre-existing `.atcr/findings-history.jsonl` is still read in place as read-only legacy data and merged into query results; it is never moved or rewritten.
++
++*Shipped via /execute-epic (epic 19.4)*
++
+ ## [Technical Debt] - 2026-07-05
+ 
+ ### Fixed
+ 
+ - `internal/registry/overlay.go`: the insecure-registry warning is now keyed per distinct URL instead of a single process-global `sync.Once`, so a long-lived process that loads two different insecure `http` registry URLs warns for both instead of only the first.
+ - `internal/registry/overlay.go`: registry-fetch redirects now re-validate the URL scheme (and re-emit the insecure-URL warning) on every hop instead of only the initial URL, closing a path where an `https` registry could be silently downgraded to `http` via a redirect.
+ - `internal/registry/overlay.go`: documented that the package-level test seams (`remoteFetchTimeout`, `remoteRegistryBodyLimit`, `insecureRegistryWarnWriter`) must not be mutated by parallel tests.
+ 
+ ## [19.2.0] - 2026-07-05
+ 
+ ### Added
+ 
+ - `ATCR_REGISTRY_URL`: point atcr at a remote `registry.yaml` to share one team registry. When set, the user-level registry is fetched over HTTP (the config-repo pattern — commit `registry.yaml` to a shared repo and point every workstation and CI runner at its raw URL) instead of read from `~/.config/atcr/registry.yaml`; unset keeps the local-file behavior unchanged.
+ 
+ ### Changed
+ 
+ - The remote registry flows through the same strict parser, validation, and env-var key contract as a local one: API keys are never read from the registry file (only `api_key_env` names travel — a literal `api_key` is a hard load error), and a set-but-unreachable/invalid URL fails loudly with no silent fallback to a local copy. Only the user registry is remote; the project overlay and trust store stay local. A non-`https` registry URL draws a one-time warning, and fetch errors and warnings redact embedded credentials and query-string tokens.
+ 
+ *Shipped via /execute-epic (epic 19.2)*
+ 
+ ## [Technical Debt] - 2026-07-05
+ 
+ ### Fixed
+ 
+ - `atcr audit-report`: no longer accepts `--pr 0` and silently aggregates unrelated local (non-PR) runs under a bogus "PR #0" report — non-positive PR numbers are now rejected as a usage error.
+ - `atcr audit-report`: an unknown `--pr` and a missing `--pr` flag now both exit with the same usage-error exit code as sibling commands, instead of a plain exit-1 error.
+ - Audit ledger writes that fail now print a visible stderr warning in addition to the existing log warning, so a systematically failing compliance ledger (permissions/full disk) is no longer silent.
+ - `atcr review --resume` no longer appends a duplicate audit record when re-running an already-complete review.
+ - An explicit `--pr 0` or `--pr -1` on `atcr review` no longer loses to a `GITHUB_REF`-derived PR number — an explicit flag always wins.
+ - The audit compliance report no longer silently drops findings with a blank/whitespace severity from its totals; they are now counted under an `UNKNOWN` column, matching `atcr history`'s behavior.
+ - The audit compliance report's empty-input handling now matches `atcr history`'s contract instead of carrying an unreachable, contradictory empty-state branch.
+ - Fixed a `sanitizeCell` escaping gap in the audit report renderer that could let a backslash-pipe sequence corrupt the rendered table.
+ - Fixed unescaped HTML and backticks in audit report cells (stored-injection hardening for a compliance artifact).
+ - Audit records are no longer silently dropped when the reviewed pool findings file has a malformed or unrecognized version header.
+ - The audit compliance report now renders full base/head commit SHAs instead of a truncated 12-character prefix.
+ - Corrected the audit package's documentation to no longer overstate tamper-evidence guarantees it does not implement, and documented the audit ledger's CLI-only hook scope and unbounded-growth read tradeoff.
+ - Documented the CWD==repo-root operating assumption for `atcr` subcommands (config load, git-range resolution, and audit/history ledger writes all assume the command runs from the repository root).
+ - Technical-debt README: audited and corrected deferral citations — genuinely deferred items now cite a real epic plan (added epics for process-group reaping on validation timeout, `reconcile`/`verify` `--repo` threading, shared Wasm guest ABI extraction, quote-aware `pyparser` scanning, grounding gitrunner reuse, and a backup-swap test seam), two mis-citations were corrected, and 23 rows citing already-completed work were removed.
+ 
+ ## [19.1.0] - 2026-07-05
+ 
+ ### Added
+ 
+ - Audit trail: every `atcr review` run now appends one tamper-evident record — run timestamp, resolved base/head SHA, PR number, and a findings-by-severity summary — to an append-only `.atcr/audit.log.jsonl` compliance ledger (a repo-level accumulator, written regardless of `--output-dir`). Resumed reviews (`--resume`) record too.
+ - `atcr review --pr <n>`: stamp a pull-request number on the run's audit record; falls back to parsing `GITHUB_REF` (`refs/pull/<n>/...`) when unset.
+ - `atcr audit-report --pr <n>`: render a one-page markdown compliance report of a PR's recorded review runs (SHAs, timestamps, findings summary); a PR with no recorded runs exits non-zero with a clear message.
+ - `internal/audit` package: audit record type with an append-only JSONL writer, a tolerant reader, per-run capture, and a markdown compliance-report renderer.
+ 
+ *Shipped via /execute-epic (epic 19.1)*
+ 
+ ## [Technical Debt] - 2026-07-05
+ 
+ ### Fixed
+ 
+ - `internal/tdmigrate`: `DecodeShardStrict` now rejects a shard file containing a second YAML document instead of silently truncating to the first (a harmless trailing `---` marker with no content is still accepted).
+ - `internal/tdmigrate`: `LoadShards` and `ValidateDir` now error on a missing shard directory instead of silently treating it as zero shards.
+ - `internal/tdmigrate`: `WriteShards` now rejects a shard `Date` that isn't in `YYYY-MM-DD` format instead of composing an invalid file path from it.
+ - `internal/tdmigrate`: `ParseREADME` now hard-errors on a malformed section header (bad date, or missing the colon after the source type) instead of silently skipping it.
+ - `internal/tdmigrate`: `ParseREADME` now hard-errors on a section with zero parseable data rows instead of silently dropping it.
+ - `internal/tdmigrate`: `ParseREADME` now hard-errors on a data row that lost its leading pipe instead of silently discarding it as prose.
+ - `internal/tdmigrate`: `Item.Validate` now reports the first blank required field in a fixed, deterministic order instead of a nondeterministic one.
+ - `td-migrate migrate/generate/validate`: `-h`/`--help` now exits 0 with usage on stdout instead of exiting 2 with usage on stderr.
+ 
+ ## [Technical Debt] - 2026-07-04
+ 
+ ### Fixed
+ 
+ - `internal/history`: `ParseSince` now rejects out-of-range duration values instead of silently accepting them.
+ - `internal/history`: `Load` no longer fails outright when the ledger contains an oversized line — it now skips the line instead.
+ - `internal/history`: deduplication now keeps the maximum severity for a repeated finding instead of whichever record happened to load first.
+ - `internal/history`: a warning is now logged when history capture skips a malformed pool row, instead of discarding it silently.
+ - `internal/history`: `review --resume` now appends its findings to the history ledger, closing a gap where resumed reviews were missing from the trend data.
+ - `atcr history` now works correctly when run from a subdirectory instead of only from the repo root.
+ - Corrected an overstated atomicity guarantee in the `Append` doc comment for O_APPEND writes.
+ - `RenderTable`: cell values now escape pipe and control characters, preventing markdown injection from unescaped input.
+ 
+ ## [19.0.0] - 2026-07-04
+diff --git a/cmd/atcr/history.go b/cmd/atcr/history.go
+index d6657f40..181cbe45 100644
+--- a/cmd/atcr/history.go
++++ b/cmd/atcr/history.go
+@@ -13,12 +13,13 @@ import (
+ // defaultHistorySince is the query window used when --since is omitted: wide
+ // enough (90 days) to be useful by default, while still bounding the table.
+ const defaultHistorySince = 90 * 24 * time.Hour
+ 
+-// newHistoryCmd builds `atcr history`: read the append-only finding ledger at
+-// .atcr/findings-history.jsonl, filter it by a time window (--since) and package
+-// prefix (--package), and print a markdown table of counts by severity per
+-// package. An absent or fully-filtered history is not an error — it exits 0 with
+-// a "no history" notice (Epic 19.0 AC3).
++// newHistoryCmd builds `atcr history`: read the append-only finding history —
++// the monthly shards under .planning/history plus the legacy .atcr flat ledger
++// (Epic 19.4) — filter it by a time window (--since) and package prefix
++// (--package), and print a markdown table of counts by severity per package. An
++// absent or fully-filtered history is not an error — it exits 0 with a "no
++// history" notice (Epic 19.0 AC3).
+ func newHistoryCmd() *cobra.Command {
+ 	cmd := &cobra.Command{
+ 		Use:   "history",
+@@ -34,40 +35,41 @@ func newHistoryCmd() *cobra.Command {
+ func runHistory(cmd *cobra.Command, _ []string) error {
+ 	since := defaultHistorySince
+ 	if raw, _ := cmd.Flags().GetString("since"); strings.TrimSpace(raw) != "" {
+ 		d, err := history.ParseSince(raw)
+ 		if err != nil {
+ 			return usageError(err) // bad --since is a usage error (exit 2)
+ 		}
+ 		since = d
+ 	}
+ 	pkg, _ := cmd.Flags().GetString("package")
+ 
+ 	root, err := repoRoot()
+ 	if err != nil {
+ 		return usageError(fmt.Errorf("resolving repo root: %w", err))
+ 	}
+-	histPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+-	recs, err := history.Load(histPath)
++	shardDir := filepath.Join(root, ".planning", "history")
++	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
++	recs, err := history.LoadAll(shardDir, legacyPath)
+ 	if err != nil {
+ 		return usageError(err) // corrupt/unreadable ledger (exit 2)
+ 	}
+ 
+ 	out := cmd.OutOrStdout()
+ 	if len(recs) == 0 {
+ 		_, _ = fmt.Fprintln(out, "no history recorded yet — run 'atcr review' first")
+ 		return nil
+ 	}
+ 
+ 	filtered := history.Filter(recs, since, pkg, time.Now())
+ 	if len(filtered) == 0 {
+ 		scope := "the selected window"
+ 		if strings.TrimSpace(pkg) != "" {
+ 			scope = fmt.Sprintf("package %q within the selected window", strings.TrimSpace(pkg))
+ 		}
+ 		_, _ = fmt.Fprintf(out, "no history for %s\n", scope)
+ 		return nil
+ 	}
+ 
+ 	_, _ = fmt.Fprint(out, history.RenderTable(filtered))
+ 	return nil
+ }
+diff --git a/cmd/atcr/history_test.go b/cmd/atcr/history_test.go
+index dbbd7f67..8441bc84 100644
+--- a/cmd/atcr/history_test.go
++++ b/cmd/atcr/history_test.go
+@@ -38,6 +38,57 @@ func writeHistoryLedger(t *testing.T, root string, lines ...map[string]any) {
+ 	require.NoError(t, os.WriteFile(filepath.Join(dir, "findings-history.jsonl"), buf.Bytes(), 0o644))
+ }
+ 
++// writeHistoryShard lays down a monthly shard .planning/history/<YYYY-MM>.jsonl
++// (Epic 19.4) with the given records. It also drops a .git marker so repoRoot()
++// resolves to root even when no .atcr tree is present.
++func writeHistoryShard(t *testing.T, root string, ts time.Time, lines ...map[string]any) {
++	t.Helper()
++	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
++	dir := filepath.Join(root, ".planning", "history")
++	require.NoError(t, os.MkdirAll(dir, 0o755))
++	var buf bytes.Buffer
++	enc := json.NewEncoder(&buf)
++	for _, l := range lines {
++		require.NoError(t, enc.Encode(l))
++	}
++	shard := filepath.Join(dir, ts.UTC().Format("2006-01")+".jsonl")
++	require.NoError(t, os.WriteFile(shard, buf.Bytes(), 0o644))
++}
++
++// AC2: `atcr history` reads monthly shards under .planning/history without the
++// caller naming a shard.
++func TestHistoryCmd_ReadsMonthlyShards(t *testing.T) {
++	root := t.TempDir()
++	recent := time.Now().Add(-2 * 24 * time.Hour)
++	writeHistoryShard(t, root, recent, map[string]any{
++		"ts": recent.UTC().Format(time.RFC3339), "package": "internal/registry", "severity": "HIGH",
++		"id": "s1", "file": "internal/registry/a.go", "category": "C",
++	})
++	out, err := runHistoryIn(t, root)
++	require.NoError(t, err)
++	assert.Contains(t, out, "| Package |")
++	assert.Contains(t, out, "internal/registry")
++}
++
++// Legacy migration: the pre-19.4 flat .atcr ledger and the new shards are merged
++// into one query result.
++func TestHistoryCmd_MergesLegacyAndShards(t *testing.T) {
++	root := t.TempDir()
++	recent := time.Now().Add(-2 * 24 * time.Hour)
++	writeHistoryLedger(t, root, map[string]any{
++		"ts": recent.UTC().Format(time.RFC3339), "package": "legacy/pkg", "severity": "HIGH",
++		"id": "L1", "file": "legacy/pkg/a.go", "category": "C",
++	})
++	writeHistoryShard(t, root, recent, map[string]any{
++		"ts": recent.UTC().Format(time.RFC3339), "package": "shard/pkg", "severity": "MEDIUM",
++		"id": "S1", "file": "shard/pkg/b.go", "category": "C",
++	})
++	out, err := runHistoryIn(t, root)
++	require.NoError(t, err)
++	assert.Contains(t, out, "legacy/pkg")
++	assert.Contains(t, out, "shard/pkg")
++}
++
+ func TestHistoryCmd_AbsentHistoryExitsZeroWithMessage(t *testing.T) {
+ 	root := t.TempDir()
+ 	out, err := runHistoryIn(t, root)
+diff --git a/cmd/atcr/resume.go b/cmd/atcr/resume.go
+index 043702c3..491b2cae 100644
+--- a/cmd/atcr/resume.go
++++ b/cmd/atcr/resume.go
+@@ -208,19 +208,19 @@ func runResume(cmd *cobra.Command, anchor string) error {
+ // recordResumeHistory persists a resumed review's pool findings to the
+ // append-only history ledger, mirroring the fresh-review hook in review.go. A
+ // history write failure is non-fatal: it must never fail an otherwise-successful
+ // resume, so it is logged and swallowed.
+ func recordResumeHistory(ctx context.Context, dir string, ts time.Time) {
+-	histPath := filepath.Join(".", ".atcr", "findings-history.jsonl")
++	histPath := history.ShardPath(filepath.Join(".", ".planning", "history"), ts)
+ 	if n, err := history.RecordReview(histPath, dir, ts); err != nil {
+ 		log.FromContext(ctx).Warn("failed to append finding history", "error", err)
+ 	} else if n > 0 {
+ 		log.FromContext(ctx).Debug("appended finding history", "records", n, "path", histPath)
+ 	}
+ }
+ 
+ // recordResumeAudit appends a resumed review's audit record to the append-only
+ // compliance ledger, mirroring the fresh-review hook in review.go so a resumed
+ // run is recorded exactly once (Epic 19.1 AC1). Like the history write it is
+ // non-fatal — a compliance write must never fail an otherwise-successful resume,
+ // so it is logged and swallowed. A write failure is also surfaced on stderr so
+ // it cannot be missed in log-only output.
+diff --git a/cmd/atcr/resume_test.go b/cmd/atcr/resume_test.go
+index d2f6ea08..fdbca623 100644
+--- a/cmd/atcr/resume_test.go
++++ b/cmd/atcr/resume_test.go
+@@ -224,20 +224,23 @@ func TestResume_AllCompleteReconcilesAndExitsZero(t *testing.T) {
+ func TestResume_AppendsFindingHistory(t *testing.T) {
+ 	isolate(t)
+ 	t.Setenv(testReviewKeyEnv, "secret")
+ 	initGitRepoWithChange(t)
+ 	srv := liveMockProvider(t)
+ 	liveReviewConfig(t, srv.URL, "bruce")
+ 
+ 	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
+-	histPath := filepath.Join(".", ".atcr", "findings-history.jsonl")
+-	before, err := history.Load(histPath)
++	// History now shards by month under .planning/history (Epic 19.4). Read the
++	// whole shard dir rather than a single month's file so the assertion does not
++	// depend on which month the writes land in (avoids a month-boundary flake).
++	histDir := filepath.Join(".", ".planning", "history")
++	before, err := history.LoadShards(histDir)
+ 	require.NoError(t, err)
+ 	require.NotEmpty(t, before, "fresh review should have appended history")
+ 
+ 	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+ 	require.Equal(t, 0, code, out)
+ 
+-	after, err := history.Load(histPath)
++	after, err := history.LoadShards(histDir)
+ 	require.NoError(t, err)
+ 	require.Greater(t, len(after), len(before), "resume must append its own records to the finding history")
+ }
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index ed813a67..83c5f2b2 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -167,354 +167,356 @@ func prFromGitHubRef(ref string) int {
+ // runReview resolves the range, loads config, and runs the full review flow.
+ // Range/config problems are usage errors (exit 2); an all-agents-failed review
+ // is a plain failure (exit 1) with the artifacts preserved on disk.
+ func runReview(cmd *cobra.Command, _ []string) error {
+ 	// --resume targets an existing review directory and runs only its pending
+ 	// agents (epic 4.1.1); it is a distinct flow from a fresh review, so branch
+ 	// before any new-review flag handling.
+ 	if cmd.Flags().Changed("resume") {
+ 		// --resume (continue an existing review non-destructively) and --force
+ 		// (back up and overwrite it) are opposite collision resolutions; passing
+ 		// both is a usage error (Epic 4.7 AC1b). Checked here, before the resume
+ 		// short-circuit, so the conflict fires regardless of flag order.
+ 		if cmd.Flags().Changed("force") {
+ 			return usageError(errors.New("--resume and --force are mutually exclusive"))
+ 		}
+ 		anchor, _ := cmd.Flags().GetString("resume")
+ 		return runResume(cmd, anchor)
+ 	}
+ 
+ 	ctx := cmd.Context()
+ 	base, _ := cmd.Flags().GetString("base")
+ 	head, _ := cmd.Flags().GetString("head")
+ 	mergeCommit, _ := cmd.Flags().GetString("merge-commit")
+ 	idOverride, _ := cmd.Flags().GetString("id")
+ 
+ 	// Resolve --output-dir (mutually exclusive with --id, relative→absolute)
+ 	// before any review work, so a bad flag combination is a usage error (exit 2)
+ 	// with no wasted API calls.
+ 	outputDir, err := outputDirFromFlags(cmd)
+ 	if err != nil {
+ 		return err
+ 	}
+ 
+ 	// Resolve the gate threshold (--fail-on flag > project config > registry)
+ 	// before any review work; a bad configured value is a usage error (exit 2).
+ 	threshold, err := resolveGateThreshold(cmd)
+ 	if err != nil {
+ 		return err
+ 	}
+ 
+ 	// --verify chains review -> reconcile -> verify (AC 04-02). Validate its
+ 	// --min-severity here too, before any API calls, so a bad value fails fast.
+ 	verifyFlag, _ := cmd.Flags().GetBool("verify")
+ 	// --exec only has consumers in the verify stage (skeptics/repro); reject the
+ 	// silent no-op of `review --exec` without --verify (Epic 11.0).
+ 	if execFlag, _ := cmd.Flags().GetBool("exec"); execFlag && !verifyFlag {
+ 		return usageError(errors.New("--exec requires --verify (execution reproduction runs in the adversarial verify stage)"))
+ 	}
+ 	verifyMinSev := ""
+ 	if verifyFlag {
+ 		if verifyMinSev, err = verifyMinSeverity(cmd); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	// execBackend is resolved AFTER gitrange.Resolve and LoadReviewConfig so that
+ 	// cheap local validation (bad range, invalid registry) fails fast without paying
+ 	// for a sandbox preflight container spawn. It is still resolved before any paid
+ 	// review API calls.
+ 	var execBackend sandbox.Backend
+ 	var execTestCmd []string
+ 	var execTimeout time.Duration
+ 
+ 	// --debate chains the cross-examination stage after reconcile (and verify, when
+ 	// present). It needs no extra validation: it runs on reconciled findings and is
+ 	// independent of --verify, though the canonical chain is --verify --debate.
+ 	debateFlag, _ := cmd.Flags().GetBool("debate")
+ 
+ 	// --require-verified hardens the one-shot gate to count only VERIFIED findings.
+ 	// It needs a gate (--fail-on) and a stage that produces confirmed verdicts:
+ 	// --verify, or --debate (a debate uphold/split writes verdict "confirmed",
+ 	// promoted to VERIFIED — debate alone genuinely yields verified findings, the
+ 	// same semantics the MCP handleDebate gates on). Without any verdict-producing
+ 	// stage a strict gate would silently pass everything, so fail fast as a usage
+ 	// error (parity with `atcr reconcile` and the MCP debate handler).
+ 	requireVerified, _ := cmd.Flags().GetBool("require-verified")
+ 	if requireVerified && (threshold == "" || (!verifyFlag && !debateFlag)) {
+ 		return usageError(errors.New("--require-verified requires --fail-on and --verify or --debate"))
+ 	}
+ 
+ 	// --single-model only affects the debate stage's casting (it opts into the
+ 	// same-model persona fallback). Without --debate it is silently a no-op, so a
+ 	// user setting it alone gets no effect and no feedback; fail fast as a usage
+ 	// error, mirroring the --require-verified guard.
+ 	singleModel, _ := cmd.Flags().GetBool("single-model")
+ 	if singleModel && !debateFlag {
+ 		return usageError(errors.New("--single-model requires --debate"))
+ 	}
+ 
+ 	// --auto-fix (Sprint 17.0, Story 6) is the opt-in write-back flow. Its
+ 	// refuse-without-backend gate is resolved after config load (it needs the
+ 	// project config) but before any fix is applied; afBackend carries the
+ 	// resolved backend forward to the post-reconcile orchestration.
+ 	autoFix := boolFlag(cmd, "auto-fix")
+ 	var afBackend autoFixBackend
+ 
+ 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
+ 	if err != nil {
+ 		// A SIGINT/SIGTERM during range resolution surfaces as context.Canceled
+ 		// here; route it to the graceful interrupt path (exit 1 + notice) rather
+ 		// than a confusing "review failed: context canceled" usage error (exit 2).
+ 		if errors.Is(ctx.Err(), context.Canceled) {
+ 			return interruptedBeforeFanout(cmd)
+ 		}
+ 		// A range failure aborts the pipeline before any agent runs — a usage
+ 		// error (exit 2), per AC 03-02 Error Scenario 2 ("review failed: ...").
+ 		return usageError(fmt.Errorf("review failed: %w", err))
+ 	}
+ 
+ 	cfg, err := fanout.LoadReviewConfig(".", cliOverrides(cmd))
+ 	if err != nil {
+ 		return usageError(err) // missing/invalid config → exit 2
+ 	}
+ 	if banner := cfg.Registry.ProjectProviderBanner(); banner != "" {
+ 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), banner)
+ 	}
+ 
+ 	// The --auto-fix backend must be fully configured before any review work so a
+ 	// half-configured run refuses fast (exit 2) instead of reviewing, applying,
+ 	// and stalling mid-flow. The gate is shape-only (no network/exec); "." is the
+ 	// working-tree root every review runs against.
+ 	if autoFix {
+ 		if afBackend, err = validateAutoFixBackend(cmd, cfg.Project, "."); err != nil {
+ 			return err
+ 		}
+ 	}
+ 
+ 	if verifyFlag {
+ 		if execBackend, execTestCmd, execTimeout, err = resolveExec(cmd, cfg.Project); err != nil {
+ 			return err // refuse-without-backend / preflight failure (exit 2)
+ 		}
+ 	}
+ 
+ 	now := time.Now()
+ 	req := fanout.ReviewRequest{
+ 		Repo: ".",
+ 		Root: ".",
+ 		Range: fanout.ReviewRange{
+ 			Base:          res.Base,
+ 			Head:          res.Head,
+ 			DetectionMode: res.DetectionMode,
+ 			DefaultBranch: res.DefaultBranch,
+ 			CommitCount:   res.CommitCount,
+ 		},
+ 		Branch:         gitrange.CurrentBranch(ctx, "."),
+ 		Date:           now.Format("2006-01-02"),
+ 		TimeSuffix:     now.Format("150405"),
+ 		StartedAt:      now,
+ 		IDOverride:     idOverride,
+ 		OutputDir:      outputDir,
+ 		Force:          boolFlag(cmd, "force"),
+ 		NoCache:        boolFlag(cmd, "no-cache"),
+ 		SprintPlanPath: sprintPlanPath(cmd),
+ 		PRNumber:       prNumberFromFlags(cmd),
+ 	}
+ 
+ 	// Run the two review phases separately so build-phase failures (persona
+ 	// resolution, unknown provider, prompt render — configuration errors per
+ 	// AC 03-02) map to exit 2, while an all-agents-failed execution stays the
+ 	// plain exit 1 with artifacts preserved on disk.
+ 	prep, err := fanout.PrepareReview(ctx, cfg, req)
+ 	if err != nil {
+ 		// An interrupt during payload build / scaffolding cancels the context; no
+ 		// review directory exists yet, so route to the graceful no-results path
+ 		// instead of a usage error.
+ 		if errors.Is(ctx.Err(), context.Canceled) {
+ 			return interruptedBeforeFanout(cmd)
+ 		}
+ 		return usageError(err)
+ 	}
+ 
+ 	// The review id is the earliest correlation anchor (it exists only after
+ 	// PrepareReview). correlateAndRedact attaches it to the context logger so every
+ 	// downstream stage — execute, reconcile, verify — emits log lines greppable by
+ 	// review_id (AC9), and installs sink-level redaction (AC5/AC6) for the whole
+ 	// review — including the resolved registry key values (epic 4.9) so non-sk-/
+ 	// non-Bearer keys are scrubbed by exact value, not only by token shape. Shared
+ 	// with runResume so the contract can't drift between paths. From here on use
+ 	// this correlated ctx, never cmd.Context() again.
+ 	secrets, secretWarnings := prep.SecretValues()
+ 	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, secrets...)
+ 	for _, w := range secretWarnings {
+ 		log.FromContext(ctx).Debug(w)
+ 	}
+ 
+ 	if err := preflightAPIKeys(prep.Slots); err != nil {
+ 		return err // no slot can authenticate → exit 2 before any provider call
+ 	}
+ 
+ 	// Snapshot the summary counters before fan-out so the end-of-review summary can
+ 	// diff against this baseline and report only this review's contribution, not the
+ 	// process-cumulative registry totals (correct even if a future process runs more
+ 	// than one review against the shared DefaultRegistry).
+ 	metricsBaseline := snapshotSummaryMetrics(metrics.DefaultRegistry)
+ 
+ 	result, err := fanout.ExecuteReview(ctx, llmclient.New(), prep)
+ 
+ 	// Graceful interrupt (SIGINT/SIGTERM cancelled the root context): completed
+ 	// agents are already persisted by WritePool and the manifest is marked
+ 	// interrupted, so report what was saved and stop — running reconcile/verify on
+ 	// a cancelled context would only fail. The check is on the parent ctx, the one
+ 	// signal that survives the engine's per-agent timeout classification. Exit 1
+ 	// (consistent with the 10s force-exit path); skips the normal success line so
+ 	// an interrupted run is never reported as "succeeded".
+ 	if errors.Is(ctx.Err(), context.Canceled) {
+ 		return reportInterrupt(cmd, ctx, result, prep)
+ 	}
+ 
+ 	// End-of-review status + metrics summary (Epic 4.4 AC3): the one-line outcome
+ 	// plus duration, agent outcome, API calls, and findings. Both are emitted before
+ 	// the all-agents-failed error guard below, so an exit-1 review (every agent
+ 	// failed, artifacts preserved) still prints the breakdown an operator most needs
+ 	// on a failure. The summary diffs the post-review registry against metricsBaseline
+ 	// so the counts reflect this review alone — the same metrics the MCP server exports.
+ 	// Note: time.Since(now) is CLI-level elapsed time (includes range resolution,
+ 	// config load, and scaffolding overhead); atcr_review_duration_seconds is
+ 	// engine-level (starts inside fanout.ExecuteReview). The two values measure
+ 	// slightly different spans and will rarely agree exactly — this is intentional.
+ 	if result != nil {
+ 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
+ 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
+ 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
+ 		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now))
+ 	}
+ 	if err != nil {
+ 		return err // all-agents-failed → exit 1, artifacts preserved
+ 	}
+ 
+ 	// Persist this run's findings to the append-only history ledger (Epic 19.0)
+ 	// so `atcr history` can answer per-package trend queries later. It runs on
+ 	// every successful review — before the conditional in-process reconcile
+ 	// below — reading the pool findings.txt that WritePool always writes, and
+-	// always targets <root>/.atcr regardless of --output-dir (the ledger is a
+-	// repo-level accumulator, not part of the redirected review tree). A history
+-	// write failure is non-fatal: it must never fail an otherwise-successful
+-	// review, so it is logged and swallowed.
+-	histPath := filepath.Join(req.Root, ".atcr", "findings-history.jsonl")
++	// always targets <root>/.planning/history regardless of --output-dir (the
++	// ledger is a repo-level accumulator, not part of the redirected review
++	// tree). Findings are appended to the current month's shard (Epic 19.4) so
++	// the version-controlled history stops churning one ever-growing blob. A
++	// history write failure is non-fatal: it must never fail an
++	// otherwise-successful review, so it is logged and swallowed.
++	histPath := history.ShardPath(filepath.Join(req.Root, ".planning", "history"), now)
+ 	if n, herr := history.RecordReview(histPath, result.Dir, now); herr != nil {
+ 		log.FromContext(ctx).Warn("failed to append finding history", "error", herr)
+ 	} else if n > 0 {
+ 		log.FromContext(ctx).Debug("appended finding history", "records", n, "path", histPath)
+ 	}
+ 
+ 	// Append this run's audit record to the append-only compliance ledger (Epic
+ 	// 19.1): run timestamp, resolved base/head SHAs, PR number (0 = none), and a
+ 	// findings-by-severity summary. Like the history ledger it always targets
+ 	// <root>/.atcr regardless of --output-dir (a repo-level accumulator) and its
+ 	// failure is non-fatal — a compliance write must never fail an otherwise
+ 	// successful review, so it is logged and swallowed.
+ 	auditPath := filepath.Join(req.Root, ".atcr", "audit.log.jsonl")
+ 	writeAuditRecord(cmd.ErrOrStderr(), ctx, auditPath, result.Dir, now, req.PRNumber, req.Range.Base, req.Range.Head)
+ 
+ 	// One-shot mode: reconcile in-process and gate on the threshold. Review
+ 	// artifacts are already on disk, so a reconcile failure (exit 2) preserves
+ 	// them for inspection (AC 03-02 Error Scenario 3).
+ 	//
+ 	// result.Summary.Partial is used directly (not ReadManifestPartial) because
+ 	// the `if err != nil { return err }` guard above ensures this block is only
+ 	// reached when ExecuteReview succeeded — a WritePool fault returns a non-nil
+ 	// error and short-circuits before this line. The FailureMarker correction in
+ 	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
+ 	// path that runs after the fact against the on-disk summary.json.
+ 	if threshold != "" || verifyFlag || debateFlag || autoFix {
+ 		rec, rerr := reconcile.RunReconcile(ctx, result.Dir, nil, reclib.Options{
+ 			ReconciledAt: time.Now(),
+ 			Partial:      result.Summary.Partial,
+ 			Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
+ 		})
+ 		if rerr != nil {
+ 			return usageError(fmt.Errorf("review failed: %w", rerr))
+ 		}
+ 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
+ 
+ 		// --verify chains the adversarial verify stage after the single reconcile
+ 		// (AC 04-02). --debate then chains the cross-examination stage. Both mutate
+ 		// the on-disk findings, so the one-shot gate runs LAST, on the post-chain
+ 		// findings — a refuted or overturned finding never blocks the gate.
+ 		if verifyFlag {
+ 			vres, verr := verify.Verify(ctx, ".", result.Dir, cfg.Registry, verify.Options{
+ 				Fresh:             boolFlag(cmd, "fresh"),
+ 				Thorough:          boolFlag(cmd, "thorough"),
+ 				MinSeverity:       verifyMinSev,
+ 				SharedTimeoutSecs: cfg.Settings.TimeoutSecs,
+ 				ExecBackend:       execBackend,
+ 				ExecTestCmd:       execTestCmd,
+ 				ExecTimeout:       execTimeout,
+ 				// Scrub the same review secrets the log sink redacts from reproduced
+ 				// exec evidence before it is persisted into findings.json (Epic 11.0).
+ 				Redactor: log.NewRedactor(resolveRedactRoot(ctx, prep.Repo), secrets...),
+ 			})
+ 			if verr != nil {
+ 				return verifyFailureError(verr)
+ 			}
+ 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+ 				"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable\n",
+ 				vres.FindingsProcessed, vres.VerdictCounts.Confirmed, vres.VerdictCounts.Refuted,
+ 				vres.VerdictCounts.Unverifiable)
+ 		}
+ 		// A debate failure here intentionally leaves the verify findings already
+ 		// written to disk: they are valid artifacts the operator can still inspect,
+ 		// and re-running --debate resumes from them. There is no cross-stage rollback;
+ 		// the failure is surfaced via debateFailureError. The debate stage's own
+ 		// internal write durability is tracked separately as TD at
+ 		// internal/debate/debate.go:146.
+ 		if debateFlag {
+ 			dres, derr := debate.Debate(ctx, ".", result.Dir, cfg.Registry, debate.Options{
+ 				SingleModel: boolFlag(cmd, "single-model"),
+ 			})
+ 			if derr != nil {
+ 				return debateFailureError(derr)
+ 			}
+ 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+ 				"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow)\n",
+ 				dres.Selected, dres.Upheld, dres.Overturned, dres.Split, dres.Unresolved, dres.Overflow)
+ 		}
+ 
+ 		// --auto-fix consumes the reconciled (and, when chained, verified/debated)
+ 		// findings: apply each selected fix, validate locally, and open a PR only
+ 		// if validation passes. It runs LAST so it operates on the post-chain
+ 		// findings, and it is terminal — the fail-on exit gate below is bypassed
+ 		// because the intent under --auto-fix is to remediate, not to fail CI.
+ 		if autoFix {
+ 			return orchestrateAutoFix(ctx, cmd.OutOrStdout(), afBackend, result.Dir, threshold, res.DefaultBranch)
+ 		}
+ 
+ 		// Gate on the post-chain findings.json when a stage rewrote it; otherwise
+ 		// gate the reconcile result directly.
+ 		if verifyFlag || debateFlag {
+ 			if threshold != "" {
+ 				findings, ferr := reconcile.ReadReconciledFindings(result.Dir)
+ 				if ferr != nil {
+ 					return usageError(ferr)
+ 				}
+ 				if n := reconcile.CountFailingJSON(findings, threshold, requireVerified); n > 0 {
+ 					// Keep the verify-only message stable (operators/CI may match on it);
+ 					// name cross-examination only when --debate actually ran.
+ 					stage := "verification"
+ 					if debateFlag {
+ 						stage = "cross-examination"
+ 					}
+ 					return fmt.Errorf("%d finding(s) at or above %s survived %s", n, threshold, stage)
+ 				}
+ 			}
+ 			return nil
+ 		}
+ 		return gateFindings(rec, threshold, false)
+ 	}
+ 	return nil
+ }
+ 
+ // interruptedBeforeFanout handles a SIGINT/SIGTERM that arrived before the
+ // fan-out started (during range resolution, config load, or scaffolding). No
+ // review directory exists yet, so there are no partial results to preserve — the
+ // notice just confirms the interrupt and exits 1, consistent with the post-fan-out
+ // interrupt path (and never the misleading exit-2 "review failed" usage error).
+diff --git a/internal/history/record.go b/internal/history/record.go
+index 42c10087..4cc8d3d5 100644
+--- a/internal/history/record.go
++++ b/internal/history/record.go
+@@ -1,11 +1,13 @@
+ // Package history persists code-review findings across runs and answers
+ // time-windowed, per-package queries against that ledger (Epic 19.0).
+ //
+-// Every `atcr review` run appends one JSON record per finding to an append-only
+-// JSONL ledger at .atcr/findings-history.jsonl. The `atcr history` command reads
+-// that ledger back, filtered by a duration window (--since) and a package path
+-// prefix (--package), and renders a markdown table of counts by severity per
+-// package.
++// Every `atcr review` run appends one JSON record per finding to the current
++// month's shard, an append-only JSONL file at .planning/history/YYYY-MM.jsonl
++// (Epic 19.4 — sharding by month keeps the version-controlled history from
++// churning one ever-growing blob). The `atcr history` command reads every shard
++// back, merged with the legacy pre-19.4 flat ledger at .atcr/findings-history.jsonl
++// if present, filtered by a duration window (--since) and a package path prefix
++// (--package), and renders a markdown table of counts by severity per package.
+ package history
+ 
+ import (
+diff --git a/internal/history/shard.go b/internal/history/shard.go
+new file mode 100644
+index 00000000..b891a462
+--- /dev/null
++++ b/internal/history/shard.go
+@@ -0,0 +1,67 @@
++package history
++
++import (
++	"fmt"
++	"path/filepath"
++	"sort"
++	"time"
++)
++
++// shardMonthLayout is the year-month stem of a monthly history shard file.
++const shardMonthLayout = "2006-01"
++
++// ShardPath returns the monthly shard file for a run at ts under dir, e.g.
++// <dir>/2026-07.jsonl. The month is taken in UTC so shard names are
++// deterministic regardless of the caller's local zone, and every record from a
++// single run (all stamped with the same ts) lands in exactly one shard.
++//
++// Because the file name is derived from ts, a run in a new month writes to a new
++// file and never reopens a prior month's shard — that is what stops old shards
++// from churning fresh git blobs once the month rolls over (Epic 19.4 AC3).
++func ShardPath(dir string, ts time.Time) string {
++	return filepath.Join(dir, ts.UTC().Format(shardMonthLayout)+".jsonl")
++}
++
++// LoadShards reads every monthly shard (*.jsonl) under dir and returns the
++// merged records across all months, ordered by shard file name — which, for the
++// YYYY-MM naming, is chronological. A missing or empty dir is a valid empty
++// history, not an error (mirroring Load), so `atcr history` answers a query
++// across whatever shards exist without the caller naming one (Epic 19.4 AC2).
++// Malformed lines inside a shard are skipped by Load; an unreadable shard is a
++// hard error.
++func LoadShards(dir string) ([]Record, error) {
++	matches, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
++	if err != nil {
++		return nil, fmt.Errorf("globbing history shards: %w", err)
++	}
++	sort.Strings(matches)
++
++	var all []Record
++	for _, path := range matches {
++		recs, err := Load(path)
++		if err != nil {
++			return nil, err
++		}
++		all = append(all, recs...)
++	}
++	return all, nil
++}
++
++// LoadAll returns the full queryable history: every monthly shard under shardDir
++// (LoadShards) merged with the legacy flat ledger at legacyPath, if it still
++// exists. The legacy file — the pre-19.4 .atcr/findings-history.jsonl — is read
++// in place and read-only; it is never moved or rewritten (Epic 19.4: "no complex
++// write-migrations"), so a project that accrued history before sharding keeps
++// that data visible alongside new shards. An absent shard dir or legacy file is
++// simply empty history, not an error.
++func LoadAll(shardDir, legacyPath string) ([]Record, error) {
++	shards, err := LoadShards(shardDir)
++	if err != nil {
++		return nil, err
++	}
++	legacy, err := Load(legacyPath)
++	if err != nil {
++		return nil, err
++	}
++	return append(shards, legacy...), nil
++}
+diff --git a/internal/history/shard_test.go b/internal/history/shard_test.go
+new file mode 100644
+index 00000000..438168d5
+--- /dev/null
++++ b/internal/history/shard_test.go
+@@ -0,0 +1,145 @@
++package history
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// AC1: a shard is named by the run's calendar year-month.
++func TestShardPath_MonthlyNaming(t *testing.T) {
++	dir := filepath.Join("x", "history")
++	ts := time.Date(2026, 7, 5, 19, 59, 0, 0, time.UTC)
++	assert.Equal(t, filepath.Join(dir, "2026-07.jsonl"), ShardPath(dir, ts))
++}
++
++// The shard month is taken in UTC so shard names are deterministic regardless of
++// the caller's local zone: a ts just past midnight in a +02:00 zone still belongs
++// to the prior UTC month and must not split into an off-by-one shard.
++func TestShardPath_UsesUTCMonth(t *testing.T) {
++	dir := filepath.Join("x", "history")
++	loc := time.FixedZone("east", 2*60*60)
++	// 2026-08-01 00:30 +02:00 == 2026-07-31 22:30 UTC → July shard.
++	ts := time.Date(2026, 8, 1, 0, 30, 0, 0, loc)
++	assert.Equal(t, filepath.Join(dir, "2026-07.jsonl"), ShardPath(dir, ts))
++}
++
++// AC3: once the month rolls over, writes land in a new shard file and the prior
++// month's shard is never reopened — so old shards stop producing new git blobs.
++func TestShardPath_RolloverWritesSeparateFiles(t *testing.T) {
++	dir := t.TempDir()
++	july := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
++	aug := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
++
++	require.NoError(t, Append(ShardPath(dir, july), []Record{{Timestamp: july, ID: "a", File: "x.go"}}))
++	require.NoError(t, Append(ShardPath(dir, aug), []Record{{Timestamp: aug, ID: "b", File: "y.go"}}))
++
++	entries, err := os.ReadDir(dir)
++	require.NoError(t, err)
++	var names []string
++	for _, e := range entries {
++		names = append(names, e.Name())
++	}
++	assert.ElementsMatch(t, []string{"2026-07.jsonl", "2026-08.jsonl"}, names)
++
++	// The July shard holds only the July record — the August write never reopened it.
++	julyRecs, err := Load(ShardPath(dir, july))
++	require.NoError(t, err)
++	require.Len(t, julyRecs, 1)
++	assert.Equal(t, "a", julyRecs[0].ID)
++}
++
++// AC2: a query loads across every monthly shard without the caller naming one.
++func TestLoadShards_MergesAllMonthlyFiles(t *testing.T) {
++	dir := t.TempDir()
++	july := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
++	aug := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
++	require.NoError(t, Append(ShardPath(dir, july), []Record{
++		{Timestamp: july, ID: "j1", File: "a.go", Package: "a", Severity: "HIGH"},
++	}))
++	require.NoError(t, Append(ShardPath(dir, aug), []Record{
++		{Timestamp: aug, ID: "a1", File: "b.go", Package: "b", Severity: "LOW"},
++		{Timestamp: aug, ID: "a2", File: "c.go", Package: "c", Severity: "MEDIUM"},
++	}))
++
++	recs, err := LoadShards(dir)
++	require.NoError(t, err)
++	require.Len(t, recs, 3)
++	ids := map[string]bool{}
++	for _, r := range recs {
++		ids[r.ID] = true
++	}
++	assert.Equal(t, map[string]bool{"j1": true, "a1": true, "a2": true}, ids)
++}
++
++// An absent shard dir is a valid empty history, not an error (mirrors Load).
++func TestLoadShards_AbsentDirIsEmptyNotError(t *testing.T) {
++	recs, err := LoadShards(filepath.Join(t.TempDir(), "does-not-exist"))
++	require.NoError(t, err)
++	assert.Empty(t, recs)
++}
++
++// Only *.jsonl files are shards; unrelated files in the dir are ignored.
++func TestLoadShards_IgnoresNonJSONLFiles(t *testing.T) {
++	dir := t.TempDir()
++	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
++	require.NoError(t, Append(ShardPath(dir, ts), []Record{{Timestamp: ts, ID: "x", File: "a.go"}}))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("not a shard"), 0o644))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("garbage"), 0o644))
++
++	recs, err := LoadShards(dir)
++	require.NoError(t, err)
++	require.Len(t, recs, 1)
++	assert.Equal(t, "x", recs[0].ID)
++}
++
++// Legacy migration: LoadAll returns monthly shards merged with the pre-19.4 flat
++// ledger, so history that accrued before sharding stays queryable.
++func TestLoadAll_MergesShardsAndLegacy(t *testing.T) {
++	root := t.TempDir()
++	shardDir := filepath.Join(root, ".planning", "history")
++	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
++
++	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
++	require.NoError(t, Append(ShardPath(shardDir, ts), []Record{{Timestamp: ts, ID: "shard1", File: "a.go"}}))
++	require.NoError(t, Append(legacyPath, []Record{{Timestamp: ts, ID: "legacy1", File: "b.go"}}))
++
++	recs, err := LoadAll(shardDir, legacyPath)
++	require.NoError(t, err)
++	require.Len(t, recs, 2)
++	ids := map[string]bool{}
++	for _, r := range recs {
++		ids[r.ID] = true
++	}
++	assert.Equal(t, map[string]bool{"shard1": true, "legacy1": true}, ids)
++}
++
++// Absent shard dir and absent legacy file is a valid empty history.
++func TestLoadAll_AbsentBothIsEmpty(t *testing.T) {
++	root := t.TempDir()
++	recs, err := LoadAll(filepath.Join(root, ".planning", "history"), filepath.Join(root, ".atcr", "findings-history.jsonl"))
++	require.NoError(t, err)
++	assert.Empty(t, recs)
++}
++
++// The legacy ledger is read in place and read-only — LoadAll must never rewrite
++// it (Epic 19.4: "no complex write-migrations will be performed").
++func TestLoadAll_DoesNotMutateLegacyFile(t *testing.T) {
++	root := t.TempDir()
++	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
++	ts := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
++	require.NoError(t, Append(legacyPath, []Record{{Timestamp: ts, ID: "legacy1", File: "b.go"}}))
++	before, err := os.ReadFile(legacyPath)
++	require.NoError(t, err)
++
++	_, err = LoadAll(filepath.Join(root, ".planning", "history"), legacyPath)
++	require.NoError(t, err)
++
++	after, err := os.ReadFile(legacyPath)
++	require.NoError(t, err)
++	assert.Equal(t, before, after, "legacy ledger must be read-only")
++}
