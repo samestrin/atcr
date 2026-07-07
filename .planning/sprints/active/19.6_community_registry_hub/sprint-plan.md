@@ -31,7 +31,7 @@ Models change too fast to bake into a binary release; the canonical persona sour
 - Repointed community-persona fetch URL (`samestrin/atcr`) with fetch-and-pin, `--offline` fallback, and backward compatibility for existing on-disk personas (Story 1 / AC1).
 - Additive `PersonaIndexEntry` structured `provider`/`model`/`tasks`/`tags` schema + `index.json` generation (Story 2 / AC2, AC7).
 - Model-aware `atcr personas search` with `--model`/`--provider` structured filtering, zero free-text fallback (Story 3 / AC2, AC6).
-- A single deterministic `ResolvePersona` precedence chain resolving self-contained persona units (inline/co-located custom prompts), with untrusted-input guardrails — length cap + hard fixture gate (Story 1 / AC1, C1/C2/C3).
+- The existing single deterministic `ResolvePersona` precedence chain (`internal/registry/persona.go:46`) **extended** to resolve self-contained persona units (co-located `<name>.md` custom prompts), with untrusted-input guardrails — length cap + hard fixture gate + `{{ }}` guardrail (Story 1 / AC1, C1/C2/C3).
 - A model-indexed, human-named persona library (frontier flagship+fallback pairs + flat-rate open models) with passing fixtures, plus the `sentinel→sasha` / `tracer→penny` / `idiomatic→ingrid` migration with no mixed-naming state (Stories 4 & 5 / AC3, AC4).
 - Authoring-contract enforcement (fixture asserts bound-model metadata) and onboarding-hierarchy docs leading with Synthetic (Stories 6 & 7 / AC5, AC7, AC8).
 
@@ -81,7 +81,7 @@ Models change too fast to bake into a binary release; the canonical persona sour
 | T2: Module | After completing an element | `go test ./internal/personas/...` / `go test ./cmd/atcr/...` |
 | T3: Full | DoD validation, pre-commit | `go test ./...` |
 
-**PRIMARY_TEST_LOCATION:** Colocated `*_test.go` files in the same package as the code under test (Go convention). New: `internal/personas/search_test.go`, `internal/personas/resolve_test.go`. Extend: `client_test.go`, `test`-fixture file, `cmd/atcr/personas_test.go`, `cmd/atcr/init_test.go`, `cmd/atcr/quickstart_test.go`. All network exercised via `httptest.NewServer` + `ATCR_PERSONAS_URL` override — **zero live network calls in CI**.
+**PRIMARY_TEST_LOCATION:** Colocated `*_test.go` files in the same package as the code under test (Go convention). New: `internal/personas/search_test.go`. Extend: `internal/registry/persona_test.go` (the **existing** `ResolvePersona` chain — no new resolver package), `client_test.go`, `test`-fixture file, `cmd/atcr/personas_test.go`, `cmd/atcr/init_test.go`, `cmd/atcr/quickstart_test.go`. All network exercised via `httptest.NewServer` + `ATCR_PERSONAS_URL` override — **zero live network calls in CI**.
 
 ### DoD Verification Checklist
 1. Tests (T3): `go test ./...` all passing
@@ -141,24 +141,24 @@ Package specs: `.planning/specifications/packages/{yaml-v3,standard-library,cobr
 
 ## Phase 1: Research & Spike — Resolution Chain Design (1 day)
 
-> Design spike only — **no shipped code, no tests**. Output: a short design note (`plan/design-notes/resolution-chain.md`) that Phase 3 implements against. Precedence order is pre-locked in sprint-design: project `.atcr/personas` override > pinned community (`~/.config/atcr/personas`) > embedded built-in. Built-in `.md` reformatting is deferred to a bounded fast-follow (built-ins resolve through the same chain via a thin adapter, not a physical file rewrite).
+> Design spike only — **no shipped code, no tests**. Output: a short design note (`plan/design-notes/resolution-chain.md`) that Phase 3 implements against. **The resolver already exists** — `internal/registry.ResolvePersona` (`internal/registry/persona.go:46`), a 6-level chain called at review time from `internal/fanout/review.go:999` over `PersonaDirs{Project, Registry}` (`review.go:150-162`). This sprint **extends** that one chain; it does **not** author a second resolver in `internal/personas`. Pre-locked decisions: precedence = project `.atcr/personas` override > pinned community (`~/.config/atcr/personas`) > embedded built-in (matches the existing `PersonaDirs` order); unit on-disk shape = **co-located `<name>.md` installed atomically with `<name>.yaml`** (single `.md` prompt format shared with built-ins, per C2). Built-in `.md` reformatting is deferred to a bounded fast-follow (built-ins resolve through the same chain via a thin adapter, not a physical file rewrite).
 
-### 1.1 [ ] **🔬 Spike: Map review-time persona-to-prompt resolution & lock the interface**
-   **Task:** Locate the current review-time call site that turns `AgentConfig.Persona` into prompt text (the codebase-discovery snapshot covers install/search/list/upgrade but NOT this path). Confirm the concrete `ResolvePersona` signature, decide the self-contained unit's on-disk shape (inline YAML field vs. co-located file installed atomically), confirm the exact precedence ordering, and confirm the length-cap constant to mirror (`MaxExecutorSystemPromptLen`, `internal/registry/config.go`).
+### 1.1 [x] **🔬 Spike: Map how to extend the existing review-time resolution chain**
+   **Task:** The review-time call site and resolver are already located — `internal/fanout/review.go:999` → `internal/registry.ResolvePersona` (`internal/registry/persona.go:46`). The spike documents **how to extend** that existing chain for community units and how to reconcile the install dir with the resolver dir — NOT how to build a new resolver, and NOT re-deciding the unit shape or precedence (both pre-locked above). Confirm the length-cap constant to mirror (`MaxExecutorSystemPromptLen`=4096, `internal/registry/config.go:83`).
    **Priority:** Critical | **Effort:** 1 day
-   1. Grep/trace `AgentConfig.Persona` → prompt-text usage at review time; document the call site (file:line).
-   2. Draft the `ResolvePersona` function signature (inputs, winning-source result shape, error cases).
-   3. Decide unit on-disk shape (inline vs. co-located) and how built-ins adapt into the same chain.
-   4. Record precedence order + collision rule + length-cap constant value.
-   **Success Criteria:** `plan/design-notes/resolution-chain.md` exists with: resolution call site (file:line), `ResolvePersona` signature, unit shape decision, precedence + collision rule, length-cap value. No production code changed.
+   1. Document the existing `ResolvePersona` signature and its `PersonaDirs{Project, Registry}` source order (verbatim from `persona.go:46`); identify the exact extension point for the pinned-community self-contained unit.
+   2. Specify the **dir reconciliation**: `internal/personas.PersonasDir()` (today `os.UserConfigDir()/atcr/personas`) MUST equal the resolver's `Registry` dir (`filepath.Dir(DefaultRegistryPath())/personas` = `~/.config/atcr/personas`). On darwin these currently differ — record the fix so a fetched persona lands on the chain.
+   3. Specify how a co-located `<name>.md` community unit is read by the existing chain (built-ins already resolve `.md` via the same path — no divergent format).
+   4. Record the length-cap value and the `{{ }}` template-metacharacter guardrail for untrusted fetched prompts (C3).
+   **Success Criteria:** `plan/design-notes/resolution-chain.md` exists with: the existing call site + signature (file:line), the extension point, the dir-reconciliation fix, the co-located-`.md` read path, precedence + collision rule (both pre-locked), length-cap + `{{ }}` guardrail. No production code changed.
    **Files:** `plan/design-notes/resolution-chain.md` (new) | **Duration:** ~1 day
 
-### 1.2 [ ] **Phase 1 DoD**
+### 1.2 [x] **Phase 1 DoD**
    1. Design note complete and internally consistent with C1/C2/C3.
    2. No code/test changes (spike only) — `git status` shows only the design note.
    3. COMMIT: `git add .planning/sprints/active/19.6_community_registry_hub/plan/design-notes/resolution-chain.md && git commit -m "docs(personas): resolution-chain design spike (phase 1)"`
 
-### 1.LAST [ ] **Phase 1 - GATE: Design Note Exit Review (subagent)**
+### 1.LAST [x] **Phase 1 - GATE: Design Note Exit Review (subagent)**
    **Scope:** `plan/design-notes/resolution-chain.md`
 
    **Spawn a fresh subagent** via the Agent tool to review the design note. No memory of the spike — intentional. Do NOT review inline.
@@ -177,11 +177,14 @@ Package specs: `.planning/specifications/packages/{yaml-v3,standard-library,cobr
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Gate findings — first pass (1 HIGH, 1 MEDIUM, 1 LOW; all cited facts verified accurate):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | resolution-chain.md §2 | Binding-only paragraph claimed a fall-through to the referenced built-in that the resolver does not perform (`persona.go:76-79` hard-fails an explicit differently-named ref; `persona.go:97` keys embedded lookup on `agentName`) — contradicted §1/§6. | **FIXED** — §2 rewritten with the explicit `persona == agentName` precondition; no false fall-through; consistent with §1/§6. |
+   | MEDIUM | paths.go:19 | Redefining `PersonasDir()` orphans darwin installs at the old `~/Library/Application Support` dir (AC1 back-compat). | **Deferred → TD-001** (`tech-debt-captured.md`); flagged in §3 for Phase 3. |
+   | LOW | config.go:83 | Length cap couples to the executor `MaxExecutorSystemPromptLen`; literal `4096` invites hardcode drift. | **Deferred → TD-002** (`tech-debt-captured.md`). |
+
+   **Gate re-run after HIGH fix:** `| NONE | Phase gate passed |` — no CRITICAL/HIGH remain. **Phase gate passed.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
@@ -343,7 +346,7 @@ Package specs: `.planning/specifications/packages/{yaml-v3,standard-library,cobr
 
 ## Phase 3: Core Resolution — Fetch-and-Pin + ResolvePersona Chain (3.5 days)
 
-> The heaviest code phase — implement fetch-and-pin in `init`/`quickstart`, the `--offline` fallback, and the new single-precedence-chain resolver with untrusted-input guardrails (length cap, hard fixture gate, pin-for-reproducibility). Implement against Phase 1's design note. Test types: Integration (mock-registry) + Unit (precedence ordering, length-cap rejection) + E2E (existing-workspace preservation, source labeling).
+> The heaviest code phase — implement fetch-and-pin in `init`/`quickstart`, the `--offline` fallback, and **extend the existing single-precedence-chain resolver** (`internal/registry.ResolvePersona`, `persona.go:46`) with untrusted-input guardrails (length cap, hard fixture gate, `{{ }}` metacharacter guardrail, pin-for-reproducibility) — plus the install-dir↔resolver-dir reconciliation. Do NOT author a second resolver in `internal/personas`. Implement against Phase 1's design note. Test types: Integration (mock-registry) + Unit (precedence ordering, length-cap rejection) + E2E (existing-workspace preservation, source labeling).
 
 ### 3.1 [ ] **[init/quickstart fetch-and-pin - RED](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **AC:** [01-02](plan/acceptance-criteria/01-02-init-quickstart-fetch-and-pin.md)
@@ -447,12 +450,12 @@ Package specs: `.planning/specifications/packages/{yaml-v3,standard-library,cobr
 
 ### 3.13 [ ] **[Custom-prompt ResolvePersona precedence chain - RED](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **AC:** [01-06](plan/acceptance-criteria/01-06-custom-prompt-resolution-precedence.md)
-   Write comprehensive failing unit tests for `ResolvePersona`: single deterministic precedence (project `.atcr/personas` override > pinned community > embedded built-in); collision resolves to exactly one source; **length cap** rejects oversized custom prompts; **hard fixture gate** blocks a fixture-failing prompt from resolving; a fetched custom prompt (inline/co-located) resolves as one self-contained unit (C1/C2/C3). Verify fail correctly.
-   **Files:** `internal/personas/resolve_test.go` (new) | **Duration:** ~3h
+   Write comprehensive failing unit tests **extending `internal/registry/persona_test.go`** for the existing `ResolvePersona`: single deterministic precedence (project `.atcr/personas` override > pinned community `~/.config/atcr/personas` > embedded built-in); collision resolves to exactly one source; the community install dir == the resolver's `Registry` dir (darwin regression); **length cap** rejects oversized custom prompts; **hard fixture gate** blocks a fixture-failing prompt from resolving; **`{{ }}` metacharacters** in a fetched prompt are not expanded; a fetched custom prompt (co-located `<name>.md`) resolves as one self-contained unit (C1/C2/C3). Verify fail correctly.
+   **Files:** `internal/registry/persona_test.go` (extend) | **Duration:** ~3h
 
 ### 3.14 [ ] **[Custom-prompt ResolvePersona precedence chain - GREEN](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
-   Implement `ResolvePersona` per the design note: one chain, one unit, guardrails (length cap mirroring `MaxExecutorSystemPromptLen`, hard fixture gate, pin). Built-ins resolve through the same chain via a thin adapter. Minimal code (T1), verify all (T2), COMMIT: `git commit -m "feat(personas): single ResolvePersona precedence chain + guardrails (green)"`
-   **Files:** `internal/personas/resolve.go` (new), `internal/personas/*` | **Duration:** ~5h
+   **Extend** the existing `internal/registry.ResolvePersona` per the design note: keep one chain, resolve the pinned-community co-located `<name>.md` unit, add guardrails (length cap mirroring `MaxExecutorSystemPromptLen`=4096, hard fixture gate, `{{ }}` guardrail, pin). Reconcile `internal/personas.PersonasDir()` to the resolver's `Registry` dir (`~/.config/atcr/personas`) so installs land on the chain. Built-ins already resolve `.md` through the same chain — no new format. Minimal code (T1), verify all (T2), COMMIT: `git commit -m "feat(personas): extend ResolvePersona chain for community units + guardrails (green)"`
+   **Files:** `internal/registry/persona.go` (extend), `internal/personas/paths.go` (dir reconcile), `internal/personas/*` (install co-located `.md`) | **Duration:** ~5h
 
 ### 3.14.A [ ] **[Custom-prompt ResolvePersona precedence chain - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 3.14`) — changed files, verbatim checklist, severity rubric, findings-table-only. Focus (HIGH-RISK, security-sensitive): prompt-injection via fetched prompt, oversized-prompt DoS, leftover `{{ }}` template injection, ambiguous collision / double-load / panic, fixture-gate bypass.
@@ -478,8 +481,8 @@ Package specs: `.planning/specifications/packages/{yaml-v3,standard-library,cobr
    5. COMMIT residual: `git commit -m "test(personas): phase 3 DoD"`
 
 ### 3.LAST [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
-   **Scope:** All files changed during Phase 3 (`client.go`, `resolve.go`, `init.go`, `quickstart.go`, tests).
-   **Spawn a fresh subagent** (subagent_type `general-purpose`, description `Phase 3 gate review`). Checklist verbatim (hostile integrator): CONTRACT EXIT (`ResolvePersona` signature matches design note & consumable by review-time callers?), CONFIG SURFACE (`--offline`, pin file documented/back-compat?), INTEGRATION (fetch-and-pin doesn't regress install/upgrade?), PHASE-EXIT CONTRACT (Phase 5 personas can be delivered via this chain?), REGRESSION (Phase 2 schema still intact?). Severity rubric; "ONLY the findings table."
+   **Scope:** All files changed during Phase 3 (`client.go`, `internal/registry/persona.go`, `internal/personas/paths.go`, `init.go`, `quickstart.go`, tests).
+   **Spawn a fresh subagent** (subagent_type `general-purpose`, description `Phase 3 gate review`). Checklist verbatim (hostile integrator): CONTRACT EXIT (the extended `ResolvePersona` still honors its existing signature & consumable by review-time callers, no second resolver introduced?), CONFIG SURFACE (`--offline`, pin file documented/back-compat?), INTEGRATION (fetch-and-pin doesn't regress install/upgrade; install dir == resolver dir on darwin?), PHASE-EXIT CONTRACT (Phase 5 personas can be delivered via this chain?), REGRESSION (Phase 2 schema still intact; existing built-in `.md` resolution unbroken?). Severity rubric; "ONLY the findings table."
 
    **Paste the subagent's findings table here (delete rows if none):**
    | Severity | File:Line | Issue | Fix |
@@ -641,7 +644,7 @@ Package specs: `.planning/specifications/packages/{yaml-v3,standard-library,cobr
 ### 5.1 [ ] **[Frontier flagship+fallback persona pairs - RED](plan/user-stories/04-model-indexed-persona-library-authoring.md)**
    **AC:** [04-01](plan/acceptance-criteria/04-01-frontier-flagship-fallback-persona-pairs.md)
    Author/lock fixtures for the 3 frontier pairs (Anthropic/OpenAI/Google, each flagship primary + same-family fallback). Verify fixtures fail (personas not yet authored).
-   **Files:** `personas/testdata/*_fixture.patch` | **Duration:** ~3h
+   **Files:** `personas/community/testdata/*_fixture.patch` | **Duration:** ~3h
 
 ### 5.2 [ ] **[Frontier flagship+fallback persona pairs - GREEN](plan/user-stories/04-model-indexed-persona-library-authoring.md)**
    Author each persona (YAML binding `provider`+`model` flagship+fallback + Markdown prompt phrased per that provider's official guide), human-named. Fixtures pass (T1/T2). COMMIT: `git commit -m "content(personas): frontier flagship+fallback library (green)"`
@@ -666,7 +669,7 @@ Package specs: `.planning/specifications/packages/{yaml-v3,standard-library,cobr
 ### 5.4 [ ] **[Flat-rate open-model personas - RED](plan/user-stories/04-model-indexed-persona-library-authoring.md)**
    **AC:** [04-02](plan/acceptance-criteria/04-02-flat-rate-open-model-personas.md)
    Author/lock fixtures for the flat-rate open-model personas (DeepSeek/Qwen/Kimi/GLM). Verify fail.
-   **Files:** `personas/testdata/*_fixture.patch` | **Duration:** ~3h
+   **Files:** `personas/community/testdata/*_fixture.patch` | **Duration:** ~3h
 
 ### 5.5 [ ] **[Flat-rate open-model personas - GREEN](plan/user-stories/04-model-indexed-persona-library-authoring.md)**
    Author each open-model persona (YAML + vendor-grounded prompt), human-named. Fixtures pass (T1/T2). COMMIT: `git commit -m "content(personas): flat-rate open-model library (green)"`
@@ -715,12 +718,12 @@ Package specs: `.planning/specifications/packages/{yaml-v3,standard-library,cobr
 
 ### 5.10 [ ] **[Fixture authoring & fixture-test pass - RED](plan/user-stories/04-model-indexed-persona-library-authoring.md)**
    **AC:** [04-04](plan/acceptance-criteria/04-04-fixture-authoring-and-fixture-test-pass.md)
-   Ensure every library persona has a `<slug>_fixture.patch` in `personas/testdata/`; run the fixture test and confirm the currently-missing ones fail. Verify fail.
-   **Files:** `personas/testdata/*` | **Duration:** ~1.5h
+   Ensure every library persona has a `<slug>_fixture.patch` in `personas/community/testdata/` (the community-fixture location locked in AC 04-04, with the extended `//go:embed community/testdata/*.patch` runner path); run the fixture test and confirm the currently-missing ones fail. Verify fail.
+   **Files:** `personas/community/testdata/*` | **Duration:** ~1.5h
 
 ### 5.11 [ ] **[Fixture authoring & fixture-test pass - GREEN](plan/user-stories/04-model-indexed-persona-library-authoring.md)**
    Complete all fixtures; full fixture test passes (T2). COMMIT: `git commit -m "content(personas): complete fixtures (green)"`
-   **Files:** `personas/testdata/*` | **Duration:** ~2h
+   **Files:** `personas/community/testdata/*` | **Duration:** ~2h
 
 ### 5.11.A [ ] **[Fixture authoring & fixture-test pass - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-model-indexed-persona-library-authoring.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 5.11`) — checklist focus: does any fixture pass only because the category word leaks from the injected diff rather than the prompt? Findings-table-only.
@@ -1103,7 +1106,7 @@ Package specs: `.planning/specifications/packages/{yaml-v3,standard-library,cobr
    2. Resolve it via `ResolvePersona`; assert the winning source and the resolved custom prompt text.
    3. Assert guardrails still hold (length cap, fixture gate).
    **Success Criteria:** Authored custom prompts resolve deterministically through the single chain; guardrails enforced.
-   **Files:** `internal/personas/resolve_test.go` (integration) | **Duration:** ~2h
+   **Files:** `internal/registry/persona_test.go` (integration) | **Duration:** ~2h
 
 ### 7.2 [ ] **AC6 end-to-end discover-by-model flow (mock registry)**
    **Task:** Drive the full "I have model X → find and install its persona" flow against `httptest.NewServer` + `ATCR_PERSONAS_URL`: `search --model <X>` → `install` → `list` → `test` (fixture).
@@ -1120,7 +1123,7 @@ Package specs: `.planning/specifications/packages/{yaml-v3,standard-library,cobr
 - [ ] Zero live network calls in CI (all fetch tests use `httptest.NewServer`)
 
 ### Optional: Targeted Mutation Testing
-MUTATION_TOOL = **UNAVAILABLE** (no Go mutation tool detected: no `stryker-mutator`/`mutmut`/`cargo-mutants`). Skip. If a Go mutation tool (e.g. `go-mutesting`/`gremlins`) is installed later, target ONLY high-risk changed files (`internal/personas/resolve.go`, `search.go`) — never the full codebase.
+MUTATION_TOOL = **UNAVAILABLE** (no Go mutation tool detected: no `stryker-mutator`/`mutmut`/`cargo-mutants`). Skip. If a Go mutation tool (e.g. `go-mutesting`/`gremlins`) is installed later, target ONLY high-risk changed files (`internal/registry/persona.go`, `internal/personas/search.go`) — never the full codebase.
 **WARNING:** Do NOT run full codebase mutation — it can take hours. Target specific files.
 
 ### Drift Analysis

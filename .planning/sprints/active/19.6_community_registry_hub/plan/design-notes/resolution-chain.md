@@ -82,10 +82,26 @@ remains the sole *resolver*. Built-ins stay embedded (level 5) and resolve throu
 chain — the C2 "embedded subset of the unit model." Built-in `.md` reformatting is deferred
 to a bounded fast-follow (out of scope this sprint).
 
-**Binding-only personas still resolve (C1 Edge Case 1):** a community persona that sets only
-`provider`/`model` and ships no custom `<name>.md` simply has no level-3 file; resolution
-continues down the existing chain to the referenced built-in. Binding-only remains *valid*,
-just no longer *required*.
+**Binding-only personas still resolve (C1 Edge Case 1) — with an explicit precondition.**
+This sprint changes **nothing** about how a binding-only persona (one that sets only
+`provider`/`model` and ships no custom `<name>.md`) resolves; it only adds the custom-prompt
+content at the existing level-3 read. Binding-only therefore resolves exactly as it does
+today, which means it is subject to the existing resolver contract (`persona.go:76-79`):
+
+- When the persona ref **equals the agent name** (`persona == agentName`), a binding-only
+  persona with no file resolves via level 5 — embedded `<agentName>.md` (`persona.go:97`
+  keys embedded lookup on `agentName`). This is the normal built-in reuse path.
+- When the persona ref **differs from the agent name** (an explicit ref) and no `<persona>.md`
+  file exists at level 2/3, resolution **hard-fails with `ErrPersonaNotFound`** — it does NOT
+  fall through to `_base`/embedded. This is existing, intentional behavior (§1), not a
+  regression this sprint introduces.
+
+So "binding-only remains *valid*, just no longer *required*" (C1) means: a binding-only
+community persona keeps working under today's rules — a differently-named binding-only ref
+must still point at a resolvable `<name>.md` (built-in reformatted into a file in the bounded
+fast-follow, or a project/community file), exactly as any persona ref must today. **No new
+fall-through is added**, preserving §6's "no new resolution branch." Phase 3 does not need a
+resolver change for this case; it only must not break it.
 
 ---
 
@@ -122,6 +138,12 @@ func PersonasDir() (string, error) {
 - **Verification (AC 01-06 Edge Case 3):** a darwin test asserts `PersonasDir()` ==
   `filepath.Dir(DefaultRegistryPath())/personas` (same directory), so a fetched persona is
   on the chain.
+- **Back-compat obligation (AC1) — Phase 3 must not silently orphan darwin installs.**
+  `PersonasDir()` also backs `personas install/list/remove/upgrade`. Redefining it on darwin
+  moves the effective dir from `~/Library/Application Support/atcr/personas` to
+  `~/.config/atcr/personas`, dropping any pre-existing install from `list`/`remove`. Phase 3
+  must either migrate (one-time move/symlink old → new) or explicitly record that no
+  back-compat is owed pre-public-launch. Captured as **TD-001** in `tech-debt-captured.md`.
 - **Import-cycle check for Phase 3:** `internal/registry` imports `github.com/samestrin/atcr/personas`
   (the embedded-content package), **not** `internal/personas`. Having `internal/personas`
   import `internal/registry` for `DefaultRegistryPath` does not close a cycle against that
