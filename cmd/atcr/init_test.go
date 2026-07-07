@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	commpersonas "github.com/samestrin/atcr/internal/personas"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/personas"
 )
@@ -193,9 +196,19 @@ func TestInit_ReadOnlyDir(t *testing.T) {
 
 func TestInit_CommandWiring(t *testing.T) {
 	// `atcr init` must run against the working directory; the test only
-	// verifies the flag plumbing by running in a temp cwd.
+	// verifies the flag plumbing by running in a temp cwd. The command also
+	// fetch-and-pins community personas, so point it at a mock registry and a
+	// throwaway pin dir to keep the test network-free.
 	dir := t.TempDir()
 	t.Chdir(dir)
+
+	index := `[{"name":"bruce","version":"1.0.0","description":"d","path":"bruce.yaml"}]`
+	srv := unitServer(t, index, map[string]string{"/bruce.yaml": communityUnitYAML})
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+	pinDir := t.TempDir()
+	oldDir := personasDir
+	personasDir = func() (string, error) { return pinDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
 
 	_, err := execute(t, "init")
 	require.NoError(t, err)
@@ -206,6 +219,102 @@ func TestInit_CommandWiring(t *testing.T) {
 
 	_, err = execute(t, "init", "--force")
 	require.NoError(t, err)
+}
+
+// --- AC 01-02: init/quickstart fetch-and-pin --------------------------------
+
+// unitServer serves a mock community registry: index.json plus the per-path
+// bodies given (persona .yaml / .md). Anything else 404s.
+func unitServer(t *testing.T, index string, files map[string]string) *httptest.Server {
+	t.Helper()
+	routes := map[string]string{"/index.json": index}
+	for p, body := range files {
+		routes[p] = body
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, ok := routes[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+const communityUnitYAML = `provider: anthropic
+model: claude-sonnet-4-6
+role: reviewer
+language:
+  - go
+version: "1.2.0"
+description: "OWASP Top-10 security reviewer"
+`
+
+const communityUnitMD = "# Security Reviewer\nReview the diff for OWASP Top-10 issues.\n"
+
+// TestInstallCommunityPersonas_FetchAndPin covers AC 01-02 Scenario 1: a roster
+// persona present in the community index installs as a co-located unit
+// (<name>.yaml + <name>.md) into the community pin dir, pinned to the fetched
+// YAML's version and labeled community by `personas list`.
+func TestInstallCommunityPersonas_FetchAndPin(t *testing.T) {
+	index := `[{"name":"owasp","version":"1.2.0","description":"sec","path":"owasp.yaml","provider":"anthropic","model":"claude-sonnet-4-6"}]`
+	srv := unitServer(t, index, map[string]string{
+		"/owasp.yaml": communityUnitYAML,
+		"/owasp.md":   communityUnitMD,
+	})
+	dest := t.TempDir()
+	out := &bytes.Buffer{}
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp"}, out, &bytes.Buffer{}))
+
+	assert.FileExists(t, filepath.Join(dest, "owasp.yaml"))
+	assert.FileExists(t, filepath.Join(dest, "owasp.md"))
+
+	metas, err := commpersonas.List(dest)
+	require.NoError(t, err)
+	var found bool
+	for _, m := range metas {
+		if m.Name == "owasp" {
+			found = true
+			assert.Equal(t, "1.2.0", m.Version, "pin is the fetched YAML version")
+			assert.Equal(t, "community", m.Source)
+		}
+	}
+	assert.True(t, found, "owasp is listed as a community persona")
+	assert.Contains(t, out.String(), "owasp", "install progress reported per persona")
+}
+
+// TestInstallCommunityPersonas_EmptyIndexErrors covers AC 01-02 Scenario 5: an
+// empty index is a hard, non-silent error and nothing is written.
+func TestInstallCommunityPersonas_EmptyIndexErrors(t *testing.T) {
+	srv := unitServer(t, "[]", nil)
+	dest := t.TempDir()
+
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp"}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err)
+
+	entries, rerr := os.ReadDir(dest)
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "no persona files written when the index is empty")
+}
+
+// TestInstallCommunityPersonas_MissingRosterSkipsWithWarning covers AC 01-02
+// Edge Case 1: a roster persona the index does not advertise is skipped with a
+// warning; present ones still install and the call succeeds (exit 0).
+func TestInstallCommunityPersonas_MissingRosterSkipsWithWarning(t *testing.T) {
+	index := `[{"name":"owasp","version":"1.2.0","description":"sec","path":"owasp.yaml"}]`
+	srv := unitServer(t, index, map[string]string{"/owasp.yaml": communityUnitYAML})
+	dest := t.TempDir()
+	errOut := &bytes.Buffer{}
+
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp", "tracer"}, &bytes.Buffer{}, errOut)
+	require.NoError(t, err, "a missing roster persona is skip-with-warning, not a hard failure")
+
+	assert.FileExists(t, filepath.Join(dest, "owasp.yaml"))
+	assert.NoFileExists(t, filepath.Join(dest, "tracer.yaml"))
+	assert.Contains(t, errOut.String(), "tracer", "the skipped persona is named in the warning")
 }
 
 func TestPersonas_EmbeddedSetComplete(t *testing.T) {

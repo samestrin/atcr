@@ -56,6 +56,37 @@ func TestQuickstart_ReusesInitWriters(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", "_base.md"))
 }
 
+// TestQuickstart_FetchAndPin_InstallsCommunity covers AC 01-02 Scenario 2:
+// runQuickstart (online) inherits the fetch-and-pin behavior — a community
+// persona advertised in the index is installed into the community pin dir before
+// the synthetic-provider setup proceeds.
+func TestQuickstart_FetchAndPin_InstallsCommunity(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// A community index advertising a roster (built-in) name so the fetch has a
+	// match; other roster names are skipped with a warning.
+	index := `[{"name":"bruce","version":"2.0.0","description":"d","path":"bruce.yaml","provider":"synthetic","model":"x"}]`
+	srv := unitServer(t, index, map[string]string{"/bruce.yaml": communityUnitYAML})
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	destDir := filepath.Join(home, ".config", "atcr", "personas")
+	oldDir := personasDir
+	personasDir = func() (string, error) { return destDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:            dir,
+		fetchCommunity: true,
+		in:             strings.NewReader(quickstartInput),
+		out:            &bytes.Buffer{},
+		errOut:         &bytes.Buffer{},
+	}))
+
+	assert.FileExists(t, filepath.Join(destDir, "bruce.yaml"), "community persona fetched and pinned during quickstart")
+}
+
 func TestQuickstart_WritesSyntheticRegistry(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()

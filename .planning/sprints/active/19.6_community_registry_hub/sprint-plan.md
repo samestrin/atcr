@@ -153,6 +153,30 @@ Answers to the Phase 2 safety-check questions (points where sprint-plan task tex
 - `RegistryBaseURL` → exactly `https://raw.githubusercontent.com/samestrin/atcr/main/personas/community`; `BaseURL()` env-override logic untouched; the existing `TestBaseURL_DefaultWhenUnset` (asserts the old URL) is **updated** in the 2.10 RED step, not duplicated.
 - Existing `fakeIndexJSON` + `testServer` helpers in `personas_test.go` are reused for the `FetchIndex`-path back-compat tests.
 
+### Phase 3 Clarifications (recorded 2026-07-07)
+
+Answers to the Phase 3 safety-check questions (open decisions the ACs/design-note left to Phase 3, plus one AC 01-05 internal contradiction). Authoritative for Phase 3 execution.
+
+**Key Decisions:**
+
+1. **`--force` never overwrites existing persona files (adjudicates AC 01-05 contradiction).** AC 01-05 Related-Files L15 ("never overwritten unless `--force`") is superseded by the higher-authority user-story SMART criteria (L28, unconditional) and AC 01-05 DoD L70 ("with or without `--force`"). Existing `.atcr/personas/*.{md,yaml}` and community `~/.config/atcr/personas/*` files are **never** overwritten by `init`/`quickstart`, with or without `--force`. `--force` retains ONLY its role of bypassing the top-level "config already exists at .atcr/config.yaml" proceed-gate (`init.go:76-78`, untouched). **Code change required (task 3.11):** today's `runInit` write closure calls `os.Remove(path)` unconditionally when `force` is true (`cmd/atcr/init.go:96-101`), clobbering every target including personas — this becomes **persona-aware** (skip the remove for a pre-existing persona file so it survives byte-for-byte), while non-persona targets (config.yaml, .gitignore) keep today's force-overwrite behavior.
+
+2. **TD-001 darwin back-compat: record no pre-public-launch back-compat owed; do NOT build a migration in task 3.14.** Redefining `internal/personas.PersonasDir()` (`paths.go:19`) to `filepath.Dir(DefaultRegistryPath())/personas` is done for chain reconciliation; the darwin dir move (`~/Library/Application Support/atcr/personas` → `~/.config/atcr/personas`) orphans no real user pre-public-launch. Record this rationale in-code at `paths.go`; leave the one-time move/symlink migration as an open fast-follow under **TD-001** (unchanged, stays deferred).
+
+3. **`{{ }}` untrusted-prompt guardrail = reject-at-load (design-note §4 "preferred").** A fetched `<name>.md` whose body contains `{{`/`}}` beyond the known required template variables is rejected at install/load time with a descriptive error — no silent escaping/transform. Keeps all three C3 guardrails (length cap, hard fixture gate, `{{ }}`) uniformly load-time-rejecting and avoids a hand-rolled escaper as the sole injection barrier.
+
+**Scope Boundaries:**
+- IN scope Phase 3: ACs 01-02 (fetch-and-pin), 01-03 (`--offline`), 01-04 (fetch-failure errors), 01-05 (preservation + source labeling), 01-06 (ResolvePersona extension + C3 guardrails + dir reconciliation).
+- OUT of Phase 3: model-aware search filters (Phase 4), persona content authoring (Phase 5), the community-persona **fixture runner** itself (Phase 6 / AC 06-03). Phase 3 wires the **hard fixture-gate seam** in the resolve/install path; the runner that the seam invokes for community personas lands in Phase 6.
+- Built-in `.md` reformatting into the unified unit format = deferred bounded fast-follow (out of scope this sprint).
+
+**Technical Approach:**
+- Length cap references `registry.MaxExecutorSystemPromptLen` (=4096) **directly**, not a hardcoded literal (resolves TD-002).
+- `init` **preserves** the embedded-builtin `.md` copy into `.atcr/personas/` (project tier) AND **adds** fetch-and-pin of community personas into `~/.config/atcr/personas/` (resolver Registry tier). Fetch-and-pin never targets `.atcr/personas/`.
+- The pin is the fetched YAML's own `version` field (no new pin file); existing `list`/`upgrade` read/compare it unchanged.
+- `internal/personas.PersonasDir()` → `registry.DefaultRegistryPath()` introduces **no import cycle** (validated: `internal/personas` already imports `internal/registry` at `install.go:9`; `internal/registry` imports the top-level embed package `personas`, not `internal/personas`).
+- Co-located `<name>.md` + `<name>.yaml` are installed **atomically together**; `Install()` today writes only `.yaml`, so the paired atomic write is net-new install work.
+
 ---
 
 ## Sprint Phases
@@ -392,28 +416,34 @@ Answers to the Phase 2 safety-check questions (points where sprint-plan task tex
 
 > The heaviest code phase — implement fetch-and-pin in `init`/`quickstart`, the `--offline` fallback, and **extend the existing single-precedence-chain resolver** (`internal/registry.ResolvePersona`, `persona.go:46`) with untrusted-input guardrails (length cap, hard fixture gate, `{{ }}` metacharacter guardrail, pin-for-reproducibility) — plus the install-dir↔resolver-dir reconciliation. Do NOT author a second resolver in `internal/personas`. Implement against Phase 1's design note. Test types: Integration (mock-registry) + Unit (precedence ordering, length-cap rejection) + E2E (existing-workspace preservation, source labeling).
 
-### 3.1 [ ] **[init/quickstart fetch-and-pin - RED](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.1 [x] **[init/quickstart fetch-and-pin - RED](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **AC:** [01-02](plan/acceptance-criteria/01-02-init-quickstart-fetch-and-pin.md)
    Write failing integration tests (mock `httptest.NewServer` + `ATCR_PERSONAS_URL`): `init`/`quickstart` fetch personas and **pin a version** reproducibly; `atcr personas upgrade` advances the pin. Verify fail correctly.
    **Files:** `cmd/atcr/init_test.go`, `cmd/atcr/quickstart_test.go`, `internal/personas/client_test.go` | **Duration:** ~3h
 
-### 3.2 [ ] **[init/quickstart fetch-and-pin - GREEN](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.2 [x] **[init/quickstart fetch-and-pin - GREEN](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    Implement fetch-and-pin version tracking in `internal/personas` and wire `init`/`quickstart` to obtain personas by fetch-and-pin. Minimal code (T1), verify all (T2), COMMIT: `git commit -m "feat(personas): fetch-and-pin for init/quickstart (green)"`
    **Files:** `internal/personas/client.go`, `cmd/atcr/init.go`, `cmd/atcr/quickstart.go` | **Duration:** ~4h
 
-### 3.2.A [ ] **[init/quickstart fetch-and-pin - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.2.A [x] **[init/quickstart fetch-and-pin - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 3.2`) — changed-file absolute paths, verbatim checklist (SECURITY / EDGE CASES / ERROR HANDLING / PERFORMANCE), severity rubric, findings-table-only. Focus: pin reproducibility, transport timeout vs. context deadline, retry/backoff reuse.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (no CRITICAL/HIGH — proceed):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | init.go:31-38 | `atcr init` writes config+personas, then unconditionally fetches; a fetch failure traps the user behind the "config exists" guard with no non-network path. | **Addressed by next tasks in-phase:** `--offline` (3.4) adds the non-network path; never-overwrite `--force` (3.10) removes the clobber-on-rerun risk. Verify closure at Phase 3 DoD. |
+   | MEDIUM | client.go:28 | Pin not reproducible — base URL targets mutable `main`; pin is the YAML `version` field. | **By design (locked):** AC 01-01 fixes the URL at `.../main/...`; US-01 Data Requirements lock pin = YAML `version` with explicit `upgrade`. Not a defect. |
+   | MEDIUM | init.go:94 / unit.go:62 | Index `Path` decoded but unused; a Name/Path divergence fetches the wrong URL → 404 → init aborts. | **Covered by TD-003** (name↔path coupling, deferred to Phase 5 when the community layout locks). Install-by-name is pre-existing behavior. |
+   | MEDIUM | unit.go:83-89 | Stale `.md`: a persona going binding-only upstream leaves its old custom prompt on disk on re-install. | **FIXED in 3.3** — `InstallUnit` now removes any stale co-located `.md` on a binding-only result; pinned by `TestInstallUnit_BindingOnlyRemovesStaleMD`. |
+   | LOW | init.go:83 | Empty-index error message references `--offline`, not yet a registered flag. | Becomes valid in **3.4** (next task registers the flag). No action. |
+   | LOW | unit.go:80-89 | Doc overclaimed crash-atomicity across the two-file write. | **FIXED in 3.3** — doc softened to "on error return"; crash-window caveat documented. |
 
    **Action Required:**
    - CRITICAL/HIGH -> 3.3, do NOT proceed until fixed | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 3.3 [ ] **[init/quickstart fetch-and-pin - REFACTOR](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+   **Outcome:** No CRITICAL/HIGH → proceed. Two findings fixed inline in 3.3 (stale-`.md` removal + doc). Two MEDIUM are addressed by later in-phase tasks (3.4/3.10) or already tracked (TD-003); one MEDIUM + one LOW are by-design/next-task, no new tech debt.
+
+### 3.3 [x] **[init/quickstart fetch-and-pin - REFACTOR](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    Fix CRITICAL/HIGH from 3.2.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): fetch-and-pin cleanup"`
    **Duration:** ~1h
 

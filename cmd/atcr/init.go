@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	commpersonas "github.com/samestrin/atcr/internal/personas"
 	"github.com/samestrin/atcr/internal/registry"
 	builtins "github.com/samestrin/atcr/personas"
 )
@@ -26,7 +27,15 @@ func newInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runInit(".", force, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
+			if err := runInit(".", force, out, errOut); err != nil {
+				return err
+			}
+			dir, err := personasDir()
+			if err != nil {
+				return err
+			}
+			return installCommunityPersonas(personasClient, commpersonas.BaseURL(), dir, builtins.Names(), out, errOut)
 		},
 	}
 	cmd.Flags().Bool("force", false, "overwrite existing configuration and persona files")
@@ -56,6 +65,38 @@ func initTargets(dir string) []string {
 		targets = append(targets, filepath.Join(personasDir, name+".md"))
 	}
 	return targets
+}
+
+// installCommunityPersonas fetches the community index from baseURL and installs
+// each roster persona present in it as a self-contained unit (<name>.yaml plus a
+// co-located <name>.md when the persona ships a custom prompt) into destDir, the
+// resolver's community pin dir. The pin is the fetched YAML's own version field
+// (read back by `personas list`/`upgrade`). An empty index is a hard, non-silent
+// error; a roster persona the index does not advertise is skipped with a warning
+// (init still succeeds). A per-persona fetch/validation failure aborts non-zero.
+func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir string, roster []string, out, errOut io.Writer) error {
+	entries, err := commpersonas.FetchIndex(client, baseURL)
+	if err != nil {
+		return fmt.Errorf("fetching community persona index: %w", err)
+	}
+	if len(entries) == 0 {
+		return fmt.Errorf("community persona index is empty: no personas to install (use --offline to scaffold from built-ins)")
+	}
+	indexed := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
+		indexed[e.Name] = struct{}{}
+	}
+	for _, name := range roster {
+		if _, ok := indexed[name]; !ok {
+			_, _ = fmt.Fprintf(errOut, "persona %q not found in community index — skipping\n", name)
+			continue
+		}
+		if err := commpersonas.InstallUnit(client, baseURL, name, destDir); err != nil {
+			return fmt.Errorf("installing community persona %q: %w", name, err)
+		}
+		_, _ = fmt.Fprintf(out, "Installed %s (community)\n", name)
+	}
+	return nil
 }
 
 // runInit writes .atcr/config.yaml and the editable persona files under dir.

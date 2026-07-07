@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	commpersonas "github.com/samestrin/atcr/internal/personas"
 	"github.com/samestrin/atcr/internal/quickstart"
 	"github.com/samestrin/atcr/internal/registry"
 	builtins "github.com/samestrin/atcr/personas"
@@ -23,13 +24,14 @@ import (
 // the browser-open hook are injectable so the interactive flow is unit-testable
 // without a TTY or a real browser.
 type quickstartOpts struct {
-	dir    string
-	force  bool
-	open   bool
-	in     io.Reader
-	out    io.Writer
-	errOut io.Writer
-	openFn func(string) error
+	dir            string
+	force          bool
+	open           bool
+	fetchCommunity bool // fetch-and-pin community personas; false scaffolds from embedded built-ins only (the safe default for tests). The command layer sets this from !--offline.
+	in             io.Reader
+	out            io.Writer
+	errOut         io.Writer
+	openFn         func(string) error
 }
 
 // newQuickstartCmd builds `atcr quickstart`: the interactive onboarding wizard.
@@ -51,12 +53,13 @@ func newQuickstartCmd() *cobra.Command {
 				return err
 			}
 			return runQuickstart(quickstartOpts{
-				dir:    ".",
-				force:  force,
-				open:   open,
-				in:     cmd.InOrStdin(),
-				out:    cmd.OutOrStdout(),
-				errOut: cmd.ErrOrStderr(),
+				dir:            ".",
+				force:          force,
+				open:           open,
+				fetchCommunity: true,
+				in:             cmd.InOrStdin(),
+				out:            cmd.OutOrStdout(),
+				errOut:         cmd.ErrOrStderr(),
 			})
 		},
 	}
@@ -81,6 +84,19 @@ func runQuickstart(o quickstartOpts) error {
 		_, _ = fmt.Fprintf(o.errOut, "Using existing workspace at %s (run with --force to regenerate config + personas).\n", filepath.Dir(cfgPath))
 	} else if err := runInit(o.dir, o.force, o.out, o.errOut); err != nil {
 		return err
+	}
+
+	// Fetch-and-pin the community personas into the resolver's pin dir. When not
+	// requested (offline / tests), this reproduces today's embedded-built-in-only
+	// scaffold with zero network access.
+	if o.fetchCommunity {
+		dir, err := personasDir()
+		if err != nil {
+			return err
+		}
+		if err := installCommunityPersonas(personasClient, commpersonas.BaseURL(), dir, builtins.Names(), o.out, o.errOut); err != nil {
+			return err
+		}
 	}
 
 	manifest, err := quickstart.LoadManifest()
