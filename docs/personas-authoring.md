@@ -159,5 +159,38 @@ Before submitting your persona, confirm every item:
 - [ ] **Fixture** is a `.patch`/`.diff` in `personas/testdata/`, named `<slug>_fixture.patch`, mode `0644`, containing a **synthetic** instance of the target class (no real secrets).
 - [ ] **Fixture test passes** locally with no network access.
 - [ ] **No secrets, credentials, or network instructions** in the prompt.
+- [ ] **Index entry** (if the persona ships in the community `index.json`) carries non-empty `provider` and `model` that **exactly match** the persona YAML's `provider`/`model` — enforced by a `go test` gate, not editorial review.
+
+## 5. The community index entry
+
+Personas distributed through the community channel are enumerated in `personas/community/index.json` — an array of entries that `atcr personas search` reads to answer *"which persona is tuned for the model I have?"*. The index is **authored in-repo** (not generated), and a `go test` gate asserts each entry stays consistent with its source persona YAML.
+
+Each entry has this shape (the JSON keys map 1:1 to `PersonaIndexEntry` in `internal/personas/search.go`):
+
+```json
+{
+  "name": "security/owasp",
+  "version": "1.0.0",
+  "description": "OWASP Top-10 security reviewer",
+  "path": "security/owasp.yaml",
+  "provider": "openrouter",
+  "model": "anthropic/claude-3.7-sonnet",
+  "tasks": ["security-review"],
+  "tags": ["owasp", "security"]
+}
+```
+
+| Key | Required | Meaning |
+|-----|----------|---------|
+| `name` | yes | Persona slug/title, shown in listings. |
+| `version` | yes | Semver; drives `atcr personas upgrade` comparison. |
+| `description` | yes | Shown by `atcr personas search` (keyword match). |
+| `path` | yes | Path to the persona YAML relative to the index root (e.g. `security/owasp.yaml`). |
+| `provider` | yes | Routing-endpoint key — **must be non-empty and equal the persona YAML's `provider`**. |
+| `model` | yes | The model id — **must be non-empty and equal the persona YAML's `model`**. Discovery by model matches this structured field, never free-text. |
+| `tasks` | no | Forward-looking task tags. **Omit the key entirely** when absent — do not emit `"tasks": []`. |
+| `tags` | no | Forward-looking free-form tags. **Omit the key entirely** when absent — do not emit `"tags": []`. |
+
+**Enforcement (hard gate, not editorial):** a Go test iterates every entry in `personas/community/index.json`, loads each entry's source persona YAML via its `path`, and fails `go test` if any entry's `provider`/`model` is empty or drifts from the YAML. A library persona with missing or mismatched metadata cannot merge. Embedded built-in personas are **exempt** — they are never enumerated in the community index. `provider`/`model`/`tasks`/`tags` are display/search metadata only: never embed executable content, secrets, or network instructions in them.
 
 See [personas-install.md](personas-install.md) for installing and using personas, and [registry.md](registry.md) for the full agent schema and routing semantics.

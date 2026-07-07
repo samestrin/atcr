@@ -2,12 +2,66 @@ package personas
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
+
+// verifyCommunityIndex is the enforcement engine behind the AC7 go-test gate
+// (AC 02-02): every entry in the community index at indexPath must carry non-empty
+// provider/model equal to the entry's source persona YAML, resolved relative to
+// personasRoot via the entry's Path. It returns human-readable problem messages
+// (empty means the contract holds) and an error only when the index itself cannot
+// be read/parsed. It is deliberately test-only — the contract is a build-time gate
+// over in-repo files (LOCKED decision Q4: the index is authored in-repo, not
+// generated), not a runtime path. Embedded built-ins are exempt because they are
+// never enumerated in the community index.
+func verifyCommunityIndex(indexPath, personasRoot string) ([]string, error) {
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		return nil, err
+	}
+	var entries []PersonaIndexEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", indexPath, err)
+	}
+	var problems []string
+	for _, e := range entries {
+		if e.Provider == "" || e.Model == "" {
+			problems = append(problems, fmt.Sprintf(
+				"%s: index entry has empty provider (%q) or model (%q)", e.Path, e.Provider, e.Model))
+		}
+		raw, err := os.ReadFile(filepath.Join(personasRoot, filepath.FromSlash(e.Path)))
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%s: cannot read source persona YAML: %v", e.Path, err))
+			continue
+		}
+		var pm struct {
+			Provider string `yaml:"provider"`
+			Model    string `yaml:"model"`
+		}
+		if err := yaml.Unmarshal(raw, &pm); err != nil {
+			problems = append(problems, fmt.Sprintf("%s: cannot parse source persona YAML: %v", e.Path, err))
+			continue
+		}
+		if pm.Provider != e.Provider {
+			problems = append(problems, fmt.Sprintf(
+				"%s: provider mismatch — index=%q yaml=%q", e.Path, e.Provider, pm.Provider))
+		}
+		if pm.Model != e.Model {
+			problems = append(problems, fmt.Sprintf(
+				"%s: model mismatch — index=%q yaml=%q", e.Path, e.Model, pm.Model))
+		}
+	}
+	return problems, nil
+}
 
 // --- AC 02-01: PersonaIndexEntry schema extension ---------------------------
 
@@ -155,4 +209,34 @@ func TestPersonaIndexEntry_MalformedJSONErrors(t *testing.T) {
 	const entry = `{"name":"a","version":"1",}` // trailing comma
 	var got PersonaIndexEntry
 	require.Error(t, json.Unmarshal([]byte(entry), &got))
+}
+
+// --- AC 02-02: index.json field population contract (AC7 enforcement gate) ---
+
+// TestCommunityIndex_ProviderModelMatchesYAML is the AC7 enforcement gate: every
+// entry in personas/community/index.json must carry non-empty provider/model equal
+// to its source persona YAML (resolved via the entry's path). An empty index (the
+// state through Phase 2, before content is authored in Phase 5) passes vacuously;
+// once real entries land, any missing/drifted metadata fails `go test`. Embedded
+// built-ins are exempt — they are not enumerated in the community index.
+func TestCommunityIndex_ProviderModelMatchesYAML(t *testing.T) {
+	root := filepath.Join("..", "..", "personas", "community")
+	problems, err := verifyCommunityIndex(filepath.Join(root, "index.json"), root)
+	require.NoError(t, err, "community index.json must exist and be readable")
+	assert.Empty(t, problems,
+		"every index entry's provider/model must be non-empty and equal its source YAML:\n%s",
+		strings.Join(problems, "\n"))
+}
+
+// TestVerifyCommunityIndex_FailsOnMismatch proves the gate actually catches drift:
+// a testdata index whose first entry's provider/model mismatch its source YAML and
+// whose second entry has empty provider/model both yield problems.
+func TestVerifyCommunityIndex_FailsOnMismatch(t *testing.T) {
+	root := filepath.Join("testdata", "badindex")
+	problems, err := verifyCommunityIndex(filepath.Join(root, "index.json"), root)
+	require.NoError(t, err)
+	require.NotEmpty(t, problems, "gate must flag mismatched/empty provider/model")
+	joined := strings.Join(problems, "\n")
+	assert.Contains(t, joined, "mismatch.yaml", "mismatched provider/model must be reported")
+	assert.Contains(t, joined, "empty.yaml", "empty provider/model must be reported")
 }

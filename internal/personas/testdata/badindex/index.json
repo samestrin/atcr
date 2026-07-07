@@ -1,0 +1,4 @@
+[
+  {"name":"mismatch","version":"1.0.0","description":"provider/model disagree with source YAML","path":"mismatch.yaml","provider":"anthropic","model":"claude-sonnet-4-6"},
+  {"name":"empty","version":"1.0.0","description":"index entry omits provider/model","path":"empty.yaml","provider":"","model":""}
+]
