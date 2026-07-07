@@ -105,11 +105,38 @@ func TestPersonaIndexEntry_AbsentOptionalFieldsAreNil(t *testing.T) {
 	assert.Nil(t, got.Tasks, "absent tasks must decode as nil, not []string{}")
 	assert.Nil(t, got.Tags, "absent tags must decode as nil, not []string{}")
 
-	// omitempty means these keys must not appear when re-marshaled.
+	// omitempty means these keys must not appear when re-marshaled. Assert on the
+	// decoded key set (not a fragile whole-blob substring) so a value that merely
+	// contains "tasks"/"tags" cannot false-pass.
 	data, err := json.Marshal(got)
 	require.NoError(t, err)
-	assert.NotContains(t, string(data), "tasks")
-	assert.NotContains(t, string(data), "tags")
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &raw))
+	assert.NotContains(t, raw, "tasks")
+	assert.NotContains(t, raw, "tags")
+}
+
+// TestPersonaIndexEntry_BareOldShapeDecodes asserts the core additive contract:
+// an old-shape entry carrying ONLY the four original keys decodes with zero-value
+// new fields and no error. (AC 02-03 exercises this end-to-end via FetchIndex too.)
+func TestPersonaIndexEntry_BareOldShapeDecodes(t *testing.T) {
+	const entry = `{"name":"security/owasp","version":"1.0.0","description":"OWASP reviewer","path":"security/owasp.yaml"}`
+	var got PersonaIndexEntry
+	require.NoError(t, json.Unmarshal([]byte(entry), &got))
+	assert.Equal(t, "security/owasp", got.Name)
+	assert.Empty(t, got.Provider)
+	assert.Empty(t, got.Model)
+	assert.Nil(t, got.Tasks)
+	assert.Nil(t, got.Tags)
+}
+
+// TestPersonaIndexEntry_UnknownKeysIgnored proves the index decode path stays
+// permissive: an unrecognized key does not cause a decode error (no KnownFields).
+func TestPersonaIndexEntry_UnknownKeysIgnored(t *testing.T) {
+	const entry = `{"name":"a","version":"1","description":"d","path":"a.yaml","future_field":"x"}`
+	var got PersonaIndexEntry
+	require.NoError(t, json.Unmarshal([]byte(entry), &got), "unknown keys must be silently ignored")
+	assert.Equal(t, "a", got.Name)
 }
 
 // TestPersonaIndexEntry_EmptyProviderModel covers AC 02-01 Edge Case 2: empty-string
