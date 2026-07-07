@@ -354,29 +354,33 @@ Answers to the Phase 2 safety-check questions (points where sprint-plan task tex
    Fix CRITICAL/HIGH from 2.11.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): base URL repoint cleanup"`
    **Duration:** ~20m
 
-### 2.13 [ ] **Phase 2 DoD**
+### 2.13 [x] **Phase 2 DoD**
    1. Tests (T3): `go test ./internal/personas/...` all passing
    2. Coverage ≥80% on touched files; Lint/vet/fmt clean
    3. Backward-compat decode test proves old `index.json` still parses
    4. DoD report (Stories 1-partial, 2)
    5. COMMIT any residual: `git commit -m "test(personas): phase 2 DoD"`
 
-### 2.LAST [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+### 2.LAST [x] **Phase 2 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2 (`internal/personas/search.go`, `client.go`, tests).
 
    **Spawn a fresh subagent** (subagent_type `general-purpose`, description `Phase 2 gate review`). Checklist verbatim (hostile integrator): CONTRACT EXIT (struct shape stable for Phases 3/4/5?), CONFIG SURFACE (new fields documented/defaulted/back-compat?), INTEGRATION (URL repoint doesn't break install/search/list/upgrade callers?), PHASE-EXIT CONTRACT (downstream consumes schema without rework?), REGRESSION (existing persona tests intact?). Severity rubric; "ONLY the findings table."
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Gate findings (no CRITICAL/HIGH):**
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | search_test.go (verifyCommunityIndex) | AC7 gate cross-checks provider/model at the entry `path` but never asserts `path == name + ".yaml"`; a Phase 5 name≠path divergence could pass while `install <name>` fetches a different YAML. | **Deferred → TD-003** — exact community layout/name↔path convention is a Phase 5 decision; strict assertion now risks being too rigid. |
+   | LOW | search_test.go (TestCommunityIndex_ProviderModelMatchesYAML) | Gate passes vacuously against the empty `[]` index until Phase 5 authors entries. | Intended/documented; `TestVerifyCommunityIndex_FailsOnMismatch` (badindex fixture) is the standing guard. No action. |
+
+   **Reviewer confirmations (clean):** PersonaIndexEntry shape/json-tags correct and Phase 3/4/5-consumable; docs §5 maps 1:1 to the struct (incl. omitempty); URL repoint has no stale callers (all route through `BaseURL()`); empty `[]` index tolerated by `FetchIndex`→`Search`→"No personas found"; back-compat decode guarded; gate YAML extraction matches the registry agent schema (`internal/registry/config.go:191-192`).
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
    - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
    - None found -> Note "Phase gate passed" and proceed to phase stop
    **Duration:** 15-30 min
+
+   **Outcome:** No CRITICAL/HIGH → **Phase gate passed.** 1 MEDIUM (TD-003) + 1 LOW deferred/no-action per protocol.
 
 ---
 
