@@ -1,9 +1,9 @@
 {
-  "skill": "create-sprint",
+  "skill": "create-user-stories",
   "args": "@.planning/plans/active/19.6_community_registry_hub/",
-  "invocation": "/create-sprint @.planning/plans/active/19.6_community_registry_hub/",
+  "invocation": "/create-user-stories @.planning/plans/active/19.6_community_registry_hub/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "61a998df-f674-4f99-aaf0-30ecd399e68e",
-  "timestamp": "2026-07-07T15:50:53.677Z"
+  "session_id": "bf5c9949-bdd9-4895-9a51-56e3bc7bfc19",
+  "timestamp": "2026-07-07T18:22:40.290Z"
 }
