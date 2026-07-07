@@ -30,13 +30,18 @@
 - **Relevant:** Directly satisfies this plan's stated goal — "a new user gets a well-tuned review panel with a single install command instead of hand-authoring prompts from scratch" — by making that install command discoverable at the two points a first-time user is most likely to read.
 - **Time-bound:** Completed within this plan's single implementation session, gated only on Stories 1-2 having published real persona names to reference.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-quick-walkthrough-recommends-default-pack.md) | Quick Walkthrough Recommends Default Persona Pack | Manual |
+| [03-02](../acceptance-criteria/03-02-readme-quickstart-recommends-default-pack.md) | README Quickstart Recommends Default Persona Pack | Manual |
+
+## Original Criteria Overview
 
 1. `docs/personas-install.md`'s "Quick walkthrough" section recommends installing the default model-tuned persona pack early in the walkthrough, with a concrete `atcr personas install <name>` example.
 2. `README.md`'s "## Quickstart" section adds a step recommending the default persona pack as part of first-time setup, positioned alongside the existing `atcr init` / provider-setup steps.
 3. Neither file's existing content (commands, structure, numbering) is removed or restructured beyond what's needed to insert the new recommendation.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.6_community_registry_hub/`_
 
 ## Technical Considerations
 

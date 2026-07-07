@@ -30,13 +30,21 @@
 - **Relevant:** Directly closes the content gap blocking Epic 19.6's goal of a single-command, model-tuned reviewer panel for new users.
 - **Time-bound:** Content authored and fixture passing before Story 2 (publishing to `index.json`) begins, since Story 2 depends on these files existing.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-anthropic-claude-persona-content.md) | Anthropic Claude Persona Content | Manual |
+| [01-02](../acceptance-criteria/01-02-openai-gpt-persona-content.md) | OpenAI GPT Persona Content | Manual |
+| [01-03](../acceptance-criteria/01-03-google-gemini-persona-content.md) | Google Gemini Persona Content | Manual |
+| [01-04](../acceptance-criteria/01-04-persona-fixtures-synthetic-patches.md) | Passing Fixtures for the 3 New Personas | Manual |
+| [01-05](../acceptance-criteria/01-05-schema-template-structure-validation.md) | Schema & Template-Structure Validation Across All 3 Personas | Manual |
+
+## Original Criteria Overview
 
 1. Each of the 3 new persona YAMLs (Anthropic, OpenAI, Google) sets a flagship-primary `provider`+`model` plus a same-family fallback (not a placeholder), and its prompt template's phrasing follows that provider's own official prompting guide's documented structure/techniques.
 2. Each prompt template mirrors the canonical section structure (`## Role`, `## Focus`, `## Scope` with `{{.ScopeRule}}`, `## Severity Rubric`, `## Output Format` with the exact 7-column pipe-delimited contract, `## Payload`) and renders every required template variable (`{{.AgentName}}`, `{{.ScopeRule}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.PayloadMode}}`, `{{.Payload}}`) with no leftover unrendered variables, and the persona's target category word appears in the prompt template itself.
 3. Each new persona has a passing fixture: a synthetic (never real) `.patch`/`.diff` file in `personas/testdata/`, named `<slug>_fixture.patch`, containing a synthetic instance of the target category, verified per the existing contribution checklist in `docs/personas-authoring.md`.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.6_community_registry_hub/`_
 
 ## Technical Considerations
 
@@ -57,4 +65,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.6_communit
 ---
 
 **Created:** July 06, 2026
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Generated

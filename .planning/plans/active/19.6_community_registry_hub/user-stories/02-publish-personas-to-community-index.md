@@ -30,13 +30,18 @@
 - **Relevant:** Without this publication step, the personas authored in Story 1 exist as files in the external repo but remain invisible and uninstallable to atcr users — this story is what makes them actually reachable via the CLI.
 - **Time-bound:** Complete within the same publication window as Story 1's content authoring, before this plan's Definition of Done is marked complete.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-index-json-entries-added.md) | index.json Entries Added for the 3 New Personas | Manual |
+| [02-02](../acceptance-criteria/02-02-search-and-install-discoverability.md) | End-to-End Search and Install Discoverability | Manual |
+
+## Original Criteria Overview
 
 1. Each of the 3 new personas from Story 1 (Anthropic, OpenAI, Google) has a corresponding entry in the external `atcr/personas` repo's `index.json`, conforming to the existing index schema (no new fields or format introduced).
 2. `atcr personas search <keyword>` against the live community repo returns each new persona when searched by its name or a matching description keyword.
 3. `atcr personas install <namespace/name>` against the live community repo successfully fetches, validates, and installs each new persona's YAML to the local personas directory.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.6_community_registry_hub/`_
 
 ## Technical Considerations
 
