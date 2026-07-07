@@ -191,6 +191,8 @@ Each entry has this shape (the JSON keys map 1:1 to `PersonaIndexEntry` in `inte
 | `tasks` | no | Forward-looking task tags. **Omit the key entirely** when absent — do not emit `"tasks": []`. |
 | `tags` | no | Forward-looking free-form tags. **Omit the key entirely** when absent — do not emit `"tags": []`. |
 
+Here "Required" means **gate-enforced at `go test` time, not enforced by the Go type**: `PersonaIndexEntry` tags `provider`/`model` as `omitempty`, so an entry that omits them still decodes — the gate below is what rejects it.
+
 **Enforcement (hard gate, not editorial):** a Go test iterates every entry in `personas/community/index.json`, loads each entry's source persona YAML via its `path`, and fails `go test` if any entry's `provider`/`model` is empty or drifts from the YAML. A library persona with missing or mismatched metadata cannot merge. Embedded built-in personas are **exempt** — they are never enumerated in the community index. `provider`/`model`/`tasks`/`tags` are display/search metadata only: never embed executable content, secrets, or network instructions in them.
 
 See [personas-install.md](personas-install.md) for installing and using personas, and [registry.md](registry.md) for the full agent schema and routing semantics.

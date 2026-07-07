@@ -23,6 +23,10 @@ import (
 // over in-repo files (LOCKED decision Q4: the index is authored in-repo, not
 // generated), not a runtime path. Embedded built-ins are exempt because they are
 // never enumerated in the community index.
+//
+// Scope limit: it verifies provider/model equality only. It does not cross-check an
+// entry's name/version/description against the YAML — AC 02-02 scopes the gate to
+// the model-discovery metadata (provider/model), which is what discovery depends on.
 func verifyCommunityIndex(indexPath, personasRoot string) ([]string, error) {
 	data, err := os.ReadFile(indexPath)
 	if err != nil {
@@ -34,11 +38,29 @@ func verifyCommunityIndex(indexPath, personasRoot string) ([]string, error) {
 	}
 	var problems []string
 	for _, e := range entries {
-		if e.Provider == "" || e.Model == "" {
-			problems = append(problems, fmt.Sprintf(
-				"%s: index entry has empty provider (%q) or model (%q)", e.Path, e.Provider, e.Model))
+		// Empty checks are independent so a partial regression is detectable.
+		if e.Provider == "" {
+			problems = append(problems, fmt.Sprintf("%s: index entry has empty provider", e.Path))
 		}
-		raw, err := os.ReadFile(filepath.Join(personasRoot, filepath.FromSlash(e.Path)))
+		if e.Model == "" {
+			problems = append(problems, fmt.Sprintf("%s: index entry has empty model", e.Path))
+		}
+
+		// Resolve the source YAML, refusing an absolute path or a `..` escape out
+		// of personasRoot (defense in depth; the index is in-repo, but the join is
+		// otherwise unvalidated).
+		rel := filepath.FromSlash(e.Path)
+		if filepath.IsAbs(rel) {
+			problems = append(problems, fmt.Sprintf("%s: entry path must be relative to the personas root", e.Path))
+			continue
+		}
+		full := filepath.Join(personasRoot, rel)
+		if inside, err := filepath.Rel(personasRoot, full); err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+			problems = append(problems, fmt.Sprintf("%s: entry path escapes the personas root", e.Path))
+			continue
+		}
+
+		raw, err := os.ReadFile(full)
 		if err != nil {
 			problems = append(problems, fmt.Sprintf("%s: cannot read source persona YAML: %v", e.Path, err))
 			continue
@@ -228,15 +250,24 @@ func TestCommunityIndex_ProviderModelMatchesYAML(t *testing.T) {
 		strings.Join(problems, "\n"))
 }
 
-// TestVerifyCommunityIndex_FailsOnMismatch proves the gate actually catches drift:
-// a testdata index whose first entry's provider/model mismatch its source YAML and
-// whose second entry has empty provider/model both yield problems.
+// TestVerifyCommunityIndex_FailsOnMismatch proves the gate catches every distinct
+// drift mode independently. The testdata index isolates one failure per entry
+// (provider-only mismatch, model-only mismatch, empty provider, empty model) so a
+// partial regression in any single check fails exactly one assertion rather than
+// being masked by a co-occurring problem. Assertions pin the discriminating reason
+// substring, not the entry filename (which prefixes every message for that entry).
 func TestVerifyCommunityIndex_FailsOnMismatch(t *testing.T) {
 	root := filepath.Join("testdata", "badindex")
 	problems, err := verifyCommunityIndex(filepath.Join(root, "index.json"), root)
 	require.NoError(t, err)
-	require.NotEmpty(t, problems, "gate must flag mismatched/empty provider/model")
 	joined := strings.Join(problems, "\n")
-	assert.Contains(t, joined, "mismatch.yaml", "mismatched provider/model must be reported")
-	assert.Contains(t, joined, "empty.yaml", "empty provider/model must be reported")
+
+	assert.Contains(t, joined, "provmismatch.yaml: provider mismatch", "provider-only drift must be caught")
+	assert.Contains(t, joined, "modelmismatch.yaml: model mismatch", "model-only drift must be caught")
+	assert.Contains(t, joined, "emptyprov.yaml: index entry has empty provider", "empty provider must be caught")
+	assert.Contains(t, joined, "emptymodel.yaml: index entry has empty model", "empty model must be caught")
+
+	// The provider-only fixture must NOT also report a model mismatch (its model
+	// matches), proving the checks are independent.
+	assert.NotContains(t, joined, "provmismatch.yaml: model mismatch")
 }

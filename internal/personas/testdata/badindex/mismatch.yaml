@@ -1,5 +1,0 @@
-provider: openai
-model: gpt-4o
-role: reviewer
-version: "1.0.0"
-description: "source YAML whose provider/model differ from the index entry"
