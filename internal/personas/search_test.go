@@ -314,18 +314,19 @@ func TestFetchIndex_MixedShapeDecodes(t *testing.T) {
 	assert.Equal(t, []string{"oss"}, entries[1].Tags)
 }
 
-// TestPersonaIndexEntry_ForwardCompatRestrictedTarget covers AC 02-03 Edge Case 2:
-// a new-shape payload decoded into a restricted four-field target succeeds — unknown
-// keys are silently ignored, so a pre-change consumer stays forward-compatible.
-func TestPersonaIndexEntry_ForwardCompatRestrictedTarget(t *testing.T) {
-	const newShape = `{"name":"a","version":"1","description":"d","path":"a.yaml","provider":"openrouter","model":"deepseek/deepseek-v3","tasks":["x"],"tags":["y"]}`
-	var legacy struct {
-		Name        string `json:"name"`
-		Version     string `json:"version"`
-		Description string `json:"description"`
-		Path        string `json:"path"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(newShape), &legacy))
-	assert.Equal(t, "a", legacy.Name)
-	assert.Equal(t, "a.yaml", legacy.Path)
+// TestFetchIndex_UnknownKeysTolerated covers AC 02-03 Edge Case 2 on the REAL fetch
+// path: a forward-shaped entry carrying an unrecognized key decodes cleanly through
+// FetchIndex. This is the load-bearing regression guard — it fails if anyone switches
+// the index decode to json.Decoder.DisallowUnknownFields()/KnownFields(true), which
+// would silently break forward-compatibility for old clients reading newer indexes.
+func TestFetchIndex_UnknownKeysTolerated(t *testing.T) {
+	const forwardShape = `[
+	  {"name":"future/entry","version":"3.0.0","description":"index from a newer atcr","path":"future/entry.yaml","provider":"openrouter","model":"qwen/qwen3-max","future_field":"not yet known to this build"}
+	]`
+	srv := testServer(t, map[string]string{"/index.json": forwardShape})
+	entries, err := FetchIndex(srv.Client(), srv.URL)
+	require.NoError(t, err, "an unknown index key must be tolerated (permissive decode)")
+	require.Len(t, entries, 1)
+	assert.Equal(t, "future/entry", entries[0].Name)
+	assert.Equal(t, "qwen/qwen3-max", entries[0].Model)
 }
