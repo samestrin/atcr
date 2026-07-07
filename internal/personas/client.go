@@ -18,10 +18,14 @@ import (
 	"time"
 )
 
-// RegistryBaseURL is the default community persona repository, raw content root.
-// It is overridable per-invocation via the ATCR_PERSONAS_URL environment
-// variable (see BaseURL) so no published source is hardcoded unconditionally.
-const RegistryBaseURL = "https://raw.githubusercontent.com/atcr/personas/main"
+// RegistryBaseURL is the default community persona repository: the in-repo
+// community-persona path on the product repo (samestrin/atcr), raw content root.
+// Persona content is canonical here rather than compiled into the binary. It is
+// overridable per-invocation via the ATCR_PERSONAS_URL environment variable (see
+// BaseURL) so no published source is hardcoded unconditionally, and so CI exercises
+// the fetch path against httptest servers with zero live network calls. Anonymous
+// raw.githubusercontent fetches only succeed once samestrin/atcr is public.
+const RegistryBaseURL = "https://raw.githubusercontent.com/samestrin/atcr/main/personas/community"
 
 // envPersonasURL overrides RegistryBaseURL when set (e.g. an httptest server).
 const envPersonasURL = "ATCR_PERSONAS_URL"

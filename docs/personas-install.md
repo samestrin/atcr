@@ -20,11 +20,13 @@ A persona installed here is picked up by the reviewer panel on your **next revie
 
 ## Configuring the registry URL
 
-By default, `install`, `search`, and `upgrade` fetch from the public community repository:
+By default, `install`, `search`, and `upgrade` fetch from the in-repo community-persona path on the product repository (`samestrin/atcr`), raw-content root:
 
 ```
-https://raw.githubusercontent.com/atcr/personas/main
+https://raw.githubusercontent.com/samestrin/atcr/main/personas/community
 ```
+
+(Anonymous raw-content fetches from this URL succeed once `samestrin/atcr` is public; until then, point `ATCR_PERSONAS_URL` at a local or mock registry.)
 
 To point at a different (e.g. private or mirrored) registry, set the `ATCR_PERSONAS_URL` environment variable to its raw-content base URL:
 
