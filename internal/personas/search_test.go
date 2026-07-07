@@ -271,3 +271,61 @@ func TestVerifyCommunityIndex_FailsOnMismatch(t *testing.T) {
 	// matches), proving the checks are independent.
 	assert.NotContains(t, joined, "provmismatch.yaml: model mismatch")
 }
+
+// --- AC 02-03: backward-compatible old-shape decode -------------------------
+
+// TestFetchIndex_OldShapeFixtureDecodes covers AC 02-03 Scenario 2: an old-shape
+// (four-field) index.json decodes cleanly through the full FetchIndex fetch path,
+// with new fields at zero value. fakeIndexJSON is deliberately old-shape.
+func TestFetchIndex_OldShapeFixtureDecodes(t *testing.T) {
+	srv := testServer(t, map[string]string{"/index.json": fakeIndexJSON})
+	entries, err := FetchIndex(srv.Client(), srv.URL)
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+	for _, e := range entries {
+		assert.NotEmpty(t, e.Name)
+		assert.NotEmpty(t, e.Path)
+		assert.Empty(t, e.Provider, "old-shape entry has zero-value Provider")
+		assert.Empty(t, e.Model, "old-shape entry has zero-value Model")
+		assert.Nil(t, e.Tasks, "old-shape entry has nil Tasks")
+		assert.Nil(t, e.Tags, "old-shape entry has nil Tags")
+	}
+}
+
+// TestFetchIndex_MixedShapeDecodes covers AC 02-03 Edge Case 1: an array mixing one
+// old-shape and one new-shape entry decodes with no cross-entry interference.
+func TestFetchIndex_MixedShapeDecodes(t *testing.T) {
+	const mixed = `[
+	  {"name":"old/entry","version":"1.0.0","description":"legacy","path":"old/entry.yaml"},
+	  {"name":"new/entry","version":"2.0.0","description":"modern","path":"new/entry.yaml","provider":"openrouter","model":"deepseek/deepseek-v3","tasks":["review"],"tags":["oss"]}
+	]`
+	srv := testServer(t, map[string]string{"/index.json": mixed})
+	entries, err := FetchIndex(srv.Client(), srv.URL)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+
+	assert.Empty(t, entries[0].Provider)
+	assert.Empty(t, entries[0].Model)
+	assert.Nil(t, entries[0].Tasks)
+
+	assert.Equal(t, "openrouter", entries[1].Provider)
+	assert.Equal(t, "deepseek/deepseek-v3", entries[1].Model)
+	assert.Equal(t, []string{"review"}, entries[1].Tasks)
+	assert.Equal(t, []string{"oss"}, entries[1].Tags)
+}
+
+// TestPersonaIndexEntry_ForwardCompatRestrictedTarget covers AC 02-03 Edge Case 2:
+// a new-shape payload decoded into a restricted four-field target succeeds — unknown
+// keys are silently ignored, so a pre-change consumer stays forward-compatible.
+func TestPersonaIndexEntry_ForwardCompatRestrictedTarget(t *testing.T) {
+	const newShape = `{"name":"a","version":"1","description":"d","path":"a.yaml","provider":"openrouter","model":"deepseek/deepseek-v3","tasks":["x"],"tags":["y"]}`
+	var legacy struct {
+		Name        string `json:"name"`
+		Version     string `json:"version"`
+		Description string `json:"description"`
+		Path        string `json:"path"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(newShape), &legacy))
+	assert.Equal(t, "a", legacy.Name)
+	assert.Equal(t, "a.yaml", legacy.Path)
+}
