@@ -64,7 +64,7 @@ untrusted fetched prompt security guardrails
 
 - **Architecture:** 3/3 - Introduces a genuinely new resolution architecture (single `ResolvePersona` precedence chain across 3 sources), converges two existing formats into one self-contained persona unit, and adds an untrusted-input security boundary (length cap + hard fixture gate) around fetched prompts — this is beyond "new patterns," it changes how personas are delivered and resolved system-wide.
 - **Integration:** 3/3 - Touches 6+ files/packages across 3 layers: `internal/personas/*` (client, search, install, list, upgrade, test), `cmd/atcr/*` (personas.go, init.go, quickstart.go), `personas/*` (registry + content), plus `docs/` and `README.md`.
-- **Story/Task & Test:** 3/3 - 7 stories, 29 linked ACs (+1 orphaned, see Risks) spanning unit, integration, and one mock-registry E2E test; one XL story requiring genuine per-model vendor-guidance research across 7+ personas.
+- **Story/Task & Test:** 3/3 - 7 stories, 30 linked ACs spanning unit, integration, and one mock-registry E2E test; one XL story requiring genuine per-model vendor-guidance research across 7+ personas.
 - **Risk/Unknowns:** 2/3 - The highest-risk architectural questions (custom-prompt resolution, unit convergence, untrusted-input guardrails) are already locked by Clarifications C1/C2/C3, leaving mostly well-scoped implementation risk (live-URL testability, content-authoring judgment calls) rather than open-ended unknowns.
 
 **Time Formula:** Σ per-phase estimates (each phase sized by story effort + AC count + new-architecture surcharge for phases touching the resolution chain)
@@ -102,7 +102,7 @@ Thresholds: adversarial triggered by complexity >= 6/12 or phases >= 3; gated tr
 
 ### Phase 4: Discovery — Model-Aware Search (1.5 days)
 **Focus:** Structured `--model`/`--provider` filtering with zero free-text fallback, backward-compatible keyword search, flag/arg validation.
-**Items:** Story 3 (03-01, 03-02, 03-03). **Resolve the orphaned `03-04` AC file first (see Risks) before or during this phase** so search-table column rendering has a linked AC.
+**Items:** Story 3 (03-01, 03-02, 03-03, 03-04).
 **Test types:** Integration (flag registration, table rendering) + Unit (structured-field-only matching, near-miss substring cases).
 
 ### Phase 5: Content Authoring — Persona Library + Human-Names Migration (5 days)
@@ -128,7 +128,7 @@ Thresholds: adversarial triggered by complexity >= 6/12 or phases >= 3; gated tr
 |-------|-------|--------|-----|-------|
 | 1: Community-Canonical Fetch-and-Pin Distribution | Distribution + Resolution | M | 01-01..01-06 (6) | 2 (01-01), 3 (01-02..01-06) |
 | 2: Structured Model Metadata Schema | Schema | S | 02-01..02-03 (3) | 2 |
-| 3: Model-Aware Search and Discovery | Discovery | M | 03-01..03-03 (3, +orphaned 03-04) | 4 |
+| 3: Model-Aware Search and Discovery | Discovery | M | 03-01..03-04 (4) | 4 |
 | 4: Model-Indexed Persona Library Authoring | Content | XL | 04-01..04-07 (7) | 5 |
 | 5: Human-Names Migration for Built-in Stragglers | Content | M | 05-01..05-04 (4) | 5 |
 | 6: Authoring Contract Enforcement | Docs/Enforcement | S | 06-01..06-03 (3) | 6 |
@@ -224,7 +224,6 @@ Thresholds: adversarial triggered by complexity >= 6/12 or phases >= 3; gated tr
 - Live install against the real `samestrin/atcr` URL is untestable until the repo is public → every test uses the existing `httptest.NewServer`/`ATCR_PERSONAS_URL` pattern; AC6 explicitly scopes verification to a mock/local registry.
 - Extending `PersonaIndexEntry`/`index.json` could silently break existing installed personas if not additive → rely on `encoding/json`'s unknown-field tolerance plus an explicit backward-compatibility decode test (AC 02-03).
 - The current review-time persona-to-prompt resolution call site is not fully mapped by the codebase-discovery snapshot (which covers install/search/list/upgrade but not the `AgentConfig.Persona`-to-prompt-text path) → addressed by Phase 1's dedicated Research & Spike phase before any resolution-chain code is written.
-- **AC file `03-04-search-table-provider-model-columns.md` exists on disk but is no longer referenced in Story 3's AC table** (dropped during the 2026-07-07 clarification-propagation edit, commit `958d6302`) → flagged for the user to resolve via `/refine-user-stories` or a manual re-link before `/create-sprint`; Phase 4 above treats it as pending resolution rather than silently ignoring it.
 
 **TDD-Specific:**
 - Authoring 8+ genuinely model-tuned personas (real vendor-guidance research, not templated substitution) is a large, judgment-heavy content workload that could stall a linear TDD sprint → isolated into its own Phase 5, separate from the schema/network code, so content review cadence doesn't block code merge cadence (per plan.md's own risk mitigation).

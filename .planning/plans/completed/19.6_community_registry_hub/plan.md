@@ -4,7 +4,7 @@
 - **Last Modified:** 2026-07-07 10:58:29
 - **Plan Type:** feature
 - **Plan Number:** 19.6
-- **Status:** Draft - Awaiting User Stories
+- **Status:** Draft - Design Refined
 
 ## Plan Overview
 **Plan Type:** feature
@@ -37,7 +37,7 @@
 
 ### Acceptance Criteria
 - **Location:** [`acceptance-criteria/`](acceptance-criteria/)
-- **Status:** Pending - generate with `/create-acceptance-criteria @.planning/plans/active/19.6_community_registry_hub/`
+- **Status:** Generated
 
 ## Feature Analysis Summary
 Epic 9.0 already built the full community-persona distribution mechanism (`atcr personas install/search/list/upgrade/remove`, fetch against an injectable `HTTPClient`, `PersonaIndexEntry`-driven search) — this plan does not rebuild that plumbing, it repoints and extends it. `internal/personas/client.go`'s `RegistryBaseURL` is a single hardcoded constant pointing at `atcr/personas`; repointing it to `samestrin/atcr` plus adding version-pin tracking and offline behavior satisfies AC1 with a small, well-isolated change. `PersonaIndexEntry` (`internal/personas/search.go`) currently carries only `Name`/`Version`/`Description`/`Path` and `Search()` does substring matching on two of those fields — AC2's model-aware discovery is additive (`encoding/json` ignores unknown fields, so old `index.json` payloads keep working). The heaviest work is content: AC3 requires authoring a full model-indexed persona library (prompt + YAML + fixture per persona, each phrased to that model's own vendor prompting guide) and migrating the three human-name stragglers (`sentinel`→`sasha`, `tracer`→`penny`, `idiomatic`→`ingrid`) into the same layout, folding in Epic 23.0 so there is never a mixed naming state. AC5's onboarding-hierarchy docs are a straightforward but detail-heavy rewrite of `README.md`'s Quickstart section and the persona docs to rank Synthetic > DashScope > Chutes/Featherless > LiteLLM(advanced) > majors(opt-in).

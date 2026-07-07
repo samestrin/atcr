@@ -37,6 +37,7 @@
 | [03-01](../acceptance-criteria/03-01-structured-model-provider-filtering.md) | Structured `--model`/`--provider` Filtering (No Free-Text Fallback) | Unit + Integration |
 | [03-02](../acceptance-criteria/03-02-keyword-search-backward-compatibility.md) | Positional Keyword Search Remains Unchanged (Backward Compatibility) | Unit + Integration |
 | [03-03](../acceptance-criteria/03-03-flag-registration-and-arg-validation.md) | `--model`/`--provider` Flag Registration and Argument Validation Guard | Integration |
+| [03-04](../acceptance-criteria/03-04-search-table-provider-model-columns.md) | `renderPersonaSearch` Table Displays Provider/Model Columns | Unit |
 
 ## Original Criteria Overview
 
