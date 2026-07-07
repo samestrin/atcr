@@ -1,4 +1,4 @@
-# Acceptance Criteria: Google Gemini Persona Content
+# Acceptance Criteria: Anthropic Claude Persona Content
 
 **Related User Story:** [01: Author Model-Tuned Persona Content](../user-stories/01-author-model-tuned-persona-content.md)
 
@@ -7,11 +7,11 @@
 |-----------|------------|-------|
 | Component Type | YAML persona file + Markdown prompt template | External repo `atcr/personas` |
 | Test Framework | Persona fixture test harness (`atcr personas test`, per `docs/personas-authoring.md`) | Manual/external execution — no in-repo CI surface |
-| Key Dependencies | `docs/personas-authoring.md` schema; `personas/_base.md` canonical structure; Google's official Gemini prompting guide (specific/unambiguous instructions, task decomposition, structured formatting) |
+| Key Dependencies | `docs/personas-authoring.md` schema; `personas/_base.md` canonical structure; Anthropic's official Claude prompting guide (role prompting, XML-tag structuring, explicit imperative instructions) |
 
 ## Related Files
-- `atcr/personas/gemini-reviewer.yaml` - create: persona-file metadata + agent binding (`provider: google`, flagship-primary `model`, e.g. `gemini-pro`, plus `persona: gemini-reviewer`)
-- `atcr/personas/gemini-reviewer.md` - create: prompt template phrased per Google's official prompting guide conventions
+- `atcr/personas/claude-reviewer.yaml` - create: persona-file metadata + agent binding (`provider: anthropic`, flagship-primary `model`, e.g. `claude-opus-4-8`, plus `persona: claude-reviewer`)
+- `atcr/personas/claude-reviewer.md` - create: prompt template phrased per Anthropic's official prompting guide conventions
 - `docs/personas-authoring.md` - reference only: schema and canonical section structure this file must mirror (no change)
 - `personas/_base.md` - reference only: canonical built-in template this structure is modeled on (no change)
 
@@ -25,26 +25,26 @@
 - `cmd/atcr/personas.go` — registers the `atcr personas install/search/list/upgrade/remove/test` CLI surface
 
 ## Happy Path Scenarios
-**Scenario 1: Persona YAML declares a flagship-primary + lighter-tier same-family fallback**
-- **Given** the contributor is authoring `atcr/personas/gemini-reviewer.yaml`
-- **When** the file sets `provider: google` and `model: gemini-pro` as the primary binding, with a same-family lighter-tier fallback (e.g. a `gemini-reviewer-backup` persona or documented fallback field set to a lighter Gemini-family model such as `gemini-flash`), mirroring `registry.yaml`'s `bruce`/`bruce-backup` primary/backup convention
-- **Then** both the primary and fallback are real, non-placeholder Gemini-family model ids, and neither is a stub value
+**Scenario 1: Persona YAML declares a flagship-primary + same-family fallback**
+- **Given** the contributor is authoring `atcr/personas/claude-reviewer.yaml`
+- **When** the file sets `provider: anthropic` and `model: claude-opus-4-8` as the primary binding, with a same-family fallback entry (e.g. a `claude-reviewer-backup` persona or documented fallback field set to `claude-sonnet-4-6`), mirroring `registry.yaml`'s `bruce`/`bruce-backup` primary/backup convention
+- **Then** both the primary and fallback are real, non-placeholder Claude model ids from the same family (Opus primary, Sonnet fallback), and neither value is a stub like `TODO` or `changeme`
 
-**Scenario 2: Prompt phrasing follows Google's official prompting guide structure**
-- **Given** the `gemini-reviewer.md` prompt template is being authored
-- **When** the `## Role` and instructional sections use specific, unambiguous task framing with explicit output constraints and decomposed sub-tasks, consistent with Google's documented guidance for Gemini models
-- **Then** the phrasing choices are attributable to Google's own guide (not a generic template rephrased) — e.g. explicit "be specific" instruction framing, task decomposition into discrete focus areas, and clearly bounded output constraints
+**Scenario 2: Prompt phrasing follows Anthropic's official prompting guide structure**
+- **Given** the `claude-reviewer.md` prompt template is being authored
+- **When** the `## Role` section uses explicit role framing (e.g. "You are {{.AgentName}}, ...") and the body favors clear, direct imperative instructions and structured delimiters (XML-tag-style or clearly labeled sections) consistent with Anthropic's documented guidance for Claude
+- **Then** the phrasing choices are attributable to Anthropic's own guide (not a generic template rephrased) — e.g. explicit "no flattery" framing, direct step ordering, and structured example blocks
 
 ## Edge Cases
 **Edge Case 1: Fallback model omitted or same as primary**
 - **Given** the YAML is reviewed before merge
 - **When** the fallback binding is missing entirely, or the fallback `model` value is identical to the primary
-- **Then** the persona fails the contribution checklist review — a same-family lighter-tier fallback distinct from the primary is required
+- **Then** the persona fails the contribution checklist review — a same-family fallback distinct from the primary is required, mirroring the `bruce`/`bruce-backup` convention
 
 **Edge Case 2: Cross-family fallback**
-- **Given** the primary model is a Gemini model
-- **When** the fallback is set to a non-Google model (e.g. Claude or GPT)
-- **Then** the persona fails review — the fallback must be same-family (another Gemini-family model tier), not a cross-provider substitute
+- **Given** the primary model is a Claude model
+- **When** the fallback is set to a non-Anthropic model (e.g. GPT or Gemini)
+- **Then** the persona fails review — the fallback must be same-family (another Claude model tier), not a cross-provider substitute
 
 ## Error Conditions
 **Error Scenario 1: Unknown or malformed agent field**
@@ -52,7 +52,7 @@
 - HTTP status / error code: N/A (CLI/load-time validation error, not an HTTP path)
 
 **Error Scenario 2: Placeholder model value shipped**
-- Error message: N/A — caught in manual contribution review, not a runtime error
+- Error message: N/A — caught in manual contribution review, not a runtime error; flagged as "flagship-primary model, not a placeholder" per the story's Success Criteria
 - HTTP status / error code: N/A
 
 ## Performance Requirements
@@ -66,7 +66,7 @@
 ## Test Implementation Guidance
 **Test Type:** MANUAL (external-observation-based; this codebase's CI does not execute against the `atcr/personas` repo)
 **Test Data Requirements:** N/A for this AC — schema/fixture validation covered in AC 01-04 and 01-05
-**Mock/Stub Requirements:** N/A — verification is `atcr personas install gemini-reviewer` or `atcr personas test gemini-reviewer` run manually against the published `atcr/personas` repo once available, not a mocked in-repo test
+**Mock/Stub Requirements:** N/A — verification is `atcr personas install claude-reviewer` or `atcr personas test claude-reviewer` run manually against the published `atcr/personas` repo once available, not a mocked in-repo test
 
 ## Definition of Done
 **Auto-Verified:**
@@ -75,9 +75,9 @@
 - [ ] Build succeeds (N/A — external repo)
 
 **Story-Specific:**
-- [ ] `gemini-reviewer.yaml` sets `provider: google` with a real flagship-primary `model` and a real same-family lighter-tier fallback, mirroring `bruce`/`bruce-backup`
-- [ ] `gemini-reviewer.md` prompt phrasing reflects Google's own official prompting guide conventions (specific/unambiguous instructions, task decomposition)
-- [ ] `gemini-reviewer.md` contains every canonical section and required template variable listed in AC 01-05, with no unrendered `{{ }}` actions
+- [ ] `claude-reviewer.yaml` sets `provider: anthropic` with a real flagship-primary `model` and a real same-family fallback, mirroring `bruce`/`bruce-backup`
+- [ ] `claude-reviewer.md` prompt phrasing reflects Anthropic's own official prompting guide conventions (explicit role framing, direct imperative instructions, structured sections)
+- [ ] `claude-reviewer.md` contains every canonical section and required template variable listed in AC 01-05, with no unrendered `{{ }}` actions
 - [ ] No placeholder values (`TODO`, `changeme`, or example ids) remain in the shipped YAML
 
 **Manual Review:**

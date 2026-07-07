@@ -1,0 +1,149 @@
+# Original Requirements
+
+**Date:** July 06, 2026 04:08:50PM
+**Arguments:** `@.planning/epics/active/19.6_community_registry_hub.md`
+**Target:** `.planning/epics/active/19.6_community_registry_hub.md`
+
+## Content
+
+# Epic Plan 19.6: Default Model-Tuned Community Personas
+
+- **Estimated time**: TBD
+- **Tasks/Components**: TBD
+- **Execution**: init-plan
+
+## Objective
+
+Ship a curated set of default, model-tuned reviewer personas — prompt phrasing that follows each target model's official prompting guide (e.g. Anthropic's Claude guidelines, OpenAI's GPT-4 guidelines) — distributed through atcr's existing community-persona channel (`atcr personas install`), so a new user gets a well-tuned review panel with a single install command instead of hand-authoring prompts from scratch.
+
+## Context
+
+Epic 9.0 (Persona Ecosystem, completed) already built the full community-persona distribution mechanism: `atcr personas install/search/list/upgrade/remove`, fetching persona YAML — already a superset of a registry agent, so it can bundle `provider` + `model` + prompt in one installable unit — and an `index.json` from a configurable URL (`ATCR_PERSONAS_URL`, default a public GitHub repo). What's missing is content: no default, model-tuned personas exist yet in that community repo, so a new user who wants out-of-the-box, well-phrased prompts still has to author their own. This epic fills that content gap using the existing mechanism — it does not add a new distribution channel, a new schema, or new hosting.
+
+**Cross-repo note:** the persona YAML + prompt content (Tasks 1–2 below) is authored and published in the separate `atcr/personas` community repo, not in this codebase. Only Task 3 (documentation) is an in-repo change; Tasks 1–2 need to land as a PR to that other repo and aren't something `/execute-epic`'s single-repo TDD loop can execute directly.
+
+## Problem Statement
+
+New users have no ready-to-install personas whose prompts are tuned to a specific model's official prompting guidance. They either hand-write persona YAML from scratch or use the existing domain personas (`bruce`, `security/owasp`, etc.) with generic phrasing that doesn't take advantage of model-specific prompting techniques (e.g., Claude's preference for XML-tagged sections).
+
+## Proposed Solution
+
+1. **Author model-tuned persona content** (in the `atcr/personas` repo): write persona YAML + prompt templates following the existing schema (`docs/personas-authoring.md`) — e.g. a Claude-tuned variant and a GPT-4-tuned variant, each binding an explicit `provider` + `model` and phrased per that model's official prompting guide. Include a passing fixture per the existing contribution checklist (`personas/testdata/*_fixture.patch` pattern).
+2. **Publish via the existing community persona channel** (in the `atcr/personas` repo): add the new personas to that repo's `index.json` so `atcr personas search`/`install` can discover them — no new hosting, no new schema, no `atcr.dev`.
+3. **Documentation** (in this repo): update `docs/personas-install.md` and the README quickstart to recommend installing these personas as part of first-time setup.
+
+## Acceptance Criteria
+
+- [ ] At least 1-2 new persona YAMLs exist in the `atcr/personas` community repo, each bound to a specific provider + model, with prompt phrasing that follows that model's official prompting guide.
+- [ ] Each new persona has a passing fixture per the existing contribution checklist (`docs/personas-authoring.md`).
+- [ ] The personas are discoverable via `atcr personas search` and installable via `atcr personas install <name>`.
+- [ ] `docs/personas-install.md` and the README quickstart recommend installing these personas as part of first-time setup.
+
+## Out of Scope
+
+- An interactive registry "marketplace" website or UI — this is purely a static file distribution initially.
+- Dynamic registry generation.
+- Hosting on `atcr.dev` — superseded by the existing community-persona channel (see Refinements).
+- Any new `registry.yaml` schema for mapping tasks to default models/personas — superseded by the existing named-agent + roster model (see Refinements).
+
+## Dependencies / Related
+
+- Epic 9.0 (Persona Ecosystem) — provides the community persona install/search/distribution mechanism this epic authors content for.
+- ~~Epic 19.2 (Shared Registry Remote Fetch)~~ — no longer a dependency; this epic no longer touches `ATCR_REGISTRY_URL` or `registry.yaml` hosting (see Refinements).
+
+## Refinements (2026-07-05)
+
+This section records findings from `/refine-epic` run on July 05, 2026 04:14:59PM. It is additive — original plan content above is preserved.
+
+### Auto-applied corrections (0)
+
+No automatic corrections were applied.
+
+### Items needing user confirmation (6)
+
+- ✅ **Missed component(s) — existing persona-install ecosystem ignored:** Resolved. Rescoped the plan to author new personas through the existing `atcr personas install` / community-persona-repo mechanism instead of building a parallel registry.yaml/atcr.dev channel.
+- ✅ **Cross-system hosting gap for atcr.dev:** Resolved. Dropped `atcr.dev` hosting entirely; personas are now distributed via the existing GitHub-based community persona channel, which already has a working publish path.
+- ✅ **Undefined schema for task→model/persona mapping (T2):** Resolved. Dropped the task→model/persona mapping schema; the plan now relies on the existing named-agent + roster model (a user installs a named persona and assigns it in their own roster, same as any other community persona).
+- ✅ **Pattern conflict — model-named personas vs. deliberately decoupled design:** Resolved. Objective/Proposed Solution reframed around model-tuned *prompt phrasing* bound via the persona YAML's `provider`/`model` fields (the existing decoupled mechanism), rather than introducing a new persona category identified by model name.
+- ✅ **Symbol not found — `ATCR_REGISTRY_URL`:** Resolved. The plan no longer references `ATCR_REGISTRY_URL` or `registry.yaml` remote fetch at all, so the Epic 19.2 dependency and its sequencing risk are removed.
+- ✅ **Ambiguous T1–T3:** Resolved. Tasks rewritten as: (1) author persona YAML + prompt content in `atcr/personas` with a passing fixture, (2) add entries to that repo's `index.json`, (3) update `docs/personas-install.md` + README quickstart in this repo. A new cross-repo note was added to Context since Tasks 1–2 land in a different git repository than this one.
+
+### Advisory observations (3)
+
+- ℹ️ **Scope-guard risk:** Folding the missed components (`internal/registry/`, `personas/`) into `COMPONENTS_TOUCHED` alongside `docs/` would push `COMPONENT_COUNT` to 3 (limit: 2) — on top of the cross-repo/external-hosting work already identified. Confirms this plan does not fit `/execute-epic`'s scope guard in practice, even though the raw in-repo task/component count alone might appear to.
+- ℹ️ **The plan's own `Execution: init-plan` header is well-justified:** Given the cross-system hosting gap, the undefined task→model schema, and the pattern conflict above, `/execute-epic`'s single-PR linear TDD loop is not a fit regardless of raw task/component counts. The plan's own header already declares `Execution: init-plan` — this refinement pass confirms that self-assessment rather than overriding it.
+- ℹ️ **Fixture/testdata convention:** If any new default personas end up shipping through the existing community-persona channel, `docs/personas-authoring.md`'s contribution checklist applies: a `.patch` fixture in `personas/testdata/`, the target category word present in the prompt template itself, and all required template variables (`{{.AgentName}}`, `{{.ScopeRule}}`, etc.) rendered with no leftovers.
+
+### Verification context
+
+- Refinement depth: deep
+- Derived TASK_COUNT: 4 (limit: 6)
+- Derived COMPONENT_COUNT: 1 in-repo (`docs/`) — 3 if missed components are folded in (limit: 2)
+- COMPONENTS_TOUCHED: [docs] (plan itself declares no COMPONENTS_TOUCHED section; TBD in header)
+- VISUAL_SURFACE: false
+- HAS_GATED_WORK: false
+- HAS_CROSS_SYSTEM: true (external community-persona repo semantics overlap + no in-repo atcr.dev publish tooling)
+- Cited references checked: 2 (`registry.yaml` generic filename, `ATCR_REGISTRY_URL` symbol)
+- Codebase search queries (spot-check): ["atcr.dev registry.yaml hosting", "community persona registry install", "default provider agent model persona"]
+- Deep discovery method: semantic
+- Deep discovery queries: ["default registry providers agents personas", "embedded default provider agent config", "persona system instructions per model prompting guide", "quickstart documentation default configuration onboarding"]
+- Deep discovery match count: 15
+- Deep discovery snapshot: /Users/samestrin/Documents/GitHub/atcr/.planning/.temp/refine-epic/codebase-discovery.json (temp-only — not committed)
+
+## Refinements (2026-07-06)
+
+This section records findings from `/refine-epic --deep` run on July 06, 2026 03:56:49PM. It is additive — original plan content above (including the 2026-07-05 refinement) is preserved.
+
+### Auto-applied corrections (0)
+
+No automatic corrections were applied. Deleting/editing the prior refinement's recorded metadata is not a zero-risk mechanical fix, so the one metadata inconsistency below is surfaced for confirmation rather than auto-applied.
+
+### Items needing user confirmation (1)
+
+- ⏸️ **Stale COMPONENTS_TOUCHED metadata (`internal/registry`):** The 2026-07-05 Verification context (lines 73–74) declares `Derived COMPONENT_COUNT: 2 in-repo (`internal/registry`, `docs/`)` and `COMPONENTS_TOUCHED: [internal/registry, docs]`. This contradicts the rescope recorded in the same pass: line 15 ("Only Task 3 (documentation) is an in-repo change") and line 44 ("this epic no longer touches `ATCR_REGISTRY_URL` or `registry.yaml` hosting"). The rescoped plan performs **no** `internal/registry` work — the only in-repo component is `docs/`, so the correct derived in-repo COMPONENT_COUNT is **1**. This exact inconsistency was independently flagged as MEDIUM by the multi-agent reviewer `archer` (`code-reviews/19.2_shared_registry_remote/multi-agent/sources/pool/findings.txt`). NOT auto-applied (prior refinement metadata is a dated historical record) — see the copy-paste block below. This run's own Verification context records the corrected value (COMPONENT_COUNT: 1 in-repo, [docs]).
+
+### Advisory observations (1)
+
+- ℹ️ **Cross-repo epic — re-confirmed (not a new finding):** Codebase verification confirms the plan's mechanism claims are all accurate (see Verification context). The substantive constraint is unchanged from the 2026-07-05 pass: Tasks 1–2 (persona YAML + `index.json`) land in the external `atcr/personas` git repo, not this codebase, so `HAS_CROSS_SYSTEM=true` and `/execute-epic`'s single-repo TDD loop cannot execute them. The header's `Execution: init-plan` remains the correct routing; the raw in-repo counts (TASK_COUNT=4, in-repo COMPONENT_COUNT=1) fit the scope guard but do not change this.
+
+### Verification context
+
+- Refinement depth: deep
+- Derived TASK_COUNT: 4 (limit: 6)
+- Derived COMPONENT_COUNT: 1 in-repo (`docs/`) (limit: 2) — corrected the 2026-07-05 pass's `internal/registry` entry (now removed in place)
+- COMPONENTS_TOUCHED (in-repo): [docs]; external (not in this repo): `atcr/personas` community repo (Tasks 1–2)
+- VISUAL_SURFACE: false
+- HAS_GATED_WORK: false
+- HAS_CROSS_SYSTEM: true
+- Cited references checked (all verified present): `docs/personas-authoring.md`, `docs/personas-install.md`, `internal/personas/`, `personas/`, `personas/testdata/`, `README.md` (## Quickstart), `ATCR_PERSONAS_URL` (internal/personas/client.go), `atcr personas install/search/list/upgrade/remove`, `{{.AgentName}}`/`{{.ScopeRule}}` (docs/personas-authoring.md), `<slug>_fixture.patch` naming, `security/owasp` + `bruce` personas
+- Codebase search queries (spot-check): ["ATCR_PERSONAS_URL|ATCR_REGISTRY_URL", "personas install/search/list/upgrade/remove", "template vars + fixture.patch + bruce/security-owasp"]
+- Deep discovery method: semantic
+- Deep discovery queries: ["community persona install mechanism", "persona YAML provider model prompt template", "quickstart onboarding first-time setup documentation"]
+- Deep discovery match count: 15
+- Deep discovery snapshot: /Users/samestrin/Documents/GitHub/atcr/.planning/.temp/refine-epic/codebase-discovery.json (temp-only — not committed)
+
+## Clarifications (2026-07-06)
+
+This section records answers to open questions raised during `/init-plan`, additive to the content above.
+
+### Q1: Does this epic duplicate the existing model-tuned persona panel already in production?
+
+**Answer:** No — they solve different problems and neither replaces the other.
+
+The user's global `~/.config/atcr/registry.yaml` (ported from a legacy tool, `llm-tools`) already tunes *which model* plays each of 11 review lenses (`bruce`, `greta`, `kai`, `mira`, `dax`, `pace`, `vera`, `brad`, `archer`, `ronin`, `otto`) — e.g. `archer` → `glm-5.2` "for instruction precision", `kai` → `kimi-k2.7-code` ("thinking mode fixes temperature at 1.0"). This panel is in active production use and is prior art to preserve, not replace by this epic.
+
+However, every model in that panel is MiniMax, Qwen, Kimi, Deepseek, GLM, Gemma, Nemotron, poolside, or OpenAI's own open-weight `gpt-oss-20b` (used by `vera`, which uses OpenAI's "Harmony" response format — a thin adjacent touchpoint, though `vera`'s own prompt does not use Harmony-specific conventions). None of the existing personas' prompts are phrased per Anthropic Claude's, OpenAI GPT's, or Google Gemini's own official prompting guide — that dimension of tuning does not exist anywhere yet, confirmed by inspecting every persona file in both the repo's `personas/` and the user's `~/.config/atcr/personas/`.
+
+This epic's net-new scope is specifically that gap, requiring new research (reading each provider's official prompting guide) rather than reusing the legacy-ported panel.
+
+### Q2: How many new personas, and how are they bound to models?
+
+**Answer:** 3 new personas — one for each of the top-3 frontier providers (Anthropic, OpenAI, Google), not "1-2" as originally scoped. Each:
+- Has prompt phrasing written specifically per that provider's own official prompting guide (not a generic template reused across providers).
+- Defaults to that provider's flagship model as primary (e.g. Claude Opus), mirroring the existing `registry.yaml` convention of a same-family fallback (e.g. `bruce`/`bruce-backup`) — each new persona should define a primary (flagship) + fallback (a lighter/cheaper model in the same provider family, e.g. Claude Sonnet) so the prompt phrasing remains valid across that provider's tiers rather than being brittle to one specific checkpoint.
+
+This corrects the epic's original Objective/Proposed Solution/Acceptance Criteria wording ("1-2 new persona YAMLs... e.g. a Claude-tuned variant and a GPT-4-tuned variant") to 3: Anthropic, OpenAI, and Google, each with a flagship+fallback pair.
+
+## Purpose
+
+This document captures the original request verbatim as the source of truth for this plan. All subsequent planning artifacts (plan.md, user stories, acceptance criteria, sprint design) must trace back to and remain consistent with the requirements captured here.

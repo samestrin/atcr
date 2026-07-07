@@ -12,6 +12,7 @@
 ## Related Files
 - `docs/personas-install.md` - modify: insert a new early step into the "Quick walkthrough" section (currently numbered 1-6, search → install → list → test → upgrade → remove) recommending the default 3-persona pack, with a concrete `atcr personas install bundle/<name>` example
 - `.planning/plans/active/19.6_community_registry_hub/user-stories/03-recommend-default-persona-pack-in-documentation.md` - reference only: source story defining scope and constraints (no edits from this AC)
+- [AC 03-02: README Quickstart Recommends Default Persona Pack](03-02-readme-quickstart-recommends-default-pack.md) - sibling AC covering the matching `README.md` Quickstart update
 
 ### Related Files (from codebase-discovery.json)
 

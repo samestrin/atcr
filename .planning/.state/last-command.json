@@ -1,9 +1,9 @@
 {
-  "skill": "design-sprint",
+  "skill": "create-sprint",
   "args": "@.planning/plans/active/19.6_community_registry_hub/",
-  "invocation": "/design-sprint @.planning/plans/active/19.6_community_registry_hub/",
+  "invocation": "/create-sprint @.planning/plans/active/19.6_community_registry_hub/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
   "session_id": "61a998df-f674-4f99-aaf0-30ecd399e68e",
-  "timestamp": "2026-07-07T03:40:23.370Z"
+  "timestamp": "2026-07-07T15:50:53.677Z"
 }
