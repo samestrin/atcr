@@ -475,28 +475,33 @@ Answers to the Phase 3 safety-check questions (open decisions the ACs/design-not
    Fix CRITICAL/HIGH from 3.5.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): offline fallback cleanup"`
    **Duration:** ~45m
 
-### 3.7 [ ] **[Fetch-failure error handling - RED](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.7 [x] **[Fetch-failure error handling - RED](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **AC:** [01-04](plan/acceptance-criteria/01-04-fetch-failure-error-handling.md)
    Write failing tests: fetch failure (without `--offline`) returns a descriptive, non-zero-exit error wrapped with `%w`; no silent fallback. Verify fail correctly.
    **Files:** `internal/personas/client_test.go` | **Duration:** ~1.5h
 
-### 3.8 [ ] **[Fetch-failure error handling - GREEN](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.8 [x] **[Fetch-failure error handling - GREEN](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    Implement descriptive error path (reuse existing retry/backoff for transient 429/5xx). Minimal code (T1), verify all (T2), COMMIT: `git commit -m "feat(personas): descriptive fetch-failure errors (green)"`
    **Files:** `internal/personas/client.go` | **Duration:** ~1.5h
 
-### 3.8.A [ ] **[Fetch-failure error handling - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.8.A [x] **[Fetch-failure error handling - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 3.8`) — changed files, verbatim checklist, severity rubric, findings-table-only. Focus: swallowed errors, silent fallback, exit-code correctness.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (no CRITICAL/HIGH — proceed):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | init.go rollback + unit.go:94-98 | Rollback only tracked prior successes, so the currently-failing persona's own leftover `.yaml` (from the binding-only stale-`.md`-remove failure path in `InstallUnit`, which returns without rolling back its yaml) would survive — violating all-or-nothing. | **FIXED in 3.9** — rollback candidates are now recorded BEFORE the `InstallUnit` call (with a pre-existed flag), so the failing persona's files are included; rollback removes only newly-created (`!preExisted && exists`) files. |
+   | LOW | init.go fileExists | `fileExists` returned `err == nil` (false on ANY error), contradicting its doc and risking deleting a pre-existing file (or dropping a created one) on a non-ENOENT stat error. | **FIXED in 3.9** — now `err == nil \|\| !errors.Is(err, fs.ErrNotExist)` (non-ENOENT treated as present → errs toward NOT deleting). |
+   | LOW | init.go per-persona error | Per-persona failure was prefixed "failed to fetch community personas: installing %q" even for validation/disk errors — a misleading label. | **FIXED in 3.9** — neutral prefix "failed to install community persona %q"; the index-fetch branch keeps "failed to fetch community personas". |
+
+   Reviewer confirmed: no silent fallback; every failure branch returns a non-nil descriptive error that propagates to a non-zero exit; the `os.Remove` rollback error is correctly ignored (best-effort).
 
    **Action Required:**
    - CRITICAL/HIGH -> 3.9, do NOT proceed until fixed | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 3.9 [ ] **[Fetch-failure error handling - REFACTOR](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+   **Outcome:** No CRITICAL/HIGH → proceed. All three findings (1 MEDIUM + 2 LOW) fixed inline in 3.9 — they harden the all-or-nothing rollback and error accuracy; no tech debt.
+
+### 3.9 [x] **[Fetch-failure error handling - REFACTOR](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    Fix CRITICAL/HIGH from 3.8.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): fetch-error cleanup"`
    **Duration:** ~45m
 

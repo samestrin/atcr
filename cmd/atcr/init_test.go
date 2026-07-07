@@ -351,6 +351,71 @@ func TestInstallCommunityPersonas_MissingRosterSkipsWithWarning(t *testing.T) {
 	assert.Contains(t, errOut.String(), "tracer", "the skipped persona is named in the warning")
 }
 
+// --- AC 01-04: fetch-failure error handling ---------------------------------
+
+// statusServer serves the given path→body map (HTTP 200), path→status overrides
+// with the given status code and no body, and 404 for anything else.
+func statusServer(t *testing.T, bodies map[string]string, statuses map[string]int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if code, ok := statuses[r.URL.Path]; ok {
+			w.WriteHeader(code)
+			return
+		}
+		if body, ok := bodies[r.URL.Path]; ok {
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestInstallCommunityPersonas_FetchFailure_SuggestsOffline covers AC 01-04
+// Error Scenario 2: a non-2xx index fetch aborts with a descriptive error that
+// names the failure and suggests --offline — never a silent fallback.
+func TestInstallCommunityPersonas_FetchFailure_SuggestsOffline(t *testing.T) {
+	srv := statusServer(t, nil, map[string]int{"/index.json": 500})
+	dest := t.TempDir()
+
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp"}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--offline", "error guides the user to the offline fallback")
+
+	entries, rerr := os.ReadDir(dest)
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "no persona files written on fetch failure")
+}
+
+// TestInstallCommunityPersonas_MidRosterFailure_RollsBack covers AC 01-04 Edge
+// Case 1: when a persona fails mid-roster, the whole roster install is rolled
+// back — no partial persona files remain on disk.
+func TestInstallCommunityPersonas_MidRosterFailure_RollsBack(t *testing.T) {
+	index := `[
+	  {"name":"a","version":"1.0.0","description":"d","path":"a.yaml"},
+	  {"name":"b","version":"1.0.0","description":"d","path":"b.yaml"},
+	  {"name":"c","version":"1.0.0","description":"d","path":"c.yaml"}
+	]`
+	srv := statusServer(t,
+		map[string]string{
+			"/index.json": index,
+			"/a.yaml":     communityUnitYAML,
+			"/b.yaml":     communityUnitYAML,
+		},
+		map[string]int{"/c.yaml": 500},
+	)
+	dest := t.TempDir()
+
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"a", "b", "c"}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "c", "the failing persona is named")
+
+	entries, rerr := os.ReadDir(dest)
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "personas installed before the failure are rolled back (all-or-nothing)")
+}
+
 func TestPersonas_EmbeddedSetComplete(t *testing.T) {
 	assert.ElementsMatch(t, personaNames, personas.Names())
 	for _, name := range personaNames {

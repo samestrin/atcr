@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -76,36 +77,80 @@ func initTargets(dir string) []string {
 	return targets
 }
 
+// offlineHint is appended to fetch-failure errors so a first-run user always has
+// a clear escape hatch to a working, network-free workspace.
+const offlineHint = " — retry, or run with --offline to use the embedded built-in personas"
+
 // installCommunityPersonas fetches the community index from baseURL and installs
 // each roster persona present in it as a self-contained unit (<name>.yaml plus a
 // co-located <name>.md when the persona ships a custom prompt) into destDir, the
 // resolver's community pin dir. The pin is the fetched YAML's own version field
 // (read back by `personas list`/`upgrade`). An empty index is a hard, non-silent
 // error; a roster persona the index does not advertise is skipped with a warning
-// (init still succeeds). A per-persona fetch/validation failure aborts non-zero.
+// (init still succeeds).
+//
+// The roster install is all-or-nothing: any fetch/validation failure aborts with
+// a descriptive error (naming the failure and suggesting --offline) and rolls back
+// every persona file this run created, so a mid-roster failure never leaves a
+// partial install behind. Pre-existing files are not touched by the rollback.
 func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir string, roster []string, out, errOut io.Writer) error {
 	entries, err := commpersonas.FetchIndex(client, baseURL)
 	if err != nil {
-		return fmt.Errorf("fetching community persona index: %w", err)
+		return fmt.Errorf("failed to fetch community personas: %w%s", err, offlineHint)
 	}
 	if len(entries) == 0 {
-		return fmt.Errorf("community persona index is empty: no personas to install (use --offline to scaffold from built-ins)")
+		return fmt.Errorf("community persona index is empty: no personas to install%s", offlineHint)
 	}
 	indexed := make(map[string]struct{}, len(entries))
 	for _, e := range entries {
 		indexed[e.Name] = struct{}{}
 	}
+
+	// Track every unit file this run might create, with whether it pre-existed, so
+	// a failure rolls back exactly the files this run created — never a pre-existing
+	// one (all-or-nothing). Candidates are recorded BEFORE the install call so the
+	// currently-failing persona's own partial write is included in the rollback,
+	// not just prior successes.
+	type rbCandidate struct {
+		path       string
+		preExisted bool
+	}
+	var candidates []rbCandidate
+	rollback := func() {
+		for _, c := range candidates {
+			if !c.preExisted && fileExists(c.path) {
+				_ = os.Remove(c.path)
+			}
+		}
+	}
+
 	for _, name := range roster {
 		if _, ok := indexed[name]; !ok {
 			_, _ = fmt.Fprintf(errOut, "persona %q not found in community index — skipping\n", name)
 			continue
 		}
+		yamlPath := filepath.Join(destDir, filepath.FromSlash(name)+".yaml")
+		mdPath := strings.TrimSuffix(yamlPath, ".yaml") + ".md"
+		candidates = append(candidates,
+			rbCandidate{yamlPath, fileExists(yamlPath)},
+			rbCandidate{mdPath, fileExists(mdPath)},
+		)
+
 		if err := commpersonas.InstallUnit(client, baseURL, name, destDir); err != nil {
-			return fmt.Errorf("installing community persona %q: %w", name, err)
+			rollback()
+			return fmt.Errorf("failed to install community persona %q: %w%s", name, err, offlineHint)
 		}
 		_, _ = fmt.Fprintf(out, "Installed %s (community)\n", name)
 	}
 	return nil
+}
+
+// fileExists reports whether path is present. A non-ENOENT stat error is treated
+// as "present" so the rollback bookkeeping errs toward NOT deleting a file it did
+// not clearly create (a pre-existing file must never be removed by a rollback).
+func fileExists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil || !errors.Is(err, fs.ErrNotExist)
 }
 
 // runInit writes .atcr/config.yaml and the editable persona files under dir.

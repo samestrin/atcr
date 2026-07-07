@@ -56,6 +56,34 @@ func TestQuickstart_ReusesInitWriters(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", "_base.md"))
 }
 
+// TestQuickstart_FetchFailure_AbortsBeforeProviderSetup covers AC 01-04
+// Scenario 2: a fetch failure aborts runQuickstart before the synthetic-provider
+// setup, so no registry.yaml is written.
+func TestQuickstart_FetchFailure_AbortsBeforeProviderSetup(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	srv := statusServer(t, nil, map[string]int{"/index.json": 500})
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+	destDir := filepath.Join(home, ".config", "atcr", "personas")
+	oldDir := personasDir
+	personasDir = func() (string, error) { return destDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	err := runQuickstart(quickstartOpts{
+		dir:            dir,
+		fetchCommunity: true,
+		in:             strings.NewReader(quickstartInput),
+		out:            &bytes.Buffer{},
+		errOut:         &bytes.Buffer{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--offline")
+	assert.NoFileExists(t, filepath.Join(home, ".config", "atcr", "registry.yaml"),
+		"provider setup must not run after a fetch failure")
+}
+
 // TestQuickstart_OfflineFlag_Registered covers AC 01-03: `atcr quickstart`
 // exposes an --offline flag.
 func TestQuickstart_OfflineFlag_Registered(t *testing.T) {
