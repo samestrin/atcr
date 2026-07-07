@@ -7,7 +7,7 @@ Repoints the community-persona fetch URL from `atcr/personas` to `samestrin/atcr
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/19.6_community_registry_hub/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/19.6_community_registry_hub/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/19.6_community_registry_hub/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/19.6_community_registry_hub/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/19.6_community_registry_hub/`
 
 ## Timeline & Milestones
@@ -37,5 +37,6 @@ Live install against the real `samestrin/atcr` URL is untestable until the repo 
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
 - [Documentation](documentation/)
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)
+- [Sprint Design](sprint-design.md)
