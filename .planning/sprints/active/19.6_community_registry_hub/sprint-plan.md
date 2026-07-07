@@ -447,28 +447,31 @@ Answers to the Phase 3 safety-check questions (open decisions the ACs/design-not
    Fix CRITICAL/HIGH from 3.2.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): fetch-and-pin cleanup"`
    **Duration:** ~1h
 
-### 3.4 [ ] **[--offline flag fallback - RED](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.4 [x] **[--offline flag fallback - RED](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **AC:** [01-03](plan/acceptance-criteria/01-03-offline-flag-fallback.md)
    Write failing tests: `--offline` skips the community fetch entirely (zero network calls) and falls back to embedded built-ins. Verify fail correctly.
    **Files:** `cmd/atcr/init_test.go` / `quickstart_test.go` | **Duration:** ~1.5h
 
-### 3.5 [ ] **[--offline flag fallback - GREEN](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.5 [x] **[--offline flag fallback - GREEN](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    Implement the `--offline` stub path. Minimal code (T1), verify all (T2), COMMIT: `git commit -m "feat(personas): --offline embedded-builtin fallback (green)"`
    **Files:** `cmd/atcr/init.go` / `quickstart.go`, `internal/personas/client.go` | **Duration:** ~2h
 
-### 3.5.A [ ] **[--offline flag fallback - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.5.A [x] **[--offline flag fallback - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 3.5`) — changed files, verbatim checklist, severity rubric, findings-table-only. Focus: does `--offline` truly make zero network calls; graceful degradation completeness.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (no CRITICAL/HIGH — proceed):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | quickstart.go flag help + keyEnvFlow | `--offline --open` still launches the OS browser to the signup URL (an explicit second flag), so the flag help's "(zero network)" wording overclaims. | **FIXED in 3.6** — dropped "(zero network)" from both `init` and `quickstart` `--offline` help; the fetch-zero-network guarantee stands, `--open` is an explicit user-initiated browser hand-off. |
+
+   Reviewer confirmed: offline gating is correct on BOTH commands and every sub-path (fresh / existing-workspace-skip / --force); `personasClient` is never reached offline (proven by `failingHTTPClient` t.Fatal); manifest load / registry write / workflow scaffold touch no network; offline workspace resolves the roster fully against embedded built-in `.md` files.
 
    **Action Required:**
    - CRITICAL/HIGH -> 3.6, do NOT proceed until fixed | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 3.6 [ ] **[--offline flag fallback - REFACTOR](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+   **Outcome:** No CRITICAL/HIGH → proceed. Single LOW fixed inline in 3.6 (help-text precision); no tech debt.
+
+### 3.6 [x] **[--offline flag fallback - REFACTOR](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    Fix CRITICAL/HIGH from 3.5.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): offline fallback cleanup"`
    **Duration:** ~45m
 

@@ -27,9 +27,17 @@ func newInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			offline, err := cmd.Flags().GetBool("offline")
+			if err != nil {
+				return err
+			}
 			out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
 			if err := runInit(".", force, out, errOut); err != nil {
 				return err
+			}
+			if offline {
+				// Scaffold from embedded built-ins only; make zero network calls.
+				return nil
 			}
 			dir, err := personasDir()
 			if err != nil {
@@ -39,6 +47,7 @@ func newInitCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().Bool("force", false, "overwrite existing configuration and persona files")
+	cmd.Flags().Bool("offline", false, "skip the community persona fetch; scaffold from embedded built-ins only")
 	return cmd
 }
 

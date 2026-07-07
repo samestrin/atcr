@@ -56,6 +56,32 @@ func TestQuickstart_ReusesInitWriters(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", "_base.md"))
 }
 
+// TestQuickstart_OfflineFlag_Registered covers AC 01-03: `atcr quickstart`
+// exposes an --offline flag.
+func TestQuickstart_OfflineFlag_Registered(t *testing.T) {
+	require.NotNil(t, newQuickstartCmd().Flags().Lookup("offline"), "--offline registered on quickstart")
+}
+
+// TestQuickstart_Offline_ZeroNetwork covers AC 01-03: the offline path (the flag
+// maps to fetchCommunity=false) makes zero network calls and still scaffolds the
+// embedded built-ins.
+func TestQuickstart_Offline_ZeroNetwork(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	oldClient := personasClient
+	personasClient = failingHTTPClient{t}
+	t.Cleanup(func() { personasClient = oldClient })
+
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:            dir,
+		fetchCommunity: false,
+		in:             strings.NewReader(quickstartInput),
+		out:            &bytes.Buffer{},
+		errOut:         &bytes.Buffer{},
+	}))
+	assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", "bruce.md"))
+}
+
 // TestQuickstart_FetchAndPin_InstallsCommunity covers AC 01-02 Scenario 2:
 // runQuickstart (online) inherits the fetch-and-pin behavior — a community
 // persona advertised in the index is installed into the community pin dir before

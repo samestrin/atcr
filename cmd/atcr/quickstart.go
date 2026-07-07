@@ -52,11 +52,15 @@ func newQuickstartCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			offline, err := cmd.Flags().GetBool("offline")
+			if err != nil {
+				return err
+			}
 			return runQuickstart(quickstartOpts{
 				dir:            ".",
 				force:          force,
 				open:           open,
-				fetchCommunity: true,
+				fetchCommunity: !offline,
 				in:             cmd.InOrStdin(),
 				out:            cmd.OutOrStdout(),
 				errOut:         cmd.ErrOrStderr(),
@@ -65,6 +69,7 @@ func newQuickstartCmd() *cobra.Command {
 	}
 	cmd.Flags().Bool("force", false, "overwrite existing configuration and workflow files")
 	cmd.Flags().Bool("open", false, "open the provider signup page in a browser")
+	cmd.Flags().Bool("offline", false, "skip the community persona fetch; scaffold from embedded built-ins only")
 	return cmd
 }
 

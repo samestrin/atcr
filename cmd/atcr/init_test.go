@@ -221,6 +221,40 @@ func TestInit_CommandWiring(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// --- AC 01-03: --offline flag fallback --------------------------------------
+
+// failingHTTPClient fails the test if any HTTP request is attempted. It proves a
+// code path (the --offline fallback) makes zero network calls.
+type failingHTTPClient struct{ t *testing.T }
+
+func (c failingHTTPClient) Do(*http.Request) (*http.Response, error) {
+	c.t.Helper()
+	c.t.Fatal("unexpected network call: the offline path must make zero network calls")
+	return nil, nil
+}
+
+// TestInit_OfflineFlag_Registered: `atcr init` exposes an --offline flag.
+func TestInit_OfflineFlag_Registered(t *testing.T) {
+	require.NotNil(t, newInitCmd().Flags().Lookup("offline"), "--offline registered on init")
+}
+
+// TestInit_Offline_ZeroNetworkFallsBackToBuiltins covers AC 01-03: `atcr init
+// --offline` skips the community fetch entirely (zero network) and still writes
+// the embedded built-in scaffold.
+func TestInit_Offline_ZeroNetworkFallsBackToBuiltins(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	oldClient := personasClient
+	personasClient = failingHTTPClient{t}
+	t.Cleanup(func() { personasClient = oldClient })
+
+	_, err := execute(t, "init", "--offline")
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(dir, ".atcr", "config.yaml"))
+	assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", "bruce.md"),
+		"embedded built-in personas still scaffolded offline")
+}
+
 // --- AC 01-02: init/quickstart fetch-and-pin --------------------------------
 
 // unitServer serves a mock community registry: index.json plus the per-path
