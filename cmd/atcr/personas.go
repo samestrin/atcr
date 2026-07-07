@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -179,7 +180,9 @@ func newPersonasListCmd() *cobra.Command {
 			if scores, _ := cmd.Flags().GetBool("scores"); scores {
 				return listPersonasWithScores(cmd, dir)
 			}
-			metas, listErr := commpersonas.List(dir)
+			// Show all three resolver tiers (project > community > built-in).
+			projectDir := filepath.Join(".atcr", "personas")
+			metas, listErr := commpersonas.ListTiers(projectDir, dir)
 			if listErr != nil {
 				// Degrade gracefully: warn but still render the built-ins.
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)

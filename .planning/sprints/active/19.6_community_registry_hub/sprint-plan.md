@@ -505,28 +505,35 @@ Answers to the Phase 3 safety-check questions (open decisions the ACs/design-not
    Fix CRITICAL/HIGH from 3.8.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): fetch-error cleanup"`
    **Duration:** ~45m
 
-### 3.10 [ ] **[Preserve existing personas + source labeling - RED](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.10 [x] **[Preserve existing personas + source labeling - RED](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **AC:** [01-05](plan/acceptance-criteria/01-05-preserve-existing-personas-and-source-labeling.md)
    Write failing E2E test: rerun `init --force` against a workspace with a hand-edited `.atcr/personas/*.md` — the file is **byte-for-byte unchanged**; missing community personas install alongside it; each persona's source is labeled. Verify fail correctly.
    **Files:** `cmd/atcr/init_test.go` | **Duration:** ~2h
 
-### 3.11 [ ] **[Preserve existing personas + source labeling - GREEN](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.11 [x] **[Preserve existing personas + source labeling - GREEN](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    Implement workspace preservation + source labeling. Minimal code (T1), verify all (T2), COMMIT: `git commit -m "feat(personas): preserve on-disk personas + source labels (green)"`
    **Files:** `cmd/atcr/init.go`, `internal/personas/*` | **Duration:** ~2h
 
-### 3.11.A [ ] **[Preserve existing personas + source labeling - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.11.A [x] **[Preserve existing personas + source labeling - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 3.11`) — changed files, verbatim checklist, severity rubric, findings-table-only. Focus: data-loss (overwriting a user's edited file), idempotence of `--force`.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (no CRITICAL/HIGH — proceed):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | init.go:171-176 | Exists-gate trips on any target (incl. a surviving persona when config.yaml was deleted); "config already exists" message can be inaccurate. | **Deferred → TD-004** — Q1 LOCKED the gate untouched and `TestInit_AlreadyExists` pins the message; protective intent is correct. Message-accuracy follow-up. |
+   | LOW | personas.go:205 | `list --scores` still uses `List` (2-tier), diverging from plain `list` (3-tier) on the Source column. | **Deferred → TD-005** — `--scores` is a separate feature; threading projectDir is beyond AC 01-05 scope. |
+   | LOW | list.go listProject | Nested `sub/_base.md` emitted as a bogus persona row (only top-level `_base` skipped). | **FIXED in 3.12** — skip whenever `filepath.Base(path) == "_base.md"` (any depth). |
+   | LOW | init.go community skip / unit.go | Skip guarded only `<name>.yaml`; a lone hand-edited `<name>.md` (no sibling yaml) was overwritten → silent prompt data loss. | **FIXED in 3.12** — skip when EITHER `.yaml` OR `.md` exists; pinned by `TestInstallCommunityPersonas_SkipsLoneExistingMD`. |
+   | LOW | list.go | Post-init all 9 built-ins render Source `project` (init scaffolds editable copies). | Confirmed intended — matches `ResolvePersona` level-2 project precedence. No action. |
+
+   Reviewer confirmed: `write` preserve-branch protects persona files/symlinks under --force; community skip + `writeFileAtomic` symlink guard hold; rollback correctly excludes skipped/pre-existing files; `ListTiers` precedence is correct and deterministic.
 
    **Action Required:**
    - CRITICAL/HIGH -> 3.12, do NOT proceed until fixed | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 3.12 [ ] **[Preserve existing personas + source labeling - REFACTOR](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+   **Outcome:** No CRITICAL/HIGH → proceed. Two data-safety/correctness LOWs fixed inline in 3.12 (lone-`.md` skip closes a silent data-loss path; nested `_base.md` skip); one MEDIUM + one LOW deferred to TD-004/TD-005 (locked-gate message + `--scores` tier parity); one LOW confirmed by-design.
+
+### 3.12 [x] **[Preserve existing personas + source labeling - REFACTOR](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    Fix CRITICAL/HIGH from 3.11.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): preservation/labeling cleanup"`
    **Duration:** ~45m
 

@@ -137,26 +137,31 @@ func TestInit_GuardCoversPersonasWithoutConfig(t *testing.T) {
 	assert.Equal(t, "CUSTOMIZED", string(data))
 }
 
-func TestInit_Force(t *testing.T) {
+// TestInit_Force_PreservesEditedPersonas covers AC 01-05 Scenario 1 (LOCKED via
+// Phase 3 Clarification Q1): `atcr init --force` regenerates config.yaml but must
+// NEVER overwrite an existing persona file. --force only bypasses the top-level
+// "config already exists" gate.
+func TestInit_Force_PreservesEditedPersonas(t *testing.T) {
 	dir := t.TempDir()
 	initDir(t, dir)
 
 	brucePath := filepath.Join(dir, ".atcr", "personas", "bruce.md")
 	require.NoError(t, os.WriteFile(brucePath, []byte("EDITED"), 0o644))
 
-	out := &bytes.Buffer{}
-	errOut := &bytes.Buffer{}
-	require.NoError(t, runInit(dir, true, out, errOut))
-	assert.Contains(t, errOut.String(), "Overwriting existing configuration and persona files",
-		"warning goes to stderr, not stdout")
-	assert.NotContains(t, out.String(), "Overwriting")
+	require.NoError(t, runInit(dir, true, &bytes.Buffer{}, &bytes.Buffer{}))
 
 	data, err := os.ReadFile(brucePath)
 	require.NoError(t, err)
-	assert.NotEqual(t, "EDITED", string(data), "--force must restore defaults")
+	assert.Equal(t, "EDITED", string(data), "--force must NOT overwrite an existing persona file")
+	// Non-persona targets are still regenerated under --force.
+	assert.FileExists(t, filepath.Join(dir, ".atcr", "config.yaml"))
 }
 
-func TestInit_ForceDoesNotWriteThroughSymlink(t *testing.T) {
+// TestInit_ForcePreservesExistingSymlinkPersona: an existing persona that is a
+// symlink is preserved (skipped) under --force — never written through — so an
+// external target is untouched (the security invariant) and the user's file
+// stays as-is (the preservation invariant).
+func TestInit_ForcePreservesExistingSymlinkPersona(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlinks")
 	}
@@ -174,11 +179,11 @@ func TestInit_ForceDoesNotWriteThroughSymlink(t *testing.T) {
 
 	data, err := os.ReadFile(external)
 	require.NoError(t, err)
-	assert.Equal(t, "EXTERNAL", string(data), "symlink target outside the workspace must not be written through")
+	assert.Equal(t, "EXTERNAL", string(data), "symlink target must never be written through")
 
 	info, err := os.Lstat(brucePath)
 	require.NoError(t, err)
-	assert.Zero(t, info.Mode()&os.ModeSymlink, "persona path must be a regular file after --force")
+	assert.NotZero(t, info.Mode()&os.ModeSymlink, "existing persona (a symlink) is preserved, not overwritten")
 }
 
 func TestInit_ReadOnlyDir(t *testing.T) {
@@ -349,6 +354,50 @@ func TestInstallCommunityPersonas_MissingRosterSkipsWithWarning(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dest, "owasp.yaml"))
 	assert.NoFileExists(t, filepath.Join(dest, "tracer.yaml"))
 	assert.Contains(t, errOut.String(), "tracer", "the skipped persona is named in the warning")
+}
+
+// TestInstallCommunityPersonas_SkipsExistingUnit covers AC 01-05: the
+// fetch-and-pin path never overwrites an existing on-disk persona; a missing one
+// still installs alongside it.
+func TestInstallCommunityPersonas_SkipsExistingUnit(t *testing.T) {
+	index := `[
+	  {"name":"owasp","version":"1.2.0","description":"d","path":"owasp.yaml"},
+	  {"name":"sans","version":"1.0.0","description":"d","path":"sans.yaml"}
+	]`
+	srv := unitServer(t, index, map[string]string{
+		"/owasp.yaml": communityUnitYAML,
+		"/sans.yaml":  communityUnitYAML,
+	})
+	dest := t.TempDir()
+	// A hand-edited persona already on disk must survive untouched.
+	require.NoError(t, os.WriteFile(filepath.Join(dest, "owasp.yaml"), []byte("HANDEDITED"), 0o644))
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp", "sans"}, &bytes.Buffer{}, &bytes.Buffer{}))
+
+	got, err := os.ReadFile(filepath.Join(dest, "owasp.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, "HANDEDITED", string(got), "existing persona not overwritten by fetch-and-pin")
+	assert.FileExists(t, filepath.Join(dest, "sans.yaml"), "missing persona still installed alongside")
+}
+
+// TestInstallCommunityPersonas_SkipsLoneExistingMD: a hand-edited <name>.md with
+// no sibling .yaml is still treated as "already installed" and left untouched —
+// the fetch-and-pin path never clobbers user prompt content.
+func TestInstallCommunityPersonas_SkipsLoneExistingMD(t *testing.T) {
+	index := `[{"name":"owasp","version":"1.2.0","description":"d","path":"owasp.yaml"}]`
+	srv := unitServer(t, index, map[string]string{
+		"/owasp.yaml": communityUnitYAML,
+		"/owasp.md":   communityUnitMD,
+	})
+	dest := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dest, "owasp.md"), []byte("HANDEDITED PROMPT"), 0o644))
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp"}, &bytes.Buffer{}, &bytes.Buffer{}))
+
+	got, err := os.ReadFile(filepath.Join(dest, "owasp.md"))
+	require.NoError(t, err)
+	assert.Equal(t, "HANDEDITED PROMPT", string(got), "lone hand-edited .md not overwritten")
+	assert.NoFileExists(t, filepath.Join(dest, "owasp.yaml"), "install skipped entirely for an existing unit")
 }
 
 // --- AC 01-04: fetch-failure error handling ---------------------------------

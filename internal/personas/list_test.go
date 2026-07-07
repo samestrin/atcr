@@ -12,6 +12,37 @@ import (
 
 func ratePtr(f float64) *float64 { return &f }
 
+// --- AC 01-05: ListTiers three-tier source labeling -------------------------
+
+// TestListTiers_ThreeSourcesInPrecedence covers AC 01-05 Scenario 2: `personas
+// list` distinguishes project > community > built-in, with a project override
+// shadowing the built-in of the same name and the community pin version shown.
+func TestListTiers_ThreeSourcesInPrecedence(t *testing.T) {
+	projectDir := t.TempDir()
+	communityDir := t.TempDir()
+
+	// A hand-authored project override for a built-in name.
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "bruce.md"), []byte("# project bruce\n"), 0o644))
+	// A community persona (namespaced, disjoint from built-in names) with a pin.
+	require.NoError(t, os.MkdirAll(filepath.Join(communityDir, "security"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(communityDir, "security", "owasp.yaml"), []byte(validPersonaYAML), 0o644))
+
+	metas, err := ListTiers(projectDir, communityDir)
+	require.NoError(t, err)
+
+	byName := map[string]PersonaMeta{}
+	for _, m := range metas {
+		byName[m.Name] = m
+	}
+	require.Contains(t, byName, "bruce")
+	assert.Equal(t, "project", byName["bruce"].Source, "project override shadows the built-in")
+	require.Contains(t, byName, "security/owasp")
+	assert.Equal(t, "community", byName["security/owasp"].Source)
+	assert.Equal(t, "1.0.0", byName["security/owasp"].Version, "community pin version shown")
+	require.Contains(t, byName, "greta")
+	assert.Equal(t, "built-in", byName["greta"].Source, "un-overridden persona stays built-in")
+}
+
 // --- FormatRate -------------------------------------------------------------
 
 func TestFormatRate(t *testing.T) {

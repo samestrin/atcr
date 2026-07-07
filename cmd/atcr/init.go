@@ -131,6 +131,14 @@ func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir s
 		}
 		yamlPath := filepath.Join(destDir, filepath.FromSlash(name)+".yaml")
 		mdPath := strings.TrimSuffix(yamlPath, ".yaml") + ".md"
+		// Never overwrite an existing on-disk persona (AC 01-05): a hand-edited or
+		// previously-pinned unit is left untouched; only missing ones install. The
+		// guard covers EITHER file so a lone hand-edited <name>.md (no sibling
+		// .yaml) is not silently clobbered by the install.
+		if fileExists(yamlPath) || fileExists(mdPath) {
+			_, _ = fmt.Fprintf(errOut, "persona %q already installed — leaving it untouched\n", name)
+			continue
+		}
 		candidates = append(candidates,
 			rbCandidate{yamlPath, fileExists(yamlPath)},
 			rbCandidate{mdPath, fileExists(mdPath)},
@@ -172,7 +180,7 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 		return usageError(errors.New("config already exists at .atcr/config.yaml — use --force to overwrite"))
 	}
 	if anyExist {
-		_, _ = fmt.Fprintln(errOut, "Overwriting existing configuration and persona files")
+		_, _ = fmt.Fprintln(errOut, "Regenerating configuration (existing persona files are preserved)")
 	}
 
 	personasDir := filepath.Join(dir, ".atcr", "personas")
@@ -187,7 +195,20 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 	}
 
 	var created []string
-	write := func(path, content string) error {
+	// write creates path with content. preserve marks a persona file, which is
+	// NEVER overwritten if it already exists — even under --force (AC 01-05 /
+	// Phase 3 Clarification Q1): hand edits survive. --force only overwrites the
+	// non-persona scaffold (config.yaml, .gitignore). An existing persona file
+	// (regular or symlink) is skipped, so a pre-planted symlink is never written
+	// through either.
+	write := func(path, content string, preserve bool) error {
+		if preserve {
+			if _, err := os.Lstat(path); err == nil {
+				return nil // exists → preserve untouched, skip
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("cannot check %s: %w", path, err)
+			}
+		}
 		if force {
 			// Drop any existing file (or symlink — never write through one).
 			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -213,11 +234,11 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 	}
 
 	roster := builtins.Names()
-	if err := write(targets[0], registry.DefaultProjectConfigYAML(roster)); err != nil {
+	if err := write(targets[0], registry.DefaultProjectConfigYAML(roster), false); err != nil {
 		return err
 	}
 
-	if err := write(filepath.Join(dir, ".atcr", ".gitignore"), atcrGitignore); err != nil {
+	if err := write(filepath.Join(dir, ".atcr", ".gitignore"), atcrGitignore, false); err != nil {
 		return err
 	}
 
@@ -225,7 +246,7 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := write(filepath.Join(personasDir, "_base.md"), base); err != nil {
+	if err := write(filepath.Join(personasDir, "_base.md"), base, true); err != nil {
 		return err
 	}
 	for _, name := range roster {
@@ -233,7 +254,7 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if err := write(filepath.Join(personasDir, name+".md"), content); err != nil {
+		if err := write(filepath.Join(personasDir, name+".md"), content, true); err != nil {
 			return err
 		}
 	}

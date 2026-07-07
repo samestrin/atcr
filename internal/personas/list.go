@@ -46,6 +46,75 @@ func List(personasDir string) ([]PersonaMeta, error) {
 	return metas, err
 }
 
+// ListTiers returns persona metadata across the three resolver tiers in
+// precedence order — project (.atcr/personas) > community (communityDir) >
+// built-in (embedded), matching internal/registry.ResolvePersona's
+// PersonaDirs{Project, Registry} ordering. A name present in a higher-precedence
+// tier shadows the lower ones, so each persona appears once, labeled by its
+// winning source. A walk error in either on-disk dir is returned alongside the
+// rows gathered so far (mirroring List), so the caller can warn yet still render.
+func ListTiers(projectDir, communityDir string) ([]PersonaMeta, error) {
+	baseMetas, baseErr := List(communityDir) // built-ins + community
+	project, projErr := listProject(projectDir)
+
+	byName := make(map[string]PersonaMeta, len(baseMetas)+len(project))
+	order := make([]string, 0, len(baseMetas)+len(project))
+	add := func(m PersonaMeta) {
+		if _, seen := byName[m.Name]; !seen {
+			order = append(order, m.Name)
+		}
+		byName[m.Name] = m // later tier (project) overrides earlier at the same name
+	}
+	for _, m := range baseMetas {
+		add(m)
+	}
+	for _, m := range project {
+		add(m)
+	}
+	out := make([]PersonaMeta, 0, len(order))
+	for _, n := range order {
+		out = append(out, byName[n])
+	}
+	return out, errors.Join(baseErr, projErr)
+}
+
+// listProject returns the project-override personas: <name>.md prompt files under
+// projectDir (the .atcr/personas dir), labeled Source "project". The shared
+// _base.md template and symlinks are skipped (symlinks may point outside the
+// dir); nested names are reported with their slash path. A missing directory
+// yields no rows and no error.
+func listProject(projectDir string) ([]PersonaMeta, error) {
+	if _, err := os.Stat(projectDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("could not read project personas directory %s: %w", projectDir, err)
+	}
+	var out []PersonaMeta
+	walkErr := filepath.WalkDir(projectDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		if strings.ToLower(filepath.Ext(path)) != ".md" {
+			return nil
+		}
+		rel, relErr := filepath.Rel(projectDir, path)
+		if relErr != nil {
+			return nil
+		}
+		if filepath.Base(path) == "_base.md" {
+			return nil // shared base template (at any depth), not a persona
+		}
+		name := filepath.ToSlash(strings.TrimSuffix(rel, filepath.Ext(rel)))
+		out = append(out, PersonaMeta{Name: name, Version: "project", Source: "project"})
+		return nil
+	})
+	return out, walkErr
+}
+
 // ScoredPersona is one row of `personas list --scores`: a persona joined with
 // its corroboration rate. Rate is nil when the persona has no scorecard data,
 // which renders as "n/a" (distinct from a real 0.0 rate).
