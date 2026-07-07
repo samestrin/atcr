@@ -1,6 +1,8 @@
 # Acceptance Criteria: Fixture Test Asserts Bound Model in Structured Metadata
 
 **Related User Story:** [06: Authoring Contract Enforcement for Model Metadata and Human Names](../user-stories/06-authoring-contract-enforcement.md)
+**Design References:** [persona-yaml-schema.md](../documentation/persona-yaml-schema.md), [testing-mock-registry.md](../documentation/testing-mock-registry.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,11 +11,12 @@
 | Test Framework | Go `testing` package, table-driven tests | No LLM call, no network — matches existing fixture-test philosophy |
 | Key Dependencies | `gopkg.in/yaml.v3` (persona YAML decode), existing `builtins` package, `internal/registry` (`AgentConfig`-shaped `Provider`/`Model` fields) | No new external dependency |
 
-## Related Files
-- `internal/personas/test.go` - modify: `TemplateFixtureRunner.RunFixture` gains a bound-model-metadata assertion that runs for every persona it resolves (built-in via `builtins.Get`/`isBuiltin`, and community via YAML decode of the installed persona file), without altering the existing `isBuiltin(name)` branch's pass/fail semantics for template-render fixture checks
-- `internal/personas/test_test.go` - create: table-driven tests covering a built-in persona (model always present via embedded metadata), a community persona YAML with a populated `model` field (assertion passes), and a community persona YAML with an empty/missing `model` field (assertion fails with a clear, attributable error)
-- `internal/personas/list.go` - reference only: `personaFileMeta` currently decodes only `Version`/`Language` from a community YAML — this AC's community-model lookup either extends this struct or adds a sibling decode step in `test.go`, without changing `List`'s existing output shape
-- `personas/testdata/` - reference only: no new fixture `.patch` files required by this AC (the assertion is on structured metadata already loaded via the persona YAML, not on the diff fixture content)
+### Related Files (from codebase-discovery.json)
+- `internal/personas/test.go` (`TemplateFixtureRunner.RunFixture`, `FixtureOutcome`) — modify: add a bound-model-metadata assertion that runs for every persona the runner resolves (built-in and community), without altering the existing `isBuiltin(name)` branch's pass/fail semantics.
+- `internal/personas/test_test.go` — create: table-driven tests covering a built-in persona, a community persona YAML with a populated `model` field (assertion passes), and a community persona YAML with an empty/missing `model` field (assertion fails).
+- `internal/personas/list.go` (`personaFileMeta`, lines 38-47, 117-172) — reference: existing metadata decode struct; this AC's community-model lookup either extends it or adds a sibling decode step without changing `List`'s output shape.
+- `docs/personas-authoring.md` — reference: authoring contract that requires `provider`/`model`.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Built-in persona always passes the model-metadata assertion**
@@ -30,6 +33,11 @@
 - **Given** the full existing personas test suite plus the new bound-model assertion
 - **When** `go test ./...` runs
 - **Then** all tests pass, confirming the new assertion is compatible with every currently-shipped built-in and community persona fixture
+
+**Scenario 4: Loading state — the model-metadata assertion completes without perceptible delay**
+- **Given** a community persona YAML with a populated `model` field
+- **When** `TemplateFixtureRunner.RunFixture` executes the model-metadata check
+- **Then** the check completes in less than 10 milliseconds per persona, with no network or LLM call performed
 
 ## Edge Cases
 **Edge Case 1: Community persona resolved for the first time (previous `HasFixture: false` short-circuit)**
@@ -60,7 +68,7 @@
 - **Then** the existing not-found error path (per `TestPersona`'s doc comment: "It errors if the persona is neither a built-in nor installed") is preserved unchanged — this AC does not alter resolution-failure behavior, only the bound-model assertion for personas that do resolve
 
 ## Performance Requirements
-- **Response Time:** Negligible overhead — one additional YAML field check (already-parsed struct field access, or at most one additional `os.ReadFile` + `yaml.Unmarshal` of an already-installed persona file) per `RunFixture` call; no measurable regression versus the current template-render-only path.
+- **Response Time:** Negligible overhead — one additional YAML field check (already-parsed struct field access, or at most one additional `os.ReadFile` + `yaml.Unmarshal` of an already-installed persona file) per `RunFixture` call; no measurable regression versus baseline (≤1% wall-time difference in `go test ./...`) versus the current template-render-only path.
 - **Throughput:** N/A (single-persona CLI/test invocation, not a service).
 
 ## Security Considerations

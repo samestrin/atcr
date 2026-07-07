@@ -1,6 +1,8 @@
 # Acceptance Criteria: Backward-Compatible Old-Shape Decode Test
 
 **Related User Story:** [02: Structured Model Metadata Schema](../user-stories/02-structured-model-metadata-schema.md)
+**Design References:** [persona-yaml-schema.md](../documentation/persona-yaml-schema.md), [testing-mock-registry.md](../documentation/testing-mock-registry.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,11 +11,13 @@
 | Test Framework | Go `testing` + `testify/assert`/`require` (existing project convention) | Matches style used in `internal/personas/personas_test.go` |
 | Key Dependencies | `encoding/json` (stdlib) | No new dependencies |
 
-## Related Files
-- `internal/personas/search_test.go` - create: table-driven/dedicated test decoding an old-shape (pre-change, four-field) `index.json` fixture into the extended `PersonaIndexEntry` struct and asserting zero-value new fields plus no decode error
-- `internal/personas/personas_test.go` - reference only: `fakeIndexJSON` constant (line 34) is the existing old-shape fixture pattern to mirror/reuse for the new test's fixture
-- `internal/personas/search.go` - reference only: the extended `PersonaIndexEntry` struct under test (delivered by AC 02-01)
-- `internal/personas/client.go` - reference only: `FetchIndex` (the decode call site) is exercised indirectly to confirm the whole fetch→decode path tolerates old-shape payloads
+### Related Files (from codebase-discovery.json)
+- `internal/personas/search_test.go` — create: table-driven test decoding old-shape (four-field) `index.json` fixtures into the extended `PersonaIndexEntry` struct and asserting zero-value new fields plus no decode error.
+- `internal/personas/personas_test.go` (`fakeIndexJSON` line 34) — reference: existing old-shape fixture pattern to mirror/reuse.
+- `internal/personas/search.go` (`PersonaIndexEntry`) — reference: the extended struct under test.
+- `internal/personas/client.go` (`FetchIndex`) — reference: the full fetch-and-decode call site exercised against an old-shape fixture.
+- `personas/community/index.json` — reference: new entries will use the extended shape while old entries remain decodable.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Old-shape index.json decodes with new fields at zero value**

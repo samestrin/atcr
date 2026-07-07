@@ -1,6 +1,8 @@
 # Acceptance Criteria: `docs/personas-install.md` Documents Tier Detail and the Discover-and-Install-by-Model Flow
 
 **Related User Story:** [07: Onboarding-Hierarchy Documentation Rewrite](../user-stories/07-onboarding-hierarchy-documentation.md)
+**Design References:** [onboarding-hierarchy.md](../documentation/onboarding-hierarchy.md), [cli-search-flags.md](../documentation/cli-search-flags.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,10 +11,11 @@
 | Test Framework | Manual review + `grep`-based acceptance checks | No markdown lint configured in this repo |
 | Key Dependencies | Depends on Theme 3 (AC2/AC6, `--model`/`--provider` search flags) for the discover-by-model bash example to be accurate; depends on Theme 4 (AC3) for real installed persona names in examples | Per story's stated Dependencies field |
 
-## Related Files
-- `docs/personas-install.md` - modify: add a "DashScope" subsection with a manual registry snippet + docs link, a "Chutes → Featherless" explore-only subsection with performance/context/concurrency caveats, a "LiteLLM (Advanced)" subsection, a "Frontier / majors (opt-in, bring your own key)" subsection, and a discover-and-install-by-model walkthrough (`personas search` → `install` → `list` → `test`)
-- `.planning/plans/active/19.6_community_registry_hub/documentation/onboarding-hierarchy.md` - reference: source of truth for the exact bash sequence (lines 41-55) and tier caveat language — not modified by this AC
-- `internal/personas/search.go` - reference only: confirms `--model`/`--provider` flags exist before the discover-by-model example cites them (per story's Risk table sequencing requirement); not modified by this AC
+### Related Files (from codebase-discovery.json)
+- `docs/personas-install.md` — modify: add DashScope, Chutes→Featherless, LiteLLM, and frontier/majors subsections with required caveat framing, plus a discover-and-install-by-model walkthrough (`personas search` → `install` → `list` → `test`).
+- `.planning/plans/active/19.6_community_registry_hub/documentation/onboarding-hierarchy.md` — reference: source of truth for the bash sequence and tier caveat language.
+- `internal/personas/search.go` (`Search`, `--model`/`--provider` flags) — reference: confirms the discover-by-model example cites existing CLI behavior.
+
 
 ## Happy Path Scenarios
 **Scenario 1: DashScope documented as secondary flat-rate option with manual snippet**

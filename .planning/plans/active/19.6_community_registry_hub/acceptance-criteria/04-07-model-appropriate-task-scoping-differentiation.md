@@ -1,6 +1,8 @@
 # Acceptance Criteria: Model-Appropriate Task-Scoping Differentiation
 
 **Related User Story:** [04: Model-Indexed Persona Library Authoring](../user-stories/04-model-indexed-persona-library-authoring.md)
+**Design References:** [persona-yaml-schema.md](../documentation/persona-yaml-schema.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,10 +11,11 @@
 | Test Framework | Go `testing` (structural distinctness assertions) + manual review checklist | Automated checks catch duplication; genuine grounding is a manual review gate |
 | Key Dependencies | None new — reuses the community persona set from AC 04-01/04-02 | |
 
-## Related Files
-- `personas/community/*.md` - reference: all 10 authored persona prompt templates, the subject of cross-persona comparison
-- `personas/community_test.go` - modify/create: a structural-distinctness test asserting no two personas' `## Focus` sections are near-identical text
-- `.planning/plans/active/19.6_community_registry_hub/documentation/` - reference: any vendor-guidance citation notes captured during authoring, used by the manual review checklist
+### Related Files (from codebase-discovery.json)
+- `personas/community/*.md` — reference: all 10+ authored persona prompt templates, the subject of cross-persona comparison.
+- `personas/community_test.go` — create: a structural-distinctness test asserting no two personas' `## Focus` sections are near-identical text.
+- `docs/personas-authoring.md` — reference: authoring contract and expected prompt structure.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Each persona's `## Focus` section is scoped to a distinct review lens**
@@ -25,7 +28,7 @@
 - **When** its `## Role`/`## Focus` are read
 - **Then** the lens named (e.g. architecture, logic, design-level correctness) plausibly matches that model's documented reasoning strength, per the story's assumption
 
-**Scenario 3: A fast/cheap model's persona is scoped toward a narrower or higher-volume lens**
+**Scenario 3: A lower-cost/faster model's persona is scoped toward a narrower or higher-volume lens**
 - **Given** a fallback or flat-rate persona bound to a lower-cost/faster model
 - **When** its `## Role`/`## Focus` are read
 - **Then** the lens named is narrower or throughput-oriented (e.g. style/lint-level findings, a single target category) rather than the same broad architecture-review scope as the flagship personas

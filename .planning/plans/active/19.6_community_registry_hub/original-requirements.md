@@ -95,6 +95,41 @@ This section records why the epic changed from its original docs-only framing. I
 
 ---
 
+## Clarifications (2026-07-07)
+
+These clarifications lock design decisions raised during planning review. They are additive and **authoritative** — all other planning artifacts (plan.md, user-stories, acceptance-criteria, sprint-design, documentation/) must conform to them and must not reintroduce the deferred or "open" framings they replace.
+
+### C1 — Custom community prompts are first-class and MUST resolve (LOCKED)
+
+A community persona MAY carry its own Markdown reviewer prompt, not only a binding to an existing built-in template. That custom prompt MUST be reachable by the persona-resolution chain used at review time (`ResolvePersona`). Binding-only reuse — a community persona that only sets `provider`/`model` and references an existing template — is explicitly **insufficient**: the epic's entire value is *model-tuned prompt phrasing*, which lives in the prompt text itself. This is net-new capability — reviewer agents today only reference a template via `AgentConfig.Persona`; there is no inline reviewer prompt (the existing `SystemPrompt` field is executor/autofix-side, Epic 7.0.1).
+
+Any prior artifact that defers this ("`/design-sprint` must decide whether to also fetch the `.md`" / "or constrain personas to references that already resolve") is **superseded**: custom prompts resolve — that is decided.
+
+### C2 — Converge on one persona unit and one resolution chain (LOCKED direction; reformat sizing at design-sprint)
+
+Reduce surface, do not extend it:
+
+- **One self-contained unit.** A persona is a single installable artifact carrying BOTH its binding (`provider`/`model` + catalog metadata) AND its prompt (inline in the YAML, or a co-located file installed atomically with it). `atcr personas install <name>` delivers a complete, resolvable persona.
+- **No second delivery path.** Do NOT add a parallel Markdown-delivery mechanism alongside the YAML. The prompt travels with the unit.
+- **One resolution chain.** `ResolvePersona` resolves through a single, deterministic precedence chain across sources, with a defined collision rule. Recommended default ordering: project `.atcr/personas` override > pinned community (`~/.config/atcr/personas`) > embedded built-in. The *existence* of one chain is locked; the *exact ordering* is the single remaining `/design-sprint` sub-decision.
+- **Built-ins are the embedded subset of this unit model.** The compiled-in built-ins are model-agnostic lens prompts and stay embedded (offline base), treated as embedded copies of the same unit format, resolved through the same chain — not a divergent second format.
+- **Scope honesty.** Whether the existing built-in `.md` set is reformatted into the unified unit within this epic or a bounded fast-follow is a `/design-sprint` sizing call. The DIRECTION is fixed: no new divergent format, no second delivery path — converge the two-format/two-directory split rather than deepen it. The prior "must not collapse those two directories" framing is replaced by "converge them, deliberately and minimally."
+
+### C3 — A fetched custom prompt is untrusted input (LOCKED guardrails)
+
+A community persona's prompt becomes an LLM system prompt at review time and is fetched from a remote repo, so it is untrusted:
+
+- **Length cap** — bound its size (mirroring `MaxExecutorSystemPromptLen`, `internal/registry/config.go`).
+- **Fixture gate** — a custom prompt MUST pass its render/category fixture as a HARD gate before it can ship or resolve (leverages the per-persona fixture the library already requires).
+- **Pin for reproducibility** — fetch-and-pin freezes the resolved prompt version; an upgrade is explicit (`atcr personas upgrade`).
+- **Collision safety** — name collisions resolve deterministically via C2's precedence chain, never ambiguously.
+
+### Rationale
+
+C1 is forced by the objective: without custom prompts, "model-tuned" and "discover-by-model" deliver nothing. C2 answers the two-format/two-directory smell surfaced in review — the fix is to converge, not build more machinery around the split ("less surface, more focus"). C3 addresses that fetched prompts are a prompt-injection surface embedded, release-signed templates are not.
+
+---
+
 ## Historical Record — Superseded Docs-Only Scope
 
 > The sections below are the dated refinement/clarification history of the **retired** docs-only scope, preserved verbatim for traceability. They describe the *prior* framing (3 majors personas in an external repo + a docs recommendation) and are **not** the current requirements — see the top of this file for the active spec. Full prior artifacts are in `.planning/sprints/superseded/` and `.planning/plans/superseded/`.

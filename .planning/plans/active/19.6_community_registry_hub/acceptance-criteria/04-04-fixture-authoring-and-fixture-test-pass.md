@@ -1,6 +1,8 @@
 # Acceptance Criteria: Fixture Authoring and Fixture-Test Pass
 
 **Related User Story:** [04: Model-Indexed Persona Library Authoring](../user-stories/04-model-indexed-persona-library-authoring.md)
+**Design References:** [persona-yaml-schema.md](../documentation/persona-yaml-schema.md), [testing-mock-registry.md](../documentation/testing-mock-registry.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,10 +11,12 @@
 | Test Framework | Go `testing` package, table-driven, mirroring `personas_test.go`'s fixture-load pattern | No network access permitted in this test path |
 | Key Dependencies | stdlib `os`/`strings`; `internal/payload.PayloadContext` | No new third-party dependency |
 
-## Related Files
-- `personas/testdata/<slug>_fixture.patch` - create: one synthetic unified-diff fixture per authored community persona (10 total), each containing a known instance of that persona's target category
-- `personas/community_test.go` - modify/create: extends the fixture-test loop (per `docs/personas-authoring.md` section 3) to iterate every community persona, asserting fixture presence, category-word presence in the template, and full render with no leftover `{{ }}` actions
-- `docs/personas-authoring.md` - reference: fixture location/naming/content rules (`<slug>_fixture.patch`, mode `0644`, synthetic values only)
+### Related Files (from codebase-discovery.json)
+- `personas/testdata/<slug>_fixture.patch` — create: one synthetic unified-diff fixture per authored community persona (10+ total). Note: per `codebase-discovery.json` integration gap, community-only fixtures may alternatively land in `personas/community/testdata/<slug>_fixture.patch`; this AC keeps the primary reference while cross-referencing that gap.
+- `personas/community_test.go` — create: extends the fixture-test loop to iterate every community persona, asserting fixture presence, category-word presence in the template, and full render with no leftover `{{ }}` actions.
+- `internal/personas/test.go` (`TemplateFixtureRunner`) — modify: extend runner resolution so community/in-repo personas can have passing fixtures.
+- `docs/personas-authoring.md` — reference: fixture location/naming/content rules.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Every community persona has a committed fixture at the correct location and name**
@@ -39,7 +43,7 @@
 **Edge Case 2: Category word present in the fixture diff but absent from the template**
 - **Given** a persona whose fixture diff happens to contain the category word in a comment, but the template itself never names it
 - **When** the fixture test's category-word check inspects only the template text (not the diff)
-- **Then** the test fails, correctly rejecting a persona that would otherwise silently pass via word-leakage from the injected diff
+- **Then** the test fails, rejecting a persona that would otherwise silently pass via word-leakage from the injected diff
 
 ## Error Conditions
 **Error Scenario 1: Fixture file missing or uncommitted**
@@ -53,7 +57,7 @@
 - **Then** all community persona fixture subtests pass with zero outbound network calls, consistent with the existing built-in persona fixture-test pattern
 
 ## Performance Requirements
-- **Response Time:** Fixture load + template render for 10 personas completes in well under 1 second; no measurable regression to `go test ./...` runtime.
+- **Response Time:** Fixture load + template render for 10 personas completes in well under 1 second; no measurable regression versus baseline (≤1% wall-time difference in `go test ./...`) to `go test ./...` runtime.
 - **Throughput:** N/A (test-time only).
 
 ## Security Considerations

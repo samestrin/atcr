@@ -1,6 +1,8 @@
 # Acceptance Criteria: Documentation Updates for the Renamed Personas
 
 **Related User Story:** [05: Human-Names Migration for Built-in Stragglers](../user-stories/05-human-names-migration-for-built-in-stragglers.md)
+**Design References:** [human-names-migration.md](../documentation/human-names-migration.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,9 +11,12 @@
 | Test Framework | Manual review + scoped grep verification (shared with AC 05-03) | No automated doc test framework in this repo |
 | Key Dependencies | None | Pure documentation change |
 
-## Related Files
-- `docs/personas-authoring.md` - modify: line 61 example reference (`personas/sentinel.md` → `personas/sasha.md`); line 119 fixture-naming example (`sentinel_fixture.patch`, `tracer_fixture.patch` → `sasha_fixture.patch`, `penny_fixture.patch`); line 130 worked-example intro ("a `tracer` (performance) fixture" → "a `penny` (performance) fixture"); line 148 ("Its `tracer.md` prompt names the `n+1` category" → "Its `penny.md` prompt names the `n+1` category")
-- `docs/personas-install.md` - modify: line 3 built-in persona summary ("the `sentinel`, `tracer`, and `idiomatic` bonus personas" → "the `sasha`, `penny`, and `ingrid` bonus personas"); line 76 and line 89 worked CLI output table rows (`# sentinel         built-in   built-in    -` → `# sasha           built-in   built-in    -`, and the corresponding line 89 row)
+### Related Files (from codebase-discovery.json)
+- `docs/personas-authoring.md` — modify: update worked examples (file path references, fixture-naming examples, performance-fixture walkthrough) from `sentinel`/`tracer`/`idiomatic` to `sasha`/`penny`/`ingrid`.
+- `docs/personas-install.md` — modify: update the built-in persona summary and worked `atcr personas list`/`atcr personas test` sample output tables to reflect the new names.
+- `personas/personas.go` (names slice ~line 20) — reference: source of truth for the current built-in persona names.
+- `docs/personas-authoring.md` / `docs/personas-install.md` — reference: scoped-search verification shared with AC 05-03.
+
 
 ## Happy Path Scenarios
 **Scenario 1: `personas-authoring.md` worked examples use the new slugs**

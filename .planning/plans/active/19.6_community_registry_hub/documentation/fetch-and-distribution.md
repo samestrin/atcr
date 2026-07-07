@@ -96,6 +96,12 @@ Existing workspaces contain editable `.md` copies of built-in personas under `.a
 
 > Source: codebase-discovery.json integration gap ("init/quickstart fetch-and-pin vs. existing .atcr/personas/ .md files")
 
+## Custom-Prompt Resolution & Convergence (Clarification C1/C2/C3)
+
+A community persona may carry its own Markdown reviewer prompt, and that prompt MUST resolve at review time via `ResolvePersona` (**C1**) — binding-only reuse is insufficient because model-tuned phrasing lives in the prompt text. The prompt travels with the persona as **one self-contained installable unit** (inline in the YAML or a co-located file installed atomically); there is **no second Markdown-delivery path** (**C2**). Resolution uses a **single deterministic precedence chain** (recommended: project `.atcr/personas` override > pinned community `~/.config/atcr/personas` > embedded built-in; the exact ordering is the one remaining `/design-sprint` sub-decision). A fetched prompt is untrusted input: length-capped (mirroring `MaxExecutorSystemPromptLen`), fixture-gated as a hard gate, and pinned (**C3**). This **supersedes** the earlier open question of "whether to also fetch the `.md` into `.atcr/personas/` or `~/.config/atcr/personas/`." Owned by AC 01-06.
+
+> Source: original-requirements.md Clarifications (2026-07-07)
+
 ## Index.json Generation Workflow
 
 `personas/community/index.json` is the canonical discovery index for the model-aware search path. No tooling currently generates it from the per-persona YAML files. Because AC2 and AC7 depend on the index's `provider`/`model`/`tasks`/`tags` matching the YAML's agent/catalog metadata, drift between the two would break model-aware discovery and fixture enforcement.

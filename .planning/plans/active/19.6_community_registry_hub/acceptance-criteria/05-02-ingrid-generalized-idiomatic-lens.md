@@ -1,6 +1,8 @@
 # Acceptance Criteria: `ingrid` — Generalizing `idiomatic`'s Go-Specific Lens
 
 **Related User Story:** [05: Human-Names Migration for Built-in Stragglers](../user-stories/05-human-names-migration-for-built-in-stragglers.md)
+**Design References:** [human-names-migration.md](../documentation/human-names-migration.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,10 +11,13 @@
 | Test Framework | Go `testing` package fixture test (`TestPersona`/`TemplateFixtureRunner`) | Verifies the rewritten template still renders and still catches the fixture's target category |
 | Key Dependencies | Existing `payload.RenderPrompt` template engine; `{{.AgentName}}`/`{{.ScopeRule}}`/`{{.ToolsEnabled}}`/`{{.Payload}}` template variables (unchanged) | No new template variables introduced |
 
-## Related Files
-- `personas/idiomatic.md` - rename + rewrite to `personas/ingrid.md`: generalize the Role/Focus sections from Go-specific idioms (line 1: "Go idioms and conventions reviewer"; line 3: "Go idiom skeptic... un-idiomatic Go"; line 7: "sentinel errors compared by string"; line 11: "Stdlib misuse: reimplementing strings/strconv/sort helpers") to a language-agnostic idiomatic-style lens ("idiomatic style for the language under review") while preserving the same category of findings (swallowed errors, leaked resources/goroutines, misused abstractions, reinvented standard-library behavior)
-- `personas/testdata/idiomatic_fixture.patch` - rename to `personas/testdata/ingrid_fixture.patch`: verify the fixture's target category (an "error" category per `personas_test.go` line 131) still triggers under the generalized prompt
-- `personas/personas_test.go` - modify: update the fixture test call at line 131 from `fixtureTest(t, "idiomatic", "testdata/idiomatic_fixture.patch", "error")` to reference `ingrid`/`ingrid_fixture.patch`
+### Related Files (from codebase-discovery.json)
+- `personas/idiomatic.md` → `personas/ingrid.md` — rename + rewrite: generalize Role/Focus sections from Go-specific idioms to a language-agnostic idiomatic-style lens while preserving concrete finding categories.
+- `personas/testdata/idiomatic_fixture.patch` → `personas/testdata/ingrid_fixture.patch` — rename.
+- `personas/personas.go` (names slice ~line 20, embedded file guard) — modify: replace `"idiomatic"` with `"ingrid"` in the `names` slice.
+- `personas/personas_test.go` — modify: update fixture test call from `idiomatic`/`idiomatic_fixture.patch` to `ingrid`/`ingrid_fixture.patch`.
+- `docs/personas-authoring.md` / `docs/personas-install.md` — modify: update worked examples (see AC 05-04).
+
 
 ## Happy Path Scenarios
 **Scenario 1: Generalized prompt renders without unresolved template markers**

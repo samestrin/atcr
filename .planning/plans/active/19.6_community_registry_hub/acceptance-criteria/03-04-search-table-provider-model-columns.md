@@ -1,6 +1,8 @@
 # Acceptance Criteria: `renderPersonaSearch` Table Displays Provider/Model Columns
 
 **Related User Story:** [03: Model-Aware Search and Discovery via `--model`/`--provider`](../user-stories/03-model-aware-search-and-discovery.md)
+**Design References:** [cli-search-flags.md](../documentation/cli-search-flags.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,9 +11,11 @@
 | Test Framework | Go `testing` package, output-buffer comparison (`bytes.Buffer` + `cmd.SetOut`) | Matches existing render-function test style (`renderPersonaList`, `renderScoredList`) |
 | Key Dependencies | stdlib `text/tabwriter`, `fmt`, `io` | No new third-party dependency |
 
-## Related Files
-- `cmd/atcr/personas.go` - modify: `renderPersonaSearch` (line ~417) — add `PROVIDER`/`MODEL` columns to the header and each row, alongside the existing `NAME`/`VERSION`/`DESCRIPTION` columns, using the same `"-"` placeholder convention as the existing empty-`Version` handling
-- `cmd/atcr/personas_test.go` - create/modify: test asserting the rendered table header and rows include `PROVIDER`/`MODEL` columns with correct values, including the `"-"` placeholder case for entries with empty `Provider`/`Model`
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/personas.go` (line ~417 `renderPersonaSearch`, line ~375 `writeTable`) — modify: add `PROVIDER`/`MODEL` columns to the header and each row, using the `"-"` placeholder convention for empty values.
+- `cmd/atcr/personas_test.go` — create/modify: test asserting the rendered table header and rows include `PROVIDER`/`MODEL` columns with correct values, including the `"-"` placeholder case.
+- `internal/personas/search.go` (`PersonaIndexEntry`) — reference: source of `Provider`/`Model` values rendered in the new columns.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Search results render Provider and Model columns**
@@ -33,7 +37,7 @@
 **Edge Case 2: Column order/count does not break existing table alignment**
 - **Given** the `writeTable`/`tabwriter` helper (line ~375) used by all persona list/search renderers
 - **When** the 5-column header (`NAME\tVERSION\tPROVIDER\tMODEL\tDESCRIPTION` or similar ordering) is passed
-- **Then** `tabwriter` aligns all columns correctly regardless of value width, with no panic or misalignment for empty-string cells
+- **Then** `tabwriter` aligns all columns without misalignment or overflow regardless of value width, including empty-string cells
 
 ## Error Conditions
 **Error Scenario 1: Rendering an empty result set**
@@ -43,7 +47,7 @@
 - HTTP status / error code: N/A (presentation-only function, no error return expected in the empty case)
 
 ## Performance Requirements
-- **Response Time:** Table rendering remains O(n) over result count with negligible per-row formatting cost; no measurable regression from adding two columns.
+- **Response Time:** Table rendering remains O(n) over result count with negligible per-row formatting cost; no measurable regression versus baseline (≤1% wall-time difference in `go test ./...`) from adding two columns.
 - **Throughput:** N/A (single-user CLI invocation).
 
 ## Security Considerations
@@ -63,7 +67,7 @@
 
 **Story-Specific:**
 - [ ] `renderPersonaSearch` header includes `PROVIDER` and `MODEL` columns
-- [ ] Populated `Provider`/`Model` values render correctly in their columns
+- [ ] Populated `Provider`/`Model` values render in their columns matching the input values
 - [ ] Empty `Provider`/`Model` values render as `"-"` per existing placeholder convention
 - [ ] Table alignment via `tabwriter` is unaffected by the new columns
 

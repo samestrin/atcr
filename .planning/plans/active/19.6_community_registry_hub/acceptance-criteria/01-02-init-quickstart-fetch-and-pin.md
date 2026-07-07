@@ -1,6 +1,8 @@
 # Acceptance Criteria: init/quickstart Fetch-and-Pin Community Personas
 
 **Related User Story:** [01: Community-Canonical Fetch-and-Pin Distribution](../user-stories/01-community-canonical-fetch-and-pin-distribution.md)
+**Design References:** [fetch-and-distribution.md](../documentation/fetch-and-distribution.md), [persona-yaml-schema.md](../documentation/persona-yaml-schema.md), [testing-mock-registry.md](../documentation/testing-mock-registry.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,13 +11,19 @@
 | Test Framework | Go `testing` + `httptest.NewServer` | mock registry server, injected via `ATCR_PERSONAS_URL` and `personasClient` |
 | Key Dependencies | `internal/personas.Install`, `internal/personas.FetchIndex` | existing fetch/validate/atomic-write machinery, no new subsystem |
 
-## Related Files
-- `cmd/atcr/init.go` - modify: `runInit` replaces the `builtins.Names()`/`builtins.Get()` copy loop (lines 120, 136-144) with calls into `commpersonas.Install` (or an equivalent bundle-install helper) against `commpersonas.BaseURL()`, using the fetched YAML's `version` field as the recorded pin.
-- `cmd/atcr/quickstart.go` - modify: `runQuickstart` (via its call to `runInit`) picks up the same fetch-and-pin behavior with no other change to the wizard flow.
-- `cmd/atcr/personas.go` - reference only: reuses the existing package-level `personasClient` var (line 81) as the injection point for tests; no change expected unless a new shared helper is added here.
-- `internal/personas/list.go` - reference only: `List`/`listCommunity` already read the installed YAML's `version` field via `personaFileMeta`, so `atcr personas list` reflects the fetched pin with no change needed.
-- `internal/personas/upgrade.go` - reference only: `Upgrade` already compares against the on-disk `version` field, so `atcr personas upgrade` continues to work unmodified once personas are installed via fetch.
-- `cmd/atcr/init_test.go` / `cmd/atcr/quickstart_test.go` - modify: add tests using `httptest.NewServer` + `ATCR_PERSONAS_URL` asserting personas are installed from the mock registry with the fetched version recorded.
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/init.go` (`runInit`, lines 76-78 force/anyExist gate, lines 96-118 O_EXCL write guard) — modify: replace the embedded built-in copy loop with fetch-and-pin calls into `internal/personas.Install`, using the fetched YAML's `version` field as the recorded pin.
+- `cmd/atcr/quickstart.go` (`runQuickstart`) — modify: inherit the fetch-and-pin behavior through its `runInit` call before proceeding to synthetic-provider setup.
+- `internal/personas/client.go` (line 24 `RegistryBaseURL`, `BaseURL()`) — modify: repoint the default community base URL to `samestrin/atcr` in-repo path.
+- `internal/personas/install.go` — reference: fetches and validates a single persona YAML before atomic write; called by the fetch-and-pin path.
+- `internal/personas/upgrade.go` — reference: compares installed version to remote version; continues to work once personas are installed via fetch.
+- `internal/personas/list.go` (`PersonaMeta`, source labeling, lines 38-47, 117-172) — reference: reads the installed YAML's `version` field and labels source `community`.
+- `cmd/atcr/personas.go` (line 81 `personasClient`) — reference: existing injection point for mock-registry tests.
+- `personas/community/index.json` — create: in-repo canonical index.
+- `personas/community/<slug>.yaml` — create: community persona YAML files fetched by `init`/`quickstart`.
+- `docs/personas-install.md` — modify: document fetch-and-pin behavior and pinned versions.
+- `cmd/atcr/init_test.go` / `cmd/atcr/quickstart_test.go` — modify: add `httptest.NewServer` + `ATCR_PERSONAS_URL` tests asserting fetch-and-pin with version recording.
+
 
 ## Happy Path Scenarios
 **Scenario 1: `atcr init` fetches and pins from the community registry**
@@ -32,6 +40,16 @@
 - **Given** a workspace whose personas were installed via fetch-and-pin at `version: "1.2.0"`, and the mock registry now serves `version: "1.3.0"`
 - **When** `atcr personas upgrade --all` runs
 - **Then** each persona is upgraded to `1.3.0` and the new version is recorded, exercising the existing `Upgrade` comparison logic unchanged
+
+**Scenario 4: Loading state — `atcr init` reports each persona as it is fetched and pinned**
+- **Given** a mock registry with three roster personas and an empty workspace
+- **When** `atcr init` runs without `--offline`
+- **Then** stdout or stderr emits a line per persona indicating the fetch/install progress (e.g. "Installed <name>" or equivalent), and the command exits 0 only after all roster personas are processed
+
+**Scenario 5: Empty registry index yields a clear, non-silent failure**
+- **Given** a mock registry whose `index.json` contains an empty array `[]`
+- **When** `atcr init` runs without `--offline`
+- **Then** the command exits non-zero with a descriptive error (e.g. "community registry index is empty" or "no personas found in community index"), and no persona files are written
 
 ## Edge Cases
 **Edge Case 1: Registry index lists fewer personas than the built-in roster**

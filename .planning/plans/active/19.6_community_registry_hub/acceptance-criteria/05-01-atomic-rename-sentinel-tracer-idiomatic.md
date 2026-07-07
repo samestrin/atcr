@@ -1,6 +1,8 @@
 # Acceptance Criteria: Atomic Rename of `sentinel`/`tracer`/`idiomatic` to `sasha`/`penny`/`ingrid`
 
 **Related User Story:** [05: Human-Names Migration for Built-in Stragglers](../user-stories/05-human-names-migration-for-built-in-stragglers.md)
+**Design References:** [human-names-migration.md](../documentation/human-names-migration.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,13 +11,15 @@
 | Test Framework | Go `testing` package (`go test ./personas/...`, `go test ./internal/personas/...`) | Init-time panic guard in `personas/personas.go` fails fast on mismatch |
 | Key Dependencies | stdlib `embed`; existing `builtins.Get`/`builtins.Fixture` in `personas/personas.go` | No new third-party dependency |
 
-## Related Files
-- `personas/personas.go` - modify: replace `"sentinel", "tracer", "idiomatic"` with `"sasha", "penny", "ingrid"` in the `names` slice (line 20); update the package doc comment (lines 1-2) and the `Fixture` doc comment (lines 92-94) that name the old three bonus personas
-- `personas/sentinel.md` - rename to `personas/sasha.md`: update the `{{.AgentName}}`-anchored role line to reflect the new name where the file is referenced by identity, preserving the security/OWASP review lens unchanged
-- `personas/tracer.md` - rename to `personas/penny.md`: preserve the performance/N+1/latency review lens unchanged
-- `personas/testdata/sentinel_fixture.patch` - rename to `personas/testdata/sasha_fixture.patch`
-- `personas/testdata/tracer_fixture.patch` - rename to `personas/testdata/penny_fixture.patch`
-- `personas/personas_test.go` - modify: update `names` slice assertions (line 17), `HasFixture` loop personas (lines 67, 92), and fixture-path test calls (lines 123, 127) from `sentinel`/`tracer` to `sasha`/`penny`
+### Related Files (from codebase-discovery.json)
+- `personas/personas.go` (names slice ~line 20, embedded file guard) — modify: replace `"sentinel"`, `"tracer"`, `"idiomatic"` with `"sasha"`, `"penny"`, `"ingrid"` in the `names` slice; update package/fixture doc comments.
+- `personas/sentinel.md` → `personas/sasha.md` — rename: preserve the security/OWASP review lens.
+- `personas/tracer.md` → `personas/penny.md` — rename: preserve the performance/N+1/latency review lens.
+- `personas/testdata/sentinel_fixture.patch` → `personas/testdata/sasha_fixture.patch` — rename.
+- `personas/testdata/tracer_fixture.patch` → `personas/testdata/penny_fixture.patch` — rename.
+- `personas/personas_test.go` — modify: update `names` slice assertions, `HasFixture` loop personas, and fixture-path test calls from `sentinel`/`tracer` to `sasha`/`penny`.
+- `docs/personas-authoring.md` / `docs/personas-install.md` — modify: update worked examples and built-in persona lists (see AC 05-04).
+
 
 ## Happy Path Scenarios
 **Scenario 1: `sasha` resolves after rename**

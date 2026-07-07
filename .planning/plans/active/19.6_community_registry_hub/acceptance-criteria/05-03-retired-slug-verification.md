@@ -1,6 +1,8 @@
 # Acceptance Criteria: Retired-Slug Verification (No Remaining `sentinel`/`tracer`/`idiomatic` References)
 
 **Related User Story:** [05: Human-Names Migration for Built-in Stragglers](../user-stories/05-human-names-migration-for-built-in-stragglers.md)
+**Design References:** [human-names-migration.md](../documentation/human-names-migration.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,11 +11,13 @@
 | Test Framework | Go `testing` (unit/integration), plus a manual/CI scoped `grep`/`rg` pass over persona-specific paths | Scope limited to `personas/`, `docs/personas-*.md`, `personas/community/index.json` (if used) per the story's Risk mitigation |
 | Key Dependencies | Existing `internal/personas.TestPersona`/`TemplateFixtureRunner`; `atcr personas test` CLI command | No new dependency |
 
-## Related Files
-- `internal/personas/test.go` - reference only: `TestPersona` is the verification entry point exercised by `atcr personas test sasha`/`penny`/`ingrid`; no code change expected here, confirms the renamed personas resolve through the existing resolution chain
-- `personas/personas.go` - reference only: post-migration `names` slice (`{"bruce", "greta", "kai", "mira", "dax", "sasha", "penny", "ingrid", "otto"}`) is the authoritative registration source checked by the verification scan
-- `docs/personas-authoring.md` - reference: scoped-search target confirming no worked examples still cite `sentinel`/`tracer`/`idiomatic` as active slugs (updated in AC 05-04)
-- `docs/personas-install.md` - reference: scoped-search target confirming the built-in persona list and worked CLI output no longer reference the retired slugs (updated in AC 05-04)
+### Related Files (from codebase-discovery.json)
+- `personas/personas.go` (names slice ~line 20, embedded file guard) — reference: post-migration `names` slice is the authoritative registration source for the verification scan.
+- `internal/personas/test.go` (`TemplateFixtureRunner`, `TestPersona`) — reference: verification entry point exercised by `atcr personas test sasha`/`penny`/`ingrid`.
+- `docs/personas-authoring.md` — reference: scoped-search target confirming no worked examples still cite `sentinel`/`tracer`/`idiomatic` as active slugs.
+- `docs/personas-install.md` — reference: scoped-search target confirming the built-in persona list and worked CLI output no longer reference the retired slugs.
+- `personas/community/index.json` — reference: if the community-only path was chosen, verify no retired-slug entries exist.
+
 
 ## Happy Path Scenarios
 **Scenario 1: `atcr personas test` passes for all three new slugs**
@@ -35,7 +39,7 @@
 **Edge Case 1: False positives from Go's unrelated `sentinel`-error-value idiom**
 - **Given** the codebase contains unrelated uses of the word "sentinel" as a Go idiom term (e.g., `internal/verify/skeptic.go`, `internal/registry/attribution.go`, and this story's own prompt text discussing "sentinel errors" as a Go concept), per the story's documented Risk
 - **When** the verification search is scoped to persona-identification paths only (not a blind repository-wide grep)
-- **Then** these unrelated occurrences are correctly excluded from the "zero remaining references" check — the check targets persona slugs/filenames, not the bare English/Go-jargon word
+- **Then** these unrelated occurrences are excluded from the "zero remaining references" check — the check targets persona slugs/filenames, not the bare English/Go-jargon word
 
 **Edge Case 2: Placeholder test data using old names as arbitrary strings**
 - **Given** `internal/personas/list_test.go` uses `"sentinel"`/`"tracer"`/`"idiomatic"` as arbitrary placeholder persona names in sorting/formatting unit tests unrelated to the actual built-in personas (e.g., `map[string]float64{"sentinel": 0.72}` used purely as test fixture data)

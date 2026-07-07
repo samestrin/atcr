@@ -1,6 +1,8 @@
 # Acceptance Criteria: All-Human-Names Convention Documented as Forward-Looking Rule
 
 **Related User Story:** [06: Authoring Contract Enforcement for Model Metadata and Human Names](../user-stories/06-authoring-contract-enforcement.md)
+**Design References:** [human-names-migration.md](../documentation/human-names-migration.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,11 +11,11 @@
 | Test Framework | Go `testing` + `stretchr/testify` (`assert.Contains`) | Same doc-content-assertion pattern as AC 06-01 |
 | Key Dependencies | None (no new package) | Pure documentation change plus a grounding test |
 
-## Related Files
-- `docs/personas-authoring.md` - modify: add a passage (in section 1 "The persona YAML" or the "Contribution checklist") documenting that every new persona name must be an all-human first name (e.g. `bruce`, `greta`, `sasha`, `penny`), phrased as a forward-looking rule for contributions, not a retroactive audit of existing names
-- `internal/personas/personas_test.go` - modify or create: a doc-content test asserting the human-names phrase/section is present in `docs/personas-authoring.md`, alongside the AC 06-01 test
-- `.planning/epics/active/23.0_human_persona_renaming.md` - reference only: AC5 defines the shared wording/intent this passage must not contradict or duplicate divergently
-- `.planning/plans/active/19.6_community_registry_hub/documentation/human-names-migration.md` - reference only: grounding for the "all-human-names convention" concept and the straggler mapping (`sentinel`→`sasha`, `tracer`→`penny`, `idiomatic`→`ingrid`)
+### Related Files (from codebase-discovery.json)
+- `docs/personas-authoring.md` — modify: add a passage documenting that every new persona name must be an all-human first name, phrased as a forward-looking rule for contributions.
+- `internal/personas/personas_test.go` — modify/create: a doc-content test asserting the human-names phrase/section is present in `docs/personas-authoring.md`.
+- `.planning/plans/active/19.6_community_registry_hub/documentation/human-names-migration.md` — reference: grounding for the "all-human-names convention" concept and the straggler mapping.
+
 
 ## Happy Path Scenarios
 **Scenario 1: New passage states the all-human-names rule**

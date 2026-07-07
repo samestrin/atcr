@@ -1,6 +1,8 @@
 # Acceptance Criteria: `personas/community/index.json` Registration
 
 **Related User Story:** [04: Model-Indexed Persona Library Authoring](../user-stories/04-model-indexed-persona-library-authoring.md)
+**Design References:** [persona-yaml-schema.md](../documentation/persona-yaml-schema.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,10 +11,12 @@
 | Test Framework | Go `testing` + `encoding/json` | Table-driven decode/consistency assertions |
 | Key Dependencies | `internal/personas.PersonaIndexEntry` (Story 2); `encoding/json` (stdlib) | No new external dependency |
 
-## Related Files
-- `personas/community/index.json` - create: one entry per authored persona (10 total) with `name`, `version`, `description`, `path`, `provider`, `model`, and optional `tasks`/`tags` populated
-- `personas/community_test.go` - modify/create: test that decodes `index.json` and cross-checks each entry's `provider`/`model` against the corresponding persona YAML's `provider`/`model` fields
-- `internal/personas/search.go` - reference only: `PersonaIndexEntry` struct (Story 2) that `index.json` entries decode into; no change made by this AC
+### Related Files (from codebase-discovery.json)
+- `personas/community/index.json` — create: one entry per authored persona (10+ total) with `name`, `version`, `description`, `path`, `provider`, `model`, and optional `tasks`/`tags` populated.
+- `personas/community_test.go` — create: test decoding `index.json` and cross-checking each entry's `provider`/`model` against the corresponding persona YAML.
+- `internal/personas/search.go` (`PersonaIndexEntry`) — reference: the struct that `index.json` entries decode into.
+- `personas/community/<slug>.yaml` — reference: source of truth for `provider`/`model` values that must match the index.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Every authored persona has exactly one `index.json` entry**
@@ -29,6 +33,11 @@
 - **Given** the completed `index.json`
 - **When** a consumer (e.g. AC3's `--model`/`--provider` search) filters entries by `Provider`/`Model`
 - **Then** every authored persona is reachable via at least one structured `provider`/`model` filter value
+
+**Scenario 4: Empty `index.json` array is rejected by the consistency test**
+- **Given** a `personas/community/index.json` containing `[]`
+- **When** the consistency test runs
+- **Then** the test fails with a clear message stating the index contains no entries, preventing a shipped empty index
 
 ## Edge Cases
 **Edge Case 1: `path` value resolves to a real file**

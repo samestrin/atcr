@@ -1,6 +1,8 @@
 # Acceptance Criteria: Structured `--model`/`--provider` Filtering (No Free-Text Fallback)
 
 **Related User Story:** [03: Model-Aware Search and Discovery via `--model`/`--provider`](../user-stories/03-model-aware-search-and-discovery.md)
+**Design References:** [cli-search-flags.md](../documentation/cli-search-flags.md), [persona-yaml-schema.md](../documentation/persona-yaml-schema.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,10 +11,12 @@
 | Test Framework | Go `testing` package, table-driven tests | `httptest.NewServer` for mock `index.json` responses |
 | Key Dependencies | stdlib `strings`; existing `PersonaIndexEntry`/`FetchIndex` from Story 2 | No new third-party dependency |
 
-## Related Files
-- `internal/personas/search.go` - modify: add structured `Provider`/`Model` matching (e.g. `SearchOptions{Keyword, Model, Provider string}` or additional parameters on `Search`), independent of and combinable with the existing keyword/description substring path
-- `internal/personas/search_test.go` - create: table-driven tests asserting structured-field-only matching and the false-positive-rejection case
-- `cmd/atcr/personas.go` - modify: `newPersonasSearchCmd` (line ~218) reads `--model`/`--provider` flag values and threads them into the extended `Search` call
+### Related Files (from codebase-discovery.json)
+- `internal/personas/search.go` (`PersonaIndexEntry`, `Search`) — modify: add structured `Provider`/`Model` matching (e.g., via a `SearchOptions` struct or additional parameters), combinable with the existing keyword/description substring path.
+- `cmd/atcr/personas.go` (line ~218 `newPersonasSearchCmd`) — modify: read `--model`/`--provider` flag values and thread them into the extended `Search` call.
+- `internal/personas/search_test.go` — create: table-driven tests asserting structured-field-only matching and the false-positive-rejection case (a model string appearing only in `Description` does not satisfy `--model`).
+- `docs/personas-install.md` — modify: document `--model`/`--provider` filters.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Filter by `--model` matches structured Model field**

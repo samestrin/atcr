@@ -30,13 +30,19 @@
 - **Relevant:** This is the literal mechanism behind the plan's headline flow — "I have DeepSeek → find the DeepSeek persona → install it" — and is explicitly named in AC2 and AC6.
 - **Time-bound:** Implementable and independently testable within a single sprint phase alongside Story 2, since both touch the same `PersonaIndexEntry`/`Search()` surface.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-structured-model-provider-filtering.md) | Structured `--model`/`--provider` Filtering (No Free-Text Fallback) | Unit + Integration |
+| [03-02](../acceptance-criteria/03-02-keyword-search-backward-compatibility.md) | Positional Keyword Search Remains Unchanged (Backward Compatibility) | Unit + Integration |
+| [03-03](../acceptance-criteria/03-03-flag-registration-and-arg-validation.md) | `--model`/`--provider` Flag Registration and Argument Validation Guard | Integration |
+
+## Original Criteria Overview
 
 1. `atcr personas search --model <name>` and `atcr personas search --provider <name>` filter community persona results using only structured `Provider`/`Model` metadata (never a substring match inside free-text `Description`), and can be combined with each other and with the existing positional `<keyword>` argument.
 2. The existing `atcr personas search <keyword>` behavior (substring match on Name/Description) is unchanged for callers that pass no new flags — full backward compatibility.
 3. `renderPersonaSearch`'s table output includes the persona's `Provider`/`Model` so a user can visually confirm which model a returned persona targets before installing it.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.6_community_registry_hub/`_
 
 ## Technical Considerations
 

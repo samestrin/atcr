@@ -1,6 +1,8 @@
 # Acceptance Criteria: Frontier Provider Flagship+Fallback Persona Pairs
 
 **Related User Story:** [04: Model-Indexed Persona Library Authoring](../user-stories/04-model-indexed-persona-library-authoring.md)
+**Design References:** [persona-yaml-schema.md](../documentation/persona-yaml-schema.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,12 +11,15 @@
 | Test Framework | Go `testing` package (community fixture-test loop from AC 04-04) | Schema validation exercised via the registry loader, not a new framework |
 | Key Dependencies | `docs/personas-authoring.md` authoring contract; registry agent schema (`provider`/`model` required fields) | No new third-party dependency |
 
-## Related Files
-- `personas/community/<anthropic-flagship-slug>.yaml` - create: persona YAML with `provider: anthropic`, `model:` set to the current flagship Claude model id, human-named `name`/`persona` per the Epic 23.0 all-human-names convention
-- `personas/community/<anthropic-fallback-slug>.yaml` - create: persona YAML with `provider: anthropic`, `model:` set to the fallback Claude model id
-- `personas/community/<openai-flagship-slug>.yaml` / `<openai-fallback-slug>.yaml` - create: OpenAI flagship+fallback bindings (`provider: openai`)
-- `personas/community/<google-flagship-slug>.yaml` / `<google-fallback-slug>.yaml` - create: Google flagship+fallback bindings (`provider: google` or the provider key the registry's OpenAI-compatible routing expects for Gemini)
-- `personas/community/index.json` - modify: one entry per frontier persona with `provider`/`model` matching each YAML
+### Related Files (from codebase-discovery.json)
+- `personas/community/<anthropic-flagship-slug>.yaml` / `<anthropic-fallback-slug>.yaml` — create: Anthropic flagship+fallback persona YAMLs with non-empty `provider`/`model`.
+- `personas/community/<openai-flagship-slug>.yaml` / `<openai-fallback-slug>.yaml` — create: OpenAI flagship+fallback persona YAMLs.
+- `personas/community/<google-flagship-slug>.yaml` / `<google-fallback-slug>.yaml` — create: Google flagship+fallback persona YAMLs.
+- `personas/community/<slug>.md` — create: prompt template per frontier persona, phrased per vendor prompting guidance.
+- `personas/community/index.json` — modify: one entry per frontier persona with `provider`/`model` matching each YAML.
+- `docs/personas-authoring.md` — reference: authoring contract (YAML schema, prompt template, fixture, contribution checklist).
+- `personas/_base.md` — reference: shared prompt-template scaffold.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Each of the 3 frontier providers has exactly a flagship+fallback pair**
@@ -31,6 +36,11 @@
 - **Given** a frontier persona YAML (e.g. the OpenAI flagship persona)
 - **When** the persona loader parses and validates it against the registry agent schema
 - **Then** validation succeeds with `provider` and `model` both non-empty and no unknown agent field present
+
+**Scenario 4: Empty or missing `model` field is rejected before the persona is considered complete**
+- **Given** a frontier persona YAML with `provider: "openai"` and `model` omitted or set to `""`
+- **When** the registry schema validates it
+- **Then** validation fails with a required-field error identifying the persona file and the missing `model` key, and the AC's Definition of Done cannot be marked complete until the field is populated
 
 ## Edge Cases
 **Edge Case 1: Fallback persona is not a copy-pasted flagship prompt**

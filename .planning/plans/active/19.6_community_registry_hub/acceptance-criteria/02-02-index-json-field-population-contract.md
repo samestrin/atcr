@@ -1,6 +1,8 @@
 # Acceptance Criteria: index.json Field Population Contract
 
 **Related User Story:** [02: Structured Model Metadata Schema](../user-stories/02-structured-model-metadata-schema.md)
+**Design References:** [persona-yaml-schema.md](../documentation/persona-yaml-schema.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,11 +11,12 @@
 | Test Framework | N/A (documentation) + Go unit test cross-check | `internal/personas/search_test.go` verifies the documented shape matches the decodable struct |
 | Key Dependencies | None | Additive doc + struct field reference only |
 
-## Related Files
-- `docs/personas-authoring.md` - modify: add a subsection documenting the `index.json` entry schema (`name`, `version`, `description`, `path`, `provider`, `model`, `tasks`, `tags`) and state that `provider`/`model` MUST be lifted verbatim from the persona YAML's required `provider`/`model` keys, with `tasks`/`tags` sourced from the YAML when present
-- `docs/personas-authoring.md` - modify: extend the "Contribution checklist" (§4) with a checklist item confirming the published `index.json` entry for the persona carries non-empty `provider`/`model` matching the persona YAML
-- `internal/personas/search.go` - reference only: the extended `PersonaIndexEntry` struct (from AC 02-01) is the single source of truth for the documented field names/types
-- `internal/personas/search_test.go` - modify/create: a test asserting the documented example `index.json` entry in `docs/personas-authoring.md` (or an equivalent fixture) decodes into `PersonaIndexEntry` with `Provider`/`Model` matching the persona YAML's `provider`/`model` values
+### Related Files (from codebase-discovery.json)
+- `docs/personas-authoring.md` — modify: add a subsection documenting the `index.json` entry schema (`name`, `version`, `description`, `path`, `provider`, `model`, `tasks`, `tags`) and extend the contribution checklist with an item requiring non-empty `provider`/`model` matching the persona YAML.
+- `internal/personas/search.go` (`PersonaIndexEntry`) — reference: the single source of truth for documented field names/types.
+- `internal/personas/search_test.go` — create/modify: a test asserting the documented example `index.json` entry decodes into `PersonaIndexEntry` with `Provider`/`Model` matching the source YAML values.
+- `personas/community/index.json` — create: in-repo index populated per the documented contract.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Documented schema matches the Go struct**

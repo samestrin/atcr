@@ -1,6 +1,8 @@
 # Acceptance Criteria: Existing Personas Preserved; `--force` Semantics and Source Labeling Intact
 
 **Related User Story:** [01: Community-Canonical Fetch-and-Pin Distribution](../user-stories/01-community-canonical-fetch-and-pin-distribution.md)
+**Design References:** [fetch-and-distribution.md](../documentation/fetch-and-distribution.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,11 +11,14 @@
 | Test Framework | Go `testing` | byte-for-byte file comparison before/after rerun |
 | Key Dependencies | `os.Lstat`/`os.OpenFile(O_EXCL)` (existing `runInit` write helper), `commpersonas.List` | no new dependency; reuses existing never-overwrite machinery |
 
-## Related Files
-- `cmd/atcr/init.go` - modify: the fetch-and-pin install branch (AC 01-02) must skip installing a community persona whose `.atcr/personas/<name>.{md,yaml}` already exists on disk, unless `--force` is passed — preserving the existing `runInit` `anyExist`/`--force` gate (lines 66-81) and the per-file `O_EXCL` write guard (lines 96-118).
-- `internal/personas/list.go` - reference only: `List`/`listCommunity` (lines 38-47, 117-172) already label rows `Source: "built-in"` vs `Source: "community"` and surface `Version`; verify this labeling continues to work unchanged for fetch-installed personas (no code change expected unless file extension handling needs alignment).
-- `cmd/atcr/init_test.go` - modify: add a test that pre-seeds `.atcr/personas/<name>.md` with hand-edited content, runs `atcr init --force`, and asserts the file is byte-identical afterward (per the story's explicit risk-mitigation test).
-- `cmd/atcr/personas_test.go` (or equivalent) - modify: add/extend a test asserting `atcr personas list` output distinguishes `built-in` vs `community` rows with pinned versions shown, for a workspace populated via fetch-and-pin.
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/init.go` (`runInit`, lines 76-78 force/anyExist gate, lines 96-118 O_EXCL write guard) — modify: preserve the per-file existence check so existing `.atcr/personas/<name>.{md,yaml}` files are never overwritten unless `--force` is passed.
+- `internal/personas/list.go` (`PersonaMeta`, source labeling, lines 38-47, 117-172) — reference: labels rows `Source: "built-in"` vs `Source: "community"` and surfaces pinned versions for fetch-installed personas.
+- `internal/personas/install.go` — reference: atomic install helper used for missing personas while existing files are skipped.
+- `cmd/atcr/init_test.go` — modify: add a byte-for-byte equality test that pre-seeds `.atcr/personas/<name>.md` with hand-edited content and reruns `atcr init --force`.
+- `cmd/atcr/personas_test.go` — modify: assert `atcr personas list` distinguishes `built-in` vs `community` rows with pinned versions after fetch-and-pin.
+- `docs/personas-install.md` — modify: document `--force` semantics and source labeling.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Rerun with pre-existing hand-edited persona leaves it untouched**

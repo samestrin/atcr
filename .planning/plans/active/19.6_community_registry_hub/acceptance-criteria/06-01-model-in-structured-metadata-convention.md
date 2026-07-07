@@ -1,6 +1,8 @@
 # Acceptance Criteria: Model-in-Structured-Metadata Convention Documented
 
 **Related User Story:** [06: Authoring Contract Enforcement for Model Metadata and Human Names](../user-stories/06-authoring-contract-enforcement.md)
+**Design References:** [persona-yaml-schema.md](../documentation/persona-yaml-schema.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,10 +11,11 @@
 | Test Framework | Go `testing` + `stretchr/testify` (`assert.Contains`) | Mirrors the existing doc-content assertion pattern in `internal/payload/template_test.go` (`TestDocs_PayloadModesExists`) and `internal/payload/tools_persona_test.go` |
 | Key Dependencies | None (no new package) | Pure documentation change plus a grounding test |
 
-## Related Files
-- `docs/personas-authoring.md` - modify: add a "Conventions" (or extend the existing "Contribution checklist") passage stating that a persona's bound model must be discoverable in structured metadata (the existing required `provider`/`model` fields, per section 1 "The persona YAML"), and that this is asserted by the fixture test, cross-referencing `internal/personas/test.go`
-- `internal/personas/personas_test.go` - modify or create: a `TestDocs_PersonasAuthoringModelMetadataConvention`-style test asserting the new section's key phrases are present in `docs/personas-authoring.md`, following the `os.ReadFile` + `assert.Contains` pattern already used for `docs/payload-modes.md`/`docs/registry.md`
-- `internal/personas/test.go` - reference only: `TemplateFixtureRunner.RunFixture` and `FixtureOutcome` are the enforcement point the new doc section must name accurately
+### Related Files (from codebase-discovery.json)
+- `docs/personas-authoring.md` — modify: add a "Conventions" or contribution-checklist passage stating that a persona's bound `model` must be present in structured metadata (the existing required `model:` YAML key) and is enforced by the fixture test.
+- `internal/personas/test.go` (`TemplateFixtureRunner.RunFixture`, `FixtureOutcome`) — reference: the enforcement point the new doc section must name accurately.
+- `internal/personas/personas_test.go` — modify/create: a doc-content test asserting the new section's key phrases are present in `docs/personas-authoring.md`.
+
 
 ## Happy Path Scenarios
 **Scenario 1: New section documents the model-in-metadata convention**

@@ -34,6 +34,9 @@ The struct-tag design also has to reconcile two decode paths that behave differe
 - **PersonaIndexEntry's additive extension mirrors encoding/json's unknown-field tolerance.** Just as encoding/json ignores unknown fields on decode by default, adding `Provider`/`Model`/`Tasks`/`Tags` to `PersonaIndexEntry` (internal/personas/search.go) is additive as long as the index decode path does not enable strict/`KnownFields(true)` mode — keeping the persona-YAML loader strict (per the authoring contract) while keeping the index-entry decoder permissive is what allows both requirements to coexist.
   > Source: [yaml-v3.md], codebase pattern (internal/personas/search.go)
 
+- **The persona unit carries its own prompt (Clarification C1/C2).** Beyond `provider`/`model`/`name`/`version`/`description`/`Tasks`/`Tags`, a community persona is a self-contained unit whose custom reviewer prompt travels with it (inline in the YAML, or a co-located file installed atomically) — never a second, separate delivery path. A fetched prompt is untrusted input, so its length is capped (mirroring `MaxExecutorSystemPromptLen`) and it must pass its render/category fixture before it can resolve (C3).
+  > Source: original-requirements.md Clarifications (2026-07-07)
+
 ## Code Examples
 
 ```go

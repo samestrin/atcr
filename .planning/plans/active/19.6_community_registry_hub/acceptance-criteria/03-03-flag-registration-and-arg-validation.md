@@ -1,6 +1,8 @@
 # Acceptance Criteria: `--model`/`--provider` Flag Registration and Argument Validation Guard
 
 **Related User Story:** [03: Model-Aware Search and Discovery via `--model`/`--provider`](../user-stories/03-model-aware-search-and-discovery.md)
+**Design References:** [cli-search-flags.md](../documentation/cli-search-flags.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,9 +11,11 @@
 | Test Framework | Go `testing` package with Cobra command execution harness (`cmd.Execute()` / `cmd.SetArgs()`) | Asserts `Args` relaxation and usage-error guard |
 | Key Dependencies | `spf13/cobra` (existing dependency only) | No new third-party dependency |
 
-## Related Files
-- `cmd/atcr/personas.go` - modify: `newPersonasSearchCmd` (line ~218) — relax `Args: usageArgs(cobra.ExactArgs(1))` to `usageArgs(cobra.MaximumNArgs(1))` (or equivalent), register `--model`/`--provider` as `cmd.Flags().String(name, "", usage)`, and add a `RunE` guard mirroring the existing empty-keyword check (line ~225-227) that returns a `usageError` when the keyword is empty AND both `--model`/`--provider` are unset
-- `cmd/atcr/personas_test.go` - create/modify: integration tests invoking the search command with no args and no flags, expecting a `usageError`; and with only `--model`/`--provider` and no positional keyword, expecting success
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/personas.go` (line ~218 `newPersonasSearchCmd`) — modify: relax `Args` from `ExactArgs(1)` to `MaximumNArgs(1)`, register `--model`/`--provider` via `cmd.Flags().String(...)`, and add a `RunE` guard returning `usageError` when keyword is empty/whitespace AND both flags are unset.
+- `cmd/atcr/personas_test.go` — create/modify: integration tests invoking the search command with no args/no flags (expect `usageError`) and with only `--model`/`--provider` and no positional keyword (expect success).
+- `internal/personas/search.go` (`Search`) — reference: the search function that receives the flag values.
+
 
 ## Happy Path Scenarios
 **Scenario 1: `--model`-only invocation succeeds with no positional keyword**

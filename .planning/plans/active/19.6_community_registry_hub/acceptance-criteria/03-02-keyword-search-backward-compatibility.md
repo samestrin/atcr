@@ -1,6 +1,8 @@
 # Acceptance Criteria: Positional Keyword Search Remains Unchanged (Backward Compatibility)
 
 **Related User Story:** [03: Model-Aware Search and Discovery via `--model`/`--provider`](../user-stories/03-model-aware-search-and-discovery.md)
+**Design References:** [cli-search-flags.md](../documentation/cli-search-flags.md), [persona-yaml-schema.md](../documentation/persona-yaml-schema.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,10 +11,12 @@
 | Test Framework | Go `testing` package, table-driven tests | Regression tests against current `Search()` behavior |
 | Key Dependencies | stdlib `strings`; existing `PersonaIndexEntry` | No new third-party dependency |
 
-## Related Files
-- `internal/personas/search.go` - modify: ensure the existing keyword-only code path (`strings.Contains` on `Name`/`Description`, case-insensitive) is preserved byte-for-byte in behavior when no `--model`/`--provider` flags are supplied
-- `internal/personas/search_test.go` - create: regression tests asserting `atcr personas search <keyword>` output is identical pre/post this story for existing keyword-only calls
-- `cmd/atcr/personas.go` - modify: `newPersonasSearchCmd` (line ~218) continues to accept the positional `<keyword>` argument and the existing empty-keyword guard (line ~225-227) continues to fire when keyword is empty and no new flags are set
+### Related Files (from codebase-discovery.json)
+- `internal/personas/search.go` (`Search`) — modify: preserve the existing keyword-only code path (`strings.Contains` on `Name`/`Description`, case-insensitive) when no `--model`/`--provider` flags are supplied.
+- `cmd/atcr/personas.go` (line ~218 `newPersonasSearchCmd`) — modify: continue accepting the positional `<keyword>` argument and preserve the existing empty-keyword guard.
+- `internal/personas/search_test.go` — create: regression tests asserting `atcr personas search <keyword>` output is identical pre/post this story for keyword-only calls.
+- `docs/personas-install.md` — modify: document that existing keyword search behavior is unchanged.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Existing keyword search behaves identically with no new flags**

@@ -1,6 +1,8 @@
 # Acceptance Criteria: Vendor-Grounded Prompt Phrasing and Canonical Structure Compliance
 
 **Related User Story:** [04: Model-Indexed Persona Library Authoring](../user-stories/04-model-indexed-persona-library-authoring.md)
+**Design References:** [persona-yaml-schema.md](../documentation/persona-yaml-schema.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,10 +11,12 @@
 | Test Framework | Go `testing` package, template-render assertions | Extends the `personas_test.go`/`grounding_test.go` render pattern to the community set |
 | Key Dependencies | `text/template` (stdlib); `internal/payload.PayloadContext` | No new third-party dependency |
 
-## Related Files
-- `personas/community/*.md` - create: one prompt template per authored persona (10 total: 6 frontier + 4+ flat-rate), each mirroring the canonical section structure
-- `personas/community_test.go` - create: table-driven test that renders every `personas/community/*.md` template against a fixture `payload.PayloadContext` and asserts no leftover `{{ }}` actions and mandatory sections present
-- `docs/personas-authoring.md` - reference: canonical structure and required-variable contract (`{{.AgentName}}`, `{{.ScopeRule}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.PayloadMode}}`, `{{.Payload}}`)
+### Related Files (from codebase-discovery.json)
+- `personas/community/*.md` — create: one prompt template per authored persona (10+ total), mirroring the canonical section structure and required variables.
+- `personas/community_test.go` — create: table-driven test rendering every `personas/community/*.md` template against a fixture `payload.PayloadContext` and asserting no leftover `{{ }}` actions and mandatory sections present.
+- `docs/personas-authoring.md` — reference: canonical structure and required-variable contract (`{{.AgentName}}`, `{{.ScopeRule}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.PayloadMode}}`, `{{.Payload}}`).
+- `personas/_base.md` — reference: shared prompt-template scaffold.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Every persona template renders with no leftover template actions**
@@ -31,7 +35,7 @@
 - **Then** each prompt's structure/emphasis is authored per that vendor's documented prompting guidance rather than all three sharing identical phrasing patterns
 
 ## Edge Cases
-**Edge Case 1: Optional `{{if .ToolsEnabled}}…{{end}}` block renders correctly in both states**
+**Edge Case 1: Optional `{{if .ToolsEnabled}}…{{end}}` block renders without error and leaves no unrendered template actions in both states**
 - **Given** a persona template that includes the optional tool-assisted-review block
 - **When** the template is rendered once with `ToolsEnabled: true` and once with `ToolsEnabled: false`
 - **Then** both renders complete with no leftover `{{ }}` actions and no template execution error
@@ -53,7 +57,7 @@
 - **Then** the test fails, since the reconciler downstream parses this format byte-for-byte
 
 ## Performance Requirements
-- **Response Time:** Template render of 10 persona templates against a fixture context completes in well under 1 second in the test suite; no measurable regression to `go test ./...` runtime.
+- **Response Time:** Template render of 10 persona templates against a fixture context completes in well under 1 second in the test suite; no measurable regression versus baseline (≤1% wall-time difference in `go test ./...`) to `go test ./...` runtime.
 - **Throughput:** N/A (test-time only, not a runtime request path).
 
 ## Security Considerations

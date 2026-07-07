@@ -1,6 +1,8 @@
 # Acceptance Criteria: `docs/personas-authoring.md` Cross-References the Discover-by-Model Flow
 
 **Related User Story:** [07: Onboarding-Hierarchy Documentation Rewrite](../user-stories/07-onboarding-hierarchy-documentation.md)
+**Design References:** [onboarding-hierarchy.md](../documentation/onboarding-hierarchy.md), [cli-search-flags.md](../documentation/cli-search-flags.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,15 +11,16 @@
 | Test Framework | Manual review + `grep`-based acceptance checks | No markdown lint configured in this repo |
 | Key Dependencies | None beyond `docs/personas-install.md` existing (AC 07-02) as the cross-reference target | No new dependency introduced |
 
-## Related Files
-- `docs/personas-authoring.md` - modify: add a short cross-reference (in the "4. Contribution checklist" section, docs/personas-authoring.md:150, or immediately preceding it) pointing contributors to the discover-and-install-by-model flow documented in `docs/personas-install.md`
-- `docs/personas-install.md` - reference only: target of the cross-reference link, carries the full discover-by-model flow per AC 07-02; not modified by this AC
+### Related Files (from codebase-discovery.json)
+- `docs/personas-authoring.md` — modify: add a short cross-reference in or near the contribution checklist pointing contributors to the discover-and-install-by-model flow in `docs/personas-install.md`.
+- `docs/personas-install.md` — reference: target of the cross-reference link, carrying the full discover-by-model flow per AC 07-02.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Cross-reference added without duplicating the full hierarchy explanation**
 - **Given** `docs/personas-authoring.md`'s existing four sections (persona YAML, prompt template, fixture, contribution checklist)
 - **When** the cross-reference is added
-- **Then** it is a short pointer (a sentence plus a Markdown link to `docs/personas-install.md`) explaining that a correctly authored persona's structured `provider`/`model` metadata is what makes it discoverable via `atcr personas search --model`/`--provider`, without restating the 5-tier onboarding hierarchy or the full bash flow
+- **Then** it is a short pointer (a sentence plus a Markdown link to `docs/personas-install.md`) explaining that a persona's structured `provider`/`model` metadata makes it discoverable via `atcr personas search --model`/`--provider`, without restating the 5-tier onboarding hierarchy or the full bash flow
 
 **Scenario 2: Cross-reference connects authoring metadata to discoverability**
 - **Given** the persona YAML's "Agent binding" fields (docs/personas-authoring.md:22-27, provider/model) that this epic's Theme 2/4 stories bind into `index.json`'s structured `Provider`/`Model` fields
@@ -45,7 +48,7 @@
 **Error Scenario 2: Broken relative link**
 - **Given** the cross-reference uses a relative Markdown link to `docs/personas-install.md` (or an anchor within it)
 - **When** the link is resolved from `docs/personas-authoring.md`'s location
-- **Then** the link path resolves correctly (`personas-install.md` in the same `docs/` directory, or a matching heading anchor) — a broken or misspelled path fails this AC
+- **Then** the link path resolves to `docs/personas-install.md` in the same `docs/` directory, or to a matching heading anchor, without a 404/broken-link error — a misspelled path fails this AC
 
 ## Performance Requirements
 - **Response Time:** N/A — static Markdown content, no runtime execution.

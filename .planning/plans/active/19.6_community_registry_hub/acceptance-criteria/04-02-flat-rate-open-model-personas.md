@@ -1,6 +1,8 @@
 # Acceptance Criteria: Flat-Rate Open Model Persona Coverage
 
 **Related User Story:** [04: Model-Indexed Persona Library Authoring](../user-stories/04-model-indexed-persona-library-authoring.md)
+**Design References:** [persona-yaml-schema.md](../documentation/persona-yaml-schema.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,12 +11,16 @@
 | Test Framework | Go `testing` package (community fixture-test loop from AC 04-04) | Schema validation exercised via the registry loader |
 | Key Dependencies | `docs/personas-authoring.md` authoring contract; each open-model provider's published model card/API docs | No new third-party dependency |
 
-## Related Files
-- `personas/community/<deepseek-slug>.yaml` - create: persona YAML with `provider`/`model` bound to a DeepSeek model id
-- `personas/community/<qwen-slug>.yaml` - create: persona YAML with `provider`/`model` bound to a Qwen model id
-- `personas/community/<kimi-slug>.yaml` - create: persona YAML with `provider`/`model` bound to a Kimi (Moonshot) model id
-- `personas/community/<glm-slug>.yaml` - create: persona YAML with `provider`/`model` bound to a GLM (Zhipu) model id
-- `personas/community/index.json` - modify: one entry per flat-rate persona with `provider`/`model` matching each YAML
+### Related Files (from codebase-discovery.json)
+- `personas/community/<deepseek-slug>.yaml` — create: DeepSeek-bound persona YAML with non-empty `provider`/`model`.
+- `personas/community/<qwen-slug>.yaml` — create: Qwen-bound persona YAML.
+- `personas/community/<kimi-slug>.yaml` — create: Kimi (Moonshot)-bound persona YAML.
+- `personas/community/<glm-slug>.yaml` — create: GLM (Zhipu)-bound persona YAML.
+- `personas/community/<slug>.md` — create: prompt template per flat-rate persona, grounded in that model's documented strengths.
+- `personas/community/index.json` — modify: one entry per flat-rate persona with `provider`/`model` matching each YAML.
+- `docs/personas-authoring.md` — reference: authoring contract and provider-key conventions.
+- `personas/_base.md` — reference: shared prompt-template scaffold.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Every flat-rate open model in scope has at least one bound persona**
@@ -31,6 +37,11 @@
 - **Given** a flat-rate persona YAML (e.g. the Qwen persona)
 - **When** the persona loader parses and validates it against the registry agent schema
 - **Then** validation succeeds with `provider` and `model` both non-empty and no unknown agent field present
+
+**Scenario 4: Empty or missing `model` field is rejected before the persona is considered complete**
+- **Given** a flat-rate persona YAML with `provider: "deepseek"` and `model` omitted or set to `""`
+- **When** the registry schema validates it
+- **Then** validation fails with a required-field error identifying the persona file and the missing `model` key, and the AC's Definition of Done cannot be marked complete until the field is populated
 
 ## Edge Cases
 **Edge Case 1: Provider key for an open model matches the registry's OpenAI-compatible routing expectations**

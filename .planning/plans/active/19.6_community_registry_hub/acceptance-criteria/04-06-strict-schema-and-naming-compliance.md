@@ -1,6 +1,8 @@
 # Acceptance Criteria: Strict Schema Validation and Human-Name Convention Compliance
 
 **Related User Story:** [04: Model-Indexed Persona Library Authoring](../user-stories/04-model-indexed-persona-library-authoring.md)
+**Design References:** [persona-yaml-schema.md](../documentation/persona-yaml-schema.md), [human-names-migration.md](../documentation/human-names-migration.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,10 +11,12 @@
 | Test Framework | Go `testing` package, table-driven negative-case assertions | Extends the community persona test file with reject-on-invalid cases |
 | Key Dependencies | `internal/registry` schema validator; no new dependency | Reuses existing strict/non-strict validation split documented in `docs/personas-authoring.md` |
 
-## Related Files
-- `personas/community/*.yaml` - reference: all 10 authored persona YAML files, the subject of validation
-- `personas/community_test.go` - modify/create: negative-case tests asserting an unknown agent field or missing required field is rejected, plus a naming-convention check across all persona `name`/slug values
-- `docs/personas-authoring.md` - reference: strict-vs-non-strict validation contract (agent fields strict, catalog fields `version`/`description` non-strict)
+### Related Files (from codebase-discovery.json)
+- `personas/community/*.yaml` — reference: all 10+ authored persona YAML files, the subject of strict validation and human-name convention checks.
+- `personas/community_test.go` — create: positive tests asserting every community persona YAML passes strict registry-schema validation, plus negative tests for unknown agent fields, out-of-range values, and role-based naming.
+- `docs/personas-authoring.md` — reference: strict-vs-non-strict validation contract and the all-human-names convention.
+- `internal/registry` — reference: registry agent schema validator.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Every persona YAML validates cleanly with no unknown agent fields**

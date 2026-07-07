@@ -1,6 +1,8 @@
 # Acceptance Criteria: README.md Quickstart Leads with Synthetic, Summarizes the 5-Tier Hierarchy
 
 **Related User Story:** [07: Onboarding-Hierarchy Documentation Rewrite](../user-stories/07-onboarding-hierarchy-documentation.md)
+**Design References:** [onboarding-hierarchy.md](../documentation/onboarding-hierarchy.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,9 +11,10 @@
 | Test Framework | Manual review + `grep`-based acceptance checks (no markdown lint configured in this repo) | Deterministic string/order checks substitute for automated tests |
 | Key Dependencies | None — pure prose edit; sources exact tier language from `documentation/onboarding-hierarchy.md` | Must not paraphrase the source tier wording |
 
-## Related Files
-- `README.md` - modify: rewrite the `## Quickstart` section (currently README.md:36-65) so `atcr quickstart` (Synthetic) remains the one-command default step, and add a hierarchy summary covering DashScope, Chutes→Featherless, LiteLLM, and frontier/majors in that order, each carrying its designated caveat language
-- `.planning/plans/active/19.6_community_registry_hub/documentation/onboarding-hierarchy.md` - reference: source of truth for tier order and exact caveat phrasing ("explore, not default", "Advanced", "bring your own key") — not modified by this AC
+### Related Files (from codebase-discovery.json)
+- `README.md` — modify: rewrite the `## Quickstart` section so `atcr quickstart` (Synthetic) remains the one-command default step, and add a hierarchy summary covering DashScope, Chutes→Featherless, LiteLLM, and frontier/majors in that order with designated caveat language.
+- `.planning/plans/active/19.6_community_registry_hub/documentation/onboarding-hierarchy.md` — reference: source of truth for tier order and exact caveat phrasing.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Quickstart section leads with `atcr quickstart` / Synthetic as the one-command default**

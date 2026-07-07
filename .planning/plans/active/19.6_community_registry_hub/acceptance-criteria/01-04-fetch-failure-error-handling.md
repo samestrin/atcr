@@ -1,6 +1,8 @@
 # Acceptance Criteria: Fetch Failure Produces a Descriptive, Non-Zero-Exit Error
 
 **Related User Story:** [01: Community-Canonical Fetch-and-Pin Distribution](../user-stories/01-community-canonical-fetch-and-pin-distribution.md)
+**Design References:** [fetch-and-distribution.md](../documentation/fetch-and-distribution.md), [testing-mock-registry.md](../documentation/testing-mock-registry.md)
+
 
 ## Implementation Technology
 | Component | Technology | Notes |
@@ -9,11 +11,14 @@
 | Test Framework | Go `testing` + `httptest.NewServer` | server returns 5xx/connection-refused/timeout to simulate failure |
 | Key Dependencies | existing `fetch()` error wrapping in `internal/personas/client.go` | no new error type required, only surfacing at the CLI boundary |
 
-## Related Files
-- `cmd/atcr/init.go` - modify: `runInit`'s fetch-and-pin branch (from AC 01-02) propagates any `commpersonas.Install`/`FetchIndex` error as a non-nil `error` return from `runInit`, with no silent fallback to embedded built-ins; wrap the error with guidance suggesting `--offline`.
-- `cmd/atcr/quickstart.go` - modify: `runQuickstart`'s call into `runInit` propagates the same error (via existing `if err := runInit(...); err != nil { return err }`), aborting the wizard before the synthetic-provider setup runs.
-- `cmd/atcr/init_test.go` - modify: add a test pointing `ATCR_PERSONAS_URL` at an `httptest.NewServer` that returns HTTP 500 (or is closed to force a connection error), asserting `runInit` returns a non-nil error and the process would exit non-zero, and that no partial persona files are left on disk.
-- `cmd/atcr/quickstart_test.go` - modify: mirror the same failure-propagation test for `runQuickstart`.
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/init.go` (`runInit`) — modify: propagate any `internal/personas.Install`/`FetchIndex` error as a non-nil return from `runInit`, with no silent fallback to embedded built-ins; wrap the error with `--offline` guidance.
+- `cmd/atcr/quickstart.go` (`runQuickstart`) — modify: propagate the same `runInit` error, aborting the wizard before synthetic-provider setup.
+- `internal/personas/client.go` (`fetch`, `fetchTimeout` 30s, `FetchIndex`) — reference: existing fetch error wrapping and timeout behavior.
+- `internal/personas/install.go` — reference: validation path that may fail after a successful fetch.
+- `cmd/atcr/init_test.go` / `cmd/atcr/quickstart_test.go` — modify: add tests pointing `ATCR_PERSONAS_URL` at a failing `httptest.NewServer` (HTTP 500 / connection refused / timeout), asserting non-zero exit and no partial files left on disk.
+- `docs/personas-install.md` — modify: document fetch-failure behavior and the `--offline` fallback.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Fetch failure aborts `atcr init` with a descriptive error**
