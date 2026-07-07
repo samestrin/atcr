@@ -15,8 +15,17 @@
 - `atcr/personas/testdata/gemini-reviewer_fixture.patch` - create: synthetic diff planting a known instance of the Gemini persona's target category
 - `docs/personas-authoring.md` - reference only: fixture location/naming/content rules this AC verifies against (no change)
 
+### Related Files (from codebase-discovery.json)
+
+- `docs/personas-authoring.md` — fixture location (`personas/testdata/<slug>_fixture.patch`), naming, content, and contribution-checklist rules
+- `personas/testdata/sentinel_fixture.patch` — example of a passing `.patch` fixture new community personas must emulate
+- `personas/personas.go` — built-in persona registry and `Fixture(name)` helper demonstrating the fixture convention
+- `internal/personas/test.go` — fixture runner `atcr personas test <name>` exercises each persona against its fixture
+- `cmd/atcr/personas_test.go` — existing test coverage pattern for the `personas test` command
+- `docs/personas-install.md` — documents `atcr personas test` and the fixture contract
+
 ## Happy Path Scenarios
-**Scenario 1: Each fixture is correctly located and named**
+**Scenario 1: Each fixture follows the naming and location convention**
 - **Given** the 3 new personas (`claude-reviewer`, `gpt-reviewer`, `gemini-reviewer`) have been authored
 - **When** their fixtures are committed to `atcr/personas/testdata/` as `claude-reviewer_fixture.patch`, `gpt-reviewer_fixture.patch`, and `gemini-reviewer_fixture.patch`
 - **Then** each file follows the `<slug>_fixture.patch` naming convention exactly, matching its persona's slug, with file mode `0644`

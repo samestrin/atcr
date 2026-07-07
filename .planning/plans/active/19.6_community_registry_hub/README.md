@@ -7,7 +7,7 @@ Ships 3 default, model-tuned reviewer personas — one each for Anthropic Claude
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/19.6_community_registry_hub/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/19.6_community_registry_hub/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/19.6_community_registry_hub/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/19.6_community_registry_hub/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/19.6_community_registry_hub/`
 
 ## Timeline & Milestones
@@ -29,3 +29,4 @@ The only material risk is the cross-repo split: Tasks 1-2 (persona content) land
 - [Codebase Discovery](codebase-discovery.json)
 - [User Stories](user-stories/)
 - [Acceptance Criteria](acceptance-criteria/)
+- [Sprint Design](sprint-design.md)

@@ -15,6 +15,15 @@
 - `docs/personas-authoring.md` - reference only: schema and canonical section structure this file must mirror (no change)
 - `personas/_base.md` - reference only: canonical built-in template this structure is modeled on (no change)
 
+### Related Files (from codebase-discovery.json)
+
+- `docs/personas-authoring.md` — schema, canonical prompt section structure, required template variables, and contribution checklist this persona must satisfy
+- `personas/_base.md` — canonical built-in prompt template structure the community-persona template mirrors
+- `docs/personas-install.md` — documents the community registry URL and `atcr personas install/search/test` commands that will distribute and validate this persona
+- `internal/personas/client.go` — fetches persona YAML from `<ATCR_PERSONAS_URL>/<name>.yaml` and the community `index.json`
+- `internal/personas/install.go` — validates and writes the installed persona YAML to the local config directory
+- `cmd/atcr/personas.go` — registers the `atcr personas install/search/list/upgrade/remove/test` CLI surface
+
 ## Happy Path Scenarios
 **Scenario 1: Persona YAML declares a flagship-primary + same-family fallback**
 - **Given** the contributor is authoring `atcr/personas/claude-reviewer.yaml`
@@ -68,6 +77,7 @@
 **Story-Specific:**
 - [ ] `claude-reviewer.yaml` sets `provider: anthropic` with a real flagship-primary `model` and a real same-family fallback, mirroring `bruce`/`bruce-backup`
 - [ ] `claude-reviewer.md` prompt phrasing reflects Anthropic's own official prompting guide conventions (explicit role framing, direct imperative instructions, structured sections)
+- [ ] `claude-reviewer.md` contains every canonical section and required template variable listed in AC 01-05, with no unrendered `{{ }}` actions
 - [ ] No placeholder values (`TODO`, `changeme`, or example ids) remain in the shipped YAML
 
 **Manual Review:**

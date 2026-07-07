@@ -15,6 +15,14 @@
 - `atcr/personas/gemini-reviewer.yaml` / `atcr/personas/gemini-reviewer.md` - validate: schema + canonical section structure
 - `docs/personas-authoring.md` - reference only: the schema/structure contract this AC checks against (no change)
 
+### Related Files (from codebase-discovery.json)
+
+- `docs/personas-authoring.md` — registry agent schema, canonical prompt section structure, required template variables, and contribution checklist
+- `personas/_base.md` — canonical built-in prompt template structure the community-persona template mirrors
+- `internal/personas/client.go` — fetches and parses persona YAML; validates against registry schema
+- `internal/personas/install.go` — validates and writes installed persona YAML to the local config directory
+- `cmd/atcr/personas.go` — registers the `atcr personas install/search/list/upgrade/remove/test` CLI surface
+
 ## Happy Path Scenarios
 **Scenario 1: All 3 YAMLs validate against the registry agent schema**
 - **Given** the 3 new persona YAML files (`claude-reviewer.yaml`, `gpt-reviewer.yaml`, `gemini-reviewer.yaml`)

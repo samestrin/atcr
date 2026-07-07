@@ -13,6 +13,12 @@
 - `README.md` - modify: add one new step to the "## Quickstart" numbered list recommending installation of the default persona pack as part of first-time setup
 - `docs/personas-install.md` - reference only: the step added here should point readers to this file for full `atcr personas` documentation (no edits to that file from this AC; see AC 03-01)
 
+### Related Files (from codebase-discovery.json)
+
+- `README.md` — modify: add one new step to the "## Quickstart" numbered list
+- `README.md:36-57` — existing "## Quickstart" numbered section to extend
+- `docs/personas-install.md` — reference only: points readers to full `atcr personas` documentation
+
 ## Happy Path Scenarios
 **Scenario 1: First-time user follows Quickstart and is pointed at the default persona pack**
 - **Given** a new user reads `README.md`'s "## Quickstart" section

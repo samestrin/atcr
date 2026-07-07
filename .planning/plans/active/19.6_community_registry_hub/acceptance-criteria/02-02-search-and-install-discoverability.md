@@ -15,6 +15,13 @@
 - `internal/personas/search.go` - reference only: `Search()` performs the case-insensitive name/description substring match that `atcr personas search <keyword>` relies on to surface each new persona
 - `atcr/personas` repo `index.json` and `<name>.yaml` files (external repo) - dependency only: this AC assumes AC 02-01's index entries and Story 1's YAML files are already published
 
+### Related Files (from codebase-discovery.json)
+
+- `docs/personas-install.md` — documents `search`/`install` subcommand contracts, error messages, and `ATCR_PERSONAS_URL` configuration
+- `internal/personas/client.go` — `FetchPersonaYAML` fetches `<baseURL>/<name>.yaml`; returns `ErrPersonaNotFound`
+- `internal/personas/search.go` — `Search()` performs case-insensitive name/description substring matching
+- `cmd/atcr/personas.go` — registers the `atcr personas search`/`install` CLI surface
+
 ## Happy Path Scenarios
 **Scenario 1: Search surfaces each new persona by name**
 - **Given** the 3 new `index.json` entries from AC 02-01 are published to the live `atcr/personas` repo
@@ -42,10 +49,10 @@
 - **When** `atcr personas install <namespace/name>` is run again for the same persona
 - **Then** the command reports the persona already present / succeeds without error (consistent with the documented idempotent-install behavior for bundle members in `docs/personas-install.md`), and does not corrupt the already-installed file
 
-**Edge Case 2: Namespace/name with the `/` separator resolves correctly**
+**Edge Case 2: Namespace/name with the `/` separator resolves to the expected fetch path**
 - **Given** the 3 new personas use namespaced slugs (e.g., `provider/claude-reviewer`) per the existing naming convention
 - **When** `search` and `install` are run using the full namespaced slug
-- **Then** the `/` separator is accepted and correctly maps to the `<ATCR_PERSONAS_URL>/<namespace>/<name>.yaml` fetch path with no traversal-guard rejection (per the letters/digits/`_`/`-`/`/` rule in `docs/personas-install.md`)
+- **Then** the `/` separator is accepted and maps to the `<ATCR_PERSONAS_URL>/<namespace>/<name>.yaml` fetch path with no traversal-guard rejection (per the letters/digits/`_`/`-`/`/` rule in `docs/personas-install.md`)
 
 ## Error Conditions
 **Error Scenario 1: Search finds nothing when index entry or keyword is wrong**

@@ -13,6 +13,13 @@
 - `docs/personas-install.md` - modify: insert a new early step into the "Quick walkthrough" section (currently numbered 1-6, search → install → list → test → upgrade → remove) recommending the default 3-persona pack, with a concrete `atcr personas install bundle/<name>` example
 - `.planning/plans/active/19.6_community_registry_hub/user-stories/03-recommend-default-persona-pack-in-documentation.md` - reference only: source story defining scope and constraints (no edits from this AC)
 
+### Related Files (from codebase-discovery.json)
+
+- `docs/personas-install.md` — modify: insert the default-pack recommendation into the "Quick walkthrough" section
+- `docs/personas-install.md:51-61` — existing `atcr personas install bundle/<name>` syntax this step must reuse
+- `docs/personas-install.md:156-176` — existing "Quick walkthrough" section to extend
+- `README.md` — reference only: Quickstart should ultimately point readers to `docs/personas-install.md` for full `atcr personas` documentation
+
 ## Happy Path Scenarios
 **Scenario 1: New reader follows the walkthrough and installs the default pack first**
 - **Given** a reader opens `docs/personas-install.md` and reaches the "Quick walkthrough" section

@@ -15,6 +15,13 @@
 - `internal/personas/client.go` - reference only: `FetchIndex` parses `index.json` into `[]PersonaIndexEntry`; `ErrIndexNotFound` is returned only when the whole file is missing, not for a malformed individual entry
 - `docs/personas-install.md` - reference only: documents the `ATCR_PERSONAS_URL` default and the `<name>.yaml` path convention each entry's `path`/`name` must resolve against
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/personas/search.go` — defines `PersonaIndexEntry` schema and `Search()` matcher
+- `internal/personas/client.go` — `FetchIndex` parses `index.json` into `[]PersonaIndexEntry`
+- `docs/personas-install.md` — documents `ATCR_PERSONAS_URL` default and `<name>.yaml` path convention
+- `cmd/atcr/personas.go` — registers `atcr personas search`/`install` subcommands that consume `index.json`
+
 ## Happy Path Scenarios
 **Scenario 1: Three new entries added, one per provider-tuned persona**
 - **Given** Story 1 has published 3 persona YAML files to the external `atcr/personas` repo (one Anthropic-tuned, one OpenAI-tuned, one Google-tuned), each already passing its own fixture validation
