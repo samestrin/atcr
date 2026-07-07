@@ -10,7 +10,7 @@
 
 ## Story Context
 
-- **Background:** Epic 9.0 (Persona Ecosystem, completed) already shipped the full community-persona distribution mechanism in this codebase (atcr): `atcr personas install/search/list/upgrade/remove`, which fetches `<ATCR_PERSONAS_URL>/index.json` and, on install, `<ATCR_PERSONAS_URL>/<name>.yaml`. `ATCR_PERSONAS_URL` defaults to `https://raw.githubusercontent.com/atcr/personas/main`. Story 1 authors the new model-tuned persona YAML + prompt templates (one tuned to Claude's official prompting guide, one to GPT-4's) plus their passing fixtures in the external `atcr/personas` repo. This story is the publication step: registering those already-authored personas in that repo's `index.json` so they become part of the searchable/installable catalog.
+- **Background:** Epic 9.0 (Persona Ecosystem, completed) already shipped the full community-persona distribution mechanism in this codebase (atcr): `atcr personas install/search/list/upgrade/remove`, which fetches `<ATCR_PERSONAS_URL>/index.json` and, on install, `<ATCR_PERSONAS_URL>/<name>.yaml`. `ATCR_PERSONAS_URL` defaults to `https://raw.githubusercontent.com/atcr/personas/main`. Story 1 authors 3 new model-tuned persona YAML + prompt templates — one each for Anthropic Claude, OpenAI GPT, and Google Gemini, each with a flagship-primary + same-family-fallback model pair — plus their passing fixtures in the external `atcr/personas` repo. This story is the publication step: registering those already-authored personas in that repo's `index.json` so they become part of the searchable/installable catalog.
 - **Assumptions:** Story 1's persona YAML files and fixtures already exist and pass validation before this story's index.json entries are added; the `index.json` schema and file format are already defined by Epic 9.0 and are not being changed; the `atcr/personas` repo maintainer (which may be the same person operating this plan) has commit access to add entries.
 - **Constraints:** **This story's actual implementation work happens entirely in the external `atcr/personas` GitHub repository, not in this codebase (atcr).** This plan's own TDD/sprint execution loop in this repo cannot execute, edit, or directly verify changes to that external repo — it can only track this story as a dependency and confirm the outcome externally (e.g., by running `atcr personas search <keyword>` and `atcr personas install <namespace/name>` against the live `atcr/personas` repo once the index.json update is published). No new index.json schema, hosting mechanism, or distribution channel may be introduced — this is strictly a content addition using the existing contract. This story depends on Story 1: the persona YAML + fixtures must exist and pass their own validation before index.json entries pointing to them are added, otherwise `atcr personas install` would fetch a non-existent or unvalidated YAML file.
 
@@ -24,7 +24,7 @@
 
 ## Success Criteria (SMART Format)
 
-- **Specific:** Add one `index.json` entry per new persona authored in Story 1 (1-2 entries) to the external `atcr/personas` repo, each with the fields required by the existing index schema (name, description, and any other fields Epic 9.0's schema requires), so the persona is listed in the catalog.
+- **Specific:** Add one `index.json` entry per new persona authored in Story 1 (3 entries — Anthropic, OpenAI, Google) to the external `atcr/personas` repo, each with the fields required by the existing index schema (name, description, and any other fields Epic 9.0's schema requires), so the persona is listed in the catalog.
 - **Measurable:** Running `atcr personas search <keyword>` (where keyword matches the new persona's name or description) against the live `ATCR_PERSONAS_URL` returns the new persona in the results; running `atcr personas install <namespace/name>` for each new persona succeeds and writes a valid YAML file to `~/.config/atcr/personas/`.
 - **Achievable:** Uses only the existing, already-shipped index.json schema and fetch contract (`internal/personas/client.go`'s `FetchIndex`/`FetchPersonaYAML`) — no new code, schema, or infrastructure required.
 - **Relevant:** Without this publication step, the personas authored in Story 1 exist as files in the external repo but remain invisible and uninstallable to atcr users — this story is what makes them actually reachable via the CLI.
@@ -32,7 +32,7 @@
 
 ## Acceptance Criteria Overview
 
-1. Each new persona from Story 1 has a corresponding entry in the external `atcr/personas` repo's `index.json`, conforming to the existing index schema (no new fields or format introduced).
+1. Each of the 3 new personas from Story 1 (Anthropic, OpenAI, Google) has a corresponding entry in the external `atcr/personas` repo's `index.json`, conforming to the existing index schema (no new fields or format introduced).
 2. `atcr personas search <keyword>` against the live community repo returns each new persona when searched by its name or a matching description keyword.
 3. `atcr personas install <namespace/name>` against the live community repo successfully fetches, validates, and installs each new persona's YAML to the local personas directory.
 
