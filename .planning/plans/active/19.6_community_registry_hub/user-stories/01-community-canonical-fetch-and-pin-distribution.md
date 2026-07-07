@@ -30,15 +30,23 @@
 - **Relevant:** This is the foundational distribution mechanism the plan's model-indexed persona library (Theme 2) and discovery flow (AC6) build on — until the fetch source is canonical and pinned, model-aware search has no reliable persona set to search over.
 - **Time-bound:** Deliverable within this sprint's first phase, ahead of the model-indexed catalog and search work that depends on it.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-registry-base-url-repoint.md) | Registry Base URL Repointed to samestrin/atcr | Unit |
+| [01-02](../acceptance-criteria/01-02-init-quickstart-fetch-and-pin.md) | init/quickstart Fetch-and-Pin Community Personas | Integration |
+| [01-03](../acceptance-criteria/01-03-offline-flag-fallback.md) | `--offline` Flag Preserves Embedded-Built-In Behavior | Unit |
+| [01-04](../acceptance-criteria/01-04-fetch-failure-error-handling.md) | Fetch Failure Produces a Descriptive, Non-Zero-Exit Error | Integration |
+| [01-05](../acceptance-criteria/01-05-preserve-existing-personas-and-source-labeling.md) | Existing Personas Preserved; `--force` Semantics and Source Labeling Intact | Integration |
+
+## Original Criteria Overview
 
 1. `RegistryBaseURL` (or equivalent default) resolves to the `samestrin/atcr` repo's in-repo persona path; `ATCR_PERSONAS_URL` override behavior is unchanged.
 2. `atcr init` and `atcr quickstart`, run without `--offline`, fetch community personas via the existing HTTP client/injection pattern and record each installed persona's fetched `version` as its pin; `atcr personas upgrade` continues to compare against and advance that pin.
 3. `--offline` flag on both commands skips the community fetch entirely and reproduces today's embedded-built-in install behavior with no network access.
 4. A fetch failure without `--offline` produces a descriptive, non-zero-exit error rather than a silent fallback.
 5. Existing `--force` semantics and existing on-disk `.md` personas are preserved: no overwrite of hand-edited files; missing community personas install alongside them; `atcr personas list` distinguishes `built-in` vs `community` sources with pinned versions shown.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.6_community_registry_hub/`_
 
 ## Technical Considerations
 

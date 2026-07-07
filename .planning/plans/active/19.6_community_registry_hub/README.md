@@ -6,7 +6,7 @@ Repoints the community-persona fetch URL from `atcr/personas` to `samestrin/atcr
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/19.6_community_registry_hub/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/19.6_community_registry_hub/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/19.6_community_registry_hub/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/19.6_community_registry_hub/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/19.6_community_registry_hub/`
 

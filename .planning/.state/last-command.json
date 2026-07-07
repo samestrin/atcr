@@ -1,9 +1,9 @@
 {
-  "skill": "create-user-stories",
+  "skill": "create-acceptance-criteria",
   "args": "@.planning/plans/active/19.6_community_registry_hub/",
-  "invocation": "/create-user-stories @.planning/plans/active/19.6_community_registry_hub/",
+  "invocation": "/create-acceptance-criteria @.planning/plans/active/19.6_community_registry_hub/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "bf5c9949-bdd9-4895-9a51-56e3bc7bfc19",
-  "timestamp": "2026-07-07T18:22:40.290Z"
+  "session_id": "bce45b73-3512-40e1-b07c-249c05913c8f",
+  "timestamp": "2026-07-07T18:31:13.914Z"
 }

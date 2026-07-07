@@ -30,7 +30,16 @@
 - **Relevant:** Directly satisfies AC4 (no role-based names remain in the active set) and prevents the alternative outcome of Epic 23.0 re-implementing this same rename later against a codebase that has already introduced human-named community personas, which would otherwise produce a window of mixed naming.
 - **Time-bound:** Completed within this plan's implementation phase, landing in the same release as the new model-indexed community library so there is no intermediate release with mixed role-based and human-named active personas.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-atomic-rename-sentinel-tracer-idiomatic.md) | Atomic Rename of `sentinel`/`tracer`/`idiomatic` to `sasha`/`penny`/`ingrid` | Unit |
+| [05-02](../acceptance-criteria/05-02-ingrid-generalized-idiomatic-lens.md) | `ingrid` — Generalizing `idiomatic`'s Go-Specific Lens | Unit |
+| [05-03](../acceptance-criteria/05-03-retired-slug-verification.md) | Retired-Slug Verification (No Remaining `sentinel`/`tracer`/`idiomatic` References) | Integration |
+| [05-04](../acceptance-criteria/05-04-documentation-updates.md) | Documentation Updates for the Renamed Personas | Manual |
+
+## Original Criteria Overview
 
 1. `sentinel`, `tracer`, and `idiomatic` are each renamed to `sasha`, `penny`, and `ingrid` respectively across prompt template, fixture, YAML metadata, and registration, with the old slugs fully retired (not aliased).
 2. `ingrid`'s prompt content is rewritten so its clean-code/idiomatic-style lens applies generally across languages rather than being Go-specific, while preserving the persona's original review intent.

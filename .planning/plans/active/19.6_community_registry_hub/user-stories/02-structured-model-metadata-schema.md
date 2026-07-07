@@ -30,13 +30,19 @@
 - **Relevant:** This is the prerequisite schema layer for AC2 (model-indexed search) and half of AC7 (authoring contract enforcing model-in-structured-metadata) — without these fields in the index, no consumer can ever search by bound model without falling back to fragile free-text matching.
 - **Time-bound:** Completed as a single-sprint task ahead of the Search()-behavior story that depends on it.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-persona-index-entry-schema-extension.md) | PersonaIndexEntry Schema Extension | Unit |
+| [02-02](../acceptance-criteria/02-02-index-json-field-population-contract.md) | index.json Field Population Contract | Unit |
+| [02-03](../acceptance-criteria/02-03-backward-compatible-decode-test.md) | Backward-Compatible Old-Shape Decode Test | Unit |
+
+## Original Criteria Overview
 
 1. `PersonaIndexEntry` struct is extended with `Provider`, `Model`, and `Tasks`/`Tags` fields carrying correct struct tags, without altering the existing four fields' names or tags.
 2. The index.json generation path populates the new fields from each persona's validated `provider`/`model` (and, where present, `tasks`/`tags`) YAML metadata.
 3. Decoding an old-shape (pre-change) index.json against the extended struct succeeds without error, and the new fields decode as their zero values (proving backward compatibility).
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.6_community_registry_hub/`_
 
 ## Technical Considerations
 

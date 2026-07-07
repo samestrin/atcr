@@ -30,7 +30,15 @@
 - **Relevant:** Directly satisfies AC7 (fixture-enforced model-in-metadata convention) and AC8 (documented forward-looking human-names rule), making both conventions self-enforcing for contributors who never read this plan's design history.
 - **Time-bound:** Completed within this sprint, as the final theme gating the plan's authoring contract before the community channel goes canonical.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [06-01](../acceptance-criteria/06-01-model-in-structured-metadata-convention.md) | Model-in-Structured-Metadata Convention Documented | Unit |
+| [06-02](../acceptance-criteria/06-02-all-human-names-convention-documented.md) | All-Human-Names Convention Documented as Forward-Looking Rule | Unit |
+| [06-03](../acceptance-criteria/06-03-fixture-test-asserts-bound-model-metadata.md) | Fixture Test Asserts Bound Model in Structured Metadata | Unit |
+
+## Original Criteria Overview
 
 1. `docs/personas-authoring.md` documents the model-in-structured-metadata convention and cross-references where the fixture test enforces it.
 2. `docs/personas-authoring.md` documents the all-human-names convention as a forward-looking rule for new persona contributions (consistent with Epic 23.0 AC5's phrasing/intent).

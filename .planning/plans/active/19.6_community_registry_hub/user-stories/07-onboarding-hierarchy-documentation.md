@@ -37,7 +37,15 @@
 - **Relevant:** Directly satisfies AC5 and the plan's stated goal of pairing the persona/model work with onboarding docs that lead with the monetizing Synthetic path.
 - **Time-bound:** Completed within the sprint phase allocated to Theme 7, after Themes 3 and 4 merge.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [07-01](../acceptance-criteria/07-01-readme-quickstart-hierarchy-rewrite.md) | README.md Quickstart Leads with Synthetic, Summarizes the 5-Tier Hierarchy | Manual |
+| [07-02](../acceptance-criteria/07-02-personas-install-tier-detail-and-discover-flow.md) | `docs/personas-install.md` Documents Tier Detail and the Discover-and-Install-by-Model Flow | Manual |
+| [07-03](../acceptance-criteria/07-03-personas-authoring-discover-by-model-cross-reference.md) | `docs/personas-authoring.md` Cross-References the Discover-by-Model Flow | Manual |
+
+## Original Criteria Overview
 
 1. README.md's Quickstart section leads with `atcr quickstart` (Synthetic) as the one-command default, then summarizes the remaining hierarchy tiers with their caveats in order (DashScope, Chutes→Featherless, LiteLLM, frontier/majors).
 2. `docs/personas-install.md` documents DashScope as a secondary flat-rate option (manual registry snippet + docs link, no quickstart wiring), Chutes then Featherless as explore-only with performance/context/concurrency caveats, LiteLLM as an Advanced aggregation-proxy note, and frontier/majors personas as opt-in "bring your own key" — plus the full discover-and-install-by-model flow (`personas search` → `install` → `list` → `test`).

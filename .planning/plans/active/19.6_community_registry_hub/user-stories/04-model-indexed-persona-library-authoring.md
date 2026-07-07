@@ -30,7 +30,19 @@
 - **Relevant:** This is the content deliverable that makes AC3's model-indexed library and AC6's discover-by-model flow meaningful — without genuinely model-tuned personas to find, the search/index machinery has nothing worth discovering.
 - **Time-bound:** Deliverable within this sprint, authored as its own phase given the plan's noted risk that content authoring is judgment-heavy and should not block the schema/network code's merge cadence (per plan.md's risk mitigation).
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-frontier-flagship-fallback-persona-pairs.md) | Frontier Provider Flagship+Fallback Persona Pairs | Unit |
+| [04-02](../acceptance-criteria/04-02-flat-rate-open-model-personas.md) | Flat-Rate Open Model Persona Coverage | Unit |
+| [04-03](../acceptance-criteria/04-03-vendor-grounded-prompt-structure-compliance.md) | Vendor-Grounded Prompt Phrasing and Canonical Structure Compliance | Unit |
+| [04-04](../acceptance-criteria/04-04-fixture-authoring-and-fixture-test-pass.md) | Fixture Authoring and Fixture-Test Pass | Unit |
+| [04-05](../acceptance-criteria/04-05-community-index-registration.md) | `personas/community/index.json` Registration | Unit |
+| [04-06](../acceptance-criteria/04-06-strict-schema-and-naming-compliance.md) | Strict Schema Validation and Human-Name Convention Compliance | Unit |
+| [04-07](../acceptance-criteria/04-07-model-appropriate-task-scoping-differentiation.md) | Model-Appropriate Task-Scoping Differentiation | Unit + Manual |
+
+## Original Criteria Overview
 
 1. Every one of the 3 frontier providers (Anthropic, OpenAI, Google) has a flagship+fallback persona pair, each bound to its specific model via a validated `provider`+`model` YAML field.
 2. Each flat-rate open model in scope (DeepSeek, Qwen, Kimi, GLM) has at least one persona bound to its specific model, task-scoped to a review lens suited to that model.
