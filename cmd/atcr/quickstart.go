@@ -274,6 +274,12 @@ func appendExport(profile, env, key string) error {
 	if err != nil {
 		return err
 	}
+	// Tighten to 0600 only on a file we create — a profile holding a secret should
+	// not be group/other-readable. An existing profile the user named keeps its own
+	// mode untouched: appendExport was asked to append, not to re-permission a file
+	// it did not create.
+	_, statErr := os.Stat(profile)
+	created := errors.Is(statErr, fs.ErrNotExist)
 	f, err := os.OpenFile(profile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -285,7 +291,10 @@ func appendExport(profile, env, key string) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Chmod(profile, 0o600)
+	if created {
+		return os.Chmod(profile, 0o600)
+	}
+	return nil
 }
 
 // profileIsAtcrOwned reports whether the shell-profile path the user named would
