@@ -66,6 +66,37 @@ func communityPath(elem ...string) string {
 	return filepath.Join(append([]string{communityDir}, elem...)...)
 }
 
+// sectionBody returns the text of the markdown section introduced by heading, up
+// to the next "## " heading (or end of file). Used to anchor a contract check to
+// the section it belongs in, rather than accepting it anywhere in the file.
+func sectionBody(text, heading string) string {
+	i := strings.Index(text, heading)
+	if i < 0 {
+		return ""
+	}
+	rest := text[i+len(heading):]
+	if j := strings.Index(rest, "\n## "); j >= 0 {
+		return rest[:j]
+	}
+	return rest
+}
+
+// sentinelRenderContext populates every persona template variable with a
+// distinctive marker so a test can prove each required field's VALUE actually
+// reaches the rendered output — a source-text token in a dead {{if false}} branch
+// or a comment would pass a presence check yet never render.
+func sentinelRenderContext(diff string) payload.PayloadContext {
+	return payload.PayloadContext{
+		AgentName:   "SENTINEL_AGENT",
+		BaseRef:     "SENTINEL_BASE",
+		HeadRef:     "SENTINEL_HEAD",
+		FileCount:   4242,
+		PayloadMode: "SENTINEL_MODE",
+		Payload:     diff,
+		ScopeRule:   "SENTINEL_SCOPE",
+	}
+}
+
 // TestCommunityPersonas_FixtureAndPromptCategory is the per-persona fixture
 // contract for the library (mirrors the built-in fixtureTest): (1) the persona's
 // category word is authored into the prompt TEMPLATE itself — not merely present
@@ -88,7 +119,9 @@ func TestCommunityPersonas_FixtureAndPromptCategory(t *testing.T) {
 
 			out, err := payload.RenderPrompt(string(text), renderContext(string(diff)))
 			require.NoErrorf(t, err, "RenderPrompt(%q)", p.Slug)
-			require.NotContainsf(t, out, "{{", "persona %q left an unrendered template action", p.Slug)
+			require.NotContainsf(t, out, "{{", "persona %q left an unrendered open action", p.Slug)
+			require.NotContainsf(t, out, "}}", "persona %q left a stray close action", p.Slug)
+			require.Containsf(t, out, "tester", "persona %q did not render AgentName into output", p.Slug)
 		})
 	}
 }
@@ -111,8 +144,15 @@ func TestCommunityPersonas_PromptStructure(t *testing.T) {
 			}
 			require.Containsf(t, text, "## Role", "persona %q missing mandatory ## Role heading", p.Slug)
 			require.Containsf(t, text, "## Output Format", "persona %q missing mandatory ## Output Format heading", p.Slug)
-			require.Containsf(t, text, canonicalOutputContract,
+
+			// Anchor the contract to its own section: the header line AND the
+			// "7 pipe-delimited columns" rule text must live inside ## Output
+			// Format, not merely somewhere in the file.
+			outputSection := sectionBody(text, "## Output Format")
+			require.Containsf(t, outputSection, canonicalOutputContract,
 				"persona %q ## Output Format must carry the 7-column contract byte-for-byte", p.Slug)
+			require.Containsf(t, outputSection, "7 pipe-delimited columns",
+				"persona %q ## Output Format must keep the one-per-line / 7-column rule text", p.Slug)
 
 			matches := vendorGuidanceRe.FindAllStringSubmatch(text, -1)
 			require.Lenf(t, matches, 1, "persona %q must carry exactly one vendor-guidance citation", p.Slug)
@@ -134,7 +174,33 @@ func TestCommunityPersonas_RendersInBothToolStates(t *testing.T) {
 			ctx.ToolsEnabled = tools
 			out, err := payload.RenderPrompt(string(raw), ctx)
 			require.NoErrorf(t, err, "RenderPrompt(%q) ToolsEnabled=%v", p.Slug, tools)
-			require.NotContainsf(t, out, "{{", "persona %q left an unrendered action (ToolsEnabled=%v)", p.Slug, tools)
+			require.NotContainsf(t, out, "{{", "persona %q left an unrendered open action (ToolsEnabled=%v)", p.Slug, tools)
+			require.NotContainsf(t, out, "}}", "persona %q left a stray close action (ToolsEnabled=%v)", p.Slug, tools)
 		}
+	}
+}
+
+// TestCommunityPersonas_RequiredValuesRender proves each required template
+// variable's VALUE actually reaches the rendered output (AC 04-03 Scenario 5
+// strengthened): a token buried in a dead {{if false}} branch or a comment would
+// satisfy the source-text presence check yet never render, so here every field is
+// given a distinctive sentinel value and the render must surface all of them.
+func TestCommunityPersonas_RequiredValuesRender(t *testing.T) {
+	const sampleDiff = "SENTINEL_DIFF_PAYLOAD"
+	wantValues := []string{
+		"SENTINEL_AGENT", "SENTINEL_SCOPE", "4242",
+		"SENTINEL_BASE", "SENTINEL_HEAD", "SENTINEL_MODE", sampleDiff,
+	}
+	for _, p := range communityPersonas {
+		t.Run(p.Slug, func(t *testing.T) {
+			raw, err := os.ReadFile(communityPath(p.Slug + ".md"))
+			require.NoErrorf(t, err, "read prompt %s", p.Slug)
+			out, err := payload.RenderPrompt(string(raw), sentinelRenderContext(sampleDiff))
+			require.NoErrorf(t, err, "RenderPrompt(%q)", p.Slug)
+			for _, want := range wantValues {
+				require.Containsf(t, out, want,
+					"persona %q rendered output is missing a required field value %q", p.Slug, want)
+			}
+		})
 	}
 }
