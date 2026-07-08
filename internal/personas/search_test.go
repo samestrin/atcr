@@ -457,3 +457,46 @@ func TestSearchWithOptions_KeywordReachesStructuredFields(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, got, 7)
 }
+
+// --- AC 03-02: positional keyword backward-compatibility ---------------------
+
+// TestSearchWithOptions_KeywordPlusFlagAND covers AC 03-02 Scenario 2: a positional
+// keyword combined with a structured flag narrows results by AND — the keyword path
+// is not disabled by the presence of a flag. Keyword "coder" matches dan+omar (on
+// Description "Coder"/"Coder alt"); adding --provider deepseek keeps only dan.
+func TestSearchWithOptions_KeywordPlusFlagAND(t *testing.T) {
+	srv := testServer(t, map[string]string{"/index.json": structuredIndexJSON})
+
+	got, err := SearchWithOptions(srv.Client(), srv.URL, SearchOptions{Keyword: "coder"})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"dan", "omar"}, resultNames(got))
+
+	got, err = SearchWithOptions(srv.Client(), srv.URL, SearchOptions{Keyword: "coder", Provider: "deepseek"})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"dan"}, resultNames(got),
+		"keyword must combine with --provider as AND, not be replaced by it")
+}
+
+// TestSearch_OldShapeKeywordParity covers AC 03-02 Error Scenario 1: for old-shape
+// entries carrying NO structured Provider/Model, keyword-only results are identical
+// in set membership to the pre-extension Name/Description behavior — the additive
+// structured matching never drops or alters a legacy Name/Description match. Uses
+// the old-shape fakeIndexJSON via both the legacy Search wrapper and the new
+// SearchWithOptions to prove parity across both entry points.
+func TestSearch_OldShapeKeywordParity(t *testing.T) {
+	srv := testServer(t, map[string]string{"/index.json": fakeIndexJSON})
+
+	legacy, err := Search(srv.Client(), srv.URL, "security")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"security/owasp", "security/sans"}, resultNames(legacy))
+
+	opts, err := SearchWithOptions(srv.Client(), srv.URL, SearchOptions{Keyword: "security"})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, resultNames(legacy), resultNames(opts),
+		"SearchWithOptions keyword path must match the legacy Search wrapper for old-shape entries")
+
+	// Description-only substring on an old-shape entry still matches (no regression).
+	desc, err := Search(srv.Client(), srv.URL, "hot-path")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"performance/tracer"}, resultNames(desc))
+}
