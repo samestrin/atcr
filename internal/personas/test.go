@@ -62,13 +62,20 @@ func (r TemplateFixtureRunner) RunFixture(name string) (FixtureOutcome, error) {
 }
 
 // renderFixture renders a persona template with the fixture patch as its payload
-// and reports a passing case when no unrendered `{{` action survives.
+// and reports a passing case only when the render actually substituted its
+// variables: no unrendered `{{`/`}}` action survives AND the AgentName value was
+// interpolated. The AgentName check catches a structurally broken template that
+// dropped every `{{ }}` token — it renders with no braces yet substitutes
+// nothing, which is not a valid persona render.
 func renderFixture(name, text, patchContent string) (FixtureOutcome, error) {
-	out, err := payload.RenderPrompt(text, fixtureCtx(patchContent))
+	ctx := fixtureCtx(patchContent)
+	out, err := payload.RenderPrompt(text, ctx)
 	if err != nil {
 		return FixtureOutcome{}, fmt.Errorf("render persona %q: %w", name, err)
 	}
-	if strings.Contains(out, "{{") {
+	rendered := !strings.Contains(out, "{{") && !strings.Contains(out, "}}") &&
+		strings.Contains(out, ctx.AgentName)
+	if !rendered {
 		return FixtureOutcome{HasFixture: true, Passed: 0, Total: 1}, nil
 	}
 	return FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}, nil
