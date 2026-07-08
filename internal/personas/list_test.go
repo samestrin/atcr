@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,6 +42,30 @@ func TestListTiers_ThreeSourcesInPrecedence(t *testing.T) {
 	assert.Equal(t, "1.0.0", byName["security/owasp"].Version, "community pin version shown")
 	require.Contains(t, byName, "greta")
 	assert.Equal(t, "built-in", byName["greta"].Source, "un-overridden persona stays built-in")
+}
+
+func TestListTiers_CaseInsensitiveBuiltinDedup(t *testing.T) {
+	projectDir := t.TempDir()
+	communityDir := t.TempDir()
+
+	// Namespaced community persona that does not collide.
+	require.NoError(t, os.MkdirAll(filepath.Join(communityDir, "security"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(communityDir, "security", "Owasp.yaml"), []byte(validPersonaYAML), 0o644))
+	// Mixed-case name that matches a built-in when compared case-insensitively.
+	require.NoError(t, os.WriteFile(filepath.Join(communityDir, "Bruce.yaml"), []byte(validPersonaYAML), 0o644))
+
+	metas, err := ListTiers(projectDir, communityDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "collides with built-in")
+
+	byName := map[string]PersonaMeta{}
+	for _, m := range metas {
+		byName[strings.ToLower(m.Name)] = m
+	}
+	require.Contains(t, byName, "security/owasp")
+	require.Contains(t, byName, "bruce")
+	assert.Equal(t, "built-in", byName["bruce"].Source, "mixed-case community file must be treated as built-in collision")
+	assert.NotContains(t, byName, "Bruce", "Bruce must not appear separately from bruce")
 }
 
 // --- FormatRate -------------------------------------------------------------
