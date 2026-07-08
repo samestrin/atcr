@@ -58,7 +58,7 @@ The loader canonicalizes every entry (trim whitespace → strip **all** leading 
 
 ### Model-in-structured-metadata convention
 
-A persona's bound `model` must live in its **structured metadata** — the `model:` YAML key above — and never only in the free-text `description`. Discovery *by model* (`atcr personas search --model …`) matches the structured field, so a model named only in prose is invisible to search and does not satisfy the authoring contract.
+A persona's bound `model` must live in its **structured metadata** — the `model:` YAML key above — and never only in the free-text `description`. Discovery *by model* (`atcr personas search --model …`) matches the structured `model` field of the community `index.json` entry — kept in lockstep with this YAML key by the [section 5](#5-the-community-index-entry) gate — so a model named only in prose is invisible to search and does not satisfy the authoring contract.
 
 This is a **forward-looking rule for every community/library persona**: the persona fixture test in `internal/personas/test.go` (`TemplateFixtureRunner.RunFixture`) asserts the resolved persona carries a non-empty `model` in structured metadata — a blank or missing value fails `go test` with a clear, attributable error — alongside the fixture render check described in [section 3](#3-the-fixture). Embedded built-in personas are model-agnostic and **exempt** (they carry no `provider`/`model`); this exemption is built-in-only, and community contributions are held to the convention.
 
