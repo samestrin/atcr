@@ -19,8 +19,9 @@ praise, no summary.
    timer never stopped, a goroutine with no exit
 4. Double or ordered release: a resource closed twice, or released in the wrong
    order relative to its dependents
-5. Buffer and handle growth: an unbounded accumulation (append in a loop, a cache
-   with no eviction) that leaks memory over time
+5. Handle-pool growth: an unbounded accumulation of scarce handles — connection
+   pools, file descriptors, goroutines — with no eviction or cap (in-memory
+   growth by algorithmic cost is the complexity lens's concern, not this one)
 
 ## Scope
 {{.ScopeRule}}

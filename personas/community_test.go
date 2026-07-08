@@ -263,6 +263,22 @@ func TestCommunityPersonas_Differentiation(t *testing.T) {
 	}
 }
 
+// TestCommunityPersonas_DistinctCategories is a categorical anti-duplication
+// guard complementing the AC-locked Jaccard gate (whose 0.85 threshold is loose
+// vs the observed ~0.168 — see TD-009): the 10 personas' finding-category words
+// must all be distinct, so a "same lens, renamed target" duplicate the loose
+// Jaccard would miss is caught here.
+func TestCommunityPersonas_DistinctCategories(t *testing.T) {
+	seen := make(map[string]string, len(communityPersonas))
+	for _, p := range communityPersonas {
+		if other, dup := seen[p.Category]; dup {
+			t.Fatalf("personas %q and %q share category %q — lenses must be distinct", other, p.Slug, p.Category)
+		}
+		seen[p.Category] = p.Slug
+	}
+	require.Lenf(t, seen, len(communityPersonas), "every persona must have a distinct category")
+}
+
 // TestCommunityPersonas_DistinctTaskScoping covers AC 04-07 DoD: each persona
 // carries a distinct primary task tag in the index, so the library spans distinct
 // review lenses rather than repeating one.

@@ -7,7 +7,7 @@
     "provider": "openrouter",
     "model": "anthropic/claude-opus-4.8",
     "tasks": ["architecture-review"],
-    "tags": ["architecture", "coupling", "claude", "frontier"]
+    "tags": ["architecture", "coupling", "claude", "frontier-vendor"]
   },
   {
     "name": "sonny",
@@ -17,7 +17,7 @@
     "provider": "openrouter",
     "model": "anthropic/claude-sonnet-4.5",
     "tasks": ["correctness-review"],
-    "tags": ["logic", "correctness", "claude", "frontier"]
+    "tags": ["logic", "correctness", "claude", "frontier-vendor"]
   },
   {
     "name": "gene",
@@ -27,7 +27,7 @@
     "provider": "openrouter",
     "model": "openai/gpt-5",
     "tasks": ["api-review"],
-    "tags": ["contract", "compatibility", "gpt", "frontier"]
+    "tags": ["contract", "compatibility", "gpt", "frontier-vendor"]
   },
   {
     "name": "milo",
@@ -37,7 +37,7 @@
     "provider": "openrouter",
     "model": "openai/gpt-5-mini",
     "tasks": ["validation-review"],
-    "tags": ["validation", "input", "gpt", "frontier"]
+    "tags": ["validation", "input", "gpt", "frontier-vendor"]
   },
   {
     "name": "gia",
@@ -47,7 +47,7 @@
     "provider": "openrouter",
     "model": "google/gemini-2.5-pro",
     "tasks": ["concurrency-review"],
-    "tags": ["race", "concurrency", "gemini", "frontier"]
+    "tags": ["race", "concurrency", "gemini", "frontier-vendor"]
   },
   {
     "name": "flint",
@@ -57,7 +57,7 @@
     "provider": "openrouter",
     "model": "google/gemini-2.5-flash",
     "tasks": ["resource-review"],
-    "tags": ["leak", "lifecycle", "gemini", "frontier"]
+    "tags": ["leak", "lifecycle", "gemini", "frontier-vendor"]
   },
   {
     "name": "delia",
