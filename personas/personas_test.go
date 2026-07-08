@@ -2,6 +2,7 @@ package personas
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -14,7 +15,7 @@ func TestNames_ReturnsAllNine(t *testing.T) {
 	require.Len(t, names, 9)
 	require.Equal(t, []string{
 		"bruce", "greta", "kai", "mira", "dax",
-		"sentinel", "tracer", "idiomatic", "otto",
+		"sasha", "penny", "ingrid", "otto",
 	}, names)
 }
 
@@ -64,7 +65,7 @@ func TestEmbeddedFilesMatchNames(t *testing.T) {
 // TestGet_BonusPersonasNonEmpty confirms each of the three bonus personas
 // resolves to a non-empty embedded template (AC 01-01 Scenario 2).
 func TestGet_BonusPersonasNonEmpty(t *testing.T) {
-	for _, name := range []string{"sentinel", "tracer", "idiomatic"} {
+	for _, name := range []string{"sasha", "penny", "ingrid"} {
 		s, err := Get(name)
 		require.NoErrorf(t, err, "Get(%q)", name)
 		require.NotEmptyf(t, s, "Get(%q) should be non-empty", name)
@@ -89,7 +90,7 @@ func renderContext(diff string) payload.PayloadContext {
 // TestBonusPersonas_TemplateRenders confirms each bonus persona parses and
 // executes against PayloadContext with no unrendered template actions left.
 func TestBonusPersonas_TemplateRenders(t *testing.T) {
-	for _, name := range []string{"sentinel", "tracer", "idiomatic"} {
+	for _, name := range []string{"sasha", "penny", "ingrid"} {
 		text, err := Get(name)
 		require.NoErrorf(t, err, "Get(%q)", name)
 		out, err := payload.RenderPrompt(text, renderContext("<sample diff>"))
@@ -119,14 +120,51 @@ func fixtureTest(t *testing.T, personaName, fixturePath, wantCategory string) {
 	require.NotContainsf(t, out, "{{", "persona %q left an unrendered action", personaName)
 }
 
-func TestSentinelFixture(t *testing.T) {
-	fixtureTest(t, "sentinel", "testdata/sentinel_fixture.patch", "injection")
+func TestSashaFixture(t *testing.T) {
+	fixtureTest(t, "sasha", "testdata/sasha_fixture.patch", "injection")
 }
 
-func TestTracerFixture(t *testing.T) {
-	fixtureTest(t, "tracer", "testdata/tracer_fixture.patch", "n+1")
+func TestPennyFixture(t *testing.T) {
+	fixtureTest(t, "penny", "testdata/penny_fixture.patch", "n+1")
 }
 
-func TestIdiomaticFixture(t *testing.T) {
-	fixtureTest(t, "idiomatic", "testdata/idiomatic_fixture.patch", "error")
+func TestIngridFixture(t *testing.T) {
+	fixtureTest(t, "ingrid", "testdata/ingrid_fixture.patch", "error")
+}
+
+// goWordRe matches the standalone language name "go"/"Go" (whole word,
+// case-insensitive) but not compound words like "goroutine" or "good".
+var goWordRe = regexp.MustCompile(`(?i)\bgo\b`)
+
+// TestIngridGeneralizedBeyondGo covers AC 05-02: ingrid's Role/Focus read as a
+// language-agnostic idiomatic lens (no literal "Go" as the review target), and a
+// NON-Go fixture (a Python swallowed-exception diff) exercises the generalized
+// lens and passes — proving "generalized beyond Go" by an executed check, not
+// prose. The original Go fixture (Edge Case 2) is still covered by TestIngridFixture.
+func TestIngridGeneralizedBeyondGo(t *testing.T) {
+	text, err := Get("ingrid")
+	require.NoError(t, err)
+
+	roleFocus := strings.ToLower(sectionBody(text, "## Role") + sectionBody(text, "## Focus"))
+	require.NotRegexp(t, goWordRe, roleFocus,
+		"ingrid Role/Focus must be language-agnostic — no literal 'Go' as the review target")
+	// Beyond the bare word "go", ban Go-specific construct tokens so the lens is
+	// framed generally (thread/coroutine, not goroutine; stdlib category, not strconv).
+	for _, tok := range []string{"goroutine", "golang", "strconv", "defer ", "sync."} {
+		require.NotContainsf(t, roleFocus, tok,
+			"ingrid Role/Focus must not name the Go-specific construct %q", tok)
+	}
+
+	require.Contains(t, strings.ToLower(text), "error",
+		"ingrid must still name a concrete idiomatic category (error handling)")
+
+	diff, err := os.ReadFile("testdata/ingrid_lang2_fixture.patch")
+	require.NoError(t, err, "non-Go fixture must exist")
+	out, err := payload.RenderPrompt(text, renderContext(string(diff)))
+	require.NoError(t, err, "generalized ingrid must render against a non-Go fixture")
+	require.NotContains(t, out, "{{", "no unresolved template action against the non-Go fixture")
+	// Non-vacuous: the Python fixture's payload must actually flow into the render,
+	// proving the generalized lens is exercised against a non-Go sample.
+	require.Contains(t, out, "except Exception",
+		"the non-Go (Python) fixture payload must render into the prompt")
 }

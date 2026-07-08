@@ -207,7 +207,9 @@ func TestInstallBundle_CleanInstall(t *testing.T) {
 	}
 	assert.FileExists(t, filepath.Join(dir, "framework", "django-orm.yaml"))
 	assert.FileExists(t, filepath.Join(dir, "security", "secrets.yaml"))
-	assert.Equal(t, int32(4), atomic.LoadInt32(&hits))
+	// InstallBundle routes through InstallUnit, so each member triggers a YAML
+	// fetch plus a co-located .md fetch (404 for binding-only members).
+	assert.Equal(t, int32(8), atomic.LoadInt32(&hits))
 }
 
 func TestInstallBundle_PartialSkip(t *testing.T) {
@@ -231,8 +233,8 @@ func TestInstallBundle_PartialSkip(t *testing.T) {
 	assert.True(t, present["language/python-types"])
 	assert.False(t, present["security/owasp"])
 	assert.False(t, present["security/secrets"])
-	// Only the two missing members are fetched.
-	assert.Equal(t, int32(2), atomic.LoadInt32(&hits))
+	// Only the two missing members are fetched, each with YAML + .md lookup.
+	assert.Equal(t, int32(4), atomic.LoadInt32(&hits))
 }
 
 func TestInstallBundle_AllPresentNoFetch(t *testing.T) {
@@ -283,4 +285,59 @@ func TestInstall_RejectsBundlePrefix(t *testing.T) {
 	err := Install(http.DefaultClient, "http://unused", "bundle/django", t.TempDir())
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrPersonaNotFound)
+}
+
+// TestInstallBundle_WritesMarkdownUnit verifies InstallBundle routes members
+// through InstallUnit, which delivers the co-located .md custom prompt as part
+// of the unit (Clarification C2).
+func TestInstallBundle_WritesMarkdownUnit(t *testing.T) {
+	routes := djangoRoutes()
+	routes["/framework/django-orm.md"] = "# Django ORM reviewer\n"
+	routes["/security/secrets.md"] = "# Secrets reviewer\n"
+	var hits int32
+	srv := countingServer(t, routes, &hits)
+	dir := t.TempDir()
+
+	out, err := InstallBundle(srv.Client(), srv.URL, "django", dir)
+	require.NoError(t, err)
+	require.Len(t, out, 4)
+	for _, o := range out {
+		assert.NoError(t, o.Err, "member %s", o.Name)
+	}
+
+	assert.FileExists(t, filepath.Join(dir, "framework", "django-orm.md"))
+	assert.FileExists(t, filepath.Join(dir, "security", "secrets.md"))
+	// Members without a co-located .md are binding-only and install YAML alone.
+	assert.NoFileExists(t, filepath.Join(dir, "language", "python-types.md"))
+}
+
+// TestInstallBundle_StrictDecodeRejectsUnknownField verifies bundle members are
+// validated with the strict community-persona schema (AC 04-06), so a smuggled
+// unknown field is rejected.
+func TestInstallBundle_StrictDecodeRejectsUnknownField(t *testing.T) {
+	badYAML := validPersonaYAML + "\nunknown_strict_field: value\n"
+	routes := map[string]string{
+		"/framework/django-orm.yaml":  badYAML,
+		"/language/python-types.yaml": validPersonaYAML,
+		"/security/owasp.yaml":        validPersonaYAML,
+		"/security/secrets.yaml":      validPersonaYAML,
+	}
+	var hits int32
+	srv := countingServer(t, routes, &hits)
+	dir := t.TempDir()
+
+	out, err := InstallBundle(srv.Client(), srv.URL, "django", dir)
+	require.NoError(t, err)
+	require.Len(t, out, 4)
+
+	var failed []string
+	for _, o := range out {
+		if o.Err != nil {
+			failed = append(failed, o.Name)
+			assert.Contains(t, o.Err.Error(), "not found in type")
+		}
+	}
+	assert.Equal(t, []string{"framework/django-orm"}, failed)
+	// The strict member's YAML must not have been written.
+	assert.NoFileExists(t, filepath.Join(dir, "framework", "django-orm.yaml"))
 }

@@ -1,0 +1,16 @@
+diff --git a/internal/report/export.go b/internal/report/export.go
+index 1111111..2222222 100644
+--- a/internal/report/export.go
++++ b/internal/report/export.go
+@@ -7,6 +7,13 @@ package report
+
++// Export opens a file and writes the report but never closes the handle,
++// leaking a file descriptor on every call.
++func Export(path string, data []byte) error {
++	f, err := os.Create(path)
++	if err != nil {
++		return err
++	}
++	_, err = f.Write(data) // f is never closed: file-descriptor leak
++	return err
++}

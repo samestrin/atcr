@@ -2,10 +2,11 @@ package personas
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/registry"
 )
 
 // personaNameRe constrains persona names to a safe character class. The dot is
@@ -14,14 +15,25 @@ import (
 // "//". The segment and absolute-path checks below are defense in depth.
 var personaNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_/-]*$`)
 
-// PersonasDir returns the per-user community personas directory
-// (os.UserConfigDir()/atcr/personas). The directory is not created here.
+// PersonasDir returns the per-user community personas directory. It MUST equal
+// the resolver's Registry dir (filepath.Dir(DefaultRegistryPath())/personas) so a
+// fetched persona lands on internal/registry.ResolvePersona's chain. It is derived
+// from DefaultRegistryPath() — the same source the resolver uses — rather than
+// os.UserConfigDir(), which on darwin resolves to ~/Library/Application Support and
+// would strand installs in a directory the resolver never searches. The directory
+// is not created here.
+//
+// Back-compat (TD-001): redefining this from os.UserConfigDir() moves the effective
+// darwin dir from ~/Library/Application Support/atcr/personas to ~/.config/atcr/personas.
+// No pre-public-launch back-compat migration is owed — the live install flow is not
+// exercised until samestrin/atcr is public, so no real user has personas at the old
+// path yet. A one-time move/symlink migration is deferred to a bounded fast-follow.
 func PersonasDir() (string, error) {
-	cfg, err := os.UserConfigDir()
+	regPath, err := registry.DefaultRegistryPath()
 	if err != nil {
-		return "", fmt.Errorf("resolving user config dir: %w", err)
+		return "", fmt.Errorf("resolving registry path: %w", err)
 	}
-	return filepath.Join(cfg, "atcr", "personas"), nil
+	return filepath.Join(filepath.Dir(regPath), "personas"), nil
 }
 
 // validatePersonaName rejects names that are empty, absolute, contain a

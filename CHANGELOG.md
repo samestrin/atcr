@@ -1,3 +1,28 @@
+## [19.6.0] - 2026-07-08
+
+Make the community persona channel canonical (fetched from `samestrin/atcr`, not compiled into the binary), add structured provider/model metadata for discover-by-model search, ship a model-indexed human-named persona library, and lead onboarding docs with the monetizing Synthetic path.
+
+### Added
+
+- Model-indexed community persona library: 10 new personas bound to specific provider/model pairs across Claude, GPT, Gemini, DeepSeek, Qwen, Kimi, and GLM, each with vendor-tuned prompt phrasing and a passing fixture.
+- `atcr personas search --model`/`--provider` flags for structured discover-by-model search, plus Provider/Model columns in search output.
+- `--offline` flag for `atcr init`/`atcr quickstart` to scaffold from embedded built-ins without a network fetch.
+
+### Changed
+
+- Default community persona registry now fetches from `samestrin/atcr` (fetch-and-pinned, with `atcr personas upgrade` to advance the pin) instead of the external `atcr/personas` registry.
+- Renamed built-in personas `sentinel`→`sasha`, `tracer`→`penny`, `idiomatic`→`ingrid` (all-human-names convention; `ingrid` generalized beyond Go).
+- `README.md` Quickstart now leads with the Synthetic onboarding path; frontier-provider personas repositioned as opt-in "bring your own key."
+- `atcr personas list` now labels sources consistently across all three tiers (project/community/built-in).
+
+### Fixed
+
+- `init`/`quickstart` no longer overwrite existing on-disk persona files, even with `--force`.
+- Sanitized control characters in persona search/list table output.
+- Guarded persona install/fetch paths against symlink escapes and added retry/backoff for transient 5xx/429 fetch errors.
+
+*Shipped via /execute-sprint (sprint 19.6)*
+
 ## [Technical Debt] - 2026-07-06
 
 ### Fixed

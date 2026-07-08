@@ -1,0 +1,12 @@
+diff --git a/internal/api/handler.go b/internal/api/handler.go
+index 1111111..2222222 100644
+--- a/internal/api/handler.go
++++ b/internal/api/handler.go
+@@ -10,6 +10,11 @@ package api
+
++// GetItem indexes the slice with a caller-supplied offset and performs no
++// validation of the parsed value before use.
++func GetItem(items []Item, idxParam string) Item {
++	i, _ := strconv.Atoi(idxParam) // error ignored; no bounds/range validation
++	return items[i]                // panics on negative or out-of-range input
++}

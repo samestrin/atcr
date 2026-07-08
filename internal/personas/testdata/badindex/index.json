@@ -1,0 +1,6 @@
+[
+  {"name":"provmismatch","version":"1.0.0","description":"provider disagrees with source YAML; model matches","path":"provmismatch.yaml","provider":"openai","model":"claude-sonnet-4-6"},
+  {"name":"modelmismatch","version":"1.0.0","description":"model disagrees with source YAML; provider matches","path":"modelmismatch.yaml","provider":"anthropic","model":"gpt-4o"},
+  {"name":"emptyprov","version":"1.0.0","description":"index entry omits provider","path":"emptyprov.yaml","provider":"","model":"claude-sonnet-4-6"},
+  {"name":"emptymodel","version":"1.0.0","description":"index entry omits model","path":"emptymodel.yaml","provider":"anthropic","model":""}
+]

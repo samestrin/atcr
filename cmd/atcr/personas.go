@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -130,7 +131,11 @@ func newPersonasInstallCmd() *cobra.Command {
 				}
 				return installBundle(cmd, dir, bundleName)
 			}
-			if err := commpersonas.Install(personasClient, commpersonas.BaseURL(), name, dir); err != nil {
+			// InstallUnit delivers the complete self-contained unit — the YAML plus
+			// its co-located custom prompt (<name>.md) when present — and enforces
+			// the C3 fetched-prompt guardrails, so `personas install` and the
+			// init/quickstart fetch-and-pin path deliver identical units (C2).
+			if err := commpersonas.InstallUnit(personasClient, commpersonas.BaseURL(), name, dir); err != nil {
 				return err
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Installed persona %q\n", name)
@@ -179,7 +184,9 @@ func newPersonasListCmd() *cobra.Command {
 			if scores, _ := cmd.Flags().GetBool("scores"); scores {
 				return listPersonasWithScores(cmd, dir)
 			}
-			metas, listErr := commpersonas.List(dir)
+			// Show all three resolver tiers (project > community > built-in).
+			projectDir := filepath.Join(".atcr", "personas")
+			metas, listErr := commpersonas.ListTiers(projectDir, dir)
 			if listErr != nil {
 				// Degrade gracefully: warn but still render the built-ins.
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)
@@ -199,7 +206,10 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 	if err != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not read scorecard data: %v\n", err)
 	}
-	scored, listErr := commpersonas.ListWithScores(dir, data.rates)
+	// Use the same three-tier resolver ordering as the plain list so the Source
+	// column is consistent and project overrides shadow community/built-ins.
+	projectDir := filepath.Join(".atcr", "personas")
+	scored, listErr := commpersonas.ListTiersWithScores(projectDir, dir, data.rates)
 	if listErr != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)
 	}
@@ -216,26 +226,54 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 }
 
 func newPersonasSearchCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "search <keyword>",
-		Short: "Search the community repository by keyword",
-		Args:  usageArgs(cobra.ExactArgs(1)),
+	cmd := &cobra.Command{
+		Use:   "search [keyword]",
+		Short: "Search the community repository by keyword, --model, or --provider",
+		Long: "Search community personas. A positional keyword matches a persona's name,\n" +
+			"description, provider, or model. --model and --provider filter on the\n" +
+			"structured index fields only (never free text) and combine with the keyword\n" +
+			"and each other as AND conditions. Discover a persona by the model you hold:\n" +
+			"`atcr personas search --model deepseek`.",
+		// Relaxed from ExactArgs(1): a --model/--provider-only invocation needs no
+		// positional keyword. The RunE guard rejects the all-empty case.
+		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			keyword := strings.TrimSpace(args[0])
-			if keyword == "" {
-				return usageError(fmt.Errorf("keyword cannot be empty"))
+			var keyword string
+			if len(args) == 1 {
+				keyword = strings.TrimSpace(args[0])
 			}
-			entries, err := commpersonas.Search(personasClient, commpersonas.BaseURL(), keyword)
+			model, _ := cmd.Flags().GetString("model")
+			provider, _ := cmd.Flags().GetString("provider")
+			model = strings.TrimSpace(model)
+			provider = strings.TrimSpace(provider)
+
+			// At least one non-empty filter is required; an all-empty invocation must
+			// not silently run an unfiltered whole-index match (AC 03-03).
+			if keyword == "" && model == "" && provider == "" {
+				return usageError(fmt.Errorf("provide a keyword, --model, or --provider"))
+			}
+
+			entries, err := commpersonas.SearchWithOptions(personasClient, commpersonas.BaseURL(),
+				commpersonas.SearchOptions{Keyword: keyword, Model: model, Provider: provider})
 			if err != nil {
 				return err
 			}
 			if len(entries) == 0 {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "No personas found matching %q\n", keyword)
+				// Preserve the exact "matching <keyword>" wording for the keyword path
+				// (AC 03-02 Edge Case 1); a flag-only search has no single keyword.
+				if keyword != "" {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "No personas found matching %q\n", keyword)
+				} else {
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No personas found")
+				}
 				return nil
 			}
 			return renderPersonaSearch(cmd.OutOrStdout(), entries)
 		},
 	}
+	cmd.Flags().String("model", "", "filter by the persona's bound model (structured field; substring, case-insensitive)")
+	cmd.Flags().String("provider", "", "filter by the persona's routing-endpoint provider key (structured field)")
+	return cmd
 }
 
 func newPersonasRemoveCmd() *cobra.Command {
@@ -263,12 +301,11 @@ func newPersonasTestCmd() *cobra.Command {
 		Short: "Run a persona against its fixture and report pass/fail",
 		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dir, err := personasDir()
-			if err != nil {
-				return err
-			}
 			name := args[0]
-			outcome, err := commpersonas.TestPersona(dir, name, personasFixtureRunner)
+			// Resolution of the target (built-in vs. installed community persona) is
+			// owned by personasFixtureRunner's PersonasDir seam, so the command does
+			// not resolve the personas dir itself.
+			outcome, err := commpersonas.TestPersona(name, personasFixtureRunner)
 			if err != nil {
 				return err
 			}
@@ -398,7 +435,8 @@ func formatLanguages(langs []string) string {
 func renderPersonaList(w io.Writer, metas []commpersonas.PersonaMeta) error {
 	rows := make([]string, len(metas))
 	for i, m := range metas {
-		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s", m.Name, m.Version, m.Source, formatLanguages(m.Language))
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s",
+			sanitizeCell(m.Name), sanitizeCell(m.Version), sanitizeCell(m.Source), sanitizeCell(formatLanguages(m.Language)))
 	}
 	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE", rows)
 }
@@ -408,20 +446,31 @@ func renderPersonaList(w io.Writer, metas []commpersonas.PersonaMeta) error {
 func renderScoredList(w io.Writer, scored []commpersonas.ScoredPersona) error {
 	rows := make([]string, len(scored))
 	for i, s := range scored {
-		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s", s.Name, s.Version, s.Source, formatLanguages(s.Language), commpersonas.FormatRate(s.Rate))
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
+			sanitizeCell(s.Name), sanitizeCell(s.Version), sanitizeCell(s.Source),
+			sanitizeCell(formatLanguages(s.Language)), commpersonas.FormatRate(s.Rate))
 	}
 	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION", rows)
 }
 
-// renderPersonaSearch writes the Name/Version/Description table of index hits.
+// renderPersonaSearch writes the Name/Version/Provider/Model/Description table of
+// index hits. Provider and Model let a user confirm which model a returned persona
+// targets before installing. Empty Version/Provider/Model render as "-".
 func renderPersonaSearch(w io.Writer, entries []commpersonas.PersonaIndexEntry) error {
 	rows := make([]string, len(entries))
 	for i, e := range entries {
-		version := e.Version
-		if version == "" {
-			version = "-"
-		}
-		rows[i] = fmt.Sprintf("%s\t%s\t%s", e.Name, version, e.Description)
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
+			sanitizeCell(e.Name), orDash(sanitizeCell(e.Version)), orDash(sanitizeCell(e.Provider)),
+			orDash(sanitizeCell(e.Model)), sanitizeCell(e.Description))
 	}
-	return writeTable(w, "NAME\tVERSION\tDESCRIPTION", rows)
+	return writeTable(w, "NAME\tVERSION\tPROVIDER\tMODEL\tDESCRIPTION", rows)
+}
+
+// orDash returns s, or "-" when s is empty — the placeholder convention shared by
+// the persona table renderers for absent optional values.
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	commpersonas "github.com/samestrin/atcr/internal/personas"
 	"github.com/samestrin/atcr/internal/quickstart"
 	"github.com/samestrin/atcr/internal/registry"
 	builtins "github.com/samestrin/atcr/personas"
@@ -23,13 +24,14 @@ import (
 // the browser-open hook are injectable so the interactive flow is unit-testable
 // without a TTY or a real browser.
 type quickstartOpts struct {
-	dir    string
-	force  bool
-	open   bool
-	in     io.Reader
-	out    io.Writer
-	errOut io.Writer
-	openFn func(string) error
+	dir            string
+	force          bool
+	open           bool
+	fetchCommunity bool // fetch-and-pin community personas; false scaffolds from embedded built-ins only (the safe default for tests). The command layer sets this from !--offline.
+	in             io.Reader
+	out            io.Writer
+	errOut         io.Writer
+	openFn         func(string) error
 }
 
 // newQuickstartCmd builds `atcr quickstart`: the interactive onboarding wizard.
@@ -50,18 +52,24 @@ func newQuickstartCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			offline, err := cmd.Flags().GetBool("offline")
+			if err != nil {
+				return err
+			}
 			return runQuickstart(quickstartOpts{
-				dir:    ".",
-				force:  force,
-				open:   open,
-				in:     cmd.InOrStdin(),
-				out:    cmd.OutOrStdout(),
-				errOut: cmd.ErrOrStderr(),
+				dir:            ".",
+				force:          force,
+				open:           open,
+				fetchCommunity: !offline,
+				in:             cmd.InOrStdin(),
+				out:            cmd.OutOrStdout(),
+				errOut:         cmd.ErrOrStderr(),
 			})
 		},
 	}
 	cmd.Flags().Bool("force", false, "overwrite existing configuration and workflow files")
 	cmd.Flags().Bool("open", false, "open the provider signup page in a browser")
+	cmd.Flags().Bool("offline", false, "skip the community persona fetch; scaffold from embedded built-ins only")
 	return cmd
 }
 
@@ -81,6 +89,19 @@ func runQuickstart(o quickstartOpts) error {
 		_, _ = fmt.Fprintf(o.errOut, "Using existing workspace at %s (run with --force to regenerate config + personas).\n", filepath.Dir(cfgPath))
 	} else if err := runInit(o.dir, o.force, o.out, o.errOut); err != nil {
 		return err
+	}
+
+	// Fetch-and-pin the community personas into the resolver's pin dir. When not
+	// requested (offline / tests), this reproduces today's embedded-built-in-only
+	// scaffold with zero network access.
+	if o.fetchCommunity {
+		dir, err := personasDir()
+		if err != nil {
+			return err
+		}
+		if err := installCommunityPersonas(personasClient, commpersonas.BaseURL(), dir, builtins.Names(), o.out, o.errOut); err != nil {
+			return err
+		}
 	}
 
 	manifest, err := quickstart.LoadManifest()
@@ -199,7 +220,14 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 		return nil
 	}
 
-	_, _ = fmt.Fprintf(o.out, "\nSet it in your current shell:\n  export %s=%s\n", env, shellSingleQuote(key))
+	if writerIsTerminal(o.out) {
+		_, _ = fmt.Fprintf(o.out, "\nSet it in your current shell:\n  export %s=%s\n", env, shellSingleQuote(key))
+	} else {
+		// stdout is piped/redirected/CI-captured — echoing the pasted key here would
+		// persist the secret into that capture. Mask the value; an interactive user
+		// still gets the copy-pasteable line on a real terminal.
+		_, _ = fmt.Fprintf(o.out, "\nSet it in your current shell:\n  export %s=****** (masked — stdout is not a terminal)\n", env)
+	}
 
 	profile, profileOK := readLine("\nAppend this export to a shell profile? Enter a path (or Enter to skip): ")
 	if !profileOK {
@@ -228,6 +256,23 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 	return nil
 }
 
+// writerIsTerminal reports whether w is backed by a character device (an
+// interactive terminal). It decides whether echoing the pasted API key back is
+// safe: on a TTY the value only reaches the user's screen, but piped/redirected/
+// CI-captured output would persist the secret. Detected via the stdlib
+// os.ModeCharDevice bit so no external terminal dependency is required.
+func writerIsTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
 // expandHome replaces a leading `~` or `~/` with the user's home directory.
 // It returns an error if the home directory cannot be determined.
 func expandHome(path string) (string, error) {
@@ -253,6 +298,12 @@ func appendExport(profile, env, key string) error {
 	if err != nil {
 		return err
 	}
+	// Tighten to 0600 only on a file we create — a profile holding a secret should
+	// not be group/other-readable. An existing profile the user named keeps its own
+	// mode untouched: appendExport was asked to append, not to re-permission a file
+	// it did not create.
+	_, statErr := os.Stat(profile)
+	created := errors.Is(statErr, fs.ErrNotExist)
 	f, err := os.OpenFile(profile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -264,7 +315,10 @@ func appendExport(profile, env, key string) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Chmod(profile, 0o600)
+	if created {
+		return os.Chmod(profile, 0o600)
+	}
+	return nil
 }
 
 // profileIsAtcrOwned reports whether the shell-profile path the user named would

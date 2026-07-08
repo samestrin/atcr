@@ -18,10 +18,14 @@ import (
 	"time"
 )
 
-// RegistryBaseURL is the default community persona repository, raw content root.
-// It is overridable per-invocation via the ATCR_PERSONAS_URL environment
-// variable (see BaseURL) so no published source is hardcoded unconditionally.
-const RegistryBaseURL = "https://raw.githubusercontent.com/atcr/personas/main"
+// RegistryBaseURL is the default community persona repository: the in-repo
+// community-persona path on the product repo (samestrin/atcr), raw content root.
+// Persona content is canonical here rather than compiled into the binary. It is
+// overridable per-invocation via the ATCR_PERSONAS_URL environment variable (see
+// BaseURL) so no published source is hardcoded unconditionally, and so CI exercises
+// the fetch path against httptest servers with zero live network calls. Anonymous
+// raw.githubusercontent fetches only succeed once samestrin/atcr is public.
+const RegistryBaseURL = "https://raw.githubusercontent.com/samestrin/atcr/main/personas/community"
 
 // envPersonasURL overrides RegistryBaseURL when set (e.g. an httptest server).
 const envPersonasURL = "ATCR_PERSONAS_URL"
@@ -58,37 +62,87 @@ var fetchTimeout = 30 * time.Second
 // or index.json size.
 const fetchBodyLimit int64 = 5 * 1024 * 1024
 
+// fetchMaxRetries and fetchBackoff bound the transient-failure retry policy used
+// by fetch. init/quickstart install personas in a batch loop, so a single
+// transient 5xx/429 or transport blip must not abort the whole run. They mirror
+// internal/ghaction/client.go's back-off policy and are package vars so tests can
+// shrink the delay.
+var (
+	fetchMaxRetries = 3
+	fetchBackoff    = 250 * time.Millisecond
+)
+
+// retriableFetchStatus reports whether a non-2xx, non-404 status should be
+// retried: transient 5xx and 429. (A 404 is handled separately as notFound.)
+func retriableFetchStatus(status int) bool {
+	return status >= 500 || status == 429
+}
+
+// sleepCtx waits for d, returning early with the context's error if it is done
+// first so a cancelled/timed-out fetch does not keep sleeping.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 // fetch performs a GET against url and returns the body for a 2xx, notFound for
-// a 404, or a descriptive error otherwise. The body is always closed.
-// A context timeout of fetchTimeout is applied to guard against server hangs.
+// a 404, or a descriptive error otherwise. The body is always closed. A context
+// timeout of fetchTimeout guards against server hangs, and transient transport
+// errors / 5xx / 429 are retried with exponential back-off (fetchMaxRetries,
+// fetchBackoff) so a batch install is not aborted by one flaky response.
 func fetch(client HTTPClient, url string, notFound error) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
+	backoff := fetchBackoff
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			if attempt < fetchMaxRetries {
+				if serr := sleepCtx(ctx, backoff); serr != nil {
+					return nil, serr
+				}
+				backoff *= 2
+				continue
+			}
+			return nil, err
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			_ = resp.Body.Close()
+			return nil, notFound
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			_ = resp.Body.Close()
+			if attempt < fetchMaxRetries && retriableFetchStatus(resp.StatusCode) {
+				if serr := sleepCtx(ctx, backoff); serr != nil {
+					return nil, serr
+				}
+				backoff *= 2
+				continue
+			}
+			return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+		}
+		// 2xx — read at most fetchBodyLimit+1 bytes; more means an oversized body,
+		// rejected to prevent DoS via a multi-GB community response.
+		body, err := io.ReadAll(io.LimitReader(resp.Body, fetchBodyLimit+1))
+		_ = resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(body)) > fetchBodyLimit {
+			return nil, fmt.Errorf("response body exceeds %d-byte limit", fetchBodyLimit)
+		}
+		return body, nil
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
-		return nil, notFound
-	case resp.StatusCode < 200 || resp.StatusCode >= 300:
-		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
-	}
-	// Read at most fetchBodyLimit+1 bytes; if we get more the response is
-	// oversized and we reject it to prevent DoS via a multi-GB community body.
-	body, err := io.ReadAll(io.LimitReader(resp.Body, fetchBodyLimit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(body)) > fetchBodyLimit {
-		return nil, fmt.Errorf("response body exceeds %d-byte limit", fetchBodyLimit)
-	}
-	return body, nil
 }
 
 // FetchPersonaYAML fetches <baseURL>/<name>.yaml from the community repo.

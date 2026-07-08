@@ -3,6 +3,7 @@ package personas
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	builtins "github.com/samestrin/atcr/personas"
 )
@@ -13,7 +14,7 @@ var builtinSet = make(map[string]struct{})
 
 func init() {
 	for _, n := range builtins.Names() {
-		builtinSet[n] = struct{}{}
+		builtinSet[strings.ToLower(n)] = struct{}{}
 	}
 }
 
@@ -40,8 +41,10 @@ func Remove(name, personasDir string) error {
 	return nil
 }
 
-// isBuiltin reports whether name is one of the embedded built-in personas.
+// isBuiltin reports whether name is one of the embedded built-in personas,
+// compared case-insensitively so that mixed-case files on case-preserving
+// filesystems collide with the lowercase built-in names.
 func isBuiltin(name string) bool {
-	_, ok := builtinSet[name]
+	_, ok := builtinSet[strings.ToLower(name)]
 	return ok
 }

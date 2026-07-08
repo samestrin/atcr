@@ -1,0 +1,5 @@
+provider: anthropic
+model: claude-sonnet-4-6
+role: reviewer
+version: "1.0.0"
+description: "source provider differs from the index entry; model matches"

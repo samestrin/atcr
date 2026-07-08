@@ -1,0 +1,13 @@
+diff --git a/internal/cache/cache.go b/internal/cache/cache.go
+index 1111111..2222222 100644
+--- a/internal/cache/cache.go
++++ b/internal/cache/cache.go
+@@ -9,6 +9,12 @@ package cache
+
++// Warm populates the shared entries map from many goroutines with no mutex,
++// producing a concurrent map write (data race) under the Go race detector.
++func (c *Cache) Warm(keys []string) {
++	for _, k := range keys {
++		go func(k string) { c.entries[k] = load(k) }(k) // unsynchronized shared write: race
++	}
++}

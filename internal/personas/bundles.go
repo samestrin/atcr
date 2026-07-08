@@ -146,10 +146,11 @@ func InstallBundle(client HTTPClient, baseURL, bundleName, destDir string) ([]Bu
 			outcomes = append(outcomes, out)
 			continue
 		}
-		// Install recomputes personaPath internally; the double traversal
-		// check is intentional — Install does not accept a pre-resolved path,
-		// and the first personaPath call above is needed for AlreadyPresent.
-		if ierr := Install(client, baseURL, member, destDir); ierr != nil {
+		// InstallUnit delivers the complete unit (YAML + co-located .md) and
+		// enforces the C3 fetched-prompt guardrails, just like the single-persona
+		// install path. The pre-install presence check above is kept so bundles
+		// never silently overwrite hand-edited or previously-pinned units.
+		if ierr := InstallUnit(client, baseURL, member, destDir); ierr != nil {
 			out.Err = ierr
 		}
 		outcomes = append(outcomes, out)

@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,11 +12,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	commpersonas "github.com/samestrin/atcr/internal/personas"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/personas"
 )
 
-var personaNames = []string{"bruce", "greta", "kai", "mira", "dax", "sentinel", "tracer", "idiomatic", "otto"}
+var personaNames = []string{"bruce", "greta", "kai", "mira", "dax", "sasha", "penny", "ingrid", "otto"}
 
 // initDir runs a fresh init into dir, failing the test on error.
 func initDir(t *testing.T, dir string) {
@@ -108,7 +111,7 @@ func TestInit_AlreadyExists(t *testing.T) {
 
 	err := runInit(dir, false, &bytes.Buffer{}, &bytes.Buffer{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "config already exists at .atcr/config.yaml")
+	assert.Contains(t, err.Error(), "existing files would be overwritten: .atcr/config.yaml")
 	assert.Contains(t, err.Error(), "--force")
 
 	data, err := os.ReadFile(brucePath)
@@ -128,32 +131,39 @@ func TestInit_GuardCoversPersonasWithoutConfig(t *testing.T) {
 
 	err := runInit(dir, false, &bytes.Buffer{}, &bytes.Buffer{})
 	require.Error(t, err, "existing persona files must trigger the overwrite guard")
+	assert.Contains(t, err.Error(), "bruce.md", "error should name the actual existing file")
+	assert.NotContains(t, err.Error(), "config already exists at .atcr/config.yaml", "error must not falsely claim config.yaml exists")
 
 	data, err := os.ReadFile(brucePath)
 	require.NoError(t, err)
 	assert.Equal(t, "CUSTOMIZED", string(data))
 }
 
-func TestInit_Force(t *testing.T) {
+// TestInit_Force_PreservesEditedPersonas covers AC 01-05 Scenario 1 (LOCKED via
+// Phase 3 Clarification Q1): `atcr init --force` regenerates config.yaml but must
+// NEVER overwrite an existing persona file. --force only bypasses the top-level
+// "config already exists" gate.
+func TestInit_Force_PreservesEditedPersonas(t *testing.T) {
 	dir := t.TempDir()
 	initDir(t, dir)
 
 	brucePath := filepath.Join(dir, ".atcr", "personas", "bruce.md")
 	require.NoError(t, os.WriteFile(brucePath, []byte("EDITED"), 0o644))
 
-	out := &bytes.Buffer{}
-	errOut := &bytes.Buffer{}
-	require.NoError(t, runInit(dir, true, out, errOut))
-	assert.Contains(t, errOut.String(), "Overwriting existing configuration and persona files",
-		"warning goes to stderr, not stdout")
-	assert.NotContains(t, out.String(), "Overwriting")
+	require.NoError(t, runInit(dir, true, &bytes.Buffer{}, &bytes.Buffer{}))
 
 	data, err := os.ReadFile(brucePath)
 	require.NoError(t, err)
-	assert.NotEqual(t, "EDITED", string(data), "--force must restore defaults")
+	assert.Equal(t, "EDITED", string(data), "--force must NOT overwrite an existing persona file")
+	// Non-persona targets are still regenerated under --force.
+	assert.FileExists(t, filepath.Join(dir, ".atcr", "config.yaml"))
 }
 
-func TestInit_ForceDoesNotWriteThroughSymlink(t *testing.T) {
+// TestInit_ForcePreservesExistingSymlinkPersona: an existing persona that is a
+// symlink is preserved (skipped) under --force — never written through — so an
+// external target is untouched (the security invariant) and the user's file
+// stays as-is (the preservation invariant).
+func TestInit_ForcePreservesExistingSymlinkPersona(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlinks")
 	}
@@ -171,11 +181,11 @@ func TestInit_ForceDoesNotWriteThroughSymlink(t *testing.T) {
 
 	data, err := os.ReadFile(external)
 	require.NoError(t, err)
-	assert.Equal(t, "EXTERNAL", string(data), "symlink target outside the workspace must not be written through")
+	assert.Equal(t, "EXTERNAL", string(data), "symlink target must never be written through")
 
 	info, err := os.Lstat(brucePath)
 	require.NoError(t, err)
-	assert.Zero(t, info.Mode()&os.ModeSymlink, "persona path must be a regular file after --force")
+	assert.NotZero(t, info.Mode()&os.ModeSymlink, "existing persona (a symlink) is preserved, not overwritten")
 }
 
 func TestInit_ReadOnlyDir(t *testing.T) {
@@ -193,9 +203,19 @@ func TestInit_ReadOnlyDir(t *testing.T) {
 
 func TestInit_CommandWiring(t *testing.T) {
 	// `atcr init` must run against the working directory; the test only
-	// verifies the flag plumbing by running in a temp cwd.
+	// verifies the flag plumbing by running in a temp cwd. The command also
+	// fetch-and-pins community personas, so point it at a mock registry and a
+	// throwaway pin dir to keep the test network-free.
 	dir := t.TempDir()
 	t.Chdir(dir)
+
+	index := `[{"name":"bruce","version":"1.0.0","description":"d","path":"bruce.yaml"}]`
+	srv := unitServer(t, index, map[string]string{"/bruce.yaml": communityUnitYAML})
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+	pinDir := t.TempDir()
+	oldDir := personasDir
+	personasDir = func() (string, error) { return pinDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
 
 	_, err := execute(t, "init")
 	require.NoError(t, err)
@@ -206,6 +226,257 @@ func TestInit_CommandWiring(t *testing.T) {
 
 	_, err = execute(t, "init", "--force")
 	require.NoError(t, err)
+}
+
+// --- AC 01-03: --offline flag fallback --------------------------------------
+
+// failingHTTPClient fails the test if any HTTP request is attempted. It proves a
+// code path (the --offline fallback) makes zero network calls.
+type failingHTTPClient struct{ t *testing.T }
+
+func (c failingHTTPClient) Do(*http.Request) (*http.Response, error) {
+	c.t.Helper()
+	c.t.Fatal("unexpected network call: the offline path must make zero network calls")
+	return nil, nil
+}
+
+// TestInit_OfflineFlag_Registered: `atcr init` exposes an --offline flag.
+func TestInit_OfflineFlag_Registered(t *testing.T) {
+	require.NotNil(t, newInitCmd().Flags().Lookup("offline"), "--offline registered on init")
+}
+
+// TestInit_Offline_ZeroNetworkFallsBackToBuiltins covers AC 01-03: `atcr init
+// --offline` skips the community fetch entirely (zero network) and still writes
+// the embedded built-in scaffold.
+func TestInit_Offline_ZeroNetworkFallsBackToBuiltins(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	oldClient := personasClient
+	personasClient = failingHTTPClient{t}
+	t.Cleanup(func() { personasClient = oldClient })
+
+	_, err := execute(t, "init", "--offline")
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(dir, ".atcr", "config.yaml"))
+	assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", "bruce.md"),
+		"embedded built-in personas still scaffolded offline")
+}
+
+// --- AC 01-02: init/quickstart fetch-and-pin --------------------------------
+
+// unitServer serves a mock community registry: index.json plus the per-path
+// bodies given (persona .yaml / .md). Anything else 404s.
+func unitServer(t *testing.T, index string, files map[string]string) *httptest.Server {
+	t.Helper()
+	routes := map[string]string{"/index.json": index}
+	for p, body := range files {
+		routes[p] = body
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, ok := routes[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+const communityUnitYAML = `provider: anthropic
+model: claude-sonnet-4-6
+role: reviewer
+language:
+  - go
+version: "1.2.0"
+description: "OWASP Top-10 security reviewer"
+`
+
+const communityUnitMD = "# Security Reviewer\nReview the diff for OWASP Top-10 issues.\n"
+
+// TestInstallCommunityPersonas_FetchAndPin covers AC 01-02 Scenario 1: a roster
+// persona present in the community index installs as a co-located unit
+// (<name>.yaml + <name>.md) into the community pin dir, pinned to the fetched
+// YAML's version and labeled community by `personas list`.
+func TestInstallCommunityPersonas_FetchAndPin(t *testing.T) {
+	index := `[{"name":"owasp","version":"1.2.0","description":"sec","path":"owasp.yaml","provider":"anthropic","model":"claude-sonnet-4-6"}]`
+	srv := unitServer(t, index, map[string]string{
+		"/owasp.yaml": communityUnitYAML,
+		"/owasp.md":   communityUnitMD,
+	})
+	dest := t.TempDir()
+	out := &bytes.Buffer{}
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp"}, out, &bytes.Buffer{}))
+
+	assert.FileExists(t, filepath.Join(dest, "owasp.yaml"))
+	assert.FileExists(t, filepath.Join(dest, "owasp.md"))
+
+	metas, err := commpersonas.List(dest)
+	require.NoError(t, err)
+	var found bool
+	for _, m := range metas {
+		if m.Name == "owasp" {
+			found = true
+			assert.Equal(t, "1.2.0", m.Version, "pin is the fetched YAML version")
+			assert.Equal(t, "community", m.Source)
+		}
+	}
+	assert.True(t, found, "owasp is listed as a community persona")
+	assert.Contains(t, out.String(), "owasp", "install progress reported per persona")
+}
+
+// TestInstallCommunityPersonas_EmptyIndexErrors covers AC 01-02 Scenario 5: an
+// empty index is a hard, non-silent error and nothing is written.
+func TestInstallCommunityPersonas_EmptyIndexErrors(t *testing.T) {
+	srv := unitServer(t, "[]", nil)
+	dest := t.TempDir()
+
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp"}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err)
+
+	entries, rerr := os.ReadDir(dest)
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "no persona files written when the index is empty")
+}
+
+// TestInstallCommunityPersonas_FetchErrorHintsForceOffline covers the recovery
+// guidance after a failed community fetch: the hint must mention --force because
+// the scaffold has already been persisted and a plain retry would trip the
+// exists-gate.
+func TestInstallCommunityPersonas_FetchErrorHintsForceOffline(t *testing.T) {
+	dest := t.TempDir()
+
+	err := installCommunityPersonas(http.DefaultClient, "http://localhost:1", dest, []string{"owasp"}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--force --offline", "recovery hint must include --force since scaffold is already persisted")
+}
+
+// TestInstallCommunityPersonas_MissingRosterSkipsWithWarning covers AC 01-02
+// Edge Case 1: a roster persona the index does not advertise is skipped with a
+// warning; present ones still install and the call succeeds (exit 0).
+func TestInstallCommunityPersonas_MissingRosterSkipsWithWarning(t *testing.T) {
+	index := `[{"name":"owasp","version":"1.2.0","description":"sec","path":"owasp.yaml"}]`
+	srv := unitServer(t, index, map[string]string{"/owasp.yaml": communityUnitYAML})
+	dest := t.TempDir()
+	errOut := &bytes.Buffer{}
+
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp", "penny"}, &bytes.Buffer{}, errOut)
+	require.NoError(t, err, "a missing roster persona is skip-with-warning, not a hard failure")
+
+	assert.FileExists(t, filepath.Join(dest, "owasp.yaml"))
+	assert.NoFileExists(t, filepath.Join(dest, "tracer.yaml"))
+	assert.Contains(t, errOut.String(), "penny", "the skipped persona is named in the warning")
+}
+
+// TestInstallCommunityPersonas_SkipsExistingUnit covers AC 01-05: the
+// fetch-and-pin path never overwrites an existing on-disk persona; a missing one
+// still installs alongside it.
+func TestInstallCommunityPersonas_SkipsExistingUnit(t *testing.T) {
+	index := `[
+	  {"name":"owasp","version":"1.2.0","description":"d","path":"owasp.yaml"},
+	  {"name":"sans","version":"1.0.0","description":"d","path":"sans.yaml"}
+	]`
+	srv := unitServer(t, index, map[string]string{
+		"/owasp.yaml": communityUnitYAML,
+		"/sans.yaml":  communityUnitYAML,
+	})
+	dest := t.TempDir()
+	// A hand-edited persona already on disk must survive untouched.
+	require.NoError(t, os.WriteFile(filepath.Join(dest, "owasp.yaml"), []byte("HANDEDITED"), 0o644))
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp", "sans"}, &bytes.Buffer{}, &bytes.Buffer{}))
+
+	got, err := os.ReadFile(filepath.Join(dest, "owasp.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, "HANDEDITED", string(got), "existing persona not overwritten by fetch-and-pin")
+	assert.FileExists(t, filepath.Join(dest, "sans.yaml"), "missing persona still installed alongside")
+}
+
+// TestInstallCommunityPersonas_SkipsLoneExistingMD: a hand-edited <name>.md with
+// no sibling .yaml is still treated as "already installed" and left untouched —
+// the fetch-and-pin path never clobbers user prompt content.
+func TestInstallCommunityPersonas_SkipsLoneExistingMD(t *testing.T) {
+	index := `[{"name":"owasp","version":"1.2.0","description":"d","path":"owasp.yaml"}]`
+	srv := unitServer(t, index, map[string]string{
+		"/owasp.yaml": communityUnitYAML,
+		"/owasp.md":   communityUnitMD,
+	})
+	dest := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dest, "owasp.md"), []byte("HANDEDITED PROMPT"), 0o644))
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp"}, &bytes.Buffer{}, &bytes.Buffer{}))
+
+	got, err := os.ReadFile(filepath.Join(dest, "owasp.md"))
+	require.NoError(t, err)
+	assert.Equal(t, "HANDEDITED PROMPT", string(got), "lone hand-edited .md not overwritten")
+	assert.NoFileExists(t, filepath.Join(dest, "owasp.yaml"), "install skipped entirely for an existing unit")
+}
+
+// --- AC 01-04: fetch-failure error handling ---------------------------------
+
+// statusServer serves the given path→body map (HTTP 200), path→status overrides
+// with the given status code and no body, and 404 for anything else.
+func statusServer(t *testing.T, bodies map[string]string, statuses map[string]int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if code, ok := statuses[r.URL.Path]; ok {
+			w.WriteHeader(code)
+			return
+		}
+		if body, ok := bodies[r.URL.Path]; ok {
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestInstallCommunityPersonas_FetchFailure_SuggestsOffline covers AC 01-04
+// Error Scenario 2: a non-2xx index fetch aborts with a descriptive error that
+// names the failure and suggests --offline — never a silent fallback.
+func TestInstallCommunityPersonas_FetchFailure_SuggestsOffline(t *testing.T) {
+	srv := statusServer(t, nil, map[string]int{"/index.json": 500})
+	dest := t.TempDir()
+
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp"}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--offline", "error guides the user to the offline fallback")
+
+	entries, rerr := os.ReadDir(dest)
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "no persona files written on fetch failure")
+}
+
+// TestInstallCommunityPersonas_MidRosterFailure_RollsBack covers AC 01-04 Edge
+// Case 1: when a persona fails mid-roster, the whole roster install is rolled
+// back — no partial persona files remain on disk.
+func TestInstallCommunityPersonas_MidRosterFailure_RollsBack(t *testing.T) {
+	index := `[
+	  {"name":"a","version":"1.0.0","description":"d","path":"a.yaml"},
+	  {"name":"b","version":"1.0.0","description":"d","path":"b.yaml"},
+	  {"name":"c","version":"1.0.0","description":"d","path":"c.yaml"}
+	]`
+	srv := statusServer(t,
+		map[string]string{
+			"/index.json": index,
+			"/a.yaml":     communityUnitYAML,
+			"/b.yaml":     communityUnitYAML,
+		},
+		map[string]int{"/c.yaml": 500},
+	)
+	dest := t.TempDir()
+
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"a", "b", "c"}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "c", "the failing persona is named")
+
+	entries, rerr := os.ReadDir(dest)
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "personas installed before the failure are rolled back (all-or-nothing)")
 }
 
 func TestPersonas_EmbeddedSetComplete(t *testing.T) {

@@ -1,0 +1,7 @@
+name: gia
+version: 1.0.0
+description: Gemini Pro concurrency and data-race reviewer (large-context lens)
+provider: openrouter
+model: google/gemini-2.5-pro
+persona: gia
+role: reviewer

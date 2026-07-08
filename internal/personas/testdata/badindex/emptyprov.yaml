@@ -1,0 +1,5 @@
+provider: ""
+model: claude-sonnet-4-6
+role: reviewer
+version: "1.0.0"
+description: "source provider also empty so ONLY the empty-provider check fires"

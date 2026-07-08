@@ -35,28 +35,36 @@ The deterministic Go reconciler — cluster → dedupe → merge → confidence 
 
 ## Quickstart
 
+**New to atcr? Run `atcr quickstart` first** — it is the one-command default. It scaffolds `.atcr/`, sets up the **Synthetic** flat-rate provider, walks you through the one API-key environment variable (the key is never written to atcr's config), shows the signup link, and scaffolds a `.github/workflows/atcr.yml` — so you reach your first review without hand-editing `registry.yaml`.
+
 ```bash
 # 1. Install (Go 1.24+)
 go install github.com/samestrin/atcr/cmd/atcr@latest
 
-# 2. Scaffold project config + the six editable personas into .atcr/
-atcr init
+# 2. One-command onboarding: scaffold .atcr/ + set up the Synthetic provider
+atcr quickstart
 
-# 3. Point a provider + agents at an OpenAI-compatible endpoint
-#    (~/.config/atcr/registry.yaml — see docs/registry.md)
-export OPENROUTER_API_KEY=sk-...
-
-# 4. Verify every configured endpoint before spending a real review on it
+# 3. Verify every configured endpoint before spending a real review on it
 atcr doctor
 
-# 5. Run the panel on the current feature branch, then reconcile — zero arguments
+# 4. Run the panel on the current feature branch, then reconcile — zero arguments
 atcr review && atcr reconcile
 
-# 6. Read the report
+# 5. Read the report
 atcr report --format md
 ```
 
-New to atcr? `atcr quickstart` runs steps 2–3 interactively: it scaffolds `.atcr/`, sets up the synthetic provider, walks you through the API-key environment variable (the key is never written to atcr's config), and scaffolds a `.github/workflows/atcr.yml` — so you reach your first review without hand-editing `registry.yaml`.
+Prefer to wire a provider by hand? `atcr init` scaffolds the project config and the nine editable personas into `.atcr/`; then point a provider + agents at any OpenAI-compatible endpoint in `~/.config/atcr/registry.yaml` (see [docs/registry.md](docs/registry.md)) and export its key (for example `export OPENROUTER_API_KEY=sk-...`).
+
+### Choosing a provider
+
+`atcr quickstart` sets up Synthetic because it is a flat-rate endpoint that reaches a working panel in one command. If you outgrow it, the recommended order is:
+
+1. **Synthetic — the default (`atcr quickstart`).** Flat-rate, one-command setup; run this first.
+2. **DashScope (Alibaba) — secondary flat-rate option.** A flat-rate alternative to switch to after trying Synthetic. There is no `atcr quickstart` wiring for it this release — see [docs/personas-install.md](docs/personas-install.md) for the manual registry snippet.
+3. **Chutes → Featherless — explore, not default.** More models, but slower inference, tighter context windows, and concurrency limits. Try Chutes first, then Featherless: explore, not default.
+4. **LiteLLM — Advanced.** An OpenAI-compatible proxy for aggregating several providers behind one endpoint. Keep it Advanced; it is not a first-run recommendation.
+5. **Frontier / majors personas — opt-in, bring your own key.** Personas prompt-tuned per each frontier provider's own official prompting guide are installed deliberately by anyone who already holds that provider's API key. They stay opt-in and outside the default funnel — see [docs/personas-install.md](docs/personas-install.md) to discover and install one by the model you have.
 
 `atcr doctor` is the recommended post-`atcr init` verification step: it invokes every configured model endpoint once with a trivial prompt and reports any misconfigured provider, model, key, or base URL — so a bad config is caught in seconds instead of mid-review. See [Commands](#commands) for its flags and exit codes.
 
@@ -75,7 +83,7 @@ New to atcr? `atcr quickstart` runs steps 2–3 interactively: it scaffolds `.at
 | `atcr report` | Render md / json / checklist views over the reconciled findings |
 | `atcr range` | Pre-flight base..head resolution only; prints resolution JSON |
 | `atcr status` | Print a review's fan-out progress as JSON (roster + per-agent state) |
-| `atcr init` | Write `.atcr/config.yaml` and the six default personas (editable) |
+| `atcr init` | Write `.atcr/config.yaml` and the nine default personas (editable) |
 | `atcr quickstart` | Interactive onboarding: scaffold `.atcr/` (reusing `init`), set up the synthetic provider + API-key env var, and scaffold a CI workflow (`--open`, `--force`) |
 | `atcr serve` | Run the MCP stdio server over the same engine |
 | `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column |
@@ -204,7 +212,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 
 - `cmd/atcr/` — binary entry point and subcommands
 - `internal/` — engine packages (`gitrange`, `payload`, `registry`, `llmclient`, `fanout`, `stream`, `reconcile`, `report`, `mcp`)
-- `personas/` — the six embedded default personas + `_base.md`
+- `personas/` — the nine embedded default personas + `_base.md`
 - `skill/` — the atcr Agent Skill (host review + orchestration)
 - `docs/` — user documentation
 - `examples/` — CI gate script
