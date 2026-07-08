@@ -550,13 +550,15 @@ func TestTemplateFixtureRunner_BuiltinNoFixture(t *testing.T) {
 	require.False(t, out.HasFixture, "bruce has no embedded fixture")
 }
 
-// TestTemplateFixtureRunner_CommunityReturnsNoFixture verifies that community
-// persona fixture testing returns HasFixture: false (future work).
+// TestTemplateFixtureRunner_CommunityReturnsNoFixture verifies that a community
+// name with no embedded library template/fixture (e.g. an arbitrary namespaced
+// persona) still returns HasFixture: false. Embedded library personas DO resolve
+// a fixture now — see TestTemplateFixtureRunner_CommunityPersonasPass.
 func TestTemplateFixtureRunner_CommunityReturnsNoFixture(t *testing.T) {
 	r := TemplateFixtureRunner{}
 	out, err := r.RunFixture("security/owasp")
 	require.NoError(t, err)
-	require.False(t, out.HasFixture, "community personas report no fixture until fixture metadata is wired")
+	require.False(t, out.HasFixture, "a non-library community name reports no embedded fixture")
 }
 
 // --- fetch body size limit --------------------------------------------------

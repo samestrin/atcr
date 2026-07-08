@@ -114,9 +114,9 @@ A fixture proves the persona works without an LLM or a network call. It is a sma
 
 | Requirement | Rule |
 |-------------|------|
-| **Location** | `personas/testdata/` (test-enforced — the test reads from here) |
+| **Location** | Built-in personas: `personas/testdata/`. Community-library personas: `personas/community/testdata/` (co-located with the community layout). Both are test-enforced — the fixture runner reads from the matching location (`//go:embed testdata/*.patch` for built-ins, `//go:embed community/testdata/*.patch` for the community library). |
 | **Format** | a unified-diff `.patch` (or `.diff`) file |
-| **Naming** | `<slug>_fixture.patch` — e.g. `sentinel_fixture.patch`, `tracer_fixture.patch` |
+| **Naming** | `<slug>_fixture.patch` — e.g. `sentinel_fixture.patch` (built-in), `anthony_fixture.patch` (community) |
 | **File mode** | `0644` (convention; not asserted by the test) |
 | **Content** | **synthetic values only** — never a real credential. Use placeholders like `FAKE_API_KEY_00000000` (convention; not asserted by the test) |
 | **Network** | none — the fixture is read from disk and rendered locally; no live call is permitted in the test path |

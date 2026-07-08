@@ -9,6 +9,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // canonicalOutputContract is the exact 7-column pipe-delimited output header the
@@ -122,6 +123,49 @@ func TestCommunityPersonas_FixtureAndPromptCategory(t *testing.T) {
 			require.NotContainsf(t, out, "{{", "persona %q left an unrendered open action", p.Slug)
 			require.NotContainsf(t, out, "}}", "persona %q left a stray close action", p.Slug)
 			require.Containsf(t, out, "tester", "persona %q did not render AgentName into output", p.Slug)
+		})
+	}
+}
+
+// validSlug mirrors internal/registry.validateName's rules (persona.go): a
+// resolvable persona slug is non-empty, carries no path separator, no `..`
+// segment, no leading dot, and is not the reserved `_base`. Replicated here
+// because validateName is unexported; the community render/resolve tests need the
+// same guarantee that every library slug is safely resolvable.
+func validSlug(slug string) bool {
+	if slug == "" || slug == "_base" || strings.HasPrefix(slug, ".") {
+		return false
+	}
+	if strings.ContainsAny(slug, `/\`) {
+		return false
+	}
+	for _, seg := range strings.Split(slug, "/") {
+		if seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// TestCommunityPersonas_SlugConsistency covers AC 04-04 Scenario 4: for each
+// library persona the YAML `name` equals the slug equals the `.md` basename, and
+// the slug passes the resolver's validateName rules. (The index `path`-stem
+// cross-check is enforced by the AC 04-05 index-registration gate.)
+func TestCommunityPersonas_SlugConsistency(t *testing.T) {
+	for _, p := range communityPersonas {
+		t.Run(p.Slug, func(t *testing.T) {
+			require.Truef(t, validSlug(p.Slug), "slug %q must pass validateName rules", p.Slug)
+
+			raw, err := os.ReadFile(communityPath(p.Slug + ".yaml"))
+			require.NoErrorf(t, err, "read yaml %s", p.Slug)
+			var meta struct {
+				Name string `yaml:"name"`
+			}
+			require.NoErrorf(t, yaml.Unmarshal(raw, &meta), "parse yaml %s", p.Slug)
+			require.Equalf(t, p.Slug, meta.Name, "YAML name must equal the slug for %q", p.Slug)
+
+			_, err = os.Stat(communityPath(p.Slug + ".md"))
+			require.NoErrorf(t, err, "prompt template community/%s.md must exist", p.Slug)
 		})
 	}
 }
