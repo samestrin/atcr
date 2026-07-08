@@ -123,7 +123,7 @@ The same name-validation guard applies, so `remove` can only delete files inside
 
 ### `atcr personas test <name>`
 
-Runs a persona against its committed fixture — with no LLM and no network — and reports pass/fail. It works for built-in personas and for embedded/installed community-library personas: the fixture renders the persona template against a known diff and confirms the expected finding category and a clean render.
+Runs a persona against its committed fixture — with no LLM and no network — and reports pass/fail. It works for built-in personas and for the embedded community-library personas: the fixture renders the persona template against a known diff and confirms the expected finding category and a clean render. A third-party persona installed from a registry that ships no embedded fixture reports `No fixture defined` instead.
 
 ```bash
 atcr personas test delia
