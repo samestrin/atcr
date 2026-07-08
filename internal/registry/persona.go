@@ -135,23 +135,34 @@ func validateCommunityPrompt(text string) error {
 	return nil
 }
 
-// validateName rejects names that could escape the persona directory via path
-// separators or "..", a leading dot (dotfiles / "."/".."), and the reserved
-// "_base" (which names the shared base template, not a persona). Persona files
-// are looked up by simple base name only.
+// validateName rejects names that could escape the persona directory. A single
+// forward slash namespace is allowed (e.g. "security/owasp") so a namespaced
+// community persona resolves to its nested <namespace>/<name>.md — matching the
+// install path (internal/personas.validatePersonaName, which uses the same
+// [a-zA-Z0-9_/-] character class). Each "/"-separated segment is validated
+// independently: no "" / "." / ".." segment (defeats traversal), no leading dot
+// (dotfiles), and no "_base" segment (reserved for the shared base template).
+// Backslashes and absolute paths are refused outright. These guarantees keep
+// filepath.Join(dir, name+".md") strictly within dir.
 func validateName(kind, name string) error {
 	if name == "" {
 		return fmt.Errorf("%s name must not be empty", kind)
 	}
-	if name != filepath.Base(name) || strings.Contains(name, "..") ||
-		strings.ContainsRune(name, '/') || strings.ContainsRune(name, '\\') {
-		return fmt.Errorf("invalid %s name %q: must not contain path separators", kind, name)
+	if strings.ContainsRune(name, '\\') {
+		return fmt.Errorf("invalid %s name %q: must not contain a backslash", kind, name)
 	}
-	if strings.HasPrefix(name, ".") {
-		return fmt.Errorf("invalid %s name %q: must not start with a dot", kind, name)
+	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") {
+		return fmt.Errorf("invalid %s name %q: must not be an absolute path", kind, name)
 	}
-	if name == "_base" {
-		return fmt.Errorf("invalid %s name %q: \"_base\" is reserved for the shared base template", kind, name)
+	for _, seg := range strings.Split(name, "/") {
+		switch {
+		case seg == "" || seg == "." || seg == "..":
+			return fmt.Errorf("invalid %s name %q: contains an invalid path segment", kind, name)
+		case strings.HasPrefix(seg, "."):
+			return fmt.Errorf("invalid %s name %q: a path segment must not start with a dot", kind, name)
+		case seg == "_base":
+			return fmt.Errorf("invalid %s name %q: \"_base\" is reserved for the shared base template", kind, name)
+		}
 	}
 	return nil
 }

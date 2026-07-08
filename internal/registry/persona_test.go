@@ -133,14 +133,39 @@ func TestPersonaResolution_PathTraversal(t *testing.T) {
 	dirs := personaDirs(t)
 	_, err := ResolvePersona("bruce", "../../../etc/passwd", nil, dirs)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "path separators")
+	assert.Contains(t, err.Error(), "invalid path segment", "'..' traversal rejected")
 }
 
 func TestPersonaResolution_AgentNameTraversal(t *testing.T) {
 	dirs := personaDirs(t)
 	_, err := ResolvePersona("../../etc/passwd", "../../etc/passwd", nil, dirs)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "path separators")
+	assert.Contains(t, err.Error(), "invalid path segment", "'..' traversal rejected")
+}
+
+// TestPersonaResolution_NamespacedCommunityResolves covers the community unit
+// layout Phase 5 depends on: a namespaced persona (security/owasp) installed as a
+// nested <namespace>/<name>.md in the Registry pin dir resolves through the same
+// chain — install path and resolve path agree on namespacing.
+func TestPersonaResolution_NamespacedCommunityResolves(t *testing.T) {
+	dirs := personaDirs(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(dirs.Registry, "security"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dirs.Registry, "security", "owasp.md"),
+		[]byte("You are a meticulous OWASP reviewer."), 0o644))
+
+	got, err := ResolvePersona("owasp", "security/owasp", nil, dirs)
+	require.NoError(t, err)
+	assert.Equal(t, "You are a meticulous OWASP reviewer.", got.Text)
+	assert.Equal(t, filepath.Join(dirs.Registry, "security", "owasp.md"), got.Source)
+}
+
+// TestPersonaResolution_NamespacedTraversalStillRejected: a namespace is allowed
+// but a ".." segment inside it is still refused (no directory escape).
+func TestPersonaResolution_NamespacedTraversalStillRejected(t *testing.T) {
+	dirs := personaDirs(t)
+	_, err := ResolvePersona("owasp", "security/../../etc/passwd", nil, dirs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid path segment")
 }
 
 func TestPersonaResolution_ReservedBaseName(t *testing.T) {
