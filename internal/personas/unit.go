@@ -83,6 +83,16 @@ func InstallUnit(client HTTPClient, baseURL, name, destDir string) error {
 		return fmt.Errorf("persona %q failed validation: %w", name, err)
 	}
 
+	return writePersonaUnit(client, baseURL, name, yamlDest, yamlData)
+}
+
+// writePersonaUnit writes a fetched persona unit (yaml + optional co-located
+// .md) to yamlDest. It fetches the co-located custom prompt, validates it
+// against the C3 guardrails, and either writes it or removes a stale .md for
+// binding-only personas. A failure to write the .md rolls back the .yaml so
+// no partial unit is left behind. This is the shared paired-write tail used by
+// InstallUnit and Upgrade.
+func writePersonaUnit(client HTTPClient, baseURL, name, yamlDest string, yamlData []byte) error {
 	// The co-located custom prompt is optional: a 404 means binding-only.
 	mdData, mdErr := FetchPersonaMD(client, baseURL, name)
 	hasMD := mdErr == nil
