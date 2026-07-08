@@ -195,15 +195,17 @@ func validatePersonaTemplateNodes(list *parse.ListNode) error {
 	return nil
 }
 
-// validatePersonaTemplateNode permits literal text, comments, a bare allowed-field
-// action, and an {{if <allowed-field>}}…{{end}} block (recursively validated; the
+// validatePersonaTemplateNode permits literal text, a bare allowed-field action,
+// and an {{if <allowed-field>}}…{{end}} block (recursively validated; the
 // condition may be any allowlisted field — in practice {{if .ToolsEnabled}} — each
-// being a safe scalar with no methods). Everything else — {{range}}, {{with}},
-// {{template}}, a pipeline, a function call, or a disallowed/nested field — is
-// rejected.
+// being a safe scalar with no methods). Comment nodes are never produced because
+// parse.Parse runs without parse.ParseComments and strips comments before tree
+// construction; prompts containing {{/* */}} are accepted as valid text once
+// comments are removed. Everything else — {{range}}, {{with}}, {{template}}, a
+// pipeline, a function call, or a disallowed/nested field — is rejected.
 func validatePersonaTemplateNode(n parse.Node) error {
 	switch node := n.(type) {
-	case *parse.TextNode, *parse.CommentNode:
+	case *parse.TextNode:
 		return nil
 	case *parse.ActionNode:
 		return validatePersonaPipe(node.Pipe)
