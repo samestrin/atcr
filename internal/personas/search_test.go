@@ -330,3 +330,101 @@ func TestFetchIndex_UnknownKeysTolerated(t *testing.T) {
 	assert.Equal(t, "future/entry", entries[0].Name)
 	assert.Equal(t, "qwen/qwen3-max", entries[0].Model)
 }
+
+// --- AC 03-01: structured --model/--provider filtering (no free-text fallback) ---
+
+// structuredIndexJSON is a mock community index carrying populated provider/model
+// fields, purpose-built to exercise structured-field filtering:
+//   - amara: model deepseek-chat via routing endpoint openrouter (vendor token lives in Model)
+//   - gina:  frontier gpt-4 on provider openai
+//   - dan:   deepseek-coder on provider deepseek (both fields carry the vendor token)
+//   - omar:  deepseek-coder on provider openai (same model, different provider — AND discriminator)
+//   - nova:  gpt-4o (near-miss substring for --model gpt-4)
+//   - cara:  DeepSeek-Chat (mixed case — case-insensitivity)
+//   - finn:  model gpt-4 but Description mentions "deepseek" (free-text-leak trap)
+const structuredIndexJSON = `[
+  {"name":"amara","version":"1.0.0","description":"General-purpose reviewer","path":"open/amara.yaml","provider":"openrouter","model":"deepseek-chat"},
+  {"name":"gina","version":"1.0.0","description":"API contract reviewer","path":"frontier/gina.yaml","provider":"openai","model":"gpt-4"},
+  {"name":"dan","version":"1.0.0","description":"Coder","path":"open/dan.yaml","provider":"deepseek","model":"deepseek-coder"},
+  {"name":"omar","version":"1.0.0","description":"Coder alt","path":"open/omar.yaml","provider":"openai","model":"deepseek-coder"},
+  {"name":"nova","version":"1.0.0","description":"Vision reviewer","path":"frontier/nova.yaml","provider":"openai","model":"gpt-4o"},
+  {"name":"cara","version":"1.0.0","description":"Case variant","path":"open/cara.yaml","provider":"openrouter","model":"DeepSeek-Chat"},
+  {"name":"finn","version":"1.0.0","description":"Tuned for deepseek workflows","path":"frontier/finn.yaml","provider":"openai","model":"gpt-4"}
+]`
+
+// resultNames extracts the Name of each entry for set-membership assertions.
+func resultNames(entries []PersonaIndexEntry) []string {
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name
+	}
+	return names
+}
+
+// TestSearchWithOptions_StructuredFiltering covers AC 03-01 happy paths + edge
+// cases: --model/--provider match ONLY the structured Model/Provider fields,
+// case-insensitively and substring-tolerant, combining as AND filters. The finn
+// entry (Model gpt-4, Description mentions deepseek) is the free-text-leak trap:
+// it must NEVER be returned under --model deepseek.
+func TestSearchWithOptions_StructuredFiltering(t *testing.T) {
+	srv := testServer(t, map[string]string{"/index.json": structuredIndexJSON})
+	cases := []struct {
+		name string
+		opts SearchOptions
+		want []string
+	}{
+		{
+			name: "model deepseek matches structured Model only (Scenario 1, Error Scenario 1)",
+			opts: SearchOptions{Model: "deepseek"},
+			want: []string{"amara", "dan", "omar", "cara"}, // finn excluded: its Model is gpt-4
+		},
+		{
+			name: "provider openai matches structured Provider (Scenario 2)",
+			opts: SearchOptions{Provider: "openai"},
+			want: []string{"gina", "omar", "nova", "finn"},
+		},
+		{
+			name: "model+provider combine as AND (Scenario 3)",
+			opts: SearchOptions{Model: "deepseek-coder", Provider: "deepseek"},
+			want: []string{"dan"}, // omar has model deepseek-coder but provider openai
+		},
+		{
+			name: "substring near-miss: --model gpt-4 also matches gpt-4o (Edge Case 1)",
+			opts: SearchOptions{Model: "gpt-4"},
+			want: []string{"gina", "nova", "finn"},
+		},
+		{
+			name: "no structured match yields empty, not error (Edge Case 2)",
+			opts: SearchOptions{Model: "nonexistent-model"},
+			want: nil,
+		},
+		{
+			name: "case-insensitive model match (Edge Case 3)",
+			opts: SearchOptions{Model: "DEEPSEEK"},
+			want: []string{"amara", "dan", "omar", "cara"},
+		},
+		{
+			name: "--provider is the routing-endpoint key, not the vendor (Edge Case 4)",
+			opts: SearchOptions{Provider: "deepseek"},
+			want: []string{"dan"}, // amara's model is deepseek-chat but provider is openrouter
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := SearchWithOptions(srv.Client(), srv.URL, tc.opts)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tc.want, resultNames(got))
+		})
+	}
+}
+
+// TestSearchWithOptions_FreeTextDescriptionDoesNotSatisfyModel is the explicit
+// AC 03-01 Error Scenario 1 guard: a persona whose Description mentions a model but
+// whose structured Model differs is NOT returned under --model.
+func TestSearchWithOptions_FreeTextDescriptionDoesNotSatisfyModel(t *testing.T) {
+	srv := testServer(t, map[string]string{"/index.json": structuredIndexJSON})
+	got, err := SearchWithOptions(srv.Client(), srv.URL, SearchOptions{Model: "deepseek"})
+	require.NoError(t, err)
+	assert.NotContains(t, resultNames(got), "finn",
+		"finn's Model is gpt-4; a deepseek mention in its Description must not satisfy --model deepseek")
+}
