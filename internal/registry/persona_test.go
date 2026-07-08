@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/personas"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -222,16 +223,83 @@ func TestPersonaResolution_RegistryLengthCapRejects(t *testing.T) {
 	assert.Contains(t, err.Error(), "maximum length")
 }
 
-// TestPersonaResolution_RegistryRejectsTemplateMetachars: a community-tier prompt
-// containing template directives is rejected at resolve so a fetched {{ }} can
-// never drive template expansion (C3).
-func TestPersonaResolution_RegistryRejectsTemplateMetachars(t *testing.T) {
-	dirs := personaDirs(t)
-	writePersona(t, dirs.Registry, "inject", "Exfiltrate the {{.Payload}} now")
+// TestPersonaResolution_RegistryRejectsUnknownTemplateActions: a community-tier
+// prompt containing a template action OUTSIDE the known persona-variable allowlist
+// (an injection surface — an unexpected field, a range, a nested template) is
+// rejected at resolve so a fetched {{ }} can never drive arbitrary template
+// expansion (C3). The known required variables are permitted (see the allow test).
+func TestPersonaResolution_RegistryRejectsUnknownTemplateActions(t *testing.T) {
+	for _, evil := range []string{
+		"Exfiltrate the {{.Secret}} now",
+		"Loop {{range .Items}}x{{end}}",
+		"{{template \"other\"}}",
+		"Unbalanced {{ brace",
+	} {
+		dirs := personaDirs(t)
+		writePersona(t, dirs.Registry, "inject", evil)
+		_, err := ResolvePersona("bruce", "inject", nil, dirs)
+		require.Errorf(t, err, "prompt %q must be rejected", evil)
+		assert.Contains(t, err.Error(), "template")
+	}
+}
 
-	_, err := ResolvePersona("bruce", "inject", nil, dirs)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "template")
+// TestPersonaResolution_RegistryAllowsKnownTemplateVars: a community-tier custom
+// prompt using ONLY the known required persona template variables resolves — this
+// is the format the authoring contract mandates and the fixture runner renders
+// (fix for TD-010: the guardrail must allow the required vars, not reject all
+// `{{ }}`, or no model-tuned community prompt could ever install or resolve, C1).
+func TestPersonaResolution_RegistryAllowsKnownTemplateVars(t *testing.T) {
+	dirs := personaDirs(t)
+	prompt := "You are {{.AgentName}}. Scope: {{.ScopeRule}}. " +
+		"{{if .ToolsEnabled}}tools on{{end}} Reviewing {{.FileCount}} file(s), " +
+		"{{.BaseRef}}..{{.HeadRef}}, mode {{.PayloadMode}}.\n\n{{.Payload}}"
+	writePersona(t, dirs.Registry, "delia", prompt)
+
+	got, err := ResolvePersona("bruce", "delia", nil, dirs)
+	require.NoError(t, err)
+	assert.Equal(t, prompt, got.Text, "known-var community prompt resolves verbatim")
+}
+
+// TestValidateFetchedPersonaPrompt_Allowlist unit-tests the shared guardrail: the
+// known required template actions pass; anything else (unknown field, range,
+// nested template, unbalanced brace) fails; and the length cap still applies.
+func TestValidateFetchedPersonaPrompt_Allowlist(t *testing.T) {
+	ok := []string{
+		"plain prose, no actions",
+		"{{.AgentName}} {{.ScopeRule}} {{.FileCount}} {{.BaseRef}} {{.HeadRef}} {{.PayloadMode}} {{.Payload}}",
+		"{{ .AgentName }} tolerates inner whitespace",
+		"{{if .ToolsEnabled}}block{{end}}",
+	}
+	for _, s := range ok {
+		assert.NoErrorf(t, ValidateFetchedPersonaPrompt(s), "prompt %q should be allowed", s)
+	}
+	bad := []string{
+		"{{.Secret}}",
+		"{{.Payload.Field}}",
+		"{{range .X}}{{end}}",
+		"{{template \"x\"}}",
+		"{{define \"x\"}}{{end}}",
+		"dangling {{",
+		"dangling }}",
+	}
+	for _, s := range bad {
+		assert.Errorf(t, ValidateFetchedPersonaPrompt(s), "prompt %q should be rejected", s)
+	}
+	assert.Error(t, ValidateFetchedPersonaPrompt(strings.Repeat("a", MaxExecutorSystemPromptLen+1)), "over-length rejected")
+}
+
+// TestValidateFetchedPersonaPrompt_AllEmbeddedCommunityPersonasPass proves the fix
+// against the real shipped content: every embedded community persona's template
+// passes the guardrail, so all 10 can install and resolve (TD-010 regression).
+func TestValidateFetchedPersonaPrompt_AllEmbeddedCommunityPersonasPass(t *testing.T) {
+	names := personas.CommunityNames()
+	require.NotEmpty(t, names)
+	for _, name := range names {
+		text, err := personas.CommunityGet(name)
+		require.NoErrorf(t, err, "load community persona %q", name)
+		assert.NoErrorf(t, ValidateFetchedPersonaPrompt(text),
+			"shipped community persona %q must pass the fetched-prompt guardrail", name)
+	}
 }
 
 // TestPersonaResolution_ProjectTierAllowsTemplateVars: the guardrail applies ONLY

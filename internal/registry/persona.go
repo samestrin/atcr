@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/samestrin/atcr/personas"
@@ -129,20 +130,62 @@ func ResolvePersona(agentName, persona string, taskMessage *string, dirs Persona
 	return ResolvedPersona{Text: base, Source: "embedded:_base"}, nil
 }
 
-// validateCommunityPrompt enforces the C3 untrusted-input guardrails on a
-// pinned-community persona prompt resolved from the Registry tier: a length cap
-// mirroring MaxExecutorSystemPromptLen, and a reject bar on template
-// metacharacters ({{ or }}) so a fetched prompt can never drive template
-// expansion. It mirrors the install-time check in internal/personas so a file
-// dropped straight into the pin dir is caught too.
-func validateCommunityPrompt(text string) error {
+// allowedPersonaTemplateActions is the exact set of Go text/template action
+// bodies (inner content, whitespace-trimmed) a persona prompt may contain: the
+// required persona variables plus the single optional tools conditional. Each
+// references only a read-only field of the fixed PayloadContext — no function
+// call, no {{template}}/{{define}}/{{range}}, no nested field access — so a fetched
+// community prompt using ONLY these cannot drive arbitrary template expansion.
+var allowedPersonaTemplateActions = map[string]struct{}{
+	".AgentName":       {},
+	".ScopeRule":       {},
+	".FileCount":       {},
+	".BaseRef":         {},
+	".HeadRef":         {},
+	".PayloadMode":     {},
+	".Payload":         {},
+	"if .ToolsEnabled": {},
+	"end":              {},
+}
+
+// personaTemplateActionRe matches a single well-formed {{...}} action (no nested
+// braces). Anything a fetched prompt contains that is NOT such an action — a
+// dangling `{{`/`}}`, an unbalanced brace — survives the strip below and is
+// rejected.
+var personaTemplateActionRe = regexp.MustCompile(`\{\{[^{}]*\}\}`)
+
+// ValidateFetchedPersonaPrompt enforces the C3 untrusted-input guardrails on a
+// fetched/pinned community persona prompt: a length cap mirroring
+// MaxExecutorSystemPromptLen, and an allowlist on template actions — the known
+// required persona variables are permitted (the authoring contract mandates them
+// and the renderer substitutes them from the fixed PayloadContext), while any
+// other {{ }} action or unbalanced brace is rejected. Reject-all was wrong: it
+// made every model-tuned community persona un-installable and un-resolvable
+// (TD-010), contradicting Clarification C1. Rejection is a descriptive error,
+// never a silent truncation or transform.
+func ValidateFetchedPersonaPrompt(text string) error {
 	if len(text) > MaxExecutorSystemPromptLen {
 		return fmt.Errorf("persona prompt exceeds maximum length of %d bytes", MaxExecutorSystemPromptLen)
 	}
-	if strings.Contains(text, "{{") || strings.Contains(text, "}}") {
-		return fmt.Errorf("persona prompt contains template metacharacters ({{ or }})")
+	stripped := personaTemplateActionRe.ReplaceAllStringFunc(text, func(m string) string {
+		inner := strings.TrimSpace(m[2 : len(m)-2])
+		if _, ok := allowedPersonaTemplateActions[inner]; ok {
+			return "" // known-good action → remove it
+		}
+		return m // unknown action → leave it so the residual-brace check below rejects it
+	})
+	if strings.Contains(stripped, "{{") || strings.Contains(stripped, "}}") {
+		return fmt.Errorf("persona prompt contains disallowed template metacharacters ({{ or }}); only the known persona template variables are permitted")
 	}
 	return nil
+}
+
+// validateCommunityPrompt enforces the C3 guardrails on a pinned-community persona
+// prompt resolved from the Registry tier. It delegates to ValidateFetchedPersonaPrompt
+// so the resolve-time and install-time (internal/personas) checks share one
+// allowlist and can never drift.
+func validateCommunityPrompt(text string) error {
+	return ValidateFetchedPersonaPrompt(text)
 }
 
 // validateName rejects names that could escape the persona directory. A single

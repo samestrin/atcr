@@ -1,7 +1,6 @@
 package personas
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"net/url"
@@ -13,19 +12,14 @@ import (
 )
 
 // validateFetchedPrompt enforces the C3 untrusted-input guardrails on a fetched
-// community custom prompt BEFORE it is written to disk: a length cap mirroring
-// registry.MaxExecutorSystemPromptLen, and a reject-at-load bar on template
-// metacharacters ({{ or }}) so an untrusted remote prompt can never drive template
-// expansion at review time. Rejection is a descriptive error, never a silent
-// truncation or transform.
+// community custom prompt BEFORE it is written to disk. It delegates to
+// registry.ValidateFetchedPersonaPrompt so install-time and resolve-time share one
+// allowlist (length cap + known-template-variable allowlist) and can never drift:
+// the required persona variables are permitted (the authoring contract mandates
+// them), any other {{ }} action or unbalanced brace is rejected. Rejection is a
+// descriptive error, never a silent truncation or transform.
 func validateFetchedPrompt(data []byte) error {
-	if len(data) > registry.MaxExecutorSystemPromptLen {
-		return fmt.Errorf("persona prompt exceeds maximum length of %d bytes", registry.MaxExecutorSystemPromptLen)
-	}
-	if bytes.Contains(data, []byte("{{")) || bytes.Contains(data, []byte("}}")) {
-		return fmt.Errorf("persona prompt contains template metacharacters ({{ or }}), which are not allowed in fetched community prompts")
-	}
-	return nil
+	return registry.ValidateFetchedPersonaPrompt(string(data))
 }
 
 // FetchPersonaMD fetches <baseURL>/<name>.md — a community persona's co-located
