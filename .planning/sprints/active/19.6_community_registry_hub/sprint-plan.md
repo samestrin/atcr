@@ -537,28 +537,32 @@ Answers to the Phase 3 safety-check questions (open decisions the ACs/design-not
    Fix CRITICAL/HIGH from 3.11.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): preservation/labeling cleanup"`
    **Duration:** ~45m
 
-### 3.13 [ ] **[Custom-prompt ResolvePersona precedence chain - RED](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.13 [x] **[Custom-prompt ResolvePersona precedence chain - RED](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **AC:** [01-06](plan/acceptance-criteria/01-06-custom-prompt-resolution-precedence.md)
    Write comprehensive failing unit tests **extending `internal/registry/persona_test.go`** for the existing `ResolvePersona`: single deterministic precedence (project `.atcr/personas` override > pinned community `~/.config/atcr/personas` > embedded built-in); collision resolves to exactly one source; the community install dir == the resolver's `Registry` dir (darwin regression); **length cap** rejects oversized custom prompts; **hard fixture gate** blocks a fixture-failing prompt from resolving; **`{{ }}` metacharacters** in a fetched prompt are not expanded; a fetched custom prompt (co-located `<name>.md`) resolves as one self-contained unit (C1/C2/C3). Verify fail correctly.
    **Files:** `internal/registry/persona_test.go` (extend) | **Duration:** ~3h
 
-### 3.14 [ ] **[Custom-prompt ResolvePersona precedence chain - GREEN](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.14 [x] **[Custom-prompt ResolvePersona precedence chain - GREEN](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **Extend** the existing `internal/registry.ResolvePersona` per the design note: keep one chain, resolve the pinned-community co-located `<name>.md` unit, add guardrails (length cap mirroring `MaxExecutorSystemPromptLen`=4096, hard fixture gate, `{{ }}` guardrail, pin). Reconcile `internal/personas.PersonasDir()` to the resolver's `Registry` dir (`~/.config/atcr/personas`) so installs land on the chain. Built-ins already resolve `.md` through the same chain — no new format. Minimal code (T1), verify all (T2), COMMIT: `git commit -m "feat(personas): extend ResolvePersona chain for community units + guardrails (green)"`
    **Files:** `internal/registry/persona.go` (extend), `internal/personas/paths.go` (dir reconcile), `internal/personas/*` (install co-located `.md`) | **Duration:** ~5h
 
-### 3.14.A [ ] **[Custom-prompt ResolvePersona precedence chain - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+### 3.14.A [x] **[Custom-prompt ResolvePersona precedence chain - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 3.14`) — changed files, verbatim checklist, severity rubric, findings-table-only. Focus (HIGH-RISK, security-sensitive): prompt-injection via fetched prompt, oversized-prompt DoS, leftover `{{ }}` template injection, ambiguous collision / double-load / panic, fixture-gate bypass.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (no CRITICAL/HIGH — proceed):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | persona.go level-4 `_base.md` read | Registry-tier `_base.md` bypasses `validateCommunityPrompt`; the resolve-guard comment overclaimed "catches hand-dropped files". | **FIXED in 3.15 (comment)** — `_base.md` is a structural template that MUST contain `{{.Payload}}` and CANNOT be fetched (name `_base` fails validation), so it is intentionally exempt; comment narrowed to state the guard covers `<persona>.md` only. No behavior change (guarding `_base` would break base templates). |
+   | LOW | unit.go install guard / personas.go:134 | Install-time guard was near-dead: `personas install` used `Install` (YAML only, no `.md`), so it delivered no custom prompt and skipped the install-time guardrail (C2 gap). | **FIXED in 3.15** — single-persona `personas install` routed through `InstallUnit` (delivers the co-located `.md` + applies the guard); pinned by `TestPersonasInstall_DeliversCustomPrompt`. Bundle `.md` delivery deferred → **TD-006**. |
+
+   Reviewer confirmed: untrusted text flows to `text/template.Parse`, and `Contains("{{")` catches every Go template trigger; fetch body capped at 5 MB before validation; install/resolve caps agree (both `len()` bytes, 4096); `PersonasDir()` == resolver Registry dir on all OSes, no import cycle; precedence deterministic, no double-load/panic.
 
    **Action Required:**
    - CRITICAL/HIGH -> 3.15, do NOT proceed until fixed | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 3.15 [ ] **[Custom-prompt ResolvePersona precedence chain - REFACTOR](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
+   **Outcome:** No CRITICAL/HIGH → proceed. MEDIUM resolved as a comment-accuracy fix (the flagged `_base` path is intentionally exempt + unfetchable); LOW fixed inline in 3.15 (install now delivers the unit) with bundle delivery deferred to TD-006.
+
+### 3.15 [x] **[Custom-prompt ResolvePersona precedence chain - REFACTOR](plan/user-stories/01-community-canonical-fetch-and-pin-distribution.md)**
    Fix CRITICAL/HIGH from 3.14.A (security findings are non-negotiable inline fixes); maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): harden ResolvePersona + guardrails"`
    **Duration:** ~1.5h
 

@@ -131,7 +131,11 @@ func newPersonasInstallCmd() *cobra.Command {
 				}
 				return installBundle(cmd, dir, bundleName)
 			}
-			if err := commpersonas.Install(personasClient, commpersonas.BaseURL(), name, dir); err != nil {
+			// InstallUnit delivers the complete self-contained unit — the YAML plus
+			// its co-located custom prompt (<name>.md) when present — and enforces
+			// the C3 fetched-prompt guardrails, so `personas install` and the
+			// init/quickstart fetch-and-pin path deliver identical units (C2).
+			if err := commpersonas.InstallUnit(personasClient, commpersonas.BaseURL(), name, dir); err != nil {
 				return err
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Installed persona %q\n", name)

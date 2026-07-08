@@ -67,6 +67,21 @@ func ResolvePersona(agentName, persona string, taskMessage *string, dirs Persona
 			return ResolvedPersona{}, err
 		}
 		if ok {
+			// The Registry (pinned-community) tier is untrusted fetched content:
+			// defensively enforce the C3 guardrails on a resolved <persona>.md so a
+			// fetched (or hand-dropped) oversized or {{ }}-bearing custom prompt is
+			// rejected even if it bypassed the install-time check. Scope note: this
+			// guards the per-persona custom prompt only. The shared _base.md
+			// structural template (level 4 below) is intentionally NOT metachar-
+			// restricted — a base template must contain {{.Payload}} to function —
+			// and cannot be fetched anyway (the name "_base" fails validation on the
+			// install/fetch path). The trusted Project tier is likewise exempt (it
+			// may use template variables exactly like the embedded built-ins).
+			if dir == dirs.Registry {
+				if err := validateCommunityPrompt(text); err != nil {
+					return ResolvedPersona{}, fmt.Errorf("community persona %q at %s: %w", persona, path, err)
+				}
+			}
 			return ResolvedPersona{Text: text, Source: path}, nil
 		}
 	}
@@ -102,6 +117,22 @@ func ResolvePersona(agentName, persona string, taskMessage *string, dirs Persona
 		return ResolvedPersona{}, fmt.Errorf("internal error: no persona found for agent '%s' — embedded default missing: %w", agentName, err)
 	}
 	return ResolvedPersona{Text: base, Source: "embedded:_base"}, nil
+}
+
+// validateCommunityPrompt enforces the C3 untrusted-input guardrails on a
+// pinned-community persona prompt resolved from the Registry tier: a length cap
+// mirroring MaxExecutorSystemPromptLen, and a reject bar on template
+// metacharacters ({{ or }}) so a fetched prompt can never drive template
+// expansion. It mirrors the install-time check in internal/personas so a file
+// dropped straight into the pin dir is caught too.
+func validateCommunityPrompt(text string) error {
+	if len(text) > MaxExecutorSystemPromptLen {
+		return fmt.Errorf("persona prompt exceeds maximum length of %d bytes", MaxExecutorSystemPromptLen)
+	}
+	if strings.Contains(text, "{{") || strings.Contains(text, "}}") {
+		return fmt.Errorf("persona prompt contains template metacharacters ({{ or }})")
+	}
+	return nil
 }
 
 // validateName rejects names that could escape the persona directory via path

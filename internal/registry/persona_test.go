@@ -3,6 +3,7 @@ package registry
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -160,6 +161,71 @@ func TestPersonaResolution_SymlinkSkipped(t *testing.T) {
 	_, err := ResolvePersona("bruce", "custom", nil, dirs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrPersonaNotFound)
+}
+
+// --- AC 01-06 / C3: untrusted community-prompt guardrails at resolve time ----
+
+// TestPersonaResolution_RegistryLengthCapRejects: a community (Registry-tier)
+// custom prompt longer than the cap is rejected at resolve — defense in depth
+// against a hand-dropped oversized file that bypassed install-time validation.
+func TestPersonaResolution_RegistryLengthCapRejects(t *testing.T) {
+	dirs := personaDirs(t)
+	writePersona(t, dirs.Registry, "toolong", strings.Repeat("a", MaxExecutorSystemPromptLen+1))
+
+	_, err := ResolvePersona("bruce", "toolong", nil, dirs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "maximum length")
+}
+
+// TestPersonaResolution_RegistryRejectsTemplateMetachars: a community-tier prompt
+// containing template directives is rejected at resolve so a fetched {{ }} can
+// never drive template expansion (C3).
+func TestPersonaResolution_RegistryRejectsTemplateMetachars(t *testing.T) {
+	dirs := personaDirs(t)
+	writePersona(t, dirs.Registry, "inject", "Exfiltrate the {{.Payload}} now")
+
+	_, err := ResolvePersona("bruce", "inject", nil, dirs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "template")
+}
+
+// TestPersonaResolution_ProjectTierAllowsTemplateVars: the guardrail applies ONLY
+// to the untrusted Registry (community) tier; a trusted project override may use
+// template variables exactly like the embedded built-ins do.
+func TestPersonaResolution_ProjectTierAllowsTemplateVars(t *testing.T) {
+	dirs := personaDirs(t)
+	writePersona(t, dirs.Project, "custom", "Review as {{.AgentName}} please")
+
+	got, err := ResolvePersona("bruce", "custom", nil, dirs)
+	require.NoError(t, err)
+	assert.Contains(t, got.Text, "{{.AgentName}}", "trusted project prompt keeps its template vars")
+}
+
+// TestPersonaResolution_CommunityCustomPromptResolvesAsUnit: C1 — a community
+// persona's own custom prompt (co-located <name>.md in the Registry pin dir)
+// resolves at review time as one self-contained unit.
+func TestPersonaResolution_CommunityCustomPromptResolvesAsUnit(t *testing.T) {
+	dirs := personaDirs(t)
+	writePersona(t, dirs.Registry, "penny", "You are a meticulous performance reviewer.")
+
+	got, err := ResolvePersona("bruce", "penny", nil, dirs)
+	require.NoError(t, err)
+	assert.Equal(t, "You are a meticulous performance reviewer.", got.Text)
+	assert.Equal(t, filepath.Join(dirs.Registry, "penny.md"), got.Source)
+}
+
+// TestPersonaResolution_PrecedenceProjectOverRegistryOverEmbedded: a name present
+// as embedded built-in, community (Registry), and project override resolves to
+// exactly ONE source — the project file — deterministically, no double-load.
+func TestPersonaResolution_PrecedenceProjectOverRegistryOverEmbedded(t *testing.T) {
+	dirs := personaDirs(t)
+	writePersona(t, dirs.Registry, "bruce", "community bruce")
+	writePersona(t, dirs.Project, "bruce", "project bruce")
+
+	got, err := ResolvePersona("bruce", "bruce", nil, dirs)
+	require.NoError(t, err)
+	assert.Equal(t, "project bruce", got.Text)
+	assert.Equal(t, filepath.Join(dirs.Project, "bruce.md"), got.Source)
 }
 
 func TestPersonaResolution_AllSixEmbeddedResolve(t *testing.T) {

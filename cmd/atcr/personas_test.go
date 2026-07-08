@@ -109,6 +109,25 @@ func TestPersonasInstall_Integration(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, "security", "owasp.yaml"))
 }
 
+// TestPersonasInstall_DeliversCustomPrompt covers C2: `personas install` delivers
+// the complete self-contained unit — the YAML plus its co-located <name>.md custom
+// prompt — so the installed persona is resolvable with its model-tuned prompt.
+func TestPersonasInstall_DeliversCustomPrompt(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{
+		"/security/owasp.yaml": cmdValidPersonaYAML,
+		"/security/owasp.md":   "You are a meticulous OWASP Top-10 reviewer.",
+	})
+	dir := withPersonasEnv(t, srv)
+
+	_, err := execute(t, "personas", "install", "security/owasp")
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(dir, "security", "owasp.yaml"))
+
+	md, err := os.ReadFile(filepath.Join(dir, "security", "owasp.md"))
+	require.NoError(t, err)
+	assert.Equal(t, "You are a meticulous OWASP Top-10 reviewer.", string(md), "co-located custom prompt delivered")
+}
+
 func TestPersonasInstall_NotFoundExitsNonZero(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{})
 	withPersonasEnv(t, srv)

@@ -1,6 +1,7 @@
 package personas
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/url"
@@ -10,6 +11,22 @@ import (
 
 	"github.com/samestrin/atcr/internal/registry"
 )
+
+// validateFetchedPrompt enforces the C3 untrusted-input guardrails on a fetched
+// community custom prompt BEFORE it is written to disk: a length cap mirroring
+// registry.MaxExecutorSystemPromptLen, and a reject-at-load bar on template
+// metacharacters ({{ or }}) so an untrusted remote prompt can never drive template
+// expansion at review time. Rejection is a descriptive error, never a silent
+// truncation or transform.
+func validateFetchedPrompt(data []byte) error {
+	if len(data) > registry.MaxExecutorSystemPromptLen {
+		return fmt.Errorf("persona prompt exceeds maximum length of %d bytes", registry.MaxExecutorSystemPromptLen)
+	}
+	if bytes.Contains(data, []byte("{{")) || bytes.Contains(data, []byte("}}")) {
+		return fmt.Errorf("persona prompt contains template metacharacters ({{ or }}), which are not allowed in fetched community prompts")
+	}
+	return nil
+}
 
 // FetchPersonaMD fetches <baseURL>/<name>.md — a community persona's co-located
 // custom reviewer prompt. A 404 is returned as ErrPersonaNotFound so callers can
@@ -77,6 +94,13 @@ func InstallUnit(client HTTPClient, baseURL, name, destDir string) error {
 	hasMD := mdErr == nil
 	if mdErr != nil && !errors.Is(mdErr, ErrPersonaNotFound) {
 		return mdErr
+	}
+	// A fetched custom prompt is untrusted input: enforce the C3 guardrails before
+	// anything is written, so an invalid prompt never reaches disk.
+	if hasMD {
+		if err := validateFetchedPrompt(mdData); err != nil {
+			return fmt.Errorf("persona %q: %w", name, err)
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(yamlDest), 0o700); err != nil {
