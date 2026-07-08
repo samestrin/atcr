@@ -58,7 +58,7 @@ _Note: This section is updated as the sprint progresses through `/execute-sprint
 - [x] Phase 4: Discovery — Model-Aware Search
 - [x] Phase 5: Content Authoring — Persona Library + Human-Names Migration
 - [x] Phase 6: Contract Enforcement + Onboarding Docs
-- [ ] Phase 7: Integration & Validation
+- [x] Phase 7: Integration & Validation
 
 ---
 
