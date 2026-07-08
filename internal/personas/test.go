@@ -186,10 +186,12 @@ func fixtureCtx(diff string) payload.PayloadContext {
 	}
 }
 
-// TestPersona resolves name (a built-in or a community persona installed under
-// personasDir) and delegates fixture execution to runner. It errors if the
-// persona is neither a built-in nor installed.
-func TestPersona(personasDir, name string, runner FixtureRunner) (FixtureOutcome, error) {
-	_ = personasDir // reserved for future community fixture support; runner owns resolution.
+// TestPersona runs name's fixture via runner and returns the outcome. Resolution
+// of the target — a built-in or a community persona installed on disk — is owned
+// by runner (see TemplateFixtureRunner, whose PersonasDir seam locates installed
+// units); TestPersona does not resolve paths itself. A name runner cannot resolve
+// to a fixture yields FixtureOutcome{HasFixture: false} with a nil error — an
+// absent persona is not an error — which the caller reports as "no fixture".
+func TestPersona(name string, runner FixtureRunner) (FixtureOutcome, error) {
 	return runner.RunFixture(name)
 }

@@ -301,12 +301,11 @@ func newPersonasTestCmd() *cobra.Command {
 		Short: "Run a persona against its fixture and report pass/fail",
 		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dir, err := personasDir()
-			if err != nil {
-				return err
-			}
 			name := args[0]
-			outcome, err := commpersonas.TestPersona(dir, name, personasFixtureRunner)
+			// Resolution of the target (built-in vs. installed community persona) is
+			// owned by personasFixtureRunner's PersonasDir seam, so the command does
+			// not resolve the personas dir itself.
+			outcome, err := commpersonas.TestPersona(name, personasFixtureRunner)
 			if err != nil {
 				return err
 			}

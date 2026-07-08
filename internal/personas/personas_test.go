@@ -432,20 +432,20 @@ func (s stubRunner) RunFixture(string) (FixtureOutcome, error) { return s.outcom
 func TestTestPersona_PassDelegates(t *testing.T) {
 	dir := t.TempDir()
 	installFixture(t, dir, "security/owasp", validPersonaYAML)
-	out, err := TestPersona(dir, "security/owasp", stubRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 3, Total: 3}})
+	out, err := TestPersona("security/owasp", stubRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 3, Total: 3}})
 	require.NoError(t, err)
 	assert.Equal(t, 3, out.Passed)
 	assert.Equal(t, 3, out.Total)
 }
 
 func TestTestPersona_BuiltinResolves(t *testing.T) {
-	out, err := TestPersona(t.TempDir(), "sasha", stubRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
+	out, err := TestPersona("sasha", stubRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
 	require.NoError(t, err)
 	assert.True(t, out.HasFixture)
 }
 
 func TestTestPersona_UnknownPersona(t *testing.T) {
-	out, err := TestPersona(t.TempDir(), "security/nope", stubRunner{})
+	out, err := TestPersona("security/nope", stubRunner{})
 	require.NoError(t, err)
 	assert.False(t, out.HasFixture, "unknown community persona returns no fixture; runner owns resolution")
 }
