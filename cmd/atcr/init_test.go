@@ -131,6 +131,8 @@ func TestInit_GuardCoversPersonasWithoutConfig(t *testing.T) {
 
 	err := runInit(dir, false, &bytes.Buffer{}, &bytes.Buffer{})
 	require.Error(t, err, "existing persona files must trigger the overwrite guard")
+	assert.Contains(t, err.Error(), "bruce.md", "error should name the actual existing file")
+	assert.NotContains(t, err.Error(), "config already exists at .atcr/config.yaml", "error must not falsely claim config.yaml exists")
 
 	data, err := os.ReadFile(brucePath)
 	require.NoError(t, err)
