@@ -1,6 +1,6 @@
 # Installing Community Personas
 
-ATCR ships with nine built-in reviewer personas (six generalists plus the `sentinel`, `tracer`, and `idiomatic` bonus personas). Beyond those, the `atcr personas` command installs **community-contributed** personas from a configurable repository, so you can extend the reviewer panel with domain-specific lenses — security, performance, framework-specific, and more — without editing your registry by hand.
+ATCR ships with nine built-in reviewer personas (six generalists plus the `sasha`, `penny`, and `ingrid` bonus personas). Beyond those, the `atcr personas` command installs **community-contributed** personas from a configurable repository, so you can extend the reviewer panel with domain-specific lenses — security, performance, framework-specific, and more — without editing your registry by hand.
 
 This guide covers every `atcr personas` subcommand. No source-code lookup is required: each command's behavior and output are described here.
 
@@ -20,11 +20,13 @@ A persona installed here is picked up by the reviewer panel on your **next revie
 
 ## Configuring the registry URL
 
-By default, `install`, `search`, and `upgrade` fetch from the public community repository:
+By default, `install`, `search`, and `upgrade` fetch from the in-repo community-persona path on the product repository (`samestrin/atcr`), raw-content root:
 
 ```
-https://raw.githubusercontent.com/atcr/personas/main
+https://raw.githubusercontent.com/samestrin/atcr/main/personas/community
 ```
+
+(Anonymous raw-content fetches from this URL succeed once `samestrin/atcr` is public; until then, point `ATCR_PERSONAS_URL` at a local or mock registry.)
 
 To point at a different (e.g. private or mirrored) registry, set the `ATCR_PERSONAS_URL` environment variable to its raw-content base URL:
 
@@ -73,7 +75,7 @@ Lists installed personas — both built-in and community — as a table:
 atcr personas list
 # NAME             VERSION    SOURCE      LANGUAGE
 # bruce            built-in   built-in    -
-# sentinel         built-in   built-in    -
+# sasha            built-in   built-in    -
 # security/owasp   1.2.0      community   -
 # language/go-fmt  0.3.0      community   go
 ```
@@ -86,7 +88,7 @@ Columns: `NAME`, `VERSION` (`built-in` for the built-in personas; the installed 
 atcr personas list --scores
 # NAME             VERSION    SOURCE      LANGUAGE  CORROBORATION
 # security/owasp   1.2.0      community   -         72.4%
-# sentinel         built-in   built-in    -         n/a
+# sasha            built-in   built-in    -         n/a
 ```
 
 The rate is the fraction of a persona's findings that other reviewers or the verify stage corroborated, formatted as `XX.X%`, or `n/a` when there is no run history for that persona. When no scorecard data exists at all, every row shows `n/a` and a footer names the path that was checked:
@@ -121,20 +123,18 @@ The same name-validation guard applies, so `remove` can only delete files inside
 
 ### `atcr personas test <name>`
 
-Runs an installed persona against its fixture and reports pass/fail.
-
-> **Current behavior:** the shipped CLI does not yet wire a fixture runner, so `atcr personas test <name>` reports `No fixture defined for persona "<name>"` and exits 0 for every persona today. The pass/fail contract below is what the command produces once a runner is wired (the runner is an injectable seam; fixture execution against the persona's `.patch` is tracked as follow-up work).
+Runs a persona against its committed fixture — with no LLM and no network — and reports pass/fail. It works for built-in personas and for the embedded community-library personas: the fixture renders the persona template against a known diff and confirms the expected finding category and a clean render. A third-party persona installed from a registry that ships no embedded fixture reports `No fixture defined` instead.
 
 ```bash
-atcr personas test security/owasp
-# No fixture defined for persona "security/owasp"
+atcr personas test delia
+# PASS: delia (1/1 cases)
 ```
 
-The full output contract:
+The output contract:
 
-- A persona with no runnable fixture reports `No fixture defined for persona "<name>"` and exits 0 (the current shipped behavior).
 - All cases passing reports `PASS: <name> (N/N cases)` (exit 0).
 - Any case failing reports `FAIL: <name> (P/N cases)` to stdout and exits non-zero.
+- A persona with no committed fixture reports `No fixture defined for persona "<name>"` and exits 0.
 
 ### `atcr personas upgrade [name]`
 
@@ -152,6 +152,63 @@ atcr personas upgrade security/owasp
 - When upgrading several personas, a failure on one is reported to stderr and skipped; the remaining personas are still attempted and the command exits non-zero if any failed.
 
 Version comparison uses semantic-version ordering; non-semver version strings fall back to string inequality.
+
+## Discover and install a persona by model
+
+Each community persona carries structured `provider`/`model` metadata (see [personas-authoring.md](personas-authoring.md)), so you can find one by the model you already have — search matches the structured `model` in `index.json`, not free-text. The end-to-end flow:
+
+```bash
+# Discover a persona tuned for the model you have
+atcr personas search --model deepseek
+# or filter by the routing-endpoint provider
+atcr personas search --provider openrouter
+
+# Install the discovered persona (writes ~/.config/atcr/personas/, pins the YAML version)
+atcr personas install delia
+
+# Confirm it is installed and pinned
+atcr personas list
+
+# Run its fixture to verify it matches the model-in-metadata convention
+atcr personas test delia
+```
+
+- `search --model <substring>` matches a persona's bound model (case-insensitive substring); `search --provider <key>` matches its routing-endpoint provider. In this example `delia` is the DeepSeek-tuned persona (bound model `deepseek/deepseek-v4-pro`, routed through `openrouter`).
+- `install` writes the persona unit to `~/.config/atcr/personas/` and pins the version from the YAML's `version` field; `upgrade` advances the pin when the registry advertises a newer one.
+
+## Provider tiers beyond Synthetic
+
+`atcr quickstart` sets up Synthetic (flat-rate) as the one-command default. When you need other models, these are the options, in recommended order:
+
+### DashScope (Alibaba) — secondary flat-rate option
+
+A flat-rate alternative to switch to after trying Synthetic. There is no `atcr quickstart` wiring for it this release — configure it by hand in `~/.config/atcr/registry.yaml`, then set its key in your environment (the key is never written into atcr's own config):
+
+```yaml
+providers:
+  dashscope:
+    api_key_env: DASHSCOPE_API_KEY
+    base_url: https://<dashscope-openai-compatible-endpoint>/v1  # from DashScope's own docs
+agents:
+  qwen-reviewer:
+    provider: dashscope
+    model: <a-dashscope-hosted-model-id>
+    role: reviewer
+```
+
+DashScope exposes an OpenAI-compatible endpoint; take the exact `base_url` and model ids from DashScope's documentation.
+
+### Chutes → Featherless — explore, not default
+
+More models, but with caveats: slower inference, tighter context windows, and concurrency limits. Try Chutes first, then Featherless. Treat both as explore, not default — do not place them ahead of Synthetic in the funnel.
+
+### LiteLLM — Advanced
+
+An OpenAI-compatible proxy that aggregates several providers behind a single endpoint. Keep it Advanced — it is not a first-run path. Point atcr's `base_url` at the proxy and treat it as one provider; see [providers.md](providers.md) for the full proxy setup (LiteLLM already covered there).
+
+### Frontier / majors personas — opt-in, bring your own key
+
+Claude/GPT/Gemini-tuned personas — each prompt-phrased per that provider's own official prompting guide — are installed deliberately by anyone who already holds that provider's API key. They stay opt-in and outside the default funnel: discover and install one by the model you have (see the discover-by-model flow above), then set that provider's key in your registry. They are never part of the `atcr quickstart` funnel.
 
 ## Quick walkthrough
 

@@ -56,6 +56,91 @@ func TestQuickstart_ReusesInitWriters(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", "_base.md"))
 }
 
+// TestQuickstart_FetchFailure_AbortsBeforeProviderSetup covers AC 01-04
+// Scenario 2: a fetch failure aborts runQuickstart before the synthetic-provider
+// setup, so no registry.yaml is written.
+func TestQuickstart_FetchFailure_AbortsBeforeProviderSetup(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	srv := statusServer(t, nil, map[string]int{"/index.json": 500})
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+	destDir := filepath.Join(home, ".config", "atcr", "personas")
+	oldDir := personasDir
+	personasDir = func() (string, error) { return destDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	err := runQuickstart(quickstartOpts{
+		dir:            dir,
+		fetchCommunity: true,
+		in:             strings.NewReader(quickstartInput),
+		out:            &bytes.Buffer{},
+		errOut:         &bytes.Buffer{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--offline")
+	assert.NoFileExists(t, filepath.Join(home, ".config", "atcr", "registry.yaml"),
+		"provider setup must not run after a fetch failure")
+}
+
+// TestQuickstart_OfflineFlag_Registered covers AC 01-03: `atcr quickstart`
+// exposes an --offline flag.
+func TestQuickstart_OfflineFlag_Registered(t *testing.T) {
+	require.NotNil(t, newQuickstartCmd().Flags().Lookup("offline"), "--offline registered on quickstart")
+}
+
+// TestQuickstart_Offline_ZeroNetwork covers AC 01-03: the offline path (the flag
+// maps to fetchCommunity=false) makes zero network calls and still scaffolds the
+// embedded built-ins.
+func TestQuickstart_Offline_ZeroNetwork(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	oldClient := personasClient
+	personasClient = failingHTTPClient{t}
+	t.Cleanup(func() { personasClient = oldClient })
+
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:            dir,
+		fetchCommunity: false,
+		in:             strings.NewReader(quickstartInput),
+		out:            &bytes.Buffer{},
+		errOut:         &bytes.Buffer{},
+	}))
+	assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", "bruce.md"))
+}
+
+// TestQuickstart_FetchAndPin_InstallsCommunity covers AC 01-02 Scenario 2:
+// runQuickstart (online) inherits the fetch-and-pin behavior — a community
+// persona advertised in the index is installed into the community pin dir before
+// the synthetic-provider setup proceeds.
+func TestQuickstart_FetchAndPin_InstallsCommunity(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// A community index advertising a roster (built-in) name so the fetch has a
+	// match; other roster names are skipped with a warning.
+	index := `[{"name":"bruce","version":"2.0.0","description":"d","path":"bruce.yaml","provider":"synthetic","model":"x"}]`
+	srv := unitServer(t, index, map[string]string{"/bruce.yaml": communityUnitYAML})
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	destDir := filepath.Join(home, ".config", "atcr", "personas")
+	oldDir := personasDir
+	personasDir = func() (string, error) { return destDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:            dir,
+		fetchCommunity: true,
+		in:             strings.NewReader(quickstartInput),
+		out:            &bytes.Buffer{},
+		errOut:         &bytes.Buffer{},
+	}))
+
+	assert.FileExists(t, filepath.Join(destDir, "bruce.yaml"), "community persona fetched and pinned during quickstart")
+}
+
 func TestQuickstart_WritesSyntheticRegistry(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()
@@ -233,6 +318,22 @@ func TestQuickstart_KeyEntry_ExportAndProfileAppend(t *testing.T) {
 	cfgBytes, err := os.ReadFile(filepath.Join(dir, ".atcr", "config.yaml"))
 	require.NoError(t, err)
 	assert.NotContains(t, string(cfgBytes), "MYSECRETKEY", "key never written to config.yaml")
+}
+
+func TestQuickstart_KeyEcho_MaskedWhenNotTTY(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	out := &bytes.Buffer{} // a buffer is not a character device → not a terminal
+	// Paste a key, then skip the profile-append prompt (empty line).
+	in := strings.NewReader("MYSECRETKEY\n\n")
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: dir, in: in, out: out, errOut: &bytes.Buffer{},
+	}))
+
+	assert.NotContains(t, out.String(), "MYSECRETKEY",
+		"the pasted key must not be echoed to non-terminal (piped/CI-captured) stdout")
+	assert.Contains(t, out.String(), "export LLM_SYNTHETIC_API_KEY=",
+		"the export guidance line is still shown, just with the value masked")
 }
 
 func TestQuickstart_NoKey_PrintsInstructions(t *testing.T) {
@@ -424,7 +525,7 @@ func TestQuickstart_AppendExportAndGuardResolveSamePath(t *testing.T) {
 	assert.Equal(t, filepath.Join(home, ".atcr-test-profile"), expected)
 }
 
-func TestQuickstart_AppendExport_ChmodsExistingProfileTo0600(t *testing.T) {
+func TestQuickstart_AppendExport_PreservesExistingProfileMode(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	profile := filepath.Join(home, ".zshrc")
@@ -434,5 +535,19 @@ func TestQuickstart_AppendExport_ChmodsExistingProfileTo0600(t *testing.T) {
 
 	info, err := os.Stat(profile)
 	require.NoError(t, err)
-	assert.Equal(t, fs.FileMode(0o600), info.Mode().Perm(), "existing profile must be restricted after appending a secret")
+	assert.Equal(t, fs.FileMode(0o644), info.Mode().Perm(),
+		"an existing profile's mode must be left untouched — appendExport was asked to append, not to re-permission a file it did not create")
+}
+
+func TestQuickstart_AppendExport_CreatesNewProfileAt0600(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	profile := filepath.Join(home, ".new-profile")
+
+	require.NoError(t, appendExport(profile, "TEST_KEY", "secret"))
+
+	info, err := os.Stat(profile)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0o600), info.Mode().Perm(),
+		"a profile appendExport creates holds a secret, so it must be restricted to 0600")
 }

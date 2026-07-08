@@ -1,0 +1,17 @@
+diff --git a/api/client.go b/api/client.go
+index 1111111..2222222 100644
+--- a/api/client.go
++++ b/api/client.go
+@@ -12,10 +12,10 @@ package api
+
+-// Get returns (nil, ErrNotFound) when the key is absent — the documented contract.
++// Get now returns (nil, nil) when the key is absent, silently breaking the
++// published (nil, ErrNotFound) contract every caller depends on.
+ func (c *Client) Get(key string) (*Value, error) {
+ 	v, ok := c.store[key]
+ 	if !ok {
+-		return nil, ErrNotFound
++		return nil, nil
+ 	}
+ 	return &v, nil
+ }

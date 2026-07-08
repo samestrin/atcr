@@ -1,0 +1,5 @@
+provider: anthropic
+model: ""
+role: reviewer
+version: "1.0.0"
+description: "source model also empty so ONLY the empty-model check fires"

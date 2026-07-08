@@ -1,0 +1,12 @@
+diff --git a/go.mod b/go.mod
+index 1111111..2222222 100644
+--- a/go.mod
++++ b/go.mod
+@@ -3,7 +3,7 @@ module github.com/example/app
+ go 1.22
+
+ require (
+-	github.com/example/crypto v1.4.2
++	github.com/example/crypto v2.0.0-rc1+incompatible // unvetted pre-release major bump: breaking API + supply-chain risk
+ 	github.com/example/log v1.1.0
+ )
