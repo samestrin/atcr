@@ -131,6 +131,20 @@ type ScoredPersona struct {
 // alongside the rows gathered so far, mirroring List.
 func ListWithScores(personasDir string, scores map[string]float64) ([]ScoredPersona, error) {
 	metas, err := List(personasDir)
+	return joinScores(metas, scores), err
+}
+
+// ListTiersWithScores returns the personas from ListTiers joined with
+// corroboration rates from scores. It mirrors ListWithScores but sources the
+// persona set from the three resolver tiers (project > community > built-in)
+// so the --scores table agrees with the plain list on the Source column.
+func ListTiersWithScores(projectDir, communityDir string, scores map[string]float64) ([]ScoredPersona, error) {
+	metas, err := ListTiers(projectDir, communityDir)
+	return joinScores(metas, scores), err
+}
+
+// joinScores attaches corroboration rates to metas and sorts the result.
+func joinScores(metas []PersonaMeta, scores map[string]float64) []ScoredPersona {
 	scored := make([]ScoredPersona, 0, len(metas))
 	for _, m := range metas {
 		sp := ScoredPersona{PersonaMeta: m}
@@ -141,7 +155,7 @@ func ListWithScores(personasDir string, scores map[string]float64) ([]ScoredPers
 		scored = append(scored, sp)
 	}
 	sortScoredPersonas(scored)
-	return scored, err
+	return scored
 }
 
 // sortScoredPersonas orders rows by corroboration rate descending, breaking ties

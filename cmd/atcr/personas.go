@@ -206,7 +206,10 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 	if err != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not read scorecard data: %v\n", err)
 	}
-	scored, listErr := commpersonas.ListWithScores(dir, data.rates)
+	// Use the same three-tier resolver ordering as the plain list so the Source
+	// column is consistent and project overrides shadow community/built-ins.
+	projectDir := filepath.Join(".atcr", "personas")
+	scored, listErr := commpersonas.ListTiersWithScores(projectDir, dir, data.rates)
 	if listErr != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)
 	}
