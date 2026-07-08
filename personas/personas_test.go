@@ -14,7 +14,7 @@ func TestNames_ReturnsAllNine(t *testing.T) {
 	require.Len(t, names, 9)
 	require.Equal(t, []string{
 		"bruce", "greta", "kai", "mira", "dax",
-		"sentinel", "tracer", "idiomatic", "otto",
+		"sasha", "penny", "ingrid", "otto",
 	}, names)
 }
 
@@ -64,7 +64,7 @@ func TestEmbeddedFilesMatchNames(t *testing.T) {
 // TestGet_BonusPersonasNonEmpty confirms each of the three bonus personas
 // resolves to a non-empty embedded template (AC 01-01 Scenario 2).
 func TestGet_BonusPersonasNonEmpty(t *testing.T) {
-	for _, name := range []string{"sentinel", "tracer", "idiomatic"} {
+	for _, name := range []string{"sasha", "penny", "ingrid"} {
 		s, err := Get(name)
 		require.NoErrorf(t, err, "Get(%q)", name)
 		require.NotEmptyf(t, s, "Get(%q) should be non-empty", name)
@@ -89,7 +89,7 @@ func renderContext(diff string) payload.PayloadContext {
 // TestBonusPersonas_TemplateRenders confirms each bonus persona parses and
 // executes against PayloadContext with no unrendered template actions left.
 func TestBonusPersonas_TemplateRenders(t *testing.T) {
-	for _, name := range []string{"sentinel", "tracer", "idiomatic"} {
+	for _, name := range []string{"sasha", "penny", "ingrid"} {
 		text, err := Get(name)
 		require.NoErrorf(t, err, "Get(%q)", name)
 		out, err := payload.RenderPrompt(text, renderContext("<sample diff>"))
@@ -119,14 +119,14 @@ func fixtureTest(t *testing.T, personaName, fixturePath, wantCategory string) {
 	require.NotContainsf(t, out, "{{", "persona %q left an unrendered action", personaName)
 }
 
-func TestSentinelFixture(t *testing.T) {
-	fixtureTest(t, "sentinel", "testdata/sentinel_fixture.patch", "injection")
+func TestSashaFixture(t *testing.T) {
+	fixtureTest(t, "sasha", "testdata/sasha_fixture.patch", "injection")
 }
 
-func TestTracerFixture(t *testing.T) {
-	fixtureTest(t, "tracer", "testdata/tracer_fixture.patch", "n+1")
+func TestPennyFixture(t *testing.T) {
+	fixtureTest(t, "penny", "testdata/penny_fixture.patch", "n+1")
 }
 
-func TestIdiomaticFixture(t *testing.T) {
-	fixtureTest(t, "idiomatic", "testdata/idiomatic_fixture.patch", "error")
+func TestIngridFixture(t *testing.T) {
+	fixtureTest(t, "ingrid", "testdata/ingrid_fixture.patch", "error")
 }

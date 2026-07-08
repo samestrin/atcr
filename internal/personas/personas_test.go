@@ -84,7 +84,7 @@ func TestValidatePersonaName(t *testing.T) {
 		wantErr bool
 	}{
 		{"security/owasp", false},
-		{"idiomatic", false},
+		{"ingrid", false},
 		{"a_b-c/d", false},
 		{"../etc/passwd", true},
 		{"security/../../etc", true},
@@ -438,7 +438,7 @@ func TestTestPersona_PassDelegates(t *testing.T) {
 }
 
 func TestTestPersona_BuiltinResolves(t *testing.T) {
-	out, err := TestPersona(t.TempDir(), "sentinel", stubRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
+	out, err := TestPersona(t.TempDir(), "sasha", stubRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
 	require.NoError(t, err)
 	assert.True(t, out.HasFixture)
 }
@@ -530,15 +530,15 @@ func TestFetchPersonaYAML_RejectsInvalidNameBeforeFetch(t *testing.T) {
 // --- TemplateFixtureRunner -------------------------------------------------
 
 // TestTemplateFixtureRunner_BuiltinWithFixture (TD-012) verifies that
-// TemplateFixtureRunner finds and renders the embedded sentinel fixture
+// TemplateFixtureRunner finds and renders the embedded sasha fixture
 // without an LLM call.
 func TestTemplateFixtureRunner_BuiltinWithFixture(t *testing.T) {
 	r := TemplateFixtureRunner{}
-	out, err := r.RunFixture("sentinel")
+	out, err := r.RunFixture("sasha")
 	require.NoError(t, err)
-	require.True(t, out.HasFixture, "sentinel has an embedded fixture")
+	require.True(t, out.HasFixture, "sasha has an embedded fixture")
 	require.Equal(t, 1, out.Total)
-	require.Equal(t, 1, out.Passed, "sentinel template must render without unresolved template variables")
+	require.Equal(t, 1, out.Passed, "sasha template must render without unresolved template variables")
 }
 
 // TestTemplateFixtureRunner_BuiltinNoFixture verifies that a built-in persona

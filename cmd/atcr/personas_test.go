@@ -22,13 +22,13 @@ func TestReviewerCorroborationRates_CollapsesModels(t *testing.T) {
 	// One reviewer, two models → one collapsed rate of (3+1)/(4+6) = 0.4, not a
 	// last-wins single-model rate (3/4 or 1/6).
 	rows := []scorecard.LeaderboardRow{
-		{Reviewer: "Sentinel", Model: "opus", FindingsCorroborated: 3, FindingsRaised: 4},
-		{Reviewer: "sentinel", Model: "sonnet", FindingsCorroborated: 1, FindingsRaised: 6},
-		{Reviewer: "tracer", Model: "opus", FindingsCorroborated: 0, FindingsRaised: 0},
+		{Reviewer: "Sasha", Model: "opus", FindingsCorroborated: 3, FindingsRaised: 4},
+		{Reviewer: "sasha", Model: "sonnet", FindingsCorroborated: 1, FindingsRaised: 6},
+		{Reviewer: "penny", Model: "opus", FindingsCorroborated: 0, FindingsRaised: 0},
 	}
 	rates := reviewerCorroborationRates(rows)
-	assert.InDelta(t, 0.4, rates["sentinel"], 1e-9)
-	assert.InDelta(t, 0.0, rates["tracer"], 1e-9) // raised==0 → 0, still present
+	assert.InDelta(t, 0.4, rates["sasha"], 1e-9)
+	assert.InDelta(t, 0.0, rates["penny"], 1e-9) // raised==0 → 0, still present
 	assert.Len(t, rates, 2)
 }
 
@@ -243,14 +243,14 @@ func TestPersonasList_ScoresColumn(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{})
 	withPersonasEnv(t, srv)
 	withPersonasScores(t, personasScoreData{
-		rates: map[string]float64{"sentinel": 0.72},
+		rates: map[string]float64{"sasha": 0.72},
 		path:  "/tmp/sc",
 	}, nil, nil)
 
 	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "CORROBORATION")
-	assert.Regexp(t, `sentinel\s.*72\.0%`, stdout)
+	assert.Regexp(t, `sasha\s.*72\.0%`, stdout)
 }
 
 func TestPersonasList_ScoresNoDataFooter(t *testing.T) {
@@ -555,7 +555,7 @@ func TestPersonasTest_Pass(t *testing.T) {
 	withPersonasEnv(t, srv)
 	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: true, Passed: 3, Total: 3}})
 
-	out, err := execute(t, "personas", "test", "sentinel")
+	out, err := execute(t, "personas", "test", "sasha")
 	require.NoError(t, err)
 	assert.Contains(t, out, "PASS")
 }
@@ -565,7 +565,7 @@ func TestPersonasTest_FailExitsNonZero(t *testing.T) {
 	withPersonasEnv(t, srv)
 	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: true, Passed: 2, Total: 3}})
 
-	stdout, _, err := executeSplit(t, "personas", "test", "sentinel")
+	stdout, _, err := executeSplit(t, "personas", "test", "sasha")
 	require.Error(t, err)
 	assert.Equal(t, exitFailure, exitCode(err)) // exit 1
 	assert.Contains(t, stdout, "FAIL")          // report on stdout
@@ -576,7 +576,7 @@ func TestPersonasTest_NoFixture(t *testing.T) {
 	withPersonasEnv(t, srv)
 	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: false}})
 
-	out, err := execute(t, "personas", "test", "sentinel")
+	out, err := execute(t, "personas", "test", "sasha")
 	require.NoError(t, err)
 	assert.Contains(t, out, "No fixture")
 }
@@ -587,7 +587,7 @@ func TestPersonasTest_NoFixture(t *testing.T) {
 func TestPersonasTest_DefaultRunnerBuiltinFixture(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{})
 	withPersonasEnv(t, srv)
-	out, err := execute(t, "personas", "test", "sentinel")
+	out, err := execute(t, "personas", "test", "sasha")
 	require.NoError(t, err)
 	assert.Contains(t, out, "PASS")
 }
@@ -632,7 +632,7 @@ func TestPersonasTest_ZeroCasesWarn(t *testing.T) {
 	withPersonasEnv(t, srv)
 	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: true, Passed: 0, Total: 0}})
 
-	stdout, stderr, err := executeSplit(t, "personas", "test", "sentinel")
+	stdout, stderr, err := executeSplit(t, "personas", "test", "sasha")
 	require.NoError(t, err)
 	assert.Contains(t, stderr, "WARN")
 	assert.NotContains(t, stdout, "PASS")

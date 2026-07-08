@@ -150,19 +150,19 @@ func sectionBody(text, heading string) string {
 	return rest
 }
 
-// sentinelRenderContext populates every persona template variable with a
+// markerRenderContext populates every persona template variable with a
 // distinctive marker so a test can prove each required field's VALUE actually
 // reaches the rendered output — a source-text token in a dead {{if false}} branch
 // or a comment would pass a presence check yet never render.
-func sentinelRenderContext(diff string) payload.PayloadContext {
+func markerRenderContext(diff string) payload.PayloadContext {
 	return payload.PayloadContext{
-		AgentName:   "SENTINEL_AGENT",
-		BaseRef:     "SENTINEL_BASE",
-		HeadRef:     "SENTINEL_HEAD",
+		AgentName:   "MARKER_AGENT",
+		BaseRef:     "MARKER_BASE",
+		HeadRef:     "MARKER_HEAD",
 		FileCount:   4242,
-		PayloadMode: "SENTINEL_MODE",
+		PayloadMode: "MARKER_MODE",
 		Payload:     diff,
-		ScopeRule:   "SENTINEL_SCOPE",
+		ScopeRule:   "MARKER_SCOPE",
 	}
 }
 
@@ -425,18 +425,18 @@ func TestCommunityPersonas_RendersInBothToolStates(t *testing.T) {
 // variable's VALUE actually reaches the rendered output (AC 04-03 Scenario 5
 // strengthened): a token buried in a dead {{if false}} branch or a comment would
 // satisfy the source-text presence check yet never render, so here every field is
-// given a distinctive sentinel value and the render must surface all of them.
+// given a distinctive marker value and the render must surface all of them.
 func TestCommunityPersonas_RequiredValuesRender(t *testing.T) {
-	const sampleDiff = "SENTINEL_DIFF_PAYLOAD"
+	const sampleDiff = "MARKER_DIFF_PAYLOAD"
 	wantValues := []string{
-		"SENTINEL_AGENT", "SENTINEL_SCOPE", "4242",
-		"SENTINEL_BASE", "SENTINEL_HEAD", "SENTINEL_MODE", sampleDiff,
+		"MARKER_AGENT", "MARKER_SCOPE", "4242",
+		"MARKER_BASE", "MARKER_HEAD", "MARKER_MODE", sampleDiff,
 	}
 	for _, p := range communityPersonas {
 		t.Run(p.Slug, func(t *testing.T) {
 			raw, err := os.ReadFile(communityPath(p.Slug + ".md"))
 			require.NoErrorf(t, err, "read prompt %s", p.Slug)
-			out, err := payload.RenderPrompt(string(raw), sentinelRenderContext(sampleDiff))
+			out, err := payload.RenderPrompt(string(raw), markerRenderContext(sampleDiff))
 			require.NoErrorf(t, err, "RenderPrompt(%q)", p.Slug)
 			for _, want := range wantValues {
 				require.Containsf(t, out, want,

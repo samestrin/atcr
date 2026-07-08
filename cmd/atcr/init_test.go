@@ -17,7 +17,7 @@ import (
 	"github.com/samestrin/atcr/personas"
 )
 
-var personaNames = []string{"bruce", "greta", "kai", "mira", "dax", "sentinel", "tracer", "idiomatic", "otto"}
+var personaNames = []string{"bruce", "greta", "kai", "mira", "dax", "sasha", "penny", "ingrid", "otto"}
 
 // initDir runs a fresh init into dir, failing the test on error.
 func initDir(t *testing.T, dir string) {
@@ -348,12 +348,12 @@ func TestInstallCommunityPersonas_MissingRosterSkipsWithWarning(t *testing.T) {
 	dest := t.TempDir()
 	errOut := &bytes.Buffer{}
 
-	err := installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp", "tracer"}, &bytes.Buffer{}, errOut)
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"owasp", "penny"}, &bytes.Buffer{}, errOut)
 	require.NoError(t, err, "a missing roster persona is skip-with-warning, not a hard failure")
 
 	assert.FileExists(t, filepath.Join(dest, "owasp.yaml"))
 	assert.NoFileExists(t, filepath.Join(dest, "tracer.yaml"))
-	assert.Contains(t, errOut.String(), "tracer", "the skipped persona is named in the warning")
+	assert.Contains(t, errOut.String(), "penny", "the skipped persona is named in the warning")
 }
 
 // TestInstallCommunityPersonas_SkipsExistingUnit covers AC 01-05: the

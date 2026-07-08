@@ -68,18 +68,18 @@ func scoredByName(scored []ScoredPersona, name string) *ScoredPersona {
 }
 
 func TestListWithScores_HasRateAndNa(t *testing.T) {
-	scores := map[string]float64{"sentinel": 0.72} // tracer absent
+	scores := map[string]float64{"sasha": 0.72} // penny absent
 	scored, err := ListWithScores(filepath.Join(t.TempDir(), "absent"), scores)
 	require.NoError(t, err)
 
-	sentinel := scoredByName(scored, "sentinel")
-	require.NotNil(t, sentinel)
-	require.NotNil(t, sentinel.Rate)
-	assert.InDelta(t, 0.72, *sentinel.Rate, 1e-9)
+	sasha := scoredByName(scored, "sasha")
+	require.NotNil(t, sasha)
+	require.NotNil(t, sasha.Rate)
+	assert.InDelta(t, 0.72, *sasha.Rate, 1e-9)
 
-	tracer := scoredByName(scored, "tracer")
-	require.NotNil(t, tracer)
-	assert.Nil(t, tracer.Rate, "persona with no scorecard data has nil rate (n/a)")
+	penny := scoredByName(scored, "penny")
+	require.NotNil(t, penny)
+	assert.Nil(t, penny.Rate, "persona with no scorecard data has nil rate (n/a)")
 }
 
 func TestListWithScores_CaseInsensitiveJoin(t *testing.T) {
@@ -100,23 +100,23 @@ func TestListWithScores_CaseInsensitiveJoin(t *testing.T) {
 }
 
 func TestListWithScores_ZeroRateIsNotNa(t *testing.T) {
-	scores := map[string]float64{"sentinel": 0.0}
+	scores := map[string]float64{"sasha": 0.0}
 	scored, err := ListWithScores(filepath.Join(t.TempDir(), "absent"), scores)
 	require.NoError(t, err)
-	sentinel := scoredByName(scored, "sentinel")
-	require.NotNil(t, sentinel)
-	require.NotNil(t, sentinel.Rate, "rate 0.0 is data, not n/a")
-	assert.Equal(t, "0.0%", FormatRate(sentinel.Rate))
+	sasha := scoredByName(scored, "sasha")
+	require.NotNil(t, sasha)
+	require.NotNil(t, sasha.Rate, "rate 0.0 is data, not n/a")
+	assert.Equal(t, "0.0%", FormatRate(sasha.Rate))
 }
 
 func TestListWithScores_NaNRateTreatedAsNa(t *testing.T) {
-	scores := map[string]float64{"sentinel": math.NaN()}
+	scores := map[string]float64{"sasha": math.NaN()}
 	scored, err := ListWithScores(filepath.Join(t.TempDir(), "absent"), scores)
 	require.NoError(t, err)
-	sentinel := scoredByName(scored, "sentinel")
-	require.NotNil(t, sentinel)
-	assert.Nil(t, sentinel.Rate, "NaN rate must be treated as n/a")
-	assert.Equal(t, "n/a", FormatRate(sentinel.Rate))
+	sasha := scoredByName(scored, "sasha")
+	require.NotNil(t, sasha)
+	assert.Nil(t, sasha.Rate, "NaN rate must be treated as n/a")
+	assert.Equal(t, "n/a", FormatRate(sasha.Rate))
 }
 
 // --- sortScoredPersonas -----------------------------------------------------
@@ -161,9 +161,9 @@ func TestSortScoredPersonas_AllNaAlphabetical(t *testing.T) {
 
 func TestListWithScores_SortedOutput(t *testing.T) {
 	// End-to-end: ListWithScores applies the sort so the first numeric row leads.
-	scores := map[string]float64{"sentinel": 0.9, "idiomatic": 0.4}
+	scores := map[string]float64{"sasha": 0.9, "ingrid": 0.4}
 	scored, err := ListWithScores(filepath.Join(t.TempDir(), "absent"), scores)
 	require.NoError(t, err)
 	require.NotEmpty(t, scored)
-	assert.Equal(t, "sentinel", scored[0].Name, "highest numeric rate sorts first")
+	assert.Equal(t, "sasha", scored[0].Name, "highest numeric rate sorts first")
 }

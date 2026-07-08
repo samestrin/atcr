@@ -17,7 +17,7 @@ var testfiles embed.FS
 
 // canonical order: generalists first, then the three domain bonus personas
 // (security, performance, Go idioms), with the style reviewer last.
-var names = []string{"bruce", "greta", "kai", "mira", "dax", "sentinel", "tracer", "idiomatic", "otto"}
+var names = []string{"bruce", "greta", "kai", "mira", "dax", "sasha", "penny", "ingrid", "otto"}
 
 // expectedEmbeddedFiles returns the set of .md files that must be present in the
 // embedded persona directory: one per registered persona plus the shared base.
@@ -90,7 +90,7 @@ func Get(name string) (string, error) {
 }
 
 // Fixture returns the embedded patch fixture for name. Only the three bonus
-// personas (idiomatic, sentinel, tracer) ship fixtures; other built-ins return
+// personas (sasha, penny, ingrid) ship fixtures; other built-ins return
 // an error — callers treat that as HasFixture: false.
 func Fixture(name string) (string, error) {
 	data, err := testfiles.ReadFile("testdata/" + name + "_fixture.patch")
