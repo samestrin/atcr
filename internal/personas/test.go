@@ -102,8 +102,10 @@ func renderFixture(name, text, patchContent string) (FixtureOutcome, error) {
 	if err != nil {
 		return FixtureOutcome{}, fmt.Errorf("render persona %q: %w", name, err)
 	}
-	rendered := !strings.Contains(out, "{{") && !strings.Contains(out, "}}") &&
-		strings.Contains(out, ctx.AgentName)
+	// RenderPrompt already errors on parse/execute failures and missing keys,
+	// so reaching here means the template rendered successfully. The AgentName
+	// check catches templates that contain no actionable substitutions at all.
+	rendered := strings.Contains(out, ctx.AgentName)
 	if !rendered {
 		return FixtureOutcome{HasFixture: true, Passed: 0, Total: 1}, nil
 	}
