@@ -9,9 +9,10 @@ import (
 
 // ValidateAgentYAML parses a single community-persona document and runs the
 // registry's agent validation against it, returning a joined error describing
-// every fault (or nil when valid). It is the exported seam the personas CLI
-// (internal/personas) uses to vet fetched YAML BEFORE writing it to disk, so
-// malformed or malicious community configs never reach the registry.
+// every fault (or nil when valid). It is the non-strict registry-level
+// validator used when merging an already-installed community persona into the
+// user's real registry; the personas install/upgrade path vets untrusted
+// fetched YAML with ValidateCommunityPersonaYAML BEFORE writing it to disk.
 //
 // Unlike LoadRegistry, the unmarshal is NON-strict: a community persona file is
 // an AgentConfig superset that also carries persona-file metadata (version,
