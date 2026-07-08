@@ -509,7 +509,7 @@ func TestQuickstart_AppendExportAndGuardResolveSamePath(t *testing.T) {
 	assert.Equal(t, filepath.Join(home, ".atcr-test-profile"), expected)
 }
 
-func TestQuickstart_AppendExport_ChmodsExistingProfileTo0600(t *testing.T) {
+func TestQuickstart_AppendExport_PreservesExistingProfileMode(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	profile := filepath.Join(home, ".zshrc")
@@ -519,5 +519,19 @@ func TestQuickstart_AppendExport_ChmodsExistingProfileTo0600(t *testing.T) {
 
 	info, err := os.Stat(profile)
 	require.NoError(t, err)
-	assert.Equal(t, fs.FileMode(0o600), info.Mode().Perm(), "existing profile must be restricted after appending a secret")
+	assert.Equal(t, fs.FileMode(0o644), info.Mode().Perm(),
+		"an existing profile's mode must be left untouched — appendExport was asked to append, not to re-permission a file it did not create")
+}
+
+func TestQuickstart_AppendExport_CreatesNewProfileAt0600(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	profile := filepath.Join(home, ".new-profile")
+
+	require.NoError(t, appendExport(profile, "TEST_KEY", "secret"))
+
+	info, err := os.Stat(profile)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0o600), info.Mode().Perm(),
+		"a profile appendExport creates holds a secret, so it must be restricted to 0600")
 }
