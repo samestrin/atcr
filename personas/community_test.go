@@ -166,6 +166,31 @@ func markerRenderContext(diff string) payload.PayloadContext {
 	}
 }
 
+// TestCommunityAccessors exercises the embedded community-library accessors
+// directly (they are otherwise only reached from internal/personas, so they carry
+// no coverage in this package): enumeration, template + fixture resolution, and
+// the not-found error paths.
+func TestCommunityAccessors(t *testing.T) {
+	names := CommunityNames()
+	require.Len(t, names, len(communityPersonas))
+	require.Contains(t, names, "anthony")
+	require.Contains(t, names, "glenna")
+
+	for _, p := range communityPersonas {
+		md, err := CommunityGet(p.Slug)
+		require.NoErrorf(t, err, "CommunityGet(%q)", p.Slug)
+		require.NotEmpty(t, md)
+		fx, err := CommunityFixture(p.Slug)
+		require.NoErrorf(t, err, "CommunityFixture(%q)", p.Slug)
+		require.NotEmpty(t, fx)
+	}
+
+	_, err := CommunityGet("does-not-exist")
+	require.Error(t, err, "unknown community persona must error")
+	_, err = CommunityFixture("does-not-exist")
+	require.Error(t, err, "unknown community fixture must error")
+}
+
 // TestCommunityPersonas_FixtureAndPromptCategory is the per-persona fixture
 // contract for the library (mirrors the built-in fixtureTest): (1) the persona's
 // category word is authored into the prompt TEMPLATE itself — not merely present
