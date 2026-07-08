@@ -1155,32 +1155,36 @@ Answers to the Phase 5 safety-check questions (content decisions the ACs left to
 
 > Close the two remaining documentation/enforcement gaps and rewrite onboarding docs — sequenced after Phases 4 and 5 so cited flags/persona names are accurate. Test types: Unit (fixture test asserts bound-model metadata) + Manual (doc-content review against `plan/documentation/onboarding-hierarchy.md`'s locked tier language).
 
-### 6.1 [ ] **[Fixture test asserts bound-model metadata - RED](plan/user-stories/06-authoring-contract-enforcement.md)**
+### 6.1 [x] **[Fixture test asserts bound-model metadata - RED](plan/user-stories/06-authoring-contract-enforcement.md)**
    **AC:** [06-03](plan/acceptance-criteria/06-03-fixture-test-asserts-bound-model-metadata.md)
    Write a failing test extending the fixture runner to assert every community persona's bound `provider`/`model` appears in structured metadata (additive path; keep the `isBuiltin(name)` branch separate). Verify fail correctly.
    **Files:** `internal/personas/` fixture test file | **Duration:** ~1.5h
 
-### 6.2 [ ] **[Fixture test asserts bound-model metadata - GREEN](plan/user-stories/06-authoring-contract-enforcement.md)**
+### 6.2 [x] **[Fixture test asserts bound-model metadata - GREEN](plan/user-stories/06-authoring-contract-enforcement.md)**
    Implement the additive assertion. Minimal code (T1), verify all (T2), COMMIT: `git commit -m "test(personas): fixture asserts bound-model metadata (green)"`
    **Files:** `internal/personas/test.go` (+ fixture runner) | **Duration:** ~1.5h
 
-### 6.2.A [ ] **[Fixture test asserts bound-model metadata - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-authoring-contract-enforcement.md)**
+### 6.2.A [x] **[Fixture test asserts bound-model metadata - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-authoring-contract-enforcement.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 6.2`) — changed files, verbatim checklist, severity rubric, findings-table-only. Focus: does the new assertion weaken/alter the existing built-in fixture pass/fail contract?
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (no CRITICAL/HIGH — proceed):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | test.go:57-60 | Model assertion gated behind fixture presence — a library persona with `.md`+`.yaml` (blank model) but no `_fixture.patch` returns `HasFixture:false` and bypasses the bound-model contract. | **FIXED in 6.3** — reordered so the model-binding assertion runs immediately after `CommunityGet` confirms a library persona, independent of fixture presence. |
+   | LOW | test.go:65-68 vs community.go | Asymmetric handling of incomplete bundles + `CommunityModel` doc comment implies soft handling while `RunFixture` hard-fails. | **FIXED in 6.3** — reorder makes `.yaml`-missing a deliberate hard-fail for a resolved library persona; `CommunityModel` doc comment tightened to match. |
+   | LOW | test_test.go:46 | Hardcodes churning model id `deepseek/deepseek-v4-pro` — asserts content, breaks on legitimate repin. | **FIXED in 6.3** — assert `provider/model` shape (non-empty, contains `/`) instead of the exact churning literal. |
+   | LOW | community.go / test.go | Per-call embed reads/decodes not reused. | No action — reviewer marked "acceptable as-is"; in-memory embed, negligible. |
 
    **Action Required:**
    - CRITICAL/HIGH -> 6.3, do NOT proceed until fixed | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 6.3 [ ] **[Fixture test asserts bound-model metadata - REFACTOR](plan/user-stories/06-authoring-contract-enforcement.md)**
+   **Outcome:** No CRITICAL/HIGH. The MEDIUM + two LOWs harden the AC7 enforcement gate itself, so resolved inline in 6.3 REFACTOR (consistent with Phase 2's 2.5.A/2.8.A disposition) rather than deferred as tech debt.
+
+### 6.3 [x] **[Fixture test asserts bound-model metadata - REFACTOR](plan/user-stories/06-authoring-contract-enforcement.md)**
    Fix CRITICAL/HIGH from 6.2.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): fixture assertion cleanup"`
    **Duration:** ~30m
 
-### 6.4 [ ] **[Document model-in-structured-metadata convention](plan/user-stories/06-authoring-contract-enforcement.md)**
+### 6.4 [x] **[Document model-in-structured-metadata convention](plan/user-stories/06-authoring-contract-enforcement.md)**
    **AC:** [06-01](plan/acceptance-criteria/06-01-model-in-structured-metadata-convention.md)
    Update `docs/personas-authoring.md` to document the model-in-structured-metadata convention as a forward-looking authoring rule (asserted by the fixture test from 6.1-6.3).
    1. Author the doc section.
@@ -1188,89 +1192,105 @@ Answers to the Phase 5 safety-check questions (content decisions the ACs left to
    3. COMMIT: `git commit -m "docs(personas): document model-in-metadata convention"`
    **Files:** `docs/personas-authoring.md` | **Duration:** ~45m
 
-### 6.4.A [ ] **[Convention docs - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-authoring-contract-enforcement.md)**
+### 6.4.A [x] **[Convention docs - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-authoring-contract-enforcement.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 6.4`) — review `docs/personas-authoring.md` changes for accuracy vs. the enforced fixture behavior and completeness. Findings-table-only.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (no CRITICAL/HIGH):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | personas-authoring.md §1 | Discovery sentence attributed `search --model` matching to "the `model:` YAML key," blurring the fixture-gate (reads YAML) vs. index-gate (search matches `index.json` entry, synced to YAML by §5) distinction. Core claim ("prose-only model invisible to search") is still true. | **FIXED inline** — reworded to "matches the structured `model` field of the community `index.json` entry — kept in lockstep with this YAML key by the §5 gate." Doc-content test still green. |
+
+   Reviewer confirmed accurate: enforcement point (`internal/personas/test.go`/`RunFixture`) named correctly; built-in EXEMPT (not "asserted to pass"); presence-only (no real/served claim); error wording matches; §3 cross-ref not restated; AC 06-01 complete.
 
    **Action Required:**
    - CRITICAL/HIGH -> fix inline before proceeding | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 6.5 [ ] **[Document all-human-names convention](plan/user-stories/06-authoring-contract-enforcement.md)**
+   **Outcome:** No CRITICAL/HIGH. The single LOW was a one-line doc-accuracy fix — corrected inline (cheaper than deferring a trivial doc nit to TD) and committed.
+
+### 6.5 [x] **[Document all-human-names convention](plan/user-stories/06-authoring-contract-enforcement.md)**
    **AC:** [06-02](plan/acceptance-criteria/06-02-all-human-names-convention-documented.md)
    Document the all-human-names convention in `docs/personas-authoring.md` as a forward-looking rule (shared with Epic 23.0 AC5).
    1. Author the section. 2. Cross-reference the migration. 3. COMMIT: `git commit -m "docs(personas): document all-human-names convention"`
    **Files:** `docs/personas-authoring.md` | **Duration:** ~30m
 
-### 6.5.A [ ] **[Human-names convention docs - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-authoring-contract-enforcement.md)**
+### 6.5.A [x] **[Human-names convention docs - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-authoring-contract-enforcement.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 6.5`) — review for accuracy/completeness; ensure no contradiction with 23.0. Findings-table-only.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings:**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | CRITICAL | personas-authoring.md §1 | The example embedded the literal retired slug tokens `sentinel`/`tracer`/`` `idiomatic` `` — `personas/retired_slugs_test.go:TestNoRetiredSlugs` scans this doc and FAILS on them, breaking CI. (Pre-commit hook runs vet+build only, not `go test`, so it slipped the 6.5 commit.) | **FIXED inline (6.5.A commit)** — reworded to "role- or function-descriptor slug (the style … the built-in stragglers carried before their Phase 5 rename)" emitting none of the forbidden tokens. `TestNoRetiredSlugs` + full `go test ./...` now green. |
+   | LOW | personas-authoring.md §1 | `human-names-migration.md` code-span reference is unreachable from `docs/` (lives under `.planning/`). Correctly NOT a hyperlink (no dangling link). | No change — informational artifact name, not a link; acceptable. |
+
+   Reviewer confirmed (no defect): all six example names are real personas; rule stated once, covers built-in AND community, forward-looking, cross-references + records 23.0 as absorbed/superseded, superset-not-contradiction framing, no straggler-mapping re-derivation; grounding test passes.
 
    **Action Required:**
    - CRITICAL/HIGH -> fix inline before proceeding | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 6.6 [ ] **[README Quickstart hierarchy rewrite](plan/user-stories/07-onboarding-hierarchy-documentation.md)**
+   **Outcome:** 1 CRITICAL (CI-breaking retired-slug token in the doc) — fixed inline before proceeding, full suite re-verified green. LOW: no action.
+
+### 6.6 [x] **[README Quickstart hierarchy rewrite](plan/user-stories/07-onboarding-hierarchy-documentation.md)**
    **AC:** [07-01](plan/acceptance-criteria/07-01-readme-quickstart-hierarchy-rewrite.md)
    Rewrite `README.md`'s Quickstart to lead with `atcr quickstart` (Synthetic, monetizing default); position frontier/majors personas as opt-in "bring your own key," out of the default funnel. Match `plan/documentation/onboarding-hierarchy.md`'s locked tier language.
    1. Rewrite Quickstart. 2. Verify tier order (Synthetic > DashScope > Chutes/Featherless > LiteLLM(advanced) > majors(opt-in)). 3. COMMIT: `git commit -m "docs(readme): lead Quickstart with Synthetic onboarding hierarchy"`
    **Files:** `README.md` | **Duration:** ~1h
 
-### 6.6.A [ ] **[README rewrite - ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-onboarding-hierarchy-documentation.md)**
+### 6.6.A [x] **[README rewrite - ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-onboarding-hierarchy-documentation.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 6.6`) — verify tier order and framing exactly match the locked onboarding-hierarchy language; no royal-we; frontier truly opt-in. Findings-table-only.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | - | No issues found | - |
+
+   Reviewer ran both hard-gate greps scoped to the section (lines 36-74): `claude|gpt|gemini` and `\b(we|our|us)\b` both ZERO matches. Tier order 1-5 correct, Chutes before Featherless, all verbatim caveats present, DashScope no-wiring + link, bash walkthrough preserved, tier 5 opt-in.
 
    **Action Required:**
    - CRITICAL/HIGH -> fix inline before proceeding | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 6.7 [ ] **[personas-install tier detail + discover flow](plan/user-stories/07-onboarding-hierarchy-documentation.md)**
+   **Outcome:** No findings — proceed.
+
+### 6.7 [x] **[personas-install tier detail + discover flow](plan/user-stories/07-onboarding-hierarchy-documentation.md)**
    **AC:** [07-02](plan/acceptance-criteria/07-02-personas-install-tier-detail-and-discover-flow.md)
    Update `docs/personas-install.md` with the full tier detail (DashScope secondary; Chutes then Featherless with caveats; LiteLLM advanced proxy) and the exact discover-install-verify-by-model bash flow (using real `--model`/`--provider` flags and real persona names).
    1. Author tier detail + flow. 2. Verify commands run against the shipped CLI. 3. COMMIT: `git commit -m "docs(personas): install tiers + discover-by-model flow"`
    **Files:** `docs/personas-install.md` | **Duration:** ~1h
 
-### 6.7.A [ ] **[personas-install docs - ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-onboarding-hierarchy-documentation.md)**
+### 6.7.A [x] **[personas-install docs - ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-onboarding-hierarchy-documentation.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 6.7`) — verify the documented flow uses real flags/names shipped in Phases 4/5 and the tier caveats match the locked language. Findings-table-only.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (no CRITICAL/HIGH/MEDIUM):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | personas-install.md:126 | `test` section said "embedded/installed community-library personas"; the runner resolves only built-in + EMBEDDED library personas (via `CommunityGet`), not on-disk third-party installs. | **FIXED inline** — reworded to "built-in and the embedded community-library personas … a third-party persona … reports `No fixture defined` instead." |
+
+   Reviewer verified against shipped code: `test` runner is genuinely wired (rewrite TRUE); `--model`/`--provider` flags exist and `--model` is case-insensitive substring on structured model; `delia`→`deepseek/deepseek-v4-pro` real (not a placeholder); DashScope snippet matches the real `providers.<name>.{api_key_env,base_url}` schema; caveats verbatim + match README; royal-we ZERO over added sections (124-211).
 
    **Action Required:**
    - CRITICAL/HIGH -> fix inline before proceeding | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 6.8 [ ] **[personas-authoring discover-by-model cross-reference](plan/user-stories/07-onboarding-hierarchy-documentation.md)**
+   **Outcome:** No CRITICAL/HIGH. Single LOW accuracy nit fixed inline. Note: this task also drove the discovery of TD-010 (guardrail bug, now fixed) via its AC 07-02 Edge Case 1 "verify against real CLI" requirement, and corrected the stale `test`-subcommand "not yet wired" note.
+
+### 6.8 [x] **[personas-authoring discover-by-model cross-reference](plan/user-stories/07-onboarding-hierarchy-documentation.md)**
    **AC:** [07-03](plan/acceptance-criteria/07-03-personas-authoring-discover-by-model-cross-reference.md)
    Add the discover-by-model cross-reference to `docs/personas-authoring.md` linking the authoring contract to the discovery flow.
    1. Add cross-reference. 2. Verify links resolve. 3. COMMIT: `git commit -m "docs(personas): cross-reference discover-by-model flow"`
    **Files:** `docs/personas-authoring.md` | **Duration:** ~30m
 
-### 6.8.A [ ] **[authoring cross-ref docs - ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-onboarding-hierarchy-documentation.md)**
+### 6.8.A [x] **[authoring cross-ref docs - ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-onboarding-hierarchy-documentation.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 6.8`) — verify links resolve and the cross-reference is accurate/consistent with 6.4/6.5. Findings-table-only.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | - | No issues found | - |
+
+   Reviewer verified: no hierarchy/bash duplication; connection named (YAML `provider`/`model` → `search --model`/`--provider`); link resolves to `personas-install.md:156` `## Discover and install a persona by model` (anchor match); human-naming/metadata rules untouched; `--model`/`--provider` real flags; royal-we ZERO.
 
    **Action Required:**
    - CRITICAL/HIGH -> fix inline before proceeding | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
+
+   **Outcome:** No findings — proceed.
 
 ### 6.9 [ ] **Phase 6 DoD**
    1. Tests (T3): `go test ./...` all passing (fixture asserts bound-model metadata)

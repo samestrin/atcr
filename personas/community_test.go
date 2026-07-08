@@ -470,3 +470,20 @@ func TestCommunityPersonas_RequiredValuesRender(t *testing.T) {
 		})
 	}
 }
+
+// TestCommunityModel colocates coverage for the bound-model accessor: every
+// embedded community persona yields a non-empty namespaced provider/model id, and
+// an unknown slug errors so callers can treat it as carrying no metadata.
+func TestCommunityModel(t *testing.T) {
+	names := CommunityNames()
+	require.NotEmpty(t, names)
+	for _, name := range names {
+		model, err := CommunityModel(name)
+		require.NoErrorf(t, err, "community persona %q", name)
+		require.NotEmptyf(t, strings.TrimSpace(model), "community persona %q model", name)
+		require.Containsf(t, model, "/", "community persona %q model should be a namespaced provider/model id", name)
+	}
+
+	_, err := CommunityModel("not-a-real-persona")
+	require.Error(t, err)
+}
