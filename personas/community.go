@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // communityFiles embeds the co-located prompt templates of the model-indexed
@@ -21,6 +23,14 @@ var communityFiles embed.FS
 //
 //go:embed community/testdata/*.patch
 var communityFixtures embed.FS
+
+// communityMeta embeds the community personas' structured metadata YAML
+// (community/<slug>.yaml), carrying the bound provider/model that the fixture
+// runner asserts against (AC 06-03). Built-ins carry no such YAML — they are
+// model-agnostic per C2 — so this embed covers the community layer only.
+//
+//go:embed community/*.yaml
+var communityMeta embed.FS
 
 // CommunityNames returns the slugs of the embedded community-library personas
 // (each community/<slug>.md), sorted. Distinct from Names(), which returns the
@@ -60,6 +70,24 @@ func CommunityFixture(name string) (string, error) {
 		return "", fmt.Errorf("no embedded community fixture for persona %q", name)
 	}
 	return string(data), nil
+}
+
+// CommunityModel returns the bound model id from the embedded community persona's
+// structured metadata (community/<name>.yaml `model:` field). Only an embedded
+// library slug resolves; an unknown name errors so callers can treat it as
+// carrying no structured metadata.
+func CommunityModel(name string) (string, error) {
+	data, err := communityMeta.ReadFile(communityEmbedDir + "/" + name + ".yaml")
+	if err != nil {
+		return "", fmt.Errorf("no embedded community persona metadata %q", name)
+	}
+	var meta struct {
+		Model string `yaml:"model"`
+	}
+	if err := yaml.Unmarshal(data, &meta); err != nil {
+		return "", fmt.Errorf("decode community persona metadata %q: %w", name, err)
+	}
+	return meta.Model, nil
 }
 
 // communityEmbedDir is the embed-FS root for the community persona layout.

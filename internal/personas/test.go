@@ -58,7 +58,30 @@ func (r TemplateFixtureRunner) RunFixture(name string) (FixtureOutcome, error) {
 	if err != nil {
 		return FixtureOutcome{HasFixture: false}, nil
 	}
+	// AC 06-03 (the AC7 authoring-contract gate): a community/library persona MUST
+	// bind a non-empty model in its structured metadata. Built-ins are exempt —
+	// they resolve through the isBuiltin branch above and carry no provider/model
+	// (model-agnostic per C2). This check is purely structural: no network, no LLM.
+	model, err := builtins.CommunityModel(name)
+	if err != nil {
+		return FixtureOutcome{}, fmt.Errorf("resolve community persona %q metadata: %w", name, err)
+	}
+	if err := assertBoundModel(name, model); err != nil {
+		return FixtureOutcome{}, err
+	}
 	return renderFixture(name, text, patchContent)
+}
+
+// assertBoundModel enforces AC 06-03: a community/library persona must carry a
+// non-empty bound model in its structured metadata. A blank model fails with a
+// clear, attributable error naming the persona and the missing field, distinct
+// from the template-unrendered failure path. Built-in personas are model-agnostic
+// (C2) and never reach this check.
+func assertBoundModel(name, model string) error {
+	if strings.TrimSpace(model) == "" {
+		return fmt.Errorf("persona %q: bound model missing from structured metadata", name)
+	}
+	return nil
 }
 
 // renderFixture renders a persona template with the fixture patch as its payload
