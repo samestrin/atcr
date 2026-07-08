@@ -29,7 +29,7 @@ func Install(client HTTPClient, baseURL, name, destDir string) error {
 	if err != nil {
 		return err
 	}
-	if err := registry.ValidateAgentYAML(name, data); err != nil {
+	if err := registry.ValidateCommunityPersonaYAML(name, data); err != nil {
 		return fmt.Errorf("persona %q failed validation: %w", name, err)
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
