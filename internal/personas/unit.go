@@ -107,6 +107,14 @@ func writePersonaUnit(client HTTPClient, baseURL, name, yamlDest string, yamlDat
 		}
 	}
 
+	// Refuse to write through a symlinked intermediate directory component: the
+	// name is attacker-influenced (untrusted index) and may be namespaced, so a
+	// pre-planted symlink at an intermediate segment could redirect MkdirAll and the
+	// writes below outside the personas dir. The leaf file is separately guarded by
+	// writeFileAtomic's own Lstat check.
+	if err := refuseSymlinkedIntermediate(yamlDest, name); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(yamlDest), 0o700); err != nil {
 		return fmt.Errorf("failed to create personas directory: %w", err)
 	}
@@ -134,6 +142,32 @@ func writePersonaUnit(client HTTPClient, baseURL, name, yamlDest string, yamlDat
 		// Binding-only upstream: drop any stale co-located prompt from a prior
 		// install so the resolver never feeds an outdated custom prompt.
 		return fmt.Errorf("failed to remove stale persona prompt %s: %w", mdDest, err)
+	}
+	return nil
+}
+
+// refuseSymlinkedIntermediate errors if any intermediate directory component that
+// the persona NAME contributes (its "/"-separated segments before the leaf file)
+// is a symlink. The name comes from the untrusted community index and personaPath
+// + MkdirAll create/traverse nested dirs, so a pre-planted symlink at an
+// intermediate segment could redirect the write outside the personas dir. The leaf
+// file itself is guarded by writeFileAtomic's Lstat check; this closes the
+// intermediate-component gap. A flat (non-namespaced) name has no intermediate
+// components and is a no-op.
+func refuseSymlinkedIntermediate(yamlDest, name string) error {
+	segs := strings.Split(name, "/")
+	dir := filepath.Dir(yamlDest)
+	for i := 0; i < len(segs)-1; i++ {
+		fi, err := os.Lstat(dir)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			// Not yet created — nothing planted at this level.
+		case err != nil:
+			return fmt.Errorf("stat persona path %s: %w", dir, err)
+		case fi.Mode()&os.ModeSymlink != 0:
+			return fmt.Errorf("refusing to install persona through symlinked path component %s", dir)
+		}
+		dir = filepath.Dir(dir)
 	}
 	return nil
 }
