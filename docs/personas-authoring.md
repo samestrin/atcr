@@ -56,9 +56,21 @@ The loader canonicalizes every entry (trim whitespace → strip **all** leading 
 
 **Nil semantics:** omit `language` entirely (or leave it empty) and the persona carries no constraint — it participates in every review regardless of the repository's detected language, with no routing preference. Use a `language` scope only when the persona is genuinely language-specific.
 
+### Model-in-structured-metadata convention
+
+A persona's bound `model` must live in its **structured metadata** — the `model:` YAML key above — and never only in the free-text `description`. Discovery *by model* (`atcr personas search --model …`) matches the structured `model` field of the community `index.json` entry — kept in lockstep with this YAML key by the [section 5](#5-the-community-index-entry) gate — so a model named only in prose is invisible to search and does not satisfy the authoring contract.
+
+This is a **forward-looking rule for every community/library persona**: the persona fixture test in `internal/personas/test.go` (`TemplateFixtureRunner.RunFixture`) asserts the resolved persona carries a non-empty `model` in structured metadata — a blank or missing value fails `go test` with a clear, attributable error — alongside the fixture render check described in [section 3](#3-the-fixture). Embedded built-in personas are model-agnostic and **exempt** (they carry no `provider`/`model`); this exemption is built-in-only, and community contributions are held to the convention.
+
+### Persona naming: human first names
+
+Every new persona — built-in **or** community — is named with a **human first name** (e.g. `bruce`, `sasha`, `penny`, `ingrid`, `anthony`, `delia`), never a role- or function-descriptor slug (the style of role-named identifier the built-in stragglers carried before their Phase 5 rename to human names). This is a **forward-looking rule for new contributions**: it does not require renaming any already-shipped persona, only that additions follow the convention instead of reintroducing role-based names. The rule applies uniformly to built-in and community personas — there is no built-in-only exemption.
+
+> **Single source of truth (shared with Epic 23.0 AC5).** Epic 23.0 is **absorbed by and superseded by Epic 19.6**: the role-based built-in stragglers were renamed to human names under 19.6's Phase 5 (see `human-names-migration.md`), so 23.0 is not run as a standalone renamer. 19.6's broader wording (built-in **and** community) subsumes 23.0 AC5's built-in-only scope — a superset, not a contradiction.
+
 ## 2. The prompt template
 
-The prompt is what the persona actually *says* to the model. Built-in personas live as Markdown templates in `personas/` (for example `personas/bruce.md`, `personas/sentinel.md`); a community persona's `persona:` field names its prompt. Mirror the canonical structure exactly — the same section headings and the same template variables:
+The prompt is what the persona actually *says* to the model. Built-in personas live as Markdown templates in `personas/` (for example `personas/bruce.md`, `personas/sasha.md`); a community persona's `persona:` field names its prompt. Mirror the canonical structure exactly — the same section headings and the same template variables:
 
 ```markdown
 # {{.AgentName}} — <one-line lens description>
@@ -114,20 +126,20 @@ A fixture proves the persona works without an LLM or a network call. It is a sma
 
 | Requirement | Rule |
 |-------------|------|
-| **Location** | `personas/testdata/` (test-enforced — the test reads from here) |
+| **Location** | Built-in personas: `personas/testdata/`. Community-library personas: `personas/community/testdata/` (co-located with the community layout). Both are test-enforced — the fixture runner reads from the matching location (`//go:embed testdata/*.patch` for built-ins, `//go:embed community/testdata/*.patch` for the community library). |
 | **Format** | a unified-diff `.patch` (or `.diff`) file |
-| **Naming** | `<slug>_fixture.patch` — e.g. `sentinel_fixture.patch`, `tracer_fixture.patch` |
+| **Naming** | `<slug>_fixture.patch` — e.g. `sasha_fixture.patch` (built-in), `anthony_fixture.patch` (community) |
 | **File mode** | `0644` (convention; not asserted by the test) |
 | **Content** | **synthetic values only** — never a real credential. Use placeholders like `FAKE_API_KEY_00000000` (convention; not asserted by the test) |
 | **Network** | none — the fixture is read from disk and rendered locally; no live call is permitted in the test path |
 
 **What the test does** (for each persona, with no LLM and no network):
 
-1. Loads the committed `.patch` fixture from `personas/testdata/` — a missing or uncommitted fixture fails here.
+1. Loads the committed `.patch` fixture — from `personas/testdata/` for a built-in or `personas/community/testdata/` for a community-library persona (see the location table above) — a missing or uncommitted fixture fails here.
 2. Asserts the expected category word is present in the persona **template** (see "Name the category in the prompt" above).
 3. Renders the template with the fixture as the diff payload and confirms **no unrendered `{{ }}` actions remain**.
 
-Worked example — a `tracer` (performance) fixture that plants an N+1 query inside a loop:
+Worked example — a `penny` (performance) fixture that plants an N+1 query inside a loop:
 
 ```diff
 --- a/store/orders.go
@@ -145,7 +157,7 @@ Worked example — a `tracer` (performance) fixture that plants an N+1 query ins
  }
 ```
 
-Its `tracer.md` prompt names the `n+1` category, so the test confirms the persona is authored to catch exactly this.
+Its `penny.md` prompt names the `n+1` category, so the test confirms the persona is authored to catch exactly this.
 
 ## 4. Contribution checklist
 
@@ -159,5 +171,42 @@ Before submitting your persona, confirm every item:
 - [ ] **Fixture** is a `.patch`/`.diff` in `personas/testdata/`, named `<slug>_fixture.patch`, mode `0644`, containing a **synthetic** instance of the target class (no real secrets).
 - [ ] **Fixture test passes** locally with no network access.
 - [ ] **No secrets, credentials, or network instructions** in the prompt.
+- [ ] **Index entry** (if the persona ships in the community `index.json`) carries non-empty `provider` and `model` that **exactly match** the persona YAML's `provider`/`model` — enforced by a `go test` gate, not editorial review.
+
+> **Discoverable by model.** The `provider`/`model` you set in the persona YAML above become the structured fields a user searches by: `atcr personas search --model <model>` / `--provider <provider>` surfaces your persona to anyone who already has that model. See the [discover-and-install-by-model flow](personas-install.md#discover-and-install-a-persona-by-model) for the end-to-end path.
+
+## 5. The community index entry
+
+Personas distributed through the community channel are enumerated in `personas/community/index.json` — an array of entries that `atcr personas search` reads to answer *"which persona is tuned for the model I have?"*. The index is **authored in-repo** (not generated), and a `go test` gate asserts each entry stays consistent with its source persona YAML.
+
+Each entry has this shape (the JSON keys map 1:1 to `PersonaIndexEntry` in `internal/personas/search.go`):
+
+```json
+{
+  "name": "security/owasp",
+  "version": "1.0.0",
+  "description": "OWASP Top-10 security reviewer",
+  "path": "security/owasp.yaml",
+  "provider": "openrouter",
+  "model": "anthropic/claude-3.7-sonnet",
+  "tasks": ["security-review"],
+  "tags": ["owasp", "security"]
+}
+```
+
+| Key | Required | Meaning |
+|-----|----------|---------|
+| `name` | yes | Persona slug/title, shown in listings. |
+| `version` | yes | Semver; drives `atcr personas upgrade` comparison. |
+| `description` | yes | Shown by `atcr personas search` (keyword match). |
+| `path` | yes | Path to the persona YAML relative to the index root (e.g. `security/owasp.yaml`). |
+| `provider` | yes | Routing-endpoint key — **must be non-empty and equal the persona YAML's `provider`**. |
+| `model` | yes | The model id — **must be non-empty and equal the persona YAML's `model`**. Discovery by model matches this structured field, never free-text. |
+| `tasks` | no | Forward-looking task tags. **Omit the key entirely** when absent — do not emit `"tasks": []`. |
+| `tags` | no | Forward-looking free-form tags. **Omit the key entirely** when absent — do not emit `"tags": []`. |
+
+Here "Required" means **gate-enforced at `go test` time, not enforced by the Go type**: `PersonaIndexEntry` tags `provider`/`model` as `omitempty`, so an entry that omits them still decodes — the gate below is what rejects it.
+
+**Enforcement (hard gate, not editorial):** a Go test iterates every entry in `personas/community/index.json`, loads each entry's source persona YAML via its `path`, and fails `go test` if any entry's `provider`/`model` is empty or drifts from the YAML. A library persona with missing or mismatched metadata cannot merge. Embedded built-in personas are **exempt** — they are never enumerated in the community index. `provider`/`model`/`tasks`/`tags` are display/search metadata only: never embed executable content, secrets, or network instructions in them.
 
 See [personas-install.md](personas-install.md) for installing and using personas, and [registry.md](registry.md) for the full agent schema and routing semantics.

@@ -8,3 +8,4 @@
 {"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/fanout","severity":"MEDIUM","id":"0b53ab5f60cc00e3","file":"internal/fanout/response_truncation_test.go","category":"testing"}
 {"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/fanout","severity":"LOW","id":"995c54d622a29ca5","file":"internal/fanout/response_truncation_test.go","category":"testing"}
 {"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/fanout","severity":"LOW","id":"e4b8238cc04217b7","file":"internal/fanout/response_truncation_e2e_test.go","category":"testing"}
+{"ts":"2026-07-08T09:51:33.040767-07:00","package":"cmd/atcr","severity":"HIGH","id":"7786b083945e26f8","file":"cmd/atcr/quickstart.go","category":"configuration"}

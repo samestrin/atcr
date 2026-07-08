@@ -1,0 +1,319 @@
+{
+  "generated": "2026-07-07",
+  "discovery_method": "semantic",
+  "queries": [
+    "persona index.json provider model metadata",
+    "community persona fetch URL override",
+    "quickstart fetch pin persona version",
+    "persona search filter model provider",
+    "persona YAML fixture test model metadata"
+  ],
+  "match_count": 15,
+  "build_from": {
+    "primary_file": "internal/personas/client.go",
+    "reason": "Defines RegistryBaseURL (line 24, currently hardcoded to https://raw.githubusercontent.com/atcr/personas/main) and BaseURL(), the ATCR_PERSONAS_URL override resolver — the exact symbol AC1's URL repoint (atcr/personas -> samestrin/atcr + in-repo community path) must change. It also owns FetchIndex/FetchPersonaYAML, the functions the fetch-and-pin mechanism (AC1) and mock-registry end-to-end tests (AC6) extend.",
+    "suggested_approach": "Repoint RegistryBaseURL to samestrin/atcr (e.g. https://raw.githubusercontent.com/samestrin/atcr/main/personas/community). Keep the existing env-override precedence in BaseURL(). Add Provider/Model/Tasks/Tags fields to PersonaIndexEntry in internal/personas/search.go and extend Search() with structural matching plus optional model/provider filters. Wire --model/--provider flags onto cmd/atcr/personas.go:newPersonasSearchCmd. For AC1's fetch-and-pin, change cmd/atcr/init.go and cmd/atcr/quickstart.go so they install community personas via internal/personas.Install (using the pinned version present in the fetched YAML's version field) instead of copying embedded built-in .md files; preserve backward compatibility for users with existing .atcr/personas/ files."
+  },
+  "existing_patterns": [
+    {
+      "name": "Injectable HTTPClient + httptest for network code",
+      "description": "internal/personas/client.go defines a minimal HTTPClient interface (Do(req) (*http.Response, error)) satisfied by *http.Client; cmd/atcr/personas.go holds a package-level personasClient var that tests can swap. All fetch tests run against httptest.NewServer with ATCR_PERSONAS_URL pointed at it — zero live network calls in CI.",
+      "files": ["internal/personas/client.go", "cmd/atcr/personas.go"],
+      "follow_for": "Any new fetch-and-pin / offline-behavior code (AC1) and the mock-registry end-to-end test (AC6) — reuse this exact injection pattern rather than inventing a new HTTP seam."
+    },
+    {
+      "name": "Env-var override with hardcoded default",
+      "description": "BaseURL() in client.go: strings.TrimSpace(os.Getenv(envPersonasURL)) wins when non-empty, else RegistryBaseURL constant. Simple, no config file involved.",
+      "files": ["internal/personas/client.go"],
+      "follow_for": "Keep this exact override precedence when repointing the default (AC1) — do not add a config.yaml layer for this."
+    },
+    {
+      "name": "Persona YAML as registry-agent superset",
+      "description": "docs/personas-authoring.md defines the authoring contract in full: provider+model are REQUIRED (validated strictly against the registry agent schema), name/version/description are OPTIONAL catalog-only keys ignored by the registry loader, and an optional language field drives skeptic routing. A persona also requires a prompt template (Markdown, in personas/) with mandatory ## Role/## Output Format sections and a fixed set of template variables, plus a .patch fixture in personas/testdata/ named <slug>_fixture.patch.",
+      "files": ["docs/personas-authoring.md", "personas/_base.md"],
+      "follow_for": "AC3 (author the model-indexed library) and AC7/AC8 (fixture-enforced authoring contract) — every new persona YAML + prompt + fixture must follow this exact three-part structure, and the new provider/model-in-structured-metadata rule (AC2) must be added to this same document as a checklist item, not a parallel doc."
+    },
+    {
+      "name": "Round-robin model binding in quickstart",
+      "description": "internal/quickstart/manifest.go RegistryYAML() binds model := m.Models[i%len(m.Models)] per roster persona index — no lens-to-model matching, just cycling through the manifest's model list. This is the 'generic, not tuned' binding the epic's Problem Statement #3 calls out.",
+      "files": ["internal/quickstart/manifest.go"],
+      "follow_for": "Reference only for this epic — the epic's Out of Scope explicitly excludes a registry.yaml task-to-model mapping schema, so this round-robin logic itself is not being replaced; the model-indexed persona library (AC3) is a separate, install-time mechanism, not a quickstart rewire."
+    },
+    {
+      "name": "Six-subcommand persona CLI wired through internal/personas",
+      "description": "cmd/atcr/personas.go's newPersonasCmd registers install/list/search/remove/test/upgrade, each a thin cobra RunE that calls the matching internal/personas function (Install, List, Search, Remove, TestPersona, Upgrade) using package-level personasClient/personasDir/personasFixtureRunner vars for test injection.",
+      "files": ["cmd/atcr/personas.go", "internal/personas/search.go"],
+      "follow_for": "AC2's --model/--provider search filters: add flags to newPersonasSearchCmd() the same way --scores is added to newPersonasListCmd(), and extend internal/personas.Search's signature/logic rather than adding a parallel search function."
+    },
+    {
+      "name": "Bundle expansion from embedded manifests",
+      "description": "internal/personas/bundles.go parses embedded bundle manifests under internal/personas/bundles/*.yaml and installs each member persona via Install. It skips already-present members and continues past individual failures.",
+      "files": ["internal/personas/bundles.go", "internal/personas/bundles/django.yaml", "internal/personas/bundles/go-production.yaml"],
+      "follow_for": "If the model-indexed library ships a convenience bundle (e.g. bundle/community-library), add a new manifest here and wire it through cmd/atcr/personas.go's installBundle path."
+    },
+    {
+      "name": "Built-in persona registry embedded via //go:embed",
+      "description": "personas/personas.go lists canonical names, serves embedded .md templates, and provides Fixtures for the subset that have personas/testdata/<name>_fixture.patch. It panics at init if the embedded files do not match the names slice.",
+      "files": ["personas/personas.go"],
+      "follow_for": "AC4's human-name migration (sentinel->sasha, tracer->penny, idiomatic->ingrid) must update the names slice and the embedded file set; the stragglers' prompts move to the in-repo community layout, so decide whether they remain built-in or become community-only."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/personas/client.go",
+      "relevance": "high",
+      "purpose": "Owns RegistryBaseURL, BaseURL(), FetchIndex, FetchPersonaYAML — the fetch/URL layer AC1 repoints and AC1's fetch-and-pin logic extends.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/personas/search.go",
+      "relevance": "high",
+      "purpose": "Defines PersonaIndexEntry{Name,Version,Description,Path} and Search() (name/description substring match only) — exactly what AC2 must extend with Provider/Model/Tasks/Tags fields and structured-metadata matching.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "cmd/atcr/personas.go",
+      "relevance": "high",
+      "purpose": "CLI surface for all six persona subcommands; renderPersonaSearch renders index.json search hits as a 3-column table (Name/Version/Description) that will need Provider/Model columns once AC2 lands, and newPersonasSearchCmd needs --model/--provider flags.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "docs/personas-authoring.md",
+      "relevance": "high",
+      "purpose": "The complete authoring contract (YAML schema, prompt template, fixture, contribution checklist) every AC3 persona must satisfy, and the document AC8's all-human-names convention note must be added to.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "docs/personas-install.md",
+      "relevance": "high",
+      "purpose": "End-user install guide documenting the six subcommands including the current search <keyword> name/description-only behavior; needs updating for --model/--provider filters (AC2) and the discover-by-model flow (Proposed Solution #4).",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "cmd/atcr/init.go",
+      "relevance": "high",
+      "purpose": "Currently copies embedded built-in personas into .atcr/personas/. AC1's fetch-and-pin requires it to install community personas from the repointed RegistryBaseURL instead (or in addition), writing validated YAML with a pinned version.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "cmd/atcr/quickstart.go",
+      "relevance": "high",
+      "purpose": "Currently reuses runInit to lay down .atcr/ and then writes a synthetic-bound registry.yaml for builtins.Names(). AC1 requires it to fetch-and-pin community personas and define the --offline stub behavior.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/personas/test.go",
+      "relevance": "high",
+      "purpose": "TemplateFixtureRunner only resolves fixtures for built-in personas today (community personas return HasFixture: false). AC7's fixture enforcement for the new library personas requires extending runner resolution to community/in-repo personas or ensuring the library ships as built-ins with embedded fixtures.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/personas/install.go",
+      "relevance": "medium",
+      "purpose": "Fetches and validates a single persona YAML before atomic write. The fetch-and-pin path in init/quickstart will call this; no signature change expected, but ensure it handles the new community index path and offline errors gracefully.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/personas/upgrade.go",
+      "relevance": "medium",
+      "purpose": "Compares installed persona version to remote version. AC1's upgrade path already works via the version field; the repointed URL and new index schema propagate automatically once client.go/search.go change.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/personas/list.go",
+      "relevance": "medium",
+      "purpose": "PersonaMeta carries Version for community personas, which is the pin value displayed by list and compared by upgrade. The discovery note about using PersonaMeta for pinning is accurate: the installed YAML's version field is the pin, and list.go reads it.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/quickstart/manifest.go",
+      "relevance": "medium",
+      "purpose": "Round-robin persona-to-model binding for atcr quickstart's generated registry.yaml — background context for the Problem Statement's 'generic, not tuned' gap; not directly rewired by this epic (see Out of Scope).",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "personas/_base.md",
+      "relevance": "medium",
+      "purpose": "Shared prompt-template scaffold ({{.AgentName}}, {{.ScopeRule}}) that built-in and library personas' prompts follow; relevant to authoring the new model-indexed personas (AC3) and the straggler renames (AC4).",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "personas/personas.go",
+      "relevance": "high",
+      "purpose": "Canonical built-in persona registry. AC4's migration of sentinel/tracer/idiomatic to sasha/penny/ingrid must update the names slice and embedded file expectations, or remove the stragglers if they become community-only.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "personas/",
+      "relevance": "high",
+      "purpose": "Directory holding built-in persona prompt Markdown (personas/bruce.md, personas/sentinel.md, etc.) and personas/testdata/ fixtures; the straggler renames (sentinel->sasha, tracer->penny, idiomatic->ingrid) and new in-repo community-persona content land here or under personas/community/.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "README.md",
+      "relevance": "medium",
+      "purpose": "Quickstart section (referenced at README.md:59) documents atcr quickstart as the first-run path; AC5 requires reordering/annotating this section to lead with Synthetic and reference DashScope/Chutes/Featherless/LiteLLM per the onboarding hierarchy.",
+      "likely_modification": "modify"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "internal/personas/client.go:RegistryBaseURL / BaseURL",
+      "type": "entry-point",
+      "description": "Single choke point for the default fetch URL; AC1's repoint changes only the RegistryBaseURL constant here, and every caller (install/search/list/upgrade/init/quickstart) picks it up automatically."
+    },
+    {
+      "location": "internal/personas/search.go:PersonaIndexEntry / Search",
+      "type": "api",
+      "description": "Schema + matcher AC2 extends: add Provider/Model/Tasks/Tags fields to the struct (json tags matching the future index.json generation) and add structural matching to Search alongside the existing substring match."
+    },
+    {
+      "location": "cmd/atcr/personas.go:newPersonasSearchCmd / renderPersonaSearch",
+      "type": "entry-point",
+      "description": "Where --model/--provider flags get added and where the new Provider/Model columns are rendered, following the same cmd.Flags().Bool pattern already used on newPersonasListCmd."
+    },
+    {
+      "location": "docs/personas-authoring.md: Contribution checklist (section 4)",
+      "type": "hook",
+      "description": "AC7/AC8's enforceable convention (bound model in structured metadata; human-names-only) is documented as new checklist items here, mirroring how existing checklist items map 1:1 to fixture-test assertions."
+    },
+    {
+      "location": "cmd/atcr/init.go:runInit / cmd/atcr/quickstart.go:runQuickstart",
+      "type": "entry-point",
+      "description": "AC1's fetch-and-pin behavior: init/quickstart must install community personas via internal/personas.Install (using the fetched YAML's version field as the pin) instead of copying embedded built-ins, while preserving backward compatibility for existing .atcr/personas/ workspaces."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "HTTPClient injection + httptest pattern",
+      "path": "internal/personas/client.go",
+      "can_extend": true,
+      "usage_example": "Any new fetch-and-pin logic (AC1) or the mock-registry end-to-end test (AC6) constructs an httptest.NewServer, sets ATCR_PERSONAS_URL, and calls the existing FetchIndex/FetchPersonaYAML/Search functions unchanged."
+    },
+    {
+      "name": "TemplateFixtureRunner",
+      "path": "internal/personas/test.go",
+      "can_extend": true,
+      "usage_example": "Currently only built-in personas have fixtures. AC7 requires either extending the runner to resolve in-repo/community fixtures or shipping the library personas as built-ins with embedded personas/testdata/<slug>_fixture.patch files."
+    }
+  ],
+  "architecture_notes": [
+    "The community-persona mechanism (Epic 9.0) is already fully generic over the repo it fetches from — repointing AC1 is a one-constant change (RegistryBaseURL) plus an in-repo community-persona directory layout to serve from, not a new fetch client.",
+    "PersonaIndexEntry today ignores unknown JSON fields on decode (encoding/json default behavior), so adding Provider/Model/Tasks/Tags to the struct is additive and backward-compatible with any index.json that predates the schema change — satisfies AC1's backward-compatibility requirement for existing on-disk personas.",
+    "The persona YAML schema is already validated as 'a superset of a registry agent' with provider/model REQUIRED — the AC2/AC7 structured-metadata requirement is really about propagating fields the schema already mandates into index.json's generation step, not inventing new validation.",
+    "internal/quickstart/manifest.go's round-robin binding is architecturally separate from the community-persona install path (internal/personas/*) — the epic's Out of Scope confirms quickstart's binding algorithm is not touched; AC3's model-indexed library is discovered/installed via atcr personas search/install, independent of quickstart's roster generation.",
+    "init and quickstart currently embed built-in personas as .md files under .atcr/personas/. AC1's fetch-and-pin changes this to install community YAML personas (via internal/personas.Install) so the canonical source is the fetched repo, not the binary. Backward compatibility must handle existing .atcr/personas/ directories that contain .md files rather than YAML.",
+    "The straggler rename (sentinel->sasha, tracer->penny, idiomatic->ingrid) and the new model-indexed personas must not create a mixed naming state. Decide whether the renamed stragglers stay built-in (updating personas/personas.go) or move entirely to the in-repo community layout."
+  ],
+  "files_to_modify": [
+    {
+      "path": "internal/personas/client.go",
+      "reason": "Repoint RegistryBaseURL to samestrin/atcr + in-repo community path (AC1).",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/personas/search.go",
+      "reason": "Add Provider/Model/Tasks/Tags to PersonaIndexEntry and extend Search with structural matching / model/provider filters (AC2).",
+      "scope": "major"
+    },
+    {
+      "path": "cmd/atcr/personas.go",
+      "reason": "Add --model/--provider flags to personas search; update renderPersonaSearch to surface the new columns (AC2).",
+      "scope": "minor"
+    },
+    {
+      "path": "cmd/atcr/init.go",
+      "reason": "Replace embedded built-in persona copy with fetch-and-pin of community personas from the repointed RegistryBaseURL, preserving backward compatibility for existing .atcr/personas/ workspaces (AC1).",
+      "scope": "major"
+    },
+    {
+      "path": "cmd/atcr/quickstart.go",
+      "reason": "Fetch-and-pin community personas instead of wiring built-ins into the synthetic registry, and define --offline stub behavior (AC1).",
+      "scope": "major"
+    },
+    {
+      "path": "internal/personas/test.go",
+      "reason": "Extend TemplateFixtureRunner so the new library personas (whether built-in or in-repo community) can have passing fixtures, enabling AC7's fixture-enforced model-in-metadata rule.",
+      "scope": "major"
+    },
+    {
+      "path": "personas/personas.go",
+      "reason": "Update the canonical names slice and embedded file expectations for the straggler rename (sentinel->sasha, tracer->penny, idiomatic->ingrid) per AC4, or remove stragglers if they become community-only.",
+      "scope": "minor"
+    },
+    {
+      "path": "docs/personas-authoring.md",
+      "reason": "Document the provider/model-in-structured-metadata authoring rule (AC2/AC7) and the all-human-names convention (AC4/AC8).",
+      "scope": "minor"
+    },
+    {
+      "path": "docs/personas-install.md",
+      "reason": "Document --model/--provider search filters and the discover-by-model flow (AC2, Proposed Solution #4).",
+      "scope": "minor"
+    },
+    {
+      "path": "README.md",
+      "reason": "Reorder/annotate Quickstart to lead with atcr quickstart (Synthetic), document DashScope/Chutes/Featherless/LiteLLM per the onboarding hierarchy, position majors personas as opt-in (AC5).",
+      "scope": "minor"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "personas/community/index.json",
+      "purpose": "The in-repo canonical index the repointed RegistryBaseURL serves, carrying Provider/Model-structured entries for every library persona (AC1, AC2, AC3).",
+      "based_on": "existing PersonaIndexEntry schema in internal/personas/search.go, extended per AC2"
+    },
+    {
+      "path": "personas/community/<slug>.yaml",
+      "purpose": "New human-named, model-tuned persona YAML files for the library (AC3) covering frontier providers (Claude/GPT/Gemini) and flat-rate open models (DeepSeek/Qwen/Kimi/GLM). Each carries provider/model plus version/description/tasks/tags metadata.",
+      "based_on": "docs/personas-authoring.md YAML schema"
+    },
+    {
+      "path": "personas/community/<slug>.md",
+      "purpose": "Prompt template per new community persona, phrased per the target model's vendor prompting guide (AC3).",
+      "based_on": "personas/_base.md structure, per docs/personas-authoring.md"
+    },
+    {
+      "path": "personas/testdata/<slug>_fixture.patch",
+      "purpose": "Fixture per new library persona proving its target category is caught (AC3/AC7). If personas ship as community-only, the fixture runner must be extended to load these; if they remain built-ins, embed them here.",
+      "based_on": "existing personas/testdata/*_fixture.patch convention"
+    },
+    {
+      "path": "internal/personas/search_test.go",
+      "purpose": "New tests for Provider/Model/Tasks/Tags filtering, case-insensitive model/provider matching, and backward-compatibility with old-shape index.json (AC2, AC6).",
+      "based_on": "table-driven tests in internal/personas/personas_test.go"
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test (testing package, table-driven)",
+    "test_location": "internal/personas/*_test.go, cmd/atcr/personas_test.go",
+    "naming_convention": "*_test.go",
+    "example_test": "internal/personas/personas_test.go (httptest-based fetch tests; add new cases for model/provider search and backward-compatible old-shape index.json parsing)"
+  },
+  "integration_gaps": [
+    {
+      "topic": "Exact in-repo community path",
+      "description": "The plan says 'samestrin/atcr (+ in-repo path)' but does not fix the directory name. Pick a path (e.g. personas/community/) and update RegistryBaseURL, FetchPersonaYAML, FetchIndex, and the created index.json/YMAL/Markdown files consistently."
+    },
+    {
+      "topic": "init/quickstart fetch-and-pin vs. existing .atcr/personas/ .md files",
+      "description": "AC1 requires init/quickstart to obtain personas by fetch-and-pin, but today they copy embedded .md templates into .atcr/personas/. Decide whether to (a) install community YAML there instead, (b) keep .md editable copies alongside fetched YAML, or (c) write fetched YAML to ~/.config/atcr/personas/ while keeping .atcr/personas/ for project overrides. The backward-compatibility story for existing workspaces must be explicit."
+    },
+    {
+      "topic": "Fixture runner coverage for community/in-repo personas",
+      "description": "TemplateFixtureRunner currently returns HasFixture: false for any non-built-in name. AC7's fixture test must enforce the model-in-metadata rule for the new library personas, so the runner must either resolve fixtures for in-repo/community personas or the library must remain built-in with embedded fixtures."
+    },
+    {
+      "topic": "Straggler migration scope",
+      "description": "AC4 migrates sentinel/tracer/idiomatic to sasha/penny/ingrid. Decide whether the renamed personas stay in the built-in set (updating personas/personas.go and embedded files) or move to personas/community/ (removing them from the binary). This affects init/quickstart, list, remove, and test behavior."
+    },
+    {
+      "topic": "Offline behavior definition",
+      "description": "AC1 mentions a --offline stub. Decide whether this is a new global flag, a personas subcommand flag, or simply graceful error messaging when fetch fails because the repo is not yet public or the user has no network."
+    },
+    {
+      "topic": "Index.json generation workflow",
+      "description": "No tooling currently generates personas/community/index.json from the YAML files. Decide whether to hand-maintain it, add a generation script/cmd, or validate it in CI. This is important because drift between YAML provider/model and index.json provider/model would break AC2/AC7."
+    }
+  ]
+}

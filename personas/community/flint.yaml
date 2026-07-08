@@ -1,0 +1,7 @@
+name: flint
+version: 1.0.0
+description: Gemini Flash resource-lifecycle and leak reviewer (fast high-throughput lens)
+provider: openrouter
+model: google/gemini-2.5-flash
+persona: flint
+role: reviewer

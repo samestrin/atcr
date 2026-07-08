@@ -1,0 +1,15 @@
+diff --git a/internal/order/service.go b/internal/order/service.go
+index 1111111..2222222 100644
+--- a/internal/order/service.go
++++ b/internal/order/service.go
+@@ -3,6 +3,13 @@ package order
+
++import "github.com/example/app/internal/http/handler"
++
++// PlaceOrder reaches directly into the HTTP transport layer's internal cache,
++// coupling the domain service to the delivery mechanism (a layering/boundary
++// violation: the domain now depends on the transport package).
++func (s *Service) PlaceOrder(o Order) error {
++	handler.GlobalResponseCache.Invalidate(o.ID) // domain -> transport coupling
++	return s.repo.Save(o)
++}
