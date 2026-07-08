@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
+	"text/template/parse"
 
 	"github.com/samestrin/atcr/personas"
 )
@@ -130,52 +130,122 @@ func ResolvePersona(agentName, persona string, taskMessage *string, dirs Persona
 	return ResolvedPersona{Text: base, Source: "embedded:_base"}, nil
 }
 
-// allowedPersonaTemplateActions is the exact set of Go text/template action
-// bodies (inner content, whitespace-trimmed) a persona prompt may contain: the
-// required persona variables plus the single optional tools conditional. Each
-// references only a read-only field of the fixed PayloadContext — no function
-// call, no {{template}}/{{define}}/{{range}}, no nested field access — so a fetched
-// community prompt using ONLY these cannot drive arbitrary template expansion.
-var allowedPersonaTemplateActions = map[string]struct{}{
-	".AgentName":       {},
-	".ScopeRule":       {},
-	".FileCount":       {},
-	".BaseRef":         {},
-	".HeadRef":         {},
-	".PayloadMode":     {},
-	".Payload":         {},
-	"if .ToolsEnabled": {},
-	"end":              {},
+// allowedPersonaFields is the exact set of PayloadContext fields a fetched
+// community persona prompt may reference as a bare `{{.Field}}` action (or as the
+// condition of an {{if .ToolsEnabled}} block). Each is a flat read-only
+// string/int/bool of the fixed render context — no nested struct, map, method,
+// env, or secret is reachable — so a prompt using ONLY these cannot exfiltrate or
+// execute anything. Any field chain (`.Payload.X`), pipeline, function call, or
+// other construct is rejected by validatePersonaTemplateNode below.
+var allowedPersonaFields = map[string]struct{}{
+	"AgentName":    {},
+	"ScopeRule":    {},
+	"FileCount":    {},
+	"BaseRef":      {},
+	"HeadRef":      {},
+	"PayloadMode":  {},
+	"Payload":      {},
+	"ToolsEnabled": {},
 }
-
-// personaTemplateActionRe matches a single well-formed {{...}} action (no nested
-// braces). Anything a fetched prompt contains that is NOT such an action — a
-// dangling `{{`/`}}`, an unbalanced brace — survives the strip below and is
-// rejected.
-var personaTemplateActionRe = regexp.MustCompile(`\{\{[^{}]*\}\}`)
 
 // ValidateFetchedPersonaPrompt enforces the C3 untrusted-input guardrails on a
 // fetched/pinned community persona prompt: a length cap mirroring
-// MaxExecutorSystemPromptLen, and an allowlist on template actions — the known
-// required persona variables are permitted (the authoring contract mandates them
-// and the renderer substitutes them from the fixed PayloadContext), while any
-// other {{ }} action or unbalanced brace is rejected. Reject-all was wrong: it
-// made every model-tuned community persona un-installable and un-resolvable
-// (TD-010), contradicting Clarification C1. Rejection is a descriptive error,
-// never a silent truncation or transform.
+// MaxExecutorSystemPromptLen, and a template allowlist. It parses the prompt with
+// the REAL text/template parser (not a regex proxy) so an unbalanced/half-open
+// action is rejected here at install/resolve rather than crashing every review at
+// render time, and trim markers / interior whitespace are normalized by the parser
+// exactly as the renderer sees them. It then walks the parse tree and permits only
+// bare references to the known PayloadContext fields and {{if .ToolsEnabled}}…
+// {{end}} blocks — the format the authoring contract mandates. Any other
+// construct (a field chain, pipeline, function call, {{range}}/{{with}}/{{template}},
+// or a disallowed field) is rejected. Reject-all was wrong: it made every
+// model-tuned community persona un-installable and un-resolvable (TD-010),
+// contradicting Clarification C1. Rejection is a descriptive error, never a silent
+// truncation or transform.
 func ValidateFetchedPersonaPrompt(text string) error {
 	if len(text) > MaxExecutorSystemPromptLen {
 		return fmt.Errorf("persona prompt exceeds maximum length of %d bytes", MaxExecutorSystemPromptLen)
 	}
-	stripped := personaTemplateActionRe.ReplaceAllStringFunc(text, func(m string) string {
-		inner := strings.TrimSpace(m[2 : len(m)-2])
-		if _, ok := allowedPersonaTemplateActions[inner]; ok {
-			return "" // known-good action → remove it
+	trees, err := parse.Parse("persona", text, "", "")
+	if err != nil {
+		return fmt.Errorf("persona prompt is not a valid template: %w", err)
+	}
+	// {{define}}/{{block}} create additional named trees beyond "persona"; a fetched
+	// prompt may not define associated templates.
+	if len(trees) != 1 {
+		return fmt.Errorf("persona prompt contains a disallowed template definition ({{define}} or {{block}})")
+	}
+	tree := trees["persona"]
+	if tree == nil || tree.Root == nil {
+		return nil
+	}
+	return validatePersonaTemplateNodes(tree.Root)
+}
+
+// validatePersonaTemplateNodes validates every node in a parsed template list.
+func validatePersonaTemplateNodes(list *parse.ListNode) error {
+	if list == nil {
+		return nil
+	}
+	for _, n := range list.Nodes {
+		if err := validatePersonaTemplateNode(n); err != nil {
+			return err
 		}
-		return m // unknown action → leave it so the residual-brace check below rejects it
-	})
-	if strings.Contains(stripped, "{{") || strings.Contains(stripped, "}}") {
-		return fmt.Errorf("persona prompt contains disallowed template metacharacters ({{ or }}); only the known persona template variables are permitted")
+	}
+	return nil
+}
+
+// validatePersonaTemplateNode permits literal text, comments, a bare allowed-field
+// action, and an {{if .ToolsEnabled}}…{{end}} block (recursively validated).
+// Everything else — {{range}}, {{with}}, {{template}}, a pipeline, a function
+// call, or a disallowed/nested field — is rejected.
+func validatePersonaTemplateNode(n parse.Node) error {
+	switch node := n.(type) {
+	case *parse.TextNode, *parse.CommentNode:
+		return nil
+	case *parse.ActionNode:
+		return validatePersonaPipe(node.Pipe)
+	case *parse.IfNode:
+		if err := validatePersonaPipe(node.Pipe); err != nil {
+			return err
+		}
+		if err := validatePersonaTemplateNodes(node.List); err != nil {
+			return err
+		}
+		return validatePersonaTemplateNodes(node.ElseList)
+	default:
+		_ = node
+		return fmt.Errorf("persona prompt contains a disallowed template construct; only the known persona variables and an {{if .ToolsEnabled}} block are permitted")
+	}
+}
+
+// validatePersonaPipe permits exactly one command consisting of one bare field
+// node whose single identifier is in the allowed set — i.e. {{.AgentName}},
+// {{.Payload}}, {{if .ToolsEnabled}}, etc. — and rejects declarations, multi-stage
+// pipelines, function calls, nested field chains, and non-field expressions.
+func validatePersonaPipe(pipe *parse.PipeNode) error {
+	if pipe == nil {
+		return nil
+	}
+	if len(pipe.Decl) > 0 {
+		return fmt.Errorf("persona prompt contains a disallowed template variable declaration")
+	}
+	if len(pipe.Cmds) != 1 {
+		return fmt.Errorf("persona prompt contains a disallowed template pipeline")
+	}
+	cmd := pipe.Cmds[0]
+	if len(cmd.Args) != 1 {
+		return fmt.Errorf("persona prompt contains a disallowed template function or multi-argument command")
+	}
+	field, ok := cmd.Args[0].(*parse.FieldNode)
+	if !ok {
+		return fmt.Errorf("persona prompt contains a disallowed template expression; only bare persona fields are permitted")
+	}
+	if len(field.Ident) != 1 {
+		return fmt.Errorf("persona prompt references a disallowed nested template field (.%s)", strings.Join(field.Ident, "."))
+	}
+	if _, ok := allowedPersonaFields[field.Ident[0]]; !ok {
+		return fmt.Errorf("persona prompt references a disallowed template field (.%s)", field.Ident[0])
 	}
 	return nil
 }

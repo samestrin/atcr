@@ -269,6 +269,12 @@ func TestValidateFetchedPersonaPrompt_Allowlist(t *testing.T) {
 		"{{.AgentName}} {{.ScopeRule}} {{.FileCount}} {{.BaseRef}} {{.HeadRef}} {{.PayloadMode}} {{.Payload}}",
 		"{{ .AgentName }} tolerates inner whitespace",
 		"{{if .ToolsEnabled}}block{{end}}",
+		"{{if .ToolsEnabled}}on{{else}}off{{end}}",
+		"{{- .Payload}}",                // leading trim marker (parser-normalized, must be allowed — HIGH #2)
+		"{{.Payload -}}",                // trailing trim marker
+		"{{if\n.ToolsEnabled}}x{{end}}", // interior newline, parser-normalized
+		"{{/* a template comment */}}",
+		"dangling }}", // a lone }} is harmless literal text to the parser
 	}
 	for _, s := range ok {
 		assert.NoErrorf(t, ValidateFetchedPersonaPrompt(s), "prompt %q should be allowed", s)
@@ -277,10 +283,15 @@ func TestValidateFetchedPersonaPrompt_Allowlist(t *testing.T) {
 		"{{.Secret}}",
 		"{{.Payload.Field}}",
 		"{{range .X}}{{end}}",
+		"{{with .Payload}}{{end}}",
 		"{{template \"x\"}}",
 		"{{define \"x\"}}{{end}}",
+		"{{printf \"%s\" .Payload}}",
+		"{{$x := .Payload}}{{$x}}",
 		"dangling {{",
-		"dangling }}",
+		"{{if .ToolsEnabled}}unterminated", // unbalanced — parses-invalid, must reject (HIGH #1)
+		"{{end}}",                          // lone end
+		"{{.Payload}}{{if .ToolsEnabled}}", // half-open trailing if
 	}
 	for _, s := range bad {
 		assert.Errorf(t, ValidateFetchedPersonaPrompt(s), "prompt %q should be rejected", s)
