@@ -173,6 +173,8 @@ Before submitting your persona, confirm every item:
 - [ ] **No secrets, credentials, or network instructions** in the prompt.
 - [ ] **Index entry** (if the persona ships in the community `index.json`) carries non-empty `provider` and `model` that **exactly match** the persona YAML's `provider`/`model` — enforced by a `go test` gate, not editorial review.
 
+> **Discoverable by model.** The `provider`/`model` you set in the persona YAML above become the structured fields a user searches by: `atcr personas search --model <model>` / `--provider <provider>` surfaces your persona to anyone who already has that model. See the [discover-and-install-by-model flow](personas-install.md#discover-and-install-a-persona-by-model) for the end-to-end path.
+
 ## 5. The community index entry
 
 Personas distributed through the community channel are enumerated in `personas/community/index.json` — an array of entries that `atcr personas search` reads to answer *"which persona is tuned for the model I have?"*. The index is **authored in-repo** (not generated), and a `go test` gate asserts each entry stays consistent with its source persona YAML.
