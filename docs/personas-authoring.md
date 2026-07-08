@@ -58,7 +58,7 @@ The loader canonicalizes every entry (trim whitespace → strip **all** leading 
 
 ## 2. The prompt template
 
-The prompt is what the persona actually *says* to the model. Built-in personas live as Markdown templates in `personas/` (for example `personas/bruce.md`, `personas/sentinel.md`); a community persona's `persona:` field names its prompt. Mirror the canonical structure exactly — the same section headings and the same template variables:
+The prompt is what the persona actually *says* to the model. Built-in personas live as Markdown templates in `personas/` (for example `personas/bruce.md`, `personas/sasha.md`); a community persona's `persona:` field names its prompt. Mirror the canonical structure exactly — the same section headings and the same template variables:
 
 ```markdown
 # {{.AgentName}} — <one-line lens description>
@@ -127,7 +127,7 @@ A fixture proves the persona works without an LLM or a network call. It is a sma
 2. Asserts the expected category word is present in the persona **template** (see "Name the category in the prompt" above).
 3. Renders the template with the fixture as the diff payload and confirms **no unrendered `{{ }}` actions remain**.
 
-Worked example — a `tracer` (performance) fixture that plants an N+1 query inside a loop:
+Worked example — a `penny` (performance) fixture that plants an N+1 query inside a loop:
 
 ```diff
 --- a/store/orders.go
@@ -145,7 +145,7 @@ Worked example — a `tracer` (performance) fixture that plants an N+1 query ins
  }
 ```
 
-Its `tracer.md` prompt names the `n+1` category, so the test confirms the persona is authored to catch exactly this.
+Its `penny.md` prompt names the `n+1` category, so the test confirms the persona is authored to catch exactly this.
 
 ## 4. Contribution checklist
 

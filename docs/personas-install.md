@@ -1,6 +1,6 @@
 # Installing Community Personas
 
-ATCR ships with nine built-in reviewer personas (six generalists plus the `sentinel`, `tracer`, and `idiomatic` bonus personas). Beyond those, the `atcr personas` command installs **community-contributed** personas from a configurable repository, so you can extend the reviewer panel with domain-specific lenses — security, performance, framework-specific, and more — without editing your registry by hand.
+ATCR ships with nine built-in reviewer personas (six generalists plus the `sasha`, `penny`, and `ingrid` bonus personas). Beyond those, the `atcr personas` command installs **community-contributed** personas from a configurable repository, so you can extend the reviewer panel with domain-specific lenses — security, performance, framework-specific, and more — without editing your registry by hand.
 
 This guide covers every `atcr personas` subcommand. No source-code lookup is required: each command's behavior and output are described here.
 
@@ -75,7 +75,7 @@ Lists installed personas — both built-in and community — as a table:
 atcr personas list
 # NAME             VERSION    SOURCE      LANGUAGE
 # bruce            built-in   built-in    -
-# sentinel         built-in   built-in    -
+# sasha            built-in   built-in    -
 # security/owasp   1.2.0      community   -
 # language/go-fmt  0.3.0      community   go
 ```
@@ -88,7 +88,7 @@ Columns: `NAME`, `VERSION` (`built-in` for the built-in personas; the installed 
 atcr personas list --scores
 # NAME             VERSION    SOURCE      LANGUAGE  CORROBORATION
 # security/owasp   1.2.0      community   -         72.4%
-# sentinel         built-in   built-in    -         n/a
+# sasha            built-in   built-in    -         n/a
 ```
 
 The rate is the fraction of a persona's findings that other reviewers or the verify stage corroborated, formatted as `XX.X%`, or `n/a` when there is no run history for that persona. When no scorecard data exists at all, every row shows `n/a` and a footer names the path that was checked:
