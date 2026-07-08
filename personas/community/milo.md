@@ -17,8 +17,9 @@ no praise, no diff restatement.
    used anyway (strconv.Atoi with `_` error)
 3. Boundary indexing: slice/array/map access with an unvalidated index or key;
    negative, zero, or out-of-range inputs
-4. Empty and default: empty string, nil slice, or zero value flowing into logic
-   that assumes it is populated
+4. External empty/default: an empty string, nil slice, or zero value arriving
+   from OUTSIDE the trust boundary and used as if it were populated and valid
+   (internal nil-flow correctness belongs to the logic lens, not here)
 5. Injection-adjacent misuse of unvalidated input in a path, query, or format
    string (defer exploitability depth to the security lens; flag the missing check)
 

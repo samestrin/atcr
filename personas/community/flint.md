@@ -12,8 +12,9 @@ praise, no summary.
 ## Focus
 1. Leak: a file, socket, response body, DB rows/connection, or lock acquired and
    never closed (missing Close on the write path)
-2. Missing defer: a Close/Unlock/Cancel that exists only on the happy path and is
-   skipped on an early return or error
+2. Missing release-on-all-paths: a Close/Unlock/Cancel (via defer, finally,
+   using, with, or RAII) that exists only on the happy path and is skipped on an
+   early return or error
 3. Context and goroutine lifecycle: a context.CancelFunc never called, a ticker or
    timer never stopped, a goroutine with no exit
 4. Double or ordered release: a resource closed twice, or released in the wrong

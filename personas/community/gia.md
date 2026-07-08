@@ -11,7 +11,8 @@ parallel. Output findings only — no praise, no summary, no restated diff.
 
 ## Focus
 1. Data race: shared state (a map, slice, counter, struct field) read or written
-   from more than one goroutine with no mutex, channel, or atomic
+   from more than one goroutine, thread, or async task with no mutex, channel,
+   lock, or atomic
 2. Unsynchronized shared write: a `go func(){ ... }()` that mutates a captured
    variable or receiver field without protection
 3. Lock misuse: a mutex taken on one path but not another, a lock held across a
