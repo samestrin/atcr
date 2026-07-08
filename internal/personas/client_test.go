@@ -4,11 +4,32 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestFetch_RetriesTransient5xx: a transient 5xx from the community repo must be
+// retried, not abort the whole fetch. init/quickstart install personas in a batch
+// loop, so a single flaky 503 previously failed the entire run.
+func TestFetch_RetriesTransient5xx(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("OK-BODY"))
+	}))
+	defer srv.Close()
+
+	body, err := fetch(srv.Client(), srv.URL+"/thing", ErrPersonaNotFound)
+	require.NoError(t, err, "a transient 5xx should be retried, not aborted")
+	assert.Equal(t, "OK-BODY", string(body))
+	assert.Equal(t, int32(2), atomic.LoadInt32(&calls), "exactly one retry after the 503")
+}
 
 // --- AC 01-01: RegistryBaseURL repointed to samestrin/atcr ------------------
 
