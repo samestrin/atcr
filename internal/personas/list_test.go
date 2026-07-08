@@ -68,6 +68,33 @@ func TestListTiers_CaseInsensitiveBuiltinDedup(t *testing.T) {
 	assert.NotContains(t, byName, "Bruce", "Bruce must not appear separately from bruce")
 }
 
+func TestListTiersWithScores_IncludesProjectOverride(t *testing.T) {
+	projectDir := t.TempDir()
+	communityDir := t.TempDir()
+
+	// Project override for a built-in name.
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "bruce.md"), []byte("# project bruce\n"), 0o644))
+	// Community pin.
+	require.NoError(t, os.MkdirAll(filepath.Join(communityDir, "security"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(communityDir, "security", "owasp.yaml"), []byte(validPersonaYAML), 0o644))
+
+	scores := map[string]float64{"bruce": 0.9, "security/owasp": 0.6}
+	scored, err := ListTiersWithScores(projectDir, communityDir, scores)
+	require.NoError(t, err)
+
+	bruce := scoredByName(scored, "bruce")
+	require.NotNil(t, bruce)
+	assert.Equal(t, "project", bruce.Source, "project override must appear in scored list")
+	require.NotNil(t, bruce.Rate)
+	assert.InDelta(t, 0.9, *bruce.Rate, 1e-9)
+
+	owasp := scoredByName(scored, "security/owasp")
+	require.NotNil(t, owasp)
+	assert.Equal(t, "community", owasp.Source)
+	require.NotNil(t, owasp.Rate)
+	assert.InDelta(t, 0.6, *owasp.Rate, 1e-9)
+}
+
 // --- FormatRate -------------------------------------------------------------
 
 func TestFormatRate(t *testing.T) {
