@@ -39,7 +39,7 @@ The deterministic Go reconciler — cluster → dedupe → merge → confidence 
 # 1. Install (Go 1.24+)
 go install github.com/samestrin/atcr/cmd/atcr@latest
 
-# 2. Scaffold project config + the six editable personas into .atcr/
+# 2. Scaffold project config + the nine editable personas into .atcr/
 atcr init
 
 # 3. Point a provider + agents at an OpenAI-compatible endpoint
@@ -75,7 +75,7 @@ New to atcr? `atcr quickstart` runs steps 2–3 interactively: it scaffolds `.at
 | `atcr report` | Render md / json / checklist views over the reconciled findings |
 | `atcr range` | Pre-flight base..head resolution only; prints resolution JSON |
 | `atcr status` | Print a review's fan-out progress as JSON (roster + per-agent state) |
-| `atcr init` | Write `.atcr/config.yaml` and the six default personas (editable) |
+| `atcr init` | Write `.atcr/config.yaml` and the nine default personas (editable) |
 | `atcr quickstart` | Interactive onboarding: scaffold `.atcr/` (reusing `init`), set up the synthetic provider + API-key env var, and scaffold a CI workflow (`--open`, `--force`) |
 | `atcr serve` | Run the MCP stdio server over the same engine |
 | `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column |
@@ -204,7 +204,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 
 - `cmd/atcr/` — binary entry point and subcommands
 - `internal/` — engine packages (`gitrange`, `payload`, `registry`, `llmclient`, `fanout`, `stream`, `reconcile`, `report`, `mcp`)
-- `personas/` — the six embedded default personas + `_base.md`
+- `personas/` — the nine embedded default personas + `_base.md`
 - `skill/` — the atcr Agent Skill (host review + orchestration)
 - `docs/` — user documentation
 - `examples/` — CI gate script
