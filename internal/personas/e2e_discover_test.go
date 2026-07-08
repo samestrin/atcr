@@ -76,8 +76,11 @@ func TestDiscoverByModel_EndToEnd_MockRegistry(t *testing.T) {
 	require.NotNil(t, listed, "installed persona must appear in `list`")
 	assert.Equal(t, "community", listed.Source)
 
-	// 4. test (fixture) → the persona passes its fixture with no leftover template actions.
-	out, err := TemplateFixtureRunner{}.RunFixture("delia")
+	// 4. test (fixture) → exercise the installed on-disk unit, not the embedded copy.
+	runner := TemplateFixtureRunner{
+		PersonasDir: func() (string, error) { return destDir, nil },
+	}
+	out, err := runner.RunFixture("delia")
 	require.NoError(t, err)
 	require.True(t, out.HasFixture, "delia must resolve a fixture")
 	require.Equal(t, out.Total, out.Passed, "delia fixture must pass")

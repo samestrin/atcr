@@ -1,6 +1,8 @@
 package personas
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -102,4 +104,27 @@ func TestRenderFixture_PassesWhenPayloadContainsBraces(t *testing.T) {
 	assert.True(t, out.HasFixture)
 	assert.Equal(t, 1, out.Passed)
 	assert.Equal(t, 1, out.Total)
+}
+
+// TestTemplateFixtureRunner_PersonasDirReadsInstalledUnit verifies the
+// PersonasDir seam resolves a community persona from an on-disk installed unit
+// before falling back to the embedded library copy.
+func TestTemplateFixtureRunner_PersonasDirReadsInstalledUnit(t *testing.T) {
+	md, err := builtins.CommunityGet("delia")
+	require.NoError(t, err)
+	model, err := builtins.CommunityModel("delia")
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "delia.md"), []byte(md), 0o644))
+	yaml := "provider: openrouter\nmodel: " + model + "\nrole: reviewer\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "delia.yaml"), []byte(yaml), 0o644))
+
+	runner := TemplateFixtureRunner{
+		PersonasDir: func() (string, error) { return dir, nil },
+	}
+	out, err := runner.RunFixture("delia")
+	require.NoError(t, err)
+	require.True(t, out.HasFixture)
+	require.Equal(t, 1, out.Passed)
 }
