@@ -60,10 +60,11 @@ func ListTiers(projectDir, communityDir string) ([]PersonaMeta, error) {
 	byName := make(map[string]PersonaMeta, len(baseMetas)+len(project))
 	order := make([]string, 0, len(baseMetas)+len(project))
 	add := func(m PersonaMeta) {
-		if _, seen := byName[m.Name]; !seen {
-			order = append(order, m.Name)
+		key := strings.ToLower(m.Name)
+		if _, seen := byName[key]; !seen {
+			order = append(order, key)
 		}
-		byName[m.Name] = m // later tier (project) overrides earlier at the same name
+		byName[key] = m // later tier (project) overrides earlier at the same name
 	}
 	for _, m := range baseMetas {
 		add(m)
