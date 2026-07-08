@@ -341,6 +341,18 @@ func TestInstallCommunityPersonas_EmptyIndexErrors(t *testing.T) {
 	assert.Empty(t, entries, "no persona files written when the index is empty")
 }
 
+// TestInstallCommunityPersonas_FetchErrorHintsForceOffline covers the recovery
+// guidance after a failed community fetch: the hint must mention --force because
+// the scaffold has already been persisted and a plain retry would trip the
+// exists-gate.
+func TestInstallCommunityPersonas_FetchErrorHintsForceOffline(t *testing.T) {
+	dest := t.TempDir()
+
+	err := installCommunityPersonas(http.DefaultClient, "http://localhost:1", dest, []string{"owasp"}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--force --offline", "recovery hint must include --force since scaffold is already persisted")
+}
+
 // TestInstallCommunityPersonas_MissingRosterSkipsWithWarning covers AC 01-02
 // Edge Case 1: a roster persona the index does not advertise is skipped with a
 // warning; present ones still install and the call succeeds (exit 0).
