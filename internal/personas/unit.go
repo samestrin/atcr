@@ -110,13 +110,24 @@ func writePersonaUnit(client HTTPClient, baseURL, name, yamlDest string, yamlDat
 	if err := os.MkdirAll(filepath.Dir(yamlDest), 0o700); err != nil {
 		return fmt.Errorf("failed to create personas directory: %w", err)
 	}
+	// Snapshot any prior YAML before it is overwritten. On a re-install/upgrade the
+	// existing unit is already valid, so if the co-located .md write fails after the
+	// .yaml has been replaced, the rollback must RESTORE the prior working YAML — not
+	// delete it, which would leave the user with no persona where one worked moments
+	// earlier. A first-time install has no prior YAML and is rolled back by removing
+	// the partial file, as before.
+	priorYAML, priorErr := os.ReadFile(yamlDest)
 	if err := writeFileAtomic(yamlDest, yamlData); err != nil {
 		return err
 	}
 	mdDest := strings.TrimSuffix(yamlDest, ".yaml") + ".md"
 	if hasMD {
 		if err := writeFileAtomic(mdDest, mdData); err != nil {
-			_ = os.Remove(yamlDest) // roll back the partial unit
+			if priorErr == nil {
+				_ = writeFileAtomic(yamlDest, priorYAML) // restore the prior working unit
+			} else {
+				_ = os.Remove(yamlDest) // roll back a first-time partial unit
+			}
 			return err
 		}
 	} else if err := os.Remove(mdDest); err != nil && !errors.Is(err, os.ErrNotExist) {
