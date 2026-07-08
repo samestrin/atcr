@@ -79,7 +79,7 @@ func initTargets(dir string) []string {
 
 // offlineHint is appended to fetch-failure errors so a first-run user always has
 // a clear escape hatch to a working, network-free workspace.
-const offlineHint = " — retry, or run with --offline to use the embedded built-in personas"
+const offlineHint = " — retry with --force --offline to use the embedded built-in personas"
 
 // installCommunityPersonas fetches the community index from baseURL and installs
 // each roster persona present in it as a self-contained unit (<name>.yaml plus a
