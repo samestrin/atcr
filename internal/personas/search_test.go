@@ -428,3 +428,32 @@ func TestSearchWithOptions_FreeTextDescriptionDoesNotSatisfyModel(t *testing.T) 
 	assert.NotContains(t, resultNames(got), "finn",
 		"finn's Model is gpt-4; a deepseek mention in its Description must not satisfy --model deepseek")
 }
+
+// TestSearchWithOptions_KeywordReachesStructuredFields pins the OR-reach that the
+// bare positional Keyword has (Name OR Description OR Provider OR Model) — the
+// mirror image of the --model/--provider structured-only contract. It also
+// confirms a whitespace-only Keyword is trimmed to absent (matches every entry).
+// The dedicated AC 03-02 back-compat regression suite lands in task 4.4.
+func TestSearchWithOptions_KeywordReachesStructuredFields(t *testing.T) {
+	srv := testServer(t, map[string]string{"/index.json": structuredIndexJSON})
+
+	// Keyword matches the structured Model of entries that carry the token there,
+	// even though it is absent from their Name/Description (amara/dan/omar/cara),
+	// AND finn — whose Description free-text mentions "deepseek". Unlike --model,
+	// the positional keyword deliberately reaches Description too.
+	got, err := SearchWithOptions(srv.Client(), srv.URL, SearchOptions{Keyword: "deepseek"})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"amara", "dan", "omar", "cara", "finn"}, resultNames(got))
+
+	// Keyword matches the structured Provider field (openrouter) with no Name/
+	// Description hit.
+	got, err = SearchWithOptions(srv.Client(), srv.URL, SearchOptions{Keyword: "openrouter"})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"amara", "cara"}, resultNames(got))
+
+	// A whitespace-only keyword is trimmed to absent, so with no other filter every
+	// entry is returned.
+	got, err = SearchWithOptions(srv.Client(), srv.URL, SearchOptions{Keyword: "   "})
+	require.NoError(t, err)
+	assert.Len(t, got, 7)
+}

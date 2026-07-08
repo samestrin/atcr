@@ -42,10 +42,11 @@ type SearchOptions struct {
 	Provider string
 }
 
-// Search fetches the community index and returns entries whose name or
-// description contains keyword (case-insensitive). Preserved as a thin
-// back-compat wrapper over SearchWithOptions for existing keyword-only callers.
-// An empty result is not an error — the caller reports "no personas found".
+// Search fetches the community index and returns entries whose Name, Description,
+// Provider, or Model contains keyword (case-insensitive substring — see
+// matchesKeyword). Preserved as a thin back-compat wrapper over SearchWithOptions
+// for existing keyword-only callers. An empty result is not an error — the caller
+// reports "no personas found".
 func Search(client HTTPClient, baseURL, keyword string) ([]PersonaIndexEntry, error) {
 	return SearchWithOptions(client, baseURL, SearchOptions{Keyword: keyword})
 }
