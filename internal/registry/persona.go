@@ -149,22 +149,22 @@ var allowedPersonaFields = map[string]struct{}{
 }
 
 // ValidateFetchedPersonaPrompt enforces the C3 untrusted-input guardrails on a
-// fetched/pinned community persona prompt: a length cap mirroring
-// MaxExecutorSystemPromptLen, and a template allowlist. It parses the prompt with
-// the REAL text/template parser (not a regex proxy) so an unbalanced/half-open
-// action is rejected here at install/resolve rather than crashing every review at
-// render time, and trim markers / interior whitespace are normalized by the parser
-// exactly as the renderer sees them. It then walks the parse tree and permits only
-// bare references to the known PayloadContext fields and {{if .ToolsEnabled}}…
-// {{end}} blocks — the format the authoring contract mandates. Any other
-// construct (a field chain, pipeline, function call, {{range}}/{{with}}/{{template}},
-// or a disallowed field) is rejected. Reject-all was wrong: it made every
-// model-tuned community persona un-installable and un-resolvable (TD-010),
-// contradicting Clarification C1. Rejection is a descriptive error, never a silent
-// truncation or transform.
+// fetched/pinned community persona prompt: a length cap (MaxPersonaPromptLen) and
+// a template allowlist. It parses the prompt with the REAL text/template parser
+// (not a regex proxy) so an unbalanced/half-open action is rejected here at
+// install/resolve rather than crashing every review at render time, and trim
+// markers / interior whitespace are normalized by the parser exactly as the
+// renderer sees them. It then walks the parse tree and permits only bare
+// references to the known PayloadContext fields and {{if .ToolsEnabled}}…{{end}}
+// blocks — the format the authoring contract mandates. Any other construct (a
+// field chain, pipeline, function call, {{range}}/{{with}}/{{template}}, or a
+// disallowed field) is rejected. Reject-all was wrong: it made every model-tuned
+// community persona un-installable and un-resolvable (TD-010), contradicting
+// Clarification C1. Rejection is a descriptive error, never a silent truncation
+// or transform.
 func ValidateFetchedPersonaPrompt(text string) error {
-	if len(text) > MaxExecutorSystemPromptLen {
-		return fmt.Errorf("persona prompt exceeds maximum length of %d bytes", MaxExecutorSystemPromptLen)
+	if len(text) > MaxPersonaPromptLen {
+		return fmt.Errorf("persona prompt exceeds maximum length of %d bytes", MaxPersonaPromptLen)
 	}
 	trees, err := parse.Parse("persona", text, "", "")
 	if err != nil {

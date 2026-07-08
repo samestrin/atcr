@@ -81,6 +81,11 @@ const (
 	// at load to limit prompt-stuffing. It is larger than the persona cap because it
 	// is a full instruction block, not a single token interpolated mid-sentence.
 	MaxExecutorSystemPromptLen = 4096
+	// MaxPersonaPromptLen caps fetched/pinned community persona prompts before they
+	// are written to disk or resolved. It aliases MaxExecutorSystemPromptLen because
+	// both bound untrusted free-text prompts that are interpolated verbatim into LLM
+	// instructions; the shared value is intentional, not coincidental.
+	MaxPersonaPromptLen = MaxExecutorSystemPromptLen
 	// MaxExecutorRuleLen caps each executor coding rule (Epic 7.0.1). Each rule is
 	// interpolated verbatim into the fix prompt as a constraint line, so it is
 	// bounded like the persona to limit prompt-stuffing by untrusted free text.

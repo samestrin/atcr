@@ -216,7 +216,7 @@ func TestPersonaResolution_SymlinkSkipped(t *testing.T) {
 // against a hand-dropped oversized file that bypassed install-time validation.
 func TestPersonaResolution_RegistryLengthCapRejects(t *testing.T) {
 	dirs := personaDirs(t)
-	writePersona(t, dirs.Registry, "toolong", strings.Repeat("a", MaxExecutorSystemPromptLen+1))
+	writePersona(t, dirs.Registry, "toolong", strings.Repeat("a", MaxPersonaPromptLen+1))
 
 	_, err := ResolvePersona("bruce", "toolong", nil, dirs)
 	require.Error(t, err)
@@ -296,7 +296,7 @@ func TestValidateFetchedPersonaPrompt_Allowlist(t *testing.T) {
 	for _, s := range bad {
 		assert.Errorf(t, ValidateFetchedPersonaPrompt(s), "prompt %q should be rejected", s)
 	}
-	assert.Error(t, ValidateFetchedPersonaPrompt(strings.Repeat("a", MaxExecutorSystemPromptLen+1)), "over-length rejected")
+	assert.Error(t, ValidateFetchedPersonaPrompt(strings.Repeat("a", MaxPersonaPromptLen+1)), "over-length rejected")
 }
 
 // TestValidateFetchedPersonaPrompt_AllEmbeddedCommunityPersonasPass proves the fix
@@ -397,7 +397,7 @@ func TestPersonaResolution_AuthoredCommunityPromptsResolveEndToEnd(t *testing.T)
 
 		t.Run("length cap rejects an oversized prompt", func(t *testing.T) {
 			dirs := personaDirs(t)
-			oversized := base + strings.Repeat("A", MaxExecutorSystemPromptLen+1)
+			oversized := base + strings.Repeat("A", MaxPersonaPromptLen+1)
 			require.NoError(t, os.WriteFile(filepath.Join(dirs.Registry, "delia.md"), []byte(oversized), 0o644))
 			_, err := ResolvePersona("delia", "delia", nil, dirs)
 			require.Error(t, err)
