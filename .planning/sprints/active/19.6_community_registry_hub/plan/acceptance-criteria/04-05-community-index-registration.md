@@ -20,7 +20,7 @@
 
 ## Happy Path Scenarios
 **Scenario 1: Every authored persona has exactly one `index.json` entry**
-- **Given** the 10 authored community personas (6 frontier + 4+ flat-rate)
+- **Given** the 10 authored community personas (6 frontier + 4 flat-rate)
 - **When** `personas/community/index.json` is decoded into `[]PersonaIndexEntry`
 - **Then** the resulting slice has exactly one entry per persona, with `path` pointing at that persona's YAML file
 
@@ -38,6 +38,11 @@
 - **Given** a `personas/community/index.json` containing `[]`
 - **When** the consistency test runs
 - **Then** the test fails with a clear message stating the index contains no entries, preventing a shipped empty index
+
+**Scenario 5: Slug is consistent across index `name`/`path`, the `.md` prompt, and the resolvable persona name**
+- **Given** an in-repo `personas/community/index.json` entry (Q4) and its persona files
+- **When** the consistency test derives the slug from the entry's `name` and the stem of its `path`, and cross-checks the co-located `<slug>.md` and the name `ResolvePersona` looks up
+- **Then** all agree on one slug string: `name` == stem(`path`) == `<slug>.md` basename == the `<persona>.md` `ResolvePersona` resolves (`internal/registry/persona.go:64`), and the slug passes `validateName` (`internal/registry/persona.go:111`). This guarantees `ResolvePersona` (which looks up `<persona>.md`) never receives an index entry whose registered name cannot resolve to its prompt file.
 
 ## Edge Cases
 **Edge Case 1: `path` value resolves to a real file**
@@ -88,6 +93,7 @@
 **Story-Specific:**
 - [ ] `index.json` has exactly one entry per authored persona, `path` resolving to a real committed file
 - [ ] Every entry's `provider`/`model` matches the corresponding YAML's `provider`/`model` exactly
+- [ ] Each entry's slug is consistent across `name`, stem(`path`), the `<slug>.md` prompt, and the `ResolvePersona`-resolvable name, and passes `validateName`
 - [ ] Task-scoped personas carry `tasks`/`tags` reflecting their review lens
 
 **Manual Review:**

@@ -14,8 +14,15 @@
 ### Related Files (from codebase-discovery.json)
 - `docs/personas-authoring.md` — modify: update worked examples (file path references, fixture-naming examples, performance-fixture walkthrough) from `sentinel`/`tracer`/`idiomatic` to `sasha`/`penny`/`ingrid`.
 - `docs/personas-install.md` — modify: update the built-in persona summary and worked `atcr personas list`/`atcr personas test` sample output tables to reflect the new names.
+- `README.md` — modify: update any built-in persona name mentions (e.g. the personas overview / roster references) from the retired slugs to `sasha`/`penny`/`ingrid`; README is a task-required doc surface and must not retain a stale slug.
 - `personas/personas.go` (names slice ~line 20) — reference: source of truth for the current built-in persona names.
-- `docs/personas-authoring.md` / `docs/personas-install.md` — reference: scoped-search verification shared with AC 05-03.
+- `docs/personas-authoring.md` / `docs/personas-install.md` / `README.md` — reference: scoped-search verification shared with AC 05-03.
+
+**Complete, deterministic enumeration of old-slug documentation locations that MUST change** (any doc file citing a retired slug as an active persona name; verified by the AC 05-03 scoped search so the checklist is exhaustive, not sampled):
+1. `docs/personas-authoring.md` — worked examples, fixture-naming (`<slug>_fixture.patch`) examples, and the performance-fixture walkthrough.
+2. `docs/personas-install.md` — built-in persona summary and the `atcr personas list`/`atcr personas test` sample output tables.
+3. `README.md` — built-in persona name mentions in the personas overview / roster narrative.
+4. Any other doc file surfaced by the AC 05-03 scoped grep for `sentinel`/`tracer`/`idiomatic` as an active slug (this AC is complete only when that scoped grep over the doc surface returns zero non-excluded matches — the enumeration above is the expected hit set, and any additional hit must also be updated).
 
 
 ## Happy Path Scenarios
@@ -69,8 +76,9 @@
 **Story-Specific:**
 - [ ] `docs/personas-authoring.md` worked examples (lines 61, 119, 130, 148 per current content) reference `sasha`/`penny`/`ingrid` in place of `sentinel`/`tracer`/`idiomatic`
 - [ ] `docs/personas-install.md` built-in persona summary and worked CLI output (lines 3, 76, 89 per current content) reference `sasha`/`penny`/`ingrid`
+- [ ] `README.md` built-in persona mentions reference `sasha`/`penny`/`ingrid` (no retired slug remains)
 - [ ] Fixture-naming convention examples remain illustrative and use the new slugs
-- [ ] Scoped search (shared with AC 05-03) confirms zero remaining active-slug references in these two files
+- [ ] Scoped search (shared with AC 05-03) confirms zero remaining active-slug references across `docs/personas-authoring.md`, `docs/personas-install.md`, `README.md`, and any other doc file the scan surfaces
 
 **Manual Review:**
 - [ ] Code reviewed and approved

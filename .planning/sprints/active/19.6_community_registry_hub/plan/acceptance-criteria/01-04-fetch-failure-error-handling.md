@@ -35,7 +35,7 @@
 **Edge Case 1: Partial fetch failure (some personas succeed, one fails mid-roster)**
 - **Given** a mock registry that serves the first two roster personas successfully and then fails (500) for the third
 - **When** `atcr init` runs without `--offline`
-- **Then** the command exits non-zero with a descriptive error identifying the failing persona name, and the workspace is left in a documented, non-silent state (either no partial files, or clearly-reported partial install — single behavior chosen and covered by test)
+- **Then** the roster install is all-or-nothing: the command exits non-zero with a descriptive error identifying the failing persona name, and NO partial files are left on disk — any personas written before the failure are rolled back so the workspace is byte-for-byte identical to its pre-run state. This atomic/rolled-back behavior is the single decisive contract (not a reported partial install) and is covered by a test asserting zero new persona files remain after the mid-roster failure.
 
 **Edge Case 2: Network timeout rather than an HTTP error status**
 - **Given** a mock server that never responds (simulating a hang past `fetchTimeout`)
@@ -75,6 +75,7 @@
 - [ ] `runInit`/`runQuickstart` return a non-nil, descriptive error naming the failure and suggesting `--offline`
 - [ ] Process exits non-zero on fetch failure
 - [ ] Timeout and non-2xx-status failures are both covered by test
+- [ ] Mid-roster fetch failure is all-or-nothing: no partial persona files remain on disk (roster install rolled back to pre-run state), covered by test
 
 **Manual Review:**
 - [ ] Code reviewed and approved

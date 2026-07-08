@@ -29,10 +29,20 @@
 - **When** its section headings are extracted
 - **Then** `## Role` and `## Output Format` are both present, and the `## Output Format` block contains the exact 7-column pipe-delimited contract (`SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE`) byte-for-byte
 
-**Scenario 3: Prompt phrasing style differs per vendor, reflecting that vendor's own prompting guidance**
-- **Given** the Anthropic, OpenAI, and Google frontier persona prompts
-- **When** their instruction style is compared (e.g. explicit step-by-step framing vs. terse directive framing)
-- **Then** each prompt's structure/emphasis is authored per that vendor's documented prompting guidance rather than all three sharing identical phrasing patterns
+**Scenario 3: Each persona prompt carries a machine-checkable vendor-guidance citation**
+- **Given** each community persona Markdown template
+- **When** the community render test scans the template's raw bytes for the citation marker
+- **Then** exactly one `<!-- vendor-guidance: <url-or-section> -->` HTML comment is present with a non-empty value, and its absence fails that persona's subtest. This citation is the machine-verifiable proxy; whether the prompt's *phrasing actually reflects* that vendor's guidance is a MANUAL review gate (Scenario 4), since fidelity to prose guidance is not automatable.
+
+**Scenario 4: Prompt phrasing style differs per vendor, reflecting that vendor's own prompting guidance (MANUAL gate)**
+- **Given** the Anthropic, OpenAI, and Google frontier persona prompts and their `<!-- vendor-guidance: ... -->` citations
+- **When** a reviewer compares each prompt's instruction style (e.g. explicit step-by-step framing vs. terse directive framing) against the cited guidance
+- **Then** each prompt's structure/emphasis is authored per that vendor's documented prompting guidance rather than all three sharing identical phrasing patterns. This is an explicitly MANUAL Definition-of-Done gate — the automated suite only enforces citation presence (Scenario 3), not fidelity.
+
+**Scenario 5: Required template tokens and mandatory headings are present in the source template text**
+- **Given** a community persona Markdown template file (raw bytes, before any render)
+- **When** the test scans the source text for each required variable token and each mandatory heading
+- **Then** every required token — `{{.AgentName}}`, `{{.ScopeRule}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.PayloadMode}}`, `{{.Payload}}` — and every mandatory `##` heading (`## Role`, `## Output Format`) is literally present in the file. This source-text assertion is REQUIRED because `text/template` only errors on a *referenced* missing field, never on an *omitted* required token — a template that simply never mentions `{{.Payload}}` renders cleanly, so render success alone (Scenario 1) cannot catch a dropped required token.
 
 ## Edge Cases
 **Edge Case 1: Optional `{{if .ToolsEnabled}}…{{end}}` block renders without error and leaves no unrendered template actions in both states**
@@ -76,10 +86,14 @@
 - [ ] Build succeeds
 
 **Story-Specific:**
-- [ ] All 10+ community persona templates render with zero leftover `{{ }}` actions
+- [ ] All 10 community persona templates render with zero leftover `{{ }}` actions
+- [ ] Source-text assertion passes: every required token (`{{.AgentName}}`, `{{.ScopeRule}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.PayloadMode}}`, `{{.Payload}}`) and mandatory `##` heading is literally present in each template file (independent of render success)
 - [ ] `## Role` and `## Output Format` (exact 7-column contract) are present in every template
-- [ ] Frontier persona phrasing style differs per vendor per that vendor's own prompting guidance
+- [ ] Every persona `.md` carries exactly one `<!-- vendor-guidance: <url-or-section> -->` citation with a non-empty value (automated presence check)
 - [ ] `## Output Format` text matches the canonical contract byte-for-byte across all personas
+
+**Manual Review (vendor-fidelity gate):**
+- [ ] Frontier persona phrasing style differs per vendor per that vendor's own cited prompting guidance — MANUAL gate; the suite enforces citation presence only, not phrasing fidelity
 
 **Manual Review:**
 - [ ] Code reviewed and approved

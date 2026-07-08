@@ -20,12 +20,26 @@
 - `docs/personas-authoring.md` — reference: authoring contract (YAML schema, prompt template, fixture, contribution checklist).
 - `personas/_base.md` — reference: shared prompt-template scaffold.
 
+### Provider-vs-vendor semantics (LOCKED — Q3)
+In the registry agent schema, `provider` is a **routing-endpoint key that must exist in the registry `Providers` map** (`internal/registry/config.go:672-676`: `validateAgent` rejects a `provider` that is not a defined `Providers` key). It is NOT the vendor name. Vendor identity (Anthropic/OpenAI/Google) lives in the `model` string (e.g. `provider: openrouter` + `model: anthropic/claude-3.7-sonnet`, per `docs/personas-authoring.md`). Therefore personas are grouped, differentiated, and asserted by the **vendor token in `model`** (`claude` / `gpt` / `gemini`) and/or `tasks`/`tags` — never by `provider ∈ {anthropic,openai,google}`.
+
+### Intended flagship+fallback model bindings (LOCKED — Q2, 2026-07-07)
+Each frontier vendor ships a flagship (primary) persona and a same-family fallback persona, mirroring the `registry.yaml` `bruce`/`bruce-backup` convention. The pinned intent below is traceable via the vendor-guidance citation each `.md` must carry (`<!-- vendor-guidance: <url-or-section> -->`, see AC 04-03):
+
+| Vendor token in `model` | Flagship (primary) model id | Fallback (same-family) model id |
+|-------------------------|-----------------------------|---------------------------------|
+| `claude` (Anthropic) | Opus-tier id (e.g. `anthropic/claude-opus-4-1`) | Sonnet-tier id (e.g. `anthropic/claude-sonnet-4`) |
+| `gpt` (OpenAI) | flagship-tier GPT id | lighter same-family GPT id |
+| `gemini` (Google) | Gemini Pro-tier id | Gemini Flash-tier id |
+
+The exact model-id strings are the author's responsibility at commit time; what this AC pins is the flagship+fallback *pairing* per vendor and its grounding citation. `provider` for every one of these personas is a valid `Providers`-map routing key (e.g. `openrouter`/`synthetic`), not the vendor name.
+
 
 ## Happy Path Scenarios
-**Scenario 1: Each of the 3 frontier providers has exactly a flagship+fallback pair**
+**Scenario 1: Each of the 3 frontier vendors has exactly a flagship+fallback pair**
 - **Given** the completed `personas/community/` directory
-- **When** the persona YAML files are enumerated and grouped by `provider`
-- **Then** `anthropic`, `openai`, and `google` each resolve to exactly 2 persona YAML files (flagship + fallback), for a total of 6 frontier personas
+- **When** the persona YAML files are enumerated and grouped by the **vendor token in `model`** (`claude` / `gpt` / `gemini`) — NOT by `provider`
+- **Then** each of `claude`, `gpt`, and `gemini` resolves to exactly 2 persona YAML files (flagship + fallback), for a total of 6 frontier personas, and every one of those YAMLs has a `provider` that is a valid registry `Providers`-map routing key (e.g. `openrouter`/`synthetic`)
 
 **Scenario 2: Flagship and fallback within a provider bind to distinct models**
 - **Given** the Anthropic flagship and fallback persona YAMLs
@@ -46,12 +60,12 @@
 **Edge Case 1: Fallback persona is not a copy-pasted flagship prompt**
 - **Given** the flagship and fallback persona Markdown prompts for the same provider
 - **When** their `## Focus` sections are compared
-- **Then** the fallback's review lens/task scope differs from the flagship's (per the story's constraint that personas are task-scoped, not generic restatements), even though both bind to the same provider
+- **Then** the fallback's review lens/task scope differs from the flagship's (per the story's constraint that personas are task-scoped, not generic restatements), even though both bind to the same vendor family (same `model` vendor token)
 
-**Edge Case 2: Provider key casing/format matches what the registry's OpenAI-compatible routing expects**
+**Edge Case 2: `provider` is one of the agreed routing-key list (authoring-convention content-lint)**
 - **Given** the `provider` value authored in each frontier YAML
-- **When** it is compared against the provider keys accepted elsewhere in the registry (e.g. `internal/registry`'s provider validation)
-- **Then** the value uses the exact accepted casing/spelling (lowercase, no aliasing typos), so the persona is installable rather than rejected at load
+- **When** a content-lint test asserts it is a member of an agreed routing-key allowlist (e.g. `{openrouter, synthetic, ...}`)
+- **Then** the value matches an allowed routing key exactly (lowercase, no aliasing typos). NOTE: this is an authoring-convention lint, NOT loader enforcement — `ValidateAgentYAML` (`internal/registry/validate.go:29-38`) synthesizes a throwaway single-key registry (`Providers: {cfg.Provider: ...}`) so its provider-reference check passes for *whatever* value is present; casing/typo errors are therefore caught only by the content-lint here, not "rejected at load."
 
 ## Error Conditions
 **Error Scenario 1: Missing `model` field on a frontier persona**
@@ -84,9 +98,10 @@
 - [ ] Build succeeds
 
 **Story-Specific:**
-- [ ] `anthropic`, `openai`, `google` each have exactly one flagship and one fallback persona YAML
-- [ ] Every frontier persona YAML has non-empty `provider`+`model` and passes strict schema validation
-- [ ] Flagship and fallback `model` values differ within each provider
+- [ ] Grouped by the `model` vendor token, `claude`, `gpt`, and `gemini` each have exactly one flagship and one fallback persona YAML (6 total)
+- [ ] Every frontier persona YAML has non-empty `provider`+`model`; `provider` is a member of the agreed routing-key allowlist (content-lint), and `model` carries the intended vendor token
+- [ ] Flagship and fallback `model` values differ within each vendor family (same vendor token, different tier id per the pinned bindings table)
+- [ ] Each persona `.md` carries a `<!-- vendor-guidance: ... -->` citation (per AC 04-03) grounding its flagship+fallback phrasing
 - [ ] Flagship and fallback prompts are task-scoped differently, not duplicate generic text
 
 **Manual Review:**

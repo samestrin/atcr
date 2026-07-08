@@ -13,6 +13,10 @@
 
 ### Related Files (from codebase-discovery.json)
 - `internal/personas/search.go` (`PersonaIndexEntry`, `Search`) — modify: extend `PersonaIndexEntry` with `Provider`, `Model`, `Tasks`, `Tags` fields carrying `json:"...,omitempty"` tags, without altering existing `Name`/`Version`/`Description`/`Path` fields or tags.
+
+**Field semantics note (per LOCKED decision Q3):**
+- `Provider` names a **routing-endpoint key** present in the registry Providers map (e.g. `openrouter`, `synthetic`) — it is NOT the vendor/brand identity. Vendor identity (e.g. `deepseek`, `anthropic`, `openai`) lives in the `Model` string. Discovery and grouping are by `Model`.
+- `Tasks` and `Tags` are **forward-looking schema only**: they are decoded and stored additively but have **NO consuming search filter in this sprint**. No test asserts their search relevance, and no scenario below treats them as query-matchable — they exist to reserve the schema shape, not to be searched. This is called out explicitly to avoid phantom scope.
 - `internal/personas/search_test.go` — create: unit tests asserting the new fields decode correctly, existing fields remain unchanged, and missing optional fields decode as zero-values.
 - `internal/personas/client.go` (`FetchIndex`) — reference: decodes `index.json` into `[]PersonaIndexEntry` via default permissive `encoding/json` unmarshal; no change required because new fields are additive.
 - `personas/community/index.json` — create: in-repo index using the extended schema.

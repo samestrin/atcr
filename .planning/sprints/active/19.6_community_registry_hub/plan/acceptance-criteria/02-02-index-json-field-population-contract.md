@@ -7,15 +7,15 @@
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
-| Component Type | Markdown documentation (schema contract) | No in-repo `index.json` generator exists — the community repo's publish pipeline builds `index.json` externally |
-| Test Framework | N/A (documentation) + Go unit test cross-check | `internal/personas/search_test.go` verifies the documented shape matches the decodable struct |
-| Key Dependencies | None | Additive doc + struct field reference only |
+| Component Type | In-repo `index.json` + Go enforcement test | `personas/community/index.json` is authored IN-REPO (LOCKED decision Q4); a Go test is the AC7 gate |
+| Test Framework | Go `testing` (hard `go test` gate) + Markdown documentation | `internal/personas/search_test.go` iterates every `index.json` entry and asserts `provider`/`model` non-empty AND equal to the source persona YAML |
+| Key Dependencies | `encoding/json`, `gopkg.in/yaml.v3` (existing) | Reads `personas/community/index.json` and each entry's source persona YAML |
 
 ### Related Files (from codebase-discovery.json)
 - `docs/personas-authoring.md` — modify: add a subsection documenting the `index.json` entry schema (`name`, `version`, `description`, `path`, `provider`, `model`, `tasks`, `tags`) and extend the contribution checklist with an item requiring non-empty `provider`/`model` matching the persona YAML.
 - `internal/personas/search.go` (`PersonaIndexEntry`) — reference: the single source of truth for documented field names/types.
-- `internal/personas/search_test.go` — create/modify: a test asserting the documented example `index.json` entry decodes into `PersonaIndexEntry` with `Provider`/`Model` matching the source YAML values.
-- `personas/community/index.json` — create: in-repo index populated per the documented contract.
+- `internal/personas/search_test.go` — create/modify: the **AC7 enforcement gate** — a Go test that iterates every entry in `personas/community/index.json`, loads each entry's source persona YAML (via its `path`), and asserts `provider`/`model` are non-empty AND string-equal to the YAML's `provider`/`model`. The test fails if any library persona entry is missing or mismatched. Embedded built-in personas are exempt (they are not enumerated in the community index).
+- `personas/community/index.json` — create: in-repo index authored/generated per the documented contract; this is the file the enforcement test reads.
 
 
 ## Happy Path Scenarios
@@ -29,25 +29,31 @@
 - **When** the example entry is decoded into `PersonaIndexEntry` in a test
 - **Then** `Provider` equals `"anthropic"` and `Model` equals `"claude-sonnet-4-6"`, proving the documented contract is exercisable end-to-end within this repo's test suite
 
+**Scenario 3: AC7 enforcement gate passes for a fully-populated in-repo index (LOCKED decision Q4)**
+- **Given** `personas/community/index.json` authored in-repo, where every entry's `provider`/`model` are non-empty and equal the corresponding source persona YAML's `provider`/`model`
+- **When** the Go enforcement test in `internal/personas/search_test.go` iterates all entries, loads each entry's source persona YAML via its `path`, and compares fields
+- **Then** the test passes (`go test` green), because each entry's `Provider`/`Model` is non-empty and matches its YAML source; embedded built-in personas are not enumerated in the community index and are therefore exempt
+
 ## Edge Cases
 **Edge Case 1: Persona YAML has no `tasks`/`tags` authored**
 - **Given** the documentation's guidance that `tasks`/`tags` are optional and should be omitted (not emitted as empty arrays) when a persona's YAML does not declare them
 - **When** a maintainer reads the schema subsection
 - **Then** the guidance explicitly states publish tooling should omit the keys entirely rather than emit `"tasks":[]`/`"tags":[]`, consistent with the `omitempty` behavior on the Go struct
 
-**Edge Case 2: Existing personas published before this schema change**
-- **Given** community personas already published under the old four-field `index.json` shape
-- **When** the documentation subsection is read
-- **Then** it states that such entries remain valid but will not be model-discoverable until the community repo's index is regenerated with `provider`/`model` populated (cross-referencing the backward-compatibility guarantee from AC 02-03)
+**Edge Case 2: Existing personas carried over from before this schema change**
+- **Given** persona entries previously authored under the old four-field `index.json` shape
+- **When** the in-repo `personas/community/index.json` is updated to the extended schema
+- **Then** any such entry that lacks non-empty `provider`/`model` matching its source YAML will FAIL the AC7 enforcement test — the in-repo gate blocks merge until the entry is populated, rather than silently degrading discoverability (cross-referencing the backward-compatibility guarantee for decode-time permissiveness in AC 02-03)
 
 ## Error Conditions
-**Error Scenario 1: Contribution checklist item fails (missing provider/model in published index entry)**
-- **Given** a contributor follows the extended checklist in §4
-- **When** the checklist item "published `index.json` entry carries non-empty `provider`/`model`" is unchecked because the publish tooling did not populate it
-- **Then** the documentation directs the contributor to verify their `index.json` regeneration step ran, rather than accepting the pull request with silently missing metadata (no formal error code — this is a docs/process control, not a runtime error)
+**Error Scenario 1: index.json entry missing or mismatched provider/model FAILS the go test gate**
+- **Given** an entry in the in-repo `personas/community/index.json` whose `provider`/`model` is empty, or does not equal its source persona YAML's `provider`/`model`
+- **When** the AC7 enforcement test in `internal/personas/search_test.go` runs (i.e. on every `go test ./...` / CI run)
+- **Then** the test FAILS with an assertion identifying the offending persona `path` and the expected-vs-actual field values — this is a hard `go test` gate, NOT editorial/manual review. A contributor cannot merge a library persona with missing or drifted metadata. Embedded built-ins are exempt (not enumerated in the community index).
+- HTTP status / error code: N/A (test-time failure, non-zero `go test` exit)
 
 ## Performance Requirements
-- **Response Time:** Not applicable — documentation change only, no runtime path affected.
+- **Response Time:** Not applicable — the enforcement is a build-time `go test` gate over in-repo `personas/community/index.json`, not a runtime path.
 - **Throughput:** Not applicable.
 
 ## Security Considerations
@@ -55,9 +61,9 @@
 - **Input Validation:** Documentation must not instruct contributors to embed executable content, secrets, or network instructions in `provider`/`model`/`tasks`/`tags` values — these are display/search metadata only, consistent with the existing security note in `docs/personas-authoring.md` about persona prompts.
 
 ## Test Implementation Guidance
-**Test Type:** UNIT (for the Go-side cross-check); documentation content is verified by manual/editorial review since there is no in-repo index-generation code path to unit test directly
-**Test Data Requirements:** One example `index.json` entry matching the documentation's sample, and one sample persona YAML fragment (`provider`/`model`) it is derived from
-**Mock/Stub Requirements:** None
+**Test Type:** UNIT (hard `go test` enforcement gate over the in-repo `personas/community/index.json`; the documentation subsection is the human-facing companion but the gate itself is executable, not editorial)
+**Test Data Requirements:** The real in-repo `personas/community/index.json` and each entry's source persona YAML; plus a negative-case fixture (an entry with empty or mismatched `provider`/`model`) proving the gate fails as designed
+**Mock/Stub Requirements:** None — the test reads real repo files directly; no HTTP or network mocking
 
 ## Definition of Done
 **Auto-Verified:**
@@ -66,9 +72,11 @@
 - [ ] Build succeeds
 
 **Story-Specific:**
+- [ ] `personas/community/index.json` is authored in-repo with `provider`/`model` populated for every library persona entry (LOCKED decision Q4)
+- [ ] AC7 enforcement gate: a Go test in `internal/personas/search_test.go` iterates every `index.json` entry and asserts `provider`/`model` are non-empty AND equal the source persona YAML's `provider`/`model`; the test fails on any missing/mismatched library persona
+- [ ] Embedded built-in personas are explicitly exempt from the gate (not enumerated in the community index)
 - [ ] `docs/personas-authoring.md` documents the full `index.json` entry schema including `provider`/`model`/`tasks`/`tags`
-- [ ] Contribution checklist (§4) includes an item requiring non-empty `provider`/`model` in the published index entry
-- [ ] A test decodes the documented example entry into `PersonaIndexEntry` and confirms `Provider`/`Model` match the source YAML values
+- [ ] Contribution checklist (§4) includes an item requiring non-empty `provider`/`model` in the index entry (matching the source YAML)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

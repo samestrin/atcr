@@ -13,6 +13,8 @@
 
 ### Related Files (from codebase-discovery.json)
 - `personas/personas.go` (names slice ~line 20, embedded file guard) — modify: replace `"sentinel"`, `"tracer"`, `"idiomatic"` with `"sasha"`, `"penny"`, `"ingrid"` in the `names` slice; update package/fixture doc comments.
+
+> **Registration path is BUILT-IN, not community-only (LOCKED per C2).** `sasha`/`penny`/`ingrid` are migrated stragglers that STAY embedded built-ins (model-agnostic lens prompts), registered ONLY in `personas/personas.go`'s `names` slice. They do NOT get a community YAML nor a `personas/community/index.json` entry — those are for the model-bound library personas (Stories 2–4), not these built-ins. There is no "if built-in / if community-only" fork here: the path is unconditionally the `names`-slice built-in path.
 - `personas/sentinel.md` → `personas/sasha.md` — rename: preserve the security/OWASP review lens.
 - `personas/tracer.md` → `personas/penny.md` — rename: preserve the performance/N+1/latency review lens.
 - `personas/testdata/sentinel_fixture.patch` → `personas/testdata/sasha_fixture.patch` — rename.
@@ -48,10 +50,10 @@
 - **When** the `personas` package's `init()` runs (e.g., any `atcr` binary invocation)
 - **Then** the embedded-file-count/name mismatch check panics with a message listing the mismatched file set, preventing a partially-migrated binary from starting silently
 
-**Edge Case 3: All three renames land as one atomic change**
+**Edge Case 3: All three renames land as one atomic change (three-part, not four)**
 - **Given** `sentinel`→`sasha`, `tracer`→`penny`, and `idiomatic`→`ingrid` are migrated together
 - **When** the change is committed
-- **Then** the `names` slice, the three `.md` templates, and the three fixture files are updated in the same commit — no intermediate state exists where some personas are renamed and others still carry role-based slugs
+- **Then** the atomic unit is exactly THREE parts per persona for the built-in path — the embedded template `.md`, the `<slug>_fixture.patch`, and the `names`-slice registration — all updated in the same commit, with no intermediate state where some personas are renamed and others still carry role-based slugs. There is deliberately NO fourth part: these stragglers stay embedded model-agnostic built-ins, so there is no `<slug>.yaml` metadata file and no `personas/community/index.json` entry to keep in sync. The init-time panic-guard atomicity guarantee therefore covers only the embedded-file set (`.md` templates + fixtures) against the `names` slice — it does not consult any YAML/index metadata, and none is expected.
 
 ## Error Conditions
 **Error Scenario 1: Stale `names` slice after file rename**

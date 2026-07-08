@@ -8,7 +8,7 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Component Type | CLI verification command (`atcr personas test <name>`) + scoped repository search | No new tooling; reuses the existing fixture-test command per persona |
-| Test Framework | Go `testing` (unit/integration), plus a manual/CI scoped `grep`/`rg` pass over persona-specific paths | Scope limited to `personas/`, `docs/personas-*.md`, `personas/community/index.json` (if used) per the story's Risk mitigation |
+| Test Framework | Go `testing` (unit/integration), plus a manual/CI scoped `grep`/`rg` pass over persona-specific paths | Scope: `personas/` (incl. `personas/personas_test.go`), `internal/personas/*_test.go`, `docs/personas-*.md`, `README.md`, and `personas/community/index.json` (if used) — per the story's Risk mitigation, EXCEPT the documented arbitrary-placeholder test cases (Edge Case 2) |
 | Key Dependencies | Existing `internal/personas.TestPersona`/`TemplateFixtureRunner`; `atcr personas test` CLI command | No new dependency |
 
 ### Related Files (from codebase-discovery.json)
@@ -26,7 +26,7 @@
 - **Then** each command exits 0 and reports its fixture passing (`Passed: 1, Total: 1`)
 
 **Scenario 2: Scoped search finds zero active-slug references**
-- **Given** a search scoped to `personas/*.md`, `personas/testdata/*.patch`, `personas/personas.go`, `docs/personas-authoring.md`, `docs/personas-install.md`, and `personas/community/index.json` (if the community-only path was chosen for these personas)
+- **Given** a search scoped to `personas/*.md`, `personas/testdata/*.patch`, `personas/personas.go`, `personas/personas_test.go`, `internal/personas/*_test.go` (where AC 05-01 edits the `names`-slice / fixture-path assertions — a stale slug in a test file must not be invisible), `docs/personas-authoring.md`, `docs/personas-install.md`, `README.md` (task-required — its built-in persona mentions must not retain retired slugs), and `personas/community/index.json` (if the community-only path was chosen for these personas), while EXCLUDING the documented arbitrary-placeholder test cases of Edge Case 2
 - **When** the search is run for the bare tokens `sentinel`, `tracer`, `idiomatic` used as persona identifiers (e.g., as a `names` slice entry, a `.md` filename stem, a `_fixture.patch` filename stem, or a documented persona slug)
 - **Then** zero matches are found in those paths
 
@@ -85,7 +85,7 @@
 **Story-Specific:**
 - [ ] `atcr personas test sasha`, `atcr personas test penny`, `atcr personas test ingrid` each pass
 - [ ] `atcr personas test sentinel`/`tracer`/`idiomatic` each fail with an unknown-persona error (old slugs are not aliased)
-- [ ] A scoped search of `personas/`, `docs/personas-*.md`, and `personas/community/index.json` (if applicable) for the retired slugs as persona identifiers returns zero matches
+- [ ] A scoped search of `personas/` (incl. `personas/personas_test.go`), `internal/personas/*_test.go` (excluding the Edge Case 2 arbitrary-placeholder fixtures), `docs/personas-*.md`, `README.md`, and `personas/community/index.json` (if applicable) for the retired slugs as persona identifiers returns zero matches
 - [ ] `go build ./...` succeeds with no init-time panic
 
 **Manual Review:**

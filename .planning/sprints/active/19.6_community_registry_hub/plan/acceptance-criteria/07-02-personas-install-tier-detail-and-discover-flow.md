@@ -13,6 +13,8 @@
 
 ### Related Files (from codebase-discovery.json)
 - `docs/personas-install.md` — modify: add DashScope, Chutes→Featherless, LiteLLM, and frontier/majors subsections with required caveat framing, plus a discover-and-install-by-model walkthrough (`personas search` → `install` → `list` → `test`).
+
+> **Documentation-baseline premise corrected (accuracy).** DashScope, Chutes, and Featherless are NOT currently documented anywhere in this repo — these three subsections are NET-NEW content to be AUTHORED, sourced from `documentation/onboarding-hierarchy.md` (tier order + exact caveat phrasing). Only LiteLLM pre-exists in the docs (README.md:189 + `docs/providers.md`), and frontier/majors provider usage is likewise already established. Therefore: the "must not weaken / must preserve existing docs" constraint applies to LiteLLM and frontier/majors (align the new subsection with, and do not contradict, what `docs/providers.md`/README already say); for DashScope/Chutes/Featherless there is no pre-existing doc to preserve — the requirement is faithful authoring from the source hierarchy, not non-regression.
 - `.planning/plans/active/19.6_community_registry_hub/documentation/onboarding-hierarchy.md` — reference: source of truth for the bash sequence and tier caveat language.
 - `internal/personas/search.go` (`Search`, `--model`/`--provider` flags) — reference: confirms the discover-by-model example cites existing CLI behavior.
 
@@ -29,9 +31,9 @@
 - **Then** Chutes is introduced first, Featherless second, and both carry caveats for slower inference, tighter context windows, and concurrency limits, using the "explore, not default" framing
 
 **Scenario 3: LiteLLM documented as an Advanced aggregation-proxy note**
-- **Given** the required "Advanced" framing for LiteLLM
+- **Given** the required "Advanced" framing for LiteLLM, which already pre-exists in the docs (README.md:189 + `docs/providers.md`)
 - **When** the LiteLLM subsection is added
-- **Then** it is placed under or labeled "Advanced" and describes LiteLLM as an OpenAI-compatible proxy for aggregating multiple providers behind one endpoint, without recommending it as a first-run path
+- **Then** it is placed under or labeled "Advanced" and describes LiteLLM as an OpenAI-compatible proxy for aggregating multiple providers behind one endpoint, without recommending it as a first-run path, and WITHOUT weakening or contradicting the existing LiteLLM documentation in `docs/providers.md`/README (this is the "must not weaken existing docs" case, distinct from the net-new DashScope/Chutes/Featherless subsections)
 
 **Scenario 4: Frontier/majors documented as opt-in bring-your-own-key**
 - **Given** the required opt-in framing for frontier/majors personas
@@ -71,6 +73,12 @@
 - **When** the frontier/majors subsection is reviewed
 - **Then** no sentence in that subsection frames Claude/GPT/Gemini personas as a default or recommended first step; any such framing fails this AC
 
+**Error Scenario 3: Royal-we leaks into the authored tier subsections (singular-voice violation)**
+- **Given** the project's hard singular-voice rule (no "we"/"our"/"us" in user-facing docs — the maintainer is a solo individual)
+- **When** the newly authored/edited subsections and discover-by-model walkthrough in `docs/personas-install.md` are checked
+- **Then** `grep -inE "\b(we|our|us)\b"` restricted to the added/edited line ranges returns ZERO matches — any first-person-plural match is a failing condition, not a runtime error
+- HTTP status / error code: N/A (documentation content-review gate)
+
 ## Performance Requirements
 - **Response Time:** N/A — static Markdown content, no runtime execution.
 - **Throughput:** N/A.
@@ -91,10 +99,12 @@
 - [ ] Build succeeds
 
 **Story-Specific:**
-- [ ] DashScope, Chutes→Featherless, LiteLLM, and frontier/majors subsections are all present with their required caveat framing
+- [ ] DashScope, Chutes→Featherless, and Featherless subsections are AUTHORED net-new from `documentation/onboarding-hierarchy.md` (not pre-existing anywhere in the repo); LiteLLM and frontier/majors subsections align with — and do not weaken/contradict — the existing `docs/providers.md`/README content
+- [ ] All four tier groupings (DashScope, Chutes→Featherless, LiteLLM, frontier/majors) are present with their required caveat framing
 - [ ] The four-step discover-and-install-by-model bash sequence matches `documentation/onboarding-hierarchy.md` verbatim-equivalent
 - [ ] Caveat phrasing matches README.md's hierarchy summary (AC 07-01) verbatim
 - [ ] Existing subcommand reference and Quick walkthrough sections remain unmodified in meaning
+- [ ] `grep -inE "\b(we|our|us)\b"` over the added/edited `docs/personas-install.md` line ranges returns zero matches (singular-voice hard rule — no royal-we)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

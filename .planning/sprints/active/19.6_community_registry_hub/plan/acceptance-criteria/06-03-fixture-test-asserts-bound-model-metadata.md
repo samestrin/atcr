@@ -12,17 +12,17 @@
 | Key Dependencies | `gopkg.in/yaml.v3` (persona YAML decode), existing `builtins` package, `internal/registry` (`AgentConfig`-shaped `Provider`/`Model` fields) | No new external dependency |
 
 ### Related Files (from codebase-discovery.json)
-- `internal/personas/test.go` (`TemplateFixtureRunner.RunFixture`, `FixtureOutcome`) — modify: add a bound-model-metadata assertion that runs for every persona the runner resolves (built-in and community), without altering the existing `isBuiltin(name)` branch's pass/fail semantics.
-- `internal/personas/test_test.go` — create: table-driven tests covering a built-in persona, a community persona YAML with a populated `model` field (assertion passes), and a community persona YAML with an empty/missing `model` field (assertion fails).
+- `internal/personas/test.go` (`TemplateFixtureRunner.RunFixture`, `FixtureOutcome`) — modify: add a bound-model-metadata assertion scoped to COMMUNITY/LIBRARY personas ONLY (the non-`isBuiltin` / `HasFixture:false` community path). Embedded built-ins are EXEMPT and the assertion is SKIPPED for them (they are model-agnostic per C2 — `personas/personas.go` embeds only `.md`, carries no `provider`/`model`, and `internal/personas/test.go` resolves them with no agent/registry config in scope). The existing `isBuiltin(name)` branch's pass/fail semantics are unaltered.
+- `internal/personas/test_test.go` — create: table-driven tests covering (1) a built-in persona where the model-metadata assertion is SKIPPED (not asserted to "pass" — built-ins carry no model), (2) a community persona YAML with a populated `model` field (assertion passes), and (3) a community persona YAML with an empty/missing `model` field (assertion fails).
 - `internal/personas/list.go` (`personaFileMeta`, lines 38-47, 117-172) — reference: existing metadata decode struct; this AC's community-model lookup either extends it or adds a sibling decode step without changing `List`'s output shape.
 - `docs/personas-authoring.md` — reference: authoring contract that requires `provider`/`model`.
 
 
 ## Happy Path Scenarios
-**Scenario 1: Built-in persona always passes the model-metadata assertion**
+**Scenario 1: Built-in persona is EXEMPT from the model-metadata assertion (assertion skipped, not "passed")**
 - **Given** a built-in persona name resolved via `isBuiltin(name)` (e.g. `bruce`)
 - **When** `TemplateFixtureRunner.RunFixture("bruce")` runs
-- **Then** the existing template-render fixture check still executes unchanged, and the new model-metadata assertion also passes (built-in personas' bound model is known via their registry agent configuration), with no regression to the existing `FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}` result shape for a passing fixture
+- **Then** the existing template-render fixture check still executes unchanged, and the new model-metadata assertion is SKIPPED for the built-in — NOT asserted to pass. Embedded built-ins are model-agnostic (C2): `personas/personas.go` embeds only the `.md`, they carry no `provider`/`model`, and `internal/personas/test.go` has no agent/registry configuration in scope from which to derive a bound model. The earlier framing ("built-in personas' bound model is known via their registry agent configuration") was false and is removed — the runner cannot and does not read registry agent config, so requiring a bound model for built-ins would be unimplementable. The `FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}` result shape for a passing built-in fixture is unchanged
 
 **Scenario 2: Community persona with a populated `model` field passes the assertion**
 - **Given** a community persona YAML installed under the personas directory with `provider: openrouter` and `model: anthropic/claude-3.7-sonnet`
@@ -87,7 +87,8 @@
 - [ ] Build succeeds
 
 **Story-Specific:**
-- [ ] `TemplateFixtureRunner.RunFixture` asserts the bound `model` is present in structured metadata for every persona it resolves (built-in and community)
+- [ ] `TemplateFixtureRunner.RunFixture` asserts the bound `model` is present in structured metadata for COMMUNITY/LIBRARY personas it resolves; embedded model-agnostic built-ins are EXEMPT (the assertion is skipped for them, not asserted to pass) — aligns with AC7's library-persona intent
+- [ ] This assertion is the AC7 enforcement gate referenced by AC 02-02 (the authoring contract's model-in-structured-metadata convention)
 - [ ] The existing `isBuiltin(name)` branch's template-render pass/fail semantics are unchanged
 - [ ] A persona with a missing/blank `model` field fails the fixture assertion with a clear, attributable error
 - [ ] `go test ./...` passes with the extended assertion active and performs no network access

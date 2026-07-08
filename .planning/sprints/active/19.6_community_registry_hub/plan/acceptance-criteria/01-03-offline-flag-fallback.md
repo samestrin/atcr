@@ -39,14 +39,14 @@
 
 **Scenario 4: Offline path never falls back to a network fetch on validation failure**
 - **Given** a workspace and a `personasClient` stub that fails on any `Do` call
-- **When** `atcr init --offline` encounters an embedded persona that cannot be read (simulated by a corrupt embed, if testable)
-- **Then** the command returns a non-zero error and does not silently invoke the fetch path to compensate
+- **When** `atcr init --offline` encounters an embedded persona that cannot be read (deterministically simulated by injecting a read error through the embedded-persona accessor — e.g. a test seam over `personas.Get()`/`fs.ReadFile` that returns an error for one name)
+- **Then** the command returns a non-zero error and does not silently invoke the fetch path to compensate; a test asserts both the non-nil error and zero `Do` calls on the network stub
 
 ## Edge Cases
 **Edge Case 1: `--offline` combined with `--force`**
-- **Given** an existing workspace with previously-installed personas
+- **Given** an existing workspace with previously-installed and/or hand-edited persona files
 - **When** `atcr init --offline --force` runs
-- **Then** existing files are overwritten with the embedded built-ins (matching the pre-story `--force` contract), with no network access attempted
+- **Then** any user-modified persona file is preserved byte-for-byte and is NEVER overwritten — the same preservation guarantee as the online path (AC 01-05) — while only missing personas are installed from the embedded built-ins, and no network access is attempted. `--force` does not license overwriting a user-modified persona in either offline or online mode; the guarantee is uniform.
 
 **Edge Case 2: `--offline` flag omitted (default)**
 - **Given** a workspace and a reachable mock registry
@@ -82,6 +82,7 @@
 - [ ] `--offline` reproduces the exact pre-story embedded-built-in install behavior
 - [ ] Test proves zero network calls occur when `--offline` is set
 - [ ] Default (`--offline` absent) resolves to the new fetch-and-pin path, not the old embedded-copy path
+- [ ] `--offline --force` preserves user-modified persona files byte-for-byte (never overwrites) — the same guarantee as the online path in AC 01-05
 
 **Manual Review:**
 - [ ] Code reviewed and approved

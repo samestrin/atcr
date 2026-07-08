@@ -20,7 +20,7 @@
 - `internal/personas/list.go` (`PersonaMeta`, source labeling, lines 38-47, 117-172) — reference: reads the installed YAML's `version` field and labels source `community`.
 - `cmd/atcr/personas.go` (line 81 `personasClient`) — reference: existing injection point for mock-registry tests.
 - `personas/community/index.json` — create: in-repo canonical index.
-- `personas/community/<slug>.yaml` — create: community persona YAML files fetched by `init`/`quickstart`.
+- `personas/community/<slug>.yaml` + `personas/community/<slug>.md` — create: in-repo community persona source pairs (YAML metadata + co-located `.md` custom prompt, single `.md` format shared with built-ins) fetched by `init`/`quickstart` and installed atomically together.
 - `docs/personas-install.md` — modify: document fetch-and-pin behavior and pinned versions.
 - `cmd/atcr/init_test.go` / `cmd/atcr/quickstart_test.go` — modify: add `httptest.NewServer` + `ATCR_PERSONAS_URL` tests asserting fetch-and-pin with version recording.
 
@@ -29,7 +29,7 @@
 **Scenario 1: `atcr init` fetches and pins from the community registry**
 - **Given** a mock registry server (`httptest.NewServer`) exposing `index.json` and per-persona YAML with `version: "1.2.0"`, referenced via `ATCR_PERSONAS_URL`
 - **When** `atcr init` runs without `--offline` in an empty workspace
-- **Then** each roster persona is installed under `.atcr/personas/<name>.yaml` (or `.md`, per existing file convention) sourced from the mock registry, and `atcr personas list` reports `version: 1.2.0` and `source: community` for each
+- **Then** each roster persona is installed under the community pin dir `~/.config/atcr/personas/` (the resolver's Registry dir per `internal/registry.ResolvePersona`) as a co-located pair — `<name>.yaml` plus its `<name>.md` custom prompt, written atomically together — sourced from the mock registry, and `atcr personas list` reports `version: 1.2.0` and `source: community` for each. Community personas install ONLY to `~/.config/atcr/personas/`; `.atcr/personas/` is the project-override tier and is never the fetch-and-pin target.
 
 **Scenario 2: `atcr quickstart` inherits the fetch-and-pin behavior**
 - **Given** the same mock registry as Scenario 1
@@ -55,7 +55,7 @@
 **Edge Case 1: Registry index lists fewer personas than the built-in roster**
 - **Given** a mock registry whose `index.json` omits one roster persona
 - **When** `atcr init` runs without `--offline`
-- **Then** the available personas are installed and pinned, and the missing one is either skipped with a clear warning or causes a descriptive failure (single documented behavior, exercised by test)
+- **Then** the available personas are installed and pinned, and the missing one is skipped with a clear warning (e.g. "persona <name> not found in community index — skipping"); `atcr init` still exits 0. Skip-with-warning is the single, decisive behavior (not a hard failure), exercised by test.
 
 **Edge Case 2: Community YAML lacks a `version` field**
 - **Given** a mock registry persona YAML with no `version` key
@@ -73,7 +73,7 @@
 
 ## Security Considerations
 - **Authentication/Authorization:** None required; fetch remains anonymous HTTPS GET as with existing `personas install`.
-- **Input Validation:** Every fetched persona YAML passes `registry.ValidateAgentYAML` before any disk write (reusing `Install`'s existing validate-before-write ordering), so malformed or malicious community content never reaches `.atcr/personas/`.
+- **Input Validation:** Every fetched persona YAML passes `registry.ValidateAgentYAML` before any disk write (reusing `Install`'s existing validate-before-write ordering), so malformed or malicious community content never reaches the community pin dir `~/.config/atcr/personas/`.
 
 ## Test Implementation Guidance
 **Test Type:** INTEGRATION
@@ -88,6 +88,7 @@
 
 **Story-Specific:**
 - [ ] `runInit` installs personas via fetch-and-pin against `commpersonas.BaseURL()` instead of embedded built-ins (default path)
+- [ ] Fetched community pairs (`<name>.yaml` + co-located `<name>.md`) install to `~/.config/atcr/personas/` — the resolver's Registry dir — with `internal/personas.PersonasDir()` reconciled to that same dir so the resolver reads what fetch wrote (on darwin these differ today)
 - [ ] `runQuickstart` inherits the same behavior through its `runInit` call
 - [ ] Recorded pin matches the fetched YAML's `version` field, readable via `atcr personas list`
 - [ ] `atcr personas upgrade` continues to compare against and advance the recorded pin with no logic change required

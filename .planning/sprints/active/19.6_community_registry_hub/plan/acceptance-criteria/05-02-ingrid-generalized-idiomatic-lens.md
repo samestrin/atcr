@@ -13,7 +13,8 @@
 
 ### Related Files (from codebase-discovery.json)
 - `personas/idiomatic.md` → `personas/ingrid.md` — rename + rewrite: generalize Role/Focus sections from Go-specific idioms to a language-agnostic idiomatic-style lens while preserving concrete finding categories.
-- `personas/testdata/idiomatic_fixture.patch` → `personas/testdata/ingrid_fixture.patch` — rename.
+- `personas/testdata/idiomatic_fixture.patch` → `personas/testdata/ingrid_fixture.patch` — rename (carries the original Go diff).
+- `personas/testdata/ingrid_lang2_fixture.patch` (or equivalent second-fixture path) — **create**: a NEW non-Go diff (e.g. Python or TypeScript) exercising a generalized idiomatic category (swallowed/discarded errors, resource leak, or stdlib reinvention) so that "generalized beyond Go" is positively verified by a passing non-Go fixture, not asserted by prose alone. The exact second-fixture wiring (a second `_fixture.patch` the runner iterates, or an added table-driven case) is a sizing detail for `/create-sprint`; the requirement is that at least one non-Go sample passes against `ingrid.md`.
 - `personas/personas.go` (names slice ~line 20, embedded file guard) — modify: replace `"idiomatic"` with `"ingrid"` in the `names` slice.
 - `personas/personas_test.go` — modify: update fixture test call from `idiomatic`/`idiomatic_fixture.patch` to `ingrid`/`ingrid_fixture.patch`.
 - `docs/personas-authoring.md` / `docs/personas-install.md` — modify: update worked examples (see AC 05-04).
@@ -29,6 +30,11 @@
 - **Given** `personas/ingrid.md` and `personas/testdata/ingrid_fixture.patch` both exist post-rename
 - **When** `atcr personas test ingrid` is run
 - **Then** the command reports the fixture passing (`HasFixture: true, Passed: 1, Total: 1`), confirming the generalized lens still catches the fixture's target category
+
+**Scenario 4: A non-Go fixture positively verifies "generalized beyond Go"**
+- **Given** a second, non-Go fixture (e.g. a Python or TypeScript diff added at `personas/testdata/ingrid_lang2_fixture.patch`) that plants a generalized idiomatic violation (e.g. a swallowed/discarded error, an unreleased resource, or a reinvented standard-library helper)
+- **When** the fixture runner exercises `ingrid.md` against that non-Go sample
+- **Then** the generalized lens catches the planted category and the fixture passes — so AC4's "generalized beyond Go" is confirmed by an executed non-Go check, not only by prose in the Role/Focus sections. This is the positive counterpart to Edge Case 2 (which confirms the original Go sample still passes)
 
 **Scenario 3: Role/Focus sections read as language-agnostic**
 - **Given** the rewritten prompt text
@@ -80,6 +86,7 @@
 **Story-Specific:**
 - [ ] `personas/ingrid.md`'s Role/Focus sections describe a language-agnostic idiomatic-style lens, with no remaining literal mentions of "Go" as the review target's language
 - [ ] `atcr personas test ingrid` passes against `personas/testdata/ingrid_fixture.patch`
+- [ ] A second, non-Go fixture (Python/TypeScript) exercising a generalized idiomatic category passes against `ingrid.md`, positively verifying "generalized beyond Go" (AC4) — not asserted by prose alone
 - [ ] The generalized prompt retains concrete, checkable finding categories (not diluted into generic style advice)
 - [ ] `{{.AgentName}}` and other template variables are unchanged from the pre-rewrite template
 

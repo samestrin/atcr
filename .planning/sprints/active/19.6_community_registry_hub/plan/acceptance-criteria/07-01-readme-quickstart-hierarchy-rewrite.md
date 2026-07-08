@@ -56,9 +56,15 @@
 - HTTP status / error code: N/A (documentation-only; failure mode is a content-review rejection, not a program error)
 
 **Error Scenario 2: Tier order is scrambled or a tier is dropped**
-- **Given** the required 5-tier order from `documentation/onboarding-hierarchy.md`
+- **Given** the required 5-tier order from `documentation/onboarding-hierarchy.md` — the EXACT locked order is: Synthetic (via `atcr quickstart`) > DashScope > Chutes then Featherless > LiteLLM (Advanced) > frontier/majors (opt-in bring-your-own-key)
 - **When** the rewritten section is checked
-- **Then** any missing tier or out-of-order tier fails this AC's Story-Specific Definition of Done item; this is a review-time failure with no runtime error code
+- **Then** any missing tier, out-of-order tier, or deviation from that exact locked sequence fails this AC's Story-Specific Definition of Done item; this is a review-time failure with no runtime error code
+
+**Error Scenario 3: Royal-we leaks into the rewritten Quickstart (singular-voice violation)**
+- **Given** the project's hard singular-voice rule (no "we"/"our"/"us" in user-facing docs — the maintainer is a solo individual)
+- **When** the rewritten `## Quickstart` section is checked
+- **Then** `grep -inE "\b(we|our|us)\b"` restricted to the rewritten `## Quickstart` line range returns ZERO matches (case-insensitive; excludes unrelated substrings like "user"/"reuse" which the word-boundary `\b` already guards against) — any first-person-plural match is a failing condition, not a runtime error
+- HTTP status / error code: N/A (documentation content-review gate)
 
 ## Performance Requirements
 - **Response Time:** N/A — static Markdown content, no runtime execution.
@@ -81,9 +87,10 @@
 
 **Story-Specific:**
 - [ ] `atcr quickstart` (Synthetic) is presented first in `## Quickstart` as the one-command default
-- [ ] All 5 tiers appear in the required order with the exact caveat phrasing from `documentation/onboarding-hierarchy.md`
+- [ ] All 5 tiers appear in the EXACT locked order — Synthetic > DashScope > Chutes/Featherless > LiteLLM (Advanced) > frontier/majors (opt-in) — with the exact caveat phrasing from `documentation/onboarding-hierarchy.md`
 - [ ] DashScope tier states no `quickstart` wiring and links to `docs/personas-install.md`
 - [ ] `grep -iE "claude|gpt|gemini"` over the `## Quickstart` section returns zero matches outside a separated opt-in callout
+- [ ] `grep -inE "\b(we|our|us)\b"` over the rewritten `## Quickstart` section returns zero matches (singular-voice hard rule — no royal-we)
 
 **Manual Review:**
 - [ ] Code reviewed and approved
