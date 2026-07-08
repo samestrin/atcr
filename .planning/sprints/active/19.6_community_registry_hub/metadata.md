@@ -55,7 +55,7 @@ _Note: This section is updated as the sprint progresses through `/execute-sprint
 - [x] Phase 1: Research & Spike — Resolution Chain Design
 - [x] Phase 2: Foundation — Schema Extension + Registry Repoint
 - [x] Phase 3: Core Resolution — Fetch-and-Pin + ResolvePersona Chain
-- [ ] Phase 4: Discovery — Model-Aware Search
+- [x] Phase 4: Discovery — Model-Aware Search
 - [ ] Phase 5: Content Authoring — Persona Library + Human-Names Migration
 - [ ] Phase 6: Contract Enforcement + Onboarding Docs
 - [ ] Phase 7: Integration & Validation

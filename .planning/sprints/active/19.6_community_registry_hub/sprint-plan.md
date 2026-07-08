@@ -733,15 +733,19 @@ Answers to the Phase 3 safety-check questions (open decisions the ACs/design-not
    4. DoD report (Story 3)
    5. COMMIT residual: `git commit -m "test(personas): phase 4 DoD"`
 
-### 4.LAST [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+### 4.LAST [x] **Phase 4 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 4 (`search.go`, `cmd/atcr/personas.go`, tests).
    **Spawn a fresh subagent** (subagent_type `general-purpose`, description `Phase 4 gate review`). Checklist verbatim (hostile integrator): CONTRACT EXIT, CONFIG SURFACE (flags documented for Phase 7 docs?), INTEGRATION (search consumes Phase 2 schema correctly?), PHASE-EXIT CONTRACT (Story 7 docs can cite real flag names?), REGRESSION (keyword search intact?). Severity rubric; "ONLY the findings table."
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Gate findings — first pass (no CRITICAL/HIGH; 2 LOW test-coverage gaps):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | personas_test.go NoMatch | REGRESSION gate weak: `TestPersonasSearch_NoMatch` asserted only `Contains("No personas found")`, which also passes the flag-only branch — the keyword-path `No personas found matching %q` wording was pinned by no test. | **FIXED inline** — asserts the full `No personas found matching "quantum"` string. |
+   | LOW | personas_test.go (no search-help test) | CONFIG SURFACE: no `search --help` test asserting `--model`/`--provider` + the `--model deepseek` example that Phase 7 docs will cite; a later edit could drop them undetected. | **FIXED inline** — added `TestPersonasSearch_HelpCitesModelProviderFlags`. |
+
+   **Reviewer confirmations (no defect):** `SearchOptions`/`SearchWithOptions` concrete & stable; flags registered with descriptions + `MaximumNArgs(1)` + all-empty guard behave as specified; search consumes Phase 2 `PersonaIndexEntry.Provider`/`Model` correctly (structured-only for flags, OR-reach for keyword); build + all Search/Render tests green. Both findings were test-coverage gaps, non-blocking.
+
+   **Gate re-run after LOW fixes:** `| NONE | Phase gate passed |` — no CRITICAL/HIGH; the two LOW coverage gaps closed inline (they harden the phase-exit/config-surface contract Phase 7 depends on). **Phase gate passed.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
