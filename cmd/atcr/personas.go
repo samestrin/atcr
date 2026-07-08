@@ -223,26 +223,54 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 }
 
 func newPersonasSearchCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "search <keyword>",
-		Short: "Search the community repository by keyword",
-		Args:  usageArgs(cobra.ExactArgs(1)),
+	cmd := &cobra.Command{
+		Use:   "search [keyword]",
+		Short: "Search the community repository by keyword, --model, or --provider",
+		Long: "Search community personas. A positional keyword matches a persona's name,\n" +
+			"description, provider, or model. --model and --provider filter on the\n" +
+			"structured index fields only (never free text) and combine with the keyword\n" +
+			"and each other as AND conditions. Discover a persona by the model you hold:\n" +
+			"`atcr personas search --model deepseek`.",
+		// Relaxed from ExactArgs(1): a --model/--provider-only invocation needs no
+		// positional keyword. The RunE guard rejects the all-empty case.
+		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			keyword := strings.TrimSpace(args[0])
-			if keyword == "" {
-				return usageError(fmt.Errorf("keyword cannot be empty"))
+			var keyword string
+			if len(args) == 1 {
+				keyword = strings.TrimSpace(args[0])
 			}
-			entries, err := commpersonas.Search(personasClient, commpersonas.BaseURL(), keyword)
+			model, _ := cmd.Flags().GetString("model")
+			provider, _ := cmd.Flags().GetString("provider")
+			model = strings.TrimSpace(model)
+			provider = strings.TrimSpace(provider)
+
+			// At least one non-empty filter is required; an all-empty invocation must
+			// not silently run an unfiltered whole-index match (AC 03-03).
+			if keyword == "" && model == "" && provider == "" {
+				return usageError(fmt.Errorf("provide a keyword, --model, or --provider"))
+			}
+
+			entries, err := commpersonas.SearchWithOptions(personasClient, commpersonas.BaseURL(),
+				commpersonas.SearchOptions{Keyword: keyword, Model: model, Provider: provider})
 			if err != nil {
 				return err
 			}
 			if len(entries) == 0 {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "No personas found matching %q\n", keyword)
+				// Preserve the exact "matching <keyword>" wording for the keyword path
+				// (AC 03-02 Edge Case 1); a flag-only search has no single keyword.
+				if keyword != "" {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "No personas found matching %q\n", keyword)
+				} else {
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No personas found")
+				}
 				return nil
 			}
 			return renderPersonaSearch(cmd.OutOrStdout(), entries)
 		},
 	}
+	cmd.Flags().String("model", "", "filter by the persona's bound model (structured field; substring, case-insensitive)")
+	cmd.Flags().String("provider", "", "filter by the persona's routing-endpoint provider key (structured field)")
+	return cmd
 }
 
 func newPersonasRemoveCmd() *cobra.Command {

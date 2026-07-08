@@ -320,14 +320,111 @@ func TestPersonasSearch_NoMatch(t *testing.T) {
 	assert.Contains(t, out, "No personas found")
 }
 
+// searchGuardMsg is the AC 03-03 canonical usage-error string, pinned and reused
+// by every guard path (no keyword and no non-empty --model/--provider).
+const searchGuardMsg = "provide a keyword, --model, or --provider"
+
+// cmdStructuredIndexJSON is a mock index carrying structured provider/model so the
+// CLI-level --model/--provider filter paths can be exercised end-to-end.
+const cmdStructuredIndexJSON = `[
+  {"name":"amara","version":"1.0.0","description":"General-purpose reviewer","path":"open/amara.yaml","provider":"openrouter","model":"deepseek-chat"},
+  {"name":"gina","version":"1.0.0","description":"API contract reviewer","path":"frontier/gina.yaml","provider":"openai","model":"gpt-4"}
+]`
+
 func TestPersonasSearch_EmptyKeywordIsUsageError(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{"/index.json": cmdIndexJSON})
 	withPersonasEnv(t, srv)
 
+	// A single empty positional arg with no flags: after trimming, keyword and both
+	// flags are empty, so the canonical guard fires (AC 03-03 Error Scenario 1).
 	_, _, err := executeSplit(t, "personas", "search", "")
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, exitCode(err))
-	assert.Contains(t, err.Error(), "keyword cannot be empty")
+	assert.Contains(t, err.Error(), searchGuardMsg)
+}
+
+// TestPersonasSearch_ModelFlagOnly covers AC 03-03 Scenario 1: --model with no
+// positional keyword succeeds (Args relaxed to MaximumNArgs(1)).
+func TestPersonasSearch_ModelFlagOnly(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{"/index.json": cmdStructuredIndexJSON})
+	withPersonasEnv(t, srv)
+
+	out, err := execute(t, "personas", "search", "--model", "deepseek")
+	require.NoError(t, err)
+	assert.Contains(t, out, "amara")
+	assert.NotContains(t, out, "gina")
+}
+
+// TestPersonasSearch_ProviderFlagOnly covers AC 03-03 Scenario 2: --provider with
+// no positional keyword succeeds.
+func TestPersonasSearch_ProviderFlagOnly(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{"/index.json": cmdStructuredIndexJSON})
+	withPersonasEnv(t, srv)
+
+	out, err := execute(t, "personas", "search", "--provider", "openai")
+	require.NoError(t, err)
+	assert.Contains(t, out, "gina")
+	assert.NotContains(t, out, "amara")
+}
+
+// TestPersonasSearch_KeywordPlusFlag covers AC 03-03 Scenario 3: one positional arg
+// plus a flag is accepted (exactly one positional under MaximumNArgs(1)).
+func TestPersonasSearch_KeywordPlusFlag(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{"/index.json": cmdStructuredIndexJSON})
+	withPersonasEnv(t, srv)
+
+	out, err := execute(t, "personas", "search", "deepseek", "--model", "deepseek-chat")
+	require.NoError(t, err)
+	assert.Contains(t, out, "amara")
+	assert.NotContains(t, out, "gina")
+}
+
+// TestPersonasSearch_NoKeywordNoFlagsIsUsageError covers AC 03-03 Edge Case 1 /
+// Error Scenario 1: bare `search` with no args and no flags returns the canonical
+// usage error, not a silent unfiltered run.
+func TestPersonasSearch_NoKeywordNoFlagsIsUsageError(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{"/index.json": cmdStructuredIndexJSON})
+	withPersonasEnv(t, srv)
+
+	_, _, err := executeSplit(t, "personas", "search")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), searchGuardMsg)
+}
+
+// TestPersonasSearch_TwoPositionalArgsRejected covers AC 03-03 Edge Case 2:
+// MaximumNArgs(1) rejects two positional args before RunE.
+func TestPersonasSearch_TwoPositionalArgsRejected(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{"/index.json": cmdStructuredIndexJSON})
+	withPersonasEnv(t, srv)
+
+	_, _, err := executeSplit(t, "personas", "search", "foo", "bar")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+}
+
+// TestPersonasSearch_WhitespaceKeywordWithFlagSucceeds covers AC 03-03 Edge Case 3:
+// a whitespace-only keyword is trimmed to absent; --model satisfies the guard.
+func TestPersonasSearch_WhitespaceKeywordWithFlagSucceeds(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{"/index.json": cmdStructuredIndexJSON})
+	withPersonasEnv(t, srv)
+
+	out, err := execute(t, "personas", "search", "   ", "--model", "deepseek")
+	require.NoError(t, err)
+	assert.Contains(t, out, "amara")
+}
+
+// TestPersonasSearch_EmptyFlagValueTreatedAsAbsent covers AC 03-03 Edge Case 4: an
+// empty/whitespace flag value is trimmed to absent and MUST NOT trigger an
+// unfiltered whole-index match — the canonical guard fires instead.
+func TestPersonasSearch_EmptyFlagValueTreatedAsAbsent(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{"/index.json": cmdStructuredIndexJSON})
+	withPersonasEnv(t, srv)
+
+	_, _, err := executeSplit(t, "personas", "search", "--model", "   ")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), searchGuardMsg)
 }
 
 func TestPersonasRemove_Integration(t *testing.T) {
