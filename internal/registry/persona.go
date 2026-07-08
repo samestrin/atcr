@@ -196,9 +196,11 @@ func validatePersonaTemplateNodes(list *parse.ListNode) error {
 }
 
 // validatePersonaTemplateNode permits literal text, comments, a bare allowed-field
-// action, and an {{if .ToolsEnabled}}…{{end}} block (recursively validated).
-// Everything else — {{range}}, {{with}}, {{template}}, a pipeline, a function
-// call, or a disallowed/nested field — is rejected.
+// action, and an {{if <allowed-field>}}…{{end}} block (recursively validated; the
+// condition may be any allowlisted field — in practice {{if .ToolsEnabled}} — each
+// being a safe scalar with no methods). Everything else — {{range}}, {{with}},
+// {{template}}, a pipeline, a function call, or a disallowed/nested field — is
+// rejected.
 func validatePersonaTemplateNode(n parse.Node) error {
 	switch node := n.(type) {
 	case *parse.TextNode, *parse.CommentNode:

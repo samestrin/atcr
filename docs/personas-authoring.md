@@ -135,7 +135,7 @@ A fixture proves the persona works without an LLM or a network call. It is a sma
 
 **What the test does** (for each persona, with no LLM and no network):
 
-1. Loads the committed `.patch` fixture from `personas/testdata/` — a missing or uncommitted fixture fails here.
+1. Loads the committed `.patch` fixture — from `personas/testdata/` for a built-in or `personas/community/testdata/` for a community-library persona (see the location table above) — a missing or uncommitted fixture fails here.
 2. Asserts the expected category word is present in the persona **template** (see "Name the category in the prompt" above).
 3. Renders the template with the fixture as the diff payload and confirms **no unrendered `{{ }}` actions remain**.
 
