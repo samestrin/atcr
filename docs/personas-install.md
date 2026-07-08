@@ -123,20 +123,18 @@ The same name-validation guard applies, so `remove` can only delete files inside
 
 ### `atcr personas test <name>`
 
-Runs an installed persona against its fixture and reports pass/fail.
-
-> **Current behavior:** the shipped CLI does not yet wire a fixture runner, so `atcr personas test <name>` reports `No fixture defined for persona "<name>"` and exits 0 for every persona today. The pass/fail contract below is what the command produces once a runner is wired (the runner is an injectable seam; fixture execution against the persona's `.patch` is tracked as follow-up work).
+Runs a persona against its committed fixture — with no LLM and no network — and reports pass/fail. It works for built-in personas and for embedded/installed community-library personas: the fixture renders the persona template against a known diff and confirms the expected finding category and a clean render.
 
 ```bash
-atcr personas test security/owasp
-# No fixture defined for persona "security/owasp"
+atcr personas test delia
+# PASS: delia (1/1 cases)
 ```
 
-The full output contract:
+The output contract:
 
-- A persona with no runnable fixture reports `No fixture defined for persona "<name>"` and exits 0 (the current shipped behavior).
 - All cases passing reports `PASS: <name> (N/N cases)` (exit 0).
 - Any case failing reports `FAIL: <name> (P/N cases)` to stdout and exits non-zero.
+- A persona with no committed fixture reports `No fixture defined for persona "<name>"` and exits 0.
 
 ### `atcr personas upgrade [name]`
 
@@ -154,6 +152,63 @@ atcr personas upgrade security/owasp
 - When upgrading several personas, a failure on one is reported to stderr and skipped; the remaining personas are still attempted and the command exits non-zero if any failed.
 
 Version comparison uses semantic-version ordering; non-semver version strings fall back to string inequality.
+
+## Discover and install a persona by model
+
+Each community persona carries structured `provider`/`model` metadata (see [personas-authoring.md](personas-authoring.md)), so you can find one by the model you already have — search matches the structured `model` in `index.json`, not free-text. The end-to-end flow:
+
+```bash
+# Discover a persona tuned for the model you have
+atcr personas search --model deepseek
+# or filter by the routing-endpoint provider
+atcr personas search --provider openrouter
+
+# Install the discovered persona (writes ~/.config/atcr/personas/, pins the YAML version)
+atcr personas install delia
+
+# Confirm it is installed and pinned
+atcr personas list
+
+# Run its fixture to verify it matches the model-in-metadata convention
+atcr personas test delia
+```
+
+- `search --model <substring>` matches a persona's bound model (case-insensitive substring); `search --provider <key>` matches its routing-endpoint provider. In this example `delia` is the DeepSeek-tuned persona (bound model `deepseek/deepseek-v4-pro`, routed through `openrouter`).
+- `install` writes the persona unit to `~/.config/atcr/personas/` and pins the version from the YAML's `version` field; `upgrade` advances the pin when the registry advertises a newer one.
+
+## Provider tiers beyond Synthetic
+
+`atcr quickstart` sets up Synthetic (flat-rate) as the one-command default. When you need other models, these are the options, in recommended order:
+
+### DashScope (Alibaba) — secondary flat-rate option
+
+A flat-rate alternative to switch to after trying Synthetic. There is no `atcr quickstart` wiring for it this release — configure it by hand in `~/.config/atcr/registry.yaml`, then set its key in your environment (the key is never written into atcr's own config):
+
+```yaml
+providers:
+  dashscope:
+    api_key_env: DASHSCOPE_API_KEY
+    base_url: https://<dashscope-openai-compatible-endpoint>/v1  # from DashScope's own docs
+agents:
+  qwen-reviewer:
+    provider: dashscope
+    model: <a-dashscope-hosted-model-id>
+    role: reviewer
+```
+
+DashScope exposes an OpenAI-compatible endpoint; take the exact `base_url` and model ids from DashScope's documentation.
+
+### Chutes → Featherless — explore, not default
+
+More models, but with caveats: slower inference, tighter context windows, and concurrency limits. Try Chutes first, then Featherless. Treat both as explore, not default — do not place them ahead of Synthetic in the funnel.
+
+### LiteLLM — Advanced
+
+An OpenAI-compatible proxy that aggregates several providers behind a single endpoint. Keep it Advanced — it is not a first-run path. Point atcr's `base_url` at the proxy and treat it as one provider; see [providers.md](providers.md) for the full proxy setup (LiteLLM already covered there).
+
+### Frontier / majors personas — opt-in, bring your own key
+
+Claude/GPT/Gemini-tuned personas — each prompt-phrased per that provider's own official prompting guide — are installed deliberately by anyone who already holds that provider's API key. They stay opt-in and outside the default funnel: discover and install one by the model you have (see the discover-by-model flow above), then set that provider's key in your registry. They are never part of the `atcr quickstart` funnel.
 
 ## Quick walkthrough
 
