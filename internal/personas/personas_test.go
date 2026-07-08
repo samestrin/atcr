@@ -592,3 +592,19 @@ func TestDocs_ModelInMetadataConventionExists(t *testing.T) {
 		assert.Truef(t, strings.Contains(content, want), "docs/personas-authoring.md missing %q", want)
 	}
 }
+
+// TestDocs_HumanNamesConventionExists asserts docs/personas-authoring.md
+// documents the all-human-names convention (AC 06-02) as a forward-looking rule
+// covering built-in AND community personas, cross-referencing Epic 23.0.
+func TestDocs_HumanNamesConventionExists(t *testing.T) {
+	data, err := os.ReadFile("../../docs/personas-authoring.md")
+	require.NoError(t, err, "docs/personas-authoring.md must exist")
+	content := string(data)
+	for _, want := range []string{
+		"human first name",
+		"role-based",
+		"Epic 23.0",
+	} {
+		assert.Truef(t, strings.Contains(content, want), "docs/personas-authoring.md missing %q", want)
+	}
+}

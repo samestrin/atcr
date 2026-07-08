@@ -62,6 +62,12 @@ A persona's bound `model` must live in its **structured metadata** — the `mode
 
 This is a **forward-looking rule for every community/library persona**: the persona fixture test in `internal/personas/test.go` (`TemplateFixtureRunner.RunFixture`) asserts the resolved persona carries a non-empty `model` in structured metadata — a blank or missing value fails `go test` with a clear, attributable error — alongside the fixture render check described in [section 3](#3-the-fixture). Embedded built-in personas are model-agnostic and **exempt** (they carry no `provider`/`model`); this exemption is built-in-only, and community contributions are held to the convention.
 
+### Persona naming: human first names
+
+Every new persona — built-in **or** community — is named with a **human first name** (e.g. `bruce`, `sasha`, `penny`, `ingrid`, `anthony`, `delia`), never a role-based slug (`sentinel`, `tracer`, `idiomatic`). This is a **forward-looking rule for new contributions**: it does not require renaming any already-shipped persona, only that additions follow the convention instead of reintroducing role-based names. The rule applies uniformly to built-in and community personas — there is no built-in-only exemption.
+
+> **Single source of truth (shared with Epic 23.0 AC5).** Epic 23.0 is **absorbed by and superseded by Epic 19.6**: the role-based built-in stragglers were renamed to human names under 19.6's Phase 5 (see `human-names-migration.md`), so 23.0 is not run as a standalone renamer. 19.6's broader wording (built-in **and** community) subsumes 23.0 AC5's built-in-only scope — a superset, not a contradiction.
+
 ## 2. The prompt template
 
 The prompt is what the persona actually *says* to the model. Built-in personas live as Markdown templates in `personas/` (for example `personas/bruce.md`, `personas/sasha.md`); a community persona's `persona:` field names its prompt. Mirror the canonical structure exactly — the same section headings and the same template variables:
