@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	builtins "github.com/samestrin/atcr/personas"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -85,4 +86,20 @@ func TestRunFixture_BuiltinExemptFromModelAssertion(t *testing.T) {
 	require.True(t, out.HasFixture)
 	require.Equal(t, 1, out.Passed)
 	require.Equal(t, 1, out.Total)
+}
+
+// TestRenderFixture_PassesWhenPayloadContainsBraces asserts that a fixture diff
+// containing literal double-brace syntax (common in the code these personas
+// review) does not falsely fail the render check. The render result includes the
+// payload verbatim, so scanning the output for "{{" is unsound; RenderPrompt's
+// own error-on-missing-key behavior plus an AgentName interpolation check are
+// sufficient to verify the template rendered.
+func TestRenderFixture_PassesWhenPayloadContainsBraces(t *testing.T) {
+	text := "## Role\nReviewer {{.AgentName}}\n## Focus\n{{.Payload}}\n"
+	patch := "code with {{ }} braces"
+	out, err := renderFixture("test-persona", text, patch)
+	require.NoError(t, err)
+	assert.True(t, out.HasFixture)
+	assert.Equal(t, 1, out.Passed)
+	assert.Equal(t, 1, out.Total)
 }
