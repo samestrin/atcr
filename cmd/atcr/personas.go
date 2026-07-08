@@ -436,7 +436,8 @@ func formatLanguages(langs []string) string {
 func renderPersonaList(w io.Writer, metas []commpersonas.PersonaMeta) error {
 	rows := make([]string, len(metas))
 	for i, m := range metas {
-		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s", m.Name, m.Version, m.Source, formatLanguages(m.Language))
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s",
+			sanitizeCell(m.Name), sanitizeCell(m.Version), sanitizeCell(m.Source), sanitizeCell(formatLanguages(m.Language)))
 	}
 	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE", rows)
 }
@@ -446,7 +447,9 @@ func renderPersonaList(w io.Writer, metas []commpersonas.PersonaMeta) error {
 func renderScoredList(w io.Writer, scored []commpersonas.ScoredPersona) error {
 	rows := make([]string, len(scored))
 	for i, s := range scored {
-		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s", s.Name, s.Version, s.Source, formatLanguages(s.Language), commpersonas.FormatRate(s.Rate))
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
+			sanitizeCell(s.Name), sanitizeCell(s.Version), sanitizeCell(s.Source),
+			sanitizeCell(formatLanguages(s.Language)), commpersonas.FormatRate(s.Rate))
 	}
 	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION", rows)
 }
@@ -458,7 +461,8 @@ func renderPersonaSearch(w io.Writer, entries []commpersonas.PersonaIndexEntry) 
 	rows := make([]string, len(entries))
 	for i, e := range entries {
 		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
-			e.Name, orDash(e.Version), orDash(e.Provider), orDash(e.Model), e.Description)
+			sanitizeCell(e.Name), orDash(sanitizeCell(e.Version)), orDash(sanitizeCell(e.Provider)),
+			orDash(sanitizeCell(e.Model)), sanitizeCell(e.Description))
 	}
 	return writeTable(w, "NAME\tVERSION\tPROVIDER\tMODEL\tDESCRIPTION", rows)
 }
