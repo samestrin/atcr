@@ -61,6 +61,16 @@ func ResolvePersona(agentName, persona string, taskMessage *string, dirs Persona
 		if dir == "" {
 			continue
 		}
+		// A namespaced persona (security/owasp) traverses intermediate directories
+		// under dir. readNonEmpty refuses a symlinked LEAF, but the OS would still
+		// follow a symlinked intermediate component, so a planted namespace symlink
+		// could read outside dir. Refuse a symlinked intermediate (treated as "not
+		// present", so resolution falls through) to keep the whole path within dir.
+		if bad, err := hasSymlinkedParent(dir, persona); err != nil {
+			return ResolvedPersona{}, err
+		} else if bad {
+			continue
+		}
 		path := filepath.Join(dir, persona+".md")
 		text, ok, err := readNonEmpty(path)
 		if err != nil {
@@ -165,6 +175,32 @@ func validateName(kind, name string) error {
 		}
 	}
 	return nil
+}
+
+// hasSymlinkedParent reports whether any intermediate directory component of a
+// namespaced persona (the "/"-separated segments before the leaf) under dir is a
+// symlink. The leaf itself is guarded by readNonEmpty; this closes the
+// intermediate-component symlink-escape that a multi-segment path would otherwise
+// allow. A flat name has no intermediate components, so this is a no-op for it.
+// A missing intermediate is not a symlink (nothing to read) and returns false.
+func hasSymlinkedParent(dir, name string) (bool, error) {
+	segs := strings.Split(name, "/")
+	cur := dir
+	for _, seg := range segs[:len(segs)-1] { // intermediate dirs only, not the leaf
+		cur = filepath.Join(cur, seg)
+		fi, err := os.Lstat(cur)
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("stat persona path %s: %w", cur, err)
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			fmt.Fprintf(os.Stderr, "warning: persona path component %s is a symlink, skipping for safety\n", cur)
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // readNonEmpty reads path, treating a missing file, a symlink, or an

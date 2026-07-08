@@ -159,6 +159,26 @@ func TestPersonaResolution_NamespacedCommunityResolves(t *testing.T) {
 	assert.Equal(t, filepath.Join(dirs.Registry, "security", "owasp.md"), got.Source)
 }
 
+// TestPersonaResolution_NamespacedSymlinkedIntermediateRefused: a symlinked
+// intermediate namespace directory (planted to point outside the pin dir) is not
+// followed — resolution falls through rather than reading the symlink target.
+func TestPersonaResolution_NamespacedSymlinkedIntermediateRefused(t *testing.T) {
+	dirs := personaDirs(t)
+	// An "outside" directory holding a secret named like a persona leaf.
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "passwd.md"), []byte("TOP SECRET"), 0o644))
+	// Plant Registry/security -> outside, so security/passwd would escape.
+	require.NoError(t, os.Symlink(outside, filepath.Join(dirs.Registry, "security")))
+
+	// persona == agentName so a skipped (symlinked) intermediate falls through to
+	// the embedded base rather than a hard not-found — proving the secret is never
+	// read either way.
+	got, err := ResolvePersona("security/passwd", "security/passwd", nil, dirs)
+	require.NoError(t, err)
+	assert.NotContains(t, got.Text, "TOP SECRET", "symlinked intermediate must not be followed")
+	assert.Contains(t, got.Source, "embedded:")
+}
+
 // TestPersonaResolution_NamespacedTraversalStillRejected: a namespace is allowed
 // but a ".." segment inside it is still refused (no directory escape).
 func TestPersonaResolution_NamespacedTraversalStillRejected(t *testing.T) {
