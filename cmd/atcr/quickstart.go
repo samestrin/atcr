@@ -220,7 +220,14 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 		return nil
 	}
 
-	_, _ = fmt.Fprintf(o.out, "\nSet it in your current shell:\n  export %s=%s\n", env, shellSingleQuote(key))
+	if writerIsTerminal(o.out) {
+		_, _ = fmt.Fprintf(o.out, "\nSet it in your current shell:\n  export %s=%s\n", env, shellSingleQuote(key))
+	} else {
+		// stdout is piped/redirected/CI-captured — echoing the pasted key here would
+		// persist the secret into that capture. Mask the value; an interactive user
+		// still gets the copy-pasteable line on a real terminal.
+		_, _ = fmt.Fprintf(o.out, "\nSet it in your current shell:\n  export %s=****** (masked — stdout is not a terminal)\n", env)
+	}
 
 	profile, profileOK := readLine("\nAppend this export to a shell profile? Enter a path (or Enter to skip): ")
 	if !profileOK {
@@ -247,6 +254,23 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 		_, _ = fmt.Fprintf(o.errOut, "input error: %v\n", err)
 	}
 	return nil
+}
+
+// writerIsTerminal reports whether w is backed by a character device (an
+// interactive terminal). It decides whether echoing the pasted API key back is
+// safe: on a TTY the value only reaches the user's screen, but piped/redirected/
+// CI-captured output would persist the secret. Detected via the stdlib
+// os.ModeCharDevice bit so no external terminal dependency is required.
+func writerIsTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 // expandHome replaces a leading `~` or `~/` with the user's home directory.
