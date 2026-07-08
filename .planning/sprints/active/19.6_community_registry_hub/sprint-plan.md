@@ -1292,28 +1292,32 @@ Answers to the Phase 5 safety-check questions (content decisions the ACs left to
 
    **Outcome:** No findings — proceed.
 
-### 6.9 [ ] **Phase 6 DoD**
+### 6.9 [x] **Phase 6 DoD**
    1. Tests (T3): `go test ./...` all passing (fixture asserts bound-model metadata)
    2. Docs match the enforced behavior and locked onboarding-hierarchy language
    3. Coverage ≥80%; Lint/vet/fmt clean
    4. DoD report (Stories 6, 7)
    5. COMMIT residual: `git commit -m "docs(personas): phase 6 DoD"`
 
-### 6.LAST [ ] **Phase 6 - GATE: Integration & Exit Review (subagent)**
-   **Scope:** All files changed during Phase 6 (fixture runner, `docs/personas-authoring.md`, `docs/personas-install.md`, `README.md`).
+### 6.LAST [x] **Phase 6 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 6 (fixture runner, `docs/personas-authoring.md`, `docs/personas-install.md`, `README.md`, + the TD-010 guardrail fix in `internal/personas/unit.go`, `internal/registry/persona.go`).
    **Spawn a fresh subagent** (subagent_type `general-purpose`, description `Phase 6 gate review`). Checklist verbatim (hostile integrator): CONTRACT EXIT (enforcement matches documented convention?), CONFIG SURFACE (docs cite real flags/names/tiers?), INTEGRATION (fixture assertion doesn't break built-in path?), PHASE-EXIT CONTRACT (nothing left for Phase 7 but validation?), REGRESSION (all prior tests intact?). Severity rubric; "ONLY the findings table."
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Gate findings (no CRITICAL/HIGH/MEDIUM):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | personas-authoring.md §3 | "What the test does" step 1 named only `personas/testdata/` (built-in); community fixtures load from `personas/community/testdata/`. | **FIXED inline** — step 1 now names both locations. |
+   | LOW | persona.go validatePersonaTemplateNode | Comment said only `{{if .ToolsEnabled}}` permitted; the validator accepts `{{if <any allowlisted field>}}` (harmless — all are safe scalars). | **FIXED inline** — comment reworded to "an `{{if <allowed-field>}}` block". |
+
+   Gate subagent ran `go test ./...` (all ok) + `go vet ./...` (clean); threw 17 malicious/edge prompts at the weakened guardrail (`{{range}}`/`{{template}}`/`{{define}}`/`{{block}}`/`{{.Secret}}`/`{{.Payload.X}}`/unbalanced-if/half-open/`{{with}}`/`{{printf}}`/pipe/`{{$x:=}}`/`{{call}}`/`{{.}}`/`{{(.Payload).X}}`/`{{index}}`) — ALL rejected; all 10 community prompts pass; built-in `isBuiltin` path byte-for-byte unchanged (`test bruce` → "No fixture defined"); config surface (flags/names/schema/caveats) verified real; built `atcr` binary → `test delia`/`sonny` PASS; Phase 7 has only validation/integration proof left.
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
    - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
    - None found -> Note "Phase gate passed" and proceed to phase stop
    **Duration:** 15-30 min
+
+   **Outcome:** No CRITICAL/HIGH/MEDIUM — **Phase gate passed.** Two LOW accuracy nits fixed inline (cheaper than deferring). Affected packages re-verified green.
 
 ---
 
