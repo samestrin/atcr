@@ -1,0 +1,7 @@
+name: celeste
+version: 1.0.0
+description: Kimi dependency and configuration reviewer (long-context lens)
+provider: openrouter
+model: moonshotai/kimi-k2
+persona: celeste
+role: reviewer

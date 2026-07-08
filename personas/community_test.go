@@ -35,7 +35,10 @@ var communityPersonas = []communityPersona{
 	{Slug: "milo", VendorToken: "gpt", Tier: "fallback", Category: "validation"},
 	{Slug: "gia", VendorToken: "gemini", Tier: "flagship", Category: "race"},
 	{Slug: "flint", VendorToken: "gemini", Tier: "fallback", Category: "leak"},
-	// open-model rows (delia/quinn/celeste/glenna) appended in task 5.4.
+	{Slug: "delia", VendorToken: "deepseek", Tier: "open", Category: "complexity"},
+	{Slug: "quinn", VendorToken: "qwen", Tier: "open", Category: "type"},
+	{Slug: "celeste", VendorToken: "kimi", Tier: "open", Category: "dependency"},
+	{Slug: "glenna", VendorToken: "glm", Tier: "open", Category: "observability"},
 }
 
 const communityDir = "community"

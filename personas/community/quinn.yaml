@@ -1,0 +1,7 @@
+name: quinn
+version: 1.0.0
+description: Qwen type-safety and conversion reviewer (coding-tier lens)
+provider: openrouter
+model: qwen/qwen3-coder
+persona: quinn
+role: reviewer

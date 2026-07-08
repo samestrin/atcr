@@ -1,0 +1,17 @@
+diff --git a/internal/dedup/dedup.go b/internal/dedup/dedup.go
+index 1111111..2222222 100644
+--- a/internal/dedup/dedup.go
++++ b/internal/dedup/dedup.go
+@@ -5,6 +5,14 @@ package dedup
+
++// Unique returns the distinct ids, but rescans the whole accumulated slice for
++// every input — quadratic O(n^2) complexity where a set-based pass is linear.
++func Unique(ids []int) []int {
++	var out []int
++	for _, id := range ids {
++		if !contains(out, id) { // linear scan inside the loop -> O(n^2)
++			out = append(out, id)
++		}
++	}
++	return out
++}

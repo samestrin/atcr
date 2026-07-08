@@ -1,0 +1,7 @@
+name: glenna
+version: 1.0.0
+description: GLM observability and diagnosability reviewer (structured-instruction lens)
+provider: openrouter
+model: z-ai/glm-4.6
+persona: glenna
+role: reviewer
