@@ -1,0 +1,7 @@
+name: gene
+version: 1.0.0
+description: GPT flagship API-contract and interface-compatibility reviewer
+provider: openrouter
+model: openai/gpt-5
+persona: gene
+role: reviewer

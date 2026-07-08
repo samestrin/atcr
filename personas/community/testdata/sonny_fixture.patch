@@ -1,0 +1,12 @@
+diff --git a/internal/pager/page.go b/internal/pager/page.go
+index 1111111..2222222 100644
+--- a/internal/pager/page.go
++++ b/internal/pager/page.go
+@@ -8,6 +8,11 @@ package pager
+
++// LastPage returns the final page index for n items of the given page size.
++func LastPage(n, size int) int {
++	// logic error: integer division silently drops the partial final page,
++	// so 11 items at size 10 reports 1 instead of 2 (off-by-one).
++	return n / size
++}

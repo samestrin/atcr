@@ -1,0 +1,7 @@
+name: sonny
+version: 1.0.0
+description: Claude Sonnet correctness and logic reviewer (balanced fast lens)
+provider: openrouter
+model: anthropic/claude-sonnet-4.5
+persona: sonny
+role: reviewer
