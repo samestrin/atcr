@@ -35,34 +35,10 @@ func Install(client HTTPClient, baseURL, name, destDir string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 		return fmt.Errorf("failed to create personas directory: %w", err)
 	}
-	// Guard against TOCTOU symlink attacks: if dest is a symlink, writing
-	// through it would follow it and write outside the personas directory.
-	if fi, lerr := os.Lstat(dest); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("refusing to write persona to symlink at %s", dest)
-	}
-	// Atomic replace: stage to a sibling temp file and rename into place so
-	// readers never observe a partially-written persona.
-	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("failed to create persona temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("failed to write persona temp file: %w", err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("failed to set persona temp file permissions: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("failed to close persona temp file: %w", err)
-	}
-	if err := os.Rename(tmpName, dest); err != nil {
-		return fmt.Errorf("failed to write persona to %s: %w", dest, err)
-	}
-	return nil
+	// writeFileAtomic provides the same symlink guard, temp-file staging, and
+	// rename-into-place behavior that used to be inlined here — keep one copy
+	// of the security-sensitive write path so hardening stays uniform.
+	return writeFileAtomic(dest, data)
 }
 
 // personaInstalled reports whether a persona file already exists at dest. A
