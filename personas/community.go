@@ -74,8 +74,10 @@ func CommunityFixture(name string) (string, error) {
 
 // CommunityModel returns the bound model id from the embedded community persona's
 // structured metadata (community/<name>.yaml `model:` field). Only an embedded
-// library slug resolves; an unknown name errors so callers can treat it as
-// carrying no structured metadata.
+// library slug with co-located metadata resolves; a name with no embedded
+// community metadata errors. Callers that have already confirmed the persona is a
+// library slug (e.g. via CommunityGet) should treat this error as a broken
+// authoring state (missing .yaml), not as "no metadata."
 func CommunityModel(name string) (string, error) {
 	data, err := communityMeta.ReadFile(communityEmbedDir + "/" + name + ".yaml")
 	if err != nil {

@@ -39,11 +39,13 @@ func TestAssertBoundModel_RejectsEmpty(t *testing.T) {
 
 // TestCommunityModel_ReturnsBoundModel asserts the embedded community YAML's
 // structured `model` field is reachable for the fixture runner's assertion, and
-// that an unknown slug errors so callers can treat it as no-metadata.
+// that an unknown slug errors. It asserts the `provider/model` SHAPE (non-empty,
+// namespaced) rather than a literal model id, which churns as models are repinned.
 func TestCommunityModel_ReturnsBoundModel(t *testing.T) {
 	model, err := builtins.CommunityModel("delia")
 	require.NoError(t, err)
-	require.Equal(t, "deepseek/deepseek-v4-pro", model)
+	require.NotEmpty(t, strings.TrimSpace(model))
+	require.Contains(t, model, "/", "expected a namespaced provider/model id")
 
 	_, err = builtins.CommunityModel("not-a-real-persona")
 	require.Error(t, err)

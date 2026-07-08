@@ -54,13 +54,14 @@ func (r TemplateFixtureRunner) RunFixture(name string) (FixtureOutcome, error) {
 	if err != nil {
 		return FixtureOutcome{HasFixture: false}, nil
 	}
-	patchContent, err := builtins.CommunityFixture(name)
-	if err != nil {
-		return FixtureOutcome{HasFixture: false}, nil
-	}
-	// AC 06-03 (the AC7 authoring-contract gate): a community/library persona MUST
-	// bind a non-empty model in its structured metadata. Built-ins are exempt —
-	// they resolve through the isBuiltin branch above and carry no provider/model
+
+	// The embedded .md resolved, so this IS a library persona. AC 06-03 (the AC7
+	// authoring-contract gate): a library persona MUST bind a non-empty model in
+	// its structured metadata. Enforce this immediately — BEFORE the fixture
+	// lookup — so a missing/absent fixture cannot silently suppress the
+	// model-binding contract (a resolved library persona with no .yaml is a broken
+	// authoring state and hard-fails here). Built-ins are exempt: they resolve
+	// through the isBuiltin branch above and carry no provider/model
 	// (model-agnostic per C2). This check is purely structural: no network, no LLM.
 	model, err := builtins.CommunityModel(name)
 	if err != nil {
@@ -68,6 +69,11 @@ func (r TemplateFixtureRunner) RunFixture(name string) (FixtureOutcome, error) {
 	}
 	if err := assertBoundModel(name, model); err != nil {
 		return FixtureOutcome{}, err
+	}
+
+	patchContent, err := builtins.CommunityFixture(name)
+	if err != nil {
+		return FixtureOutcome{HasFixture: false}, nil
 	}
 	return renderFixture(name, text, patchContent)
 }
