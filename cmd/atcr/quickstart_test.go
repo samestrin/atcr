@@ -320,6 +320,22 @@ func TestQuickstart_KeyEntry_ExportAndProfileAppend(t *testing.T) {
 	assert.NotContains(t, string(cfgBytes), "MYSECRETKEY", "key never written to config.yaml")
 }
 
+func TestQuickstart_KeyEcho_MaskedWhenNotTTY(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	out := &bytes.Buffer{} // a buffer is not a character device → not a terminal
+	// Paste a key, then skip the profile-append prompt (empty line).
+	in := strings.NewReader("MYSECRETKEY\n\n")
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: dir, in: in, out: out, errOut: &bytes.Buffer{},
+	}))
+
+	assert.NotContains(t, out.String(), "MYSECRETKEY",
+		"the pasted key must not be echoed to non-terminal (piped/CI-captured) stdout")
+	assert.Contains(t, out.String(), "export LLM_SYNTHETIC_API_KEY=",
+		"the export guidance line is still shown, just with the value masked")
+}
+
 func TestQuickstart_NoKey_PrintsInstructions(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
