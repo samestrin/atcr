@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -425,6 +426,61 @@ func TestPersonasSearch_EmptyFlagValueTreatedAsAbsent(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, exitCode(err))
 	assert.Contains(t, err.Error(), searchGuardMsg)
+}
+
+// --- AC 03-04: renderPersonaSearch provider/model columns -------------------
+
+// TestRenderPersonaSearch_IncludesProviderModelColumns covers AC 03-04 Scenario 1:
+// the rendered table header is exactly NAME VERSION PROVIDER MODEL DESCRIPTION (in
+// that pinned order) and a populated row carries the provider/model values.
+func TestRenderPersonaSearch_IncludesProviderModelColumns(t *testing.T) {
+	var buf bytes.Buffer
+	entries := []personas.PersonaIndexEntry{
+		{Name: "deepseek-reviewer", Version: "1.0.0", Provider: "deepseek", Model: "deepseek-coder", Description: "Coder-tuned"},
+	}
+	require.NoError(t, renderPersonaSearch(&buf, entries))
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	require.GreaterOrEqual(t, len(lines), 2)
+	assert.Equal(t, []string{"NAME", "VERSION", "PROVIDER", "MODEL", "DESCRIPTION"}, strings.Fields(lines[0]),
+		"header column order is pinned exactly")
+	assert.Contains(t, lines[1], "deepseek")
+	assert.Contains(t, lines[1], "deepseek-coder")
+}
+
+// TestRenderPersonaSearch_EmptyProviderModelPlaceholder covers AC 03-04 Edge Case 1:
+// empty Provider/Model render as the "-" placeholder, matching the existing empty-
+// Version convention.
+func TestRenderPersonaSearch_EmptyProviderModelPlaceholder(t *testing.T) {
+	var buf bytes.Buffer
+	entries := []personas.PersonaIndexEntry{
+		{Name: "general", Version: "1.0.0", Provider: "", Model: "", Description: "General reviewer"},
+	}
+	require.NoError(t, renderPersonaSearch(&buf, entries))
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	require.Len(t, lines, 2)
+	fields := strings.Fields(lines[1])
+	require.GreaterOrEqual(t, len(fields), 5)
+	assert.Equal(t, "general", fields[0])
+	assert.Equal(t, "1.0.0", fields[1])
+	assert.Equal(t, "-", fields[2], "empty PROVIDER renders as placeholder")
+	assert.Equal(t, "-", fields[3], "empty MODEL renders as placeholder")
+}
+
+// TestPersonasSearch_OutputHasProviderModelColumns covers AC 03-04 Scenario 2:
+// end-to-end, `search --model deepseek` output includes the Provider/Model columns
+// populated for the matching persona.
+func TestPersonasSearch_OutputHasProviderModelColumns(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{"/index.json": cmdStructuredIndexJSON})
+	withPersonasEnv(t, srv)
+
+	out, err := execute(t, "personas", "search", "--model", "deepseek")
+	require.NoError(t, err)
+	assert.Contains(t, out, "PROVIDER")
+	assert.Contains(t, out, "MODEL")
+	assert.Contains(t, out, "openrouter")
+	assert.Contains(t, out, "deepseek-chat")
 }
 
 func TestPersonasRemove_Integration(t *testing.T) {

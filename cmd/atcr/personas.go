@@ -448,15 +448,23 @@ func renderScoredList(w io.Writer, scored []commpersonas.ScoredPersona) error {
 	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION", rows)
 }
 
-// renderPersonaSearch writes the Name/Version/Description table of index hits.
+// renderPersonaSearch writes the Name/Version/Provider/Model/Description table of
+// index hits. Provider and Model let a user confirm which model a returned persona
+// targets before installing. Empty Version/Provider/Model render as "-".
 func renderPersonaSearch(w io.Writer, entries []commpersonas.PersonaIndexEntry) error {
 	rows := make([]string, len(entries))
 	for i, e := range entries {
-		version := e.Version
-		if version == "" {
-			version = "-"
-		}
-		rows[i] = fmt.Sprintf("%s\t%s\t%s", e.Name, version, e.Description)
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
+			e.Name, orDash(e.Version), orDash(e.Provider), orDash(e.Model), e.Description)
 	}
-	return writeTable(w, "NAME\tVERSION\tDESCRIPTION", rows)
+	return writeTable(w, "NAME\tVERSION\tPROVIDER\tMODEL\tDESCRIPTION", rows)
+}
+
+// orDash returns s, or "-" when s is empty — the placeholder convention shared by
+// the persona table renderers for absent optional values.
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
