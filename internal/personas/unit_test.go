@@ -118,6 +118,39 @@ func TestInstallUnit_BindingOnlyRemovesStaleMD(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(dir, "security", "owasp.md"), "stale custom prompt removed")
 }
 
+// TestInstallUnit_ReinstallMDFailurePreservesPriorYAML: on a RE-install the fresh
+// <name>.yaml is written (renaming over the prior valid one) before the co-located
+// <name>.md. If the .md write then fails, the rollback must NOT delete the .yaml —
+// that would leave the user with NO persona where a working one existed moments
+// earlier. The prior unit is restored instead. A symlink planted at <name>.md
+// forces the .md write to fail via writeFileAtomic's TOCTOU symlink guard, after
+// the .yaml has already been replaced.
+func TestInstallUnit_ReinstallMDFailurePreservesPriorYAML(t *testing.T) {
+	dir := t.TempDir()
+	name := "security/owasp"
+	yamlDest := filepath.Join(dir, "security", "owasp.yaml")
+	mdDest := filepath.Join(dir, "security", "owasp.md")
+
+	// A prior working unit already on disk. Distinct content so restoration is
+	// observable, not merely "some .yaml survived".
+	const priorYAML = "provider: anthropic\nmodel: claude-sonnet-4-6\nrole: reviewer\nversion: \"0.9.0\"\ndescription: \"prior installed version\"\n"
+	require.NoError(t, os.MkdirAll(filepath.Dir(yamlDest), 0o700))
+	require.NoError(t, os.WriteFile(yamlDest, []byte(priorYAML), 0o600))
+	require.NoError(t, os.Symlink(filepath.Join(dir, "sink"), mdDest))
+
+	srv := testServer(t, map[string]string{
+		"/security/owasp.yaml": validPersonaYAML,
+		"/security/owasp.md":   customPromptMD,
+	})
+
+	err := InstallUnit(srv.Client(), srv.URL, name, dir)
+	require.Error(t, err, ".md write through a symlink must fail the re-install")
+
+	got, rerr := os.ReadFile(yamlDest)
+	require.NoError(t, rerr, "prior .yaml must survive a failed re-install (persona not destroyed)")
+	assert.Equal(t, priorYAML, string(got), "prior .yaml content restored, not left half-written or deleted")
+}
+
 // --- AC 01-06 / C3: untrusted fetched-prompt guardrails (install-time) ------
 
 // TestInstallUnit_RejectsOversizedPrompt: a fetched custom prompt longer than the
