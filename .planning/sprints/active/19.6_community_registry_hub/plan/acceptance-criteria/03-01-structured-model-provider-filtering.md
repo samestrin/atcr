@@ -17,6 +17,11 @@
 - `internal/personas/search_test.go` — create: table-driven tests asserting structured-field-only matching and the false-positive-rejection case (a model string appearing only in `Description` does not satisfy `--model`).
 - `docs/personas-install.md` — modify: document `--model`/`--provider` filters.
 
+**Field-semantics note (per LOCKED decision Q3):**
+- `--model`/`--provider` match the **structured** `Model`/`Provider` fields only — never free text (`Name`/`Description`).
+- `--provider` matches the **routing-endpoint key** (a key in the registry Providers map, e.g. `openrouter`, `synthetic`) — it is NOT the vendor/brand. Users **discover by `--model`**: the vendor/brand token (e.g. `deepseek`, `anthropic`) lives in the `Model` string, so "I have DeepSeek → `--model deepseek`" is the intended discovery path.
+- Consequence for the library: every library persona's `model` value MUST contain the recognizable vendor/brand token so a `--model <vendor>` substring query matches it (e.g. a DeepSeek-bound persona must have `model` like `deepseek-chat`/`deepseek-coder`, not an opaque alias). This is an authoring constraint on the in-repo index, verified by the AC7 gate in AC 02-02.
+
 
 ## Happy Path Scenarios
 **Scenario 1: Filter by `--model` matches structured Model field**
@@ -50,6 +55,11 @@
 - **When** `atcr personas search --model deepseek` is run (lowercase)
 - **Then** the persona is returned
 
+**Edge Case 4: `--provider` is the routing-endpoint key, not the vendor (per Q3)**
+- **Given** a persona with `Provider: "openrouter"` (routing endpoint) and `Model: "deepseek-chat"` (vendor token in the model string)
+- **When** `atcr personas search --provider deepseek` is run
+- **Then** the persona is NOT returned by `--provider deepseek` because `deepseek` is the vendor (it lives in `Model`), and `--provider` only matches the routing-endpoint key `openrouter`; the correct discovery query is `--model deepseek`. This confirms vendor discovery is a `--model` concern, not a `--provider` one.
+
 ## Error Conditions
 **Error Scenario 1: Free-text Description match must NOT satisfy `--model`**
 - **Given** a persona with `Model: "gpt-4"` and `Description: "Tuned for deepseek workflows"` (mentions "deepseek" only in free text)
@@ -72,15 +82,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `--model` and `--provider` flags filter using only `PersonaIndexEntry.Provider`/`Model` fields
-- [ ] A model string appearing only in `Description` does not satisfy `--model`
-- [ ] `--model` and `--provider` combine as AND filters when both supplied
-- [ ] Matching is case-insensitive and substring-tolerant, documented in code comments
+- [x] `--model` and `--provider` flags filter using only `PersonaIndexEntry.Provider`/`Model` fields
+- [x] A model string appearing only in `Description` does not satisfy `--model`
+- [x] `--model` and `--provider` combine as AND filters when both supplied
+- [x] Matching is case-insensitive and substring-tolerant, documented in code comments
 
 **Manual Review:**
 - [ ] Code reviewed and approved

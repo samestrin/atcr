@@ -608,107 +608,125 @@ Answers to the Phase 3 safety-check questions (open decisions the ACs/design-not
 
 > Structured `--model`/`--provider` filtering with **zero free-text fallback**, backward-compatible keyword search, flag/arg validation. Test types: Integration (flag registration, table rendering) + Unit (structured-field-only matching, near-miss substring cases).
 
-### 4.1 [ ] **[Structured model/provider filtering - RED](plan/user-stories/03-model-aware-search-and-discovery.md)**
+### 4.1 [x] **[Structured model/provider filtering - RED](plan/user-stories/03-model-aware-search-and-discovery.md)**
    **AC:** [03-01](plan/acceptance-criteria/03-01-structured-model-provider-filtering.md)
    Write failing tests: `Search` matches structured `Provider`/`Model` fields only; a persona whose `Description` mentions a model but whose structured `Model` differs is **NOT** returned under `--model` (no free-text fallback). Verify fail correctly.
    **Files:** `internal/personas/search_test.go` | **Duration:** ~1h
 
-### 4.2 [ ] **[Structured model/provider filtering - GREEN](plan/user-stories/03-model-aware-search-and-discovery.md)**
+### 4.2 [x] **[Structured model/provider filtering - GREEN](plan/user-stories/03-model-aware-search-and-discovery.md)**
    Extend `Search()` to filter on structured fields. Minimal code (T1), verify all (T2), COMMIT: `git commit -m "feat(personas): structured model/provider filtering (green)"`
    **Files:** `internal/personas/search.go` | **Duration:** ~1h
 
-### 4.2.A [ ] **[Structured model/provider filtering - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-model-aware-search-and-discovery.md)**
+### 4.2.A [x] **[Structured model/provider filtering - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-model-aware-search-and-discovery.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 4.2`) — changed files, verbatim checklist, severity rubric, findings-table-only. Focus: any free-text leak into `--model` matching; case/normalization edge cases.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (no CRITICAL/HIGH — proceed):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | search.go:45-48 | Stale `Search` doc comment says keyword matches "name or description" only, understating that `matchesKeyword` also reaches structured Provider/Model. | **FIXED in 4.3** — comment updated to name all four fields. |
+   | LOW | search_test.go | No test here exercises the Keyword path's structured reach (OR into Provider/Model), so the "keyword reaches structured, but --model/--provider do NOT reach free text" distinction is only half-verified in this file. | **FIXED in 4.3** — added `TestSearchWithOptions_KeywordReachesStructuredFields` (keyword OR-reach + whitespace trim). AC 03-02 (task 4.4) adds the dedicated back-compat regression suite. |
+
+   **Reviewer confirmation (no defect):** no free-text leak into `--model`/`--provider` (both match only their structured field); AND semantics correct; empty/whitespace filters trimmed to absent; substring/case-insensitivity deliberate.
 
    **Action Required:**
    - CRITICAL/HIGH -> 4.3, do NOT proceed until fixed | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 4.3 [ ] **[Structured model/provider filtering - REFACTOR](plan/user-stories/03-model-aware-search-and-discovery.md)**
+   **Outcome:** No CRITICAL/HIGH. Adversarial review passed. Both LOWs resolved inline in 4.3 REFACTOR (they harden the AC 03-01/03-02 contract coverage) rather than deferred as tech debt.
+
+### 4.3 [x] **[Structured model/provider filtering - REFACTOR](plan/user-stories/03-model-aware-search-and-discovery.md)**
    Fix CRITICAL/HIGH from 4.2.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): filtering cleanup"`
    **Duration:** ~30m
 
-### 4.4 [ ] **[Keyword search backward-compatibility - RED](plan/user-stories/03-model-aware-search-and-discovery.md)**
+### 4.4 [x] **[Keyword search backward-compatibility - RED](plan/user-stories/03-model-aware-search-and-discovery.md)**
+   > **Note:** AC 03-02's core behavior (positional keyword reaches structured Provider/Model; Name/Description parity preserved) was already implemented in task 4.2's `matchesKeyword`, so these backward-compat/regression guards pass on first run — a genuine RED failure is not achievable without artificially breaking working code. Tests added: `TestSearchWithOptions_KeywordPlusFlagAND` (Scenario 2 AND), `TestSearch_OldShapeKeywordParity` (Error Scenario 1 old-shape parity across the legacy `Search` wrapper + `SearchWithOptions`). Structured-reach (Scenario 3) already pinned by 4.3's `TestSearchWithOptions_KeywordReachesStructuredFields`.
    **AC:** [03-02](plan/acceptance-criteria/03-02-keyword-search-backward-compatibility.md)
    Write failing tests: bare `atcr personas search <term>` still matches `Name`/`Description` substrings exactly as before (no regression). Verify fail correctly.
    **Files:** `internal/personas/search_test.go` | **Duration:** ~45m
 
-### 4.5 [ ] **[Keyword search backward-compatibility - GREEN](plan/user-stories/03-model-aware-search-and-discovery.md)**
+### 4.5 [x] **[Keyword search backward-compatibility - GREEN](plan/user-stories/03-model-aware-search-and-discovery.md)**
    Preserve keyword path alongside structured filters. Minimal code (T1), verify all (T2), COMMIT: `git commit -m "feat(personas): preserve keyword search path (green)"`
    **Files:** `internal/personas/search.go` | **Duration:** ~30m
+   > **Green with no production change:** the keyword path was already preserved (and extended to structured fields) by 4.2. `go test ./internal/personas/...` green; committed the AC 03-02 guard tests under the GREEN message.
 
-### 4.5.A [ ] **[Keyword search backward-compatibility - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-model-aware-search-and-discovery.md)**
+### 4.5.A [x] **[Keyword search backward-compatibility - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-model-aware-search-and-discovery.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 4.5`) — changed files, verbatim checklist, severity rubric, findings-table-only. Focus: interaction of keyword + structured flags (AND/OR semantics).
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (no CRITICAL/HIGH — proceed):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | search_test.go parity | Cross-call `ElementsMatch(legacy, opts)` is a tautology (`Search` just wraps `SearchWithOptions`); the concrete literal-set assertions carry the real proof. | **FIXED in 4.6** — replaced the cross-call comparison with a hardcoded expected-set assertion on the `SearchWithOptions` keyword result. |
+   | LOW | search_test.go coverage | No `Keyword + Model` AND case — the one pairing where the keyword's OR-reach into structured Model could interact with the structured `--model` filter. | **FIXED in 4.6** — added `{Keyword:"deepseek", Model:"gpt-4"}` → `finn` only, proving AND-narrowing. |
+   | LOW | search.go:75 | Per-entry redundant lowercasing (flag path + `matchesKeyword` each lowercase `e.Model`/`e.Provider`). | **Declined (not deferred):** AC 03-01 Performance explicitly deems this negligible for index sizes in the hundreds; precomputing per-entry lowercase adds complexity for no measurable gain (minimum-code). Recorded here, not logged as TD. |
 
    **Action Required:**
    - CRITICAL/HIGH -> 4.6, do NOT proceed until fixed | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 4.6 [ ] **[Keyword search backward-compatibility - REFACTOR](plan/user-stories/03-model-aware-search-and-discovery.md)**
+   **Outcome:** No CRITICAL/HIGH. Adversarial review passed. Two LOWs (test-hardening) fixed inline in 4.6; the perf LOW declined per the AC's own negligible-overhead stance.
+
+### 4.6 [x] **[Keyword search backward-compatibility - REFACTOR](plan/user-stories/03-model-aware-search-and-discovery.md)**
    Fix CRITICAL/HIGH from 4.5.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): search path cleanup"`
    **Duration:** ~20m
 
-### 4.7 [ ] **[Flag registration & arg validation - RED](plan/user-stories/03-model-aware-search-and-discovery.md)**
+### 4.7 [x] **[Flag registration & arg validation - RED](plan/user-stories/03-model-aware-search-and-discovery.md)**
    **AC:** [03-03](plan/acceptance-criteria/03-03-flag-registration-and-arg-validation.md)
    Write failing tests: `--model`/`--provider` registered on `newPersonasSearchCmd` following the `--scores` pattern; invalid arg combos return a `RunE` error (no `os.Exit`). Verify fail correctly.
    **Files:** `cmd/atcr/personas_test.go` | **Duration:** ~1h
 
-### 4.8 [ ] **[Flag registration & arg validation - GREEN](plan/user-stories/03-model-aware-search-and-discovery.md)**
+### 4.8 [x] **[Flag registration & arg validation - GREEN](plan/user-stories/03-model-aware-search-and-discovery.md)**
    Register flags + validation on the search command. Minimal code (T1), verify all (T2), COMMIT: `git commit -m "feat(cli): --model/--provider flags on personas search (green)"`
    **Files:** `cmd/atcr/personas.go` | **Duration:** ~1h
 
-### 4.8.A [ ] **[Flag registration & arg validation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-model-aware-search-and-discovery.md)**
+### 4.8.A [x] **[Flag registration & arg validation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-model-aware-search-and-discovery.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 4.8`) — changed files, verbatim checklist, severity rubric, findings-table-only. Focus: error paths use `RunE` returns not `os.Exit`; output via `cmd.OutOrStdout()`.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | - | No issues found | - |
+
+   **Reviewer confirmations (no defect):** guard fires the exact canonical string via `usageError` (exit 2), never `os.Exit`; flag values trimmed before the guard (defense-in-depth with `SearchWithOptions`' own trim) so empty flags never trigger an unfiltered match; guard reachable for every all-empty combo; all output via `cmd.OutOrStdout()`; `MaximumNArgs(1)` scoped to the search command only; keyword-path "No personas found matching %q" preserved verbatim.
 
    **Action Required:**
    - CRITICAL/HIGH -> 4.9, do NOT proceed until fixed | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 4.9 [ ] **[Flag registration & arg validation - REFACTOR](plan/user-stories/03-model-aware-search-and-discovery.md)**
+   **Outcome:** No findings. Adversarial review passed.
+
+### 4.9 [x] **[Flag registration & arg validation - REFACTOR](plan/user-stories/03-model-aware-search-and-discovery.md)**
    Fix CRITICAL/HIGH from 4.8.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(cli): search flag cleanup"`
    **Duration:** ~30m
+   > **No-op REFACTOR:** 4.8.A returned zero findings; no CRITICAL/HIGH to fix and no cleanup warranted (the GREEN already routes output through `cmd.OutOrStdout()`, uses `RunE`/`usageError`, and trims flags). Suite green — no separate commit.
 
-### 4.10 [ ] **[Search table provider/model columns - RED](plan/user-stories/03-model-aware-search-and-discovery.md)**
+### 4.10 [x] **[Search table provider/model columns - RED](plan/user-stories/03-model-aware-search-and-discovery.md)**
    **AC:** [03-04](plan/acceptance-criteria/03-04-search-table-provider-model-columns.md)
    Write failing tests for `renderPersonaSearch` output including `provider`/`model` columns. Verify fail correctly.
    **Files:** `cmd/atcr/personas_test.go` | **Duration:** ~45m
 
-### 4.11 [ ] **[Search table provider/model columns - GREEN](plan/user-stories/03-model-aware-search-and-discovery.md)**
+### 4.11 [x] **[Search table provider/model columns - GREEN](plan/user-stories/03-model-aware-search-and-discovery.md)**
    Render provider/model columns. Minimal code (T1), verify all (T2), COMMIT: `git commit -m "feat(cli): render provider/model columns in search (green)"`
    **Files:** `cmd/atcr/personas.go` | **Duration:** ~45m
 
-### 4.11.A [ ] **[Search table provider/model columns - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-model-aware-search-and-discovery.md)**
+### 4.11.A [x] **[Search table provider/model columns - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-model-aware-search-and-discovery.md)**
    **Spawn a fresh subagent** (description `Adversarial review: 4.11`) — changed files, verbatim checklist, severity rubric, findings-table-only. Focus: empty-field rendering, column alignment with `omitempty` values.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (no CRITICAL/HIGH):**
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | personas.go renderPersonaSearch/writeTable | Untrusted community-index fields (Name/Provider/Model/Description) written raw to the terminal → control-char/ANSI injection (newline row-forgery, tab misalignment, escape spoofing). Partly pre-existing; new Provider/Model columns widen it. | **Deferred → TD-008** (below CRITICAL/HIGH inline bar; largely pre-existing; no untrusted index served in CI pre-public-launch). |
+   | LOW | personas.go:458 | `Description` emitted raw (not via `orDash`), so an empty Description is a blank cell rather than "-". | **Declined (intentional):** AC 03-04 scopes the "-" placeholder to Version/Provider/Model; Description was rendered raw pre-change (no regression), and real entries always carry a description. |
+
+   **Reviewer confirmations (no defect):** header order pinned correctly (`NAME VERSION PROVIDER MODEL DESCRIPTION`); empty-set renders header-only; empty Version/Provider/Model correctly yield "-"; `%` in a value is never reinterpreted (all `%s` args).
 
    **Action Required:**
    - CRITICAL/HIGH -> 4.12, do NOT proceed until fixed | MEDIUM/LOW -> `tech-debt-captured.md` | None -> proceed
 
-### 4.12 [ ] **[Search table provider/model columns - REFACTOR](plan/user-stories/03-model-aware-search-and-discovery.md)**
+   **Outcome:** No CRITICAL/HIGH. Adversarial review passed. MEDIUM → TD-008; LOW declined as intentional (out of AC 03-04 scope).
+
+### 4.12 [x] **[Search table provider/model columns - REFACTOR](plan/user-stories/03-model-aware-search-and-discovery.md)**
    Fix CRITICAL/HIGH from 4.11.A; maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(cli): search rendering cleanup"`
    **Duration:** ~20m
+   > **No-op REFACTOR:** 4.11.A found no CRITICAL/HIGH; the sole MEDIUM was deferred to TD-008 (not an inline fix). GREEN already extracted the shared `orDash` placeholder helper, so no additional cleanup warranted. Suite green — no separate commit.
 
-### 4.13 [ ] **Phase 4 DoD**
+### 4.13 [x] **Phase 4 DoD**
    1. Tests (T3): `go test ./...` all passing (Story 3 complete)
    2. Coverage ≥80%; Lint/vet/fmt clean
    3. Structured-only matching proven (no free-text fallback)

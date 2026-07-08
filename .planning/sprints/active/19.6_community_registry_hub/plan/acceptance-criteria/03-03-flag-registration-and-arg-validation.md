@@ -12,7 +12,7 @@
 | Key Dependencies | `spf13/cobra` (existing dependency only) | No new third-party dependency |
 
 ### Related Files (from codebase-discovery.json)
-- `cmd/atcr/personas.go` (line ~218 `newPersonasSearchCmd`) — modify: relax `Args` from `ExactArgs(1)` to `MaximumNArgs(1)`, register `--model`/`--provider` via `cmd.Flags().String(...)`, and add a `RunE` guard returning `usageError` when keyword is empty/whitespace AND both flags are unset.
+- `cmd/atcr/personas.go` (line ~218 `newPersonasSearchCmd`) — modify: relax `Args` from `ExactArgs(1)` to `MaximumNArgs(1)`, register `--model`/`--provider` via `cmd.Flags().String(...)`, and add a `RunE` guard returning the canonical `usageError` string `"provide a keyword, --model, or --provider"` when — after trimming — keyword AND both flag values are all empty. Trim each flag value before evaluating it, so an empty/whitespace `--model ""`/`--provider ""` counts as absent (never a whole-index match).
 - `cmd/atcr/personas_test.go` — create/modify: integration tests invoking the search command with no args/no flags (expect `usageError`) and with only `--model`/`--provider` and no positional keyword (expect success).
 - `internal/personas/search.go` (`Search`) — reference: the search function that receives the flag values.
 
@@ -35,7 +35,7 @@
 **Edge Case 1: No keyword and no flags produces a usage error, not an empty result**
 - **Given** the story's Risk #1 (relaxing `ExactArgs(1)` could silently accept a no-argument, no-flag call)
 - **When** `atcr personas search` is run with zero positional args and neither `--model` nor `--provider` set
-- **Then** the command returns a `usageError` (e.g. `"provide a keyword, --model, or --provider"`) instead of silently running an unfiltered/empty search
+- **Then** the command returns the canonical `usageError` string `"provide a keyword, --model, or --provider"` (this exact string is pinned and reused by every guard path in this AC) instead of silently running an unfiltered/empty search
 
 **Edge Case 2: Two positional arguments still rejected**
 - **Given** `Args: cobra.MaximumNArgs(1)`
@@ -47,11 +47,16 @@
 - **When** the command runs
 - **Then** the guard treats the trimmed-empty keyword as absent (does not error, since `--model` satisfies the "something was supplied" requirement) and filtering proceeds using only `--model`
 
+**Edge Case 4: Empty/whitespace flag value is treated as ABSENT (no unfiltered whole-index match)**
+- **Given** `atcr personas search --model ""` (or `--provider "   "`) with no positional keyword
+- **When** the guard evaluates the inputs
+- **Then** the flag value is trimmed and, being empty, is treated as ABSENT — it does NOT count toward "something was supplied". Because keyword, `--model`, and `--provider` are all effectively empty, the guard returns the canonical `usageError` (`"provide a keyword, --model, or --provider"`) and the command MUST NOT proceed to run an unfiltered whole-index match. The guard requires at least one NON-EMPTY value among {keyword, `--model`, `--provider`} after trimming.
+
 ## Error Conditions
 **Error Scenario 1: Bare `atcr personas search` with no keyword and no flags**
 - **Given** no positional argument and no `--model`/`--provider` flags
 - **When** the command is invoked
-- **Then** a `usageError` is returned with a message clearly stating a keyword or `--model`/`--provider` is required
+- **Then** a `usageError` is returned carrying the pinned canonical string `"provide a keyword, --model, or --provider"` (identical to Edge Case 1 and Edge Case 4 — one string, reused)
 - HTTP status / error code: N/A (CLI exit code non-zero via existing `usageError` wrapping convention)
 
 **Error Scenario 2: More than one positional argument**
@@ -74,15 +79,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `Args` relaxed from `ExactArgs(1)` to `MaximumNArgs(1)` (or equivalent) on `newPersonasSearchCmd`
-- [ ] `--model`/`--provider` registered via `cmd.Flags().String(...)` following the `--scores` pattern
-- [ ] `RunE` guard returns `usageError` when keyword is empty/whitespace AND both `--model`/`--provider` are unset
-- [ ] `--model`-only and `--provider`-only invocations (no positional keyword) succeed
+- [x] `Args` relaxed from `ExactArgs(1)` to `MaximumNArgs(1)` (or equivalent) on `newPersonasSearchCmd`
+- [x] `--model`/`--provider` registered via `cmd.Flags().String(...)` following the `--scores` pattern
+- [x] `RunE` guard returns the pinned canonical `usageError` string `"provide a keyword, --model, or --provider"` when — after trimming — keyword AND both `--model`/`--provider` are all empty
+- [x] Empty/whitespace flag values (`--model ""`, `--provider "   "`) are trimmed and treated as ABSENT — the guard never lets an empty flag trigger an unfiltered whole-index match
+- [x] `--model`-only and `--provider`-only invocations (no positional keyword) succeed
 
 **Manual Review:**
 - [ ] Code reviewed and approved

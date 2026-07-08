@@ -36,7 +36,7 @@
 
 **Edge Case 2: Column order/count does not break existing table alignment**
 - **Given** the `writeTable`/`tabwriter` helper (line ~375) used by all persona list/search renderers
-- **When** the 5-column header (`NAME\tVERSION\tPROVIDER\tMODEL\tDESCRIPTION` or similar ordering) is passed
+- **When** the pinned 5-column header `NAME\tVERSION\tPROVIDER\tMODEL\tDESCRIPTION` (this exact order — no other ordering is acceptable) is passed
 - **Then** `tabwriter` aligns all columns without misalignment or overflow regardless of value width, including empty-string cells
 
 ## Error Conditions
@@ -61,15 +61,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `renderPersonaSearch` header includes `PROVIDER` and `MODEL` columns
-- [ ] Populated `Provider`/`Model` values render in their columns matching the input values
-- [ ] Empty `Provider`/`Model` values render as `"-"` per existing placeholder convention
-- [ ] Table alignment via `tabwriter` is unaffected by the new columns
+- [x] `renderPersonaSearch` header is exactly `NAME  VERSION  PROVIDER  MODEL  DESCRIPTION` in that pinned column order (the header-assertion test checks this exact sequence — no alternative ordering permitted)
+- [x] Populated `Provider`/`Model` values render in their columns matching the input values
+- [x] Empty `Provider`/`Model` values render as `"-"` per existing placeholder convention
+- [x] Table alignment via `tabwriter` is unaffected by the new columns
 
 **Manual Review:**
 - [ ] Code reviewed and approved
