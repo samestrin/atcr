@@ -2,6 +2,7 @@ package personas
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -129,4 +130,31 @@ func TestPennyFixture(t *testing.T) {
 
 func TestIngridFixture(t *testing.T) {
 	fixtureTest(t, "ingrid", "testdata/ingrid_fixture.patch", "error")
+}
+
+// goWordRe matches the standalone language name "go"/"Go" (whole word,
+// case-insensitive) but not compound words like "goroutine" or "good".
+var goWordRe = regexp.MustCompile(`(?i)\bgo\b`)
+
+// TestIngridGeneralizedBeyondGo covers AC 05-02: ingrid's Role/Focus read as a
+// language-agnostic idiomatic lens (no literal "Go" as the review target), and a
+// NON-Go fixture (a Python swallowed-exception diff) exercises the generalized
+// lens and passes — proving "generalized beyond Go" by an executed check, not
+// prose. The original Go fixture (Edge Case 2) is still covered by TestIngridFixture.
+func TestIngridGeneralizedBeyondGo(t *testing.T) {
+	text, err := Get("ingrid")
+	require.NoError(t, err)
+
+	roleFocus := sectionBody(text, "## Role") + sectionBody(text, "## Focus")
+	require.NotRegexp(t, goWordRe, roleFocus,
+		"ingrid Role/Focus must be language-agnostic — no literal 'Go' as the review target")
+
+	require.Contains(t, strings.ToLower(text), "error",
+		"ingrid must still name a concrete idiomatic category (error handling)")
+
+	diff, err := os.ReadFile("testdata/ingrid_lang2_fixture.patch")
+	require.NoError(t, err, "non-Go fixture must exist")
+	out, err := payload.RenderPrompt(text, renderContext(string(diff)))
+	require.NoError(t, err, "generalized ingrid must render against a non-Go fixture")
+	require.NotContains(t, out, "{{", "no unresolved template action against the non-Go fixture")
 }

@@ -1,0 +1,12 @@
+diff --git a/src/importer.py b/src/importer.py
+index 1111111..2222222 100644
+--- a/src/importer.py
++++ b/src/importer.py
+@@ -10,6 +10,12 @@ class Importer:
+
++    def load(self, path):
++        try:
++            return self._read(path)
++        except Exception:
++            pass  # error swallowed silently: the caller cannot tell the load failed
++        return None
