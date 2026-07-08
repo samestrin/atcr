@@ -145,9 +145,15 @@ func TestIngridGeneralizedBeyondGo(t *testing.T) {
 	text, err := Get("ingrid")
 	require.NoError(t, err)
 
-	roleFocus := sectionBody(text, "## Role") + sectionBody(text, "## Focus")
+	roleFocus := strings.ToLower(sectionBody(text, "## Role") + sectionBody(text, "## Focus"))
 	require.NotRegexp(t, goWordRe, roleFocus,
 		"ingrid Role/Focus must be language-agnostic — no literal 'Go' as the review target")
+	// Beyond the bare word "go", ban Go-specific construct tokens so the lens is
+	// framed generally (thread/coroutine, not goroutine; stdlib category, not strconv).
+	for _, tok := range []string{"goroutine", "golang", "strconv", "defer ", "sync."} {
+		require.NotContainsf(t, roleFocus, tok,
+			"ingrid Role/Focus must not name the Go-specific construct %q", tok)
+	}
 
 	require.Contains(t, strings.ToLower(text), "error",
 		"ingrid must still name a concrete idiomatic category (error handling)")
@@ -157,4 +163,8 @@ func TestIngridGeneralizedBeyondGo(t *testing.T) {
 	out, err := payload.RenderPrompt(text, renderContext(string(diff)))
 	require.NoError(t, err, "generalized ingrid must render against a non-Go fixture")
 	require.NotContains(t, out, "{{", "no unresolved template action against the non-Go fixture")
+	// Non-vacuous: the Python fixture's payload must actually flow into the render,
+	// proving the generalized lens is exercised against a non-Go sample.
+	require.Contains(t, out, "except Exception",
+		"the non-Go (Python) fixture payload must render into the prompt")
 }

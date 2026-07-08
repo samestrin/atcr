@@ -34,7 +34,7 @@ SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit nothing.
 
 Example:
-HIGH|src/importer.py:12|Exception swallowed with a bare except/pass, so a failed load silently returns None|Catch the specific exception and propagate or log it with context|error|15|except Exception: pass
+HIGH|lib/cache.rb:22|A rescue swallows StandardError and returns nil, hiding a failed fetch from the caller|Rescue the specific error and surface or log it with context|error|15|rescue StandardError; nil
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.
