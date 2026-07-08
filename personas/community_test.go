@@ -228,18 +228,22 @@ func TestCommunityIndex_Registration(t *testing.T) {
 			_, err := os.Stat(communityPath(e.Path))
 			require.NoErrorf(t, err, "index path %q must resolve to a committed YAML", e.Path)
 
-			// Scenario 2: provider/model match the persona YAML exactly.
+			// Scenario 2: provider/model/description match the persona YAML exactly.
 			var ym struct {
-				Provider string `yaml:"provider"`
-				Model    string `yaml:"model"`
+				Provider    string `yaml:"provider"`
+				Model       string `yaml:"model"`
+				Description string `yaml:"description"`
 			}
 			yraw, err := os.ReadFile(communityPath(p.Slug + ".yaml"))
 			require.NoErrorf(t, err, "read yaml %s", p.Slug)
 			require.NoError(t, yaml.Unmarshal(yraw, &ym))
 			require.Equalf(t, ym.Provider, e.Provider, "provider drift for %q", p.Slug)
 			require.Equalf(t, ym.Model, e.Model, "model drift for %q", p.Slug)
-			require.NotEmptyf(t, e.Provider, "index provider must be non-empty for %q", p.Slug)
+			require.Equalf(t, ym.Description, e.Description, "description drift for %q", p.Slug)
 			require.NotEmptyf(t, e.Model, "index model must be non-empty for %q", p.Slug)
+			// Pin the routing key: every community persona routes through openrouter,
+			// never a vendor-named provider (LOCKED Q3 / Phase 5 clarifications).
+			require.Equalf(t, "openrouter", e.Provider, "index provider must be the openrouter routing key for %q", p.Slug)
 
 			// Grouping key: the vendor token lives in model, never provider.
 			require.Containsf(t, strings.ToLower(e.Model), p.VendorToken,
