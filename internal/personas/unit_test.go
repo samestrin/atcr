@@ -151,6 +151,28 @@ func TestInstallUnit_ReinstallMDFailurePreservesPriorYAML(t *testing.T) {
 	assert.Equal(t, priorYAML, string(got), "prior .yaml content restored, not left half-written or deleted")
 }
 
+// TestInstallUnit_RefusesSymlinkedIntermediateDir: a persona name is attacker-
+// influenced (it comes from the untrusted index) and may contain "/", so
+// personaPath + MkdirAll create nested dirs. If an intermediate component is a
+// pre-planted symlink pointing outside the personas dir, writing through it would
+// escape the dir. The install must be refused and nothing written through the link.
+func TestInstallUnit_RefusesSymlinkedIntermediateDir(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	// Pre-plant a symlink at the intermediate "security" path component.
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "security")))
+
+	srv := testServer(t, map[string]string{
+		"/security/owasp.yaml": validPersonaYAML,
+		"/security/owasp.md":   customPromptMD,
+	})
+
+	err := InstallUnit(srv.Client(), srv.URL, "security/owasp", dir)
+	require.Error(t, err, "must refuse to install through a symlinked intermediate dir")
+	assert.Contains(t, err.Error(), "symlink")
+	assert.NoFileExists(t, filepath.Join(outside, "owasp.yaml"), "nothing written through the symlink")
+}
+
 // --- AC 01-06 / C3: untrusted fetched-prompt guardrails (install-time) ------
 
 // TestInstallUnit_RejectsOversizedPrompt: a fetched custom prompt longer than the
