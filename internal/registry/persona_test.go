@@ -361,3 +361,56 @@ func TestPersonaResolution_AllSixEmbeddedResolve(t *testing.T) {
 		assert.NotEmpty(t, got.Text)
 	}
 }
+
+// TestPersonaResolution_AuthoredCommunityPromptsResolveEndToEnd is the Phase 7
+// cross-story integration proof (task 7.1): a Story-4 authored persona's REAL
+// custom prompt — placed on the pinned-community (Registry) tier exactly where
+// personas.InstallUnit lands it — resolves through the single ResolvePersona chain
+// for BOTH a frontier persona (anthony/Claude) and a flat-rate open-model persona
+// (delia/DeepSeek), not merely via the per-story unit tests. It asserts the winning
+// source is the Registry tier and the resolved text is the authored prompt
+// verbatim, then proves the C3 untrusted-input guardrails (length cap + template
+// gate) still fire on that same resolve path for tampered community content.
+func TestPersonaResolution_AuthoredCommunityPromptsResolveEndToEnd(t *testing.T) {
+	for _, name := range []string{"anthony", "delia"} {
+		t.Run(name, func(t *testing.T) {
+			authored, err := personas.CommunityGet(name)
+			require.NoError(t, err)
+			require.NotEmpty(t, strings.TrimSpace(authored))
+
+			dirs := personaDirs(t)
+			// Land the authored unit prompt on the pinned-community (Registry) tier —
+			// the same on-disk location personas.InstallUnit writes <name>.md to.
+			require.NoError(t, os.WriteFile(filepath.Join(dirs.Registry, name+".md"), []byte(authored), 0o644))
+
+			got, err := ResolvePersona(name, name, nil, dirs)
+			require.NoError(t, err, "authored community persona %q must resolve through the single chain", name)
+			assert.Equal(t, filepath.Join(dirs.Registry, name+".md"), got.Source)
+			assert.Equal(t, authored, got.Text, "resolved text must be the authored prompt verbatim")
+		})
+	}
+
+	// Guardrails still hold on the SAME resolve path for tampered community content.
+	t.Run("guardrails", func(t *testing.T) {
+		base, err := personas.CommunityGet("delia")
+		require.NoError(t, err)
+
+		t.Run("length cap rejects an oversized prompt", func(t *testing.T) {
+			dirs := personaDirs(t)
+			oversized := base + strings.Repeat("A", MaxExecutorSystemPromptLen+1)
+			require.NoError(t, os.WriteFile(filepath.Join(dirs.Registry, "delia.md"), []byte(oversized), 0o644))
+			_, err := ResolvePersona("delia", "delia", nil, dirs)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "maximum length")
+		})
+
+		t.Run("template gate rejects a disallowed action", func(t *testing.T) {
+			dirs := personaDirs(t)
+			tampered := base + "\n{{range .Payload}}{{end}}\n"
+			require.NoError(t, os.WriteFile(filepath.Join(dirs.Registry, "delia.md"), []byte(tampered), 0o644))
+			_, err := ResolvePersona("delia", "delia", nil, dirs)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "disallowed template")
+		})
+	})
+}
