@@ -470,6 +470,26 @@ func TestRenderPersonaSearch_EmptyProviderModelPlaceholder(t *testing.T) {
 	assert.Equal(t, "-", fields[3], "empty MODEL renders as placeholder")
 }
 
+// TestRenderPersonaSearch_StripsControlChars: community-index string fields are
+// untrusted; a crafted field must not smuggle a raw ANSI escape into the user's
+// terminal, nor an embedded newline/tab that would split one row into extra rows
+// or columns. Every dynamic cell flows through the shared writeTable path, so the
+// sanitization must strip C0 control characters (tab, newline, CR, ESC) uniformly.
+func TestRenderPersonaSearch_StripsControlChars(t *testing.T) {
+	var buf bytes.Buffer
+	entries := []personas.PersonaIndexEntry{
+		{Name: "evil/persona", Version: "1.0.0", Provider: "anthropic", Model: "claude",
+			Description: "red\x1b[31m\nFAKE\tROW"},
+	}
+	require.NoError(t, renderPersonaSearch(&buf, entries))
+
+	out := buf.String()
+	assert.NotContains(t, out, "\x1b", "raw ANSI ESC must be stripped from an index field")
+	// writeTable emits exactly one header line + one data line, each newline-
+	// terminated. An embedded newline in a field would add a third → row injection.
+	assert.Equal(t, 2, strings.Count(out, "\n"), "header + exactly one data row (no injected rows)")
+}
+
 // TestPersonasSearch_OutputHasProviderModelColumns covers AC 03-04 Scenario 2:
 // end-to-end, `search --model deepseek` output includes the Provider/Model columns
 // populated for the matching persona.
