@@ -56,6 +56,12 @@ The loader canonicalizes every entry (trim whitespace → strip **all** leading 
 
 **Nil semantics:** omit `language` entirely (or leave it empty) and the persona carries no constraint — it participates in every review regardless of the repository's detected language, with no routing preference. Use a `language` scope only when the persona is genuinely language-specific.
 
+### Model-in-structured-metadata convention
+
+A persona's bound `model` must live in its **structured metadata** — the `model:` YAML key above — and never only in the free-text `description`. Discovery *by model* (`atcr personas search --model …`) matches the structured field, so a model named only in prose is invisible to search and does not satisfy the authoring contract.
+
+This is a **forward-looking rule for every community/library persona**: the persona fixture test in `internal/personas/test.go` (`TemplateFixtureRunner.RunFixture`) asserts the resolved persona carries a non-empty `model` in structured metadata — a blank or missing value fails `go test` with a clear, attributable error — alongside the fixture render check described in [section 3](#3-the-fixture). Embedded built-in personas are model-agnostic and **exempt** (they carry no `provider`/`model`); this exemption is built-in-only, and community contributions are held to the convention.
+
 ## 2. The prompt template
 
 The prompt is what the persona actually *says* to the model. Built-in personas live as Markdown templates in `personas/` (for example `personas/bruce.md`, `personas/sasha.md`); a community persona's `persona:` field names its prompt. Mirror the canonical structure exactly — the same section headings and the same template variables:

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -573,4 +574,21 @@ func TestFetch_RejectsOversizedBody(t *testing.T) {
 	_, err := fetch(srv.Client(), srv.URL+"/big.yaml", errors.New("not found"))
 	require.Error(t, err, "fetch must reject a body larger than fetchBodyLimit")
 	assert.Contains(t, err.Error(), "limit")
+}
+
+// TestDocs_ModelInMetadataConventionExists asserts docs/personas-authoring.md
+// documents the model-in-structured-metadata convention (AC 06-01) and names the
+// fixture test in internal/personas/test.go as its enforcement point. Mirrors the
+// doc-content assertion pattern in internal/payload/template_test.go.
+func TestDocs_ModelInMetadataConventionExists(t *testing.T) {
+	data, err := os.ReadFile("../../docs/personas-authoring.md")
+	require.NoError(t, err, "docs/personas-authoring.md must exist")
+	content := string(data)
+	for _, want := range []string{
+		"Model-in-structured-metadata convention",
+		"structured metadata",
+		"internal/personas/test.go",
+	} {
+		assert.Truef(t, strings.Contains(content, want), "docs/personas-authoring.md missing %q", want)
+	}
 }
