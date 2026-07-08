@@ -10,10 +10,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// bareRetiredRe matches the retired persona slugs sentinel/tracer as bare words.
-// In the persona-identifier scan scope these are never legitimate English words
-// (unlike "idiomatic"), so a bare match is a stale persona reference.
-var bareRetiredRe = regexp.MustCompile(`\b(sentinel|tracer)\b`)
+// bareRetiredRe matches the retired persona slugs sentinel/tracer as bare words
+// OR as an underscore-suffixed identifier stem (e.g. sentinel_fixture, where the
+// underscore is a word char and would otherwise defeat the trailing \b). In the
+// persona-identifier scan scope these are never legitimate English words (unlike
+// "idiomatic"), so a match is a stale persona reference.
+//
+// Known limitation (accepted): a BARE "idiomatic" persona-list row in a doc code
+// fence (e.g. "# idiomatic  built-in") is not caught, because "idiomatic" is a
+// common adjective ingrid's own prompt uses — catching it bare would false-positive.
+// The identifier forms below cover the realistic doc/code references; the built-in
+// persona table is additionally reviewed manually.
+var bareRetiredRe = regexp.MustCompile(`\b(sentinel|tracer)\b|(sentinel|tracer)_`)
 
 // idiomaticIdentRe matches "idiomatic" only in a PERSONA-IDENTIFIER context —
 // a doc code span, a file reference, a fixture stem, or a quoted literal — never
@@ -39,6 +47,17 @@ func retiredSlugScanFiles(t *testing.T) []string {
 		filepath.Join("..", "docs", "personas-install.md"),
 		filepath.Join("..", "README.md"),
 	)
+	// AC 05-03 Scenario 2 also scopes package test files ("a stale slug in a test
+	// file must not be invisible"). Scan them EXCEPT this file, which legitimately
+	// contains the retired slugs in its regex literals and old-slug assertions.
+	tests, err := filepath.Glob("*_test.go")
+	require.NoError(t, err)
+	for _, tf := range tests {
+		if filepath.Base(tf) == "retired_slugs_test.go" {
+			continue
+		}
+		files = append(files, tf)
+	}
 	return files
 }
 
@@ -58,9 +77,16 @@ func TestNoRetiredSlugs(t *testing.T) {
 		}
 	}
 
-	// Fixture filenames must carry no retired stem.
-	patches, err := filepath.Glob(filepath.Join("testdata", "*.patch"))
-	require.NoError(t, err)
+	// Fixture filenames must carry no retired stem (built-in + community testdata).
+	var patches []string
+	for _, glob := range []string{
+		filepath.Join("testdata", "*.patch"),
+		filepath.Join("community", "testdata", "*.patch"),
+	} {
+		found, err := filepath.Glob(glob)
+		require.NoError(t, err)
+		patches = append(patches, found...)
+	}
 	for _, p := range patches {
 		base := filepath.Base(p)
 		assert.NotRegexpf(t, `^(sentinel|tracer|idiomatic)_`, base, "fixture %s carries a retired slug stem", p)
