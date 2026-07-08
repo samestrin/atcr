@@ -475,6 +475,15 @@ func TestSearchWithOptions_KeywordPlusFlagAND(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"dan"}, resultNames(got),
 		"keyword must combine with --provider as AND, not be replaced by it")
+
+	// Keyword + Model AND: the keyword "deepseek" reaches structured Model, so it
+	// alone matches amara/dan/omar/cara (structured) + finn (Description). Adding
+	// Model "gpt-4" (structured-only) narrows to just finn — proving the keyword's
+	// OR-reach and the --model structured filter compose as AND, not OR.
+	got, err = SearchWithOptions(srv.Client(), srv.URL, SearchOptions{Keyword: "deepseek", Model: "gpt-4"})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"finn"}, resultNames(got),
+		"keyword and --model must AND-narrow, never OR")
 }
 
 // TestSearch_OldShapeKeywordParity covers AC 03-02 Error Scenario 1: for old-shape
@@ -490,10 +499,14 @@ func TestSearch_OldShapeKeywordParity(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"security/owasp", "security/sans"}, resultNames(legacy))
 
+	// Assert against the hardcoded Name/Description-only expected set (not a
+	// cross-call comparison with the wrapper, which would be tautological): this is
+	// the load-bearing proof that the structured extension did not alter old-shape
+	// keyword semantics.
 	opts, err := SearchWithOptions(srv.Client(), srv.URL, SearchOptions{Keyword: "security"})
 	require.NoError(t, err)
-	assert.ElementsMatch(t, resultNames(legacy), resultNames(opts),
-		"SearchWithOptions keyword path must match the legacy Search wrapper for old-shape entries")
+	assert.ElementsMatch(t, []string{"security/owasp", "security/sans"}, resultNames(opts),
+		"keyword-only search over old-shape entries must equal exactly the Name/Description hits (no regression)")
 
 	// Description-only substring on an old-shape entry still matches (no regression).
 	desc, err := Search(srv.Client(), srv.URL, "hot-path")
