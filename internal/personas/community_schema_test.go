@@ -21,12 +21,17 @@ func communityYAMLRoot() string { return filepath.Join("..", "..", "personas", "
 // (security-reviewer, perf-checker) would carry.
 var humanNameRe = regexp.MustCompile(`^[a-z]+$`)
 
-// retiredRoleSlugs are the role-based names Epic 23.0 retires; none may appear as
-// a community-library persona name.
+// retiredRoleSlugs are role-based names barred by the all-human-names convention
+// (Epic 23.0's retired stragglers plus common role words). A single lowercase
+// word can still be a disguised role, so this denylist is a backstop; the
+// load-bearing guarantee is name==slug consistency plus manual review.
 var retiredRoleSlugs = map[string]struct{}{
 	"sentinel": {}, "tracer": {}, "idiomatic": {},
 	"security": {}, "perf": {}, "reviewer": {}, "checker": {},
-	"auditor": {}, "scanner": {}, "linter": {},
+	"auditor": {}, "scanner": {}, "linter": {}, "critic": {},
+	"analyst": {}, "inspector": {}, "guardian": {}, "grader": {},
+	"monitor": {}, "validator": {}, "enforcer": {}, "judge": {},
+	"skeptic": {}, "fixer": {}, "executor": {}, "reviewerbot": {},
 }
 
 // TestCommunityPersonas_StrictSchema covers AC 04-06 Scenario 1 / Edge 2: every
@@ -76,6 +81,16 @@ func TestCommunityPersonas_HumanNames(t *testing.T) {
 				"persona slug %q must be a single lowercase human name (no hyphen/digit)", name)
 			_, retired := retiredRoleSlugs[name]
 			require.Falsef(t, retired, "persona slug %q is a retired role-based name", name)
+
+			// The YAML's own name must equal the slug, so a role-based name can't
+			// hide inside a human-slugged file (closes the 5.17.A guard gap).
+			data, err := os.ReadFile(filepath.Join(communityYAMLRoot(), name+".yaml"))
+			require.NoErrorf(t, err, "read yaml %s", name)
+			var m struct {
+				Name string `yaml:"name"`
+			}
+			require.NoError(t, yaml.Unmarshal(data, &m))
+			require.Equalf(t, name, m.Name, "YAML name %q must equal the human slug %q", m.Name, name)
 		})
 	}
 }
