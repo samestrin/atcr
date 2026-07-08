@@ -566,28 +566,37 @@ Answers to the Phase 3 safety-check questions (open decisions the ACs/design-not
    Fix CRITICAL/HIGH from 3.14.A (security findings are non-negotiable inline fixes); maintain green (T1), validate (T3); COMMIT: `git commit -m "refactor(personas): harden ResolvePersona + guardrails"`
    **Duration:** ~1.5h
 
-### 3.16 [ ] **Phase 3 DoD**
-   1. Tests (T3): `go test ./...` all passing (Story 1 complete)
-   2. Coverage ≥80%; Lint/vet/fmt clean
-   3. Security guardrails (length cap, fixture gate) proven by tests
-   4. DoD report (Story 1)
+### 3.16 [x] **Phase 3 DoD**
+   1. ✅ Tests (T3): `go test ./...` all passing (Story 1 complete — 40 packages ok)
+   2. ✅ Coverage ≥80% (internal/personas 83.3%, internal/registry 93.3%, cmd/atcr 83.8%); ✅ golangci-lint 0 issues; `go vet`/`gofmt` clean
+   3. ✅ Security guardrails proven by tests: length cap + `{{ }}` reject at install (`TestInstallUnit_Rejects*`) and resolve (`TestPersonaResolution_Registry*`); dir reconciliation (`TestPersonasDir_EqualsResolverRegistryDir`); namespaced traversal + intermediate-symlink refusal; all-or-nothing rollback; never-overwrite preservation
+   4. DoD report (Story 1) — see Outcome below
    5. COMMIT residual: `git commit -m "test(personas): phase 3 DoD"`
 
-### 3.LAST [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
-   **Scope:** All files changed during Phase 3 (`client.go`, `internal/registry/persona.go`, `internal/personas/paths.go`, `init.go`, `quickstart.go`, tests).
-   **Spawn a fresh subagent** (subagent_type `general-purpose`, description `Phase 3 gate review`). Checklist verbatim (hostile integrator): CONTRACT EXIT (the extended `ResolvePersona` still honors its existing signature & consumable by review-time callers, no second resolver introduced?), CONFIG SURFACE (`--offline`, pin file documented/back-compat?), INTEGRATION (fetch-and-pin doesn't regress install/upgrade; install dir == resolver dir on darwin?), PHASE-EXIT CONTRACT (Phase 5 personas can be delivered via this chain?), REGRESSION (Phase 2 schema still intact; existing built-in `.md` resolution unbroken?). Severity rubric; "ONLY the findings table."
+   **Story 1 DoD (ACs 01-02..01-06):** All Auto-Verified (tests pass / lint clean / build ok) and Story-Specific items satisfied — fetch-and-pin into the resolver Registry dir with version pin (01-02); `--offline` zero-network embedded fallback (01-03); descriptive fetch-failure errors + all-or-nothing rollback (01-04); never-overwrite existing personas with/without `--force` + 3-tier source labeling (01-05); single `ResolvePersona` chain resolves community units (flat + namespaced) with C1/C2/C3 guardrails, dir reconciliation, deterministic precedence (01-06). Deferred: TD-001, TD-004..TD-007 (all non-blocking, documented).
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+### 3.LAST [x] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 3 (`internal/personas/{unit,paths,list}.go`, `internal/registry/persona.go`, `cmd/atcr/{init,quickstart,personas}.go`, tests).
+   **Spawn a fresh subagent** (subagent_type `general-purpose`, description `Phase 3 gate review`). Checklist verbatim (hostile integrator): CONTRACT EXIT, CONFIG SURFACE, INTEGRATION, PHASE-EXIT CONTRACT, REGRESSION.
+
+   **Gate findings — first pass (1 HIGH, 2 MEDIUM):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | persona.go validateName vs config.go validateAgent | Namespaced `<provider>/<name>` personas unreachable: `validateName` rejected any `/` while `validateAgent` permits it in the `persona:` field — a namespaced community unit installed to a nested path could never resolve at review time (breaks C1). | **FIXED before boundary** — `validateName` now accepts a bounded `/`-separated namespace, validating each segment (no `''`/`.`/`..`/leading-dot/`_base` segment, no backslash, not absolute); install and resolve now agree. New tests: `TestPersonaResolution_NamespacedCommunityResolves`, `_NamespacedTraversalStillRejected`. **Gate re-run → passed.** |
+   | MEDIUM | upgrade.go:27-92 | `Upgrade` refreshes only the `.yaml`, not the co-located `.md` → stale-prompt hazard on upgrade. | **Deferred → TD-007** (AC 01-02 scoped `upgrade` to "no logic change"; unit-refresh work parked with TD-006). |
+   | MEDIUM | bundles.go:152 | Bundle install delivers YAML only, not the co-located `.md` (C2 delivery-path inconsistency). | **Deferred → TD-006** (already captured in 3.14.A). |
+
+   **Gate re-run after HIGH fix (1 LOW):**
+   | Severity | File:Line | Issue | Resolution |
+   |----------|-----------|-------|-----|
+   | LOW | persona.go readNonEmpty | Leaf-only symlink guard; a symlinked INTERMEDIATE namespace dir could read outside the pin dir (traversal-via-symlink opened by allowing `/`). | **FIXED inline** — `hasSymlinkedParent` refuses a symlinked intermediate (falls through); pinned by `TestPersonaResolution_NamespacedSymlinkedIntermediateRefused`. No-op for flat names. |
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
    - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
    - None found -> Note "Phase gate passed" and proceed to phase stop
-   **Duration:** 15-30 min
+
+   **Outcome:** HIGH fixed before the boundary and re-gated; the sole re-gate LOW (intermediate-symlink) fixed inline as a security-hardening (self-introduced vector). Reviewer confirmed: `ResolvePersona` signature unchanged & consumed at `review.go:999`; no second resolver (C2); `--offline` registered on both commands; PersonasDir == resolver Registry == upgrade dir on all OSes; Phase 2 index schema untouched (Phase 4 safe); Phase 5 namespaced + co-located-`.md` units resolve through the existing chain. **Phase gate passed.**
 
 ---
 
