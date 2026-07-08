@@ -2,10 +2,12 @@ package personas
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/payload"
 	builtins "github.com/samestrin/atcr/personas"
+	"gopkg.in/yaml.v3"
 )
 
 // FixtureOutcome is the result of running a persona's fixture cases.
@@ -47,6 +49,30 @@ func (r TemplateFixtureRunner) RunFixture(name string) (FixtureOutcome, error) {
 		return renderFixture(name, text, patchContent)
 	}
 
+	// If a personas directory is configured, prefer an installed on-disk unit
+	// (the production resolver chain) over the embedded library copy. The fixture
+	// patch stays embedded-only because InstallUnit never writes testdata patches
+	// to disk.
+	if r.PersonasDir != nil {
+		dir, perr := r.PersonasDir()
+		if perr == nil {
+			text, model, found, ferr := loadInstalledPersona(dir, name)
+			if ferr != nil {
+				return FixtureOutcome{}, ferr
+			}
+			if found {
+				if err := assertBoundModel(name, model); err != nil {
+					return FixtureOutcome{}, err
+				}
+				patchContent, err := builtins.CommunityFixture(name)
+				if err != nil {
+					return FixtureOutcome{HasFixture: false}, nil
+				}
+				return renderFixture(name, text, patchContent)
+			}
+		}
+	}
+
 	// Community-library persona: resolve its co-located template + fixture from
 	// the embedded community layout. A name with no embedded community template
 	// (an arbitrary/namespaced name) is not a library persona → HasFixture: false.
@@ -76,6 +102,41 @@ func (r TemplateFixtureRunner) RunFixture(name string) (FixtureOutcome, error) {
 		return FixtureOutcome{HasFixture: false}, nil
 	}
 	return renderFixture(name, text, patchContent)
+}
+
+// loadInstalledPersona reads an installed persona unit from dir. It returns the
+// .md template text, the bound model extracted from the co-located .yaml, a
+// found flag, and any error. If either file is missing, found is false and err
+// is nil so the caller can fall back to the embedded library copy.
+func loadInstalledPersona(dir, name string) (text string, model string, found bool, err error) {
+	yamlPath, perr := personaPath(dir, name)
+	if perr != nil {
+		return "", "", false, perr
+	}
+	mdPath := strings.TrimSuffix(yamlPath, ".yaml") + ".md"
+
+	mdData, merr := os.ReadFile(mdPath)
+	if merr != nil {
+		if os.IsNotExist(merr) {
+			return "", "", false, nil
+		}
+		return "", "", false, fmt.Errorf("read installed persona prompt %q: %w", name, merr)
+	}
+	yamlData, yerr := os.ReadFile(yamlPath)
+	if yerr != nil {
+		if os.IsNotExist(yerr) {
+			return "", "", false, nil
+		}
+		return "", "", false, fmt.Errorf("read installed persona metadata %q: %w", name, yerr)
+	}
+
+	var meta struct {
+		Model string `yaml:"model"`
+	}
+	if uerr := yaml.Unmarshal(yamlData, &meta); uerr != nil {
+		return "", "", false, fmt.Errorf("parse installed persona metadata %q: %w", name, uerr)
+	}
+	return string(mdData), meta.Model, true, nil
 }
 
 // assertBoundModel enforces AC 06-03: a community/library persona must carry a
