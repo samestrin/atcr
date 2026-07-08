@@ -166,20 +166,26 @@ func fileExists(path string) bool {
 // touched. Warnings go to errOut; the created-files report goes to out.
 func runInit(dir string, force bool, out, errOut io.Writer) error {
 	targets := initTargets(dir)
-	anyExist := false
+	var existing []string
 	for _, path := range targets {
 		_, err := os.Lstat(path)
 		switch {
 		case err == nil:
-			anyExist = true
+			existing = append(existing, path)
 		case !errors.Is(err, fs.ErrNotExist):
 			return fmt.Errorf("cannot check %s: %w", path, err)
 		}
 	}
-	if anyExist && !force {
-		return usageError(errors.New("config already exists at .atcr/config.yaml — use --force to overwrite"))
+	if len(existing) > 0 && !force {
+		rels := make([]string, 0, len(existing))
+		for _, p := range existing {
+			rel := strings.TrimPrefix(p, dir+string(filepath.Separator))
+			rels = append(rels, rel)
+		}
+		msg := fmt.Sprintf("existing files would be overwritten: %s — use --force to overwrite", strings.Join(rels, ", "))
+		return usageError(errors.New(msg))
 	}
-	if anyExist {
+	if len(existing) > 0 {
 		_, _ = fmt.Fprintln(errOut, "Regenerating configuration (existing persona files are preserved)")
 	}
 

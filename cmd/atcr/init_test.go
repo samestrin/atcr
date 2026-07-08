@@ -111,7 +111,7 @@ func TestInit_AlreadyExists(t *testing.T) {
 
 	err := runInit(dir, false, &bytes.Buffer{}, &bytes.Buffer{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "config already exists at .atcr/config.yaml")
+	assert.Contains(t, err.Error(), "existing files would be overwritten: .atcr/config.yaml")
 	assert.Contains(t, err.Error(), "--force")
 
 	data, err := os.ReadFile(brucePath)
