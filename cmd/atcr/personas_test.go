@@ -318,7 +318,9 @@ func TestPersonasSearch_NoMatch(t *testing.T) {
 
 	out, err := execute(t, "personas", "search", "quantum")
 	require.NoError(t, err)
-	assert.Contains(t, out, "No personas found")
+	// Pin the exact keyword-path wording (AC 03-02 Edge Case 1) so a collapse into
+	// the generic flag-only "No personas found" branch is detectable.
+	assert.Contains(t, out, `No personas found matching "quantum"`)
 }
 
 // searchGuardMsg is the AC 03-03 canonical usage-error string, pinned and reused
@@ -481,6 +483,18 @@ func TestPersonasSearch_OutputHasProviderModelColumns(t *testing.T) {
 	assert.Contains(t, out, "MODEL")
 	assert.Contains(t, out, "openrouter")
 	assert.Contains(t, out, "deepseek-chat")
+}
+
+// TestPersonasSearch_HelpCitesModelProviderFlags guards the CONFIG SURFACE that
+// Phase 7 onboarding docs will cite: `search --help` must name --model/--provider
+// and show the discover-by-model example, so a later edit cannot silently drop the
+// flag names or example the docs reference.
+func TestPersonasSearch_HelpCitesModelProviderFlags(t *testing.T) {
+	out, err := execute(t, "personas", "search", "--help")
+	require.NoError(t, err)
+	assert.Contains(t, out, "--model")
+	assert.Contains(t, out, "--provider")
+	assert.Contains(t, out, "search --model deepseek")
 }
 
 func TestPersonasRemove_Integration(t *testing.T) {
