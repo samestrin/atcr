@@ -7,11 +7,54 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
+
+// jaccardStopwords is the small stopword set dropped before the AC 04-07
+// token-set similarity comparison, so shared grammar words don't inflate J.
+var jaccardStopwords = map[string]bool{
+	"the": true, "a": true, "an": true, "you": true, "your": true, "is": true,
+	"are": true, "and": true, "or": true, "of": true, "to": true, "in": true,
+	"it": true, "that": true, "this": true, "with": true, "for": true, "on": true,
+	"as": true, "be": true, "no": true, "not": true, "into": true, "its": true,
+}
+
+// tokenSet lowercases text, splits on non-alphanumeric runs, drops stopwords, and
+// returns the deduplicated token set (AC 04-07 locked metric).
+func tokenSet(text string) map[string]struct{} {
+	set := make(map[string]struct{})
+	for _, tok := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if jaccardStopwords[tok] {
+			continue
+		}
+		set[tok] = struct{}{}
+	}
+	return set
+}
+
+// jaccard returns |A ∩ B| / |A ∪ B| for two token sets.
+func jaccard(a, b map[string]struct{}) float64 {
+	if len(a) == 0 && len(b) == 0 {
+		return 0
+	}
+	inter := 0
+	for k := range a {
+		if _, ok := b[k]; ok {
+			inter++
+		}
+	}
+	union := len(a) + len(b) - inter
+	if union == 0 {
+		return 0
+	}
+	return float64(inter) / float64(union)
+}
 
 // indexEntry mirrors the JSON shape of internal/personas.PersonaIndexEntry. It is
 // re-declared locally rather than imported to avoid an import cycle: this test
@@ -192,6 +235,47 @@ func TestCommunityPersonas_SlugConsistency(t *testing.T) {
 			_, err = os.Stat(communityPath(p.Slug + ".md"))
 			require.NoErrorf(t, err, "prompt template community/%s.md must exist", p.Slug)
 		})
+	}
+}
+
+// TestCommunityPersonas_Differentiation covers AC 04-07 Scenario 1 / Error 1: no
+// pair of personas has combined ## Role+## Focus token-set Jaccard above the
+// locked 0.85 threshold, evidencing genuine per-model task scoping rather than one
+// generic list restated ten times. Runs over all C(10,2)=45 pairs.
+func TestCommunityPersonas_Differentiation(t *testing.T) {
+	sets := make(map[string]map[string]struct{}, len(communityPersonas))
+	for _, p := range communityPersonas {
+		raw, err := os.ReadFile(communityPath(p.Slug + ".md"))
+		require.NoErrorf(t, err, "read prompt %s", p.Slug)
+		text := string(raw)
+		combined := sectionBody(text, "## Role") + " " + sectionBody(text, "## Focus")
+		sets[p.Slug] = tokenSet(combined)
+		require.NotEmptyf(t, sets[p.Slug], "persona %q has empty Role+Focus token set", p.Slug)
+	}
+	const threshold = 0.85
+	for i := 0; i < len(communityPersonas); i++ {
+		for j := i + 1; j < len(communityPersonas); j++ {
+			a, b := communityPersonas[i].Slug, communityPersonas[j].Slug
+			jac := jaccard(sets[a], sets[b])
+			require.LessOrEqualf(t, jac, threshold,
+				"personas %q and %q are too similar: Jaccard(Role+Focus)=%.3f > %.2f", a, b, jac, threshold)
+		}
+	}
+}
+
+// TestCommunityPersonas_DistinctTaskScoping covers AC 04-07 DoD: each persona
+// carries a distinct primary task tag in the index, so the library spans distinct
+// review lenses rather than repeating one.
+func TestCommunityPersonas_DistinctTaskScoping(t *testing.T) {
+	entries := readCommunityIndex(t)
+	seen := make(map[string]string, len(entries))
+	for _, e := range entries {
+		require.NotEmptyf(t, e.Tasks, "persona %q must carry a task tag", e.Name)
+		primary := e.Tasks[0]
+		if other, dup := seen[primary]; dup {
+			t.Fatalf("personas %q and %q share primary task %q — lenses must be differentiated", other, e.Name, primary)
+		}
+		seen[primary] = e.Name
 	}
 }
 
