@@ -1,9 +1,9 @@
 {
-  "skill": "finalize-td",
-  "args": "",
-  "invocation": "/finalize-td",
+  "skill": "sprint-complete",
+  "args": "@.planning/sprints/active/19.6_community_registry_hub/",
+  "invocation": "/sprint-complete @.planning/sprints/active/19.6_community_registry_hub/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "65ba85bf-62a4-4612-bd29-2df765c45fb7",
-  "timestamp": "2026-07-06T02:15:56.296Z"
+  "session_id": "76bc8d68-289c-42a8-9c6f-3c097f851101",
+  "timestamp": "2026-07-08T23:11:00.378Z"
 }

@@ -3,7 +3,6 @@ package personas
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/registry"
@@ -21,9 +20,10 @@ type UpgradeResult struct {
 }
 
 // Upgrade re-fetches name from baseURL, compares its version to the installed
-// copy, and overwrites the local file when the remote is newer. dryRun reports
-// what would change without writing. The fetched content is validated before
-// any write, so invalid remote content never overwrites a good local file.
+// copy, and overwrites the local unit (YAML plus any co-located custom prompt)
+// when the remote is newer. dryRun reports what would change without writing.
+// The fetched content is validated before any write, so invalid remote content
+// never overwrites a good local file.
 func Upgrade(client HTTPClient, baseURL, personasDir, name string, dryRun bool) (UpgradeResult, error) {
 	dest, err := personaPath(personasDir, name)
 	if err != nil {
@@ -40,7 +40,7 @@ func Upgrade(client HTTPClient, baseURL, personasDir, name string, dryRun bool) 
 	if err != nil {
 		return UpgradeResult{}, err
 	}
-	if err := registry.ValidateAgentYAML(name, remoteData); err != nil {
+	if err := registry.ValidateCommunityPersonaYAML(name, remoteData); err != nil {
 		return UpgradeResult{}, fmt.Errorf("persona %q failed validation: %w", name, err)
 	}
 
@@ -61,32 +61,8 @@ func Upgrade(client HTTPClient, baseURL, personasDir, name string, dryRun bool) 
 	if dryRun {
 		return res, nil
 	}
-	// Guard against TOCTOU symlink attacks: if dest is a symlink, writing
-	// through it would follow it and write outside the personas directory.
-	if fi, lerr := os.Lstat(dest); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return UpgradeResult{}, fmt.Errorf("refusing to write persona to symlink at %s", dest)
-	}
-	// Atomic replace: stage to a sibling temp file and rename into place so
-	// readers never observe a partially-written persona.
-	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+".tmp-*")
-	if err != nil {
-		return UpgradeResult{}, fmt.Errorf("failed to create persona temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(remoteData); err != nil {
-		_ = tmp.Close()
-		return UpgradeResult{}, fmt.Errorf("failed to write persona temp file: %w", err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return UpgradeResult{}, fmt.Errorf("failed to set persona temp file permissions: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return UpgradeResult{}, fmt.Errorf("failed to close persona temp file: %w", err)
-	}
-	if err := os.Rename(tmpName, dest); err != nil {
-		return UpgradeResult{}, fmt.Errorf("failed to write persona to %s: %w", dest, err)
+	if err := writePersonaUnit(client, baseURL, name, dest, remoteData); err != nil {
+		return UpgradeResult{}, err
 	}
 	return res, nil
 }

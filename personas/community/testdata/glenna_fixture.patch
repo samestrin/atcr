@@ -1,0 +1,15 @@
+diff --git a/internal/worker/run.go b/internal/worker/run.go
+index 1111111..2222222 100644
+--- a/internal/worker/run.go
++++ b/internal/worker/run.go
+@@ -10,6 +10,12 @@ package worker
+
++// Process drops every per-item error on the floor: no log line, no metric, no
++// return — the failure is completely unobservable in production.
++func Process(items []Item) {
++	for _, it := range items {
++		if err := handle(it); err != nil {
++			continue // error swallowed silently: no logging, metric, or trace
++		}
++	}
++}

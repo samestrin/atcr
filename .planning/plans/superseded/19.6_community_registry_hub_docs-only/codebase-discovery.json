@@ -1,0 +1,351 @@
+{
+  "generated": "2026-07-06",
+  "discovery_method": "semantic",
+  "queries": [
+    "persona YAML schema provider model",
+    "atcr personas install command implementation",
+    "persona prompt template rendering variables",
+    "community persona index fetch URL",
+    "persona fixture testdata patch convention"
+  ],
+  "match_count": 20,
+  "build_from": {
+    "primary_file": "docs/personas-authoring.md",
+    "reason": "This is the complete, authoritative schema/prompt/fixture contract that any new persona — including the model-tuned Claude and GPT-4 variants this epic ships — must satisfy: required agent fields (provider, model), the canonical prompt template structure with required template variables ({{.AgentName}}, {{.ScopeRule}}, etc.), the fixture location/naming convention (personas/testdata/<slug>_fixture.patch), and the contribution checklist. Tasks 1-2 (authored in the external atcr/personas repo) must follow this exact contract; this repo's own docs/personas-install.md and README already assume it.",
+    "suggested_approach": "Task 1-2 content (external atcr/personas repo, out of scope for this codebase) follows docs/personas-authoring.md's template + checklist verbatim for each model-tuned persona. Task 3 (the only in-repo work) updates docs/personas-install.md's early sections/Quick walkthrough and README.md's Quickstart to recommend installing the new default persona pack as part of first-time setup, reusing the existing `atcr personas install <name>` / `atcr personas search <keyword>` commands documented there — no new command, flag, or code path is needed."
+  },
+  "semantic_matches": [
+    {
+      "file": "docs/personas-authoring.md",
+      "symbol": "1. The persona YAML",
+      "type": "doc-section",
+      "line": 10,
+      "score": 1.0,
+      "query": "persona YAML provider model prompt template",
+      "relevance": "Defines the exact required/optional schema (provider, model required) new model-tuned personas must satisfy"
+    },
+    {
+      "file": "docs/personas-authoring.md",
+      "symbol": "2. The prompt template",
+      "type": "doc-section",
+      "line": 59,
+      "score": 0.998,
+      "query": "personas authoring fixture testdata template variables",
+      "relevance": "Canonical prompt structure (Role/Focus/Scope/Severity Rubric/Output Format/Payload) and required template variables the new personas' prompt phrasing must mirror"
+    },
+    {
+      "file": "docs/personas-authoring.md",
+      "symbol": "3. The fixture",
+      "type": "doc-section",
+      "line": 109,
+      "score": 0.997,
+      "query": "personas authoring fixture testdata template variables",
+      "relevance": "Fixture location/naming rule (personas/testdata/<slug>_fixture.patch) each new persona's passing fixture must follow per AC2"
+    },
+    {
+      "file": "docs/personas-authoring.md",
+      "symbol": "4. Contribution checklist",
+      "type": "doc-section",
+      "line": 150,
+      "score": 0.9995,
+      "query": "persona YAML provider model prompt template",
+      "relevance": "The exact checklist AC2 references (\"existing contribution checklist\") that each new persona submission must satisfy before publishing"
+    },
+    {
+      "file": "docs/personas-install.md",
+      "symbol": "Installing Community Personas",
+      "type": "doc-file",
+      "line": 1,
+      "score": 0.996,
+      "query": "community persona install search",
+      "relevance": "Primary target for this epic's only in-repo change (Task 3): recommend the new default persona pack here"
+    },
+    {
+      "file": "docs/personas-install.md",
+      "symbol": "Configuring the registry URL",
+      "type": "doc-section",
+      "line": 21,
+      "score": 0.9995,
+      "query": "ATCR_PERSONAS_URL client fetch index",
+      "relevance": "Documents ATCR_PERSONAS_URL and the default community repo base URL the new personas are published to/fetched from"
+    },
+    {
+      "file": "docs/personas-install.md",
+      "symbol": "atcr personas install <namespace/name>",
+      "type": "doc-section",
+      "line": 40,
+      "score": 0.9985,
+      "query": "ATCR_PERSONAS_URL client fetch index",
+      "relevance": "Install subcommand contract the new personas must be installable through (AC3)"
+    },
+    {
+      "file": "docs/personas-install.md",
+      "symbol": "atcr personas search <keyword>",
+      "type": "doc-section",
+      "line": 98,
+      "score": 0.9985,
+      "query": "community persona install search",
+      "relevance": "Search subcommand contract the new personas must be discoverable through (AC3)"
+    },
+    {
+      "file": "docs/personas-install.md",
+      "symbol": "Quick walkthrough",
+      "type": "doc-section",
+      "line": 156,
+      "score": 0.9985,
+      "query": "community persona install search",
+      "relevance": "Natural insertion point for recommending the default model-tuned persona pack during first-time setup"
+    },
+    {
+      "file": "docs/README.md",
+      "symbol": "## Personas",
+      "type": "doc-section",
+      "line": 33,
+      "score": 0.9976,
+      "query": "community persona install search",
+      "relevance": "Top-level docs index linking personas-authoring.md and personas-install.md; may need a one-line mention of the new pack"
+    },
+    {
+      "file": "README.md",
+      "symbol": "## Quickstart",
+      "type": "doc-section",
+      "line": 29,
+      "score": null,
+      "query": "README quickstart onboarding first-time setup documentation",
+      "relevance": "The other in-repo target for Task 3 — README quickstart should recommend installing the default persona pack as part of first-time setup"
+    },
+    {
+      "file": "internal/personas/client.go",
+      "symbol": "RegistryBaseUrl / BaseURL",
+      "type": "function",
+      "line": 23,
+      "score": null,
+      "query": "ATCR_PERSONAS_URL client fetch index",
+      "relevance": "Reference-only: confirms the default community repo URL and ATCR_PERSONAS_URL override mechanism the new personas are published/fetched through — no code change needed here"
+    },
+    {
+      "file": "internal/personas/test.go",
+      "symbol": "TestPersona",
+      "type": "function",
+      "line": 70,
+      "score": 0.9697,
+      "query": "personas authoring fixture testdata template variables",
+      "relevance": "Reference-only: the fixture runner `atcr personas test <name>` exercises against each persona's fixture"
+    },
+    {
+      "file": "cmd/atcr/personas_test.go",
+      "symbol": "TestPersonasTest_NoFixture",
+      "type": "function",
+      "line": 388,
+      "score": 0.998,
+      "query": "personas authoring fixture testdata template variables",
+      "relevance": "Reference-only: existing test coverage pattern for the `personas test` command that the new personas' fixtures will exercise once installed"
+    },
+    {
+      "file": "personas/_base.md",
+      "symbol": "{{.AgentName}} — code reviewer",
+      "type": "template",
+      "line": 1,
+      "score": null,
+      "query": "persona YAML provider model prompt template",
+      "relevance": "Reference-only: shows the canonical built-in prompt template structure that docs/personas-authoring.md's community-persona template mirrors"
+    },
+    {
+      "file": "cmd/atcr/personas.go",
+      "symbol": "newPersonasCmd / newPersonasInstallCmd / newPersonasSearchCmd",
+      "type": "function",
+      "line": 1,
+      "score": 1.0,
+      "query": "atcr personas install command implementation",
+      "relevance": "Reference-only: implements the `atcr personas install/search/list/upgrade/remove/test` CLI surface the new personas are discovered and installed through"
+    },
+    {
+      "file": "internal/personas/search.go",
+      "symbol": "Search",
+      "type": "function",
+      "line": 1,
+      "score": 0.9868,
+      "query": "community persona index fetch URL",
+      "relevance": "Reference-only: fetches the community repo's `index.json` that must list the new model-tuned personas for discoverability"
+    },
+    {
+      "file": "internal/personas/install.go",
+      "symbol": "Install",
+      "type": "function",
+      "line": 1,
+      "score": 0.9995,
+      "query": "atcr personas install command implementation",
+      "relevance": "Reference-only: fetches and writes persona YAML from the community repo; the new personas must be installable through this path"
+    },
+    {
+      "file": "personas/personas.go",
+      "symbol": "Names / Fixture",
+      "type": "function",
+      "line": 1,
+      "score": 0.9995,
+      "query": "persona fixture testdata patch convention",
+      "relevance": "Reference-only: defines the built-in persona registry and the `Fixture(name)` helper; community personas mirror the same fixture convention"
+    },
+    {
+      "file": "personas/testdata/sentinel_fixture.patch",
+      "symbol": "sentinel_fixture",
+      "type": "fixture",
+      "line": 1,
+      "score": 0.9990,
+      "query": "persona fixture testdata patch convention",
+      "relevance": "Reference-only: example of a passing `.patch` fixture that new community personas must emulate per docs/personas-authoring.md"
+    }
+  ],
+  "existing_patterns": [
+    {
+      "name": "Community Persona Distribution (Epic 9.0)",
+      "description": "`atcr personas install/search/list/upgrade/remove/test` fetches persona YAML (a superset of a registry agent) plus an index.json from a configurable base URL (ATCR_PERSONAS_URL, default the public atcr/personas GitHub repo).",
+      "files": ["internal/personas/client.go", "docs/personas-install.md"],
+      "follow_for": "This epic ships content through this existing mechanism only — no new command, schema, or hosting is introduced."
+    },
+    {
+      "name": "Persona Authoring Contract",
+      "description": "A persona YAML binds provider+model (required) plus optional persona/role/language fields; its prompt is a Markdown template with a fixed section structure and required template variables; a fixture proves it works without a live LLM call.",
+      "files": ["docs/personas-authoring.md", "personas/_base.md"],
+      "follow_for": "Every new model-tuned persona (Claude-tuned, GPT-4-tuned) authored in the external atcr/personas repo must conform to this contract."
+    },
+    {
+      "name": "Personas CLI Subcommand Surface",
+      "description": "`cmd/atcr/personas.go` registers six sub-subcommands (`install`, `search`, `list`, `upgrade`, `remove`, `test`) backed by `internal/personas/`. These commands are the only in-repo surface affected by this epic's content.",
+      "files": ["cmd/atcr/personas.go", "internal/personas/install.go", "internal/personas/search.go"],
+      "follow_for": "No new subcommand or flag is needed; documentation should reference the existing `atcr personas install/search` commands."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "docs/personas-install.md",
+      "relevance": "high",
+      "purpose": "User-facing guide to all `atcr personas` subcommands, including the registry URL and quick walkthrough",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "README.md",
+      "relevance": "high",
+      "purpose": "Top-level Quickstart section walking a new user through first-time setup",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "docs/README.md",
+      "relevance": "medium",
+      "purpose": "Docs index linking personas-authoring.md and personas-install.md",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "docs/personas-authoring.md",
+      "relevance": "high",
+      "purpose": "Full schema, prompt template, fixture, and contribution-checklist reference for authoring a persona",
+      "likely_modification": "reference-only (governs the external-repo content, not modified in this codebase)"
+    },
+    {
+      "path": "internal/personas/client.go",
+      "relevance": "medium",
+      "purpose": "Fetches persona YAML and index.json from the community repo base URL",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "personas/_base.md",
+      "relevance": "low",
+      "purpose": "Canonical built-in persona prompt template that the community-persona template convention mirrors",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "cmd/atcr/personas.go",
+      "relevance": "medium",
+      "purpose": "CLI surface for all `atcr personas` subcommands (install/search/list/upgrade/remove/test)",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/personas/install.go",
+      "relevance": "low",
+      "purpose": "Fetches and writes a persona YAML from the community repo to the local config directory",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/personas/search.go",
+      "relevance": "low",
+      "purpose": "Fetches the community repo index.json and filters entries by keyword",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "personas/personas.go",
+      "relevance": "low",
+      "purpose": "Embedded built-in persona registry and `Fixture(name)` helper used by built-in fixture tests",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "personas/testdata",
+      "relevance": "low",
+      "purpose": "Directory containing built-in persona `.patch` fixtures that demonstrate the fixture convention new community personas must follow",
+      "likely_modification": "reference-only"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "docs/personas-install.md:Quick walkthrough",
+      "type": "entry-point",
+      "description": "Natural place to recommend installing the new default persona pack as an early onboarding step"
+    },
+    {
+      "location": "README.md:Quickstart",
+      "type": "entry-point",
+      "description": "Natural place to recommend installing the new default persona pack as part of first-time setup, alongside `atcr init` / `atcr quickstart`"
+    }
+  ],
+  "integration_gaps": [
+    {
+      "location": "docs/personas-install.md:Quick walkthrough",
+      "type": "entry-point",
+      "description": "Must explicitly recommend installing the new default model-tuned persona pack as an early onboarding step; currently only demonstrates `security/owasp`",
+      "status": "open"
+    },
+    {
+      "location": "README.md:Quickstart",
+      "type": "entry-point",
+      "description": "Must explicitly recommend installing the default model-tuned persona pack as part of first-time setup; currently focuses on `atcr init` / `atcr review`",
+      "status": "open"
+    },
+    {
+      "location": "atcr/personas community repo",
+      "type": "external-dependency",
+      "description": "Tasks 1-2 (authoring persona YAML + prompt templates and adding index.json entries) land in the separate `atcr/personas` GitHub repository; this plan cannot verify them directly through its single-repo TDD loop",
+      "status": "tracked"
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "atcr personas install/search",
+      "path": "internal/personas/",
+      "can_extend": false,
+      "usage_example": "atcr personas install <namespace>/<name> — the exact mechanism this epic's new personas are installed through; no extension needed"
+    }
+  ],
+  "architecture_notes": [
+    "This epic performs almost no in-repo code change. The only in-repo component is docs/ (docs/personas-install.md + README.md Quickstart) — everything else (Tasks 1-2: authoring persona YAML/prompt content and publishing index.json entries) lands in the separate atcr/personas GitHub repository.",
+    "No new registry.yaml schema, no atcr.dev hosting, and no new CLI surface are introduced — this is purely new content flowing through Epic 9.0's existing distribution mechanism.",
+    "Because the substantive work is cross-repo, user stories/ACs generated for this plan should scope narrowly to the in-repo documentation change (Task 3) and describe Tasks 1-2 informationally as external dependencies, not as work this plan's TDD loop can execute."
+  ],
+  "files_to_modify": [
+    {
+      "path": "docs/personas-install.md",
+      "reason": "Recommend installing the new default model-tuned persona pack as part of first-time setup",
+      "scope": "minor"
+    },
+    {
+      "path": "README.md",
+      "reason": "Quickstart section should recommend installing the default persona pack",
+      "scope": "minor"
+    }
+  ],
+  "files_to_create": [],
+  "test_patterns": {
+    "framework": "go test (testing + testify)",
+    "test_location": "cmd/atcr/*_test.go, internal/personas/*_test.go",
+    "naming_convention": "*_test.go",
+    "example_test": "cmd/atcr/personas_test.go"
+  }
+}

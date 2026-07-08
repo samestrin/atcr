@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template/parse"
 
 	"github.com/samestrin/atcr/personas"
 )
@@ -61,12 +62,37 @@ func ResolvePersona(agentName, persona string, taskMessage *string, dirs Persona
 		if dir == "" {
 			continue
 		}
+		// A namespaced persona (security/owasp) traverses intermediate directories
+		// under dir. readNonEmpty refuses a symlinked LEAF, but the OS would still
+		// follow a symlinked intermediate component, so a planted namespace symlink
+		// could read outside dir. Refuse a symlinked intermediate (treated as "not
+		// present", so resolution falls through) to keep the whole path within dir.
+		if bad, err := hasSymlinkedParent(dir, persona); err != nil {
+			return ResolvedPersona{}, err
+		} else if bad {
+			continue
+		}
 		path := filepath.Join(dir, persona+".md")
 		text, ok, err := readNonEmpty(path)
 		if err != nil {
 			return ResolvedPersona{}, err
 		}
 		if ok {
+			// The Registry (pinned-community) tier is untrusted fetched content:
+			// defensively enforce the C3 guardrails on a resolved <persona>.md so a
+			// fetched (or hand-dropped) oversized or {{ }}-bearing custom prompt is
+			// rejected even if it bypassed the install-time check. Scope note: this
+			// guards the per-persona custom prompt only. The shared _base.md
+			// structural template (level 4 below) is intentionally NOT metachar-
+			// restricted — a base template must contain {{.Payload}} to function —
+			// and cannot be fetched anyway (the name "_base" fails validation on the
+			// install/fetch path). The trusted Project tier is likewise exempt (it
+			// may use template variables exactly like the embedded built-ins).
+			if dir == dirs.Registry {
+				if err := validateCommunityPrompt(text); err != nil {
+					return ResolvedPersona{}, fmt.Errorf("community persona %q at %s: %w", persona, path, err)
+				}
+			}
 			return ResolvedPersona{Text: text, Source: path}, nil
 		}
 	}
@@ -104,25 +130,194 @@ func ResolvePersona(agentName, persona string, taskMessage *string, dirs Persona
 	return ResolvedPersona{Text: base, Source: "embedded:_base"}, nil
 }
 
-// validateName rejects names that could escape the persona directory via path
-// separators or "..", a leading dot (dotfiles / "."/".."), and the reserved
-// "_base" (which names the shared base template, not a persona). Persona files
-// are looked up by simple base name only.
+// allowedPersonaFields is the exact set of PayloadContext fields a fetched
+// community persona prompt may reference as a bare `{{.Field}}` action (or as the
+// condition of an {{if .ToolsEnabled}} block). Each is a flat read-only
+// string/int/bool of the fixed render context — no nested struct, map, method,
+// env, or secret is reachable — so a prompt using ONLY these cannot exfiltrate or
+// execute anything. Any field chain (`.Payload.X`), pipeline, function call, or
+// other construct is rejected by validatePersonaTemplateNode below.
+var allowedPersonaFields = map[string]struct{}{
+	"AgentName":    {},
+	"ScopeRule":    {},
+	"FileCount":    {},
+	"BaseRef":      {},
+	"HeadRef":      {},
+	"PayloadMode":  {},
+	"Payload":      {},
+	"ToolsEnabled": {},
+}
+
+// ValidateFetchedPersonaPrompt enforces the C3 untrusted-input guardrails on a
+// fetched/pinned community persona prompt: a length cap (MaxPersonaPromptLen) and
+// a template allowlist. It parses the prompt with the REAL text/template parser
+// (not a regex proxy) so an unbalanced/half-open action is rejected here at
+// install/resolve rather than crashing every review at render time, and trim
+// markers / interior whitespace are normalized by the parser exactly as the
+// renderer sees them. It then walks the parse tree and permits only bare
+// references to the known PayloadContext fields and {{if .ToolsEnabled}}…{{end}}
+// blocks — the format the authoring contract mandates. Any other construct (a
+// field chain, pipeline, function call, {{range}}/{{with}}/{{template}}, or a
+// disallowed field) is rejected. Reject-all was wrong: it made every model-tuned
+// community persona un-installable and un-resolvable (TD-010), contradicting
+// Clarification C1. Rejection is a descriptive error, never a silent truncation
+// or transform.
+func ValidateFetchedPersonaPrompt(text string) error {
+	if len(text) > MaxPersonaPromptLen {
+		return fmt.Errorf("persona prompt exceeds maximum length of %d bytes", MaxPersonaPromptLen)
+	}
+	trees, err := parse.Parse("persona", text, "", "")
+	if err != nil {
+		return fmt.Errorf("persona prompt is not a valid template: %w", err)
+	}
+	// {{define}}/{{block}} create additional named trees beyond "persona"; a fetched
+	// prompt may not define associated templates.
+	if len(trees) != 1 {
+		return fmt.Errorf("persona prompt contains a disallowed template definition ({{define}} or {{block}})")
+	}
+	tree := trees["persona"]
+	if tree == nil || tree.Root == nil {
+		return nil
+	}
+	return validatePersonaTemplateNodes(tree.Root)
+}
+
+// validatePersonaTemplateNodes validates every node in a parsed template list.
+func validatePersonaTemplateNodes(list *parse.ListNode) error {
+	if list == nil {
+		return nil
+	}
+	for _, n := range list.Nodes {
+		if err := validatePersonaTemplateNode(n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validatePersonaTemplateNode permits literal text, a bare allowed-field action,
+// and an {{if <allowed-field>}}…{{end}} block (recursively validated; the
+// condition may be any allowlisted field — in practice {{if .ToolsEnabled}} — each
+// being a safe scalar with no methods). Comment nodes are never produced because
+// parse.Parse runs without parse.ParseComments and strips comments before tree
+// construction; prompts containing {{/* */}} are accepted as valid text once
+// comments are removed. Everything else — {{range}}, {{with}}, {{template}}, a
+// pipeline, a function call, or a disallowed/nested field — is rejected.
+func validatePersonaTemplateNode(n parse.Node) error {
+	switch node := n.(type) {
+	case *parse.TextNode:
+		return nil
+	case *parse.ActionNode:
+		return validatePersonaPipe(node.Pipe)
+	case *parse.IfNode:
+		if err := validatePersonaPipe(node.Pipe); err != nil {
+			return err
+		}
+		if err := validatePersonaTemplateNodes(node.List); err != nil {
+			return err
+		}
+		return validatePersonaTemplateNodes(node.ElseList)
+	default:
+		_ = node
+		return fmt.Errorf("persona prompt contains a disallowed template construct; only the known persona variables and an {{if .ToolsEnabled}} block are permitted")
+	}
+}
+
+// validatePersonaPipe permits exactly one command consisting of one bare field
+// node whose single identifier is in the allowed set — i.e. {{.AgentName}},
+// {{.Payload}}, {{if .ToolsEnabled}}, etc. — and rejects declarations, multi-stage
+// pipelines, function calls, nested field chains, and non-field expressions.
+func validatePersonaPipe(pipe *parse.PipeNode) error {
+	if pipe == nil {
+		return nil
+	}
+	if len(pipe.Decl) > 0 {
+		return fmt.Errorf("persona prompt contains a disallowed template variable declaration")
+	}
+	if len(pipe.Cmds) != 1 {
+		return fmt.Errorf("persona prompt contains a disallowed template pipeline")
+	}
+	cmd := pipe.Cmds[0]
+	if len(cmd.Args) != 1 {
+		return fmt.Errorf("persona prompt contains a disallowed template function or multi-argument command")
+	}
+	field, ok := cmd.Args[0].(*parse.FieldNode)
+	if !ok {
+		return fmt.Errorf("persona prompt contains a disallowed template expression; only bare persona fields are permitted")
+	}
+	if len(field.Ident) != 1 {
+		return fmt.Errorf("persona prompt references a disallowed nested template field (.%s)", strings.Join(field.Ident, "."))
+	}
+	if _, ok := allowedPersonaFields[field.Ident[0]]; !ok {
+		return fmt.Errorf("persona prompt references a disallowed template field (.%s)", field.Ident[0])
+	}
+	return nil
+}
+
+// validateCommunityPrompt enforces the C3 guardrails on a pinned-community persona
+// prompt resolved from the Registry tier. It delegates to ValidateFetchedPersonaPrompt
+// so the resolve-time and install-time (internal/personas) checks share one
+// allowlist and can never drift.
+func validateCommunityPrompt(text string) error {
+	return ValidateFetchedPersonaPrompt(text)
+}
+
+// validateName rejects names that could escape the persona directory. A single
+// forward slash namespace is allowed (e.g. "security/owasp") so a namespaced
+// community persona resolves to its nested <namespace>/<name>.md — matching the
+// install path (internal/personas.validatePersonaName, which uses the same
+// [a-zA-Z0-9_/-] character class). Each "/"-separated segment is validated
+// independently: no "" / "." / ".." segment (defeats traversal), no leading dot
+// (dotfiles), and no "_base" segment (reserved for the shared base template).
+// Backslashes and absolute paths are refused outright. These guarantees keep
+// filepath.Join(dir, name+".md") strictly within dir.
 func validateName(kind, name string) error {
 	if name == "" {
 		return fmt.Errorf("%s name must not be empty", kind)
 	}
-	if name != filepath.Base(name) || strings.Contains(name, "..") ||
-		strings.ContainsRune(name, '/') || strings.ContainsRune(name, '\\') {
-		return fmt.Errorf("invalid %s name %q: must not contain path separators", kind, name)
+	if strings.ContainsRune(name, '\\') {
+		return fmt.Errorf("invalid %s name %q: must not contain a backslash", kind, name)
 	}
-	if strings.HasPrefix(name, ".") {
-		return fmt.Errorf("invalid %s name %q: must not start with a dot", kind, name)
+	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") {
+		return fmt.Errorf("invalid %s name %q: must not be an absolute path", kind, name)
 	}
-	if name == "_base" {
-		return fmt.Errorf("invalid %s name %q: \"_base\" is reserved for the shared base template", kind, name)
+	for _, seg := range strings.Split(name, "/") {
+		switch {
+		case seg == "" || seg == "." || seg == "..":
+			return fmt.Errorf("invalid %s name %q: contains an invalid path segment", kind, name)
+		case strings.HasPrefix(seg, "."):
+			return fmt.Errorf("invalid %s name %q: a path segment must not start with a dot", kind, name)
+		case seg == "_base":
+			return fmt.Errorf("invalid %s name %q: \"_base\" is reserved for the shared base template", kind, name)
+		}
 	}
 	return nil
+}
+
+// hasSymlinkedParent reports whether any intermediate directory component of a
+// namespaced persona (the "/"-separated segments before the leaf) under dir is a
+// symlink. The leaf itself is guarded by readNonEmpty; this closes the
+// intermediate-component symlink-escape that a multi-segment path would otherwise
+// allow. A flat name has no intermediate components, so this is a no-op for it.
+// A missing intermediate is not a symlink (nothing to read) and returns false.
+func hasSymlinkedParent(dir, name string) (bool, error) {
+	segs := strings.Split(name, "/")
+	cur := dir
+	for _, seg := range segs[:len(segs)-1] { // intermediate dirs only, not the leaf
+		cur = filepath.Join(cur, seg)
+		fi, err := os.Lstat(cur)
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("stat persona path %s: %w", cur, err)
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			fmt.Fprintf(os.Stderr, "warning: persona path component %s is a symlink, skipping for safety\n", cur)
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // readNonEmpty reads path, treating a missing file, a symlink, or an

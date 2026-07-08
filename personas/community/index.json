@@ -1,0 +1,102 @@
+[
+  {
+    "name": "anthony",
+    "version": "1.0.0",
+    "description": "Claude Opus architecture and design-integrity reviewer (deep-reasoning lens)",
+    "path": "anthony.yaml",
+    "provider": "openrouter",
+    "model": "anthropic/claude-opus-4.8",
+    "tasks": ["architecture-review"],
+    "tags": ["architecture", "coupling", "claude", "frontier-vendor"]
+  },
+  {
+    "name": "sonny",
+    "version": "1.0.0",
+    "description": "Claude Sonnet correctness and logic reviewer (balanced fast lens)",
+    "path": "sonny.yaml",
+    "provider": "openrouter",
+    "model": "anthropic/claude-sonnet-5",
+    "tasks": ["correctness-review"],
+    "tags": ["logic", "correctness", "claude", "frontier-vendor"]
+  },
+  {
+    "name": "gene",
+    "version": "1.0.0",
+    "description": "GPT flagship API-contract and interface-compatibility reviewer",
+    "path": "gene.yaml",
+    "provider": "openrouter",
+    "model": "openai/gpt-5.5",
+    "tasks": ["api-review"],
+    "tags": ["contract", "compatibility", "gpt", "frontier-vendor"]
+  },
+  {
+    "name": "milo",
+    "version": "1.0.0",
+    "description": "GPT-mini input-validation and edge-case reviewer (fast high-volume lens)",
+    "path": "milo.yaml",
+    "provider": "openrouter",
+    "model": "openai/gpt-5.4-mini",
+    "tasks": ["validation-review"],
+    "tags": ["validation", "input", "gpt", "frontier-vendor"]
+  },
+  {
+    "name": "gia",
+    "version": "1.0.0",
+    "description": "Gemini Pro concurrency and data-race reviewer (large-context lens)",
+    "path": "gia.yaml",
+    "provider": "openrouter",
+    "model": "google/gemini-2.5-pro",
+    "tasks": ["concurrency-review"],
+    "tags": ["race", "concurrency", "gemini", "frontier-vendor"]
+  },
+  {
+    "name": "flint",
+    "version": "1.0.0",
+    "description": "Gemini Flash resource-lifecycle and leak reviewer (fast high-throughput lens)",
+    "path": "flint.yaml",
+    "provider": "openrouter",
+    "model": "google/gemini-2.5-flash",
+    "tasks": ["resource-review"],
+    "tags": ["leak", "lifecycle", "gemini", "frontier-vendor"]
+  },
+  {
+    "name": "delia",
+    "version": "1.0.0",
+    "description": "DeepSeek algorithmic-complexity and efficiency reviewer (reasoning-tier lens)",
+    "path": "delia.yaml",
+    "provider": "openrouter",
+    "model": "deepseek/deepseek-v4-pro",
+    "tasks": ["performance-review"],
+    "tags": ["complexity", "efficiency", "deepseek", "open-model"]
+  },
+  {
+    "name": "quinn",
+    "version": "1.0.0",
+    "description": "Qwen type-safety and conversion reviewer (coding-tier lens)",
+    "path": "quinn.yaml",
+    "provider": "openrouter",
+    "model": "qwen/qwen3-coder-plus",
+    "tasks": ["type-safety-review"],
+    "tags": ["type", "conversion", "qwen", "open-model"]
+  },
+  {
+    "name": "celeste",
+    "version": "1.0.0",
+    "description": "Kimi dependency and configuration reviewer (long-context lens)",
+    "path": "celeste.yaml",
+    "provider": "openrouter",
+    "model": "moonshotai/kimi-k2.7-code",
+    "tasks": ["dependency-review"],
+    "tags": ["dependency", "config", "kimi", "open-model"]
+  },
+  {
+    "name": "glenna",
+    "version": "1.0.0",
+    "description": "GLM observability and diagnosability reviewer (structured-instruction lens)",
+    "path": "glenna.yaml",
+    "provider": "openrouter",
+    "model": "z-ai/glm-5.2",
+    "tasks": ["observability-review"],
+    "tags": ["observability", "logging", "glm", "open-model"]
+  }
+]

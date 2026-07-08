@@ -9,9 +9,10 @@ import (
 
 // ValidateAgentYAML parses a single community-persona document and runs the
 // registry's agent validation against it, returning a joined error describing
-// every fault (or nil when valid). It is the exported seam the personas CLI
-// (internal/personas) uses to vet fetched YAML BEFORE writing it to disk, so
-// malformed or malicious community configs never reach the registry.
+// every fault (or nil when valid). It is the non-strict registry-level
+// validator used when merging an already-installed community persona into the
+// user's real registry; the personas install/upgrade path vets untrusted
+// fetched YAML with ValidateCommunityPersonaYAML BEFORE writing it to disk.
 //
 // Unlike LoadRegistry, the unmarshal is NON-strict: a community persona file is
 // an AgentConfig superset that also carries persona-file metadata (version,
@@ -36,4 +37,41 @@ func ValidateAgentYAML(name string, data []byte) error {
 		Agents:    map[string]AgentConfig{name: cfg},
 	}
 	return errors.Join(r.validateAgent(name, cfg)...)
+}
+
+// ValidateCommunityPersonaYAML strictly validates a community-persona file
+// (AC 04-06): it decodes with KnownFields(true) over the combined
+// community-persona schema (recognized agent fields ∪ the defined catalog-only
+// keys) so a key in NEITHER set is rejected as unknown, then runs the same agent
+// validation the registry applies at load. This is the strict counterpart of
+// ValidateAgentYAML — a fetched community unit is untrusted input, so a smuggled
+// unknown field must fail closed rather than be silently ignored.
+func ValidateCommunityPersonaYAML(name string, data []byte) error {
+	var cf communityPersonaFile
+	if err := decodeStrictYAML(data, &cf); err != nil {
+		if errors.Is(err, errEmptyDocument) {
+			return fmt.Errorf("community persona %q has no content", name)
+		}
+		return fmt.Errorf("parse community persona %q: %w", name, err)
+	}
+	r := &Registry{
+		Providers: map[string]Provider{cf.Provider: {APIKeyEnv: "PLACEHOLDER"}},
+		Agents:    map[string]AgentConfig{name: cf.AgentConfig},
+	}
+	return errors.Join(r.validateAgent(name, cf.AgentConfig)...)
+}
+
+// communityPersonaFile is the combined community-persona schema: the recognized
+// agent fields (inlined AgentConfig) plus the defined catalog-only keys. It is
+// the strict-decode target for ValidateCommunityPersonaYAML — a key present in
+// NEITHER set trips KnownFields(true) as unknown.
+type communityPersonaFile struct {
+	AgentConfig `yaml:",inline"`
+	Name        string   `yaml:"name,omitempty"`
+	Version     string   `yaml:"version,omitempty"`
+	Description string   `yaml:"description,omitempty"`
+	Tasks       []string `yaml:"tasks,omitempty"`
+	Tags        []string `yaml:"tags,omitempty"`
+	Fixture     string   `yaml:"fixture,omitempty"`
+	Path        string   `yaml:"path,omitempty"`
 }

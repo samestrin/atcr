@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,7 +85,7 @@ func TestValidatePersonaName(t *testing.T) {
 		wantErr bool
 	}{
 		{"security/owasp", false},
-		{"idiomatic", false},
+		{"ingrid", false},
 		{"a_b-c/d", false},
 		{"../etc/passwd", true},
 		{"security/../../etc", true},
@@ -431,20 +432,20 @@ func (s stubRunner) RunFixture(string) (FixtureOutcome, error) { return s.outcom
 func TestTestPersona_PassDelegates(t *testing.T) {
 	dir := t.TempDir()
 	installFixture(t, dir, "security/owasp", validPersonaYAML)
-	out, err := TestPersona(dir, "security/owasp", stubRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 3, Total: 3}})
+	out, err := TestPersona("security/owasp", stubRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 3, Total: 3}})
 	require.NoError(t, err)
 	assert.Equal(t, 3, out.Passed)
 	assert.Equal(t, 3, out.Total)
 }
 
 func TestTestPersona_BuiltinResolves(t *testing.T) {
-	out, err := TestPersona(t.TempDir(), "sentinel", stubRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
+	out, err := TestPersona("sasha", stubRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
 	require.NoError(t, err)
 	assert.True(t, out.HasFixture)
 }
 
 func TestTestPersona_UnknownPersona(t *testing.T) {
-	out, err := TestPersona(t.TempDir(), "security/nope", stubRunner{})
+	out, err := TestPersona("security/nope", stubRunner{})
 	require.NoError(t, err)
 	assert.False(t, out.HasFixture, "unknown community persona returns no fixture; runner owns resolution")
 }
@@ -530,15 +531,15 @@ func TestFetchPersonaYAML_RejectsInvalidNameBeforeFetch(t *testing.T) {
 // --- TemplateFixtureRunner -------------------------------------------------
 
 // TestTemplateFixtureRunner_BuiltinWithFixture (TD-012) verifies that
-// TemplateFixtureRunner finds and renders the embedded sentinel fixture
+// TemplateFixtureRunner finds and renders the embedded sasha fixture
 // without an LLM call.
 func TestTemplateFixtureRunner_BuiltinWithFixture(t *testing.T) {
 	r := TemplateFixtureRunner{}
-	out, err := r.RunFixture("sentinel")
+	out, err := r.RunFixture("sasha")
 	require.NoError(t, err)
-	require.True(t, out.HasFixture, "sentinel has an embedded fixture")
+	require.True(t, out.HasFixture, "sasha has an embedded fixture")
 	require.Equal(t, 1, out.Total)
-	require.Equal(t, 1, out.Passed, "sentinel template must render without unresolved template variables")
+	require.Equal(t, 1, out.Passed, "sasha template must render without unresolved template variables")
 }
 
 // TestTemplateFixtureRunner_BuiltinNoFixture verifies that a built-in persona
@@ -550,13 +551,15 @@ func TestTemplateFixtureRunner_BuiltinNoFixture(t *testing.T) {
 	require.False(t, out.HasFixture, "bruce has no embedded fixture")
 }
 
-// TestTemplateFixtureRunner_CommunityReturnsNoFixture verifies that community
-// persona fixture testing returns HasFixture: false (future work).
+// TestTemplateFixtureRunner_CommunityReturnsNoFixture verifies that a community
+// name with no embedded library template/fixture (e.g. an arbitrary namespaced
+// persona) still returns HasFixture: false. Embedded library personas DO resolve
+// a fixture now — see TestTemplateFixtureRunner_CommunityPersonasPass.
 func TestTemplateFixtureRunner_CommunityReturnsNoFixture(t *testing.T) {
 	r := TemplateFixtureRunner{}
 	out, err := r.RunFixture("security/owasp")
 	require.NoError(t, err)
-	require.False(t, out.HasFixture, "community personas report no fixture until fixture metadata is wired")
+	require.False(t, out.HasFixture, "a non-library community name reports no embedded fixture")
 }
 
 // --- fetch body size limit --------------------------------------------------
@@ -571,4 +574,37 @@ func TestFetch_RejectsOversizedBody(t *testing.T) {
 	_, err := fetch(srv.Client(), srv.URL+"/big.yaml", errors.New("not found"))
 	require.Error(t, err, "fetch must reject a body larger than fetchBodyLimit")
 	assert.Contains(t, err.Error(), "limit")
+}
+
+// TestDocs_ModelInMetadataConventionExists asserts docs/personas-authoring.md
+// documents the model-in-structured-metadata convention (AC 06-01) and names the
+// fixture test in internal/personas/test.go as its enforcement point. Mirrors the
+// doc-content assertion pattern in internal/payload/template_test.go.
+func TestDocs_ModelInMetadataConventionExists(t *testing.T) {
+	data, err := os.ReadFile("../../docs/personas-authoring.md")
+	require.NoError(t, err, "docs/personas-authoring.md must exist")
+	content := string(data)
+	for _, want := range []string{
+		"Model-in-structured-metadata convention",
+		"structured metadata",
+		"internal/personas/test.go",
+	} {
+		assert.Truef(t, strings.Contains(content, want), "docs/personas-authoring.md missing %q", want)
+	}
+}
+
+// TestDocs_HumanNamesConventionExists asserts docs/personas-authoring.md
+// documents the all-human-names convention (AC 06-02) as a forward-looking rule
+// covering built-in AND community personas, cross-referencing Epic 23.0.
+func TestDocs_HumanNamesConventionExists(t *testing.T) {
+	data, err := os.ReadFile("../../docs/personas-authoring.md")
+	require.NoError(t, err, "docs/personas-authoring.md must exist")
+	content := string(data)
+	for _, want := range []string{
+		"human first name",
+		"role-based",
+		"Epic 23.0",
+	} {
+		assert.Truef(t, strings.Contains(content, want), "docs/personas-authoring.md missing %q", want)
+	}
 }
