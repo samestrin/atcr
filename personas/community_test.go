@@ -1,6 +1,7 @@
 package personas
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,6 +12,30 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
+
+// indexEntry mirrors the JSON shape of internal/personas.PersonaIndexEntry. It is
+// re-declared locally rather than imported to avoid an import cycle: this test
+// lives in package personas, and internal/personas imports package personas.
+type indexEntry struct {
+	Name        string   `json:"name"`
+	Version     string   `json:"version"`
+	Description string   `json:"description"`
+	Path        string   `json:"path"`
+	Provider    string   `json:"provider"`
+	Model       string   `json:"model"`
+	Tasks       []string `json:"tasks"`
+	Tags        []string `json:"tags"`
+}
+
+// readCommunityIndex decodes personas/community/index.json into entries.
+func readCommunityIndex(t *testing.T) []indexEntry {
+	t.Helper()
+	raw, err := os.ReadFile(communityPath("index.json"))
+	require.NoError(t, err, "community index.json must exist and be readable")
+	var entries []indexEntry
+	require.NoError(t, json.Unmarshal(raw, &entries), "community index.json must be valid JSON")
+	return entries
+}
 
 // canonicalOutputContract is the exact 7-column pipe-delimited output header the
 // reconciler parses byte-for-byte; every persona's ## Output Format block must
@@ -166,6 +191,74 @@ func TestCommunityPersonas_SlugConsistency(t *testing.T) {
 
 			_, err = os.Stat(communityPath(p.Slug + ".md"))
 			require.NoErrorf(t, err, "prompt template community/%s.md must exist", p.Slug)
+		})
+	}
+}
+
+// TestCommunityIndex_Registration covers AC 04-05: the in-repo community index
+// registers exactly one entry per authored persona, discoverable by its bound
+// model. It asserts (Scenario 1) one entry per persona with path→a real file;
+// (Scenario 2) index provider/model equal the persona YAML; (Scenario 4) the
+// index is non-empty; (Scenario 5) slug consistency name==stem(path)==<slug>.md
+// and validateName; (Edge 2) tasks/tags populated; (Scenario 3) each persona is
+// discoverable by the structured model vendor token.
+func TestCommunityIndex_Registration(t *testing.T) {
+	entries := readCommunityIndex(t)
+	require.NotEmpty(t, entries, "community index.json must not be an empty [] array once personas are authored")
+
+	byStem := make(map[string]indexEntry, len(entries))
+	for _, e := range entries {
+		stem := strings.TrimSuffix(e.Path, ".yaml")
+		byStem[stem] = e
+	}
+	require.Lenf(t, byStem, len(communityPersonas),
+		"expected exactly one index entry per authored persona (%d)", len(communityPersonas))
+
+	for _, p := range communityPersonas {
+		t.Run(p.Slug, func(t *testing.T) {
+			e, ok := byStem[p.Slug]
+			require.Truef(t, ok, "persona %q has no index entry", p.Slug)
+
+			// Scenario 5: slug consistency + validateName.
+			require.Equalf(t, p.Slug, e.Name, "index name must equal slug for %q", p.Slug)
+			require.Equalf(t, p.Slug+".yaml", e.Path, "index path must be <slug>.yaml for %q", p.Slug)
+			require.Truef(t, validSlug(p.Slug), "slug %q must pass validateName rules", p.Slug)
+
+			// Edge Case 1 / Error 1: path resolves to a committed file.
+			_, err := os.Stat(communityPath(e.Path))
+			require.NoErrorf(t, err, "index path %q must resolve to a committed YAML", e.Path)
+
+			// Scenario 2: provider/model match the persona YAML exactly.
+			var ym struct {
+				Provider string `yaml:"provider"`
+				Model    string `yaml:"model"`
+			}
+			yraw, err := os.ReadFile(communityPath(p.Slug + ".yaml"))
+			require.NoErrorf(t, err, "read yaml %s", p.Slug)
+			require.NoError(t, yaml.Unmarshal(yraw, &ym))
+			require.Equalf(t, ym.Provider, e.Provider, "provider drift for %q", p.Slug)
+			require.Equalf(t, ym.Model, e.Model, "model drift for %q", p.Slug)
+			require.NotEmptyf(t, e.Provider, "index provider must be non-empty for %q", p.Slug)
+			require.NotEmptyf(t, e.Model, "index model must be non-empty for %q", p.Slug)
+
+			// Grouping key: the vendor token lives in model, never provider.
+			require.Containsf(t, strings.ToLower(e.Model), p.VendorToken,
+				"model %q must carry vendor token %q", e.Model, p.VendorToken)
+
+			// Edge Case 2: task-scoped personas carry tasks/tags.
+			require.NotEmptyf(t, e.Tasks, "persona %q must carry at least one task tag", p.Slug)
+			require.NotEmptyf(t, e.Tags, "persona %q must carry at least one tag", p.Slug)
+
+			// Scenario 3: discoverable by the structured model field (substring,
+			// case-insensitive — mirrors SearchWithOptions Model filtering).
+			var found bool
+			for _, cand := range entries {
+				if strings.Contains(strings.ToLower(cand.Model), p.VendorToken) && cand.Name == p.Slug {
+					found = true
+					break
+				}
+			}
+			require.Truef(t, found, "persona %q must be discoverable via its model vendor token %q", p.Slug, p.VendorToken)
 		})
 	}
 }
