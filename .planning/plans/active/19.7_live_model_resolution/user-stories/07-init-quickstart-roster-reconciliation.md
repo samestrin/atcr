@@ -30,13 +30,19 @@
 - **Relevant:** Directly closes TD-011, the deferred 19.6 HIGH, and satisfies AC7 verbatim: a working, non-noisy community persona set on online init/quickstart, backward-compatible with existing on-disk personas.
 - **Time-bound:** Deliverable within this sprint as a self-contained fix; it can be sequenced in parallel with or independently of Stories 1-6 since it touches `cmd/atcr/init.go` and `cmd/atcr/quickstart.go` exclusively, not the resolver package.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [07-01](../acceptance-criteria/07-01-working-nonempty-community-roster.md) | Online init/quickstart Install a Working, Non-Empty Community Roster | Integration |
+| [07-02](../acceptance-criteria/07-02-no-misleading-skip-warnings.md) | No Misleading "Not Found in Community Index" Warnings | Integration |
+| [07-03](../acceptance-criteria/07-03-shared-reconciliation-point-and-backward-compat.md) | Single Shared Reconciliation Point and Backward Compatibility | Integration |
+
+## Original Criteria Overview
 
 1. Online `init`/`quickstart` install a non-empty, working set of community personas against the real `personas/community/index.json` — either by publishing the built-in lenses into the community channel behind a model-agnostic gate (preserving C2), or by aligning the fetch-and-pin roster with what the index actually publishes.
 2. No misleading `%q not found in community index — skipping` warning is printed for any name in the roster actually requested by online init/quickstart against the real index.
 3. The reconciliation is implemented once in a shared location consumed by both `init.go:47` and `quickstart.go:102` (or their shared `installCommunityPersonas` callee), so the two call sites cannot drift the way TD-006/TD-007 did; existing on-disk personas and the current all-or-nothing rollback/never-overwrite behavior remain unchanged.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.7_live_model_resolution/`_
 
 ## Technical Considerations
 

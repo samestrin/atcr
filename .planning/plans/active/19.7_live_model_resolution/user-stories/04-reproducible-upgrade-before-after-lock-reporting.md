@@ -30,13 +30,19 @@
 - **Relevant:** Directly satisfies Proposed Solution #5 and AC4 verbatim — this is the command surface that makes the resolver real and observable to the user, and the sole gate that keeps model resolution off the review hot path.
 - **Time-bound:** Implemented and passing within this sprint's execution window for Plan 19.7, immediately after Story 3's resolver lands.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-upgrade-resolves-advances-lock-slug-report.md) | Upgrade Re-Resolves Binding and Advances Lock with Before→After Slug Reporting | Unit |
+| [04-02](../acceptance-criteria/04-02-resolution-isolated-to-upgrade-path.md) | Resolver and Models-Endpoint Calls Occur Only Inside `Upgrade()` — Never on the Review Hot Path | Integration |
+| [04-03](../acceptance-criteria/04-03-dry-run-reports-without-writing.md) | `--all` Fan-Out and `--dry-run` Report the Full Before→After Slug Set Without Writing | Integration |
+
+## Original Criteria Overview
 
 1. `atcr personas upgrade <name>` re-resolves the named persona's family/channel binding, compares it to the current lock, and — only on a real change passing the version-advance rule — writes the new resolved slug to the lock; the command prints an explicit `name: old-slug → new-slug` line (or an "unchanged" line) for the persona.
 2. `atcr personas upgrade --all` performs the same re-resolve/compare/report/write cycle across every installed persona in one run, with one before→after (or unchanged) line per persona, and `--dry-run` shows the same report without writing any lock.
 3. The resolver call and the OpenRouter models-endpoint request occur only inside this command's execution path — no other command, no persona load, and no review invocation ever triggers resolution or an endpoint call, verified by tests asserting zero endpoint calls outside `Upgrade()`.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.7_live_model_resolution/`_
 
 ## Technical Considerations
 

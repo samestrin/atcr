@@ -6,7 +6,7 @@ Layers a live, auto-updating model resolution system over the persona `model` bi
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/19.7_live_model_resolution/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/19.7_live_model_resolution/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/19.7_live_model_resolution/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/19.7_live_model_resolution/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/19.7_live_model_resolution/`
 

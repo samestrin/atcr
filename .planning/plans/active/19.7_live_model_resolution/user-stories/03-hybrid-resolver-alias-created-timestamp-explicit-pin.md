@@ -30,13 +30,21 @@
 - **Relevant:** This is the core value proposition of the epic — turning a static per-persona slug into a self-maintaining binding that rides each vendor's capability curve without manual edits, while preserving an escape hatch for personas that need a hand-pinned version.
 - **Time-bound:** Resolver logic, its unit tests against the catalog snapshot fixture, and the `z-ai/` prefix regression test land within this story's implementation slice, ready for Story 4 to wire into `atcr personas upgrade`.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-alias-passthrough-seven-personas.md) | Alias Passthrough Resolves the 7 Alias-Covered Personas Without a Catalog Scan | Unit |
+| [03-02](../acceptance-criteria/03-02-created-timestamp-vendor-prefix-scan.md) | `created`-Timestamp Newest-in-Vendor-Prefix Scan Resolves delia/quinn/glenna (z-ai/ Correctness) | Unit |
+| [03-03](../acceptance-criteria/03-03-explicit-pin-never-floats.md) | Explicit-Slug Pin Resolves Unchanged and Never Floats Regardless of Channel | Unit |
+| [03-04](../acceptance-criteria/03-04-stable-channel-excludes-preview-and-expiring.md) | `@stable` Channel Excludes Preview/Beta/Exp-Tagged and Expiring Models in the `created`-Timestamp Scan | Unit |
+| [03-05](../acceptance-criteria/03-05-latest-channel-includes-preview.md) | `@latest` Channel Includes Preview-Tagged Models in the `created`-Timestamp Scan | Unit |
+
+## Original Criteria Overview
 
 1. The 7 alias-covered personas (Anthropic ×2, OpenAI ×3, Google ×2, Moonshot ×1) resolve by returning the provider's `~`-prefixed `-latest` alias slug unchanged — the resolver performs no catalog scan for these, the provider owns resolution.
 2. delia (DeepSeek), quinn (Qwen), and glenna (GLM) resolve via a `created`-timestamp newest-in-vendor-prefix scan over the catalog snapshot, filtered by each persona's correct vendor prefix — critically `z-ai/` for glenna, never `glm/` — with the `@stable` heuristic (from Story 1) excluding preview/beta/exp-tokened and expired entries unless the channel is `@latest`.
 3. Any persona bound to an explicit-slug pin resolves to that exact slug regardless of channel or catalog contents, and this pin is never overwritten or re-resolved by either the alias or `created`-timestamp strategies.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.7_live_model_resolution/`_
 
 ## Technical Considerations
 

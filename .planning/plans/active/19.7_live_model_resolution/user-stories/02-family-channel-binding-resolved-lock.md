@@ -30,7 +30,15 @@
 - **Relevant:** This is the schema/data-model foundation every other story in Epic 19.7 (hybrid resolver, upgrade reporting, `models check`, major-bump gate) reads from or writes to; without it, none of those stories have a lock to operate on.
 - **Time-bound:** Deliverable within this sprint's first implementation phase, ahead of the resolver logic (Theme 3) that depends on the binding field existing.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-family-channel-binding-schema-extension.md) | Family/Channel Binding Schema Extension with Back-Compat Decode | Unit |
+| [02-02](../acceptance-criteria/02-02-review-path-reads-locked-slug-zero-endpoint-calls.md) | Review Path Reads the Locked Model Slug with Zero Endpoint Calls | Unit |
+| [02-03](../acceptance-criteria/02-03-pinned-model-seeds-initial-lock-zero-migration.md) | 19.6's Pinned Model Values Seed the Initial Lock with Zero Migration | Integration |
+
+## Original Criteria Overview
 
 1. `PersonaIndexEntry` (and the corresponding on-disk persona unit written by `writePersonaUnit`) gains a family/channel binding field and a resolved-lock field, both `omitempty` and permissively decoded, with 19.6's pinned `model` value seeding the initial lock for every existing persona with zero migration required.
 2. The review path (`internal/fanout/review.go`'s `renderAgent`, via `internal/registry/config.go`'s `AgentConfig.Model`) reads only the locked slug — never the binding — and makes no endpoint/network call to resolve it; the model used in a review is fully deterministic given the on-disk lock.

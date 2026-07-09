@@ -30,13 +30,18 @@
 - **Relevant:** The finding is the explicit go/no-go input the hybrid resolver (Theme 3) and family/channel binding schema (Theme 2) need before either is designed in code; per the plan's Implementation Strategy, this task is sequenced first for exactly this reason.
 - **Time-bound:** Completed before any resolver or binding-schema code (Stories 2+) is written, as the first task in the epic's execution order.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-latest-alias-routability-confirmed.md) | `~…-latest` Alias Routability Confirmed via Authenticated Completion Call | Manual |
+| [01-02](../acceptance-criteria/01-02-stable-channel-heuristic-z-ai-prefix.md) | `@stable` Channel Heuristic Defined Against Live Schema, `z-ai/` Prefix Pinned | Manual |
+
+## Original Criteria Overview
 
 1. A real authenticated completion call against a `~…-latest` alias is made and its outcome (success or failure, with response detail) is recorded as the answer to "are `~`-prefixed aliases completion-routable."
 2. The `@stable` channel heuristic is defined and recorded: which preview/beta/exp token patterns to exclude from `id`/`canonical_slug`, and how a non-null `expiration_date` is treated, grounded in the live catalog's actual field values rather than assumption.
 3. The `z-ai/` vendor prefix (not `glm/`) is confirmed and recorded as the pinned resolver key for glenna, cross-referenced against `personas/community/index.json`'s existing GLM/DeepSeek/Qwen slugs.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.7_live_model_resolution/`_
 
 ## Technical Considerations
 

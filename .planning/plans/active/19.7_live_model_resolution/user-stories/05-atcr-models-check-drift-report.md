@@ -30,13 +30,20 @@
 - **Relevant:** Directly satisfies the Proposed Solution's item #6 and AC5 verbatim, delivering the deterministic drift-report primitive that is both a standalone user command and the exact seam Epic 19.8's mechanical agent will wrap — without building any part of that agent here.
 - **Time-bound:** Deliverable within this sprint once Story 2's lock/binding fields exist to read from; sequenced after the data-model foundation and independent of the resolver/upgrade stories' internals beyond needing a populated lock to compare.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-command-registration-human-readable-drift-report.md) | Command Registration and Human-Readable Drift Report | Integration |
+| [05-02](../acceptance-criteria/05-02-json-machine-readable-output.md) | `--json` Machine-Readable Output Shape | Integration |
+| [05-03](../acceptance-criteria/05-03-exit-code-contract.md) | Exit-Code Contract (0 / 1 / 2) | Integration |
+| [05-04](../acceptance-criteria/05-04-deterministic-catalog-snapshot-default.md) | Determinism via Checked-In Catalog Snapshot | Unit |
+
+## Original Criteria Overview
 
 1. `atcr models` is registered as a new top-level command family (`cmd/atcr/main.go:202`) with `check` as its first subcommand, following `cmd/atcr/personas.go` conventions for output streams and flag handling.
 2. `atcr models check` enumerates all installed personas (reusing `internal/personas/list.go:53`'s tier-walking/dedup precedent), reads each persona's resolved lock, and compares it against the default catalog snapshot (`internal/personas/testdata/catalog_snapshot.json`) to report newer-family-member drift, `expiration_date` deprecation, and missing-slug conditions.
 3. The command supports both a human-readable default output and a `--json` machine-readable output mode carrying the same drift data, and exits 0 when no conditions are found, 1 when one or more conditions are found, and 2 on usage error or command failure — this exit-code/output contract is exactly what Epic 19.8's mechanical agent is expected to consume, though building that agent is explicitly out of scope for this story.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.7_live_model_resolution/`_
 
 ## Technical Considerations
 

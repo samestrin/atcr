@@ -30,13 +30,18 @@
 - **Relevant:** Directly satisfies Proposed Solution item #7 and AC6 verbatim: "A major-version model jump gates on the persona fixture re-passing and surfaces a re-tune flag; a minor jump auto-locks."
 - **Time-bound:** Implemented and passing within this sprint's execution window for Plan 19.7, sequenced after Story 4's upgrade flow exists to gate.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [06-01](../acceptance-criteria/06-01-major-jump-fixture-gate-and-verify-flag.md) | Major-Version Jump Gates the Lock on Fixture Re-Pass and Always Surfaces a Verify Flag | Unit |
+| [06-02](../acceptance-criteria/06-02-minor-jump-auto-lock-regression-guard.md) | Minor-Version Jump Continues to Auto-Lock With Zero Added Friction (Regression Guard) | Unit |
+
+## Original Criteria Overview
 
 1. The upgrade flow classifies every resolved-version transition as major or minor using `semver.Major(local)` vs. `semver.Major(remote)`, reusing the existing `isNewer`/semver-compare machinery in `internal/personas/upgrade.go` rather than introducing new version-parsing logic.
 2. On a classified major jump, the lock write is gated on the persona's existing `.patch` fixture re-passing under the unmodified `TemplateFixtureRunner`; a failing fixture blocks the lock advance and the command reports the block and the reason. On a classified minor jump, the lock auto-advances with no fixture re-run, matching Story 4's existing behavior unchanged.
 3. Every major-jump transition — whether the fixture passes or fails — surfaces an explicit "prompt tuned for the prior major — verify" flag in the upgrade report, making clear to the human operator that a passing fixture proves only template rendering, not prompt tuning appropriateness, and that verifying the latter is a human judgment call out of this story's and this epic's automated scope.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.7_live_model_resolution/`_
 
 ## Technical Considerations
 
