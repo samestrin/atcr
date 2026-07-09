@@ -28,6 +28,14 @@ func (e *driftFoundError) Error() string {
 // main()'s exitCode() dispatch.
 func (e *driftFoundError) ExitCode() int { return exitFailure }
 
+// ciTruthy reports whether a CI-environment variable value should be treated as
+// "in CI". Empty, "false", and "0" are ignored so a maintainer exporting
+// CI=false is not blocked.
+func ciTruthy(v string) bool {
+	v = strings.ToLower(strings.TrimSpace(v))
+	return v != "" && v != "false" && v != "0"
+}
+
 // newModelsCmd builds `atcr models`: the top-level command family for inspecting
 // model bindings, drift, and the catalog snapshot. `check` is its first
 // subcommand; a `refresh` subcommand follows in Phase 8.
@@ -93,8 +101,10 @@ func runModelsRefresh(cmd *cobra.Command, _ []string) error {
 	// under a CI environment AND require OPENROUTER_API_KEY. Both fail closed (exit 2)
 	// so CI — which sets CI/GITHUB_ACTIONS and may export the key — can never fetch
 	// live. The catalog GET itself is unauthenticated; the key is the maintainer gate.
+	// CI values like "false" or "0" are treated as absent so a maintainer exporting
+	// CI=false locally is not blocked.
 	if !overridden {
-		if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+		if ciTruthy(os.Getenv("CI")) || ciTruthy(os.Getenv("GITHUB_ACTIONS")) {
 			return usageError(fmt.Errorf("atcr models refresh is a maintainer-only command and must not run in CI"))
 		}
 		if strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) == "" {
