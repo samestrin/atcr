@@ -178,6 +178,36 @@ func TestQuickstart_Online_InstallsNonEmptyCommunityRoster(t *testing.T) {
 		"online quickstart installs the same index-derived roster as init")
 }
 
+// TestQuickstart_Online_NoSkipWarnings covers AC 07-02 Scenario 2 end-to-end
+// through `runQuickstart`: the errOut stream contains zero "not found in community
+// index — skipping" warnings against the real index. Transparent vacuous-RED — it
+// passes because 7.2's index-derived roster already removed the misleading warning
+// (same mechanism); its value is the regression guard against a reverted roster.
+func TestQuickstart_Online_NoSkipWarnings(t *testing.T) {
+	srv := realCommunityServer(t)
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	destDir := filepath.Join(home, ".config", "atcr", "personas")
+	oldDir := personasDir
+	personasDir = func() (string, error) { return destDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	errOut := &bytes.Buffer{}
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:            dir,
+		fetchCommunity: true,
+		in:             strings.NewReader(quickstartInput),
+		out:            &bytes.Buffer{},
+		errOut:         errOut,
+	}))
+
+	assert.NotContains(t, errOut.String(), "not found in community index",
+		"online quickstart emits no misleading skip warnings against the real index")
+}
+
 func TestQuickstart_WritesSyntheticRegistry(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()

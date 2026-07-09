@@ -584,6 +584,111 @@ func TestInit_Online_InstallsNonEmptyCommunityRoster(t *testing.T) {
 		"online init installs the index-derived community roster")
 }
 
+// --- AC 07-02: no misleading "not found in community index" warnings --------
+
+// realCommunityServer serves the repo's ACTUAL personas/community/index.json and
+// every co-located unit file, so AC 07-02's negative assertion ("zero skip
+// warnings") is proven against production data rather than a synthetic stand-in.
+// The community dir is anchored to this test file's own location via
+// runtime.Caller so the helper is robust to a test that t.Chdir()s first.
+func realCommunityServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok, "runtime.Caller must resolve the test file path")
+	dir := filepath.Join(filepath.Dir(thisFile), "..", "..", "personas", "community")
+
+	index, err := os.ReadFile(filepath.Join(dir, "index.json"))
+	require.NoError(t, err, "the real community index must be readable")
+	routes := map[string][]byte{"/index.json": index}
+	files, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, f := range files {
+		if f.IsDir() {
+			continue
+		}
+		body, rerr := os.ReadFile(filepath.Join(dir, f.Name()))
+		require.NoError(t, rerr)
+		routes["/"+f.Name()] = body
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if body, ok := routes[r.URL.Path]; ok {
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestInstallCommunityPersonas_NilRoster_NoSkipWarnings_RealIndex covers AC 07-02
+// Scenario 1 against the REAL index: the index-derived (nil) roster emits zero
+// "not found in community index — skipping" warnings, because every derived name
+// is present in the index by construction.
+//
+// Transparent vacuous-RED (mirrors this sprint's 2.4/2.7 notes): Element 1's
+// GREEN (7.2 — derive the roster from the fetched index) is the SAME line of code
+// that removes the misleading warning, so AC 07-02 is already satisfied and this
+// test passes on first run. Its value is the permanent regression guard: it fails
+// if the roster is ever reverted to a hardcoded list disjoint from the index (the
+// skip warnings would return). The discriminating counterpart —
+// TestInstallCommunityPersonas_MissingRosterSkipsWithWarning — proves the warning
+// path still fires for a genuinely-absent name, so this is not an always-green
+// tautology.
+func TestInstallCommunityPersonas_NilRoster_NoSkipWarnings_RealIndex(t *testing.T) {
+	srv := realCommunityServer(t)
+	dest := t.TempDir()
+	errOut := &bytes.Buffer{}
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, errOut))
+
+	assert.NotContains(t, errOut.String(), "not found in community index",
+		"the index-derived roster produces zero misleading skip warnings")
+	assert.NotEmpty(t, communityPinNames(t, dest), "a non-empty set installs from the real index")
+}
+
+// TestInit_Online_NoSkipWarnings covers AC 07-02 Scenario 1 end-to-end through
+// `atcr init`: stderr contains zero skip warnings against the real index.
+func TestInit_Online_NoSkipWarnings(t *testing.T) {
+	srv := realCommunityServer(t) // resolve the real community dir BEFORE t.Chdir
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	pinDir := t.TempDir()
+	oldDir := personasDir
+	personasDir = func() (string, error) { return pinDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	_, stderr, err := executeSplit(t, "init")
+	require.NoError(t, err)
+	assert.NotContains(t, stderr, "not found in community index",
+		"online init emits no misleading skip warnings against the real index")
+}
+
+// TestInstallCommunityPersonas_NeverOverwriteWarningDistinct covers AC 07-02 Edge
+// Case 2 + DoD bullet 3: the pre-existing "already installed — leaving it
+// untouched" notice still prints for an on-disk unit and is NOT conflated with the
+// "not found in community index" skip-warning this AC targets.
+func TestInstallCommunityPersonas_NeverOverwriteWarningDistinct(t *testing.T) {
+	srv := realCommunityServer(t)
+	dest := t.TempDir()
+	// Pre-seed one real-index persona so the never-overwrite path fires for it.
+	require.NoError(t, os.WriteFile(filepath.Join(dest, "anthony.yaml"), []byte("HANDEDITED"), 0o644))
+	errOut := &bytes.Buffer{}
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, errOut))
+
+	s := errOut.String()
+	assert.Contains(t, s, "already installed — leaving it untouched",
+		"the never-overwrite notice still prints for a pre-existing unit")
+	assert.NotContains(t, s, "not found in community index",
+		"the never-overwrite notice is not conflated with the skip-warning")
+	got, err := os.ReadFile(filepath.Join(dest, "anthony.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, "HANDEDITED", string(got), "the pre-existing hand-edited unit is untouched")
+}
+
 func TestPersonas_EmbeddedSetComplete(t *testing.T) {
 	assert.ElementsMatch(t, personaNames, personas.Names())
 	for _, name := range personaNames {
