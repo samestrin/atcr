@@ -140,6 +140,8 @@ func TestParseBinding(t *testing.T) {
 		// accepted as a pin that only fails downstream at the API.
 		{"alias-shaped typo errors", "anthropic/claude-opu", false, Binding{}, true},
 		{"bare unknown token errors", "totallybogus", false, Binding{}, true},
+		// A bare trailing '@' (empty channel) must fail closed for every family.
+		{"empty channel errors", "anthropic/claude-opus@", false, Binding{}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

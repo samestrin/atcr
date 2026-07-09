@@ -171,6 +171,12 @@ func parseBinding(s string) (Binding, bool, error) {
 		if family == "" {
 			return Binding{}, false, fmt.Errorf("binding %q has an empty family", s)
 		}
+		// Reject a bare trailing '@' (empty channel) here so the typo fails closed
+		// for ALL families — otherwise an alias family silently ignores it while a
+		// scan family fails only later at normalizeChannel (asymmetric).
+		if channel == "@" {
+			return Binding{}, false, fmt.Errorf("binding %q has an empty channel", s)
+		}
 		return Binding{Family: family, Channel: channel}, true, nil
 	}
 	if _, ok := aliasTable[s]; ok {
@@ -270,8 +276,10 @@ func slugOrPlaceholder(slug string) string {
 
 // setModelField returns data with only its top-level `model` value replaced by
 // newModel, preserving every other field, comment, and scalar style via a
-// yaml.Node round-trip — so a lock advance is a minimal, faithful edit (the
-// resolved slug is the only change written to disk).
+// yaml.Node round-trip — so the resolved slug replaces only the model value and
+// every other persona field is left intact. (The caller persists the result
+// through writePersonaUnit, which additionally re-syncs the co-located .md — see
+// tech-debt TD-003 on decoupling a lock advance from the prompt fetch.)
 func setModelField(data []byte, newModel string) ([]byte, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
