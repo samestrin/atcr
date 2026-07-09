@@ -67,15 +67,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (no new automated tests introduced by this AC)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (no new automated tests introduced by this AC)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] The `@stable` exclusion list names the specific preview/beta/exp substrings actually observed in the live catalog's `id`/`canonical_slug` values, not a hypothetical/generic list
-- [ ] The `expiration_date` non-null handling rule is written down explicitly as part of the `@stable` heuristic
-- [ ] The `z-ai/` vendor prefix (not `glm/`) is confirmed present in the live catalog and recorded as glenna's pinned resolver key, cross-referenced against `personas/community/index.json`
-- [ ] `deepseek/` and `qwen/` prefixes for delia/quinn are also cross-checked against the live catalog and `index.json`
+- [x] The `@stable` exclusion list names the specific preview/beta/exp substrings actually observed in the live catalog's `id`/`canonical_slug` values, not a hypothetical/generic list
+- [x] The `expiration_date` non-null handling rule is written down explicitly as part of the `@stable` heuristic
+- [x] The `z-ai/` vendor prefix (not `glm/`) is confirmed present in the live catalog and recorded as glenna's pinned resolver key, cross-referenced against `personas/community/index.json`
+- [x] `deepseek/` and `qwen/` prefixes for delia/quinn are also cross-checked against the live catalog and `index.json`
 
 **Manual Review:**
 - [ ] Code reviewed and approved

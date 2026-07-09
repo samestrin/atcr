@@ -93,3 +93,85 @@ Example alias forms observed in the catalog spike (not full request/response bod
 - Original epic requirements: ../original-requirements.md (Catalog spike section)
 - https://openrouter.ai/docs/guides/overview/models
 - https://openrouter.ai/docs/quickstart#using-the-openrouter-api
+
+---
+
+## Epic 19.7 Spike Findings — Independently Confirmed (recorded 2026-07-08)
+
+This section records the outcome of Epic 19.7's own authenticated spike (Phase 1, tasks 1.1 + 1.2),
+superseding the earlier "not yet independently confirmed" caveat above. Stories 2 (family/channel
+binding) and 3 (hybrid resolver) cite these findings directly as their design basis. The API key was
+read inline from the environment for both calls and never printed, committed, or echoed.
+
+### Task 1.1 — `~…-latest` alias routability: **CONFIRMED ROUTABLE** (AC 01-01)
+
+One authenticated `POST https://openrouter.ai/api/v1/chat/completions` was made with
+`{"model": "~openai/gpt-latest", "messages": [{"role":"user","content":"Reply with the single word: pong"}], "max_tokens": 16}`.
+
+**Verbatim outcome:**
+- HTTP status: **`200 OK`**
+- The `~openai/gpt-latest` alias **resolved server-side to a concrete model**, echoed back in the
+  response `model` field: **`openai/gpt-5.5-20260423`** (`"provider": "OpenAI"`).
+- Response object: `"object": "chat.completion"`, `id` `gen-1783568516-…`, one `choices[0]` entry.
+- `usage`: `prompt_tokens: 13`, `completion_tokens: 16`, `total_tokens: 29`, `cost: 0.000545`
+  (`reasoning_tokens: 11`).
+- `finish_reason: "length"` (`native_finish_reason: "max_output_tokens"`); `choices[0].message.content`
+  was `null` **because the 16-token budget was fully consumed by the reasoning trace** — a
+  token-budget artifact of the minimal spike request, **not** a routability signal. The request was
+  accepted, routed to a concrete flagship model, and billed.
+
+**Verdict:** `~`-prefixed `-latest` aliases are **completion-routable in a live call**, not just
+catalog-browsing artifacts. This confirms the open question the earlier docs-cited evidence could only
+suggest. Design consequence: Story 3's alias-bind path for the 7 alias-covered personas may pass the
+`~…-latest` alias straight through as the resolved binding — the provider owns resolution server-side.
+
+### Task 1.2 — `@stable` exclusion heuristic + vendor-prefix pins (AC 01-02)
+
+Derived from one authenticated `GET https://openrouter.ai/api/v1/models` → **`200 OK`, 344 models**.
+
+**`@stable` exclusion heuristic (definition for Story 3):** a model is excluded from `@stable` if
+**EITHER** condition holds:
+
+1. **Preview/pre-release token** present as a **hyphen-delimited segment** in `id` or `canonical_slug`
+   (see the critical matching rule below). Tokens **actually observed** in the live catalog:
+   - **`-preview`** — 16 models today (e.g. `google/gemini-3.1-pro-preview`, `qwen/qwen3.6-max-preview`,
+     `openai/gpt-4-turbo-preview`, `google/gemini-2.5-flash-lite-preview-09-2025`).
+   - **`-exp`** — 1 model today (`deepseek/deepseek-v3.2-exp`).
+   - Forward-looking watch tokens with **zero** matches today but retained as exclusion rules so a
+     future reader does not treat `expiration_date` as the only signal: `-beta`, `-alpha`, `-rc`,
+     `-experimental`, `-nightly`, `-snapshot`, dated `-preview-MM-YYYY` forms.
+2. **Deprecation:** `expiration_date` is **non-null**, regardless of the `id`/`canonical_slug` text.
+   8 of 344 models carry a non-null `expiration_date` today:
+   `tencent/hy3:free` (2026-07-21), `poolside/laguna-xs.2:free` + `poolside/laguna-xs.2` (2026-07-09),
+   `z-ai/glm-5v-turbo` (2098-12-31), `openai/gpt-5.2-chat` (2026-08-10), `arcee-ai/trinity-mini`
+   (2026-07-10), `google/gemini-2.5-flash-lite-preview-09-2025` (2026-07-09), `z-ai/glm-4.5` (2026-12-31).
+
+**`@latest` vs `@stable` (cross-ref AC 03-05):** `@latest` bypasses **only** the preview-token
+exclusion (condition 1); the deprecation exclusion (condition 2, non-null `expiration_date`) is
+**always** applied and fails closed to the next-newest non-expiring member.
+
+**Overlap edge case (feeds 3.11.A):** `google/gemini-2.5-flash-lite-preview-09-2025` satisfies **both**
+conditions (preview-tagged AND `expiration_date` non-null). Under `@stable` it is excluded by either
+rule; under `@latest` it is still excluded by the deprecation rule.
+
+**CRITICAL matching rule — segment match, NOT bare substring (Edge Case 3, false-positive risk).**
+A naive `strings.Contains` over-excludes stable models on substring collisions actually present in the
+live catalog:
+- `test` collides with **every `~…-latest` alias** ("la**test**" contains "test") — 11 hits, all aliases
+  we must KEEP.
+- `rc` collides with `sea**rc**h` / `resea**rc**h` / `a**rc**ee-ai` / `pe**rc**eptron` / `me**rc**ury` — 18 hits, none preview.
+- `dev` collides with `mistralai/**dev**stral-2512` — a product name, not a channel.
+- `:free` (25) and `:thinking` (11) are **variant-syntax suffixes**, orthogonal to stability channels —
+  NOT `@stable` exclusions.
+The resolver MUST match preview tokens as hyphen-delimited path segments (segment equals / suffix
+`-token` / interior `-token-`), never as a bare substring.
+
+**Vendor-prefix pins for the 3 alias-less personas (confirmed present in live catalog):**
+- **`z-ai/`** — 12 models (**not `glm/`, which has 0 models**). `glenna → z-ai/glm-5.2` (index.json),
+  and `z-ai/glm-5.2` is the newest `z-ai/` member by `created` (1781631930) that is non-expiring →
+  the `created`-timestamp newest-in-prefix resolver for glenna MUST key on `z-ai/`.
+- **`deepseek/`** — 11 models. `delia → deepseek/deepseek-v4-pro` (index.json) — present.
+- **`qwen/`** — 49 models. `quinn → qwen/qwen3-coder-plus` (index.json) — present.
+All three bindings above were cross-checked against `personas/community/index.json` and the live catalog.
+
+> Source: Epic 19.7 Phase 1 authenticated spike, 2026-07-08 (LLM_OPENROUTER_API_KEY, inline; value never recorded).

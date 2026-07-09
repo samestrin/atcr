@@ -62,15 +62,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (no new automated tests introduced by this AC; existing suite is unaffected)
-- [ ] No linting errors (N/A if no code file is added; applies only if a throwaway script is committed)
-- [ ] Build succeeds
+- [x] All tests passing (no new automated tests introduced by this AC; existing suite is unaffected)
+- [x] No linting errors (N/A if no code file is added; applies only if a throwaway script is committed)
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Exactly one live authenticated completion call was made against a `~…-latest` alias
-- [ ] The outcome (success with response detail, or definitive failure with status/error) is recorded verbatim in `documentation/openrouter-catalog-api.md`
-- [ ] The recorded finding is stated in terms Stories 2 and 3 can cite directly as their alias-routability design basis
-- [ ] No production resolver code path was introduced or altered by this AC (per the story's Constraints)
+- [x] Exactly one live authenticated completion call was made against a `~…-latest` alias
+- [x] The outcome (success with response detail, or definitive failure with status/error) is recorded verbatim in `documentation/openrouter-catalog-api.md`
+- [x] The recorded finding is stated in terms Stories 2 and 3 can cite directly as their alias-routability design basis
+- [x] No production resolver code path was introduced or altered by this AC (per the story's Constraints)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

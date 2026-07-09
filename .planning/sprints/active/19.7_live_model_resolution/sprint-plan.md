@@ -12,6 +12,22 @@ Before each phase, review `/CLAUDE.md` (or AGENTS.md).
 
 ---
 
+## Clarifications
+
+### Phase 1 Clarifications (recorded 2026-07-08)
+
+**Key Decisions:**
+- API key source: reuse the existing `LLM_OPENROUTER_API_KEY` env var, read inline at call time (`Authorization: Bearer $LLM_OPENROUTER_API_KEY`) for both the task 1.1 completion call and the task 1.2 `/api/v1/models` re-list. Never export, print, commit, or echo the value (Phase 1 API-key handling rule).
+- Network egress to `https://openrouter.ai` confirmed permitted (unauthenticated `GET /api/v1/models` → HTTP 200).
+
+**Scope Boundaries:**
+- Phase 1 remains a manual design spike — findings recorded in `plan/documentation/openrouter-catalog-api.md`; no shipped resolver code.
+- Existing docs-cited evidence in that file is retained; the spike ADDS an independently-confirmed live-call outcome so Stories 2/3 cite a real result, not just the quickstart docs.
+
+**Technical Approach:**
+- Task 1.1: one authenticated `POST` to `/api/v1/chat/completions` with `"model": "~openai/gpt-latest"` + minimal message; record status, resolved model, and verbatim outcome.
+- Task 1.2: one authenticated `GET /api/v1/models`; scan `id`/`canonical_slug` for preview/beta/exp substrings actually present; confirm `z-ai/`, `deepseek/`, `qwen/` prefixes; record the `@stable` exclusion list + `expiration_date` rule.
+
 ## Sprint Overview
 
 **Metadata:** See [metadata.md](metadata.md) for complete plan and sprint tracking details.
@@ -153,25 +169,25 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
 
 > ⚠️ **API key handling:** treat `OPENROUTER_API_KEY` exactly as 19.6's `quickstart.go` treats Synthetic keys — never print it, never commit it, never echo it to logs/terminal history. Record only the outcome (routable: yes/no), never the raw request/response.
 
-### 1.1 [ ] **[Alias routability spike — MANUAL](plan/user-stories/01-catalog-routability-spike-stable-channel-heuristic.md)**
+### 1.1 [x] **[Alias routability spike — MANUAL](plan/user-stories/01-catalog-routability-spike-stable-channel-heuristic.md)**
    **AC:** [01-01](plan/acceptance-criteria/01-01-latest-alias-routability-confirmed.md)
    1. Make ONE authenticated completion call against a `~…-latest` alias (e.g. `~anthropic/claude-opus-latest`) to confirm real server-side routability.
    2. Record the finding (routable: yes/no) in `plan/documentation/openrouter-catalog-api.md`.
    3. If NOT routable: note the fallback path (hybrid resolver uses `created`-timestamp/explicit-pin for affected personas — no epic-blocking failure per `HAS_GATED_WORK: false`).
    **Files:** `plan/documentation/openrouter-catalog-api.md` | **Duration:** 2-3h
 
-### 1.2 [ ] **[@stable heuristic & z-ai prefix — MANUAL](plan/user-stories/01-catalog-routability-spike-stable-channel-heuristic.md)**
+### 1.2 [x] **[@stable heuristic & z-ai prefix — MANUAL](plan/user-stories/01-catalog-routability-spike-stable-channel-heuristic.md)**
    **AC:** [01-02](plan/acceptance-criteria/01-02-stable-channel-heuristic-z-ai-prefix.md)
    1. Against the live schema, enumerate preview/beta/exp token patterns; define the `@stable` exclusion heuristic (exclude preview/beta/exp tokens + honor non-null `expiration_date`).
    2. Pin the GLM vendor prefix as `z-ai/` (NOT `glm/`) for glenna; confirm `delia → deepseek/`, `quinn → qwen/`.
    3. Record the heuristic + confirmed prefixes in `plan/documentation/openrouter-catalog-api.md`.
    **Files:** `plan/documentation/openrouter-catalog-api.md` | **Duration:** 2-3h
 
-### 1.3 [ ] **Phase 1 — DoD**
-   - [ ] Both spike findings recorded in `plan/documentation/openrouter-catalog-api.md`
-   - [ ] `@stable` heuristic defined against live schema; `z-ai/` prefix pinned
-   - [ ] No API key printed/committed
-   - [ ] COMMIT: `git add plan/documentation/openrouter-catalog-api.md && git commit -m "docs(personas): record catalog routability spike + @stable heuristic"`
+### 1.3 [x] **Phase 1 — DoD**
+   - [x] Both spike findings recorded in `plan/documentation/openrouter-catalog-api.md`
+   - [x] `@stable` heuristic defined against live schema; `z-ai/` prefix pinned
+   - [x] No API key printed/committed
+   - [x] COMMIT: `git add plan/documentation/openrouter-catalog-api.md && git commit -m "docs(personas): record catalog routability spike + @stable heuristic"`
 
 ### 1.4 [ ] **Phase 1 — GATE: Integration & Exit Review (subagent)**
    **Scope:** The recorded spike findings (informs Phase 3 resolver design).
@@ -463,7 +479,7 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
 
 ### 3.10 [ ] **[@stable excludes preview & expiring — RED](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    **AC:** [03-04](plan/acceptance-criteria/03-04-stable-channel-excludes-preview-and-expiring.md)
-   Write failing tests for `@stable`: excludes preview/beta/exp tokens AND models with non-null `expiration_date`. **High-complexity AC — the `@stable`/`expiration_date`/preview interaction is flagged unresolved in the story text; DECIDE explicitly here** (does `@latest` bypass one exclusion or both?) and record the decision in the test + `clarifications/`. Verify fail correctly.
+   Write failing tests for `@stable`: excludes preview/beta/exp tokens AND models with non-null `expiration_date`. **High-complexity AC.** The `@stable`/`expiration_date`/preview interaction is now PINNED in the ACs: `@stable` excludes BOTH preview/beta/exp tokens AND non-null `expiration_date`; the `@latest`×`expiration_date` rule is pinned in AC 03-05 (only the preview-token exclusion is bypassed under `@latest` — deprecation is ALWAYS excluded, failing closed to the next-newest non-expiring entry). Encode these pinned rules directly in the tests. Verify fail correctly.
    **Files:** `internal/personas/catalog_test.go` | **Duration:** 3h
 
 ### 3.11 [ ] **[@stable excludes preview & expiring — GREEN](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
@@ -497,7 +513,7 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
 
 ### 3.13 [ ] **[@latest includes preview — RED](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    **AC:** [03-05](plan/acceptance-criteria/03-05-latest-channel-includes-preview.md)
-   Write failing tests: `@latest` includes preview-tagged members per the decided semantics. Verify fail correctly.
+   Write failing tests: `@latest` includes preview-tagged members BUT still excludes non-null `expiration_date` (deprecation), per the rule pinned in AC 03-05. Verify fail correctly.
    **Files:** `internal/personas/catalog_test.go` | **Duration:** 2h
 
 ### 3.14 [ ] **[@latest includes preview — GREEN](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
