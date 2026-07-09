@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -444,5 +445,54 @@ func TestModelsCheckExit_ReadFailureOnly_Zero(t *testing.T) {
 	assert.Equal(t, "[]\n", jsonOut)
 }
 
-var _ = httptest.NewServer
-var _ = http.StatusOK
+// --- Determinism + zero-network default path (AC 05-04) ---
+
+// failRoundTripper fails the test if any HTTP request is attempted.
+type failRoundTripper struct{ t *testing.T }
+
+func (f failRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	f.t.Error("unexpected network call in models check default path")
+	return nil, fmt.Errorf("network blocked in test")
+}
+
+func TestModelsCheck_Deterministic_RepeatedRuns(t *testing.T) {
+	dir := withEmptyPersonasDir(t)
+	// No ATCR_CATALOG_SNAPSHOT override → the embedded snapshot is used.
+	// z-ai/glm-4.5 is deprecated AND behind glm-5.2 in the embedded snapshot.
+	writeCommunityPersona(t, dir, "glenna", "z-ai/glm-4.5", "")
+
+	out1, err1 := execute(t, "models", "check")
+	out2, err2 := execute(t, "models", "check")
+	assert.Equal(t, out1, out2, "repeated default runs must produce identical stdout")
+	assert.Equal(t, exitCode(err1), exitCode(err2))
+	assert.Equal(t, exitFailure, exitCode(err1)) // drift present
+
+	j1, je1 := execute(t, "models", "check", "--json")
+	j2, je2 := execute(t, "models", "check", "--json")
+	assert.Equal(t, j1, j2, "repeated --json runs must produce identical stdout")
+	assert.Equal(t, exitCode(je1), exitCode(je2))
+}
+
+func TestModelsCheck_DefaultPath_ZeroNetwork(t *testing.T) {
+	dir := withEmptyPersonasDir(t)
+	// anthropic/claude-opus-4.8 is present + newest in its (non-alias) family in the
+	// embedded snapshot → a clean, no-drift run.
+	writeCommunityPersona(t, dir, "anthony", "anthropic/claude-opus-4.8", "")
+
+	oldClient := personasClient
+	personasClient = &http.Client{Transport: failRoundTripper{t}}
+	t.Cleanup(func() { personasClient = oldClient })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("catalog/personas endpoint hit in default check path")
+		http.Error(w, "no", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("ATCR_CATALOG_URL", srv.URL)
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	out, err := execute(t, "models", "check")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exitCode(err))
+	assert.Contains(t, out, "No drift, deprecation, or missing-slug conditions found.")
+}
