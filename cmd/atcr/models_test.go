@@ -496,3 +496,133 @@ func TestModelsCheck_DefaultPath_ZeroNetwork(t *testing.T) {
 	assert.Equal(t, 0, exitCode(err))
 	assert.Contains(t, out, "No drift, deprecation, or missing-slug conditions found.")
 }
+
+// --- Story 08 (AC 08-02): `atcr models refresh` regenerates the snapshot from a
+// live fetch; maintainer-initiated, never CI-invoked -------------------------
+
+// fakeCatalogServer serves catalogBody at every path and points ATCR_CATALOG_URL
+// at it (the resolver/refresh catalog injection seam), so `models refresh` fetches
+// the fake instead of live OpenRouter and CI stays zero-live-network. A non-2xx
+// status models a fetch failure. Setting ATCR_CATALOG_URL also marks the run as a
+// test/override (not the live default), which bypasses the API-key gate.
+func fakeCatalogServer(t *testing.T, status int, catalogBody string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if status != 0 && status/100 != 2 {
+			http.Error(w, catalogBody, status)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(catalogBody))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("ATCR_CATALOG_URL", srv.URL)
+	return srv
+}
+
+// refreshCatalogBody is a small but structurally complete {"data":[...]} catalog:
+// a pinned slug, an alias entry, and a z-ai/ entry — enough to prove the written
+// fixture round-trips through the resolver's parser.
+const refreshCatalogBody = `{"data":[
+  {"id":"anthropic/claude-opus-4.8","canonical_slug":"anthropic/claude-opus-4.8","created":1776000000,"expiration_date":null},
+  {"id":"~openai/gpt-latest","canonical_slug":"openai/gpt-latest","created":1783000002,"expiration_date":null},
+  {"id":"z-ai/glm-5.2","canonical_slug":"z-ai/glm-5.2","created":1781631930,"expiration_date":null}
+]}`
+
+func TestModelsRefresh_IsRegistered(t *testing.T) {
+	out, err := execute(t, "models", "refresh", "--help")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "unknown command")
+	assert.Contains(t, out, "refresh")
+}
+
+// TestModelsRefresh_WritesFixtureFromLiveFetch covers AC 08-02 Scenario 1 + 2: the
+// command fetches /models, writes the array to --output preserving readable
+// indentation, prints a confirmation naming the path + model count, and the
+// written file round-trips through the resolver's parser (SnapshotModels).
+func TestModelsRefresh_WritesFixtureFromLiveFetch(t *testing.T) {
+	fakeCatalogServer(t, http.StatusOK, refreshCatalogBody)
+	out := filepath.Join(t.TempDir(), "catalog_snapshot.json")
+
+	stdout, err := execute(t, "models", "refresh", "--output", out)
+	require.NoError(t, err)
+	assert.Equal(t, 0, exitCode(err))
+
+	// Confirmation names the output path and the number of models written.
+	assert.Contains(t, stdout, out, "confirmation must name the output path")
+	assert.Contains(t, stdout, "3", "confirmation must report the model count")
+
+	written, rerr := os.ReadFile(out)
+	require.NoError(t, rerr, "the command must write the snapshot file")
+	assert.Contains(t, string(written), "anthropic/claude-opus-4.8")
+	assert.Contains(t, string(written), "  ", "written JSON must preserve readable indentation")
+
+	// Round-trip: the written file must parse through the same code path the
+	// resolver tests use, proving structural compatibility (AC 08-02 Scenario 2).
+	t.Setenv("ATCR_CATALOG_SNAPSHOT", out)
+	models, serr := commpersonas.SnapshotModels()
+	require.NoError(t, serr)
+	assert.Len(t, models, 3)
+}
+
+// TestModelsRefresh_RefusesEmptyCatalog covers AC 08-02 Edge Case 1: an empty data
+// array is refused with a clear error and exit 2; no file is written.
+func TestModelsRefresh_RefusesEmptyCatalog(t *testing.T) {
+	fakeCatalogServer(t, http.StatusOK, `{"data":[]}`)
+	out := filepath.Join(t.TempDir(), "catalog_snapshot.json")
+
+	stdout, err := execute(t, "models", "refresh", "--output", out)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error()+stdout, "empty")
+	_, statErr := os.Stat(out)
+	assert.True(t, os.IsNotExist(statErr), "no file must be written on an empty catalog")
+}
+
+// TestModelsRefresh_FetchFailure_LeavesFixtureUntouched covers AC 08-02 Edge Case 2:
+// a non-2xx fetch leaves any existing fixture unchanged and exits 2.
+func TestModelsRefresh_FetchFailure_LeavesFixtureUntouched(t *testing.T) {
+	fakeCatalogServer(t, http.StatusInternalServerError, "upstream boom")
+	out := filepath.Join(t.TempDir(), "catalog_snapshot.json")
+	require.NoError(t, os.WriteFile(out, []byte("PRIOR-CONTENT"), 0o644))
+
+	_, err := execute(t, "models", "refresh", "--output", out)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+
+	after, rerr := os.ReadFile(out)
+	require.NoError(t, rerr)
+	assert.Equal(t, "PRIOR-CONTENT", string(after), "existing fixture must be untouched on fetch failure")
+}
+
+// TestModelsRefresh_MissingAPIKey_LiveDefault_Exit2 covers AC 08-02 Error Scenario 1:
+// on the live default path (no ATCR_CATALOG_URL override) a missing OPENROUTER_API_KEY
+// fails closed with exit 2 and the pinned message — no file written, no network. This
+// is what keeps `refresh` from ever running in CI (which has no key).
+func TestModelsRefresh_MissingAPIKey_LiveDefault_Exit2(t *testing.T) {
+	// No ATCR_CATALOG_URL → the live default path; ensure no key is present.
+	t.Setenv("ATCR_CATALOG_URL", "")
+	t.Setenv("OPENROUTER_API_KEY", "")
+	out := filepath.Join(t.TempDir(), "catalog_snapshot.json")
+
+	_, err := execute(t, "models", "refresh", "--output", out)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "OPENROUTER_API_KEY is required to refresh the catalog snapshot")
+	_, statErr := os.Stat(out)
+	assert.True(t, os.IsNotExist(statErr), "no file must be written when the key is missing")
+}
+
+// TestModelsRefresh_UnwritablePath_Exit2 covers AC 08-02 Error Scenario 2: an
+// unwritable output path surfaces a wrapped write error naming the path, exits 2.
+func TestModelsRefresh_UnwritablePath_Exit2(t *testing.T) {
+	fakeCatalogServer(t, http.StatusOK, refreshCatalogBody)
+	// A path whose parent is a regular file, so os.WriteFile cannot create it.
+	parent := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(parent, []byte("x"), 0o644))
+	out := filepath.Join(parent, "catalog_snapshot.json")
+
+	_, err := execute(t, "models", "refresh", "--output", out)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+}

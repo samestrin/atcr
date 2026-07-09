@@ -43,3 +43,35 @@ func SnapshotModels() ([]CatalogModel, error) {
 	}
 	return resp.Data, nil
 }
+
+// snapshotModelOut is the on-disk wire shape `atcr models refresh` writes, with the
+// same JSON keys CatalogModel consumes (mirrors catalogModelJSON) so a refreshed
+// file round-trips through SnapshotModels/FetchModels unchanged.
+type snapshotModelOut struct {
+	ID             string  `json:"id"`
+	CanonicalSlug  string  `json:"canonical_slug"`
+	Created        int64   `json:"created"`
+	ExpirationDate *string `json:"expiration_date"`
+}
+
+// MarshalSnapshot renders models as the {"data":[...]} snapshot envelope with
+// stable, human-readable 2-space indentation and a trailing newline — the format
+// `atcr models refresh` writes and every resolver test consumes.
+func MarshalSnapshot(models []CatalogModel) ([]byte, error) {
+	out := struct {
+		Data []snapshotModelOut `json:"data"`
+	}{Data: make([]snapshotModelOut, len(models))}
+	for i, m := range models {
+		out.Data[i] = snapshotModelOut{
+			ID:             m.ID,
+			CanonicalSlug:  m.CanonicalSlug,
+			Created:        m.Created,
+			ExpirationDate: m.ExpirationDate,
+		}
+	}
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
+}

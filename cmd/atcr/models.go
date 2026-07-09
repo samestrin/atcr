@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -45,7 +46,69 @@ func newModelsCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	cmd.AddCommand(newModelsCheckCmd())
+	cmd.AddCommand(newModelsRefreshCmd())
 	return cmd
+}
+
+// defaultSnapshotOutput is where `atcr models refresh` writes by default: the
+// checked-in fixture snapshot.go embeds at build time. A refreshed file reaches
+// the default `models check` path either by recompiling the binary (the embed
+// re-reads it) or, at runtime, via the ATCR_CATALOG_SNAPSHOT override (TD-009).
+const defaultSnapshotOutput = "internal/personas/testdata/catalog_snapshot.json"
+
+func newModelsRefreshCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "refresh",
+		Short: "Regenerate the checked-in catalog snapshot from a live OpenRouter fetch (maintainer-only)",
+		Long: "Fetch OpenRouter's /api/v1/models once and rewrite the checked-in catalog\n" +
+			"snapshot the resolver tests and the embedded `models check` path consume.\n\n" +
+			"This is a MAINTAINER command, never run in CI: on the live default path it\n" +
+			"requires OPENROUTER_API_KEY and fails closed (exit 2) without it, so CI — which\n" +
+			"has no key — can never fetch live. A refreshed file reaches the default\n" +
+			"`models check` path by recompiling the binary (the snapshot is embedded) or at\n" +
+			"runtime via the ATCR_CATALOG_SNAPSHOT override.\n\n" +
+			"By default it writes " + defaultSnapshotOutput + "; use --output to write elsewhere.",
+		Args: usageArgs(cobra.NoArgs),
+		RunE: runModelsRefresh,
+	}
+	cmd.Flags().String("output", "", "path to write the snapshot (default: "+defaultSnapshotOutput+")")
+	return cmd
+}
+
+func runModelsRefresh(cmd *cobra.Command, _ []string) error {
+	output, _ := cmd.Flags().GetString("output")
+	if strings.TrimSpace(output) == "" {
+		output = defaultSnapshotOutput
+	}
+
+	// Maintainer-auth gate: on the live default path (no ATCR_CATALOG_URL override)
+	// require OPENROUTER_API_KEY. CI has no key, so refresh fails closed there and
+	// can never fetch live — the key presence is the maintainer gate even though the
+	// catalog GET itself is unauthenticated (AC 08-02 Error Scenario 1).
+	if commpersonas.CatalogURLOverride() == "" && strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) == "" {
+		return usageError(fmt.Errorf("OPENROUTER_API_KEY is required to refresh the catalog snapshot"))
+	}
+
+	// Fetch once. Any transport/status error leaves the existing fixture untouched
+	// (we return before the write) and maps to exit 2.
+	models, err := commpersonas.NewLiveCatalogClient(personasClient).FetchModels()
+	if err != nil {
+		return usageError(err)
+	}
+	if len(models) == 0 {
+		return usageError(fmt.Errorf("refusing to overwrite fixture with empty catalog"))
+	}
+
+	data, err := commpersonas.MarshalSnapshot(models)
+	if err != nil {
+		return usageError(err)
+	}
+	if err := os.WriteFile(output, data, 0o644); err != nil {
+		return usageError(fmt.Errorf("writing catalog snapshot to %s: %w", output, err))
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Wrote %d models to %s\n", len(models), output)
+	return nil
 }
 
 func newModelsCheckCmd() *cobra.Command {

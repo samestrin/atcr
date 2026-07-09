@@ -96,6 +96,21 @@ type CatalogClient struct {
 // ErrCatalogNotFound is returned when the catalog endpoint 404s.
 var ErrCatalogNotFound = fmt.Errorf("catalog endpoint not found")
 
+// CatalogURLOverride returns the ATCR_CATALOG_URL override (empty when unset), so
+// a caller outside this package can distinguish the live default catalog path from
+// a test/override and gate maintainer-only requirements (e.g. an API key) on the
+// live path only. It centralizes the env-var knowledge in this package.
+func CatalogURLOverride() string {
+	return catalogBaseURL()
+}
+
+// NewLiveCatalogClient builds a CatalogClient for a maintainer/live fetch, using
+// the ATCR_CATALOG_URL override when set (tests point it at an httptest server)
+// and falling back to the public CatalogBaseURL otherwise.
+func NewLiveCatalogClient(client HTTPClient) *CatalogClient {
+	return &CatalogClient{HTTPClient: client, BaseURL: catalogBaseURL()}
+}
+
 // FetchModels GETs <BaseURL>/models and returns the parsed model list. It reuses
 // fetch()'s retry/backoff/timeout/body-size-cap guards unchanged.
 func (c *CatalogClient) FetchModels() ([]CatalogModel, error) {
