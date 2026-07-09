@@ -557,6 +557,10 @@ func TestModelsRefresh_WritesFixtureFromLiveFetch(t *testing.T) {
 	require.NoError(t, rerr, "the command must write the snapshot file")
 	assert.Contains(t, string(written), "anthropic/claude-opus-4.8")
 	assert.Contains(t, string(written), "  ", "written JSON must preserve readable indentation")
+	// The refreshed file re-emits the self-documenting provenance header (ignored on
+	// read) so a refresh does not silently strip the checked-in fixture's note.
+	assert.Contains(t, string(written), "_fixture_meta", "written snapshot must carry a provenance header")
+	assert.Contains(t, string(written), "/models", "provenance must name the catalog source")
 
 	// Round-trip: the written file must parse through the same code path the
 	// resolver tests use, proving structural compatibility (AC 08-02 Scenario 2).

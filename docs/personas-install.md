@@ -172,14 +172,16 @@ The `models` command family inspects the resolved-slug locks against a checked-i
 
 Reports three conditions per installed community persona: a newer family member is available (**drift**), the locked slug is expiring (**deprecation**), or the locked slug is absent from the catalog (**missing**).
 
+The shipped roster's locks are all current, so a fresh run prints the clean message. The block below is an **illustrative** example of the three line formats when conditions *are* present (the slugs are hypothetical):
+
 ```bash
 atcr models check
 # anthony: anthropic/claude-opus-4.8 → anthropic/claude-opus-5.0 (newer member)
-# glenna: z-ai/glm-4.5 has expiration 2026-12-31 (deprecation)
-# quinn: qwen/qwen3-legacy no longer in catalog (missing)
+# glenna: z-ai/glm-5.2 → z-ai/glm-6.0 (newer member)
+# quinn: qwen/qwen3-coder-plus no longer in catalog (missing)
 ```
 
-- A clean run prints `No drift, deprecation, or missing-slug conditions found.`
+- A clean run — including every persona in the shipped roster today — prints `No drift, deprecation, or missing-slug conditions found.`
 - **Exit codes:** `0` = clean, `1` = one or more conditions found, `2` = usage or command failure. This exit-code contract is the seam Epic 19.8's mechanical maintenance agent wraps.
 - `--json` emits a machine-readable array (one object per condition); an empty result is `[]`.
 - `check` changes nothing — it only reports. Use `atcr personas upgrade` to act on drift.

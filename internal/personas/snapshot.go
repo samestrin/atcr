@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // embeddedSnapshot is the checked-in catalog snapshot compiled into the binary,
@@ -54,13 +55,32 @@ type snapshotModelOut struct {
 	ExpirationDate *string `json:"expiration_date"`
 }
 
-// MarshalSnapshot renders models as the {"data":[...]} snapshot envelope with
-// stable, human-readable 2-space indentation and a trailing newline — the format
-// `atcr models refresh` writes and every resolver test consumes.
+// snapshotMeta is the ignored-on-read provenance header `atcr models refresh`
+// re-emits so a regenerated snapshot stays self-documenting (SnapshotModels /
+// FetchModels read only `data` and never this key).
+type snapshotMeta struct {
+	Note    string `json:"note"`
+	Fetched string `json:"fetched"`
+	Source  string `json:"source"`
+}
+
+// MarshalSnapshot renders models as the {"_fixture_meta":{…},"data":[…]} snapshot
+// envelope with stable, human-readable 2-space indentation and a trailing newline —
+// the format `atcr models refresh` writes and every resolver test consumes. The
+// provenance header is re-emitted (with today's fetch date) so a refresh does not
+// silently strip the checked-in fixture's self-documenting note.
 func MarshalSnapshot(models []CatalogModel) ([]byte, error) {
 	out := struct {
+		Meta snapshotMeta       `json:"_fixture_meta"`
 		Data []snapshotModelOut `json:"data"`
-	}{Data: make([]snapshotModelOut, len(models))}
+	}{
+		Meta: snapshotMeta{
+			Note:    "Checked-in snapshot of OpenRouter /api/v1/models for zero-live-network resolver tests (Epic 19.7). Regenerate with `atcr models refresh`. Only the `data` array is consumed by CatalogClient.FetchModels; this key is ignored.",
+			Fetched: time.Now().UTC().Format("2006-01-02"),
+			Source:  strings.TrimRight(CatalogBaseURL, "/") + "/models",
+		},
+		Data: make([]snapshotModelOut, len(models)),
+	}
 	for i, m := range models {
 		// CatalogModel and snapshotModelOut share an identical field layout (the
 		// latter only adds JSON tags), so a struct conversion is exact.
