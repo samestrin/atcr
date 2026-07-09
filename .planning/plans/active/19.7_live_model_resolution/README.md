@@ -7,11 +7,11 @@ Layers a live, auto-updating model resolution system over the persona `model` bi
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/19.7_live_model_resolution/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/19.7_live_model_resolution/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/19.7_live_model_resolution/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/19.7_live_model_resolution/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/19.7_live_model_resolution/`
 
 ## Timeline & Milestones
-Complexity is rated Very-Complex (5 components touched, 9 proposed-solution items, an external-endpoint integration crossing a system boundary) — comparable in scope to Epic 19.6. Estimated ~7 user stories across roughly the same phase shape as 19.6 (spike → schema/lock foundation → resolver → upgrade/check commands → validation gate → roster reconciliation → docs), with exact day estimates deferred to `/design-sprint`.
+Complexity scored 10/12 (Very-Complex) by `/design-sprint`: 8 phases (Research & Spike → Foundation → Core Resolution → Upgrade Integration → Discovery Command → Validation Gate → Roster Reconciliation → Integration & Docs), 15 days total. See [sprint-design.md](sprint-design.md) for the full phase breakdown, complexity scoring, and risk analysis. `--gated` is strongly recommended for `/create-sprint`.
 
 ## Resource Requirements
 Backend/CLI engineering time only (Go); no new infrastructure, no new third-party dependency, no design/UX resourcing (no visual surface). One authenticated OpenRouter API call is required for the AC1 spike; all subsequent resolver tests run against a checked-in catalog snapshot fixture with zero live network in CI.
@@ -36,5 +36,6 @@ Alias routability is unconfirmed until the AC1 spike runs (mitigated by a resolv
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
 - [Documentation](documentation/)
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)
+- [Sprint Design](sprint-design.md)
