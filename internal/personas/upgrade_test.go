@@ -1,6 +1,7 @@
 package personas
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// recordingClient wraps an HTTPClient and records the path of every request it
+// makes, so a test can assert exactly which endpoints a code path touches.
+type recordingClient struct {
+	inner HTTPClient
+	paths *[]string
+}
+
+func (r recordingClient) Do(req *http.Request) (*http.Response, error) {
+	*r.paths = append(*r.paths, req.URL.Path)
+	return r.inner.Do(req)
+}
 
 func TestVersionOf_ValidYAML(t *testing.T) {
 	data := []byte("version: \"1.2.3\"\n")
@@ -295,6 +308,81 @@ version: "1.0.0"
 
 	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "anthony.yaml"))
 	assert.Equal(t, aliasPersona, string(got), "an unchanged alias persona must be byte-for-byte identical")
+}
+
+// --- Phase 4: resolution isolated to the upgrade path (AC 04-02) ------------
+
+// TestUpgrade_CatalogFetchedOnlyOnBindingPath proves the catalog/models endpoint
+// is fetched exactly once on the resolution path and NEVER on the bindingless
+// version path — the load-bearing C3 guarantee that resolution is confined to
+// Upgrade's binding branch.
+func TestUpgrade_CatalogFetchedOnlyOnBindingPath(t *testing.T) {
+	cat := catalogJSON([2]string{"deepseek/deepseek-v4.1", "1780000000"})
+	remote := `provider: anthropic
+model: claude-sonnet-4-6
+role: reviewer
+version: "1.1.0"
+`
+	srv := testServer(t, map[string]string{
+		"/models":              cat,
+		"/security/owasp.yaml": remote,
+	})
+	t.Setenv(envCatalogURL, srv.URL)
+
+	// Bindingless persona: version path only — the catalog must never be touched.
+	t.Run("bindingless never fetches catalog", func(t *testing.T) {
+		var paths []string
+		client := recordingClient{inner: srv.Client(), paths: &paths}
+		dir := t.TempDir()
+		installFixture(t, dir, "security/owasp", validPersonaYAML)
+
+		_, err := Upgrade(client, srv.URL, dir, "security/owasp", false)
+		require.NoError(t, err)
+		for _, p := range paths {
+			assert.NotEqual(t, "/models", p, "bindingless upgrade must never fetch the catalog")
+		}
+	})
+
+	// Bound persona: the catalog is fetched exactly once, on the resolution path.
+	t.Run("binding fetches catalog exactly once", func(t *testing.T) {
+		var paths []string
+		client := recordingClient{inner: srv.Client(), paths: &paths}
+		dir := t.TempDir()
+		installFixture(t, dir, "vendor/delia", bindingPersonaYAML)
+
+		_, err := Upgrade(client, srv.URL, dir, "vendor/delia", false)
+		require.NoError(t, err)
+		n := 0
+		for _, p := range paths {
+			if p == "/models" {
+				n++
+			}
+		}
+		assert.Equal(t, 1, n, "a bound upgrade must fetch the catalog exactly once")
+	})
+}
+
+// TestReviewAndResolvePathsCannotReachCatalog is a structural regression lock: the
+// catalog/resolver lives in internal/personas, so no file in internal/registry
+// (ResolvePersona — the review-time resolve path) or internal/fanout (review
+// fan-out) may import internal/personas. Enforcing zero import is stronger than
+// checking a single file and catches any future convenience call that would put
+// catalog resolution on the review hot path (AC 04-02 Edge Case 1).
+func TestReviewAndResolvePathsCannotReachCatalog(t *testing.T) {
+	const forbidden = `"github.com/samestrin/atcr/internal/personas"`
+	for _, pkgDir := range []string{"../registry", "../fanout"} {
+		entries, err := os.ReadDir(pkgDir)
+		require.NoError(t, err)
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(pkgDir, e.Name()))
+			require.NoError(t, err)
+			assert.NotContains(t, string(data), forbidden,
+				"%s/%s must not import internal/personas — resolution must stay off the review path", pkgDir, e.Name())
+		}
+	}
 }
 
 // TestUpgrade_EmptyBindingUsesVersionPath is the bindingless-persona case both
