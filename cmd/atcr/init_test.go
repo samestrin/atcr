@@ -700,6 +700,111 @@ func TestInstallCommunityPersonas_NeverOverwriteWarningDistinct(t *testing.T) {
 	assert.Equal(t, "HANDEDITED", string(got), "the pre-existing hand-edited unit is untouched")
 }
 
+// --- AC 07-03: single shared reconciliation point + backward compat ---------
+
+// TestRosterReconciliation_InitQuickstartParity covers AC 07-03 Scenario 1: the
+// `init` and `quickstart` call paths resolve to the IDENTICAL index-derived
+// roster because both consume the same shared reconciliation point
+// (installCommunityPersonas, nil roster) — the TD-006/TD-007 two-call-site drift
+// guard. Both paths run against the same real index and must install the same set.
+//
+// Transparent vacuous-RED: 7.2's nil-roster derivation already made both call
+// sites share one source, so this passes on first run. It is the drift guard —
+// it fails if either call site is ever changed to pass a different roster.
+func TestRosterReconciliation_InitQuickstartParity(t *testing.T) {
+	srv := realCommunityServer(t) // resolve real dir before any t.Chdir
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	oldDir := personasDir
+	t.Cleanup(func() { personasDir = oldDir })
+
+	// init call path: writes .atcr into cwd, community units into its pin dir.
+	initProj := t.TempDir()
+	initPin := t.TempDir()
+	t.Chdir(initProj)
+	personasDir = func() (string, error) { return initPin, nil }
+	_, _, err := executeSplit(t, "init")
+	require.NoError(t, err)
+
+	// quickstart call path: explicit dir arg (cwd-independent), its own pin dir.
+	qsProj := t.TempDir()
+	qsPin := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	personasDir = func() (string, error) { return qsPin, nil }
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:            qsProj,
+		fetchCommunity: true,
+		in:             strings.NewReader(quickstartInput),
+		out:            &bytes.Buffer{},
+		errOut:         &bytes.Buffer{},
+	}))
+
+	initSet := communityPinNames(t, initPin)
+	assert.NotEmpty(t, initSet, "init installs a non-empty roster")
+	assert.Equal(t, initSet, communityPinNames(t, qsPin),
+		"init and quickstart install the identical index-derived roster (one shared reconciliation point)")
+}
+
+// TestInstallCommunityPersonas_NilRoster_MidRosterFailure_RollsBack covers AC
+// 07-03 Edge Case 1: the all-or-nothing rollback is preserved under the reconciled
+// (nil) roster — a mid-roster install failure removes every file this run created.
+func TestInstallCommunityPersonas_NilRoster_MidRosterFailure_RollsBack(t *testing.T) {
+	index := `[
+	  {"name":"a","version":"1.0.0","description":"d","path":"a.yaml"},
+	  {"name":"b","version":"1.0.0","description":"d","path":"b.yaml"},
+	  {"name":"c","version":"1.0.0","description":"d","path":"c.yaml"}
+	]`
+	srv := statusServer(t,
+		map[string]string{
+			"/index.json": index,
+			"/a.yaml":     communityUnitYAML,
+			"/b.yaml":     communityUnitYAML,
+		},
+		map[string]int{"/c.yaml": 500},
+	)
+	dest := t.TempDir()
+
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "c", "the failing persona is named")
+
+	entries, rerr := os.ReadDir(dest)
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "nil-roster install is all-or-nothing: earlier installs are rolled back")
+}
+
+// TestInit_BuiltinScaffoldUntouchedByCommunityInstall covers AC 07-03 Edge Case 2:
+// the embedded built-in .md scaffolds `atcr init` writes under .atcr/personas are
+// not modified, renamed, or removed by the community-install step (Option B never
+// touches the built-in scaffold or builtins.Names() — the two are decoupled). In
+// production the community pin dir (~/.config/atcr/personas) is a DIFFERENT dir
+// from the project .atcr/personas scaffold dir; the test mirrors that separation.
+func TestInit_BuiltinScaffoldUntouchedByCommunityInstall(t *testing.T) {
+	srv := realCommunityServer(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	pinDir := t.TempDir() // separate from .atcr/personas, mirroring production
+	oldDir := personasDir
+	personasDir = func() (string, error) { return pinDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	_, _, err := executeSplit(t, "init")
+	require.NoError(t, err)
+
+	// Every built-in .md scaffold is present and intact after the community install.
+	for _, name := range personaNames {
+		data, rerr := os.ReadFile(filepath.Join(dir, ".atcr", "personas", name+".md"))
+		require.NoError(t, rerr, "built-in scaffold %s.md present after community install", name)
+		assert.Contains(t, string(data), "## Role", "%s.md scaffold content intact", name)
+	}
+	// The community roster lands in the separate pin dir — never among the scaffolds.
+	assert.NotEmpty(t, communityPinNames(t, pinDir), "community roster installed to the pin dir")
+	assert.NoFileExists(t, filepath.Join(dir, ".atcr", "personas", "anthony.yaml"),
+		"community units never land among the built-in scaffolds (decoupled)")
+}
+
 func TestPersonas_EmbeddedSetComplete(t *testing.T) {
 	assert.ElementsMatch(t, personaNames, personas.Names())
 	for _, name := range personaNames {
