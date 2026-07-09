@@ -30,10 +30,16 @@ const (
 // from (AC 05-02): condition-inapplicable fields are omitted from JSON via
 // omitempty rather than emitted as null.
 type DriftFinding struct {
-	Persona        string `json:"persona"`
-	Condition      string `json:"condition"`
-	CurrentSlug    string `json:"current_slug"`
-	SuggestedSlug  string `json:"suggested_slug,omitempty"`
+	Persona       string `json:"persona"`
+	Condition     string `json:"condition"`
+	CurrentSlug   string `json:"current_slug"`
+	SuggestedSlug string `json:"suggested_slug,omitempty"`
+	// Family is advisory newer-member context, NOT a stable grouping key: for a
+	// BOUND persona it is the bare binding family token (e.g. "glm"); for a
+	// BINDINGLESS persona it is the vendor/tier prefix derived from the locked
+	// slug (e.g. "z-ai/glm", "anthropic/claude-opus"). The two shapes differ by
+	// provenance (see TD-008); a machine consumer should key on condition/
+	// current_slug/suggested_slug, not on family.
 	Family         string `json:"family,omitempty"`
 	Channel        string `json:"channel,omitempty"`
 	ExpirationDate string `json:"expiration_date,omitempty"`

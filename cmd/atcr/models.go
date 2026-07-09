@@ -58,7 +58,10 @@ func newModelsCheckCmd() *cobra.Command {
 			"or the locked slug is absent from the catalog (missing).\n\n" +
 			"With no argument, every installed community persona is checked; pass a name\n" +
 			"to check a single persona. Exit codes: 0 = clean, 1 = conditions found,\n" +
-			"2 = usage or command failure.",
+			"2 = usage or command failure.\n\n" +
+			"The comparison uses a catalog snapshot compiled into the binary (no network).\n" +
+			"Set ATCR_CATALOG_SNAPSHOT to a file path to compare against a different\n" +
+			"snapshot (e.g. one produced by a future `atcr models refresh`).",
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: runModelsCheck,
 	}
