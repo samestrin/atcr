@@ -31,7 +31,7 @@
 
 ### Acceptance Criteria
 - **Location:** [`acceptance-criteria/`](acceptance-criteria/)
-- **Status:** Pending - generate with `/create-acceptance-criteria @.planning/plans/active/19.7_live_model_resolution/`
+- **Status:** Generated
 
 ## Feature Analysis Summary
 Epic 19.6 already proved the fetch-and-pin + explicit-upgrade discipline (locked Clarification C3): resolution never touches the review hot path, and an explicit `atcr personas upgrade` is the only path that advances a persona's version. This epic extends that exact posture from "static slug" to "resolved slug from a family/channel binding" — the resolver is strictly upstream of `internal/registry.ResolvePersona`'s prompt-resolution chain and must never modify it. A catalog spike (AC1) against OpenRouter's `/api/v1/models` confirms whether `~`-prefixed `-latest` aliases are actually completion-routable before the hybrid resolver design commits to them for 7 of 10 personas; DeepSeek/Qwen/GLM (no alias) fall back to a `created`-timestamp newest-in-vendor-prefix resolver or an explicit pin. A major-version jump additionally gates on the existing `TemplateFixtureRunner` still passing and surfaces a re-tune flag, while a minor jump auto-locks — reusing `upgrade.go`'s existing `isNewer` semver-comparison machinery. Separately, this epic closes 19.6's deferred HIGH (TD-011): `init`/`quickstart` currently fetch-and-pin `builtins.Names()` (9 model-agnostic built-ins) against a community index that only publishes 10 disjoint model-indexed personas, so online `init`/`quickstart` today pin zero community personas and emit 9 misleading skip warnings.
