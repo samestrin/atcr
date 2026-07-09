@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	commpersonas "github.com/samestrin/atcr/internal/personas"
 	"github.com/spf13/cobra"
@@ -124,7 +125,7 @@ func runModelsCheck(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	} else {
-		renderDriftText(cmd.OutOrStdout(), findings, checked)
+		renderDriftText(cmd.OutOrStdout(), findings, checked, filter)
 	}
 
 	if len(findings) > 0 {
@@ -135,12 +136,16 @@ func runModelsCheck(cmd *cobra.Command, args []string) error {
 
 // renderDriftText writes one line per finding, or an explicit non-empty
 // confirmation when there are none — distinguishing "nothing to check" (no
-// community personas) from "checked, all clean".
-func renderDriftText(w io.Writer, findings []commpersonas.DriftFinding, checked int) {
+// community personas), "no such persona to check" (a name filter matched
+// nothing), and "checked, all clean".
+func renderDriftText(w io.Writer, findings []commpersonas.DriftFinding, checked int, filter string) {
 	if len(findings) == 0 {
-		if checked == 0 {
+		switch {
+		case checked == 0 && filter != "":
+			_, _ = fmt.Fprintf(w, "No community persona named %q to check.\n", sanitizeDisplay(filter))
+		case checked == 0:
 			_, _ = fmt.Fprintln(w, "No community personas installed; nothing to check.")
-		} else {
+		default:
 			_, _ = fmt.Fprintln(w, "No drift, deprecation, or missing-slug conditions found.")
 		}
 		return
@@ -151,17 +156,34 @@ func renderDriftText(w io.Writer, findings []commpersonas.DriftFinding, checked 
 }
 
 // driftLine renders one finding in the documented human-readable line format.
+// Every interpolated field is control-char-sanitized so a crafted persona model
+// field or catalog id cannot inject terminal escapes into operator stdout.
 func driftLine(f commpersonas.DriftFinding) string {
+	persona := sanitizeDisplay(f.Persona)
+	cur := sanitizeDisplay(f.CurrentSlug)
 	switch f.Condition {
 	case commpersonas.ConditionNewerMember:
-		return fmt.Sprintf("%s: %s → %s (newer member)", f.Persona, f.CurrentSlug, f.SuggestedSlug)
+		return fmt.Sprintf("%s: %s → %s (newer member)", persona, cur, sanitizeDisplay(f.SuggestedSlug))
 	case commpersonas.ConditionDeprecation:
-		return fmt.Sprintf("%s: %s has expiration %s (deprecation)", f.Persona, f.CurrentSlug, f.ExpirationDate)
+		return fmt.Sprintf("%s: %s has expiration %s (deprecation)", persona, cur, sanitizeDisplay(f.ExpirationDate))
 	case commpersonas.ConditionMissing:
-		return fmt.Sprintf("%s: %s no longer in catalog (missing)", f.Persona, f.CurrentSlug)
+		return fmt.Sprintf("%s: %s no longer in catalog (missing)", persona, cur)
 	default:
-		return fmt.Sprintf("%s: %s (%s)", f.Persona, f.CurrentSlug, f.Condition)
+		return fmt.Sprintf("%s: %s (%s)", persona, cur, sanitizeDisplay(f.Condition))
 	}
+}
+
+// sanitizeDisplay strips control characters (including U+2028/2029 line and
+// paragraph separators) from a value bound for a human-readable line, mirroring
+// the TD-008 control-char discipline. The --json path needs no equivalent — the
+// standard-library encoder escapes control characters itself.
+func sanitizeDisplay(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // renderDriftJSON emits the findings as a JSON array (one object per condition),

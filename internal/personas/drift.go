@@ -65,8 +65,10 @@ func LoadLock(personasDir, name string) (InstalledLock, error) {
 // single persona newer-member before deprecation. A slug absent from the catalog
 // is terminal for that persona (one `missing` finding; no version baseline to
 // compare, and its expiration cannot be read). A lock with an empty Model is
-// skipped (a model-agnostic persona carries nothing to check). The catalog is
-// indexed once and reused across all personas (O(n)).
+// skipped (a model-agnostic persona carries nothing to check). The missing and
+// deprecation lookups use a catalog index built once (O(1) per persona); the
+// newer-member check scans the model list per persona (O(personas × models)),
+// which is negligible at the realistic scale of tens of personas.
 func CheckDrift(locks []InstalledLock, models []CatalogModel) []DriftFinding {
 	bySlug := make(map[string]CatalogModel, len(models))
 	for _, m := range models {
@@ -180,9 +182,14 @@ func deriveFamilyPrefix(slug string) string {
 }
 
 // newestStableInFamilyPrefix returns the ID of the newest @stable-eligible catalog
-// member whose ID shares familyPrefix at a segment boundary, selected by the same
-// created-timestamp total order the resolver uses. ok=false when the prefix is
-// empty or no eligible member exists.
+// member of the SAME family tier as familyPrefix, selected by the same
+// created-timestamp total order the resolver uses. A candidate is same-tier only
+// when its own derived family prefix equals familyPrefix — so "anthropic/claude-opus"
+// matches "anthropic/claude-opus-5.0" but NOT a sibling tier like
+// "openai/gpt-5.4-mini" (whose derived prefix retains the "-mini" tier token) and
+// never a "~"-prefixed alias (different vendor token). A malformed/control-char
+// candidate slug is skipped so a bad catalog entry is never suggested as a lock.
+// ok=false when the prefix is empty or no eligible member exists.
 func newestStableInFamilyPrefix(familyPrefix string, models []CatalogModel) (string, bool) {
 	if strings.TrimSpace(familyPrefix) == "" {
 		return "", false
@@ -190,13 +197,16 @@ func newestStableInFamilyPrefix(familyPrefix string, models []CatalogModel) (str
 	var best *CatalogModel
 	for i := range models {
 		m := &models[i]
-		if !inFamilyPrefix(m.ID, familyPrefix) {
+		if deriveFamilyPrefix(m.ID) != familyPrefix { // same tier only (no cross-tier bleed)
 			continue
 		}
 		if m.Created <= 0 {
 			continue
 		}
 		if !channelEligible(*m, "@stable") {
+			continue
+		}
+		if validateResolvedSlug(m.ID) != nil { // never suggest a malformed/control-char slug
 			continue
 		}
 		if best == nil || newerCandidate(*m, *best) {
@@ -207,23 +217,4 @@ func newestStableInFamilyPrefix(familyPrefix string, models []CatalogModel) (str
 		return "", false
 	}
 	return best.ID, true
-}
-
-// inFamilyPrefix reports whether id begins with familyPrefix at a delimiter
-// boundary ("-", "/", ":", or end of string), so "anthropic/claude-opus" matches
-// "anthropic/claude-opus-5.0" but not "anthropic/claude-opusx". A "~"-prefixed
-// alias never matches a concrete family prefix (it does not start with the vendor).
-func inFamilyPrefix(id, familyPrefix string) bool {
-	if !strings.HasPrefix(id, familyPrefix) {
-		return false
-	}
-	if len(id) == len(familyPrefix) {
-		return true
-	}
-	switch id[len(familyPrefix)] {
-	case '-', '/', ':':
-		return true
-	default:
-		return false
-	}
 }

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	commpersonas "github.com/samestrin/atcr/internal/personas"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -135,8 +136,55 @@ func TestModelsCheck_PerPersonaReadFailure_ExcludedNotAborted(t *testing.T) {
 	assert.Contains(t, out, "anthony: anthropic/claude-opus-4.8 → anthropic/claude-opus-5.0 (newer member)")
 }
 
-// unusedJSONImport keeps encoding/json and httptest referenced until later
-// elements' tests use them (added in 5.4 / 5.10).
+// TestModelsCheck_FilterNoMatch_DistinctMessage covers the 5.2.A LOW: a name
+// filter matching no community persona reports a distinct message, not the
+// misleading "nothing to check" reserved for an empty install.
+func TestModelsCheck_FilterNoMatch_DistinctMessage(t *testing.T) {
+	dir := withEmptyPersonasDir(t)
+	withCatalogSnapshot(t, driftFixtureCatalog)
+	writeCommunityPersona(t, dir, "anthony", "anthropic/claude-opus-5.0", "")
+
+	out, err := execute(t, "models", "check", "nonexistent")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exitCode(err))
+	assert.Contains(t, out, `No community persona named "nonexistent" to check.`)
+	assert.NotContains(t, out, "nothing to check")
+}
+
+// TestModelsCheck_BindinglessFallback_NoCrossTierBleed covers the 5.2.A MEDIUM:
+// a bindingless lock's family-prefix fallback must not float a sibling tier
+// (openai/gpt-* must not be suggested a "-mini" tier member, and vice versa).
+func TestModelsCheck_BindinglessFallback_NoCrossTierBleed(t *testing.T) {
+	dir := withEmptyPersonasDir(t)
+	// gpt-6-mini is a NEWER, higher-versioned sibling TIER; it must not be
+	// suggested as a newer member of the gpt (non-mini) family.
+	withCatalogSnapshot(t, `[
+  {"id":"openai/gpt-5.5","canonical_slug":"openai/gpt-5.5","created":100,"expiration_date":null},
+  {"id":"openai/gpt-6-mini","canonical_slug":"openai/gpt-6-mini","created":900,"expiration_date":null}
+]`)
+	writeCommunityPersona(t, dir, "milo", "openai/gpt-5.5", "")
+
+	out, err := execute(t, "models", "check")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exitCode(err))
+	assert.NotContains(t, out, "openai/gpt-6-mini")
+	assert.Contains(t, out, "No drift, deprecation, or missing-slug conditions found.")
+}
+
+// TestDriftLine_StripsControlChars covers the 5.2.A LOW: displayed slug values are
+// control-char-sanitized so a crafted lock cannot inject terminal escapes.
+func TestDriftLine_StripsControlChars(t *testing.T) {
+	line := driftLine(commpersonas.DriftFinding{
+		Persona:     "evil",
+		Condition:   commpersonas.ConditionMissing,
+		CurrentSlug: "vendor/model\x1b[31m\n\u2028",
+	})
+	assert.NotContains(t, line, "\x1b")
+	assert.NotContains(t, line, "\u2028")
+	assert.Equal(t, "evil: vendor/model[31m no longer in catalog (missing)", line)
+}
+
+// keep encoding/json + httptest referenced until 5.4 / 5.10 use them directly.
 var _ = json.Marshal
 var _ = httptest.NewServer
 var _ = http.StatusOK
