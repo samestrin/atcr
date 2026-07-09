@@ -177,8 +177,19 @@ func TestPinnedModelIsLockZeroMigration(t *testing.T) {
 			require.NoError(t, yaml.Unmarshal(data, &ac))
 			// The pinned model IS the lock: non-empty and usable with no transform.
 			require.NotEmptyf(t, ac.Model, "persona %q pinned model must serve as the initial lock", name)
-			// A persona is never required to declare a binding for its lock to be
-			// valid — Binding decodes as "" and the model lock stands on its own.
+
+			// Binding inertness: a persona is never required to declare a binding for
+			// its lock to be valid. When the on-disk YAML carries no `binding:` key,
+			// Binding must decode as "" while the model lock stands on its own —
+			// proving 19.6 personas need zero binding backfill to have a valid lock.
+			var rawKeys struct {
+				Binding string `yaml:"binding"`
+			}
+			require.NoError(t, yaml.Unmarshal(data, &rawKeys))
+			if rawKeys.Binding == "" {
+				require.Emptyf(t, ac.Binding,
+					"persona %q ships no binding, so Binding must decode as \"\" (inert) — model lock alone is the lock", name)
+			}
 		})
 	}
 }
