@@ -754,3 +754,31 @@ func TestModelsRefresh_CIFalse_AllowsRun(t *testing.T) {
 		})
 	}
 }
+
+// TestModelsRefresh_FiltersBlankEntries covers the maintainability gap: a
+// payload containing both substantive and blank-id entries must persist only
+// the substantive ones and report that filtered count in the success message.
+func TestModelsRefresh_FiltersBlankEntries(t *testing.T) {
+	body := `{"data":[
+		{"id":"anthropic/claude-opus-4.8","canonical_slug":"anthropic/claude-opus-4.8","created":1776000000,"expiration_date":null},
+		{"id":"","canonical_slug":"","created":0,"expiration_date":null},
+		{"id":"","canonical_slug":"","created":0,"expiration_date":null}
+	]}`
+	fakeCatalogServer(t, http.StatusOK, body)
+	out := filepath.Join(t.TempDir(), "catalog_snapshot.json")
+
+	stdout, err := execute(t, "models", "refresh", "--output", out)
+	require.NoError(t, err)
+	assert.Equal(t, 0, exitCode(err))
+	assert.Contains(t, stdout, "Wrote 1 models", "success message must report substantive count, not raw payload length")
+
+	written, rerr := os.ReadFile(out)
+	require.NoError(t, rerr)
+	assert.Contains(t, string(written), "anthropic/claude-opus-4.8")
+	// Blank entries must not be persisted.
+	var snap struct {
+		Data []map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(written, &snap))
+	require.Len(t, snap.Data, 1, "only the substantive entry should be written")
+}
