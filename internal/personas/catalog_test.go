@@ -140,6 +140,109 @@ func cm(id string, created int64) CatalogModel {
 	return CatalogModel{ID: id, CanonicalSlug: id, Created: created}
 }
 
+// cmExp builds a catalog model carrying an expiration_date string (deprecation
+// signal). Pass "" to model a JSON empty-string expiration_date.
+func cmExp(id string, created int64, exp string) CatalogModel {
+	return CatalogModel{ID: id, CanonicalSlug: id, Created: created, ExpirationDate: &exp}
+}
+
+// --- Element 4 (AC 03-04): @stable excludes preview/beta/exp and expiring -----
+
+// TestResolveModel_Stable_SkipsPreviewNewest covers AC 03-04 Scenario 1 + Edge
+// Case 1: under @stable the newest-by-created entry is skipped when its slug
+// carries a preview token (including a `-preview-01` suffixed form), and the
+// next-newest eligible entry is selected.
+func TestResolveModel_Stable_SkipsPreviewNewest(t *testing.T) {
+	for _, previewID := range []string{
+		"deepseek/deepseek-v5-preview",
+		"deepseek/deepseek-v5-preview-01",
+		"deepseek/deepseek-v5-beta",
+		"deepseek/deepseek-v5-exp",
+	} {
+		models := []CatalogModel{
+			cm(previewID, 300),                  // newest, but preview → excluded under @stable
+			cm("deepseek/deepseek-v4-pro", 200), // next-newest, clean
+		}
+		got, err := ResolveModel(Binding{Family: "deepseek", Channel: "@stable"}, models)
+		require.NoError(t, err)
+		assert.Equal(t, "deepseek/deepseek-v4-pro", got, "@stable must skip preview newest %q", previewID)
+	}
+}
+
+// TestResolveModel_Stable_TD001_StripsVariantSuffix covers TD-001: the preview
+// segment match normalizes away a `:variant` suffix before tokenizing, so a
+// `…-preview:free` slug is still excluded under @stable.
+func TestResolveModel_Stable_TD001_StripsVariantSuffix(t *testing.T) {
+	models := []CatalogModel{
+		cm("deepseek/deepseek-v5-preview:free", 300), // preview + variant suffix → excluded
+		cm("deepseek/deepseek-v4-pro", 200),
+	}
+	got, err := ResolveModel(Binding{Family: "deepseek", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek/deepseek-v4-pro", got)
+}
+
+// TestResolveModel_Stable_SkipsExpiringNewest covers AC 03-04 Scenario 2: under
+// @stable the newest entry with a non-null expiration_date (deprecation) is
+// skipped in favor of the older non-expiring entry.
+func TestResolveModel_Stable_SkipsExpiringNewest(t *testing.T) {
+	models := []CatalogModel{
+		cmExp("qwen/qwen3.8-plus", 300, "2027-01-01"), // newest, expiring → excluded
+		cm("qwen/qwen3.7-plus", 200),                  // older, non-expiring
+	}
+	got, err := ResolveModel(Binding{Family: "qwen", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "qwen/qwen3.7-plus", got)
+}
+
+// TestResolveModel_Stable_TD002_FarFutureExpirationExcluded covers TD-002: the
+// deprecation rule is any-non-null expiration_date (fails closed, no horizon), so
+// a far-future sentinel date is treated as deprecated and excluded. Documents the
+// decision to keep the simple any-non-null rule rather than a horizon window.
+func TestResolveModel_Stable_TD002_FarFutureExpirationExcluded(t *testing.T) {
+	models := []CatalogModel{
+		cmExp("z-ai/glm-5v-turbo", 300, "2098-12-31"), // far-future sentinel → still excluded
+		cm("z-ai/glm-5.2", 200),
+	}
+	got, err := ResolveModel(Binding{Family: "glm", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "z-ai/glm-5.2", got)
+}
+
+// TestResolveModel_Stable_AcceptsCleanNewest covers AC 03-04 Scenario 3: an entry
+// with no preview token and null expiration_date is accepted directly — @stable is
+// a pure exclusion filter, not an extra inclusion requirement.
+func TestResolveModel_Stable_AcceptsCleanNewest(t *testing.T) {
+	got, err := ResolveModel(Binding{Family: "glm", Channel: "@stable"},
+		[]CatalogModel{cm("z-ai/glm-5.1", 100), cm("z-ai/glm-5.2", 200)})
+	require.NoError(t, err)
+	assert.Equal(t, "z-ai/glm-5.2", got)
+}
+
+// TestResolveModel_Stable_EmptyExpirationIsNotDeprecated covers AC 03-04 Edge Case
+// 3: an expiration_date of "" (empty string, not JSON null) is treated as NOT
+// deprecated, equivalently to null.
+func TestResolveModel_Stable_EmptyExpirationIsNotDeprecated(t *testing.T) {
+	got, err := ResolveModel(Binding{Family: "glm", Channel: "@stable"},
+		[]CatalogModel{cmExp("z-ai/glm-5.2", 200, "   ")})
+	require.NoError(t, err)
+	assert.Equal(t, "z-ai/glm-5.2", got, `expiration_date "" / whitespace must count as not-deprecated`)
+}
+
+// TestResolveModel_Stable_AllExcluded_Error covers AC 03-04 Edge Case 2 + Error
+// Scenario 1: when every entry under a prefix is preview-tagged or expiring, @stable
+// fails closed with a descriptive error rather than returning an excluded entry.
+func TestResolveModel_Stable_AllExcluded_Error(t *testing.T) {
+	models := []CatalogModel{
+		cm("deepseek/deepseek-v5-preview", 300),
+		cmExp("deepseek/deepseek-v4-pro", 200, "2027-01-01"),
+	}
+	got, err := ResolveModel(Binding{Family: "deepseek", Channel: "@stable"}, models)
+	require.Error(t, err)
+	assert.Empty(t, got)
+	assert.Contains(t, err.Error(), "deepseek/")
+}
+
 // --- Element 2 (AC 03-02): created-timestamp newest-in-vendor-prefix scan -----
 
 // TestResolveModel_CreatedScan_NewestPerPrefix covers AC 03-02 Scenarios 1 & 2:

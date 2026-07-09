@@ -203,8 +203,9 @@ func resolveNewestInPrefix(prefix string, b Binding, models []CatalogModel) (str
 		if m.Created <= 0 { // absent/zero/unparseable created → ineligible
 			continue
 		}
-		// Channel exclusion filter (@stable preview/deprecation) is layered in
-		// Elements 4–5; Element 2 selects purely by newest eligible `created`.
+		if !passesStableFilter(*m) { // exclude preview-token + deprecated entries
+			continue
+		}
 		if best == nil || newerCandidate(*m, *best) {
 			best = m
 		}
@@ -216,6 +217,59 @@ func resolveNewestInPrefix(prefix string, b Binding, models []CatalogModel) (str
 		return "", fmt.Errorf("resolved model for family %q: %w", b.Family, err)
 	}
 	return best.ID, nil
+}
+
+// previewTokenSet is the set of hyphen-delimited slug segments that mark a model
+// as preview/pre-release, excluded under @stable. Derived from the Phase 1 spike
+// (`-preview`, `-exp` observed live; the rest retained as forward-looking watch
+// tokens). Matched as whole segments, never bare substrings, so stable models are
+// not over-excluded on collisions (e.g. "latest" contains "test", "search"
+// contains "rc").
+var previewTokenSet = map[string]bool{
+	"preview": true, "beta": true, "exp": true, "alpha": true,
+	"rc": true, "experimental": true, "nightly": true, "snapshot": true,
+}
+
+// passesStableFilter reports whether a model qualifies for the @stable channel:
+// it must carry no preview/beta/exp segment token AND have no deprecation
+// (non-null expiration_date). Both are pure exclusions over already-fetched
+// catalog data.
+func passesStableFilter(m CatalogModel) bool {
+	return !hasPreviewToken(m) && !isDeprecated(m)
+}
+
+// isDeprecated reports whether a model carries a deprecation signal: a non-null,
+// non-empty expiration_date. Per TD-002 this is an any-non-null rule (fails
+// closed, no horizon window) — a far-future sentinel date is still treated as
+// deprecated. An empty/whitespace string is treated as equivalent to JSON null
+// (not deprecated), since the schema is `string | null` (AC 03-04 Edge Case 3).
+func isDeprecated(m CatalogModel) bool {
+	return m.ExpirationDate != nil && strings.TrimSpace(*m.ExpirationDate) != ""
+}
+
+// hasPreviewToken reports whether a model's id or canonical_slug contains a
+// preview segment token. The slug is normalized before tokenizing (TD-001): the
+// `:variant` suffix (e.g. `:free`, `:thinking`) and the vendor prefix are stripped
+// first, then the remainder is split on "-" and each segment checked against
+// previewTokenSet — so `deepseek/deepseek-v5-preview:free` is correctly excluded
+// while `~anthropic/claude-opus-latest` (segment "latest") is not.
+func hasPreviewToken(m CatalogModel) bool {
+	return slugHasPreviewSegment(m.ID) || slugHasPreviewSegment(m.CanonicalSlug)
+}
+
+func slugHasPreviewSegment(slug string) bool {
+	if i := strings.IndexByte(slug, ':'); i >= 0 {
+		slug = slug[:i] // strip :variant suffix
+	}
+	if i := strings.LastIndexByte(slug, '/'); i >= 0 {
+		slug = slug[i+1:] // strip vendor prefix
+	}
+	for _, seg := range strings.Split(slug, "-") {
+		if previewTokenSet[strings.ToLower(seg)] {
+			return true
+		}
+	}
+	return false
 }
 
 // newerCandidate reports whether cand should replace cur as the newest: a larger
