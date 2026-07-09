@@ -370,18 +370,23 @@ version: "1.1.0"
 // catalog resolution on the review hot path (AC 04-02 Edge Case 1).
 func TestReviewAndResolvePathsCannotReachCatalog(t *testing.T) {
 	const forbidden = `"github.com/samestrin/atcr/internal/personas"`
-	for _, pkgDir := range []string{"../registry", "../fanout"} {
-		entries, err := os.ReadDir(pkgDir)
-		require.NoError(t, err)
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
-				continue
+	// Walk recursively so a future SUBpackage under these trees cannot evade the
+	// guard (hardened per the 4.5.A adversarial caveat).
+	for _, root := range []string{"../registry", "../fanout"} {
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
 			}
-			data, err := os.ReadFile(filepath.Join(pkgDir, e.Name()))
+			if d.IsDir() || !strings.HasSuffix(d.Name(), ".go") || strings.HasSuffix(d.Name(), "_test.go") {
+				return nil
+			}
+			data, err := os.ReadFile(path)
 			require.NoError(t, err)
 			assert.NotContains(t, string(data), forbidden,
-				"%s/%s must not import internal/personas — resolution must stay off the review path", pkgDir, e.Name())
-		}
+				"%s must not import internal/personas — resolution must stay off the review path", path)
+			return nil
+		})
+		require.NoError(t, err)
 	}
 }
 
