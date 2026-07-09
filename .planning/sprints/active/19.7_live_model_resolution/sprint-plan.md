@@ -967,16 +967,16 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
 **Story:** [06: Major-Bump Re-Validation Gate](plan/user-stories/06-major-bump-re-validation-gate.md)
 **Focus:** Layer `semver.Major(local) != semver.Major(remote)` on top of the existing `isNewer` normalization to classify major vs. minor jumps; gate major jumps on `TemplateFixtureRunner` re-passing + an unconditional human "verify" flag; minor jumps auto-lock unchanged. Reuse `isNewer`'s exact normalization — do NOT fork it.
 
-### 6.1 [ ] **[Major-jump fixture gate + verify flag — RED](plan/user-stories/06-major-bump-re-validation-gate.md)**
+### 6.1 [x] **[Major-jump fixture gate + verify flag — RED](plan/user-stories/06-major-bump-re-validation-gate.md)**
    **AC:** [06-01](plan/acceptance-criteria/06-01-major-jump-fixture-gate-and-verify-flag.md)
    Write failing tests: a major jump (4.x→5.x) gates on the fixture re-passing AND surfaces an unconditional "prompt tuned for the prior major — verify" flag before the lock advances. Non-semver strings are NOT treated as a major-bump trigger (per `isNewer` precedent). **High-complexity AC.** Verify fail correctly.
    **Files:** `internal/personas/upgrade_test.go` | **Duration:** 3h
 
-### 6.2 [ ] **[Major-jump fixture gate + verify flag — GREEN](plan/user-stories/06-major-bump-re-validation-gate.md)**
+### 6.2 [x] **[Major-jump fixture gate + verify flag — GREEN](plan/user-stories/06-major-bump-re-validation-gate.md)**
    Implement `semver.Major` classification + fixture gate + verify flag, reusing `isNewer`'s normalization. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(personas): major-bump re-validation gate + verify flag (green)"`
    **Files:** `internal/personas/upgrade.go` | **Duration:** 3h
 
-### 6.2.A [ ] **[Major-jump gate — ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-major-bump-re-validation-gate.md)**
+### 6.2.A [x] **[Major-jump gate — ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-major-bump-re-validation-gate.md)**
    **Changed Files:** `internal/personas/upgrade.go`, `internal/personas/upgrade_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -984,33 +984,32 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 6.2`
    - prompt: Files above + verbatim checklist, plus: "EDGE CASES — non-semver/`v`-prefix strings; confirm the gate reuses `isNewer`'s exact normalization (no divergent parallel impl); the verify flag is unconditional on a major jump." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Findings (no CRITICAL/HIGH; 1 MEDIUM deferred → TD-010):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | upgrade.go isMajorJump vs isNewer default branch | `versionSegRe` accepts version-shaped non-semver tokens (4+ components, leading-zero dates); `isNewer` advances on string-inequality but `isMajorJump` returns false → theoretical silent cross-major advance. No real catalog slug can trigger it (all ≤3-component semver). | Deferred to TD-010 — fail-safe classifier or tighten `versionSegRe`; no shipping persona affected. |
 
    **Action Required:**
    - CRITICAL/HIGH found → List issues for 6.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md` ✅ captured as TD-010 in `tech-debt-captured.md`
    - None found → Note "Adversarial review passed" and proceed
 
-### 6.3 [ ] **[Major-jump gate — REFACTOR](plan/user-stories/06-major-bump-re-validation-gate.md)**
+### 6.3 [x] **[Major-jump gate — REFACTOR](plan/user-stories/06-major-bump-re-validation-gate.md)** — no CRITICAL/HIGH from 6.2.A; impl already minimal (shared `normalizeSemver`, single-purpose helpers); gofmt/vet/T3 clean; no code change → no refactor commit
    1. Fix CRITICAL/HIGH issues from 6.2.A (if any)
    2. Improve quality, maintain green (T1), validate (T3)
    3. COMMIT: `git commit -m "refactor(personas): clean up major-bump gate"`
    **Duration:** 1h
 
-### 6.4 [ ] **[Minor-jump auto-lock regression guard — RED](plan/user-stories/06-major-bump-re-validation-gate.md)**
+### 6.4 [x] **[Minor-jump auto-lock regression guard — RED](plan/user-stories/06-major-bump-re-validation-gate.md)**
    **AC:** [06-02](plan/acceptance-criteria/06-02-minor-jump-auto-lock-regression-guard.md)
    Write failing tests: a minor jump (4.8→4.9) auto-locks with no verify flag; regression guard on `isNewer` behavior. Verify fail correctly.
    **Files:** `internal/personas/upgrade_test.go` | **Duration:** 2h
 
-### 6.5 [ ] **[Minor-jump auto-lock — GREEN](plan/user-stories/06-major-bump-re-validation-gate.md)**
+### 6.5 [x] **[Minor-jump auto-lock — GREEN](plan/user-stories/06-major-bump-re-validation-gate.md)** — no production code needed (6.2 gate's `isMajorJump` classification already excludes minor jumps from the fixture check); deliverable is the regression-guard tests, committed
    Implement minor-jump auto-lock. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(personas): minor-jump auto-lock (green)"`
    **Files:** `internal/personas/upgrade.go` | **Duration:** 1h
 
-### 6.5.A [ ] **[Minor-jump auto-lock — ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-major-bump-re-validation-gate.md)**
+### 6.5.A [x] **[Minor-jump auto-lock — ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-major-bump-re-validation-gate.md)**
    **Changed Files:** `internal/personas/upgrade.go`, `internal/personas/upgrade_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -1018,31 +1017,30 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 6.5`
    - prompt: Files above + verbatim checklist, plus: "Confirm a minor jump never triggers the verify flag and a major jump never auto-locks — no boundary off-by-one." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Findings — a SECOND independent reviewer converged on the same TD-010 divergence; escalated to inline fix (maps to Story 06's HIGH-impact "silent cross-major advance" risk):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM→fixed | upgrade.go isMajorJump vs isNewer | Non-semver version-shaped tokens (4+ components / leading zeros): `isNewer` advances on string-inequality but `isMajorJump` returned false → v4→v5 could auto-lock without the fixture gate or verify flag. Boundary/ordering otherwise clean. | Fixed inline: `isMajorJump` now falls back to `leadingMajor` numeric-component compare for non-semver tokens; establish-from-empty & alias stay ungated. TD-010 marked Resolved. Guard: `TestUpgrade_NonSemverMajorJumpStillGates` + extended `TestIsMajorJump`. |
 
    **Action Required:**
    - CRITICAL/HIGH found → List issues for 6.6, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md` — escalated: fixed inline in 6.6 (two-reviewer convergence + Story-06 HIGH-impact risk); TD-010 Resolved
    - None found → Note "Adversarial review passed" and proceed
 
-### 6.6 [ ] **[Minor-jump auto-lock — REFACTOR](plan/user-stories/06-major-bump-re-validation-gate.md)**
+### 6.6 [x] **[Minor-jump auto-lock — REFACTOR](plan/user-stories/06-major-bump-re-validation-gate.md)** — fixed the escalated 6.5.A finding (TD-010 fail-safe `leadingMajor` fallback); T3 + gofmt/vet clean; committed `fix(personas): fail-safe major-jump classification…`
    1. Fix CRITICAL/HIGH issues from 6.5.A (if any)
    2. Improve quality, maintain green (T1), validate (T3)
    3. COMMIT: `git commit -m "refactor(personas): clean up minor-jump auto-lock"`
    **Duration:** 1h
 
-### 6.7 [ ] **Phase 6 — DoD**
-   - [ ] All Phase 6 tests passing (T3); major/minor boundary verified
-   - [ ] Coverage ≥80%
-   - [ ] Lint/vet/fmt clean; build succeeds
-   - [ ] `isNewer` normalization reused unmodified (no fork)
-   - [ ] DoD report per template
+### 6.7 [x] **Phase 6 — DoD**
+   - [x] All Phase 6 tests passing (T3); major/minor boundary verified — full `go test ./...` green; boundary covered by `TestIsMajorJump` + `TestUpgrade_{MajorJump*,MinorJump,NoChange,NonSemver}`
+   - [x] Coverage ≥80% — personas 85.2%, cmd/atcr 84.2%; new gate fns (isMajorJump/leadingMajor/normalizeSemver/fixturePassed/fixtureBlockReason/isNewer) 100%
+   - [x] Lint/vet/fmt clean; build succeeds — golangci-lint 0 issues; `go vet` clean; gofmt clean; pre-commit build passed
+   - [x] `isNewer` normalization reused unmodified (no fork) — extracted shared `normalizeSemver`; isNewer behavior byte-identical (regression: `TestIsNewer_MixedValidityTreatsAsUpToDate` green); `isMajorJump` consumes the same normalized string
+   - [x] DoD report per template — mini-report below
 
-### 6.8 [ ] **Phase 6 — GATE: Integration & Exit Review (subagent)**
+### 6.8 [x] **Phase 6 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 6.
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -1050,16 +1048,15 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Phase 6 gate review`
    - prompt: Phase 6 changed files + verbatim hostile-integrator checklist. Emphasize: gate composes with Phase 4's upgrade path; `isNewer` reuse; verify flag human-facing. Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Findings — none (all seams A–F confirmed clean): Phase 4 paths intact; single `normalizeSemver`; verify flag human-facing on every major jump and never on minor; seam var non-leaking; per-persona `--all` independence; exit-code coherence.**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | — | — | none | — |
 
    **Action Required:**
    - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
    - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   - None found → Note "Phase gate passed" and proceed to phase stop ✅ Phase gate passed
    **Duration:** 15-30 min
 
 **🚧 GATED STOP:** Phase 6 complete. Await review before Phase 7.
