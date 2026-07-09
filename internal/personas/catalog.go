@@ -3,17 +3,16 @@ package personas
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
 // CatalogBaseURL is OpenRouter's public API base. The model catalog lives at
-// <base>/models. It is overridable per-invocation via ATCR_CATALOG_URL (see
-// CatalogBaseURLFromEnv) so CI exercises the fetch path against an httptest
-// server with zero live network calls, mirroring RegistryBaseURL/BaseURL.
+// <base>/models. Tests point a CatalogClient at an httptest server by setting its
+// BaseURL field directly (the same injection seam client.go's fetch path uses),
+// so CI exercises the fetch path with zero live network calls; production leaves
+// BaseURL empty and FetchModels falls back to this constant.
 const CatalogBaseURL = "https://openrouter.ai/api/v1"
-
-// envCatalogURL overrides CatalogBaseURL when set (e.g. an httptest server).
-const envCatalogURL = "ATCR_CATALOG_URL"
 
 // CatalogModel is one entry of OpenRouter's /api/v1/models `data` array, reduced
 // to the fields the resolver needs (per documentation/openrouter-catalog-api.md).
@@ -27,14 +26,16 @@ type CatalogModel struct {
 	ExpirationDate *string
 }
 
-// catalogModelJSON is the wire shape. Created is decoded via json.Number so a
-// missing, zero, or unparseable value degrades to 0 (treated as ineligible for
-// newest-selection, AC 03-02 Edge Case 4) instead of failing the whole decode.
+// catalogModelJSON is the wire shape. Created is captured as raw JSON so a
+// missing, zero, or non-numeric value degrades to 0 (treated as ineligible for
+// newest-selection, AC 03-02 Edge Case 4) instead of failing the whole decode —
+// json.RawMessage accepts any JSON token without erroring, and parseCreated does
+// the best-effort conversion.
 type catalogModelJSON struct {
-	ID             string      `json:"id"`
-	CanonicalSlug  string      `json:"canonical_slug"`
-	Created        json.Number `json:"created"`
-	ExpirationDate *string     `json:"expiration_date"`
+	ID             string          `json:"id"`
+	CanonicalSlug  string          `json:"canonical_slug"`
+	Created        json.RawMessage `json:"created"`
+	ExpirationDate *string         `json:"expiration_date"`
 }
 
 // UnmarshalJSON tolerates a missing/zero/unparseable `created` by leaving Created
@@ -47,12 +48,35 @@ func (m *CatalogModel) UnmarshalJSON(data []byte) error {
 	m.ID = raw.ID
 	m.CanonicalSlug = raw.CanonicalSlug
 	m.ExpirationDate = raw.ExpirationDate
-	if n, err := raw.Created.Int64(); err == nil {
-		m.Created = n
-	} else {
-		m.Created = 0 // absent/empty/unparseable → ineligible, never a hard error
-	}
+	m.Created = parseCreated(raw.Created)
 	return nil
+}
+
+// parseCreated best-effort-converts a raw `created` value to a Unix timestamp.
+// It accepts a JSON number (int or float) or a numeric JSON string, and returns
+// 0 for anything absent, non-numeric, or otherwise unparseable — so a single
+// malformed entry is treated as ineligible rather than aborting the catalog parse.
+func parseCreated(raw json.RawMessage) int64 {
+	if len(raw) == 0 {
+		return 0
+	}
+	var n json.Number
+	if err := json.Unmarshal(raw, &n); err == nil {
+		if v, err := n.Int64(); err == nil {
+			return v
+		}
+		if f, err := n.Float64(); err == nil && f > 0 {
+			return int64(f)
+		}
+		return 0
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		if v, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil {
+			return v
+		}
+	}
+	return 0
 }
 
 // catalogResponse is the envelope OpenRouter returns: {"data": [ ...models... ]}.

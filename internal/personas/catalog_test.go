@@ -1,6 +1,7 @@
 package personas
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,17 +13,6 @@ import (
 
 // --- Element 1 (AC 03-01): Alias passthrough resolves the alias-covered vendor
 // tiers without a catalog scan -----------------------------------------------
-
-// failingHTTPClient fails the test if any HTTP call is made. The alias path must
-// never touch the network, so injecting this proves "the provider owns
-// resolution" (AC 03-01 Scenario 3 / Story-Specific DoD).
-type failingHTTPClient struct{ t *testing.T }
-
-func (f failingHTTPClient) Do(*http.Request) (*http.Response, error) {
-	f.t.Helper()
-	f.t.Fatal("alias path must not perform any HTTP/catalog call")
-	return nil, nil
-}
 
 // TestResolveModel_AliasPassthrough_AllVendorTiers covers AC 03-01 Scenario 2:
 // each alias-covered vendor tier resolves to its documented ~…-latest alias slug
@@ -85,17 +75,17 @@ func TestResolveModel_AliasTable_ExactMatchOnly(t *testing.T) {
 	}
 }
 
-// TestResolveModel_AliasPath_DoesNotCallCatalog covers AC 03-01 Scenario 3 with a
-// stronger guarantee: a client that fails on any call is never invoked, because
-// the alias path is a pure static-table lookup.
-func TestResolveModel_AliasPath_DoesNotCallCatalog(t *testing.T) {
-	// If the resolver ever fetched, failingHTTPClient would fail the test. The
-	// resolver takes an already-parsed model list, so no client is even passed —
-	// this asserts the alias branch does not consult the (empty) model list.
-	_ = failingHTTPClient{t: t}
-	got, err := ResolveModel(Binding{Family: "openai/gpt", Channel: "@latest"}, []CatalogModel{})
-	require.NoError(t, err)
-	assert.Equal(t, "~openai/gpt-latest", got)
+// TestResolveModel_AliasPath_IgnoresCatalogContents covers AC 03-01 Scenario 3:
+// the alias path is a pure static-table lookup that never reads the catalog, so
+// it resolves identically against a nil, empty, or populated model list. The
+// resolver holds no HTTPClient, so there is structurally no catalog call to make.
+func TestResolveModel_AliasPath_IgnoresCatalogContents(t *testing.T) {
+	arbitrary := []CatalogModel{{ID: "unrelated/model", Created: 1}}
+	for _, models := range [][]CatalogModel{nil, {}, arbitrary} {
+		got, err := ResolveModel(Binding{Family: "openai/gpt", Channel: "@latest"}, models)
+		require.NoError(t, err)
+		assert.Equal(t, "~openai/gpt-latest", got)
+	}
 }
 
 // TestResolveModel_UnknownFamily_DescriptiveError covers AC 03-01 Error Scenario 1:
@@ -143,4 +133,45 @@ func TestCatalogClient_FetchModels_ParsesFixtureSnapshot(t *testing.T) {
 	} {
 		assert.Contains(t, byID, id, "fixture must contain %q", id)
 	}
+}
+
+// TestCatalogClient_FetchModels_MalformedJSON covers the parse-failure path:
+// invalid catalog JSON returns a wrapped, descriptive error, not a partial list.
+func TestCatalogClient_FetchModels_MalformedJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data": [ {"id": "x/y", "created": ` + "\n"))
+	}))
+	defer ts.Close()
+
+	c := &CatalogClient{HTTPClient: ts.Client(), BaseURL: ts.URL}
+	_, err := c.FetchModels()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse model catalog")
+}
+
+// TestCatalogModel_TolerantCreated proves a missing, zero, non-numeric, or
+// numeric-string `created` on ONE entry degrades that entry's Created to 0
+// (ineligible) without aborting the parse of the whole array (AC 03-02 EC4).
+func TestCatalogModel_TolerantCreated(t *testing.T) {
+	raw := []byte(`{"data": [
+		{"id": "a/1", "created": 1777000679},
+		{"id": "a/2", "created": "1780000000"},
+		{"id": "a/3", "created": "not-a-number"},
+		{"id": "a/4", "created": true},
+		{"id": "a/5"}
+	]}`)
+	var resp struct {
+		Data []CatalogModel `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &resp), "one bad created must not abort the array")
+	require.Len(t, resp.Data, 5)
+	got := map[string]int64{}
+	for _, m := range resp.Data {
+		got[m.ID] = m.Created
+	}
+	assert.Equal(t, int64(1777000679), got["a/1"], "numeric created parses")
+	assert.Equal(t, int64(1780000000), got["a/2"], "numeric-string created parses")
+	assert.Equal(t, int64(0), got["a/3"], "non-numeric string → 0")
+	assert.Equal(t, int64(0), got["a/4"], "bool → 0")
+	assert.Equal(t, int64(0), got["a/5"], "absent → 0")
 }
