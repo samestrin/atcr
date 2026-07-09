@@ -184,7 +184,133 @@ func TestDriftLine_StripsControlChars(t *testing.T) {
 	assert.Equal(t, "evil: vendor/model[31m no longer in catalog (missing)", line)
 }
 
-// keep encoding/json + httptest referenced until 5.4 / 5.10 use them directly.
-var _ = json.Marshal
+// jsonFinding decodes one --json object; condition-inapplicable fields stay at
+// their zero value (proving omitempty omitted them).
+type jsonFinding struct {
+	Persona        string `json:"persona"`
+	Condition      string `json:"condition"`
+	CurrentSlug    string `json:"current_slug"`
+	SuggestedSlug  string `json:"suggested_slug"`
+	Family         string `json:"family"`
+	Channel        string `json:"channel"`
+	ExpirationDate string `json:"expiration_date"`
+}
+
+func decodeFindings(t *testing.T, stdout string) []jsonFinding {
+	t.Helper()
+	var fs []jsonFinding
+	require.NoError(t, json.Unmarshal([]byte(stdout), &fs))
+	return fs
+}
+
+func TestModelsCheckJSON_ArrayOneObjectPerCondition(t *testing.T) {
+	installDriftFixture(t)
+	out, _, err := executeSplit(t, "models", "check", "--json")
+	require.Error(t, err)
+	assert.Equal(t, exitFailure, exitCode(err))
+
+	fs := decodeFindings(t, out)
+	require.Len(t, fs, 3)
+	byPersona := map[string]jsonFinding{}
+	for _, f := range fs {
+		byPersona[f.Persona] = f
+	}
+	assert.Equal(t, "newer-member", byPersona["anthony"].Condition)
+	assert.Equal(t, "deprecation", byPersona["gene"].Condition)
+	assert.Equal(t, "missing", byPersona["milo"].Condition)
+}
+
+func TestModelsCheckJSON_NewerMemberFields(t *testing.T) {
+	installDriftFixture(t)
+	out, _, _ := executeSplit(t, "models", "check", "--json")
+	fs := decodeFindings(t, out)
+
+	var anthony jsonFinding
+	for _, f := range fs {
+		if f.Persona == "anthony" {
+			anthony = f
+		}
+	}
+	assert.Equal(t, "newer-member", anthony.Condition)
+	assert.Equal(t, "anthropic/claude-opus-4.8", anthony.CurrentSlug)
+	assert.Equal(t, "anthropic/claude-opus-5.0", anthony.SuggestedSlug)
+	assert.Equal(t, "anthropic/claude-opus", anthony.Family)
+	assert.Equal(t, "stable", anthony.Channel)
+	assert.Empty(t, anthony.ExpirationDate)
+}
+
+func TestModelsCheckJSON_ConditionSpecificFieldsOmitted(t *testing.T) {
+	installDriftFixture(t)
+	out, _, _ := executeSplit(t, "models", "check", "--json")
+
+	// gene (deprecation): carries expiration_date, omits newer-member fields.
+	// milo (missing): carries only persona/condition/current_slug.
+	assert.Contains(t, out, `"expiration_date": "2026-09-01"`)
+	assert.NotContains(t, out, `"suggested_slug": ""`)
+	assert.NotContains(t, out, `"expiration_date": ""`)
+	assert.NotContains(t, out, `"family": ""`)
+	assert.NotContains(t, out, `null`)
+
+	fs := decodeFindings(t, out)
+	for _, f := range fs {
+		switch f.Persona {
+		case "gene":
+			assert.Equal(t, "2026-09-01", f.ExpirationDate)
+			assert.Empty(t, f.SuggestedSlug)
+		case "milo":
+			assert.Empty(t, f.SuggestedSlug)
+			assert.Empty(t, f.Family)
+			assert.Empty(t, f.ExpirationDate)
+		}
+	}
+}
+
+func TestModelsCheckJSON_EmptyResultIsEmptyArray(t *testing.T) {
+	dir := withEmptyPersonasDir(t)
+	withCatalogSnapshot(t, driftFixtureCatalog)
+	writeCommunityPersona(t, dir, "anthony", "anthropic/claude-opus-5.0", "") // clean
+
+	out, _, err := executeSplit(t, "models", "check", "--json")
+	require.NoError(t, err)
+	assert.Equal(t, "[]\n", out)
+	// Must decode unconditionally.
+	var fs []jsonFinding
+	require.NoError(t, json.Unmarshal([]byte(out), &fs))
+	assert.Empty(t, fs)
+}
+
+func TestModelsCheckJSON_NoCommunityPersonas_EmptyArray(t *testing.T) {
+	withEmptyPersonasDir(t)
+	withCatalogSnapshot(t, driftFixtureCatalog)
+
+	out, _, err := executeSplit(t, "models", "check", "--json")
+	require.NoError(t, err)
+	assert.Equal(t, "[]\n", out)
+}
+
+func TestModelsCheckJSON_ParityWithHumanReadable(t *testing.T) {
+	installDriftFixture(t)
+	jsonOut, _, _ := executeSplit(t, "models", "check", "--json")
+	humanOut, _, _ := executeSplit(t, "models", "check")
+
+	// Same (persona, condition) set in both modes.
+	type pc struct{ p, c string }
+	want := map[pc]bool{}
+	for _, f := range decodeFindings(t, jsonOut) {
+		want[pc{f.Persona, f.Condition}] = true
+	}
+	got := map[pc]bool{}
+	for _, line := range []struct{ persona, cond, needle string }{
+		{"anthony", "newer-member", "anthony:"},
+		{"gene", "deprecation", "gene:"},
+		{"milo", "missing", "milo:"},
+	} {
+		if assert.Contains(t, humanOut, line.needle) {
+			got[pc{line.persona, line.cond}] = true
+		}
+	}
+	assert.Equal(t, want, got)
+}
+
 var _ = httptest.NewServer
 var _ = http.StatusOK
