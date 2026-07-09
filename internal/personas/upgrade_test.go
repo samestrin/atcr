@@ -365,6 +365,54 @@ func TestUpgrade_BindingDryRunParity(t *testing.T) {
 	assert.Contains(t, string(realGot), "deepseek/deepseek-v4.1", "real run advances the lock")
 }
 
+// TestUpgrade_BindingDryRunLeavesMarkdownUntouched locks the "no .md write/delete
+// on dry-run" guarantee: a pre-existing co-located custom prompt survives a
+// dry-run advance intact (the resolution write path — including the .md
+// fetch/delete inside writePersonaUnit — is never reached under dryRun).
+func TestUpgrade_BindingDryRunLeavesMarkdownUntouched(t *testing.T) {
+	cat := catalogJSON(
+		[2]string{"deepseek/deepseek-v4.0", "1700000000"},
+		[2]string{"deepseek/deepseek-v4.1", "1780000000"},
+	)
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	installFixture(t, dir, "vendor/delia", bindingPersonaYAML)
+	mdPath := filepath.Join(dir, "vendor", "delia.md")
+	require.NoError(t, os.WriteFile(mdPath, []byte("# local custom prompt\n"), 0o644))
+
+	_, err := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", true)
+	require.NoError(t, err)
+
+	got, err := os.ReadFile(mdPath)
+	require.NoError(t, err)
+	assert.Equal(t, "# local custom prompt\n", string(got), "dry-run must not touch the co-located .md")
+}
+
+// TestUpgrade_BindingDryRunReportsValidationError proves dry-run report parity for
+// the error case: a dry-run whose would-be lock fails validation surfaces the same
+// error a real run would, rather than falsely reporting an unachievable advance.
+func TestUpgrade_BindingDryRunReportsValidationError(t *testing.T) {
+	cat := catalogJSON([2]string{"deepseek/deepseek-v4.1", "1780000000"})
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	// A binding-carrying persona with no model key: setModelField has nothing to
+	// advance, so both dry-run and real run must error identically.
+	noModel := `provider: openrouter
+role: reviewer
+binding: deepseek@stable
+version: "1.0.0"
+`
+	installFixture(t, dir, "vendor/delia", noModel)
+
+	_, dryErr := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", true)
+	require.Error(t, dryErr, "dry-run must surface the same error a real run would")
+	_, realErr := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", false)
+	require.Error(t, realErr)
+	assert.Equal(t, dryErr.Error(), realErr.Error(), "dry-run and real-run errors must match")
+}
+
 // --- Phase 4: resolution isolated to the upgrade path (AC 04-02) ------------
 
 // TestUpgrade_CatalogFetchedOnlyOnBindingPath proves the catalog/models endpoint

@@ -238,16 +238,20 @@ func upgradeResolvedLock(client HTTPClient, baseURL, name, dest string, localDat
 	}
 	res.SlugChanged = true
 	res.Upgraded = true
-	if dryRun {
-		return res, nil
-	}
 
+	// Compute and validate the new lock BEFORE the dry-run short-circuit, so a
+	// dry-run surfaces exactly the error a real run would and never advertises a
+	// would-be advance a real run cannot produce (report parity, AC 04-03). Only
+	// the write itself is gated by dryRun — the shared-computation guarantee.
 	newYAML, err := setModelField(localData, newSlug)
 	if err != nil {
 		return UpgradeResult{}, fmt.Errorf("persona %q: %w", name, err)
 	}
 	if err := registry.ValidateCommunityPersonaYAML(name, newYAML); err != nil {
 		return UpgradeResult{}, fmt.Errorf("persona %q failed validation: %w", name, err)
+	}
+	if dryRun {
+		return res, nil
 	}
 	if err := writePersonaUnit(client, baseURL, name, dest, newYAML); err != nil {
 		return UpgradeResult{}, err
