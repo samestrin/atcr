@@ -206,6 +206,10 @@ func TestQuickstart_Online_NoSkipWarnings(t *testing.T) {
 
 	assert.NotContains(t, errOut.String(), "not found in community index",
 		"online quickstart emits no misleading skip warnings against the real index")
+	// Positive guard: reject a silent zero-install regression (which would also
+	// emit zero warnings) by asserting a non-empty install.
+	assert.NotEmpty(t, communityPinNames(t, destDir),
+		"online quickstart installs a non-empty community roster (not a silent zero-install)")
 }
 
 func TestQuickstart_WritesSyntheticRegistry(t *testing.T) {

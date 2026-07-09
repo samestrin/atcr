@@ -368,7 +368,8 @@ func TestInstallCommunityPersonas_MissingRosterSkipsWithWarning(t *testing.T) {
 	require.NoError(t, err, "a missing roster persona is skip-with-warning, not a hard failure")
 
 	assert.FileExists(t, filepath.Join(dest, "owasp.yaml"))
-	assert.NoFileExists(t, filepath.Join(dest, "tracer.yaml"))
+	assert.NoFileExists(t, filepath.Join(dest, "penny.yaml"),
+		"the genuinely-absent roster persona is not written to disk")
 	assert.Contains(t, errOut.String(), "penny", "the skipped persona is named in the warning")
 }
 
@@ -591,6 +592,11 @@ func TestInit_Online_InstallsNonEmptyCommunityRoster(t *testing.T) {
 // warnings") is proven against production data rather than a synthetic stand-in.
 // The community dir is anchored to this test file's own location via
 // runtime.Caller so the helper is robust to a test that t.Chdir()s first.
+//
+// Assumes normal `go test` (the project's CI + hooks run `go test -race ./...`,
+// no -trimpath), where runtime.Caller yields the absolute source path. Under a
+// hypothetical -trimpath test build the recorded path would be package-relative
+// and the ReadFile below fails LOUD via require.NoError (never a false green).
 func realCommunityServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -664,6 +670,11 @@ func TestInit_Online_NoSkipWarnings(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, stderr, "not found in community index",
 		"online init emits no misleading skip warnings against the real index")
+	// Positive guard: a silent regression that derives an empty roster would also
+	// emit zero warnings — assert a non-empty install so this is not passed by
+	// installing nothing.
+	assert.NotEmpty(t, communityPinNames(t, pinDir),
+		"online init installs a non-empty community roster (not a silent zero-install)")
 }
 
 // TestInstallCommunityPersonas_NeverOverwriteWarningDistinct covers AC 07-02 Edge
