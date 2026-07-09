@@ -356,5 +356,73 @@ func TestRenderDriftJSON_EscapesControlChars(t *testing.T) {
 	assert.Equal(t, "vendor/model\x1b\"x\u2028", fs[0].CurrentSlug) // round-trips
 }
 
+// --- Exit-code contract (AC 05-03): 0 clean / 1 conditions found / 2 failure ---
+
+func TestModelsCheckExit_Clean_Zero(t *testing.T) {
+	dir := withEmptyPersonasDir(t)
+	withCatalogSnapshot(t, driftFixtureCatalog)
+	writeCommunityPersona(t, dir, "anthony", "anthropic/claude-opus-5.0", "")
+
+	for _, args := range [][]string{{"models", "check"}, {"models", "check", "--json"}} {
+		_, err := execute(t, args...)
+		require.NoError(t, err, args)
+		assert.Equal(t, 0, exitCode(err), args)
+	}
+}
+
+func TestModelsCheckExit_ConditionsFound_One(t *testing.T) {
+	installDriftFixture(t)
+	for _, args := range [][]string{{"models", "check"}, {"models", "check", "--json"}} {
+		_, err := execute(t, args...)
+		require.Error(t, err, args)
+		assert.Equal(t, exitFailure, exitCode(err), args) // 1, not 2
+	}
+}
+
+func TestModelsCheckExit_UsageError_Two_NoReport(t *testing.T) {
+	installDriftFixture(t)
+	out, err := execute(t, "models", "check", "--not-a-real-flag")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err)) // 2
+	// A usage error must not compute or print a drift report.
+	assert.NotContains(t, out, "newer member")
+	assert.NotContains(t, out, "No drift")
+}
+
+func TestModelsCheckExit_FindingsPlusReadFailure_StillOne(t *testing.T) {
+	dir := installDriftFixture(t)
+	// gene's lock is unreadable (an internal per-persona failure, not a usage
+	// error); anthony + milo still yield findings.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "gene.yaml"), []byte("::: not yaml :::\n"), 0o644))
+
+	_, err := execute(t, "models", "check")
+	require.Error(t, err)
+	assert.Equal(t, exitFailure, exitCode(err)) // 1, not 2
+}
+
+func TestModelsCheckExit_MissingSnapshot_Two(t *testing.T) {
+	dir := withEmptyPersonasDir(t)
+	writeCommunityPersona(t, dir, "anthony", "anthropic/claude-opus-4.8", "")
+	t.Setenv("ATCR_CATALOG_SNAPSHOT", filepath.Join(t.TempDir(), "does-not-exist.json"))
+
+	_, err := execute(t, "models", "check")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err)) // 2, a command failure — not "conditions found"
+	assert.Contains(t, err.Error(), "failed to load catalog snapshot")
+}
+
+func TestModelsCheckExit_MalformedSnapshot_Two(t *testing.T) {
+	dir := withEmptyPersonasDir(t)
+	writeCommunityPersona(t, dir, "anthony", "anthropic/claude-opus-4.8", "")
+	bad := filepath.Join(t.TempDir(), "bad.json")
+	require.NoError(t, os.WriteFile(bad, []byte("{not valid json"), 0o644))
+	t.Setenv("ATCR_CATALOG_SNAPSHOT", bad)
+
+	_, err := execute(t, "models", "check")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "failed to parse catalog snapshot")
+}
+
 var _ = httptest.NewServer
 var _ = http.StatusOK
