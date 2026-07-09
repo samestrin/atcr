@@ -24,6 +24,7 @@
     { "id": "deepseek/deepseek-v5-pro", "canonical_slug": "deepseek/deepseek-v5-pro", "created": 1785000000, "expiration_date": "2027-06-30" },
     { "id": "deepseek/deepseek-v4-pro", "canonical_slug": "deepseek/deepseek-v4-pro", "created": 1777000679, "expiration_date": null },
     { "id": "deepseek/deepseek-v3.2-exp", "canonical_slug": "deepseek/deepseek-v3.2-exp", "created": 1759150481, "expiration_date": null },
+    { "id": "deepseek/deepseek-legacy", "canonical_slug": "deepseek/deepseek-legacy", "created": 0, "expiration_date": null },
 
     { "id": "qwen/qwen4-preview", "canonical_slug": "qwen/qwen4-preview", "created": 1785500000, "expiration_date": null },
     { "id": "qwen/qwen3.7-plus", "canonical_slug": "qwen/qwen3.7-plus", "created": 1780491783, "expiration_date": null },

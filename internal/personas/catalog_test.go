@@ -249,8 +249,9 @@ func TestResolveModel_AgainstFixture_ScanFamilies(t *testing.T) {
 	require.NoError(t, err)
 
 	// delia + glenna: newest eligible in-prefix EQUALS the 19.6 pin under @stable
-	// (deepseek-v3.2-exp preview-excluded; z-ai glm-4.5 + glm-5v-turbo deprecation-
-	// excluded) — proving the seed-lock zero-migration Phase 4 depends on.
+	// (deepseek: newest v5-pro deprecation-excluded, v3.2-exp preview-excluded,
+	// legacy created:0 ineligible → v4-pro; z-ai glm-4.5 + glm-5v-turbo deprecation-
+	// excluded → glm-5.2) — proving the seed-lock zero-migration Phase 4 depends on.
 	for _, tc := range []struct{ family, channel, want string }{
 		{"deepseek", "@stable", "deepseek/deepseek-v4-pro"},
 		{"deepseek", "@latest", "deepseek/deepseek-v4-pro"}, // exp member older than v4-pro
@@ -822,4 +823,31 @@ func TestCatalogSnapshot_CoversExpiringNewestUnderScanPrefix(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, newest.ID, stable, "@stable must not select the expiring newest")
 	assert.False(t, isDeprecated(byID[stable]), "@stable selection must itself be non-expiring")
+}
+
+// TestCatalogSnapshot_CoversIneligibleCreatedUnderScanPrefix (AC 08-01 / AC 03-02
+// EC4) requires the fixture to contain a scan-prefix member with an absent/zero
+// `created`, so the resolver's ineligibility branch (m.Created <= 0 → skipped) is
+// exercised by the CHECKED-IN fixture, not only by synthetic unit tests. The
+// ineligible member must be present yet never selected under either channel.
+func TestCatalogSnapshot_CoversIneligibleCreatedUnderScanPrefix(t *testing.T) {
+	models := loadFixtureModels(t)
+
+	var ineligible *CatalogModel
+	for i := range models {
+		m := &models[i]
+		if strings.HasPrefix(m.ID, "deepseek/") && m.Created <= 0 {
+			ineligible = m
+			break
+		}
+	}
+	require.NotNil(t, ineligible,
+		"fixture needs a deepseek/ member with created<=0 to exercise the ineligibility branch")
+
+	for _, channel := range []string{"@stable", "@latest"} {
+		got, err := ResolveModel(Binding{Family: "deepseek", Channel: channel}, models)
+		require.NoError(t, err, "deepseek %s", channel)
+		assert.NotEqual(t, ineligible.ID, got,
+			"a created<=0 member must never be selected under %s", channel)
+	}
 }
