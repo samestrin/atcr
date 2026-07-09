@@ -243,16 +243,44 @@ func TestResolveModel_UnrecognizedChannel_Error(t *testing.T) {
 	}
 }
 
-// TestResolveModel_EmptyChannel_DefaultsStable confirms an omitted channel decodes
-// as the @stable default (the documented default channel) on the scan path.
+// TestResolveModel_EmptyChannel_DefaultsStable confirms an omitted or
+// whitespace-only channel decodes as the @stable default on the scan path.
 func TestResolveModel_EmptyChannel_DefaultsStable(t *testing.T) {
 	models := []CatalogModel{
 		cm("deepseek/deepseek-v5-preview", 300),
 		cm("deepseek/deepseek-v4-pro", 200),
 	}
-	got, err := ResolveModel(Binding{Family: "deepseek", Channel: ""}, models)
+	for _, ch := range []string{"", "   ", "\t"} {
+		got, err := ResolveModel(Binding{Family: "deepseek", Channel: ch}, models)
+		require.NoError(t, err)
+		assert.Equal(t, "deepseek/deepseek-v4-pro", got, "channel %q defaults to @stable", ch)
+	}
+}
+
+// TestResolveModel_Channel_WhitespaceTrimmed confirms a valid channel with
+// surrounding whitespace is trimmed and honored (e.g. "  @latest  " includes preview).
+func TestResolveModel_Channel_WhitespaceTrimmed(t *testing.T) {
+	models := []CatalogModel{
+		cm("deepseek/deepseek-v5-preview", 300),
+		cm("deepseek/deepseek-v4-pro", 200),
+	}
+	got, err := ResolveModel(Binding{Family: "deepseek", Channel: "  @latest  "}, models)
 	require.NoError(t, err)
-	assert.Equal(t, "deepseek/deepseek-v4-pro", got, "empty channel defaults to @stable")
+	assert.Equal(t, "deepseek/deepseek-v5-preview", got, "padded @latest must be trimmed and honored")
+}
+
+// TestResolveModel_InvalidChannel_IgnoredOnAliasAndPin confirms channel is
+// consulted ONLY on the created-timestamp scan path: an unrecognized channel on
+// an alias or pin binding is ignored (resolves without error), because both
+// strategies short-circuit before channel validation.
+func TestResolveModel_InvalidChannel_IgnoredOnAliasAndPin(t *testing.T) {
+	got, err := ResolveModel(Binding{Family: "google/gemini-pro", Channel: "@edge"}, nil)
+	require.NoError(t, err, "invalid channel must not error on the alias path")
+	assert.Equal(t, "~google/gemini-pro-latest", got)
+
+	got, err = ResolveModel(Binding{Pin: "custom/model", Channel: "@edge"}, nil)
+	require.NoError(t, err, "invalid channel must not error on the pin path")
+	assert.Equal(t, "custom/model", got)
 }
 
 // --- Element 4 (AC 03-04): @stable excludes preview/beta/exp and expiring -----
