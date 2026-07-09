@@ -189,7 +189,7 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - [x] No API key printed/committed
    - [x] COMMIT: `git add plan/documentation/openrouter-catalog-api.md && git commit -m "docs(personas): record catalog routability spike + @stable heuristic"`
 
-### 1.4 [ ] **Phase 1 — GATE: Integration & Exit Review (subagent)**
+### 1.4 [x] **Phase 1 — GATE: Integration & Exit Review (subagent)**
    **Scope:** The recorded spike findings (informs Phase 3 resolver design).
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -205,16 +205,21 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below, no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings — initial gate (2 HIGH + 1 MEDIUM), all resolved before boundary:**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | openrouter-catalog-api.md (created-timestamp) | Resolver output validated only for glenna, not delia/quinn; quinn's `qwen3-coder-plus` pin ≠ newest `qwen/` member (`qwen3.7-plus`) | FIXED — added per-persona strategy table; validated newest-non-expiring per prefix; quinn reclassified to explicit-pin (specialized coder variant) |
+   | HIGH | openrouter-catalog-api.md (alias-bind) | No explicit persona→alias mapping; celeste's `kimi-k2.7-code` pin generalized by `~moonshotai/kimi-latest` | FIXED — added 10-row persona→alias mapping; celeste reclassified to explicit-pin. Final split: 6 alias-bind + 2 created-timestamp + 2 explicit-pin |
+   | MEDIUM | openrouter-catalog-api.md (@stable matching) | Segment-match rule doesn't strip `:variant` suffix/vendor prefix before tokenizing (`...-preview:free` escapes exclusion) | Captured → tech-debt-captured.md TD-001 (Phase 3) |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Subagent findings — re-run gate (0 CRITICAL/HIGH → PASS; 1 MEDIUM + 2 LOW):**
+   | Severity | File:Line | Issue | Resolution |
+   |----------|-----------|-------|-----|
+   | MEDIUM | openrouter-catalog-api.md (created-timestamp) | Resolver defined as "newest non-expiring" — didn't state it applies the `@stable` preview-token exclusion; a future newest `-exp` deepseek member could float delia | FIXED — clarified resolver applies the active channel filter before max-`created`; verified `deepseek-v4-pro` (1777000679) > `deepseek-v3.2-exp` (1759150481) so delia is safe today |
+   | LOW | openrouter-catalog-api.md (expiration_date) | Any-non-null exclusion treats far-future sentinel `z-ai/glm-5v-turbo` (2098-12-31) as deprecated (channel-only; no pin affected) | Captured → tech-debt-captured.md TD-002 (Phase 3 deprecation-horizon decision) |
+   | LOW | openrouter-catalog-api.md (Task 1.2 block) | Task 1.2 vendor-prefix block implied created-timestamp applies to quinn; per-persona table reclassifies to explicit-pin | FIXED — added forward reference in Task 1.2 `qwen/` line |
+
+   **Action Taken:** 2 HIGH fixed inline + gate re-run (0 CRITICAL/HIGH). MEDIUM/LOW either fixed inline or captured to `tech-debt-captured.md` (TD-001, TD-002). ✅ **Phase gate passed.**
    **Duration:** 15-30 min
 
 **🚧 GATED STOP:** Phase 1 complete. Await review before Phase 2.

@@ -171,7 +171,51 @@ The resolver MUST match preview tokens as hyphen-delimited path segments (segmen
   and `z-ai/glm-5.2` is the newest `z-ai/` member by `created` (1781631930) that is non-expiring →
   the `created`-timestamp newest-in-prefix resolver for glenna MUST key on `z-ai/`.
 - **`deepseek/`** — 11 models. `delia → deepseek/deepseek-v4-pro` (index.json) — present.
-- **`qwen/`** — 49 models. `quinn → qwen/qwen3-coder-plus` (index.json) — present.
+- **`qwen/`** — 49 models. `quinn → qwen/qwen3-coder-plus` (index.json) — present. **Note:** although
+  `qwen/` is a `created`-timestamp-eligible prefix, quinn is **reclassified to explicit-pin** in the
+  per-persona table below — its `coder` specialization is not the newest `qwen/` member, so
+  newest-in-prefix would mis-resolve it. The created-timestamp resolver applies to delia + glenna only.
 All three bindings above were cross-checked against `personas/community/index.json` and the live catalog.
+
+### Per-persona resolution strategy — resolver-output validated against all 10 pins (Phase 3 input)
+
+The three resolver strategies were validated against the **actual** live-catalog output for every one of
+the 10 personas (roster + 19.6 pins from `personas/community/index.json`). Two personas the earlier "7
+alias-covered / 3 created-timestamp" framing implied — **quinn** and **celeste** — turn out to be
+**specialized variants** whose correct strategy is the **explicit-pin escape hatch** (AC 03-03), because
+neither the general `-latest` alias nor the newest-in-vendor-prefix scan preserves their specialization.
+This is an additive refinement (the aliases/prefixes still exist as described); it does not contradict
+19.6, and the explicit-pin path is already a first-class Story-3 strategy. Final split: **6 alias-bind +
+2 created-timestamp + 2 explicit-pin**.
+
+| Persona | 19.6 pin (lock seed) | Strategy | Resolved target (live catalog, 2026-07-08) | Notes |
+|---|---|---|---|---|
+| anthony | `anthropic/claude-opus-4.8` | alias-bind | `~anthropic/claude-opus-latest` | opus family alias present |
+| sonny | `anthropic/claude-sonnet-5` | alias-bind | `~anthropic/claude-sonnet-latest` | sonnet family alias present |
+| gene | `openai/gpt-5.5` | alias-bind | `~openai/gpt-latest` | flagship alias |
+| milo | `openai/gpt-5.4-mini` | alias-bind | `~openai/gpt-mini-latest` | mini-family alias (NOT `~openai/gpt-chat-latest`, which is unmapped) |
+| gia | `google/gemini-2.5-pro` | alias-bind | `~google/gemini-pro-latest` | pro alias present |
+| flint | `google/gemini-2.5-flash` | alias-bind | `~google/gemini-flash-latest` | flash alias present |
+| delia | `deepseek/deepseek-v4-pro` | created-timestamp | `deepseek/deepseek-v4-pro` (created 1777000679) | newest non-expiring `deepseek/` member **equals** the pin ✓ |
+| glenna | `z-ai/glm-5.2` | created-timestamp | `z-ai/glm-5.2` (created 1781631930) | newest non-expiring `z-ai/` member **equals** the pin ✓ (keyed on `z-ai/`, never `glm/`) |
+| quinn | `qwen/qwen3-coder-plus` | **explicit-pin** | `qwen/qwen3-coder-plus` (verbatim) | newest non-expiring `qwen/` member is `qwen/qwen3.7-plus` (created 1780491783) — a **general** model; newest-in-prefix would silently drop the **coder** specialization, so quinn pins explicitly |
+| celeste | `moonshotai/kimi-k2.7-code` | **explicit-pin** | `moonshotai/kimi-k2.7-code` (verbatim) | only moonshot alias is `~moonshotai/kimi-latest` (**general** flagship); alias-bind would drop the **code** specialization, so celeste pins explicitly |
+
+**Design consequences for Phase 3 (Story 3):**
+- Alias-bind covers exactly 6 personas (anthony, sonny, gene, milo, gia, flint); the resolver passes the
+  mapped `~…-latest` alias through unchanged (Task 1.1 confirmed such aliases are completion-routable).
+- Created-timestamp resolution selects the newest-by-`created` member **that passes the active channel
+  filter** — NOT merely "non-expiring". Under `@stable` that means excluding preview-token members
+  (condition 1) AND non-null `expiration_date` (condition 2) before taking the max `created`; under
+  `@latest`, excluding only condition 2. This matters because `deepseek/` contains a non-expiring
+  preview member, `deepseek/deepseek-v3.2-exp` (`created 1759150481`), which must be skipped under
+  `@stable`. It happens to be older than the pin today, so delia is safe either way, but the resolver
+  must apply the channel filter so a future newest `-exp`/`-preview` member never floats delia.
+- With the channel filter applied, delia (`deepseek/`) resolves to `deepseek/deepseek-v4-pro`
+  (`created 1777000679`, the max qualifying member) and glenna (`z-ai/`) to `z-ai/glm-5.2`
+  (`created 1781631930`) — both **equal the current pin**; tests (AC 03-02) should assert those exact
+  targets and include a newer-but-preview decoy to prove the channel filter is applied.
+- quinn and celeste MUST use explicit-pin (AC 03-03) — a specialized variant must never be silently
+  advanced to a general newest member. AC 03-03's "explicit pin never floats" test should cover both.
 
 > Source: Epic 19.7 Phase 1 authenticated spike, 2026-07-08 (LLM_OPENROUTER_API_KEY, inline; value never recorded).
