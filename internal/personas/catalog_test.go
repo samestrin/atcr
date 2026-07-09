@@ -146,6 +146,115 @@ func cmExp(id string, created int64, exp string) CatalogModel {
 	return CatalogModel{ID: id, CanonicalSlug: id, Created: created, ExpirationDate: &exp}
 }
 
+// --- Element 5 (AC 03-05): @latest includes preview, still excludes deprecated --
+
+// TestResolveModel_Latest_IncludesPreviewNewest covers AC 03-05 Scenario 1: under
+// @latest the preview-tagged newest entry that @stable skips IS selected —
+// directly contrasting with the @stable case over the identical fixture.
+func TestResolveModel_Latest_IncludesPreviewNewest(t *testing.T) {
+	models := []CatalogModel{
+		cm("deepseek/deepseek-v5-preview", 300),
+		cm("deepseek/deepseek-v4-pro", 200),
+	}
+	gotLatest, err := ResolveModel(Binding{Family: "deepseek", Channel: "@latest"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek/deepseek-v5-preview", gotLatest, "@latest includes the preview newest")
+
+	gotStable, err := ResolveModel(Binding{Family: "deepseek", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek/deepseek-v4-pro", gotStable, "@stable excludes it (contrast)")
+}
+
+// TestResolveModel_Latest_NewestAmongAll covers AC 03-05 Scenario 2: @latest still
+// selects exactly the single newest-by-created among all (preview or not) — it
+// widens eligibility, it does not "return every preview build".
+func TestResolveModel_Latest_NewestAmongAll(t *testing.T) {
+	models := []CatalogModel{
+		cm("qwen/qwen-preview-a", 100),
+		cm("qwen/qwen-preview-b", 300), // newest overall (preview)
+		cm("qwen/qwen-stable-c", 200),
+	}
+	got, err := ResolveModel(Binding{Family: "qwen", Channel: "@latest"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "qwen/qwen-preview-b", got)
+}
+
+// TestResolveModel_Latest_CleanPrefixSameAsStable covers AC 03-05 Scenario 3:
+// with no preview/expiring entries, @latest and @stable return the identical slug
+// (@latest is a strict superset of @stable's eligible set).
+func TestResolveModel_Latest_CleanPrefixSameAsStable(t *testing.T) {
+	models := []CatalogModel{cm("z-ai/glm-5.1", 100), cm("z-ai/glm-5.2", 200)}
+	gotLatest, err := ResolveModel(Binding{Family: "glm", Channel: "@latest"}, models)
+	require.NoError(t, err)
+	gotStable, err := ResolveModel(Binding{Family: "glm", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, gotStable, gotLatest)
+	assert.Equal(t, "z-ai/glm-5.2", gotLatest)
+}
+
+// TestResolveModel_Latest_StillExcludesDeprecated covers AC 03-05 Edge Case 1:
+// @latest bypasses ONLY the preview-token exclusion; a non-null expiration_date
+// (deprecation) is STILL excluded, failing over to the next-newest non-expiring
+// entry (or failing closed if none).
+func TestResolveModel_Latest_StillExcludesDeprecated(t *testing.T) {
+	// Newest is deprecated (non-preview) → skipped even under @latest.
+	models := []CatalogModel{
+		cmExp("deepseek/deepseek-v5", 300, "2027-01-01"), // newest, deprecated → excluded
+		cm("deepseek/deepseek-v4-pro", 200),              // non-expiring
+	}
+	got, err := ResolveModel(Binding{Family: "deepseek", Channel: "@latest"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek/deepseek-v4-pro", got, "@latest still excludes deprecated")
+
+	// A preview newest that is ALSO deprecated is excluded under @latest too;
+	// only the non-deprecated (preview) member survives.
+	models2 := []CatalogModel{
+		cmExp("deepseek/deepseek-v6-preview", 400, "2027-01-01"), // preview + deprecated → excluded
+		cm("deepseek/deepseek-v5-preview", 300),                  // preview, non-expiring → selected
+	}
+	got, err = ResolveModel(Binding{Family: "deepseek", Channel: "@latest"}, models2)
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek/deepseek-v5-preview", got)
+
+	// All deprecated → fail closed even under @latest.
+	_, err = ResolveModel(Binding{Family: "deepseek", Channel: "@latest"},
+		[]CatalogModel{cmExp("deepseek/only", 100, "2027-01-01")})
+	require.Error(t, err)
+}
+
+// TestResolveModel_Latest_AliasUnaffected covers AC 03-05 Edge Case 2: an
+// alias-covered persona ignores channel entirely — @latest is a no-op there.
+func TestResolveModel_Latest_AliasUnaffected(t *testing.T) {
+	got, err := ResolveModel(Binding{Family: "google/gemini-pro", Channel: "@latest"}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "~google/gemini-pro-latest", got)
+}
+
+// TestResolveModel_UnrecognizedChannel_Error covers AC 03-05 Error Scenario 1: a
+// channel that is neither @stable nor @latest fails closed with a descriptive
+// error rather than silently defaulting.
+func TestResolveModel_UnrecognizedChannel_Error(t *testing.T) {
+	for _, ch := range []string{"@edge", "stable", "@Stable", "latest"} {
+		got, err := ResolveModel(Binding{Family: "deepseek", Channel: ch},
+			[]CatalogModel{cm("deepseek/deepseek-v4-pro", 200)})
+		require.Error(t, err, "channel %q must be rejected", ch)
+		assert.Empty(t, got)
+		assert.Contains(t, err.Error(), "channel")
+	}
+}
+
+// TestResolveModel_EmptyChannel_DefaultsStable confirms an omitted channel decodes
+// as the @stable default (the documented default channel) on the scan path.
+func TestResolveModel_EmptyChannel_DefaultsStable(t *testing.T) {
+	models := []CatalogModel{
+		cm("deepseek/deepseek-v5-preview", 300),
+		cm("deepseek/deepseek-v4-pro", 200),
+	}
+	got, err := ResolveModel(Binding{Family: "deepseek", Channel: ""}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek/deepseek-v4-pro", got, "empty channel defaults to @stable")
+}
+
 // --- Element 4 (AC 03-04): @stable excludes preview/beta/exp and expiring -----
 
 // TestResolveModel_Stable_SkipsPreviewNewest covers AC 03-04 Scenario 1 + Edge

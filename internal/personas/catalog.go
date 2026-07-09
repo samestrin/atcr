@@ -194,6 +194,10 @@ func ResolveModel(b Binding, models []CatalogModel) (string, error) {
 // stale or zero-value slug. The resolved slug is validated as a plain printable
 // identifier before return (mirrors 19.6 TD-008 control-char sanitization).
 func resolveNewestInPrefix(prefix string, b Binding, models []CatalogModel) (string, error) {
+	channel, ok := normalizeChannel(b.Channel)
+	if !ok {
+		return "", fmt.Errorf("unrecognized channel %q for family %q: expected \"@stable\" or \"@latest\"", b.Channel, b.Family)
+	}
 	var best *CatalogModel
 	for i := range models {
 		m := &models[i]
@@ -203,7 +207,7 @@ func resolveNewestInPrefix(prefix string, b Binding, models []CatalogModel) (str
 		if m.Created <= 0 { // absent/zero/unparseable created → ineligible
 			continue
 		}
-		if !passesStableFilter(*m) { // exclude preview-token + deprecated entries
+		if !channelEligible(*m, channel) { // channel-conditional preview/deprecation exclusion
 			continue
 		}
 		if best == nil || newerCandidate(*m, *best) {
@@ -230,12 +234,36 @@ var previewTokenSet = map[string]bool{
 	"rc": true, "experimental": true, "nightly": true, "snapshot": true,
 }
 
-// passesStableFilter reports whether a model qualifies for the @stable channel:
-// it must carry no preview/beta/exp segment token AND have no deprecation
-// (non-null expiration_date). Both are pure exclusions over already-fetched
-// catalog data.
-func passesStableFilter(m CatalogModel) bool {
-	return !hasPreviewToken(m) && !isDeprecated(m)
+// normalizeChannel resolves a binding's channel to one of the two known literals,
+// defaulting an empty/whitespace channel to "@stable" (the documented default).
+// It returns ok=false for any other value so the resolver fails closed on an
+// unrecognized channel rather than silently defaulting (AC 03-05 Error Scenario 1).
+func normalizeChannel(channel string) (string, bool) {
+	switch strings.TrimSpace(channel) {
+	case "":
+		return "@stable", true
+	case "@stable":
+		return "@stable", true
+	case "@latest":
+		return "@latest", true
+	default:
+		return "", false
+	}
+}
+
+// channelEligible reports whether a model qualifies for the given (normalized)
+// channel. Deprecation (non-null expiration_date) is ALWAYS excluded — a
+// sunsetting model would 404 at review time regardless of preview status. Beyond
+// that, @stable additionally excludes preview/beta/exp-tagged models, while
+// @latest includes them. So @latest bypasses ONLY the preview-token exclusion.
+func channelEligible(m CatalogModel, channel string) bool {
+	if isDeprecated(m) {
+		return false // deprecation excludes under both channels (fails closed)
+	}
+	if channel == "@latest" {
+		return true // preview-tagged members are eligible under @latest
+	}
+	return !hasPreviewToken(m) // @stable excludes preview-tagged members
 }
 
 // isDeprecated reports whether a model carries a deprecation signal: a non-null,
