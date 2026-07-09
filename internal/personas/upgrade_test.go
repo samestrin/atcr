@@ -693,3 +693,82 @@ func TestUpgrade_MajorJumpDryRunReportsWithoutWriting(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "delia.yaml"))
 	assert.Equal(t, majorJumpPersonaYAML, string(got), "dry-run must write nothing")
 }
+
+// --- Phase 6: minor-jump auto-lock regression guard (AC 06-02) --------------
+
+// TestIsMajorJump exercises the classifier directly across the AC 06-02 edge
+// cases: bare/prefixed majors, no-change, mixed validity (must not fire), and a
+// pre-release major (must fire via semver.Major, not defeated by suffix noise).
+func TestIsMajorJump(t *testing.T) {
+	cases := []struct {
+		local, remote string
+		want          bool
+		why           string
+	}{
+		{"v4.9.2", "v5.0.0", true, "v4→v5 crosses a major boundary"},
+		{"4.8", "4.9", false, "same major, bare tokens"},
+		{"v4.9.0", "v4.9.0", false, "no change"},
+		{"latest", "v1.0.0", false, "mixed validity must not fire (matches isNewer)"},
+		{"v1.0.0", "latest", false, "mixed validity must not fire (either order)"},
+		{"v4.9.2", "v5.0.0-rc.1", true, "pre-release major still classifies major"},
+		{"", "v5.0.0", false, "no prior version (establishing) is not a major jump"},
+		{"v4.9.2", "", false, "absent remote version is not a major jump"},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, isMajorJump(c.local, c.remote), "isMajorJump(%q, %q): %s", c.local, c.remote, c.why)
+	}
+}
+
+// minorJumpPersonaYAML locks a deepseek persona at v4.8; a catalog offering
+// deepseek-v4.9 is a same-major minor advance (must auto-lock, no gate).
+const minorJumpPersonaYAML = `provider: openrouter
+model: deepseek/deepseek-v4.8
+role: reviewer
+binding: deepseek@stable
+version: "1.0.0"
+`
+
+// TestUpgrade_MinorJumpAutoLocksNoFixture: AC 06-02 Scenario 1 — a minor advance
+// auto-locks exactly as before, never invoking the fixture runner and never
+// surfacing the verify flag.
+func TestUpgrade_MinorJumpAutoLocksNoFixture(t *testing.T) {
+	cat := catalogJSON([2]string{"deepseek/deepseek-v4.9", "1780000000"})
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	installFixture(t, dir, "vendor/delia", minorJumpPersonaYAML)
+	runner := &spyRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}}
+	withStubRunner(t, runner)
+
+	res, err := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", false)
+	require.NoError(t, err)
+	assert.True(t, res.SlugChanged, "a minor advance must auto-lock")
+	assert.False(t, res.MajorJump, "a same-major advance is not a major jump")
+	assert.False(t, res.FixtureBlocked)
+	assert.Equal(t, 0, runner.calls, "a minor jump must NEVER invoke the fixture runner")
+
+	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "delia.yaml"))
+	assert.Contains(t, string(got), "deepseek/deepseek-v4.9", "the minor advance locked on disk")
+}
+
+// TestUpgrade_NoChangeNoGateNoFixture: AC 06-02 Scenario 2 — a no-change
+// transition reports up-to-date, writes nothing, runs no fixture, sets no flag.
+func TestUpgrade_NoChangeNoGateNoFixture(t *testing.T) {
+	cat := catalogJSON([2]string{"deepseek/deepseek-v4.8", "1700000000"})
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	installFixture(t, dir, "vendor/delia", minorJumpPersonaYAML)
+	runner := &spyRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}}
+	withStubRunner(t, runner)
+
+	res, err := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", false)
+	require.NoError(t, err)
+	assert.True(t, res.UpToDate)
+	assert.False(t, res.SlugChanged)
+	assert.False(t, res.MajorJump)
+	assert.Equal(t, 0, runner.calls, "an up-to-date persona must never invoke the fixture runner")
+
+	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "delia.yaml"))
+	assert.Equal(t, minorJumpPersonaYAML, string(got), "an up-to-date persona is byte-for-byte unchanged")
+}
