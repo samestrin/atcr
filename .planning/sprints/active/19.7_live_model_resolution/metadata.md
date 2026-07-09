@@ -53,11 +53,11 @@ _Populated by `/execute-sprint` as phases complete._
 
 | Phase | Story | Status |
 |-------|-------|--------|
-| 1 | 01: Catalog Routability Spike & Stable-Channel Heuristic | ⬜ Not started |
-| 2 | 02: Family/Channel Binding & Resolved Lock | ⬜ Not started |
-| 3 | 03: Hybrid Resolver (Alias / Created-Timestamp / Explicit-Pin) | ⬜ Not started |
-| 4 | 04: Reproducible Upgrade with Before→After Lock Reporting | ⬜ Not started |
-| 5 | 05: `atcr models check` Drift Report | ⬜ Not started |
+| 1 | 01: Catalog Routability Spike & Stable-Channel Heuristic | ✅ Complete |
+| 2 | 02: Family/Channel Binding & Resolved Lock | ✅ Complete |
+| 3 | 03: Hybrid Resolver (Alias / Created-Timestamp / Explicit-Pin) | ✅ Complete |
+| 4 | 04: Reproducible Upgrade with Before→After Lock Reporting | ✅ Complete |
+| 5 | 05: `atcr models check` Drift Report | ✅ Complete (gated stop) |
 | 6 | 06: Major-Bump Re-Validation Gate | ⬜ Not started |
 | 7 | 07: init/quickstart Roster Reconciliation | ⬜ Not started |
 | 8 | 08: Catalog Snapshot Fixture, Refresh Command & Documentation | ⬜ Not started |

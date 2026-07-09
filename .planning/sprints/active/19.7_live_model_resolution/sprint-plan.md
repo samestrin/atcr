@@ -616,7 +616,7 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    Insert resolver call into `Upgrade()` before `isNewer`/write; extend reporting. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(personas): upgrade re-resolves + before→after lock report (green)"`
    **Files:** `internal/personas/upgrade.go`, `cmd/atcr/personas.go` | **Duration:** 4h
 
-### 4.2.A [ ] **[Upgrade resolves & advances lock — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
+### 4.2.A [x] **[Upgrade resolves & advances lock — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
    **Changed Files:** `internal/personas/upgrade.go`, `cmd/atcr/personas.go`, `internal/personas/upgrade_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -652,7 +652,7 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    **Files:** `internal/personas/upgrade.go` | **Duration:** 2h
    **Done:** No production change required — the isolation was satisfied by task 4.2's design (single catalog construction site in `upgradeResolvedLock`; no cross-package import path to the catalog). Confirmed by both 4.4 tests. `--all` uses the same `runPersonaUpgrades`→`Upgrade` loop (each name through the same binding branch) and is exercised directly by AC 04-03. Committed test-only.
 
-### 4.5.A [ ] **[Resolution isolation — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
+### 4.5.A [x] **[Resolution isolation — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
    **Changed Files:** `internal/personas/upgrade.go`, `internal/personas/upgrade_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -685,7 +685,7 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    **Files:** `internal/personas/upgrade.go`, `cmd/atcr/personas.go` | **Duration:** 2h
    **Done:** No production change required — dry-run report parity was satisfied by task 4.2 (shared computation up to the `if dryRun` short-circuit; CLI dry-run branch). Committed test-only.
 
-### 4.8.A [ ] **[Dry-run — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
+### 4.8.A [x] **[Dry-run — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
    **Changed Files:** `internal/personas/upgrade.go`, `cmd/atcr/personas.go`, `internal/personas/upgrade_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -754,50 +754,59 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
 **Story:** [05: `atcr models check` Drift Report](plan/user-stories/05-atcr-models-check-drift-report.md)
 **Focus:** Net-new `cmd/atcr/models.go` command family; enumerate installed personas' locked slugs (via a `ListTiers`-style pattern); report newer-member/deprecation/missing with `--json` and a 0/1/2 exit-code contract; default to the checked-in snapshot for determinism.
 
-### 5.1 [ ] **[Command registration + human-readable drift report — RED](plan/user-stories/05-atcr-models-check-drift-report.md)**
+### 5.1 [x] **[Command registration + human-readable drift report — RED](plan/user-stories/05-atcr-models-check-drift-report.md)**
    **AC:** [05-01](plan/acceptance-criteria/05-01-command-registration-human-readable-drift-report.md)
    Write failing tests: `atcr models check` is registered next to `personas`; prints a human-readable drift report (newer member / deprecation / missing). Verify fail correctly.
    **Files:** `cmd/atcr/models_test.go` | **Duration:** 3h
 
-### 5.2 [ ] **[Command registration + drift report — GREEN](plan/user-stories/05-atcr-models-check-drift-report.md)**
+### 5.2 [x] **[Command registration + drift report — GREEN](plan/user-stories/05-atcr-models-check-drift-report.md)**
    Implement `cmd/atcr/models.go` `check` subcommand + registration at `cmd/atcr/main.go`. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(models): register models check + human-readable drift report (green)"`
    **Files:** `cmd/atcr/models.go`, `cmd/atcr/main.go` | **Duration:** 4h
 
-### 5.2.A [ ] **[Command registration + drift report — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-atcr-models-check-drift-report.md)**
-   **Changed Files:** `cmd/atcr/models.go`, `cmd/atcr/main.go`, `cmd/atcr/models_test.go`
+### 5.2.A [x] **[Command registration + drift report — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-atcr-models-check-drift-report.md)**
+   **Changed Files:** `cmd/atcr/models.go`, `internal/personas/drift.go`, `internal/personas/snapshot.go`, `cmd/atcr/main.go`, `cmd/atcr/models_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
    - subagent_type: `general-purpose`
    - description: `Adversarial review: 5.2`
    - prompt: Files above + verbatim checklist, plus: "Confirm `models check` is diagnostic-only (never on the review path); enumeration handles a persona with a missing slug without panicking." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent confirmed:** go:embed compiles into the production binary; finding order deterministic (ListTiers order, newer-member before deprecation); catalog indexed once for missing/deprecation; `missing` correctly terminal/exclusive; no injection/exit-code/AC-breaking defect.
+
+   **Subagent findings (fresh-context general-purpose subagent) — 0 CRITICAL/HIGH:**
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | drift.go (deriveFamilyPrefix/inFamilyPrefix) | Bindingless family-prefix fallback can cross tiers: `openai/gpt-5.5` → prefix `openai/gpt` also matches `openai/gpt-6-mini`; a higher-versioned sibling tier could be floated as "newer member" | FIXED inline in 5.3 — matched candidates by `deriveFamilyPrefix(candidate)==familyPrefix` (same-tier equality) instead of raw prefix; `inFamilyPrefix` removed; added `TestCheckDrift_BindinglessFallback_NoCrossTierBleed` |
+   | MEDIUM | drift.go (missing check) | Alias-bound persona locks Model to the synthetic `~vendor/-latest` slug; if Phase 8's `models refresh` regenerates a live catalog that omits the `~` ids, every alias-bound persona reports a false `missing` | CAPTURED → tech-debt-captured.md TD-005 (MEDIUM, Phase 8). Today the snapshot lists the `~` entries and the Phase 1 spike confirmed the `~…-latest` aliases are real, routable, listed catalog entries; the risk is only a future live-catalog shape change coupled to refresh |
+   | LOW | models.go (filter no-match) | `[name]` matching no community persona prints "nothing to check" even when community personas exist | FIXED inline in 5.3 — distinct `no community persona named %q to check` message when a filter is supplied and nothing matched; added `TestModelsCheck_FilterNoMatch_DistinctMessage` |
+   | LOW | drift.go (human display) | Displayed slug/expiration printed raw; a crafted persona `model:` or catalog id could inject terminal control chars into stdout (JSON path already safe via encoder) | FIXED inline in 5.3 — newer-member scan now skips candidates failing `validateResolvedSlug` (mirrors resolveNewestInPrefix), and the human render strips control chars via `sanitizeDisplay`; added `TestDriftLine_StripsControlChars` |
+   | LOW | drift.go:63-69 | Docstring claimed O(n) but newer-member re-scans per persona (O(personas×models)) | FIXED inline in 5.3 — corrected the CheckDrift docstring to state the missing/deprecation lookups are O(1) via the index while newer-member scans per persona |
+
+   **Action Taken:** 0 CRITICAL/HIGH → no blocker. 1 MEDIUM (cross-tier) + 3 LOW were defects/gaps in this element's own freshly-authored code → fixed inline in 5.3 ("clean up own mess", per Phase 2-4 precedent). 1 MEDIUM (alias false-missing) is forward-looking + Phase-8-coupled → captured to `tech-debt-captured.md` (TD-005). ✅ Adversarial review passed.
 
    **Action Required:**
    - CRITICAL/HIGH found → List issues for 5.3, do NOT proceed until fixed
    - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
    - None found → Note "Adversarial review passed" and proceed
 
-### 5.3 [ ] **[Command registration + drift report — REFACTOR](plan/user-stories/05-atcr-models-check-drift-report.md)**
-   1. Fix CRITICAL/HIGH issues from 5.2.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(models): clean up check command"`
+### 5.3 [x] **[Command registration + drift report — REFACTOR](plan/user-stories/05-atcr-models-check-drift-report.md)**
+   1. Fix CRITICAL/HIGH issues from 5.2.A (if any) — none; fixed 1 MEDIUM (cross-tier bleed) + 3 LOW (filter-no-match msg, control-char display sanitization, docstring) inline on own freshly-authored code; captured 1 forward-looking MEDIUM (alias false-missing) to TD-005
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ full suite `go test ./...` 0 failures; `golangci-lint run` 0 issues; vet/fmt clean
+   3. COMMIT: `refactor(models): same-tier family match, sanitize display, filter-no-match msg`
    **Duration:** 2h
 
-### 5.4 [ ] **[--json machine-readable output — RED](plan/user-stories/05-atcr-models-check-drift-report.md)**
+### 5.4 [x] **[--json machine-readable output — RED](plan/user-stories/05-atcr-models-check-drift-report.md)**
    **AC:** [05-02](plan/acceptance-criteria/05-02-json-machine-readable-output.md)
    Write failing tests: `--json` emits a stable machine-readable shape (the seam Epic 19.8 wraps). Verify fail correctly.
    **Files:** `cmd/atcr/models_test.go` | **Duration:** 2h
+   **Note — transparent regression-lock RED:** the `--json` flag and `renderDriftJSON` derive from the SAME `personas.DriftFinding` structure the human renderer uses, which landed with the shared-structure design in element 1 (task 5.2) per AC 05-02's "never two independently-computed code paths." So the 6 JSON tests (`TestModelsCheckJSON_*`: array-one-object-per-condition, newer-member field set, omitempty of inapplicable fields + no `null`, `[]` on empty + no-personas, human/JSON (persona,condition) parity) PASS on first run. Their value is the permanent contract guard on Epic 19.8's machine-readable seam.
 
-### 5.5 [ ] **[--json output — GREEN](plan/user-stories/05-atcr-models-check-drift-report.md)**
+### 5.5 [x] **[--json output — GREEN](plan/user-stories/05-atcr-models-check-drift-report.md)**
    Implement `--json`. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(models): --json machine-readable drift output (green)"`
    **Files:** `cmd/atcr/models.go` | **Duration:** 2h
+   **Done:** No production change required — `--json` (flag + `renderDriftJSON` emitting `[]DriftFinding` with `omitempty`, `[]` on empty) was implemented in element 1 as part of the single shared structure feeding both renderers. Committed test-only (`test(models): --json machine-readable drift output contract (green)`).
 
-### 5.5.A [ ] **[--json output — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-atcr-models-check-drift-report.md)**
+### 5.5.A [x] **[--json output — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-atcr-models-check-drift-report.md)**
    **Changed Files:** `cmd/atcr/models.go`, `cmd/atcr/models_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -805,33 +814,40 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 5.5`
    - prompt: Files above + verbatim checklist, plus: "Confirm JSON shape is stable/documented and does not leak secrets; handles empty/no-drift case." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent confirmed (0 CRITICAL/HIGH/MEDIUM):** empty findings emit `[]` (nil-guard + `make([],0)`); both renderers consume the single `findings` slice (shared-structure parity real by construction); condition strings are stable constants; newer-member always carries family+channel and deprecation always carries expiration_date (omitempty never drops a required field); no secret-bearing fields; stdlib encoder escapes control chars; command failures precede any stdout write.
+
+   **Subagent findings (fresh-context general-purpose subagent) — 0 CRITICAL/HIGH:**
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | models_test.go (JSON suite) | No JSON test asserts a single persona with two conditions emits TWO objects (the `byPersona` map masks it) | FIXED inline in 5.6 — added `TestModelsCheckJSON_MultiCondition_TwoObjects` (own freshly-authored test surface) |
+   | LOW | models_test.go (JSON suite) | No JSON test exercises quotes/control chars in a value (the `--json` path deliberately opts out of `sanitizeDisplay`, relying on stdlib escaping) | FIXED inline in 5.6 — added `TestRenderDriftJSON_EscapesControlChars` (ESC/quote/U+2028 escaped + round-trips) |
+   | LOW | models.go:196-198 | Theoretical partial-JSON on a stdout short-write mid-`enc.Encode` | ACCEPTED AS DESIGNED — unreachable by any computable command failure (personasDir/SnapshotModels fail before the write); a raw stdout short-write is unrecoverable and buffer-then-write cannot fully prevent it either. No change |
+
+   **Action Taken:** 0 CRITICAL/HIGH/MEDIUM. Two LOW test-coverage gaps in this element's own tests → fixed inline in 5.6. One LOW theoretical io-error accepted as designed. ✅ Adversarial review passed.
 
    **Action Required:**
    - CRITICAL/HIGH found → List issues for 5.6, do NOT proceed until fixed
    - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
    - None found → Note "Adversarial review passed" and proceed
 
-### 5.6 [ ] **[--json output — REFACTOR](plan/user-stories/05-atcr-models-check-drift-report.md)**
-   1. Fix CRITICAL/HIGH issues from 5.5.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(models): clean up json output"`
+### 5.6 [x] **[--json output — REFACTOR](plan/user-stories/05-atcr-models-check-drift-report.md)**
+   1. Fix CRITICAL/HIGH issues from 5.5.A (if any) — none; added 2 LOW JSON coverage tests inline (multi-condition two-objects + control-char escaping/round-trip); 1 LOW accepted as designed
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ JSON suite green, full suite 0 failures
+   3. COMMIT: `test(models): JSON multi-condition + control-char escaping coverage`
    **Duration:** 1h
 
-### 5.7 [ ] **[Exit-code contract (0/1/2) — RED](plan/user-stories/05-atcr-models-check-drift-report.md)**
+### 5.7 [x] **[Exit-code contract (0/1/2) — RED](plan/user-stories/05-atcr-models-check-drift-report.md)**
    **AC:** [05-03](plan/acceptance-criteria/05-03-exit-code-contract.md)
    Write failing tests for the 0 (no drift) / 1 (drift) / 2 (error) exit-code contract. Verify fail correctly.
    **Files:** `cmd/atcr/models_test.go` | **Duration:** 2h
+   **Note — transparent regression-lock RED:** the 0/1/2 mapping was implemented in element 1 (`driftFoundError.ExitCode()==exitFailure(1)`; snapshot load/parse failure wrapped in `usageError`→2; clean→nil→0; cobra flag errors→root `SetFlagErrorFunc`→usageError→2), so the 6 exit tests (`TestModelsCheckExit_*`: clean=0, conditions=1, usage=2+no-report, findings+read-failure=1-not-2, missing-snapshot=2, malformed-snapshot=2 — each covering `--json` parity) PASS on first run. Their value is the permanent contract guard Epic 19.8 and CI depend on.
 
-### 5.8 [ ] **[Exit-code contract — GREEN](plan/user-stories/05-atcr-models-check-drift-report.md)**
+### 5.8 [x] **[Exit-code contract — GREEN](plan/user-stories/05-atcr-models-check-drift-report.md)**
    Implement exit codes. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(models): 0/1/2 exit-code contract (green)"`
+   **Done:** No production change required — the typed `driftFoundError` (exit 1), `usageError`-wrapped snapshot failures (exit 2), clean-nil (exit 0), and cobra flag-error → exit 2 all landed in element 1. Committed test-only (`test(models): 0/1/2 exit-code contract (green)`).
    **Files:** `cmd/atcr/models.go` | **Duration:** 1h
 
-### 5.8.A [ ] **[Exit-code contract — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-atcr-models-check-drift-report.md)**
+### 5.8.A [x] **[Exit-code contract — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-atcr-models-check-drift-report.md)**
    **Changed Files:** `cmd/atcr/models.go`, `cmd/atcr/models_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -839,65 +855,85 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 5.8`
    - prompt: Files above + verbatim checklist, plus: "Confirm every code path maps to exactly one of 0/1/2; an internal error never returns 0 or 1." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (fresh-context general-purpose subagent) — 0 CRITICAL/HIGH:**
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | models.go:72-75 | `personasDir()` failure returned an UNCODED error → `main()` maps it to exit 1 (drift), but it is an unrecoverable command failure that must exit 2 — inconsistent with the `SnapshotModels` failure 3 lines below which IS wrapped in `usageError`→2 | FIXED inline in 5.9 — wrapped in `usageError(err)` (exit 2), matching the snapshot handling; own freshly-authored code |
+   | LOW | models.go:124-126 | `renderDriftJSON` write error returned uncoded → exit 1, while the text path swallows write errors → a stdout-write failure with zero findings would exit 1 under `--json` but 0 under default (parity gap, AC 05-03 EC2) | FIXED inline in 5.9 — the JSON render error is now swallowed symmetrically (`_ = renderDriftJSON(...)`) so the exit code is purely findings-based in both modes; `renderDriftJSON` cannot fail on marshaling, only on an unrecoverable stdout write |
+   | LOW | models_test.go (exit suite) | The "per-persona read failure with ZERO findings → exit 0" path was untested | FIXED inline in 5.9 — added `TestModelsCheckExit_ReadFailureOnly_Zero` (default → 0 + "No drift…"; `--json` → 0 + `[]`) |
+
+   **Action Taken:** 0 CRITICAL/HIGH. One MEDIUM (an exit-code leak: command failure mis-mapped to 1) + two LOW (json/text exit parity, missing test) were all defects/gaps in this element's own freshly-authored code → fixed inline in 5.9. No tech-debt captured. ✅ Adversarial review passed.
 
    **Action Required:**
    - CRITICAL/HIGH found → List issues for 5.9, do NOT proceed until fixed
    - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
    - None found → Note "Adversarial review passed" and proceed
 
-### 5.9 [ ] **[Exit-code contract — REFACTOR](plan/user-stories/05-atcr-models-check-drift-report.md)**
-   1. Fix CRITICAL/HIGH issues from 5.8.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(models): clean up exit-code handling"`
+### 5.9 [x] **[Exit-code contract — REFACTOR](plan/user-stories/05-atcr-models-check-drift-report.md)**
+   1. Fix CRITICAL/HIGH issues from 5.8.A (if any) — none; fixed 1 MEDIUM (personasDir failure → exit 2) + 2 LOW (json/text exit parity, zero-findings-read-failure test) inline
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ all models tests green; `golangci-lint run` 0 issues
+   3. COMMIT: `refactor(models): personasDir failure exits 2, json/text exit parity`
    **Duration:** 1h
 
-### 5.10 [ ] **[Deterministic catalog-snapshot default — RED](plan/user-stories/05-atcr-models-check-drift-report.md)**
+### 5.10 [x] **[Deterministic catalog-snapshot default — RED](plan/user-stories/05-atcr-models-check-drift-report.md)**
    **AC:** [05-04](plan/acceptance-criteria/05-04-deterministic-catalog-snapshot-default.md)
    Write failing tests: `models check` defaults to the checked-in snapshot (zero network) for deterministic output. Verify fail correctly.
-   **Files:** `cmd/atcr/models_test.go` | **Duration:** 2h
+   **Files:** `cmd/atcr/models_test.go`, `internal/personas/drift_test.go` | **Duration:** 2h
+   **Note — transparent regression-lock + new unit coverage:** the deterministic embedded-snapshot default (`//go:embed testdata/catalog_snapshot.json` via `SnapshotModels`, zero network by construction — no `HTTPClient` in the default path) and the deterministic finding order landed in element 1, so the integration tests (`TestModelsCheck_Deterministic_RepeatedRuns` — identical stdout+exit across repeated default and `--json` runs; `TestModelsCheck_DefaultPath_ZeroNetwork` — a `failRoundTripper` + failing httptest server prove no HTTP call) PASS on first run. Added NEW `internal/personas/drift_test.go` unit coverage of the classifier + loader: missing/deprecation/null-expiration(EC2)/empty-string-expiration/empty-lock/same-tier-newer-member/bound-resolver-newer-member/deterministic-order + `TestSnapshotModels_RoundTrip` (slug/created/expiration survive the loader). The missing/malformed-snapshot → exit 2 error paths were already covered in element 3 (`TestModelsCheckExit_MissingSnapshot_Two`/`_MalformedSnapshot_Two`).
 
-### 5.11 [ ] **[Snapshot default — GREEN](plan/user-stories/05-atcr-models-check-drift-report.md)**
+### 5.11 [x] **[Snapshot default — GREEN](plan/user-stories/05-atcr-models-check-drift-report.md)**
    Default to the checked-in snapshot. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(models): default to checked-in snapshot for determinism (green)"`
-   **Files:** `cmd/atcr/models.go` | **Duration:** 2h
+   **Files:** `cmd/atcr/models.go`, `internal/personas/snapshot.go` | **Duration:** 2h
+   **Done:** No production change required — `SnapshotModels` (embedded snapshot via `//go:embed`, `ATCR_CATALOG_SNAPSHOT` override for the error-path tests, zero network in the default path) landed in element 1 and is the sole catalog source `models check` uses. Committed test-only (`test(models): deterministic snapshot default + zero-network guard (green)`).
 
-### 5.11.A [ ] **[Snapshot default — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-atcr-models-check-drift-report.md)**
-   **Changed Files:** `cmd/atcr/models.go`, `cmd/atcr/models_test.go`
+### 5.11.A [x] **[Snapshot default — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-atcr-models-check-drift-report.md)**
+   **Changed Files:** `internal/personas/snapshot.go`, `internal/personas/drift.go`, `internal/personas/drift_test.go`, `cmd/atcr/models.go`, `cmd/atcr/models_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
    - subagent_type: `general-purpose`
    - description: `Adversarial review: 5.11`
    - prompt: Files above + verbatim checklist, plus: "Confirm the default path makes zero network calls; live-catalog mode (if any) is explicit opt-in." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent confirmed (0 CRITICAL/HIGH/MEDIUM), all AC 05-04 contracts hold with tests:** determinism real (no map iteration reaches stdout; `bySlug` + static tables are lookup-only; total-order tie-break is array-order-independent; byte-identical verified); zero-network real (`strings` on the built binary confirms the snapshot is compiled in; failing RoundTripper asserts no calls); go:embed of a single explicit `testdata/` file DOES compile into the non-test production binary (empty embed would fail `TestSnapshotModels_RoundTrip`); round-trip + `_fixture_meta`/unknown-field ignore; null AND empty-string expiration both non-deprecated; far-future sentinel + `~`-aliases correctly excluded from bindingless suggestions; snapshot parsed once per invocation; `ATCR_CATALOG_SNAPSHOT` is an intended operator/test seam reading a file the invoking user can already read (no traversal/privilege/TOCTOU vector).
+
+   **Subagent findings (fresh-context general-purpose subagent) — 0 CRITICAL/HIGH/MEDIUM:**
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | drift.go (deriveFamilyPrefix) | Strips only a TRAILING version segment, so a `<family>-<version>-<tier>` slug (`openai/gpt-5.4-mini`) derives to itself and a bindingless persona on it never groups with tier siblings — silently no-drift-forever (fails SAFE, documented) | CAPTURED → tech-debt-captured.md TD-006 (LOW). Fails safe (no false/cross-tier suggestion); bound personas unaffected (they use `ResolveModel`'s scan); all 10 shipping personas have trailing versions. Interior-version stripping is speculative complexity risking cross-tier bleed |
+   | LOW | drift.go (bySlug vs scan) | Theoretical: duplicate catalog ids with differing expiration could make the deprecation lookup (first occurrence) and newer-member scan (all occurrences) disagree | FIXED inline in 5.12 (doc) — added a comment stating the snapshot is assumed ID-unique and first-occurrence-wins keeps the result deterministic; no behavior change (OpenRouter `/models` + the authored snapshot are id-unique) |
+
+   **Action Taken:** 0 CRITICAL/HIGH/MEDIUM. One LOW (bindingless interior-version gap) is documented fail-safe conservatism → captured to `tech-debt-captured.md` (TD-006). One LOW (theoretical duplicate-id) addressed with a clarifying doc comment inline (5.12). ✅ Adversarial review passed.
 
    **Action Required:**
    - CRITICAL/HIGH found → List issues for 5.12, do NOT proceed until fixed
    - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
    - None found → Note "Adversarial review passed" and proceed
 
-### 5.12 [ ] **[Snapshot default — REFACTOR](plan/user-stories/05-atcr-models-check-drift-report.md)**
-   1. Fix CRITICAL/HIGH issues from 5.11.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(models): clean up snapshot-default path"`
+### 5.12 [x] **[Snapshot default — REFACTOR](plan/user-stories/05-atcr-models-check-drift-report.md)**
+   1. Fix CRITICAL/HIGH issues from 5.11.A (if any) — none; captured 1 LOW (TD-006, documented fail-safe conservatism) + added 1 clarifying doc comment (duplicate-id determinism), no behavior change
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ personas suite green; `golangci-lint run` 0 issues
+   3. COMMIT: `docs(personas): note snapshot ID-uniqueness assumption; capture TD-006`
    **Duration:** 1h
 
-### 5.13 [ ] **Phase 5 — DoD**
-   - [ ] All Phase 5 tests passing (T3); exit codes verified
-   - [ ] Coverage ≥80%; zero live network (snapshot default)
-   - [ ] Lint/vet/fmt clean; build succeeds
-   - [ ] `models check` never invoked on the review path
-   - [ ] DoD report per template
+### 5.13 [x] **Phase 5 — DoD**
+   - [x] All Phase 5 tests passing (T3); exit codes verified — `go test ./...` 0 failures; 0/1/2 exit contract covered (`TestModelsCheckExit_*`)
+   - [x] Coverage ≥80%; zero live network (snapshot default) — personas 84.6%, cmd/atcr 84.2%; default path uses the embedded snapshot, `TestModelsCheck_DefaultPath_ZeroNetwork` (failRoundTripper) proves no HTTP call
+   - [x] Lint/vet/fmt clean; build succeeds — `golangci-lint run` 0 issues, `go vet` clean, `gofmt -l` empty, `go build ./...` OK
+   - [x] `models check` never invoked on the review path — grep of `internal/fanout/` + `internal/registry/` for `CheckDrift`/`SnapshotModels`/`runModelsCheck` empty; drift/snapshot are new upstream code only, review path (`ResolvePersona`, review fan-out) untouched
+   - [x] DoD report per template
 
-### 5.14 [ ] **Phase 5 — GATE: Integration & Exit Review (subagent)**
+   ```
+   Story-05 DoD Complete
+   Auto: 3/3 (tests passing, lint/vet/fmt clean, build succeeds)
+   Story-Specific (AC 05-01/02/03/04): all green
+     05-01: `models check` registered next to personas (22-subcommand invariant updated); enumerates via ListTiers (matches personas list); 3 condition line-formats + multi-condition one-line-per-condition; canonical no-drift + distinct nothing-to-check/filter-no-match messages; per-persona read failure surfaced+excluded not aborting
+     05-02: single shared personas.DriftFinding feeds table + --json; array one-object-per-condition; condition-specific fields via omitempty (no null); `[]` on empty; human/JSON (persona,condition) parity; control-char escaping
+     05-03: 0 clean / 1 conditions-found (typed driftFoundError) / 2 usage|command-failure; findings+per-persona-read-failure stays 1; personasDir+snapshot load/parse failure → 2; identical exit codes across default and --json
+     05-04: embedded snapshot default (zero network, go:embed compiled into production binary); repeated runs byte-identical; only non-null expiration_date → deprecation; missing→"failed to load", malformed→"failed to parse", both exit 2
+   Manual Review: [ ] Code reviewed (deferred to /execute-code-review)
+   ```
+
+### 5.14 [x] **Phase 5 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 5.
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -905,11 +941,16 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Phase 5 gate review`
    - prompt: Phase 5 changed files + verbatim hostile-integrator checklist. Emphasize: the `--json`/exit-code contract is stable enough for Epic 19.8 to wrap; snapshot-default determinism. Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent confirmed:** `go build ./...`/`go vet` clean; all Phase 5 tests pass; `models` registers exactly once (main.go:203); no `internal/personas → cmd` import cycle; `models check` enumerates the SAME set as `personas list` (identical `filepath.Join(".atcr","personas")` + `ListTiers`); reuses `ResolveModel`/`lockMetaOf`/`personaPath` (no forked logic); single `DriftFinding` feeds both renderers; JSON `condition` values are stable constants; default path diagnostic-only, zero network, no lock writes; review hot path + AC7 gate + Phase 3/4 resolver/upgrade untouched.
+
+   **Subagent findings (fresh-context hostile-integrator subagent) — 0 CRITICAL/HIGH:**
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | models.go (runModelsCheck) | A machine consumer (Epic 19.8) cannot distinguish "clean" from "incompletely checked": `listErr` + per-persona `LoadLock` failures go only to stderr, never affecting exit code or the `--json` array, so `exit 0`/`[]` can be a false all-clear on partial enumeration | CAPTURED → tech-debt-captured.md TD-007 (MEDIUM). Per-persona-to-stderr/exit-unaffected is AC-MANDATED (AC 05-01 ES1 + AC 05-03 EC1); the structured-envelope fix CONTRADICTS AC 05-02's pinned array shape; escalating `listErr` diverges from sibling `personas list`. The machine-consumer incomplete-check contract belongs to Epic 19.8 (out of scope) |
+   | LOW | drift.go (newerMemberFinding Family) | `family` JSON field carries two shapes: bound → bare token (`"glm"`), bindingless → vendor/tier prefix (`"z-ai/glm"`) | CAPTURED → TD-008 (LOW) + FIXED inline (doc) — added a `DriftFinding.Family` doc comment marking it advisory (not a stable grouping key) with different bound/bindingless provenance; normalization deferred to 19.8 (different provenance, lossless single shape non-trivial) |
+   | LOW | snapshot.go / models.go | Embed sources from `testdata/`; `ATCR_CATALOG_SNAPSHOT` undocumented in `--help`; Phase 8 `refresh`-to-testdata won't reach an installed binary's embed | CAPTURED → TD-009 (LOW) + FIXED inline — documented `ATCR_CATALOG_SNAPSHOT` in `models check --help`; the single-fixture-shared-with-tests design is pinned by `catalog-snapshot-fixture.md` and the refresh-consumption model is explicitly Phase 8's story |
+
+   **Action Taken:** 0 CRITICAL/HIGH → no gate re-run required. 1 MEDIUM + 2 LOW captured to `tech-debt-captured.md` (TD-007/008/009); the two LOWs additionally got cheap inline doc clarifications (family-field semantics + env-override help text) that reduce their impact now. ✅ **Phase gate passed.**
 
    **Action Required:**
    - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
