@@ -231,16 +231,16 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
 **Story:** [02: Family/Channel Binding & Resolved Lock](plan/user-stories/02-family-channel-binding-resolved-lock.md)
 **Focus:** Extend `PersonaIndexEntry`/`AgentConfig` additively with the family/channel binding field; confirm the existing `Model` field is the lock consumed at review time (no new field, zero migration); verify 19.6's AC7 exact-match gate is unaffected.
 
-### 2.1 [ ] **[Family/channel binding schema extension — RED](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
+### 2.1 [x] **[Family/channel binding schema extension — RED](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
    **AC:** [02-01](plan/acceptance-criteria/02-01-family-channel-binding-schema-extension.md)
    Write comprehensive failing tests: binding field decodes (`omitempty`, permissive), absent field is backward-compatible, 19.6 AC7 `Provider`/`Model` parity gate still passes. Verify fail correctly.
    **Files:** `internal/personas/search_test.go` (+ `internal/registry/config_test.go`) | **Duration:** 3h
 
-### 2.2 [ ] **[Family/channel binding schema extension — GREEN](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
+### 2.2 [x] **[Family/channel binding schema extension — GREEN](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
    Add the additive `Binding` field to `PersonaIndexEntry`/`AgentConfig` (`omitempty`, permissive decode). Minimal code, one test at a time (T1), verify all pass (T2), COMMIT: `git commit -m "feat(personas): add additive family/channel binding field (green)"`
    **Files:** `internal/personas/search.go`, `internal/registry/config.go` | **Duration:** 3h
 
-### 2.2.A [ ] **[Family/channel binding schema extension — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
+### 2.2.A [x] **[Family/channel binding schema extension — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
    **Changed Files:** `internal/personas/search.go`, `internal/registry/config.go`, `internal/personas/search_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. The subagent has no memory of the implementation — intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -257,33 +257,30 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below, no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose subagent):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | - | No findings — `.Binding` has zero reads on any non-test path; AC7 `Provider`/`Model` gate untouched; `KnownFields(true)` widened by exactly the one `binding` key (proven by `TestValidateCommunityPersonaYAML_BindingDoesNotWidenGate`) | - |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 2.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action Taken:** ✅ Adversarial review passed — no CRITICAL/HIGH/MEDIUM/LOW findings. Proceeding.
 
-### 2.3 [ ] **[Family/channel binding schema extension — REFACTOR](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
-   1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(personas): address review + clean up binding schema"`
+### 2.3 [x] **[Family/channel binding schema extension — REFACTOR](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
+   1. Fix CRITICAL/HIGH issues from 2.2.A (if any) — **none** (adversarial review passed with zero findings)
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ `go build ./...` + `go test ./...` full suite green
+   3. COMMIT: no refactor commit — the GREEN implementation is already minimal (additive `omitempty` field + doc comment); no code change to make. No empty/no-op commit created.
    **Duration:** 2h
 
-### 2.4 [ ] **[Review path reads locked slug, zero endpoint calls — RED](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
+### 2.4 [x] **[Review path reads locked slug, zero endpoint calls — RED](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
    **AC:** [02-02](plan/acceptance-criteria/02-02-review-path-reads-locked-slug-zero-endpoint-calls.md)
    Write failing tests proving the review path consumes `AgentConfig.Model` (the lock) and makes ZERO catalog/endpoint calls (assert against an injected `HTTPClient` that fails on any call). **High-complexity AC — most adversarial test design.** Verify fail correctly.
-   **Files:** `internal/registry/config_test.go` (or `internal/fanout/review_test.go`) | **Duration:** 3h
+   **Files:** `internal/fanout/lock_test.go` (new — placed alongside `engine_test.go` per AC 02-02 guidance) | **Duration:** 3h
+   **Note — vacuous RED (transparent):** AC 02-02 is a *verify/regression-lock* AC — its own Related Files section labels `renderAgent`/Invocation construction as "reference/verify, no behavioral change expected." The review path already reads `ac.Model` and never `Binding` (review.go:1057 primary, :1144 fallback), so the 3 regression tests (`TestReviewPath_InvocationModelIsLockNotBinding`, `TestReviewPath_FallbackModelIsLockNotBinding`, `TestReviewPath_ZeroCatalogEndpointToResolveModel`) PASS on first run. There is no pre-existing behavioral gap to drive; manufacturing a fake failure (e.g. asserting `Model == Binding`) would be dishonest. The tests' value is the build-time guard they now provide: any future change that consumes `Binding` on the review path or adds a live resolution call fails them. Distinct sentinels (`model-greta` vs `binding-greta`) make any leak obvious. End-to-end test records every outbound request and asserts model==lock, no `/models`/`catalog` path.
 
-### 2.5 [ ] **[Review path reads locked slug, zero endpoint calls — GREEN](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
+### 2.5 [x] **[Review path reads locked slug, zero endpoint calls — GREEN](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
    Confirm/wire the review path to read the locked `Model` field only. Minimal code (T1), verify all pass (T2), COMMIT: `git commit -m "feat(registry): confirm review path reads locked slug, no endpoint call (green)"`
    **Files:** `internal/registry/config.go`, `internal/fanout/review.go` (read-only verification) | **Duration:** 2h
 
-### 2.5.A [ ] **[Review path reads locked slug — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
+### 2.5.A [x] **[Review path reads locked slug — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
    **Changed Files:** `internal/registry/config.go`, `internal/fanout/review.go`, `internal/registry/config_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -291,33 +288,30 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 2.5`
    - prompt: Self-contained brief with the files above and the verbatim checklist (SECURITY / EDGE CASES / ERROR HANDLING / PERFORMANCE), plus: "Prove no code path on the review hot path can trigger a catalog fetch." Severity rubric CRITICAL/HIGH/MEDIUM/LOW. Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose subagent):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | internal/fanout/lock_test.go:149-150 | The "no catalog fetch" guard rejected paths by substring blocklist (`/models`, `catalog`); a differently-named resolution endpoint (`/resolve`, `/v1/registry`) could evade it. Binding-leak (Model-sentinel) assertion is robust; only the endpoint-shape check was partial. | FIXED inline in 2.6 — replaced blocklist with a positive allowlist: every recorded request path must equal the known completion endpoint `/chat/completions`, so ANY unexpected request fails the test. (Fixed inline rather than deferred: it strengthens the epic's load-bearing reproducibility guard and is freshly-authored test code — cleaning up own work.) |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 2.6, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action Taken:** No CRITICAL/HIGH. One LOW strengthened inline in 2.6 (positive-assertion allowlist on the completion endpoint). Production code unchanged — the review path was already correct. Proceeding.
 
-### 2.6 [ ] **[Review path reads locked slug — REFACTOR](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
-   1. Fix CRITICAL/HIGH issues from 2.5.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
+### 2.6 [x] **[Review path reads locked slug — REFACTOR](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
+   1. Fix CRITICAL/HIGH issues from 2.5.A (if any) — none; strengthened the one LOW endpoint-guard inline
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ green
    3. COMMIT: `git commit -m "refactor(registry): clean up locked-slug review path"`
    **Duration:** 2h
 
-### 2.7 [ ] **[Pinned model seeds initial lock, zero migration — RED](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
+### 2.7 [x] **[Pinned model seeds initial lock, zero migration — RED](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
    **AC:** [02-03](plan/acceptance-criteria/02-03-pinned-model-seeds-initial-lock-zero-migration.md)
    Write failing tests: an existing 19.6 on-disk persona (pinned `Model`, no `Binding`) is treated as its own initial lock with zero migration; AC7 parity unaffected. Verify fail correctly.
-   **Files:** `internal/personas/search_test.go` | **Duration:** 2h
+   **Files:** `internal/personas/community_schema_test.go` (added `TestVerifyCommunityIndex_BindingExempt`, `TestPinnedModelIsLockZeroMigration`) | **Duration:** 2h
+   **Note — vacuous RED (transparent):** Like AC 02-02, 02-03 is a verify/exemption/zero-migration AC. 19.6's pinned `Model` already IS the lock (no new field, no transform) and `verifyCommunityIndex` (the AC7 gate) already enumerates Provider/Model only — so both tests PASS on first run. No behavioral gap exists to drive; the tests are permanent guards: `TestVerifyCommunityIndex_BindingExempt` fails the build if anyone makes the gate enumerate Binding; `TestPinnedModelIsLockZeroMigration` fails if any of the 10 personas' pinned model lock goes empty. Zero migration is satisfied by NOT touching any persona YAML (byte-for-byte unchanged — verified: no persona YAML edited this story).
 
-### 2.8 [ ] **[Pinned model seeds initial lock — GREEN](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
+### 2.8 [x] **[Pinned model seeds initial lock — GREEN](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
    Minimal code so a pinned `Model` seeds the lock. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(personas): pinned model seeds initial lock, zero migration (green)"`
    **Files:** `internal/personas/search.go` | **Duration:** 2h
 
-### 2.8.A [ ] **[Pinned model seeds initial lock — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
+### 2.8.A [x] **[Pinned model seeds initial lock — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
    **Changed Files:** `internal/personas/search.go`, `internal/personas/search_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -325,31 +319,37 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 2.8`
    - prompt: Files above + verbatim checklist (SECURITY / EDGE CASES / ERROR HANDLING / PERFORMANCE), plus: "Confirm zero migration — no existing on-disk persona is rewritten or invalidated." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose subagent):** Zero migration confirmed — no persona YAML/index.json modified by the branch; `BindingExempt` test genuinely discriminating.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | community_schema_test.go:169 | `TestPinnedModelIsLockZeroMigration` docstring claimed it proves "a persona shipping no binding decodes Binding as ''" but the loop only asserted `NotEmpty(ac.Model)` — the binding-decode guarantee was unverified, making it a weak near-duplicate of `TestCommunityPersonas_NoPlaceholderModel`. | FIXED inline in 2.9 — added a per-persona assertion: when the raw YAML carries no `binding:` key, `ac.Binding` must decode as "" (Binding inertness), matching the docstring and differentiating the test. Fixed inline (freshly-authored test, own cleanup). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 2.9, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action Taken:** No CRITICAL/HIGH. One LOW strengthened inline in 2.9 (added the missing Binding-inertness assertion). Proceeding.
 
-### 2.9 [ ] **[Pinned model seeds initial lock — REFACTOR](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
-   1. Fix CRITICAL/HIGH issues from 2.8.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
+### 2.9 [x] **[Pinned model seeds initial lock — REFACTOR](plan/user-stories/02-family-channel-binding-resolved-lock.md)**
+   1. Fix CRITICAL/HIGH issues from 2.8.A (if any) — none; strengthened the one LOW test-rigor gap inline
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ green
    3. COMMIT: `git commit -m "refactor(personas): clean up initial-lock seeding"`
    **Duration:** 1h
 
-### 2.10 [ ] **Phase 2 — DoD**
-   - [ ] All Phase 2 tests passing (T3: `go test ./...`)
-   - [ ] Coverage ≥80% for changed packages
-   - [ ] Lint/vet/fmt clean; build succeeds
-   - [ ] 19.6 AC7 `Provider`/`Model` parity gate still green
-   - [ ] DoD report per template
+### 2.10 [x] **Phase 2 — DoD**
+   - [x] All Phase 2 tests passing (T3: `go test ./...`) — full suite exit 0
+   - [x] Coverage ≥80% for changed packages — personas 84.7%, registry 91.8%, fanout 87.8%
+   - [x] Lint/vet/fmt clean; build succeeds — `golangci-lint run` 0 issues, `go vet` clean, `gofmt -l` empty, `go build ./...` exit 0
+   - [x] 19.6 AC7 `Provider`/`Model` parity gate still green — `TestCommunityIndex_ProviderModelMatchesYAML`/`TestVerifyCommunityIndex_FailsOnMismatch`/`TestCommunityIndex_Registration` pass unchanged
+   - [x] DoD report per template
 
-### 2.11 [ ] **Phase 2 — GATE: Integration & Exit Review (subagent)**
+   ```
+   Story-02 DoD Complete
+   Auto: 3/3 (tests passing, no lint errors, build succeeds)
+   Story-Specific (AC 02-01/02/03): 4/4 + 4/4 + 4/4
+     02-01: Binding field added (json+yaml, omitempty); old-shape decodes Binding=""; KnownFields(true) accepts binding, still rejects unknown; writePersonaUnit untouched (byte-for-byte persist)
+     02-02: Invocation.Model derives solely from AgentConfig.Model (regression test); zero outbound calls beyond LLM completion (positive-allowlist end-to-end); ResolvePersona untouched; fallback chain confirmed unaffected
+     02-03: every persona model unchanged byte-for-byte (git diff empty); AC7 gate assertions pass unmodified; Binding drift/absence exempt from gate (explicit test); Binding inertness asserted
+   Manual Review: [ ] Code reviewed (deferred to /execute-code-review)
+   ```
+
+### 2.11 [x] **Phase 2 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2 (integration-level).
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -357,16 +357,12 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Phase 2 gate review`
    - prompt: Self-contained brief with Phase 2 changed files (absolute paths) + verbatim hostile-integrator checklist (CONTRACT EXIT / CONFIG SURFACE / INTEGRATION / PHASE-EXIT CONTRACT / REGRESSION). Emphasize: additive schema is back-compat; the `Model` field IS the lock consumed downstream; AC7 gate intact. Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context hostile-integrator subagent):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | - | No findings — additive Binding is back-compat everywhere (index json has no strict decode; community YAML `KnownFields(true)` auto-recognizes the inlined field); zero production reads of `.Binding` (verified by grep); `renderAgent`/`buildFallbackAgent` consume `ac.Model` exclusively; AC7 Provider/Model gate + strict `KnownFields(true)` gate intact and unweakened; nothing normalizes/validates Binding, so Phase 3's resolver design is not pre-empted | - |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Action Taken:** ✅ Phase gate passed — 0 CRITICAL/HIGH/MEDIUM/LOW. No re-run needed. No tech-debt captured this phase (both adversarial LOWs from 2.5.A/2.8.A were strengthened inline, none deferred).
    **Duration:** 15-30 min
 
 **🚧 GATED STOP:** Phase 2 complete. Await review before Phase 3.
