@@ -376,16 +376,17 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
 
 > All catalog access goes through the injected `HTTPClient`; every test uses `httptest.NewServer` + fixture data. Reuse `fetch()`'s body-size cap/timeout/backoff. Validate slugs as plain printable identifiers before returning them as a lock.
 
-### 3.1 [ ] **[Alias passthrough (7 personas) — RED](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.1 [x] **[Alias passthrough (7 personas) — RED](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    **AC:** [03-01](plan/acceptance-criteria/03-01-alias-passthrough-seven-personas.md)
    Write failing tests: the 7 alias-covered personas bind to provider `-latest` aliases and pass through unchanged. Verify fail correctly.
    **Files:** `internal/personas/catalog_test.go` | **Duration:** 3h
 
-### 3.2 [ ] **[Alias passthrough — GREEN](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.2 [x] **[Alias passthrough — GREEN](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    Implement alias-bind path + catalog client scaffolding. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(personas): alias-bind resolver for 7 personas (green)"`
    **Files:** `internal/personas/catalog.go` | **Duration:** 4h
+   **Done:** created `catalog.go` (`CatalogModel`, `CatalogClient.FetchModels` via the injected `HTTPClient`/`fetch()` seam, `Binding`, 7-entry `aliasTable`, `ResolveModel` alias branch + descriptive error) + checked-in `testdata/catalog_snapshot.json` (7 aliases, all 10 pins, deepseek//qwen//z-ai/ members, preview + expiring entries). Commit `8222def8`-parent.
 
-### 3.2.A [ ] **[Alias passthrough — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.2.A [x] **[Alias passthrough — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    **Changed Files:** `internal/personas/catalog.go`, `internal/personas/catalog_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -393,33 +394,33 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 3.2`
    - prompt: Files above + verbatim checklist (SECURITY / EDGE CASES / ERROR HANDLING / PERFORMANCE), plus: "Verify catalog client reuses fetch()'s body-size cap + timeout; verify slug validation before return." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose subagent) — 0 CRITICAL/HIGH:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | catalog.go:42-55 | `created` decoded via `json.Number` aborts the WHOLE `data` parse on a non-numeric value (`"abc"`/`true`/object) — breaks the "one malformed entry never crashes the scan" contract + AC 03-02 EC4 | FIXED inline in 3.3 — switched to `json.RawMessage` + `parseCreated` best-effort (number, float, numeric-string → int64; anything else → 0); added `TestCatalogModel_TolerantCreated` |
+   | MEDIUM | catalog.go:9-16 | Dead `envCatalogURL` const + doc comment promising a `CatalogBaseURLFromEnv` override that does not exist; `FetchModels` reads only `c.BaseURL` | FIXED inline in 3.3 — deleted dead const, corrected comment to describe only the `BaseURL` injection seam (minimal fix; no speculative env override added per "minimum code" rule) |
+   | LOW | catalog_test.go:88-99 | `failingHTTPClient` constructed then discarded (`_ =`) — misleading dead scaffold; `ResolveModel` holds no client | FIXED inline in 3.3 — removed the type + construction; test renamed/rewritten to honestly assert alias resolves identically against nil/empty/arbitrary model lists |
+   | LOW | catalog_test.go | No malformed-catalog-JSON test for `FetchModels` | FIXED inline in 3.3 — added `TestCatalogClient_FetchModels_MalformedJSON` asserting the wrapped "parse model catalog" error |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 3.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action Taken:** No CRITICAL/HIGH. All 4 findings were defects/inconsistencies in this element's freshly-authored code (two against my own stated contract + AC 03-02 EC4), so fixed inline in 3.3 ("clean up your own mess") rather than deferred. No tech-debt captured.
 
-### 3.3 [ ] **[Alias passthrough — REFACTOR](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
-   1. Fix CRITICAL/HIGH issues from 3.2.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(personas): clean up alias-bind path"`
+### 3.3 [x] **[Alias passthrough — REFACTOR](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+   1. Fix CRITICAL/HIGH issues from 3.2.A (if any) — none; fixed 2 MEDIUM + 2 LOW inline (own freshly-authored code)
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ full suite `go test ./...` PASS; `golangci-lint run ./internal/personas/` 0 issues; `go vet`/`gofmt` clean
+   3. COMMIT: `refactor(personas): tolerant created parse, honest alias tests, drop dead env const` (`8222def8`)
    **Duration:** 2h
 
-### 3.4 [ ] **[Created-timestamp vendor-prefix scan — RED](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.4 [x] **[Created-timestamp vendor-prefix scan — RED](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    **AC:** [03-02](plan/acceptance-criteria/03-02-created-timestamp-vendor-prefix-scan.md)
    Write failing tests: newest-in-vendor-prefix resolver for `deepseek/`, `qwen/`, `z-ai/` (glenna); missing `created` = ineligible; **no `glm/` namespace assumption anywhere**. **High-complexity AC.** Verify fail correctly.
    **Files:** `internal/personas/catalog_test.go` | **Duration:** 4h
 
-### 3.5 [ ] **[Created-timestamp vendor-prefix scan — GREEN](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.5 [x] **[Created-timestamp vendor-prefix scan — GREEN](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    Implement `created`-timestamp newest-in-prefix resolver. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(personas): created-timestamp vendor-prefix resolver (green)"`
    **Files:** `internal/personas/catalog.go` | **Duration:** 4h
+   **Done (`68fe25a8`):** `vendorPrefixTable` (deepseek→`deepseek/`, qwen→`qwen/`, glm→`z-ai/`), `resolveNewestInPrefix` (exact-prefix `HasPrefix`, ineligible `created<=0` skipped, `newerCandidate` total order [created desc, then slug desc] → array-order-independent, fail-closed descriptive error), `validateResolvedSlug` (TD-008 control-char mirror). Element 2 selects purely by newest eligible `created`; channel preview/deprecation filter layered in Elements 4–5.
 
-### 3.5.A [ ] **[Created-timestamp scan — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.5.A [x] **[Created-timestamp scan — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    **Changed Files:** `internal/personas/catalog.go`, `internal/personas/catalog_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -427,33 +428,31 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 3.5`
    - prompt: Files above + verbatim checklist, plus: "EDGE CASES — null/missing `created`, ties, `z-ai/` vs `glm/` prefix; SECURITY — untrusted slug/timestamp fields." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose subagent) — 0 CRITICAL/HIGH:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | catalog.go (validateResolvedSlug) | A bare vendor-prefix ID (`"z-ai/"`) passes validation (non-empty, control-char-free, contains `/`); if it were the newest entry it would be returned as a malformed lock value | FIXED inline in 3.6 — require a non-empty segment on BOTH sides of the first `/` (rejects `"z-ai/"`, `"/glm-5.2"`, `"vendor/"`) |
+   | LOW | catalog_test.go | `validateResolvedSlug`'s empty/control-char reject branches never exercised via the scan path | FIXED inline in 3.6 — added `TestResolveModel_CreatedScan_ControlCharSlug_Rejected` (scan fails closed on a control-char slug) + `TestValidateResolvedSlug` direct table (empty/blank/no-slash/bare-vendor/empty-vendor/control-char) |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 3.6, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action Taken:** No CRITICAL/HIGH. Both findings hardened the load-bearing slug-sanitization guard on freshly-authored code → fixed inline in 3.6. No tech-debt captured.
 
-### 3.6 [ ] **[Created-timestamp scan — REFACTOR](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
-   1. Fix CRITICAL/HIGH issues from 3.5.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(personas): clean up created-timestamp resolver"`
+### 3.6 [x] **[Created-timestamp scan — REFACTOR](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+   1. Fix CRITICAL/HIGH issues from 3.5.A (if any) — none; hardened `validateResolvedSlug` + added guard tests inline
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ full suite PASS; lint 0 issues; vet/fmt clean
+   3. COMMIT: `refactor(personas): reject bare vendor/model slugs, test sanitization guard` (`2df47e7f`)
    **Duration:** 2h
 
-### 3.7 [ ] **[Explicit-pin never floats — RED](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.7 [x] **[Explicit-pin never floats — RED](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    **AC:** [03-03](plan/acceptance-criteria/03-03-explicit-pin-never-floats.md)
    Write failing tests: an explicit-slug pin resolves to itself verbatim and NEVER floats to a newer member. Verify fail correctly.
    **Files:** `internal/personas/catalog_test.go` | **Duration:** 2h
 
-### 3.8 [ ] **[Explicit-pin never floats — GREEN](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.8 [x] **[Explicit-pin never floats — GREEN](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    Implement explicit-pin escape hatch. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(personas): explicit-pin escape hatch never floats (green)"`
    **Files:** `internal/personas/catalog.go` | **Duration:** 2h
+   **Done (`0e23f0e4`):** pin short-circuit at the TOP of `ResolveModel` (before alias + scan): non-empty trimmed `Pin` validated via `validateResolvedSlug` then returned verbatim (never floats, channel/family irrelevant); empty/whitespace pin falls through; invalid pin → `invalid pin %q for family %q` error.
 
-### 3.8.A [ ] **[Explicit-pin — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.8.A [x] **[Explicit-pin — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    **Changed Files:** `internal/personas/catalog.go`, `internal/personas/catalog_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -461,33 +460,32 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 3.8`
    - prompt: Files above + verbatim checklist, plus: "Confirm an explicit pin can never be silently advanced by any strategy." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose subagent) — 0 CRITICAL/HIGH/MEDIUM:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | catalog_test.go (Pin suite) | No pin-path test drives a control-char / bare-vendor / bare-model pin through `ResolveModel`; the sanitization was only asserted transitively (scan path + direct `validateResolvedSlug`), so a refactor dropping `validateResolvedSlug(pin)` would leave every `Pin` test green | FIXED inline in 3.9 — widened `TestResolveModel_Pin_Invalid_Error` to a table (`not-a-slug`, `deepseek/x\n y`, `z-ai/`, `/glm-5.2`) pinning the rejection to the pin short-circuit itself |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 3.9, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Subagent verdict:** short-circuit returns unconditionally before alias + scan (pin can never float); trimmed pin == validated == returned value; empty/whitespace/no-slash all handled. No CRITICAL/HIGH/MEDIUM.
 
-### 3.9 [ ] **[Explicit-pin — REFACTOR](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
-   1. Fix CRITICAL/HIGH issues from 3.8.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(personas): clean up explicit-pin path"`
+   **Action Taken:** No CRITICAL/HIGH. One LOW test-rigor gap on freshly-authored code → fixed inline in 3.9. No tech-debt captured.
+
+### 3.9 [x] **[Explicit-pin — REFACTOR](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+   1. Fix CRITICAL/HIGH issues from 3.8.A (if any) — none; strengthened the one LOW test-rigor gap inline
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ full suite PASS; lint 0 issues; vet/fmt clean
+   3. COMMIT: `refactor(personas): pin-path rejection test for invalid pins` (`89d0fa1d`)
    **Duration:** 1h
 
-### 3.10 [ ] **[@stable excludes preview & expiring — RED](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.10 [x] **[@stable excludes preview & expiring — RED](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    **AC:** [03-04](plan/acceptance-criteria/03-04-stable-channel-excludes-preview-and-expiring.md)
    Write failing tests for `@stable`: excludes preview/beta/exp tokens AND models with non-null `expiration_date`. **High-complexity AC.** The `@stable`/`expiration_date`/preview interaction is now PINNED in the ACs: `@stable` excludes BOTH preview/beta/exp tokens AND non-null `expiration_date`; the `@latest`×`expiration_date` rule is pinned in AC 03-05 (only the preview-token exclusion is bypassed under `@latest` — deprecation is ALWAYS excluded, failing closed to the next-newest non-expiring entry). Encode these pinned rules directly in the tests. Verify fail correctly.
    **Files:** `internal/personas/catalog_test.go` | **Duration:** 3h
 
-### 3.11 [ ] **[@stable excludes preview & expiring — GREEN](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.11 [x] **[@stable excludes preview & expiring — GREEN](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    Implement `@stable` channel logic per the decided semantics. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(personas): @stable channel excludes preview + expiring (green)"`
    **Files:** `internal/personas/catalog.go` | **Duration:** 3h
+   **Done (`18f55171`):** `passesStableFilter` = `!hasPreviewToken && !isDeprecated`, wired into `resolveNewestInPrefix`. **TD-001 RESOLVED** — `slugHasPreviewSegment` normalizes (strip `:variant` suffix + vendor prefix) then hyphen-segment matches `previewTokenSet` {preview,beta,exp,alpha,rc,experimental,nightly,snapshot}, never bare substrings. **TD-002 DECIDED** — `isDeprecated` = any-non-null expiration_date (fails closed, no horizon; empty/whitespace == not-deprecated per AC 03-04 EC3). Applied unconditionally this element (channel gate added in Element 5).
 
-### 3.11.A [ ] **[@stable channel — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.11.A [x] **[@stable channel — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    **Changed Files:** `internal/personas/catalog.go`, `internal/personas/catalog_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -495,33 +493,34 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 3.11`
    - prompt: Files above + verbatim checklist, plus: "EDGE CASES — a model both preview-tagged AND with non-null `expiration_date`; confirm the documented `@stable`/`@latest` decision is applied consistently." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (fresh-context general-purpose subagent, no plan context):**
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | catalog.go:206 | `passesStableFilter` applied unconditionally; `b.Channel` never read, so `@latest` also excludes preview (AC 03-05 requires `@latest` to INCLUDE preview) | NOT a defect in Element 4 scope — this is **Element 5's explicit deliverable** (tasks 3.13–3.15, AC 03-05). The subagent has no plan context; the plan sequences `@stable` (Element 4) then `@latest` (Element 5). Driven by 3.13 RED → 3.14 GREEN (channel gate), resolved before the Phase 3 gate (3.17). Resolver is not wired anywhere yet (Phase 4) → no escaped defect, not tech-debt. |
+   | MEDIUM | catalog_test.go:149 | No `@latest` created-scan test | This IS 3.13's RED test (Element 5). Added there. |
+   | LOW | catalog.go:267 | Preview match splits only on `-`; a non-hyphen-joined marker (`v5preview`, `_preview`) would pass @stable | Acceptable per spec — the `openrouter-catalog-api.md` CRITICAL rule defines segment match over HYPHEN delimiters (bare-substring match over-excludes stable models). Subagent concurs it is within documented scope. No change. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 3.12, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Subagent confirmed correct:** all substring false-positive risks avoided ("latest"⊃"test", "arcee"⊃"rc", "devstral"⊃"dev", "export"⊃"exp") via segment equality + `:variant`/prefix stripping; `isDeprecated` no nil-deref + honors empty/whitespace==not-deprecated; no panics on empty/multi-`/`/multi-`:` slugs; filter confined to created-scan path (alias/pin unaffected); selects newest-among-eligible.
 
-### 3.12 [ ] **[@stable channel — REFACTOR](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
-   1. Fix CRITICAL/HIGH issues from 3.11.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(personas): clean up @stable channel logic"`
+   **Action Taken:** No in-scope CRITICAL/HIGH for Element 4. The one HIGH is Element 5's planned deliverable (sequenced next, TDD-driven, resolved before the phase gate) — transparently recorded, not deferred to tech-debt and not an escaped defect. LOW is spec-compliant. No tech-debt captured.
+
+### 3.12 [x] **[@stable channel — REFACTOR](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+   1. Fix CRITICAL/HIGH issues from 3.11.A (if any) — none in Element 4 scope; the sole HIGH is Element 5's deliverable (below), driven by TDD next
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ full suite PASS; lint 0 issues; vet/fmt clean
+   3. COMMIT: no separate refactor commit — the `@stable` GREEN implementation (`18f55171`) is already minimal and correct; no code change to make. No empty/no-op commit created (mirrors Phase 2 task 2.3 precedent).
    **Duration:** 2h
 
-### 3.13 [ ] **[@latest includes preview — RED](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.13 [x] **[@latest includes preview — RED](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    **AC:** [03-05](plan/acceptance-criteria/03-05-latest-channel-includes-preview.md)
    Write failing tests: `@latest` includes preview-tagged members BUT still excludes non-null `expiration_date` (deprecation), per the rule pinned in AC 03-05. Verify fail correctly.
    **Files:** `internal/personas/catalog_test.go` | **Duration:** 2h
 
-### 3.14 [ ] **[@latest includes preview — GREEN](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.14 [x] **[@latest includes preview — GREEN](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    Implement `@latest` channel logic. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(personas): @latest channel includes preview (green)"`
    **Files:** `internal/personas/catalog.go` | **Duration:** 2h
+   **Done (`0c7e9bd2`):** `normalizeChannel` (""→@stable default; validates the two literals, case-sensitive; ok=false else) + `channelEligible` (deprecation ALWAYS excluded both channels; @latest bypasses ONLY the preview-token exclusion). Wired into `resolveNewestInPrefix` — channel validated BEFORE the scan (unrecognized → fail closed), applied per-entry. `passesStableFilter` removed (fully replaced by `channelEligible`; @stable behavior preserved). **Resolves the 3.11.A HIGH** (@latest now includes preview) via genuine RED→GREEN.
 
-### 3.14.A [ ] **[@latest channel — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+### 3.14.A [x] **[@latest channel — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
    **Changed Files:** `internal/personas/catalog.go`, `internal/personas/catalog_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -529,29 +528,40 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 3.14`
    - prompt: Files above + verbatim checklist, plus: "Confirm `@latest` vs `@stable` boundary is consistent with the 3.10 decision; no strategy cross-contamination." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose subagent) — 0 CRITICAL/HIGH/MEDIUM (full-resolver-boundary pass):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | catalog_test.go | No test pins whitespace-padded (`"  @latest  "`) or whitespace-only (`"   "`/`"\t"`) channel handling (code correct via TrimSpace) | FIXED inline in 3.15 — added `TestResolveModel_Channel_WhitespaceTrimmed` + widened `TestResolveModel_EmptyChannel_DefaultsStable` to whitespace-only |
+   | LOW | catalog_test.go | No test pins that an unrecognized channel on an alias/pin binding is IGNORED (code correct — alias/pin short-circuit before validation) | FIXED inline in 3.15 — added `TestResolveModel_InvalidChannel_IgnoredOnAliasAndPin` |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 3.15, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Subagent verdict (correctness NONE):** @stable via `channelEligible` exactly reproduces prior `passesStableFilter`; deprecated-AND-preview still excluded under @latest; channel validated before scan (unrecognized errors even with eligible entries); pin/alias short-circuit before channel → channel ignored there; @stable/@latest cannot diverge with no preview/deprecated entry; strict total-order tie-break order-independent; no panic; no untrusted channel persisted.
 
-### 3.15 [ ] **[@latest channel — REFACTOR](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
-   1. Fix CRITICAL/HIGH issues from 3.14.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(personas): clean up @latest channel logic"`
+   **Action Taken:** No CRITICAL/HIGH/MEDIUM. Two LOW coverage gaps on freshly-authored code (code already correct) → fixed inline in 3.15. No tech-debt captured.
+
+### 3.15 [x] **[@latest channel — REFACTOR](plan/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md)**
+   1. Fix CRITICAL/HIGH issues from 3.14.A (if any) — none; added 2 LOW edge-coverage tests inline
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ full suite PASS; lint 0 issues; vet/fmt clean
+   3. COMMIT: `refactor(personas): channel-gate edge tests (whitespace, alias/pin ignore)` (`62ee3c29`)
    **Duration:** 1h
 
-### 3.16 [ ] **Phase 3 — DoD**
-   - [ ] All three resolver strategies + both channels tested independently (T3)
-   - [ ] Coverage ≥80%; zero live network (httptest + fixture)
-   - [ ] Lint/vet/fmt clean; build succeeds
-   - [ ] `ResolvePersona` untouched; `@stable`/`@latest` decision recorded
-   - [ ] DoD report per template
+### 3.16 [x] **Phase 3 — DoD**
+   - [x] All three resolver strategies + both channels tested independently (T3) — alias / created-timestamp / explicit-pin + @stable / @latest each have dedicated `TestResolveModel_*` subtests; `go test ./...` exit 0
+   - [x] Coverage ≥80%; zero live network (httptest + fixture) — personas pkg **85.9%**; core resolver funcs (`ResolveModel`, `resolveNewestInPrefix`, channel/filter helpers) 100%; all catalog access via injected `HTTPClient` + `testdata/catalog_snapshot.json`, no real network
+   - [x] Lint/vet/fmt clean; build succeeds — `golangci-lint run ./internal/personas/` 0 issues, `go vet` clean, `gofmt -l` empty, `go build ./...` OK
+   - [x] `ResolvePersona` untouched; `@stable`/`@latest` decision recorded — `git diff main...HEAD -- internal/registry/persona.go` empty; channel semantics recorded in 3.11/3.14 + `channelEligible` doc comment; TD-001 resolved + TD-002 decided (any-non-null) in `tech-debt-captured.md`
+   - [x] DoD report per template
+
+   ```
+   Story-03 DoD Complete
+   Auto: 3/3 (tests passing, no lint errors, build succeeds)
+   Story-Specific (AC 03-01/02/03/04/05): all green
+     03-01: 7 alias tiers resolve verbatim, no catalog scan, exact-match table, unknown-family error
+     03-02: newest-in-prefix (deepseek//qwen//z-ai/), glm→z-ai/ regression, exact-prefix (no z-ai-evil/), desc-lex tie-break (order-independent), ineligible-created excluded, fail-closed error
+     03-03: pin verbatim, invariant across 2 snapshots, overrides channel, precedence over alias+scan, empty/whitespace falls through, invalid-pin rejected on pin path
+     03-04: @stable excludes preview segment tokens (TD-001 normalized) + any-non-null expiration (TD-002 decided), ""==not-deprecated, all-excluded fail-closed
+     03-05: @latest includes preview but still excludes deprecated, newest-among-all, ==@stable when clean, unrecognized-channel fail-closed, alias/pin ignore channel
+   Manual Review: [ ] Code reviewed (deferred to /execute-code-review)
+   ```
 
 ### 3.17 [ ] **Phase 3 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3.
