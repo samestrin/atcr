@@ -135,6 +135,121 @@ func TestCatalogClient_FetchModels_ParsesFixtureSnapshot(t *testing.T) {
 	}
 }
 
+// cm builds a clean (non-preview, non-expiring) catalog model for scan tests.
+func cm(id string, created int64) CatalogModel {
+	return CatalogModel{ID: id, CanonicalSlug: id, Created: created}
+}
+
+// --- Element 2 (AC 03-02): created-timestamp newest-in-vendor-prefix scan -----
+
+// TestResolveModel_CreatedScan_NewestPerPrefix covers AC 03-02 Scenarios 1 & 2:
+// delia/qwen resolve to the numerically-largest `created` entry under their
+// vendor prefix; a higher-`created` entry under a DIFFERENT prefix is ignored.
+func TestResolveModel_CreatedScan_NewestPerPrefix(t *testing.T) {
+	models := []CatalogModel{
+		cm("deepseek/deepseek-v3", 100),
+		cm("deepseek/deepseek-v4-pro", 300),
+		cm("deepseek/deepseek-v3.5", 200),
+		cm("qwen/qwen3-a", 150),
+		cm("qwen/qwen3.7-plus", 500),
+		cm("unrelated/model", 999), // higher created, wrong prefix → ignored
+	}
+	got, err := ResolveModel(Binding{Family: "deepseek", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek/deepseek-v4-pro", got)
+
+	got, err = ResolveModel(Binding{Family: "qwen", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "qwen/qwen3.7-plus", got)
+}
+
+// TestResolveModel_CreatedScan_Glenna_ZaiPrefixNotGlm covers AC 03-02 Scenario 3
+// + Edge Case 1: family "glm" scans the "z-ai/" namespace, never "glm/". A decoy
+// "glm/"-prefixed entry with a huge `created` must NOT be selected.
+func TestResolveModel_CreatedScan_Glenna_ZaiPrefixNotGlm(t *testing.T) {
+	models := []CatalogModel{
+		cm("z-ai/glm-5.1", 100),
+		cm("z-ai/glm-5.2", 200),
+		cm("glm/glm-9", 999), // decoy: if the resolver wrongly used "glm/" it would pick this
+	}
+	got, err := ResolveModel(Binding{Family: "glm", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "z-ai/glm-5.2", got, "family glm must resolve against z-ai/, never glm/")
+}
+
+// TestResolveModel_CreatedScan_ExactPrefixNoEvilCollision covers AC 03-02 Security:
+// prefix matching is exact-prefix, so "z-ai-evil/..." cannot be mistaken for "z-ai/".
+func TestResolveModel_CreatedScan_ExactPrefixNoEvilCollision(t *testing.T) {
+	models := []CatalogModel{
+		cm("z-ai-evil/glm-hack", 999),
+		cm("z-ai/glm-5.2", 200),
+	}
+	got, err := ResolveModel(Binding{Family: "glm", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "z-ai/glm-5.2", got)
+}
+
+// TestResolveModel_CreatedScan_TieBreakDescLexicographic covers AC 03-02 Edge
+// Case 3: two entries tie on `created` → the lexicographically greater slug wins,
+// deterministically and independent of catalog array order (asserted against a
+// reversed copy).
+func TestResolveModel_CreatedScan_TieBreakDescLexicographic(t *testing.T) {
+	forward := []CatalogModel{
+		cm("qwen/qwen3-a", 500),
+		cm("qwen/qwen3-b", 500),
+		cm("qwen/qwen3-c", 500),
+	}
+	reversed := []CatalogModel{forward[2], forward[1], forward[0]}
+	gotF, err := ResolveModel(Binding{Family: "qwen", Channel: "@stable"}, forward)
+	require.NoError(t, err)
+	gotR, err := ResolveModel(Binding{Family: "qwen", Channel: "@stable"}, reversed)
+	require.NoError(t, err)
+	assert.Equal(t, "qwen/qwen3-c", gotF, "highest lexicographic slug wins a created tie")
+	assert.Equal(t, gotF, gotR, "tie-break is independent of array order")
+}
+
+// TestResolveModel_CreatedScan_Singleton covers AC 03-02 Edge Case 2: exactly one
+// eligible entry under the prefix resolves without ambiguity handling.
+func TestResolveModel_CreatedScan_Singleton(t *testing.T) {
+	got, err := ResolveModel(Binding{Family: "deepseek", Channel: "@stable"},
+		[]CatalogModel{cm("deepseek/only", 42), cm("qwen/other", 99)})
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek/only", got)
+}
+
+// TestResolveModel_CreatedScan_IneligibleCreatedExcluded covers AC 03-02 Edge
+// Case 4: an entry with an absent/zero `created` is never selected; selection
+// proceeds among the remaining valid entries.
+func TestResolveModel_CreatedScan_IneligibleCreatedExcluded(t *testing.T) {
+	models := []CatalogModel{
+		cm("deepseek/no-created", 0), // ineligible even though it could look "newest"
+		cm("deepseek/valid", 100),
+	}
+	got, err := ResolveModel(Binding{Family: "deepseek", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek/valid", got)
+}
+
+// TestResolveModel_CreatedScan_NoEligible_Error covers AC 03-02 Edge Case 4 tail +
+// Error Scenario 1: when no entry under the prefix has a valid `created`, the
+// resolver fails closed with a descriptive error naming the prefix and family —
+// never a silent empty slug.
+func TestResolveModel_CreatedScan_NoEligible_Error(t *testing.T) {
+	// No deepseek/ entry at all.
+	got, err := ResolveModel(Binding{Family: "deepseek", Channel: "@stable"},
+		[]CatalogModel{cm("qwen/x", 100)})
+	require.Error(t, err)
+	assert.Empty(t, got)
+	assert.Contains(t, err.Error(), "deepseek/")
+	assert.Contains(t, err.Error(), "deepseek")
+
+	// All z-ai/ entries have ineligible created → still fails closed.
+	_, err = ResolveModel(Binding{Family: "glm", Channel: "@stable"},
+		[]CatalogModel{cm("z-ai/glm-5.2", 0)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "z-ai/")
+}
+
 // TestCatalogClient_FetchModels_MalformedJSON covers the parse-failure path:
 // invalid catalog JSON returns a wrapped, descriptive error, not a partial list.
 func TestCatalogClient_FetchModels_MalformedJSON(t *testing.T) {

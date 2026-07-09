@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // CatalogBaseURL is OpenRouter's public API base. The model catalog lives at
@@ -142,6 +143,16 @@ var aliasTable = map[string]string{
 	"moonshotai/kimi":         "~moonshotai/kimi-latest",
 }
 
+// vendorPrefixTable maps an alias-less family to its catalog vendor prefix for
+// the created-timestamp newest-in-vendor-prefix scan. Critically, family "glm"
+// keys the "z-ai/" namespace — there is NO "glm/" namespace in the catalog (a
+// regression caught during /refine-epic; encoded as a test, never a bare comment).
+var vendorPrefixTable = map[string]string{
+	"deepseek": "deepseek/",
+	"qwen":     "qwen/",
+	"glm":      "z-ai/",
+}
+
 // ResolveModel turns a persona's binding into exactly one concrete model slug,
 // selecting the strategy deterministically: explicit pin first, then the alias
 // table, then the created-timestamp vendor-prefix scan. It never falls back to a
@@ -158,7 +169,71 @@ func ResolveModel(b Binding, models []CatalogModel) (string, error) {
 		return slug, nil
 	}
 
-	// Strategy 3 — created-timestamp vendor-prefix scan (added in Element 2).
+	// Strategy 3 — created-timestamp newest-in-vendor-prefix scan.
+	if prefix, ok := vendorPrefixTable[b.Family]; ok {
+		return resolveNewestInPrefix(prefix, b, models)
+	}
 
 	return "", fmt.Errorf("no alias, pin, or vendor-prefix strategy found for persona family %q", b.Family)
+}
+
+// resolveNewestInPrefix returns the slug of the newest-by-`created` catalog entry
+// whose ID carries the exact vendor prefix. Entries with an ineligible `created`
+// (absent/zero) are skipped. Ties on `created` break to the lexicographically
+// greater slug, deterministically and independent of catalog array order. It
+// fails closed with a descriptive error when no eligible entry exists — never a
+// stale or zero-value slug. The resolved slug is validated as a plain printable
+// identifier before return (mirrors 19.6 TD-008 control-char sanitization).
+func resolveNewestInPrefix(prefix string, b Binding, models []CatalogModel) (string, error) {
+	var best *CatalogModel
+	for i := range models {
+		m := &models[i]
+		if !strings.HasPrefix(m.ID, prefix) { // exact-prefix: "z-ai-evil/" ≠ "z-ai/"
+			continue
+		}
+		if m.Created <= 0 { // absent/zero/unparseable created → ineligible
+			continue
+		}
+		// Channel exclusion filter (@stable preview/deprecation) is layered in
+		// Elements 4–5; Element 2 selects purely by newest eligible `created`.
+		if best == nil || newerCandidate(*m, *best) {
+			best = m
+		}
+	}
+	if best == nil {
+		return "", fmt.Errorf("no eligible %s-prefixed model found in catalog for family %q", prefix, b.Family)
+	}
+	if err := validateResolvedSlug(best.ID); err != nil {
+		return "", fmt.Errorf("resolved model for family %q: %w", b.Family, err)
+	}
+	return best.ID, nil
+}
+
+// newerCandidate reports whether cand should replace cur as the newest: a larger
+// `created` wins; on a tie the lexicographically greater ID wins. This total
+// order makes selection independent of the catalog's array order.
+func newerCandidate(cand, cur CatalogModel) bool {
+	if cand.Created != cur.Created {
+		return cand.Created > cur.Created
+	}
+	return cand.ID > cur.ID
+}
+
+// validateResolvedSlug rejects a resolved/pinned slug that is empty, carries
+// control characters (mirrors 19.6 TD-008: unicode.IsControl plus the U+2028/2029
+// line/paragraph separators), or lacks a "/" (not a vendor/model slug) — before
+// it is ever returned to be written into a lock or an outbound request.
+func validateResolvedSlug(slug string) error {
+	if strings.TrimSpace(slug) == "" {
+		return fmt.Errorf("resolved slug is empty")
+	}
+	if strings.IndexFunc(slug, func(r rune) bool {
+		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+	}) >= 0 {
+		return fmt.Errorf("resolved slug %q contains control characters", slug)
+	}
+	if !strings.Contains(slug, "/") {
+		return fmt.Errorf("resolved slug %q is not a vendor/model slug", slug)
+	}
+	return nil
 }
