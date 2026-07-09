@@ -70,6 +70,10 @@ func LoadLock(personasDir, name string) (InstalledLock, error) {
 // newer-member check scans the model list per persona (O(personas × models)),
 // which is negligible at the realistic scale of tens of personas.
 func CheckDrift(locks []InstalledLock, models []CatalogModel) []DriftFinding {
+	// The catalog snapshot is assumed ID-unique (OpenRouter's /models returns each
+	// id once; the checked-in snapshot is authored so). Should a duplicate id ever
+	// appear, the first occurrence wins deterministically for the missing/
+	// deprecation lookups, so the result stays stable across runs.
 	bySlug := make(map[string]CatalogModel, len(models))
 	for _, m := range models {
 		if _, seen := bySlug[m.ID]; !seen {
