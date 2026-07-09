@@ -581,6 +581,45 @@ version: "1.0.0"
 	assert.Contains(t, string(got), "deepseek/deepseek-v4.1")
 }
 
+// TestPersonasUpgrade_AllDryRunReportsNoWrite covers AC 04-03: --all --dry-run
+// reports one before→after (or unchanged) line per bound persona and writes
+// nothing to disk.
+func TestPersonasUpgrade_AllDryRunReportsNoWrite(t *testing.T) {
+	cat := `{"data":[` +
+		`{"id":"deepseek/deepseek-v4.0","canonical_slug":"deepseek/deepseek-v4.0","created":1700000000,"expiration_date":null},` +
+		`{"id":"deepseek/deepseek-v4.1","canonical_slug":"deepseek/deepseek-v4.1","created":1780000000,"expiration_date":null}]}`
+	srv := personasTestServer(t, map[string]string{"/models": cat})
+	dir := withPersonasEnv(t, srv)
+	t.Setenv("ATCR_CATALOG_URL", srv.URL)
+	changing := `provider: openrouter
+model: deepseek/deepseek-v4.0
+role: reviewer
+binding: deepseek@stable
+version: "1.0.0"
+`
+	unchanged := `provider: openrouter
+model: deepseek/deepseek-v4.1
+role: reviewer
+binding: deepseek@stable
+version: "1.0.0"
+`
+	pa := filepath.Join(dir, "vendor", "aa.yaml")
+	pb := filepath.Join(dir, "vendor", "bb.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(pa), 0o755))
+	require.NoError(t, os.WriteFile(pa, []byte(changing), 0o644))
+	require.NoError(t, os.WriteFile(pb, []byte(unchanged), 0o644))
+
+	out, err := execute(t, "personas", "upgrade", "--all", "--dry-run")
+	require.NoError(t, err)
+	assert.Contains(t, out, "deepseek/deepseek-v4.0 → deepseek/deepseek-v4.1")
+	assert.Contains(t, out, "(unchanged)")
+
+	gotA, _ := os.ReadFile(pa)
+	assert.Equal(t, changing, string(gotA), "dry-run must not write the changing persona")
+	gotB, _ := os.ReadFile(pb)
+	assert.Equal(t, unchanged, string(gotB), "dry-run must not write the unchanged persona")
+}
+
 // stubFixtureRunner lets the test drive the `test` subcommand's outcome without
 // a live LLM.
 type stubFixtureRunner struct{ outcome personas.FixtureOutcome }

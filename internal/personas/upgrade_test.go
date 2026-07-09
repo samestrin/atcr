@@ -310,6 +310,61 @@ version: "1.0.0"
 	assert.Equal(t, aliasPersona, string(got), "an unchanged alias persona must be byte-for-byte identical")
 }
 
+// --- Phase 4: dry-run reports without writing (AC 04-03) --------------------
+
+// TestUpgrade_BindingDryRunReportsWithoutWriting: a dry-run resolution reports the
+// before→after it WOULD apply, leaving the persona byte-for-byte unchanged.
+func TestUpgrade_BindingDryRunReportsWithoutWriting(t *testing.T) {
+	cat := catalogJSON(
+		[2]string{"deepseek/deepseek-v4.0", "1700000000"},
+		[2]string{"deepseek/deepseek-v4.1", "1780000000"},
+	)
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	installFixture(t, dir, "vendor/delia", bindingPersonaYAML)
+
+	res, err := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", true)
+	require.NoError(t, err)
+	assert.True(t, res.SlugChanged, "dry-run must still report the would-be advance")
+	assert.Equal(t, "deepseek/deepseek-v4.0", res.FromSlug)
+	assert.Equal(t, "deepseek/deepseek-v4.1", res.ToSlug)
+
+	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "delia.yaml"))
+	assert.Equal(t, bindingPersonaYAML, string(got), "dry-run must not change the persona on disk")
+}
+
+// TestUpgrade_BindingDryRunParity: a dry-run produces the identical UpgradeResult
+// (from/to slugs, changed flag) a real run would, differing only in the write —
+// the shared-computation guarantee AC 04-03 requires.
+func TestUpgrade_BindingDryRunParity(t *testing.T) {
+	cat := catalogJSON(
+		[2]string{"deepseek/deepseek-v4.0", "1700000000"},
+		[2]string{"deepseek/deepseek-v4.1", "1780000000"},
+	)
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+
+	dryDir := t.TempDir()
+	installFixture(t, dryDir, "vendor/delia", bindingPersonaYAML)
+	dryRes, err := Upgrade(srv.Client(), srv.URL, dryDir, "vendor/delia", true)
+	require.NoError(t, err)
+
+	realDir := t.TempDir()
+	installFixture(t, realDir, "vendor/delia", bindingPersonaYAML)
+	realRes, err := Upgrade(srv.Client(), srv.URL, realDir, "vendor/delia", false)
+	require.NoError(t, err)
+
+	assert.Equal(t, realRes.FromSlug, dryRes.FromSlug)
+	assert.Equal(t, realRes.ToSlug, dryRes.ToSlug)
+	assert.Equal(t, realRes.SlugChanged, dryRes.SlugChanged)
+
+	dryGot, _ := os.ReadFile(filepath.Join(dryDir, "vendor", "delia.yaml"))
+	assert.Equal(t, bindingPersonaYAML, string(dryGot), "dry-run leaves disk unchanged")
+	realGot, _ := os.ReadFile(filepath.Join(realDir, "vendor", "delia.yaml"))
+	assert.Contains(t, string(realGot), "deepseek/deepseek-v4.1", "real run advances the lock")
+}
+
 // --- Phase 4: resolution isolated to the upgrade path (AC 04-02) ------------
 
 // TestUpgrade_CatalogFetchedOnlyOnBindingPath proves the catalog/models endpoint
