@@ -79,7 +79,7 @@ func Upgrade(client HTTPClient, baseURL, personasDir, name string, dryRun bool) 
 		return UpgradeResult{}, fmt.Errorf("persona %q has an invalid binding: %w", name, err)
 	}
 	if present {
-		return upgradeResolvedLock(client, baseURL, name, dest, localData, lockMeta.Model, binding, dryRun)
+		return upgradeResolvedLock(client, name, dest, localData, lockMeta.Model, binding, dryRun)
 	}
 
 	remoteData, err := FetchPersonaYAML(client, baseURL, name)
@@ -220,7 +220,14 @@ func versionFromSlug(slug string) string {
 // resolved slug both differs from the current lock AND is a version-advance. A
 // failed fetch or unresolvable binding aborts cleanly, leaving the lock unchanged
 // (no partial advance, no silent stale fallback — AC 04-01 Error Scenario 3).
-func upgradeResolvedLock(client HTTPClient, baseURL, name, dest string, localData []byte, currentSlug string, b Binding, dryRun bool) (UpgradeResult, error) {
+//
+// A lock advance writes ONLY the model-bumped YAML (writeLockYAML) — it never
+// touches the co-located custom prompt or the personas .md endpoint, so advancing
+// a model can never clobber a locally-authored prompt and never depends on a
+// second network fetch (TD-003 resolution). This deliberately diverges from the
+// 19.6 version path's writePersonaUnit, whose .md re-sync is correct for a
+// full-unit version upgrade but wrong for a model-only lock advance.
+func upgradeResolvedLock(client HTTPClient, name, dest string, localData []byte, currentSlug string, b Binding, dryRun bool) (UpgradeResult, error) {
 	cat := &CatalogClient{HTTPClient: client, BaseURL: catalogBaseURL()}
 	models, err := cat.FetchModels()
 	if err != nil {
@@ -259,10 +266,22 @@ func upgradeResolvedLock(client HTTPClient, baseURL, name, dest string, localDat
 	if dryRun {
 		return res, nil
 	}
-	if err := writePersonaUnit(client, baseURL, name, dest, newYAML); err != nil {
+	if err := writeLockYAML(dest, name, newYAML); err != nil {
 		return UpgradeResult{}, err
 	}
 	return res, nil
+}
+
+// writeLockYAML persists a resolved-lock advance by writing ONLY the model-bumped
+// persona YAML — it leaves the co-located .md untouched (a lock advance changes
+// the model, never the prompt) and never fetches the .md endpoint. It keeps the
+// same symlink guards writePersonaUnit uses: refuseSymlinkedIntermediate for the
+// name-contributed intermediate dirs plus writeFileAtomic's own leaf Lstat check.
+func writeLockYAML(dest, name string, yamlData []byte) error {
+	if err := refuseSymlinkedIntermediate(dest, name); err != nil {
+		return err
+	}
+	return writeFileAtomic(dest, yamlData)
 }
 
 // slugOrPlaceholder renders an empty lock as "(none)" so the before→after report
@@ -277,9 +296,9 @@ func slugOrPlaceholder(slug string) string {
 // setModelField returns data with only its top-level `model` value replaced by
 // newModel, preserving every other field, comment, and scalar style via a
 // yaml.Node round-trip — so the resolved slug replaces only the model value and
-// every other persona field is left intact. (The caller persists the result
-// through writePersonaUnit, which additionally re-syncs the co-located .md — see
-// tech-debt TD-003 on decoupling a lock advance from the prompt fetch.)
+// every other persona field is left intact. The caller persists the result via
+// writeLockYAML (YAML only), so the resolved slug really is the only change
+// written to disk.
 func setModelField(data []byte, newModel string) ([]byte, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {

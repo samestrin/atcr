@@ -224,6 +224,33 @@ func TestUpgrade_BindingResolvesAndAdvancesLock(t *testing.T) {
 	assert.Contains(t, string(got), "binding: deepseek@stable", "binding must be preserved")
 }
 
+// TestUpgrade_BindingAdvancePreservesLocalMarkdown locks the TD-003 fix: a real
+// (non-dry-run) lock advance writes only the model-bumped YAML and leaves a
+// locally-authored co-located .md untouched — a model bump never clobbers the
+// prompt, and never fetches the .md endpoint (the server serves no .md route).
+func TestUpgrade_BindingAdvancePreservesLocalMarkdown(t *testing.T) {
+	cat := catalogJSON(
+		[2]string{"deepseek/deepseek-v4.0", "1700000000"},
+		[2]string{"deepseek/deepseek-v4.1", "1780000000"},
+	)
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	installFixture(t, dir, "vendor/delia", bindingPersonaYAML)
+	mdPath := filepath.Join(dir, "vendor", "delia.md")
+	require.NoError(t, os.WriteFile(mdPath, []byte("# local custom prompt\n"), 0o644))
+
+	res, err := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", false)
+	require.NoError(t, err)
+	assert.True(t, res.SlugChanged)
+
+	got, err := os.ReadFile(mdPath)
+	require.NoError(t, err)
+	assert.Equal(t, "# local custom prompt\n", string(got), "a real lock advance must not touch the local .md")
+	yaml, _ := os.ReadFile(filepath.Join(dir, "vendor", "delia.yaml"))
+	assert.Contains(t, string(yaml), "deepseek/deepseek-v4.1", "the lock advanced")
+}
+
 func TestUpgrade_BindingResolvedUnchanged(t *testing.T) {
 	// Catalog's newest deepseek equals the current lock → no advance, no write.
 	cat := catalogJSON([2]string{"deepseek/deepseek-v4.0", "1700000000"})
