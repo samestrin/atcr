@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	commpersonas "github.com/samestrin/atcr/internal/personas"
@@ -711,4 +713,44 @@ func TestModelsRefresh_UnwritablePath_Exit2(t *testing.T) {
 	_, err := execute(t, "models", "refresh", "--output", out)
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, exitCode(err))
+}
+
+// mockCatalogRoundTripper returns a canned 200 OK catalog body, keeping the
+// `models refresh` live-path tests zero-network.
+type mockCatalogRoundTripper struct {
+	t    *testing.T
+	body string
+}
+
+func (m mockCatalogRoundTripper) RoundTrip(_ *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(m.body)),
+	}, nil
+}
+
+// TestModelsRefresh_CIFalse_AllowsRun covers the never-CI-invoked guard:
+// a CI variable set to a falsy value ("false", "0", or empty) must NOT be
+// treated as "in CI", so a maintainer exporting CI=false can still refresh.
+func TestModelsRefresh_CIFalse_AllowsRun(t *testing.T) {
+	t.Setenv("ATCR_CATALOG_URL", "") // live path, so the CI gate is exercised
+	t.Setenv("OPENROUTER_API_KEY", "present")
+
+	oldClient := personasClient
+	personasClient = &http.Client{Transport: mockCatalogRoundTripper{t: t, body: refreshCatalogBody}}
+	t.Cleanup(func() { personasClient = oldClient })
+
+	for _, ci := range []string{"false", "0", ""} {
+		t.Run("CI="+ci, func(t *testing.T) {
+			t.Setenv("CI", ci)
+			t.Setenv("GITHUB_ACTIONS", "")
+
+			out := filepath.Join(t.TempDir(), "catalog_snapshot.json")
+			stdout, err := execute(t, "models", "refresh", "--output", out)
+			require.NoError(t, err)
+			assert.Equal(t, 0, exitCode(err))
+			assert.Contains(t, stdout, "3", "confirmation must report the model count")
+		})
+	}
 }
