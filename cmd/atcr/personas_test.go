@@ -555,6 +555,32 @@ version: "1.1.0"
 	assert.Equal(t, newer, string(got))
 }
 
+// TestPersonasUpgrade_BindingSlugReport covers AC 04-01: a persona with a
+// family/channel binding reports the before→after resolved slug on stdout.
+func TestPersonasUpgrade_BindingSlugReport(t *testing.T) {
+	cat := `{"data":[` +
+		`{"id":"deepseek/deepseek-v4.0","canonical_slug":"deepseek/deepseek-v4.0","created":1700000000,"expiration_date":null},` +
+		`{"id":"deepseek/deepseek-v4.1","canonical_slug":"deepseek/deepseek-v4.1","created":1780000000,"expiration_date":null}]}`
+	srv := personasTestServer(t, map[string]string{"/models": cat})
+	dir := withPersonasEnv(t, srv)
+	t.Setenv("ATCR_CATALOG_URL", srv.URL)
+	installed := `provider: openrouter
+model: deepseek/deepseek-v4.0
+role: reviewer
+binding: deepseek@stable
+version: "1.0.0"
+`
+	p := filepath.Join(dir, "vendor", "delia.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte(installed), 0o644))
+
+	out, err := execute(t, "personas", "upgrade", "vendor/delia")
+	require.NoError(t, err)
+	assert.Contains(t, out, "deepseek/deepseek-v4.0 → deepseek/deepseek-v4.1")
+	got, _ := os.ReadFile(p)
+	assert.Contains(t, string(got), "deepseek/deepseek-v4.1")
+}
+
 // stubFixtureRunner lets the test drive the `test` subcommand's outcome without
 // a live LLM.
 type stubFixtureRunner struct{ outcome personas.FixtureOutcome }

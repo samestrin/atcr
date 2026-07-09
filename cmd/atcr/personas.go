@@ -378,6 +378,14 @@ func runPersonaUpgrades(cmd *cobra.Command, dir string, names []string, dryRun b
 			continue
 		}
 		switch {
+		case res.Resolved && res.SlugChanged && dryRun:
+			// 19.7 resolved-lock path (dry run): report the before→after slug.
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would upgrade %s: %s → %s\n", name, res.FromSlug, res.ToSlug)
+		case res.Resolved && res.SlugChanged:
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Upgraded %s: %s → %s\n", name, res.FromSlug, res.ToSlug)
+		case res.Resolved:
+			// Resolution ran but the lock did not advance — report explicitly, never omit.
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s (unchanged)\n", name, res.ToSlug)
 		case res.UpToDate:
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already up to date (%s)\n", name, res.ToVersion)
 		case dryRun:
