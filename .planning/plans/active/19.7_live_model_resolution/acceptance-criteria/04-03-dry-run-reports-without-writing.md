@@ -9,11 +9,13 @@
 | Test Framework | `testing` + `testify`, integration-style CLI execution tests following `TestPersonasUpgrade_AllEmpty` (`personas_test.go:642`) and `TestPersonasUpgrade_Integration` (`personas_test.go:538`) patterns | |
 | Key Dependencies | Story 3's hybrid resolver, Story 2's lock field, existing `installedCommunityNames()` (`personas.go:396`) and `writePersonaUnit()` (`internal/personas/unit.go:95`) | No new flags or command are introduced |
 
-## Related Files
-- `cmd/atcr/personas.go` - modify: `runPersonaUpgrades()` (`personas.go:371`) computes and prints the before→after (or unchanged) resolved-slug line for every persona in `names`, sharing one report-computation code path between `--dry-run` and real-run modes per the story's risk mitigation (differ only in whether the final write executes)
-- `internal/personas/upgrade.go` - modify: `Upgrade()`'s `dryRun` branch (`upgrade.go:61-63`) returns the fully computed `UpgradeResult` — including the resolved before/after slug — before the `writePersonaUnit()` call, so dry-run and real-run share identical computation up to the write
-- `cmd/atcr/personas_test.go` - modify: extend `TestPersonasUpgrade_AllEmpty` sibling coverage with a populated multi-persona `--all` case, and add a `--dry-run` case asserting no lock file bytes change on disk after the run
-- `internal/personas/upgrade_test.go` - modify: add a test asserting `dryRun=true` produces the same `UpgradeResult` (from/to slugs) as `dryRun=false` would, except no file write occurs
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/personas.go:371` (`runPersonaUpgrades()`) — modify: compute and print the before→after (or unchanged) resolved-slug line for every persona in `names`, sharing one report-computation code path between `--dry-run` and real-run modes per the story's risk mitigation (differ only in whether the final write executes).
+- `internal/personas/upgrade.go:61-63` (`Upgrade()` `dryRun` branch) — modify: return the fully computed `UpgradeResult` — including the resolved before/after slug — before the `writePersonaUnit()` call, so dry-run and real-run share identical computation up to the write.
+- `cmd/atcr/personas_test.go` — modify: extend `TestPersonasUpgrade_AllEmpty` sibling coverage with a populated multi-persona `--all` case, and add a `--dry-run` case asserting no lock file bytes change on disk after the run.
+- `internal/personas/upgrade_test.go` — modify: add a test asserting `dryRun=true` produces the same `UpgradeResult` (from/to slugs) as `dryRun=false` would, except no file write occurs.
+- `internal/personas/unit.go:95` (`writePersonaUnit`) — reference: the shared paired-write tail that is skipped under `--dry-run`.
+- `cmd/atcr/personas.go:356` (`installedCommunityNames()`) — reference: the existing helper used by `--all` to enumerate installed community personas.
 
 ## Happy Path Scenarios
 **Scenario 1: `--all` reports one line per installed persona in a single run**

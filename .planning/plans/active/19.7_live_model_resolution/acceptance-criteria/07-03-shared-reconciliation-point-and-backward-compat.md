@@ -9,15 +9,18 @@
 | Test Framework | `testing` + `testify/require` + `net/http/httptest` | Same call-site-parity assertion style should run against both `init.go:47` and `quickstart.go:102` |
 | Key Dependencies | `internal/personas` (`FetchIndex`, `HTTPClient`), `personas` (`builtins.Names()`) | No new dependencies required |
 
-## Related Files
-- `cmd/atcr/init.go` - modify: the roster/index reconciliation must be expressed in exactly ONE shared location — either inside `installCommunityPersonas` (`init.go:96`) itself, or via a single shared roster-producing helper both `init.go:47` and `quickstart.go:102` call — not duplicated per call site
-- `cmd/atcr/quickstart.go` - modify: `quickstart.go:102` must consume the identical shared source as `init.go:47`; no call-site-local roster logic
-- `cmd/atcr/init_test.go` - modify: add a test that runs the same reconciliation assertion (non-empty install, zero skip-warnings) against the `init` call path
-- `cmd/atcr/quickstart_test.go` - modify: add the parallel test running the identical assertion against the `quickstart` call path, proving both consume the same source rather than two independently-patched copies
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/init.go:96` (`installCommunityPersonas`) — modify: the roster/index reconciliation must be expressed in exactly ONE shared location — either inside `installCommunityPersonas` itself, or via a single shared roster-producing helper both `init.go:47` and `quickstart.go:102` call — not duplicated per call site.
+- `cmd/atcr/init.go:47` — modify: must consume the same reconciled roster source as `quickstart.go:102`.
+- `cmd/atcr/quickstart.go:102` — modify: must consume the identical shared source as `init.go:47`; no call-site-local roster logic.
+- `cmd/atcr/init_test.go` — modify: add a test that runs the same reconciliation assertion (non-empty install, zero skip-warnings) against the `init` call path.
+- `cmd/atcr/quickstart_test.go` — modify: add the parallel test running the identical assertion against the `quickstart` call path, proving both consume the same source rather than two independently-patched copies.
+- `personas/personas.go:19` (`builtins.Names()`) — reference: the 9 embedded model-agnostic built-ins that currently form the disjoint roster side of TD-011.
+- `documentation/existing-resolver-patterns.md` — reference: documents the two-call-site drift risk (TD-006/TD-007) and why AC7 must be fixed in one shared location.
 
 ## Happy Path Scenarios
 **Scenario 1: A single source change propagates to both call sites**
-- **Given** the reconciliation is implemented as one shared roster/index source (per whichever of the two Proposed Solution options is chosen)
+- **Given** the reconciliation is implemented as one shared roster-derivation point (LOCKED: Option B — deriving the roster from the fetched index, per plan.md Clarifications)
 - **When** that shared source is exercised via `init.go:47`
 - **Then** the identical resolved roster is also what `quickstart.go:102` consumes — verified by running the same test assertion (non-empty install; zero skip-warnings) against both call paths and observing identical results
 
@@ -35,7 +38,7 @@
 **Edge Case 2: Built-in `.md` scaffolds from `atcr init`'s non-community step are untouched**
 - **Given** `atcr init` has already written the 9 embedded built-in `.md` files via `runInit`/`initTargets` (a step unrelated to `installCommunityPersonas`)
 - **When** the reconciled community roster subsequently installs (or attempts to install) alongside them
-- **Then** the built-in scaffold files are not modified, renamed, or removed by the community-install step, regardless of which reconciliation option (A or B) is chosen
+- **Then** the built-in scaffold files are not modified, renamed, or removed by the community-install step (Option B never touches the embedded built-in scaffold or `builtins.Names()` at all — the two are now fully decoupled)
 
 ## Error Conditions
 **Error Scenario 1: Drift regression — one call site fixed, the other not**

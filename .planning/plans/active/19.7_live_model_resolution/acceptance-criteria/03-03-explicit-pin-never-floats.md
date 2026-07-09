@@ -9,11 +9,13 @@
 | Test Framework | `testing` + `httptest.NewServer`, two-snapshot comparison test | Asserts identical output across two catalog snapshots where the vendor-prefix newest member differs |
 | Key Dependencies | Story 2's binding schema (explicit-pin field on the persona binding) — assumed available on `PersonaIndexEntry` or the on-disk persona unit | No catalog network call occurs on this path at all |
 
-## Related Files
-- `internal/personas/catalog.go` - create: strategy-selection entry point that checks the explicit-pin field first and returns it unconditionally before evaluating alias or vendor-prefix strategies
-- `internal/personas/catalog_test.go` - create: a test resolving the same pinned persona against two distinct catalog snapshots (`catalog_snapshot.json` and a second in-test fixture with a newer vendor-prefix member) and asserting byte-identical resolved slugs
-- `internal/personas/testdata/catalog_snapshot.json` - create: baseline fixture; the second comparison snapshot for this AC's test may be constructed inline in the test file (a modified in-memory copy) rather than a second checked-in file
-- `internal/personas/unit.go` - reference only (`unit.go:95`, `writePersonaUnit`): the resolved slug this AC covers is what eventually gets written into the persona's lock field — this AC does not modify the write path, only proves the resolver's output is stable
+### Related Files (from codebase-discovery.json)
+- `internal/personas/catalog.go` — create: strategy-selection entry point that checks the explicit-pin field first and returns it unconditionally before evaluating alias or vendor-prefix strategies.
+- `internal/personas/catalog_test.go` — create: a test resolving the same pinned persona against two distinct catalog snapshots (`catalog_snapshot.json` and a second in-test fixture with a newer vendor-prefix member) and asserting byte-identical resolved slugs.
+- `internal/personas/testdata/catalog_snapshot.json` — create: baseline fixture; the second comparison snapshot for this AC's test may be constructed inline in the test file (a modified in-memory copy) rather than a second checked-in file.
+- `internal/personas/unit.go:95` (`writePersonaUnit`) — reference only: the resolved slug this AC covers is what eventually gets written into the persona's lock field — this AC does not modify the write path, only proves the resolver's output is stable.
+- `internal/personas/search.go:14` (`PersonaIndexEntry`) — reference: the binding schema (post AC 02-01) that carries the explicit-pin field the resolver reads.
+- `documentation/existing-resolver-patterns.md` — reference: confirms the explicit-pin path is the always-available escape hatch and must never float.
 
 ## Happy Path Scenarios
 **Scenario 1: Pinned persona resolves to its pinned slug unchanged**

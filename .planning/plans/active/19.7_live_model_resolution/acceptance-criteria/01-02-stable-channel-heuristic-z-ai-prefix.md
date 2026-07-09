@@ -9,11 +9,12 @@
 | Test Framework | MANUAL — heuristic derived by inspecting the live `/api/v1/models` response; no automated test in this story | A future story's resolver/heuristic implementation (e.g. `internal/personas/catalog.go`, not yet created) will carry its own Go unit tests against a checked-in snapshot fixture |
 | Key Dependencies | `OPENROUTER_API_KEY`, `net/http` re-list of `/api/v1/models` (reusing `internal/personas/client.go:99`'s `fetch()` pattern), `personas/community/index.json` for vendor-prefix cross-check | |
 
-## Related Files
-- `.planning/plans/active/19.7_live_model_resolution/documentation/openrouter-catalog-api.md` - modify: record the finalized `@stable` exclusion heuristic (specific preview/beta/exp substrings actually observed in live `id`/`canonical_slug` values, plus the `expiration_date` non-null handling rule) and the confirmed `z-ai/` vendor-prefix finding for glenna
-- `personas/community/index.json` - reference only (no modification in this AC): ground truth for `delia → deepseek/deepseek-v4-pro`, `quinn → qwen/qwen3-coder-plus`, `glenna → z-ai/glm-5.2` used to cross-check the vendor-prefix finding
-- `internal/personas/catalog.go` - create (in a later story, Theme 2/3; NOT created by this AC): the future catalog-client/resolver file that will consume this heuristic — noted here so the heuristic's field names and exclusion list are written in a form directly usable when that file is authored
-- `.planning/epics/active/19.7_live_model_resolution.md` - reference: the epic's explicit "GLM vendor prefix is `z-ai/`, not `glm`" finding (epic body, Clarifications-style note) that this AC formally re-confirms against the live catalog before resolver code depends on it
+### Related Files (from codebase-discovery.json)
+- `.planning/plans/active/19.7_live_model_resolution/documentation/openrouter-catalog-api.md` — modify: record the finalized `@stable` exclusion heuristic (specific preview/beta/exp substrings actually observed in live `id`/`canonical_slug` values, plus the `expiration_date` non-null handling rule) and the confirmed `z-ai/` vendor-prefix finding for glenna.
+- `personas/community/index.json:1` — reference only: ground truth for `delia → deepseek/deepseek-v4-pro`, `quinn → qwen/qwen3-coder-plus`, `glenna → z-ai/glm-5.2` used to cross-check the vendor-prefix finding.
+- `internal/personas/catalog.go` — create (in later stories Theme 2/3; NOT created by this AC): the future catalog-client/resolver file that will consume this heuristic — noted here so the heuristic's field names and exclusion list are written in a form directly usable when that file is authored.
+- `internal/personas/client.go:99` — reference only: reuse the `fetch()` retry/backoff/timeout/size-cap pattern if the live `/api/v1/models` re-list is scripted.
+- `.planning/epics/active/19.7_live_model_resolution.md` — reference: the epic's explicit "GLM vendor prefix is `z-ai/`, not `glm`" finding that this AC formally re-confirms against the live catalog before resolver code depends on it.
 
 ## Happy Path Scenarios
 **Scenario 1: `@stable` heuristic derived from observed live catalog values**

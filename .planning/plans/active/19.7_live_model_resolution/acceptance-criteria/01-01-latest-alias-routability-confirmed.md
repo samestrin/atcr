@@ -9,10 +9,12 @@
 | Test Framework | MANUAL — one authenticated call to `https://openrouter.ai/api/v1/chat/completions`, outcome recorded by hand | Not run in CI; CI stays zero-live-network per Epic 19.7 Objective 11 |
 | Key Dependencies | `OPENROUTER_API_KEY` (env var, maintainer's own), `net/http` (or `curl`), the `HTTPClient`/retry conventions already proven in `internal/personas/client.go:35` and `client.go:99` | The story explicitly allows a throwaway script following the same conventions rather than new shipped code |
 
-## Related Files
-- `.planning/plans/active/19.7_live_model_resolution/documentation/openrouter-catalog-api.md` - modify: record the live completion-call outcome (status code, response detail, and an explicit statement that `~` alias routability is now independently confirmed by the epic's own spike, not just cited from the quickstart docs)
-- `internal/personas/client.go` - reference only (no modification in this AC): reuse the `fetch()` retry/backoff/`HTTPClient`-injection pattern (`client.go:35`, `client.go:99`) as the template for the one-off completion call
-- `.planning/epics/active/19.7_live_model_resolution.md` - reference: AC1's source acceptance criterion and Theme 3 (hybrid resolver) dependency on this finding
+### Related Files (from codebase-discovery.json)
+- `internal/personas/client.go:35` — reference only: reuse the `HTTPClient` interface seam for the one-off authenticated completion call.
+- `internal/personas/client.go:99` — reference only: reuse the `fetch()` retry/backoff/timeout/size-cap pattern as the template for the spike call.
+- `.planning/plans/active/19.7_live_model_resolution/documentation/openrouter-catalog-api.md` — modify: record the live completion-call outcome (status code, response detail, and an explicit statement that `~` alias routability is now independently confirmed by the epic's own spike, not just cited from the quickstart docs).
+- `personas/community/index.json:1` — reference only: ground truth for existing vendor-prefixed slugs used to contextualize the spike finding.
+- `internal/personas/catalog.go` — create (in later stories Theme 2/3): the future catalog client/resolver file that will consume this spike's finding — noted here so the recorded outcome is written in a form directly usable when that file is authored.
 
 ## Happy Path Scenarios
 **Scenario 1: `~`-prefixed alias completes successfully**

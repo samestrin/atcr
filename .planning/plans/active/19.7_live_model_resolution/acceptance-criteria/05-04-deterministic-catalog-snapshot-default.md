@@ -9,10 +9,12 @@
 | Test Framework | Go `testing` + `testify`, including a repeated-run determinism assertion | Confirms byte-for-byte or field-for-field identical output across repeated invocations against the same fixture |
 | Key Dependencies | `encoding/json` (stdlib) for snapshot parsing; no HTTP client dependency in this AC's default path | Snapshot format mirrors the catalog entry shape already used elsewhere in `internal/personas` (family/channel/slug/`expiration_date`) |
 
-## Related Files
-- `internal/personas/testdata/catalog_snapshot.json` - create: the checked-in deterministic catalog fixture used by `atcr models check`'s default comparison path, containing entries with `slug`, `family`, `channel`, and (where applicable) non-null `expiration_date` fields sufficient to exercise all three drift conditions in tests.
-- `cmd/atcr/models.go` - create: a snapshot-loading function that reads `internal/personas/testdata/catalog_snapshot.json` (or an equivalent embedded/packaged path resolved relative to the binary/module) by default, with no `HTTPClient`/network call anywhere in `check`'s default `RunE` path.
-- `cmd/atcr/models_test.go` - create: a determinism test that runs `atcr models check` (and `--json`) twice against an identical fixture/lock state and asserts byte-identical (or field-identical) output and exit code both times; a regression test asserting no outbound HTTP call occurs during the default `check` invocation (e.g. via an `httptest` server registered as a would-fail-if-called guard, or a `RoundTripper` that fails the test if invoked).
+### Related Files (from codebase-discovery.json)
+- `internal/personas/testdata/catalog_snapshot.json` — create: the checked-in deterministic catalog fixture used by `atcr models check`'s default comparison path, containing entries with `slug`, `family`, `channel`, and (where applicable) non-null `expiration_date` fields sufficient to exercise all three drift conditions in tests.
+- `cmd/atcr/models.go` — create: a snapshot-loading function that reads `internal/personas/testdata/catalog_snapshot.json` (or an equivalent embedded/packaged path resolved relative to the binary/module) by default, with no `HTTPClient`/network call anywhere in `check`'s default `RunE` path.
+- `cmd/atcr/models_test.go` — create: a determinism test that runs `atcr models check` (and `--json`) twice against an identical fixture/lock state and asserts byte-identical (or field-identical) output and exit code both times; a regression test asserting no outbound HTTP call occurs during the default `check` invocation.
+- `documentation/catalog-snapshot-fixture.md` — reference: fixture discipline, zero-live-network CI requirement, and refresh command rationale.
+- `cmd/atcr/main.go:202` (`newRootCmd` `AddCommand` list) — reference: the registration point for the `models` command family (modified in AC 05-01).
 
 ## Happy Path Scenarios
 **Scenario 1: Repeated runs against identical state produce identical output**

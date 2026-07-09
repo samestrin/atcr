@@ -9,11 +9,13 @@
 | Test Framework | `testing` + `httptest.NewServer`, table-driven subtests | Mirrors `internal/personas/client_test.go` conventions already used in this package |
 | Key Dependencies | `internal/personas.HTTPClient` (`client.go:35`), the checked-in catalog snapshot fixture | No new external dependency; alias resolution here is a static lookup table, not a catalog scan |
 
-## Related Files
-- `internal/personas/catalog.go` - create: hybrid resolver entry point plus a static alias table mapping the 7 alias-covered personas (anthony, sonny, gene, milo, gia, flint, celeste) to their provider `~`-prefixed `-latest` alias slug
-- `internal/personas/catalog_test.go` - create: unit tests asserting each of the 7 personas resolves to its alias slug unchanged and that no catalog fetch/scan occurs for this path
-- `internal/personas/testdata/catalog_snapshot.json` - create: fixture containing the `-latest` alias entries per `documentation/catalog-snapshot-fixture.md` (Anthropic, OpenAI, Google, Moonshot vendors)
-- `internal/personas/client.go` - reference only: reuse `HTTPClient` (`client.go:35`) injection seam so the resolver's catalog client (used only by the other two strategies) is testable, even though this AC's alias path never calls it
+### Related Files (from codebase-discovery.json)
+- `internal/personas/catalog.go` — create: hybrid resolver entry point plus a static alias table mapping the 7 alias-covered personas (anthony, sonny, gene, milo, gia, flint, celeste) to their provider `~`-prefixed `-latest` alias slug.
+- `internal/personas/catalog_test.go` — create: unit tests asserting each of the 7 personas resolves to its alias slug unchanged and that no catalog fetch/scan occurs for this path.
+- `internal/personas/testdata/catalog_snapshot.json` — create: fixture containing the `-latest` alias entries per `documentation/catalog-snapshot-fixture.md` (Anthropic, OpenAI, Google, Moonshot vendors).
+- `internal/personas/client.go:35` (`HTTPClient`) — reference only: reuse the injectable `HTTPClient` seam so the resolver's catalog client (used only by the other two strategies) is testable, even though this AC's alias path never calls it.
+- `personas/community/index.json:1` — reference only: source of truth confirming the 7 alias-covered persona names and their current pinned slugs.
+- `documentation/openrouter-catalog-api.md` — reference: lists the documented `~`-prefixed `-latest` alias forms this AC's alias table must match verbatim.
 
 ## Happy Path Scenarios
 **Scenario 1: Anthropic persona (anthony) resolves via alias passthrough**
@@ -21,7 +23,7 @@
 - **When** the resolver is invoked with anthony's binding and the parsed catalog model list
 - **Then** it returns `~anthropic/claude-opus-latest` unchanged, with no `created`-timestamp comparison performed
 
-**Scenario 2: All 7 alias-covered personas resolve correctly in one pass**
+**Scenario 2: All 7 alias-covered personas resolve to their documented alias slugs in one pass**
 - **Given** the 7 personas (anthony, sonny → Anthropic; gene, milo → OpenAI; gia, flint → Google; celeste → Moonshot) each bound to their vendor family
 - **When** each is resolved against the catalog snapshot fixture
 - **Then** each returns its documented `-latest` alias slug from `documentation/openrouter-catalog-api.md`'s Code Examples list (e.g. `~openai/gpt-latest`, `~openai/gpt-mini-latest`, `~google/gemini-pro-latest`, `~google/gemini-flash-latest`, `~moonshotai/kimi-latest`) verbatim

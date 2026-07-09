@@ -9,12 +9,12 @@
 | Test Framework | `testing` + `testify` (`assert`/`require`) | Matches existing `upgrade_test.go` conventions |
 | Key Dependencies | `golang.org/x/mod/semver` (`semver.Major`, `semver.IsValid`) | Same normalized version strings `isNewer` already builds; no new parsing logic |
 
-## Related Files
-- `internal/personas/upgrade.go` - modify: ensure the major/minor classification (`semver.Major(local) != semver.Major(remote)`) is the sole branch point; the minor/no-change path falls straight through to the existing `isNewer`-driven auto-lock write, unchanged from pre-Story-06 behavior
-- `internal/personas/upgrade_test.go` - modify: add cases for (minor bump, no gate triggered — auto-locks with no fixture re-run and no verify flag) and (same major, no version change — no gate, no flag, no write per existing `isNewer` up-to-date semantics)
-- `internal/personas/test.go` - reference only, unchanged: the `FixtureRunner`/`TemplateFixtureRunner` seam must be provably uninvoked on this path
-
-**Minimum 2 files per AC**
+### Related Files (from codebase-discovery.json)
+- `internal/personas/upgrade.go` — modify: ensure the major/minor classification (`semver.Major(local) != semver.Major(remote)`) is the sole branch point; the minor/no-change path falls straight through to the existing `isNewer`-driven auto-lock write, unchanged from pre-Story-06 behavior.
+- `internal/personas/upgrade_test.go` — modify: add cases for (minor bump, no gate triggered — auto-locks with no fixture re-run and no verify flag) and (same major, no version change — no gate, no flag, no write per existing `isNewer` up-to-date semantics).
+- `internal/personas/test.go` — reference only, unchanged: the `FixtureRunner`/`TemplateFixtureRunner` seam must be provably uninvoked on this path.
+- `internal/personas/upgrade.go:89` (`isNewer`) — reference: existing semver-aware comparison; the minor-path reuses its existing behavior unchanged.
+- `documentation/semver-version-comparison.md` — reference: explains how `semver.Major` classification builds on the same normalized version strings `isNewer` uses.
 
 ## Happy Path Scenarios
 
@@ -73,7 +73,7 @@
 - [ ] Minor bump auto-locks with zero added friction: no fixture re-run, no verify flag
 - [ ] Same-major/no-change transition matches pre-existing `isNewer` up-to-date behavior exactly (no write, no flag)
 - [ ] Malformed/mixed-validity version strings do not spuriously trigger the major-jump gate
-- [ ] Pre-release major-version strings are still correctly classified as major via `semver.Major`, not defeated by suffix noise
+- [ ] Pre-release major-version strings are classified as major via `semver.Major`, not defeated by suffix noise
 
 **Manual Review:**
 - [ ] Code reviewed and approved

@@ -27,7 +27,7 @@
 ### User Stories
 - **Location:** [`user-stories/`](user-stories/)
 - **Status:** Generated
-- **Estimated Count:** 7 stories
+- **Estimated Count:** 8 stories
 
 ### Acceptance Criteria
 - **Location:** [`acceptance-criteria/`](acceptance-criteria/)
@@ -50,6 +50,18 @@ Grounded reference docs for implementation — see [documentation/README.md](doc
 - **[IMPORTANT]** [Catalog Snapshot Fixture Discipline](documentation/catalog-snapshot-fixture.md) — checked-in fixture, `httptest` zero-live-network testing, and the refresh command (AC8).
 - **[IMPORTANT]** [`atcr models check` Command Design](documentation/models-check-command.md) — drift/deprecation/missing-slug reporting, exit codes, and `--json` output shape (AC5).
 - **[IMPORTANT]** [Semantic Version Comparison](documentation/semver-version-comparison.md) — `golang.org/x/mod/semver` API and AC6's major/minor gate.
+
+## Clarifications
+
+### AC7 Roster Reconciliation — LOCKED (recorded 2026-07-08)
+
+Proposed Solution item #8 offered two options for closing TD-011 (init/quickstart's disjoint fetch-and-pin roster) and deferred the choice to design-sprint/implementation judgment. This is now locked:
+
+**Decision: Option B — align the fetch-and-pin roster with what the community index publishes.** The effective roster for online `init`/`quickstart` becomes the set of persona names published in the fetched `personas/community/index.json` itself (all entries, e.g. anthony/sonny/gene/milo/gia/flint/delia/quinn/celeste/glenna today) — not the hardcoded `builtins.Names()` list of 9 embedded, model-agnostic built-ins. Because the roster is derived from the index at fetch time rather than hardcoded, it self-heals as the index grows or changes; no per-release roster maintenance is required.
+
+**Rejected: Option A** (publishing built-in lenses into the community channel behind a model-agnostic gate carve-out) — rejected because it requires inventing a null/agnostic-model case in a schema whose entire purpose is model-binding (fighting this epic's own family/channel model), and it duplicates content that already ships correctly via the embedded built-in scaffold (`runInit`/`initTargets`), which is unrelated to and unaffected by this decision.
+
+**Scope:** No change to `personas/community/index.json`'s schema or existing entries. `builtins.Names()` and the embedded built-in `.md` scaffold step remain exactly as they are — this decision only changes what roster argument `installCommunityPersonas` (`cmd/atcr/init.go:96`, called from `init.go:47` and `quickstart.go:102`) is reconciled against.
 
 ## Implementation Strategy
 Land the catalog spike and stable-channel heuristic first (AC1) since the hybrid resolver's alias-bind path depends on its outcome, though the `created`-timestamp/explicit-pin fallback means the epic is not blocked either way. Then land the family/channel binding schema + lock (AC2), seeded from 19.6's existing pinned `model` values with zero migration. Build the hybrid resolver (AC3) and wire it into `atcr personas upgrade` (AC4) so resolution happens exactly once per explicit upgrade invocation, never on the review hot path. Add `atcr models check` (AC5) as the deterministic drift-report primitive Epic 19.8 will consume. Layer the major/minor re-validation gate (AC6) on top of the existing fixture runner. Finally, reconcile the init/quickstart roster against the real community index (AC7) and document the full family/channel/lock model plus reproducible-vs-upgrade behavior (AC8).
@@ -80,13 +92,16 @@ A minor version advance (4.8→4.9) auto-locks; a major jump (4.x→5.x) require
 ### Theme 7 — init/quickstart Roster Reconciliation
 Closes 19.6's deferred HIGH (TD-011): rebuilds init/quickstart model enablement so online `init`/`quickstart` deliver a working, non-noisy persona set — either publishing built-in lenses into the community channel behind a model-agnostic gate carve-out, or aligning the fetch-and-pin roster with what the index actually publishes — backward-compatible with existing on-disk personas.
 
+### Theme 8 — Catalog Snapshot Fixture, Refresh Command & Documentation
+Provides the checked-in OpenRouter catalog snapshot fixture that makes Stories 3 and 5 deterministic in CI, the on-demand `atcr models refresh` command that regenerates it as the live catalog drifts, and the user-facing documentation updates (`docs/personas-authoring.md`, `docs/personas-install.md`) that explain the family/channel/lock model and the reproducible-vs-upgrade behavior (AC8).
+
 ## Success Criteria
 - Alias routability confirmed/refuted by a real completion call; `@stable` heuristic defined against the live catalog schema (AC1).
 - A persona's family/channel binding resolves to a lock that reviews run deterministically, with zero endpoint calls on the review path (AC2, AC3).
 - `atcr personas upgrade` reports the before→after resolved slug per persona; no silent runtime model change ever occurs (AC4).
 - `atcr models check [--json]` reports drift/deprecation/missing-slug with machine-readable output and exit codes (AC5).
 - Online `init`/`quickstart` pin a working, non-noisy community persona set — TD-011 closed (AC7).
-- `go test ./...` passes with all resolver/catalog tests backed by a checked-in snapshot, zero live network in CI (AC8).
+- `go test ./...` passes with all resolver/catalog tests backed by a checked-in snapshot, zero live network in CI; an `atcr models refresh` command regenerates the snapshot on demand; and docs document the family/channel/lock model plus reproducible-vs-upgrade behavior (AC8).
 
 ## Risk Mitigation
 - **Risk:** OpenRouter's `~`-prefixed aliases may not be completion-routable, undermining the 7-persona alias-bind design. **Mitigation:** AC1's spike runs first and is a real authenticated call, not an assumption; the hybrid resolver's `created`-timestamp/explicit-pin fallback covers a negative result without blocking the epic.

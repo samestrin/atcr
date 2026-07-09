@@ -9,13 +9,13 @@
 | Test Framework | `testing` + `testify` (`assert`/`require`) | Matches existing `upgrade_test.go` conventions |
 | Key Dependencies | `golang.org/x/mod/semver` (`semver.Major`, already vendored via `isNewer`); `TemplateFixtureRunner` (existing, unchanged) | No new dependency; reuses `internal/personas/test.go`'s `FixtureRunner` interface |
 
-## Related Files
-- `internal/personas/upgrade.go` - modify: add a `semver.Major(local) != semver.Major(remote)` classification immediately alongside `isNewer`, and gate the call to `writePersonaUnit()` on a `TemplateFixtureRunner.RunFixture()` re-pass when the transition classifies as major; on fixture failure, skip the write and report the block + reason
-- `internal/personas/upgrade_test.go` - modify: add cases for (major bump, fixture passes → lock advances + verify flag present), (major bump, fixture fails → lock does NOT advance + block reason reported + verify flag still present)
-- `internal/personas/test.go` - reference only, unchanged: `TemplateFixtureRunner`/`FixtureRunner` is reused as-is; no new fixture format or mechanism is introduced by this AC
-- `cmd/atcr/personas.go` - modify: extend the upgrade report to carry the fixture-block reason and the "prompt tuned for the prior major — verify" flag per persona
-
-**Minimum 2 files per AC**
+### Related Files (from codebase-discovery.json)
+- `internal/personas/upgrade.go` — modify: add a `semver.Major(local) != semver.Major(remote)` classification immediately alongside `isNewer`, and gate the call to `writePersonaUnit()` on a `TemplateFixtureRunner.RunFixture()` re-pass when the transition classifies as major; on fixture failure, skip the write and report the block + reason.
+- `internal/personas/upgrade_test.go` — modify: add cases for (major bump, fixture passes → lock advances + verify flag present), (major bump, fixture fails → lock does NOT advance + block reason reported + verify flag still present).
+- `internal/personas/test.go` — reference only, unchanged: `TemplateFixtureRunner`/`FixtureRunner` is reused as-is; no new fixture format or mechanism is introduced by this AC.
+- `cmd/atcr/personas.go` — modify: extend the upgrade report to carry the fixture-block reason and the "prompt tuned for the prior major — verify" flag per persona.
+- `internal/personas/upgrade.go:89` (`isNewer`) — reference: existing semver-aware comparison; the major-jump classification reuses the same normalized, validity-checked version strings `isNewer` already produces.
+- `documentation/semver-version-comparison.md` — reference: explains how `semver.Major` is layered on top of the same normalized version strings `isNewer` uses.
 
 ## Happy Path Scenarios
 

@@ -58,6 +58,11 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.7_live_mod
   - `personas/community_test.go` (`TestCommunityIndex_Registration`) and `internal/personas/search_test.go` (`TestCommunityIndex_ProviderModelMatchesYAML`, `TestVerifyCommunityIndex_FailsOnMismatch`) — 19.6's AC7 exact-match gate that any new `index.json` field must respect or be explicitly exempted from.
 - **Data Requirements:** A family/channel binding value (e.g., `anthropic/claude-opus@stable`) and a resolved concrete slug (the lock) per persona, both persisted on-disk in the persona unit and reflected in `index.json` per the existing YAML-source-of-truth convention.
 
+### References
+
+- [Existing Codebase Patterns to Reuse](../documentation/existing-resolver-patterns.md) — additive `omitempty` schema extension, `writePersonaUnit()` shared write path, and the `ResolvePersona` boundary rule.
+- [OpenRouter Catalog & Completions API](../documentation/openrouter-catalog-api.md) — why the lock (concrete slug) is what reviews run, while the binding (family/channel) is what `upgrade` re-resolves.
+
 ## Potential Risks
 
 | Risk | Impact | Mitigation |

@@ -45,9 +45,14 @@
 
 ## Technical Considerations
 
-- **Implementation Notes:** Add a major/minor classification step in `internal/personas/upgrade.go`, immediately alongside the existing `isNewer` comparison, using `semver.Major(local)` and `semver.Major(remote)` on the same normalized (`"v"`-prefixed) version strings `isNewer` already constructs. When the classification is major, invoke the existing `TemplateFixtureRunner` against the persona's already-committed fixture before permitting the lock write in `writePersonaUnit()`; on minor, skip straight to the existing auto-lock path unchanged. The "verify" flag is a report-only annotation — it does not gate anything by itself beyond triggering the fixture check; the fixture result is the actual write-gate.
+- **Implementation Notes:** Add a major/minor classification step in `internal/personas/upgrade.go`, immediately alongside the existing `isNewer` comparison, using `semver.Major(local)` and `semver.Major(remote)` on the version strings extracted from the resolved model slugs (e.g. `4.8` from `anthropic/claude-opus-4.8` is normalized to `v4.8` — the same `"v"`-prefixed form `isNewer` already constructs). When the classification is major, invoke the existing `TemplateFixtureRunner` against the persona's already-committed fixture before permitting the lock write in `writePersonaUnit()`; on minor, skip straight to the existing auto-lock path unchanged. The "verify" flag is a report-only annotation — it does not gate anything by itself beyond triggering the fixture check; the fixture result is the actual write-gate.
 - **Integration Points:** `internal/personas/upgrade.go` (`isNewer`, the lock-write decision point Story 4 introduces), `golang.org/x/mod/semver` (`semver.Major`, already vendored), `TemplateFixtureRunner` (existing, unchanged — reused as-is per `documentation/existing-resolver-patterns.md`), Story 4's before→after reporting in `cmd/atcr/personas.go` (extended to carry the fixture-block reason and the "verify" flag), Story 3's hybrid resolver (supplies the candidate resolved slug this gate classifies).
-- **Data Requirements:** No new schema — this story reads the same local/remote version strings Story 4's upgrade flow already computes and the same committed `.patch` fixture every persona already ships. The upgrade report gains two new pieces of per-persona output on a major jump: the fixture pass/fail result and the "prompt tuned for the prior major — verify" flag; no new persisted lock field is introduced.
+- **Data Requirements:** No new schema — this story reads the same local/remote version strings Story 4's upgrade flow already computes (extracted from resolved model slugs and normalized for semver) and the same committed `.patch` fixture every persona already ships. The upgrade report gains two new pieces of per-persona output on a major jump: the fixture pass/fail result and the "prompt tuned for the prior major — verify" flag; no new persisted lock field is introduced.
+
+### References
+
+- [Existing Codebase Patterns to Reuse](../documentation/existing-resolver-patterns.md) — `isNewer()`/`TemplateFixtureRunner` reuse and the lock-write decision point.
+- [Semantic Version Comparison](../documentation/semver-version-comparison.md) — `semver.Major` classification on the same normalized version strings `isNewer` uses.
 
 ## Potential Risks
 

@@ -9,11 +9,12 @@
 | Test Framework | `testing` + `httptest.NewServer`, table-driven subtests including an explicit `z-ai/` regression case | |
 | Key Dependencies | Catalog model entries with `id`/`canonical_slug`/`created`/`expiration_date` (per `documentation/openrouter-catalog-api.md`); a vendor-prefix table sourced from `personas/community/index.json` | No sorting library needed — a linear max-by-`created` scan suffices |
 
-## Related Files
-- `internal/personas/catalog.go` - create: the `created`-timestamp newest-in-vendor-prefix scan function, plus the vendor-prefix table `delia → "deepseek/"`, `quinn → "qwen/"`, `glenna → "z-ai/"` (explicitly NOT `"glm/"`)
-- `internal/personas/catalog_test.go` - create: unit tests covering delia/quinn/glenna resolution, plus a dedicated regression test asserting glenna's scan filters on `z-ai/` and returns zero matches (or an error) if incorrectly filtered on `glm/`
-- `internal/personas/testdata/catalog_snapshot.json` - create: fixture with multiple deepseek/qwen/z-ai models at varying `created` timestamps, per `documentation/catalog-snapshot-fixture.md`'s required content list
-- `personas/community/index.json` - reference only: source of truth confirming glenna's catalog slug is `z-ai/glm-5.2` (line 98), not any `glm/`-prefixed slug
+### Related Files (from codebase-discovery.json)
+- `internal/personas/catalog.go` — create: the `created`-timestamp newest-in-vendor-prefix scan function, plus the vendor-prefix table `delia → "deepseek/"`, `quinn → "qwen/"`, `glenna → "z-ai/"` (explicitly NOT `"glm/"`).
+- `internal/personas/catalog_test.go` — create: unit tests covering delia/quinn/glenna resolution, plus a dedicated regression test asserting glenna's scan filters on `z-ai/` and returns zero matches (or an error) if incorrectly filtered on `glm/`.
+- `internal/personas/testdata/catalog_snapshot.json` — create: fixture with multiple `deepseek/`, `qwen/`, and `z-ai/` models at varying `created` timestamps, per `documentation/catalog-snapshot-fixture.md`'s required content list.
+- `personas/community/index.json:1` — reference only: source of truth confirming glenna's catalog slug is `z-ai/glm-5.2` (around line 98), not any `glm/`-prefixed slug.
+- `documentation/openrouter-catalog-api.md` — reference: catalog schema (`id`, `canonical_slug`, `created`, `expiration_date`) and the absence of a stability flag that makes the `created`-timestamp scan necessary for these three personas.
 
 ## Happy Path Scenarios
 **Scenario 1: delia resolves to the newest DeepSeek model**

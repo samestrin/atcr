@@ -9,11 +9,12 @@
 | Test Framework | `testing` + `httptest.NewServer`, table-driven subtests | Fixture must include a preview-tokened newest entry so exclusion is provably load-bearing (not a no-op) |
 | Key Dependencies | Catalog `expiration_date` (`string \| null`) and slug/`id` string tokens (`preview`, `beta`, `exp`) per `documentation/openrouter-catalog-api.md`'s schema and heuristic notes | No new dependency — string-token matching plus null-check on `expiration_date` |
 
-## Related Files
-- `internal/personas/catalog.go` - create: the `@stable` exclusion filter (shared with/reused from Story 1) invoked inside the `created`-timestamp scan for delia/quinn/glenna when channel is `@stable`
-- `internal/personas/catalog_test.go` - create: unit tests proving a newest-`created` entry tagged `preview`/`beta`/`exp` is skipped, and a newest entry with a non-null `expiration_date` is skipped, under `@stable`
-- `internal/personas/testdata/catalog_snapshot.json` - create: fixture containing at least one preview/beta/exp-tokened entry and at least one entry with a non-null `expiration_date`, both positioned as the numerically newest `created` candidate in their vendor prefix, per `documentation/catalog-snapshot-fixture.md`
-- `documentation/openrouter-catalog-api.md` - reference only: source of the "no explicit stable/GA/preview flag" gap and the heuristic definition (exclude preview/beta/exp tokens + honor `expiration_date`)
+### Related Files (from codebase-discovery.json)
+- `internal/personas/catalog.go` — create: the `@stable` exclusion filter (shared with/reused from Story 1) invoked inside the `created`-timestamp scan for delia/quinn/glenna when channel is `@stable`.
+- `internal/personas/catalog_test.go` — create: unit tests proving a newest-`created` entry tagged `preview`/`beta`/`exp` is skipped, and a newest entry with a non-null `expiration_date` is skipped, under `@stable`.
+- `internal/personas/testdata/catalog_snapshot.json` — create: fixture containing at least one preview/beta/exp-tokened entry and at least one entry with a non-null `expiration_date`, both positioned as the numerically newest `created` candidate in their vendor prefix, per `documentation/catalog-snapshot-fixture.md`.
+- `documentation/openrouter-catalog-api.md` — reference only: source of the "no explicit stable/GA/preview flag" gap and the heuristic definition (exclude preview/beta/exp tokens + honor `expiration_date`).
+- `internal/personas/client.go:35` (`HTTPClient`) — reference only: the fixture is served through an `httptest.NewServer`-backed `HTTPClient` so the resolver tests remain zero-live-network.
 
 ## Happy Path Scenarios
 **Scenario 1: `@stable` skips a preview-tagged newest entry and picks the next-newest eligible one**

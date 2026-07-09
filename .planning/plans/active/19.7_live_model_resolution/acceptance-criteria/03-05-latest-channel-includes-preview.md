@@ -9,11 +9,12 @@
 | Test Framework | `testing` + `httptest.NewServer`, table-driven subtests directly comparable against the AC 03-04 `@stable` cases | Same fixture, different channel value, to make the behavioral contrast explicit in test names/output |
 | Key Dependencies | Same catalog schema fields as AC 03-04 (`created`, slug tokens, `expiration_date`); no new dependency | `expiration_date` honoring — deprecation — is a separate signal from the preview/beta/exp exclusion; this AC clarifies which of the two `@latest` actually bypasses |
 
-## Related Files
-- `internal/personas/catalog.go` - create: the channel-conditional branch in the `created`-timestamp scan — `@latest` selects the newest-by-`created` entry without applying the preview/beta/exp token exclusion
-- `internal/personas/catalog_test.go` - create: unit tests using the same preview-tagged fixture entries as AC 03-04's tests, asserting `@latest` returns the preview-tagged newest entry that `@stable` would have skipped
-- `internal/personas/testdata/catalog_snapshot.json` - create: shared fixture with AC 03-04 (same file); no separate fixture needed since both channels are exercised against identical data
-- `.planning/plans/active/19.7_live_model_resolution/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md` - reference: AC2 overview text specifying the `@stable`/`@latest` conditional exclusion
+### Related Files (from codebase-discovery.json)
+- `internal/personas/catalog.go` — create: the channel-conditional branch in the `created`-timestamp scan — `@latest` selects the newest-by-`created` entry without applying the preview/beta/exp token exclusion.
+- `internal/personas/catalog_test.go` — create: unit tests using the same preview-tagged fixture entries as AC 03-04's tests, asserting `@latest` returns the preview-tagged newest entry that `@stable` would have skipped.
+- `internal/personas/testdata/catalog_snapshot.json` — create: shared fixture with AC 03-04 (same file); no separate fixture needed since both channels are exercised against identical data.
+- `.planning/plans/active/19.7_live_model_resolution/user-stories/03-hybrid-resolver-alias-created-timestamp-explicit-pin.md` — reference: AC2 overview text specifying the `@stable`/`@latest` conditional exclusion.
+- `documentation/openrouter-catalog-api.md` — reference: source of the "no explicit stable/GA/preview flag" gap and the heuristic definition that `@latest` bypasses preview-token exclusion while still honoring deprecation.
 
 ## Happy Path Scenarios
 **Scenario 1: `@latest` selects a preview-tagged newest entry that `@stable` would skip**

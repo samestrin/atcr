@@ -9,10 +9,12 @@
 | Test Framework | Go `testing` + `testify` + `encoding/json` | Table-driven, asserting decoded JSON field values, not raw string matching |
 | Key Dependencies | `encoding/json` (stdlib), `github.com/spf13/cobra` | No new external dependency |
 
-## Related Files
-- `cmd/atcr/models.go` - create: define an internal `driftFinding` (or equivalent) struct with fields covering `persona`, `condition`, `current_slug`, and condition-specific fields (`suggested_slug`/`family`/`channel` for newer-member, `expiration_date` for deprecation); `check`'s `RunE` builds a `[]driftFinding` once and renders it either as the human-readable table (AC 05-01) or as JSON (this AC) depending on the `--json` flag — never two independently-computed code paths.
-- `cmd/atcr/models_test.go` - create: JSON-mode tests that unmarshal `--json` stdout into `[]driftFinding` (or a local test-side struct) and assert per-condition field values, plus a same-input parity test asserting the JSON and human-readable renderers report the identical set of personas/conditions.
-- `cmd/atcr/personas.go` - reference: existing precedent for an optional machine-readable flag gating table vs. structured output on the same command, mirrored here for `--json`.
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/models.go` — create: define an internal `driftFinding` (or equivalent) struct with fields covering `persona`, `condition`, `current_slug`, and condition-specific fields (`suggested_slug`/`family`/`channel` for newer-member, `expiration_date` for deprecation); `check`'s `RunE` builds a `[]driftFinding` once and renders it either as the human-readable table (AC 05-01) or as JSON (this AC) depending on the `--json` flag — never two independently-computed code paths.
+- `cmd/atcr/models_test.go` — create: JSON-mode tests that unmarshal `--json` stdout into `[]driftFinding` (or a local test-side struct) and assert per-condition field values, plus a same-input parity test asserting the JSON and human-readable renderers report the identical set of personas/conditions.
+- `cmd/atcr/personas.go` — reference: existing precedent for an optional machine-readable flag gating table vs. structured output on the same command, mirrored here for `--json`.
+- `documentation/models-check-command.md` — reference: specifies the `--json` output shape and the requirement that both renderers derive from one shared internal data structure.
+- `cmd/atcr/main.go:202` (`newRootCmd` `AddCommand` list) — reference: the registration point for the `models` command family (modified in AC 05-01).
 
 ## Happy Path Scenarios
 **Scenario 1: `--json` emits a JSON array with one object per condition**

@@ -46,9 +46,14 @@
 
 ## Technical Considerations
 
-- **Implementation Notes:** Insert the resolver call in `internal/personas/upgrade.go:27` immediately before the existing `isNewer`/write logic, per the grounding in `documentation/existing-resolver-patterns.md`. Reuse `isNewer()` (`upgrade.go:89`) for the version-advance decision, now comparing resolved slugs rather than only version strings. Extend the existing before→after version report in `cmd/atcr/personas.go` to also print the resolved slug, keeping the existing `--all`/`--dry-run` flag semantics unchanged. Writes continue to flow through `writePersonaUnit()` (`internal/personas/unit.go:95`) so install and upgrade stay consistent.
+- **Implementation Notes:** Insert the resolver call in `internal/personas/upgrade.go:27` immediately before the existing `isNewer`/write logic, per the grounding in `documentation/existing-resolver-patterns.md`. Reuse `isNewer()` (`upgrade.go:89`) for the version-advance decision by first extracting the version suffix from each resolved model slug (e.g. `4.8` from `anthropic/claude-opus-4.8`) and normalizing it to a `v`-prefixed semver string (`v4.8`) so the existing semver comparison can classify the transition as newer, older, or unchanged. Extend the existing before→after version report in `cmd/atcr/personas.go` to also print the resolved slug, keeping the existing `--all`/`--dry-run` flag semantics unchanged. Writes continue to flow through `writePersonaUnit()` (`internal/personas/unit.go:95`) so install and upgrade stay consistent.
 - **Integration Points:** `internal/personas/upgrade.go` (`Upgrade()`), `cmd/atcr/personas.go` (`upgrade` subcommand and its reporting), Story 2's lock schema on `PersonaIndexEntry` (`internal/personas/search.go:14`), Story 3's hybrid resolver function, and Story 6's major-bump fixture-repass gate (must run before this story's lock write when the semver major changes).
 - **Data Requirements:** No new schema beyond Story 2's lock field — this story only adds a resolver call and reporting, it does not define the lock's shape. Report output must include, per persona: name, previous resolved slug, new resolved slug (or "unchanged"), and whether the lock was written or skipped (e.g., dry-run, or fixture-gate failure on a major bump).
+
+### References
+
+- [Existing Codebase Patterns to Reuse](../documentation/existing-resolver-patterns.md) — exact `Upgrade()` insertion point, `isNewer()` reuse, and the rule that the resolver must never touch the review path.
+- [Semantic Version Comparison](../documentation/semver-version-comparison.md) — how `isNewer` normalizes and compares version strings, which this story extends by extracting version suffixes from resolved model slugs.
 
 ## Potential Risks
 

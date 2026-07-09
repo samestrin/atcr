@@ -9,11 +9,13 @@
 | Test Framework | `testing` + `testify`, plus a static/structural check (e.g. an import-boundary or call-graph assertion) alongside behavioral tests | Behavioral test exercises `internal/registry.ResolvePersona()` (`internal/registry/persona.go:47`) and the fan-out review path and asserts zero HTTP calls to the models endpoint |
 | Key Dependencies | `internal/registry/persona.go`'s `ResolvePersona()`, `internal/fanout/review.go` (review invocation path), the `HTTPClient` fake/spy already used across `internal/personas/*_test.go` | No new production dependency; this AC is purely a negative-space guarantee |
 
-## Related Files
-- `internal/personas/upgrade_test.go` - modify: add a test asserting the resolver/catalog client is constructed and invoked exactly once per `Upgrade()` call, and only from within `Upgrade()`
-- `internal/registry/persona.go` - reference only (no modification in this AC): `ResolvePersona()` (`persona.go:47`) must remain untouched — a passing test proves it never constructs or calls the resolver/catalog client
-- `internal/fanout/review.go` - reference only (no modification in this AC): the review invocation path must never import or call the resolver/catalog client package
-- `cmd/atcr/personas_test.go` - modify: add/extend an integration test using a spy `HTTPClient` across a full `personas test`, `personas list`, and `personas upgrade` sequence, asserting the models-endpoint request is observed only during the `upgrade` invocation
+### Related Files (from codebase-discovery.json)
+- `internal/personas/upgrade_test.go` — modify: add a test asserting the resolver/catalog client is constructed and invoked exactly once per `Upgrade()` call, and only from within `Upgrade()`.
+- `internal/registry/persona.go:47` (`ResolvePersona()`) — reference only (no modification in this AC): `ResolvePersona()` must remain untouched — a passing test proves it never constructs or calls the resolver/catalog client.
+- `internal/fanout/review.go` — reference only (no modification in this AC): the review invocation path must never import or call the resolver/catalog client package.
+- `cmd/atcr/personas_test.go` — modify: add/extend an integration test using a spy `HTTPClient` across a full `personas test`, `personas list`, and `personas upgrade` sequence, asserting the models-endpoint request is observed only during the `upgrade` invocation.
+- `internal/personas/client.go:35` (`HTTPClient`) — reference only: the spy/recording `HTTPClient` implementation used in the isolation tests mirrors this existing interface.
+- `internal/personas/catalog.go` — reference: the resolver/catalog client package that must only be invoked from `Upgrade()`'s call chain.
 
 ## Happy Path Scenarios
 **Scenario 1: `atcr personas upgrade` is the sole caller of the resolver and models endpoint**

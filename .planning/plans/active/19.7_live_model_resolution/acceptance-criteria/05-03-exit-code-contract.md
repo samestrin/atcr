@@ -9,10 +9,12 @@
 | Test Framework | Go `testing` + `testify`, asserting process/command exit codes via Cobra's `Execute()` error return and a thin `main`-level exit-code mapping test | Mirrors existing exit-code conventions elsewhere in `cmd/atcr` (e.g. `doctor`) |
 | Key Dependencies | `github.com/spf13/cobra`, stdlib `os` | No new external dependency |
 
-## Related Files
-- `cmd/atcr/models.go` - create: `check`'s `RunE` returns a distinguishable sentinel/typed error (or sets a result on the command) when one or more conditions are found, separate from a genuine usage/execution error, so the exit-code mapping layer (`main.go` or a shared helper) can tell the two apart.
-- `cmd/atcr/main.go` - modify: reuse or extend the existing top-level exit-code mapping (wherever `root.Execute()`'s error is translated to `os.Exit(code)`) so a "conditions found" result from `models check` maps to exit code `1` and a genuine usage/failure error maps to exit code `2`, while a clean run (no conditions) maps to `0`.
-- `cmd/atcr/models_test.go` - create: tests invoking the command and asserting the exact exit code for each of the three states, run as a subprocess (`exec.Command` on the built binary, or Cobra's `Execute()` return value inspected against the exit-code mapping function directly) so the assertion covers the real process boundary, not just an internal return value.
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/models.go` — create: `check`'s `RunE` returns a distinguishable sentinel/typed error (or sets a result on the command) when one or more conditions are found, separate from a genuine usage/execution error, so the exit-code mapping layer (`main.go` or a shared helper) can tell the two apart.
+- `cmd/atcr/main.go` — modify: reuse or extend the existing top-level exit-code mapping (wherever `root.Execute()`'s error is translated to `os.Exit(code)`) so a "conditions found" result from `models check` maps to exit code `1` and a genuine usage/failure error maps to exit code `2`, while a clean run (no conditions) maps to `0`.
+- `cmd/atcr/models_test.go` — create: tests invoking the command and asserting the exact exit code for each of the three states, run as a subprocess (`exec.Command` on the built binary, or Cobra's `Execute()` return value inspected against the exit-code mapping function directly) so the assertion covers the real process boundary, not just an internal return value.
+- `documentation/models-check-command.md` — reference: documents the exit-code contract (`0` clean, `1` drift found, `2` error) that this AC verifies.
+- `cmd/atcr/personas.go` — reference: sibling command conventions for returning errors from `RunE` and the existing `--all`/`--dry-run` flag handling.
 
 ## Happy Path Scenarios
 **Scenario 1: No conditions found exits 0**

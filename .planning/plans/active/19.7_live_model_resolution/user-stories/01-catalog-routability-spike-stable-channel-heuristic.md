@@ -49,6 +49,10 @@
 - **Integration Points:** OpenRouter `/api/v1/chat/completions` (completion call) and `/api/v1/models` (catalog confirmation), both authenticated with `Authorization: Bearer <OPENROUTER_API_KEY>`. Downstream integration point: the finding feeds the family/channel binding schema and hybrid resolver design (Stories 2 and 3), and the `z-ai/` prefix finding feeds the `created`-timestamp newest-in-vendor-prefix resolver for glenna specifically.
 - **Data Requirements:** No schema or persisted-data change in this story. The only artifact is the recorded finding (routability outcome, `@stable` heuristic definition, `z-ai/` prefix confirmation), which downstream stories treat as their design input — the plan's `documentation/openrouter-catalog-api.md` already carries the desk-research half of this and should be updated with the live-call confirmation.
 
+### References
+
+- [OpenRouter Catalog & Completions API](../documentation/openrouter-catalog-api.md) — existing desk research on the model schema, alias forms, and the open question this spike closes.
+
 ## Potential Risks
 
 | Risk | Impact | Mitigation |

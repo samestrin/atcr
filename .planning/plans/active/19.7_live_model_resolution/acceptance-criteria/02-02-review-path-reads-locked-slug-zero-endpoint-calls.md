@@ -9,11 +9,12 @@
 | Test Framework | Go `testing` + `net/http/httptest` (to prove zero network access) | Mirrors existing fanout test conventions (e.g. `internal/fanout/engine_test.go`) |
 | Key Dependencies | None new — `internal/registry`, `internal/llmclient` (already imported by `internal/fanout`) | |
 
-## Related Files
-- `internal/fanout/review.go` (`renderAgent`, line 998; `Invocation` construction at line ~1057) - reference/verify, no behavioral change expected: `renderAgent` already builds `llmclient.Invocation{..., Model: ac.Model, ...}` directly from `AgentConfig.Model`. This AC locks that contract in with a regression test asserting `Invocation.Model == ac.Model` regardless of whatever value `ac.Binding` carries (added in AC 02-01), and that a `Binding` value is never substituted, appended to, or used to derive the invoked model string.
-- `internal/registry/config.go` (`AgentConfig.Model`, `AgentConfig.Binding`) - reference: `Model` is the sole field consumed on the review path (the "lock"); `Binding` is present on the struct (post AC 02-01) but inert here — no code path in `internal/fanout` may read it.
-- `internal/registry/persona.go` (`ResolvePersona`, line 47) - reference only, **must NOT be modified by this story**: `ResolvePersona` resolves which *prompt template* wins (project > registry/pinned-community > `_base` > embedded); it has no involvement in *which model* is invoked and must stay that way. See Edge Case 1.
-- `internal/fanout` (new or existing test file, e.g. a new `lock_test.go` alongside `engine_test.go`) - create/modify: add the regression test described in Test Implementation Guidance, including an `HTTPClient` stub that fails the test if `renderAgent`/`buildSlots` ever issues an HTTP call.
+### Related Files (from codebase-discovery.json)
+- `internal/fanout/review.go:998` (`renderAgent`) and `:~1057` (`Invocation` construction) — reference/verify, no behavioral change expected: `renderAgent` already builds `llmclient.Invocation{..., Model: ac.Model, ...}` directly from `AgentConfig.Model`. This AC locks that contract in with a regression test asserting `Invocation.Model == ac.Model` regardless of whatever value `ac.Binding` carries (added in AC 02-01), and that a `Binding` value is never substituted, appended to, or used to derive the invoked model string.
+- `internal/registry/config.go` (`AgentConfig.Model`, `AgentConfig.Binding`) — reference: `Model` is the sole field consumed on the review path (the "lock"); `Binding` is present on the struct (post AC 02-01) but inert here — no code path in `internal/fanout` may read it.
+- `internal/registry/persona.go:47` (`ResolvePersona`) — reference only, **must NOT be modified by this story**: `ResolvePersona` resolves which *prompt template* wins (project > registry/pinned-community > `_base` > embedded); it has no involvement in *which model* is invoked and must stay that way. See Edge Case 1.
+- `internal/fanout` — create/modify: add a regression test file (e.g. `lock_test.go` alongside `engine_test.go`) including an `HTTPClient` stub that fails the test if `renderAgent`/`buildSlots` ever issues an HTTP call.
+- `internal/personas/client.go:35` (`HTTPClient`) — reference only: the stub/spy used in the regression test mirrors the existing injectable `HTTPClient` interface to prove zero network calls on the review path.
 
 ## Happy Path Scenarios
 **Scenario 1: `renderAgent` invokes the locked `Model`, never `Binding`**

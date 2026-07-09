@@ -5,15 +5,18 @@
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
-| Component Type | Go CLI init/quickstart flow (`cmd/atcr` package) | Reconciliation may land in `installCommunityPersonas`, its shared caller-side roster input, or `personas/community/index.json`, per whichever of the two Proposed Solution options is selected at implementation/design-sprint time — this AC does not pick one |
+| Component Type | Go CLI init/quickstart flow (`cmd/atcr` package) | **LOCKED (Option B):** the roster is derived from the fetched community index's own entries; no change to `personas/community/index.json`'s contents or schema |
 | Test Framework | `testing` + `testify/require` + `net/http/httptest` | Matches the existing pattern in `cmd/atcr/init_test.go` (`TestInstallCommunityPersonas_*`) |
 | Key Dependencies | `internal/personas` (`FetchIndex`, `HTTPClient`), `personas` (`builtins.Names()`) | No new dependencies required |
 
-## Related Files
-- `cmd/atcr/init.go` - modify: the roster passed at `init.go:47` (and/or `installCommunityPersonas` at `init.go:96`) must resolve to at least one persona actually present in `personas/community/index.json`
-- `cmd/atcr/quickstart.go` - modify: the roster passed at `quickstart.go:102` must consume the same reconciled source as `init.go`, producing the identical non-empty install outcome
-- `personas/community/index.json` - modify (only if Option A — publishing built-ins into the index — is the chosen path): add the model-agnostic carve-out entries; unchanged if Option B is chosen
-- `cmd/atcr/init_test.go` - modify: add/extend a test that runs `installCommunityPersonas` (or its reconciled equivalent) against the real, unmodified `personas/community/index.json` content and asserts at least one persona file is written to disk
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/init.go:47` — modify: the roster passed to `installCommunityPersonas` becomes the fetched index's own entry names, not `builtins.Names()`.
+- `cmd/atcr/init.go:96` (`installCommunityPersonas`) — modify: derive the install roster from the already-fetched `[]PersonaIndexEntry` internally (or accept the derived roster from a single shared caller-side helper) so the fix is expressed once.
+- `cmd/atcr/quickstart.go:102` — modify: the roster passed must consume the same reconciled (index-derived) source as `init.go:47`, producing the identical non-empty install outcome.
+- `personas/community/index.json:1` — reference only: no schema or content change; the index's existing 10 entries are what the derived roster installs.
+- `cmd/atcr/init_test.go` — modify: add/extend a test that runs `installCommunityPersonas` (or its reconciled equivalent) against the real, unmodified `personas/community/index.json` content and asserts at least one persona file is written to disk.
+- `personas/personas.go:19` (`builtins.Names()`) — reference: the 9 embedded model-agnostic built-ins; no longer passed as the community fetch-and-pin roster (still used unchanged by `runInit`'s separate embedded-scaffold step).
+- `documentation/existing-resolver-patterns.md` — reference: documents the two-call-site drift risk (TD-006/TD-007) and why AC7 must be fixed in one shared location.
 
 ## Happy Path Scenarios
 **Scenario 1: Online `init` installs a non-empty community persona set**
@@ -32,10 +35,10 @@
 - **When** `installCommunityPersonas` runs
 - **Then** the remaining roster members that ARE in the index still install successfully; the run is not aborted for the one absent name (existing skip-then-continue behavior is preserved for genuinely absent entries)
 
-**Edge Case 2: Reconciliation choice (Option A) must not weaken built-in model-agnosticism**
-- **Given** Option A (publishing built-ins into the community channel) is the implementation chosen
-- **When** the built-in-sourced entries are added to `personas/community/index.json` or its equivalent carve-out
-- **Then** none of those entries carry a `provider`/`model` binding — they remain usable with any provider/model, preserving constraint C2
+**Edge Case 2: A future index change installs automatically, without a code change**
+- **Given** `personas/community/index.json` gains an 11th entry (or loses one) upstream, after this fix ships
+- **When** online `init`/`quickstart` next runs
+- **Then** the derived roster reflects the new index contents automatically (installs the added persona, or simply omits the removed one) — no `builtins.Names()`-style hardcoded list needs updating
 
 ## Error Conditions
 **Error Scenario 1: Community index fetch fails entirely (pre-existing behavior, must not regress)**
@@ -52,7 +55,7 @@
 
 ## Security Considerations
 - **Authentication/Authorization:** N/A — community index fetch is unauthenticated, unchanged by this story
-- **Input Validation:** If Option A is chosen, added index entries must pass the same `FetchIndex`/unit-install validation already applied to existing entries (no relaxed parsing path for built-in-sourced entries)
+- **Input Validation:** No change — the derived roster's entries pass through the same `FetchIndex`/unit-install validation already applied today; deriving the roster from `entries` rather than an external list does not introduce a new parsing or validation path
 
 ## Test Implementation Guidance
 **Test Type:** INTEGRATION (existing `httptest.Server`-backed pattern in `cmd/atcr/init_test.go`)
@@ -68,7 +71,7 @@
 **Story-Specific:**
 - [ ] A test proves online `init` installs at least one community persona against the real index content
 - [ ] A test proves online `quickstart` installs the identical non-empty roster via the same reconciled source
-- [ ] If Option A is chosen, a test asserts built-in-sourced index entries carry no provider/model binding
+- [ ] A test proves the roster is derived from the fetched index (not a hardcoded list) — e.g. adding/removing a fixture index entry changes the installed set without a code change
 
 **Manual Review:**
 - [ ] Code reviewed and approved

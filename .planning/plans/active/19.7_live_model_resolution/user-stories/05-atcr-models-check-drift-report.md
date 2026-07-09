@@ -56,6 +56,11 @@
   - `internal/personas/testdata/catalog_snapshot.json` — the default deterministic comparison source for the catalog.
 - **Data Requirements:** Read-only access to each installed persona's resolved lock and the catalog snapshot's slug/family/`expiration_date` metadata; no new persisted state is introduced by this command, and no lock is ever modified by `models check`.
 
+### References
+
+- [`atcr models check` Command Design](../documentation/models-check-command.md) — condition definitions, exit-code contract, and `--json` output shape.
+- [Catalog Snapshot Fixture Discipline](../documentation/catalog-snapshot-fixture.md) — why the default comparison source is the checked-in snapshot, not a live network call.
+
 ## Potential Risks
 
 | Risk | Impact | Mitigation |

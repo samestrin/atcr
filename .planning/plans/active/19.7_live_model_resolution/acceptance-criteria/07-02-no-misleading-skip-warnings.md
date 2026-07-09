@@ -9,11 +9,14 @@
 | Test Framework | `testing` + `testify/require` + captured `io.Writer` for `errOut` | Mirrors `TestInstallCommunityPersonas_MissingRosterSkipsWithWarning`'s existing assertion style, inverted to assert absence |
 | Key Dependencies | `internal/personas` (`FetchIndex`), `personas` (`builtins.Names()`) | No new dependencies required |
 
-## Related Files
-- `cmd/atcr/init.go` - modify: whatever roster/index source `init.go:47` supplies to `installCommunityPersonas` must not contain names absent from `personas/community/index.json`
-- `cmd/atcr/quickstart.go` - modify: `quickstart.go:102` must supply the same reconciled roster, so the same zero-warning guarantee holds for quickstart
-- `cmd/atcr/init_test.go` - modify: add a test asserting `errOut` contains zero `"not found in community index — skipping"` occurrences when `installCommunityPersonas` runs with the reconciled roster against the real index
-- `cmd/atcr/quickstart_test.go` - modify: add the equivalent zero-warning assertion for the quickstart call site
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/init.go:47` — modify: whatever roster/index source `init.go:47` supplies to `installCommunityPersonas` must not contain names absent from `personas/community/index.json`.
+- `cmd/atcr/init.go:129` — reference: the existing `"persona %q not found in community index — skipping"` warning path that must not fire for any name in the reconciled roster.
+- `cmd/atcr/quickstart.go:102` — modify: `quickstart.go:102` must supply the same reconciled roster, so the same zero-warning guarantee holds for quickstart.
+- `cmd/atcr/init_test.go` — modify: add a test asserting `errOut` contains zero `"not found in community index — skipping"` occurrences when `installCommunityPersonas` runs with the reconciled roster against the real index.
+- `cmd/atcr/quickstart_test.go` — modify: add the equivalent zero-warning assertion for the quickstart call site.
+- `personas/community/index.json:1` — reference: the shipped 10-entry model-indexed community catalog used to validate the zero-warning assertion.
+- `cmd/atcr/init.go:139` — reference: the existing never-overwrite guard whose message must not be conflated with the skip-warning targeted by this AC.
 
 ## Happy Path Scenarios
 **Scenario 1: Online `init` prints zero skip-warnings**

@@ -9,11 +9,13 @@
 | Test Framework | `testing` + `testify` (`assert`/`require`), table-driven, following `internal/personas/upgrade_test.go`'s existing style | Mirrors `TestIsNewer_MixedValidityTreatsAsUpToDate`'s table pattern |
 | Key Dependencies | Story 3's hybrid resolver function, Story 2's lock field on the persona unit/`PersonaIndexEntry`, existing `isNewer()` (`upgrade.go:89`), `writePersonaUnit()` (`internal/personas/unit.go:95`) | No new external dependency; this AC is pure composition of already-planned internals |
 
-## Related Files
-- `internal/personas/upgrade.go` - modify: insert the resolver call in `Upgrade()` (`upgrade.go:27`) immediately before the existing `isNewer`/write logic; extend `UpgradeResult` with resolved-slug before/after fields consumed by the CLI report
-- `internal/personas/upgrade_test.go` - modify: add cases asserting `Upgrade()` calls the resolver, compares resolved slugs (not just version strings), and writes the lock only on a passing version-advance comparison
-- `cmd/atcr/personas.go` - modify: extend `runPersonaUpgrades()` (`personas.go:371`) reporting to print the resolved-slug before→after line per persona, alongside the existing version report
-- `cmd/atcr/personas_test.go` - modify: extend `TestPersonasUpgrade_Integration` (`personas_test.go:538`) to assert the `name: old-slug → new-slug` line appears in stdout
+### Related Files (from codebase-discovery.json)
+- `internal/personas/upgrade.go:27` (`Upgrade()`) — modify: insert the resolver call immediately before the existing `isNewer`/write logic; extend `UpgradeResult` with resolved-slug before/after fields consumed by the CLI report.
+- `internal/personas/upgrade_test.go` — modify: add cases asserting `Upgrade()` calls the resolver, compares resolved slugs (not just version strings), and writes the lock only on a passing version-advance comparison.
+- `cmd/atcr/personas.go:371` (`runPersonaUpgrades()`) — modify: extend reporting to print the resolved-slug before→after line per persona, alongside the existing version report.
+- `cmd/atcr/personas_test.go:538` (`TestPersonasUpgrade_Integration`) — modify: extend to assert the `name: old-slug → new-slug` line appears in stdout.
+- `internal/personas/unit.go:95` (`writePersonaUnit`) — reference: the shared paired-write tail used by both `InstallUnit` and `Upgrade`; the resolved lock is persisted through here.
+- `internal/personas/catalog.go` — reference: Story 3's hybrid resolver function invoked from `Upgrade()`.
 
 ## Happy Path Scenarios
 **Scenario 1: Single-name upgrade advances the lock and reports the slug change**

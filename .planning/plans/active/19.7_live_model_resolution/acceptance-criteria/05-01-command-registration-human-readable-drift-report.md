@@ -9,11 +9,13 @@
 | Test Framework | Go `testing` + `testify` (`assert`/`require`) | Table-driven, following `cmd/atcr/personas_test.go`'s existing style |
 | Key Dependencies | `github.com/spf13/cobra`, `internal/personas` (`ListTiers`), `text/tabwriter` | No new external dependency |
 
-## Related Files
-- `cmd/atcr/models.go` - create: define `newModelsCmd()` (top-level, no `RunE` of its own) and `newModelsCheckCmd()` (`check` subcommand); `check`'s `RunE` enumerates installed personas via `internal/personas.ListTiers` (`internal/personas/list.go:53`), reads each persona's resolved lock, diffs it against the catalog snapshot, and renders a human-readable table/text report via `cmd.OutOrStdout()`.
-- `cmd/atcr/models_test.go` - create: integration tests asserting `atcr models check` is reachable, enumerates installed personas the same way `atcr personas list` does, and renders the three condition types in the documented human-readable line format.
-- `cmd/atcr/main.go` (`newRootCmd`, `AddCommand` list, line 202) - modify: register `newModelsCmd()` alongside `newPersonasCmd()`, `newDoctorCmd()`, `newDebtCmd()`, etc.
-- `internal/personas/list.go` (`ListTiers`, line 53) - reference: reused directly for installed-persona enumeration/dedup; not modified by this AC.
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/models.go` — create: define `newModelsCmd()` (top-level, no `RunE` of its own) and `newModelsCheckCmd()` (`check` subcommand); `check`'s `RunE` enumerates installed personas via `internal/personas.ListTiers`, reads each persona's resolved lock, diffs it against the catalog snapshot, and renders a human-readable table/text report via `cmd.OutOrStdout()`.
+- `cmd/atcr/models_test.go` — create: integration tests asserting `atcr models check` is reachable, enumerates installed personas the same way `atcr personas list` does, and renders the three condition types in the documented human-readable line format.
+- `cmd/atcr/main.go:202` (`newRootCmd` `AddCommand` list) — modify: register `newModelsCmd()` alongside `newPersonasCmd()`, `newDoctorCmd()`, `newDebtCmd()`, etc.
+- `internal/personas/list.go:53` (`ListTiers`) — reference: reused directly for installed-persona enumeration/dedup; not modified by this AC.
+- `cmd/atcr/personas.go` — reference: sibling command conventions for output streams, flag handling, and table rendering to mirror.
+- `internal/personas/testdata/catalog_snapshot.json` — create: the checked-in deterministic catalog fixture used by the default comparison path.
 
 ## Happy Path Scenarios
 **Scenario 1: `models check` is registered and runs with no arguments**
