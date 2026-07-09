@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 
@@ -142,11 +141,13 @@ func TestReviewPath_ZeroCatalogEndpointToResolveModel(t *testing.T) {
 			"every outbound completion must use the locked Model, never the Binding value (request %d)", i)
 		assert.NotEqual(t, "binding-greta", m)
 	}
-	// No request path may be catalog/models/resolution-shaped: the review path
-	// resolves the model from the static lock, not from any endpoint.
+	// Positive allowlist (stronger than a blocklist): EVERY outbound request on the
+	// review path must be the LLM completion endpoint. Any other path — a
+	// catalog/models/resolution call under any name — fails the test, so the
+	// reproducibility invariant cannot be silently broken by an endpoint we didn't
+	// think to blocklist.
 	for _, p := range paths {
-		lp := strings.ToLower(p)
-		assert.NotContains(t, lp, "/models", "review path must not hit a models/catalog endpoint (got %q)", p)
-		assert.NotContains(t, lp, "catalog", "review path must not hit a catalog endpoint (got %q)", p)
+		assert.Equal(t, "/chat/completions", p,
+			"review path must issue ONLY the completion call — any other endpoint (catalog/resolution) breaks reproducibility (got %q)", p)
 	}
 }
