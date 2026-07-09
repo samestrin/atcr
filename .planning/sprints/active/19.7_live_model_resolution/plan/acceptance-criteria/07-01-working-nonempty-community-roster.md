@@ -64,14 +64,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing — `go test ./...` full suite green
+- [x] No linting errors — `golangci-lint run ./cmd/atcr/` 0 issues; `go vet`/`gofmt` clean
+- [x] Build succeeds — `go build ./...` exit 0
 
 **Story-Specific:**
-- [ ] A test proves online `init` installs at least one community persona against the real index content
-- [ ] A test proves online `quickstart` installs the identical non-empty roster via the same reconciled source
-- [ ] A test proves the roster is derived from the fetched index (not a hardcoded list) — e.g. adding/removing a fixture index entry changes the installed set without a code change
+- [x] A test proves online `init` installs at least one community persona against the real index content — `TestInit_Online_InstallsNonEmptyCommunityRoster` + `TestInit_Online_NoSkipWarnings` (real index, `NotEmpty` pin dir)
+- [x] A test proves online `quickstart` installs the identical non-empty roster via the same reconciled source — `TestQuickstart_Online_InstallsNonEmptyCommunityRoster` + `TestRosterReconciliation_InitQuickstartParity` (identical index-derived set both paths)
+- [x] A test proves the roster is derived from the fetched index (not a hardcoded list) — `TestInstallCommunityPersonas_RosterTracksIndexContents` (grow index → install set changes, no code change) + `TestInstallCommunityPersonas_NilRosterDerivesFromIndex` (disjoint-from-builtins names install)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

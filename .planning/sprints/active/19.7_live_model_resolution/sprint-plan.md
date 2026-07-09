@@ -1068,16 +1068,16 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
 **Story:** [07: init/quickstart Roster Reconciliation](plan/user-stories/07-init-quickstart-roster-reconciliation.md)
 **Focus:** Closes 19.6's deferred TD-011 HIGH per the **locked Option B decision** — derive the fetch-and-pin roster from the community index's own fetched entries instead of the hardcoded `builtins.Names()` list, fixed once in a shared location to avoid the TD-006/TD-007 two-call-site drift pattern. Independent of Phases 1-6.
 
-### 7.1 [ ] **[Working non-empty community roster — RED](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
+### 7.1 [x] **[Working non-empty community roster — RED](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
    **AC:** [07-01](plan/acceptance-criteria/07-01-working-nonempty-community-roster.md)
    Write failing tests: online `init`/`quickstart` install a working, non-empty community persona set derived from the fetched index (not `builtins.Names()`). Verify fail correctly.
    **Files:** `cmd/atcr/init_test.go`, `cmd/atcr/quickstart_test.go` | **Duration:** 3h
 
-### 7.2 [ ] **[Working non-empty roster — GREEN](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
+### 7.2 [x] **[Working non-empty roster — GREEN](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
    Derive the roster from the single existing `FetchIndex` call inside `installCommunityPersonas`. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(cmd): derive init/quickstart roster from fetched index (green)"`
    **Files:** `cmd/atcr/init.go`, `cmd/atcr/quickstart.go` | **Duration:** 3h
 
-### 7.2.A [ ] **[Working non-empty roster — ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
+### 7.2.A [x] **[Working non-empty roster — ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
    **Changed Files:** `cmd/atcr/init.go`, `cmd/atcr/quickstart.go`, `cmd/atcr/init_test.go`, `cmd/atcr/quickstart_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -1085,33 +1085,34 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 7.2`
    - prompt: Files above + verbatim checklist, plus: "Confirm no additional network round-trip introduced; all-or-nothing rollback / skip-then-continue behavior preserved; no new two-call-site drift (single shared reconciliation point)." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose subagent) — 0 CRITICAL/HIGH:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | init.go (installCommunityPersonas nil-roster path) | Derived roster installs untrusted index `e.Name` values (FetchIndex does not validate); a malformed published entry (empty/invalid name) trips the all-or-nothing rollback and aborts online init/quickstart for all users — the derived path has no per-name skip-with-warning tolerance | Captured → tech-debt-captured.md TD-011. Reviewer's "skip-on-InstallUnit-failure" fix REJECTED (all-or-nothing rollback is AC 07-03 EC1-mandated + regression-locked). Only the narrower empty/invalid-NAME pre-filter is the deferrable robustness item; no path-traversal write possible (InstallUnit→personaPath validates + fails closed) |
+   | LOW | init.go (rbCandidate append) | `rbCandidate.preExisted` re-stat is always false (reached only after the exists-guard `continue`) — dead bookkeeping | Captured → tech-debt-captured.md TD-012 (pre-existing 19.6 code, untouched by this phase; story mandates preserving installCommunityPersonas mechanics) |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 7.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Subagent verdict (confirmed clean):** no additional network round-trip (nil path reuses the already-fetched `entries`); all-or-nothing rollback + never-overwrite guard preserved; exactly ONE reconciliation point (both call sites pass nil); genuine-absence skip-warning path still reachable via a non-nil roster; nil-vs-empty roster, duplicate entries, and ordering all handled.
 
-### 7.3 [ ] **[Working non-empty roster — REFACTOR](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
-   1. Fix CRITICAL/HIGH issues from 7.2.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(cmd): clean up roster derivation"`
+   **Action Taken:** No CRITICAL/HIGH. 1 MEDIUM + 1 LOW captured to `tech-debt-captured.md` (TD-011/TD-012) — neither an inline fix (MEDIUM's core is AC-mandated behavior; LOW is pre-existing untouched code). ✅ Adversarial review passed, proceeding.
+
+### 7.3 [x] **[Working non-empty roster — REFACTOR](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
+   1. Fix CRITICAL/HIGH issues from 7.2.A (if any) — none (0 CRITICAL/HIGH; the MEDIUM/LOW were deferred to TD-011/TD-012, not inline fixes)
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ full suite `go test ./...` PASS
+   3. COMMIT: no refactor commit — the GREEN implementation is already minimal (nil-sentinel derivation + doc comment); no code change to make. No empty/no-op commit created (matches 2.3/2.9 precedent).
    **Duration:** 1h
 
-### 7.4 [ ] **[No misleading skip warnings — RED](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
+### 7.4 [x] **[No misleading skip warnings — RED](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
    **AC:** [07-02](plan/acceptance-criteria/07-02-no-misleading-skip-warnings.md)
    Write failing tests: no `not found in community index — skipping` warnings emitted for the reconciled roster. Verify fail correctly.
    **Files:** `cmd/atcr/init_test.go`, `cmd/atcr/quickstart_test.go` | **Duration:** 2h
+   **Note — transparent vacuous RED (mirrors 2.4/2.7):** AC 07-02 ("no misleading skip warnings") is satisfied by the SAME line of code as AC 07-01 — deriving the roster from the fetched index (7.2 GREEN) means every roster member is present in the index by construction, so the skip-warning cannot fire. The 4 new tests therefore PASS on first run against the REAL `personas/community/index.json` (served via a new `realCommunityServer` helper anchored by `runtime.Caller`, robust to `t.Chdir`): `TestInstallCommunityPersonas_NilRoster_NoSkipWarnings_RealIndex`, `TestInit_Online_NoSkipWarnings` (asserts stderr via `executeSplit`), `TestQuickstart_Online_NoSkipWarnings`, `TestInstallCommunityPersonas_NeverOverwriteWarningDistinct` (AC 07-02 EC2 — the never-overwrite notice still prints and is not conflated). They are permanent guards: any revert to a hardcoded index-disjoint roster re-fires the warnings → red. The discriminating counterpart `TestInstallCommunityPersonas_MissingRosterSkipsWithWarning` proves the warning path still fires for a genuinely-absent name (non-nil roster), so these are not an always-green tautology.
 
-### 7.5 [ ] **[No misleading skip warnings — GREEN](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
+### 7.5 [x] **[No misleading skip warnings — GREEN](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
    Remove the source of the misleading warning under the reconciled roster. (T1), verify all pass (T2), COMMIT: `git commit -m "fix(cmd): drop misleading skip warnings under reconciled roster (green)"`
    **Files:** `cmd/atcr/init.go`, `cmd/atcr/quickstart.go` | **Duration:** 1h
+   **Done:** No new production code — the misleading warning was already eliminated by 7.2's index-derived roster (every derived name is in the index → the `init.go:129` skip path is unreachable for the nil-roster production path). GREEN commit is honestly `test(cmd)` (test-only regression guards), not `fix(cmd)`, since no production line changed here: `test(cmd): assert zero misleading skip warnings under index-derived roster (green)` (`2bcf6adb`). T2 `go test ./cmd/atcr/...` PASS. The skip-warning code stays as defensive dead-path handling (still reachable/tested via an explicit non-nil roster).
 
-### 7.5.A [ ] **[No misleading skip warnings — ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
+### 7.5.A [x] **[No misleading skip warnings — ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
    **Changed Files:** `cmd/atcr/init.go`, `cmd/atcr/quickstart.go`, `cmd/atcr/init_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -1119,33 +1120,35 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 7.5`
    - prompt: Files above + verbatim checklist, plus: "Confirm legitimate skip cases (genuine absence) still warn; only the misleading roster/index-disjoint warning is removed." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose subagent) — 0 CRITICAL/HIGH/MEDIUM:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | init_test.go (MissingRosterSkipsWithWarning) | The genuine-absence discriminator asserted `NoFileExists("tracer.yaml")` — a name never in the roster/index, so vacuously true; the intended invariant (absent `penny` not written) went unverified | FIXED inline in 7.6 — asserts `NoFileExists("penny.yaml")` (the actually-absent roster name), strengthening the discriminator my 07-02 anti-tautology argument depends on |
+   | LOW | init_test.go / quickstart_test.go (`*_Online_NoSkipWarnings`) | Negative-only against the real index; a silent empty-roster regression (0 warnings + 0 installs) would pass | FIXED inline in 7.6 — added `assert.NotEmpty(communityPinNames(...))` positive install guard to both command-level tests |
+   | LOW | init_test.go (realCommunityServer) | `runtime.Caller` anchor is package-relative under `go test -trimpath`; mitigated (fails loud, never false-green) | Documented inline (assumption comment) rather than a speculative go.mod walker — the project's CI + hooks run `go test -race ./...` with NO -trimpath (verified), and the helper fails loud if the assumption ever breaks; a walker would be code for a mode this project never uses |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 7.6, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Subagent verdict (confirmed clean):** never-overwrite-vs-skip distinction genuinely tested (disjoint substrings, both asserted); genuine-absence warning coverage survives via `MissingRosterSkipsWithWarning`; negative `NotContains` assertions not too loose (cannot mask the never-overwrite notice); anti-tautology holds (a `builtins.Names()` revert re-fires warnings → red; empty-roster revert caught by `NotEmpty`).
 
-### 7.6 [ ] **[No misleading skip warnings — REFACTOR](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
-   1. Fix CRITICAL/HIGH issues from 7.5.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(cmd): clean up skip-warning handling"`
+   **Action Taken:** No CRITICAL/HIGH/MEDIUM. 3 LOW — all on freshly-authored / load-bearing guard code → fixed/documented inline in 7.6 (`6400b465`) rather than deferred, consistent with this sprint's inline-LOW precedent (2.5.A/2.8.A/3.2.A). ✅ Adversarial review passed.
+
+### 7.6 [x] **[No misleading skip warnings — REFACTOR](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
+   1. Fix CRITICAL/HIGH issues from 7.5.A (if any) — none; fixed 2 LOW test-quality gaps + documented 1 LOW harness assumption inline (own/load-bearing test code)
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ full suite `go test ./...` PASS; `golangci-lint run ./cmd/atcr/` 0 issues; `go vet`/`gofmt` clean
+   3. COMMIT: `test(cmd): strengthen roster-reconciliation guards (positive install + genuine-absence)` (`6400b465`) — test-only (no production change this element; the fix rode 7.2)
    **Duration:** 1h
 
-### 7.7 [ ] **[Shared reconciliation point + backward compat — RED](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
+### 7.7 [x] **[Shared reconciliation point + backward compat — RED](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
    **AC:** [07-03](plan/acceptance-criteria/07-03-shared-reconciliation-point-and-backward-compat.md)
    Write failing tests: the roster derivation lives in ONE shared location (both `init` and `quickstart` call it — no drift); existing on-disk personas remain backward-compatible. Verify fail correctly.
    **Files:** `cmd/atcr/init_test.go`, `cmd/atcr/quickstart_test.go` | **Duration:** 2h
+   **Note — transparent vacuous RED (mirrors 2.4/2.7):** AC 07-03 (single shared reconciliation point) is already satisfied by 7.2 — the derivation lives INSIDE `installCommunityPersonas` and both call sites pass `nil`, so the two cannot drift. 3 new guards PASS on first run: `TestRosterReconciliation_InitQuickstartParity` (drives BOTH real call paths against the same real index and asserts an identical installed set — the TD-006/TD-007 drift guard), `TestInstallCommunityPersonas_NilRoster_MidRosterFailure_RollsBack` (all-or-nothing rollback preserved under the nil roster), `TestInit_BuiltinScaffoldUntouchedByCommunityInstall` (EC2 — built-in `.md` scaffolds intact + community units land in the separate pin dir, decoupled). The never-overwrite-under-nil-roster bullet is already covered by 7.4's `TestInstallCommunityPersonas_NeverOverwriteWarningDistinct`. Guards fail red if either call site diverges, rollback regresses, or the scaffold/community dirs are conflated.
 
-### 7.8 [ ] **[Shared reconciliation point — GREEN](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
+### 7.8 [x] **[Shared reconciliation point — GREEN](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
    Extract a single shared reconciliation function; wire both call sites to it. (T1), verify all pass (T2), COMMIT: `git commit -m "refactor(cmd): single shared roster-reconciliation point (green)"`
    **Files:** `cmd/atcr/init.go`, `cmd/atcr/quickstart.go` (+ shared helper) | **Duration:** 2h
+   **Done:** No new production code / no separate helper extracted — the single shared reconciliation point already lives INSIDE `installCommunityPersonas` (the one routine both `init.go` and `quickstart.go` call), with both passing `nil` (landed in 7.2). AC 07-03 explicitly permits "inside `installCommunityPersonas` itself"; a standalone helper would be extra code for no benefit (minimum-code rule). GREEN commit is honestly `test(cmd)` (07-03 guards), not `refactor(cmd)`: `test(cmd): guard single shared roster-reconciliation point + backward compat (green)` (`e5b70834`). T2 `go test ./cmd/atcr/...` PASS.
 
-### 7.8.A [ ] **[Shared reconciliation point — ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
+### 7.8.A [x] **[Shared reconciliation point — ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
    **Changed Files:** `cmd/atcr/init.go`, `cmd/atcr/quickstart.go`, shared helper, tests
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -1153,31 +1156,41 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 7.8`
    - prompt: Files above + verbatim checklist, plus: "Confirm there is exactly ONE reconciliation point (no TD-006/TD-007 two-call-site drift); backward compat with existing on-disk personas." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose subagent) — 0 CRITICAL/HIGH/MEDIUM:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | init_test.go (InitQuickstartParity) | Asserted "both call sites agree + non-empty" but not "index-derived" — would miss both sites changed to the SAME non-nil hardcoded roster | FIXED inline in 7.9 — also asserts the installed set equals the fetched index's own entry names (`FetchIndex` → sorted), so the guard is "index-derived," not merely "the two agree" |
+   | LOW | init_test.go (NilRoster_MidRosterFailure_RollsBack) | A reverted Option B (nil→install-nothing→returns nil) fails `require.Error` for the WRONG reason, so a green did not isolate "rollback works" | FIXED inline in 7.9 — tightened to `Contains(err, 'failed to install community persona "c"')`, proving the derived roster reached c and the rollback fired (isolated from an empty-roster no-op) |
+   | LOW | init_test.go (BuiltinScaffoldUntouched) | Decoupling assertion was near-tautological — the test itself pointed `personasDir` at a separate temp dir, so community units structurally could not collide with scaffolds | FIXED inline in 7.9 — dropped the `personasDir` override; the pin dir is now production-resolved (`$HOME/.config/atcr/personas`), so the `NoFileExists` routing/decoupling assertion genuinely exercises real behavior |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 7.9, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Subagent verdict (confirmed clean):** exactly ONE reconciliation point (both sites pass nil; real index disjoint from `builtins.Names()` so a single-site revert → empty → guards fail red); backward compat preserved; no flakiness (no `t.Parallel()`; `realCommunityServer`/`personasDir`/`ATCR_PERSONAS_URL` ordering correct — real dir resolved before `t.Chdir`, globals restored via `t.Cleanup`).
 
-### 7.9 [ ] **[Shared reconciliation point — REFACTOR](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
-   1. Fix CRITICAL/HIGH issues from 7.8.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(cmd): finalize shared reconciliation point"`
+   **Action Taken:** No CRITICAL/HIGH/MEDIUM. 3 LOW — all hardening MY freshly-authored guards (each strengthens a load-bearing anti-tautology assertion) → fixed inline in 7.9 (`a130a1ac`), consistent with this sprint's inline-LOW precedent. ✅ Adversarial review passed.
+
+### 7.9 [x] **[Shared reconciliation point — REFACTOR](plan/user-stories/07-init-quickstart-roster-reconciliation.md)**
+   1. Fix CRITICAL/HIGH issues from 7.8.A (if any) — none; fixed 3 LOW test-tautology gaps inline (own guard code)
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ full suite `go test ./...` PASS; `golangci-lint run ./cmd/atcr/` 0 issues; `go vet`/`gofmt` clean
+   3. COMMIT: `test(cmd): tighten 07-03 guards (index-derived parity, isolated rollback, real routing)` (`a130a1ac`) — test-only (the shared point already landed in 7.2)
    **Duration:** 1h
 
-### 7.10 [ ] **Phase 7 — DoD**
-   - [ ] All Phase 7 tests passing (T3)
-   - [ ] Coverage ≥80%
-   - [ ] Lint/vet/fmt clean; build succeeds
-   - [ ] 19.6 TD-011 HIGH closed; single reconciliation point; backward compat
-   - [ ] DoD report per template
+### 7.10 [x] **Phase 7 — DoD**
+   - [x] All Phase 7 tests passing (T3) — `go test ./...` full suite exit 0
+   - [x] Coverage ≥80% — `cmd/atcr` 84.2% of statements
+   - [x] Lint/vet/fmt clean; build succeeds — `golangci-lint run ./cmd/atcr/` 0 issues, `go vet ./...` clean, `gofmt -l cmd/atcr/` empty, `go build ./...` exit 0
+   - [x] 19.6 TD-011 HIGH closed; single reconciliation point; backward compat — roster derived from the fetched index inside the single `installCommunityPersonas` (both call sites pass nil, no drift); existing on-disk personas preserved (never-overwrite guard); all-or-nothing rollback intact
+   - [x] DoD report per template
 
-### 7.11 [ ] **Phase 7 — GATE: Integration & Exit Review (subagent)**
+   ```
+   Story-07 DoD Complete
+   Auto: 3/3 (tests passing, lint/vet/fmt clean, build succeeds)
+   Story-Specific (AC 07-01/02/03): 3/3 + 3/3 + 4/4
+     07-01: online init installs a non-empty index-derived roster; online quickstart installs the identical set via the same shared source; roster tracks index contents (grow-index test, no code change)
+     07-02: zero misleading skip-warnings for online init (stderr) + quickstart against the REAL index; never-overwrite notice still prints, disjoint from the skip-warning, hand-edited unit byte-untouched
+     07-03: init + quickstart resolve to the identical index-derived roster (parity == fetched index names); never-overwrite guard + all-or-nothing rollback preserved under the nil roster; built-in .md scaffolds decoupled from community units (production-resolved pin dir)
+   Manual Review: [ ] Code reviewed (deferred to /execute-code-review)
+   ```
+
+### 7.11 [x] **Phase 7 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 7.
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -1185,16 +1198,14 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Phase 7 gate review`
    - prompt: Phase 7 changed files + verbatim hostile-integrator checklist. Emphasize: single shared reconciliation point; no new network round-trip; rollback/skip behavior preserved; backward compat. Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context hostile-integrator subagent) — 0 CRITICAL/HIGH/MEDIUM:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | init.go (config roster) / quickstart.go (synthetic registry) | Online init/quickstart pin the 10 index-derived community personas into the pin dir, but `.atcr/config.yaml`'s roster stays `builtins.Names()` — the community set is an available POOL, not active on default `atcr review` until the user edits the roster | Captured → tech-debt-captured.md TD-013. WITHIN the LOCKED Option B contract (not a regression; asserted by AC 07-01/07-03) — a future roster-wiring decision, not a defect |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Gate verdict (verified clean):** exactly ONE reconciliation point (`installCommunityPersonas`, both call sites pass nil — no TD-006/TD-007 drift); NO new network round-trip (nil roster reuses the already-fetched `entries`, single FetchIndex call); `builtins.Names()` still used unchanged for the embedded scaffold + synthetic registry (decoupled); empty-index hard error fires BEFORE nil derivation (a nil roster can never silently derive to empty); all-or-nothing rollback + never-overwrite guard preserved; genuine-absence skip-warning still reachable via a non-nil roster; backward compat intact (all pre-existing tests pass).
+
+   **Action Taken:** No CRITICAL/HIGH/MEDIUM. 1 LOW captured to `tech-debt-captured.md` (TD-013, a within-scope coherence caveat). ✅ **Phase gate passed.**
    **Duration:** 15-30 min
 
 **🚧 GATED STOP:** Phase 7 complete. Await review before Phase 8.

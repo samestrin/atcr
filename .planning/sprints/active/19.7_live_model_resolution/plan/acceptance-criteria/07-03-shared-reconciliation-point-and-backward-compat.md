@@ -64,15 +64,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing — `go test ./...` full suite green
+- [x] No linting errors — `golangci-lint run ./cmd/atcr/` 0 issues; `go vet`/`gofmt` clean
+- [x] Build succeeds — `go build ./...` exit 0
 
 **Story-Specific:**
-- [ ] A test proves `init.go:47` and `quickstart.go:102` resolve to the identical roster/index source (parallel assertions, both passing)
-- [ ] A test proves the never-overwrite guard (`init.go:139`) still applies unchanged under the reconciled roster
-- [ ] A test proves all-or-nothing rollback still applies unchanged under the reconciled roster (`TestInstallCommunityPersonas_MidRosterFailure_RollsBack`-equivalent, run against the reconciled roster)
-- [ ] Built-in `.md` scaffolds written by `atcr init`'s non-community step are unaffected by the community-install step
+- [x] A test proves `init.go:47` and `quickstart.go:102` resolve to the identical roster/index source (parallel assertions, both passing) — `TestRosterReconciliation_InitQuickstartParity` (both paths install the identical set, and that set equals the fetched index's own entry names)
+- [x] A test proves the never-overwrite guard (`init.go:139`) still applies unchanged under the reconciled roster — `TestInstallCommunityPersonas_NeverOverwriteWarningDistinct` (nil roster; pre-seeded unit left byte-untouched)
+- [x] A test proves all-or-nothing rollback still applies unchanged under the reconciled roster — `TestInstallCommunityPersonas_NilRoster_MidRosterFailure_RollsBack` (nil roster; mid-roster failure rolls back all)
+- [x] Built-in `.md` scaffolds written by `atcr init`'s non-community step are unaffected by the community-install step — `TestInit_BuiltinScaffoldUntouchedByCommunityInstall` (scaffolds intact; community units route to the production-resolved pin dir, decoupled)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

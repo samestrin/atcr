@@ -60,14 +60,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing — `go test ./...` full suite green
+- [x] No linting errors — `golangci-lint run ./cmd/atcr/` 0 issues; `go vet`/`gofmt` clean
+- [x] Build succeeds — `go build ./...` exit 0
 
 **Story-Specific:**
-- [ ] A test proves zero skip-warnings for online `init` against the real index
-- [ ] A test proves zero skip-warnings for online `quickstart` against the real index
-- [ ] The never-overwrite warning (`init.go:139`) is confirmed unaffected/unconflated by this change
+- [x] A test proves zero skip-warnings for online `init` against the real index — `TestInit_Online_NoSkipWarnings` (asserts stderr via `executeSplit`, real `personas/community/index.json`)
+- [x] A test proves zero skip-warnings for online `quickstart` against the real index — `TestQuickstart_Online_NoSkipWarnings`
+- [x] The never-overwrite warning (`init.go:139`) is confirmed unaffected/unconflated by this change — `TestInstallCommunityPersonas_NeverOverwriteWarningDistinct` (asserts the notice still prints + is disjoint from the skip-warning text + hand-edited unit byte-untouched)
 
 **Manual Review:**
 - [ ] Code reviewed and approved
