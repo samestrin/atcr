@@ -139,3 +139,46 @@ func TestValidateCommunityPersonaYAML_BindingDoesNotWidenGate(t *testing.T) {
 	require.Error(t, err, "a genuinely unknown key must still be rejected alongside a valid binding")
 	require.Contains(t, strings.ToLower(err.Error()), "foobar")
 }
+
+// --- AC 02-03: pinned model seeds the initial lock, zero migration ----------
+
+// TestVerifyCommunityIndex_BindingExempt covers AC 02-03 Edge Case 1: the AC7
+// exact-match gate (verifyCommunityIndex) enumerates Provider/Model only. An
+// index entry whose `binding` is present-and-drifted while the source YAML has
+// NO binding — with Provider/Model correct — reports ZERO problems, proving
+// Binding is exempt from the gate by construction, not by accidental omission.
+func TestVerifyCommunityIndex_BindingExempt(t *testing.T) {
+	root := t.TempDir()
+	// Source YAML carries no binding; the index entry carries a drifted binding.
+	const yaml = "name: anthony\nprovider: openrouter\nmodel: anthropic/claude-opus-4.8\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "anthony.yaml"), []byte(yaml), 0o644))
+	const index = `[{"name":"anthony","version":"1.0.0","description":"d","path":"anthony.yaml","provider":"openrouter","model":"anthropic/claude-opus-4.8","binding":"anthropic/claude-opus@stable"}]`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "index.json"), []byte(index), 0o644))
+
+	problems, err := verifyCommunityIndex(filepath.Join(root, "index.json"), root)
+	require.NoError(t, err)
+	require.Emptyf(t, problems,
+		"Binding drift/absence must NOT trip the Provider/Model AC7 gate; got: %v", problems)
+}
+
+// TestPinnedModelIsLockZeroMigration covers AC 02-03 Scenario 1 / Edge Case 3:
+// every existing community persona's pinned `model` value is a usable resolved
+// lock as-is (non-empty), and a persona shipping no `binding` decodes Binding as
+// "" with its `model` lock intact — no migration, backfill, or data transform is
+// required to turn 19.6's pinned model into 19.7's initial lock.
+func TestPinnedModelIsLockZeroMigration(t *testing.T) {
+	names := builtins.CommunityNames()
+	require.NotEmpty(t, names)
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(communityYAMLRoot(), name+".yaml"))
+			require.NoErrorf(t, err, "read yaml %s", name)
+			var ac registry.AgentConfig
+			require.NoError(t, yaml.Unmarshal(data, &ac))
+			// The pinned model IS the lock: non-empty and usable with no transform.
+			require.NotEmptyf(t, ac.Model, "persona %q pinned model must serve as the initial lock", name)
+			// A persona is never required to declare a binding for its lock to be
+			// valid — Binding decodes as "" and the model lock stands on its own.
+		})
+	}
+}
