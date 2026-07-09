@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -310,6 +311,49 @@ func TestModelsCheckJSON_ParityWithHumanReadable(t *testing.T) {
 		}
 	}
 	assert.Equal(t, want, got)
+}
+
+// TestModelsCheckJSON_MultiCondition_TwoObjects covers the 5.5.A LOW: a single
+// persona with two conditions must emit TWO array objects in JSON mode.
+func TestModelsCheckJSON_MultiCondition_TwoObjects(t *testing.T) {
+	dir := withEmptyPersonasDir(t)
+	withCatalogSnapshot(t, `[
+  {"id":"google/gemini-pro-1.5","canonical_slug":"google/gemini-pro-1.5","created":100,"expiration_date":"2026-09-01"},
+  {"id":"google/gemini-pro-2.0","canonical_slug":"google/gemini-pro-2.0","created":200,"expiration_date":null}
+]`)
+	writeCommunityPersona(t, dir, "gene", "google/gemini-pro-1.5", "")
+
+	out, _, err := executeSplit(t, "models", "check", "--json")
+	require.Error(t, err)
+	fs := decodeFindings(t, out)
+	require.Len(t, fs, 2)
+	conds := map[string]bool{}
+	for _, f := range fs {
+		assert.Equal(t, "gene", f.Persona)
+		conds[f.Condition] = true
+	}
+	assert.True(t, conds["newer-member"])
+	assert.True(t, conds["deprecation"])
+}
+
+// TestRenderDriftJSON_EscapesControlChars covers the 5.5.A LOW: the --json path
+// relies solely on stdlib escaping (it opts out of sanitizeDisplay), so a value
+// with quotes/control chars must be safely escaped and round-trip cleanly.
+func TestRenderDriftJSON_EscapesControlChars(t *testing.T) {
+	var buf bytes.Buffer
+	err := renderDriftJSON(&buf, []commpersonas.DriftFinding{{
+		Persona:     "evil\x1b",
+		Condition:   commpersonas.ConditionMissing,
+		CurrentSlug: "vendor/model\x1b\"x\u2028",
+	}})
+	require.NoError(t, err)
+	out := buf.String()
+	assert.NotContains(t, out, "\x1b") // raw ESC never emitted
+	assert.Contains(t, out, "\\u001b") // ESC escaped, not raw
+	var fs []jsonFinding
+	require.NoError(t, json.Unmarshal([]byte(out), &fs))
+	require.Len(t, fs, 1)
+	assert.Equal(t, "vendor/model\x1b\"x\u2028", fs[0].CurrentSlug) // round-trips
 }
 
 var _ = httptest.NewServer
