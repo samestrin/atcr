@@ -1,6 +1,8 @@
 package personas
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -126,4 +128,18 @@ func TestSnapshotModels_RoundTrip(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, glm45.ExpirationDate)
 	assert.Equal(t, "2026-12-31", *glm45.ExpirationDate)
+}
+
+func TestSnapshotModels_EnvOverride_SizeCap(t *testing.T) {
+	// An env-override snapshot path must be size-bounded like the network path,
+	// so a FIFO or multi-GB file cannot exhaust memory.
+	dir := t.TempDir()
+	big := filepath.Join(dir, "oversized.json")
+	data := make([]byte, fetchBodyLimit+1)
+	require.NoError(t, os.WriteFile(big, data, 0o644))
+
+	t.Setenv(envCatalogSnapshot, big)
+	_, err := SnapshotModels()
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to load catalog snapshot")
 }
