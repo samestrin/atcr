@@ -44,7 +44,10 @@ func newInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return installCommunityPersonas(personasClient, commpersonas.BaseURL(), dir, builtins.Names(), out, errOut)
+			// nil roster → install the community set the fetched index publishes
+			// (Option B / TD-011); builtins.Names() is the embedded-scaffold roster,
+			// not the community fetch-and-pin roster.
+			return installCommunityPersonas(personasClient, commpersonas.BaseURL(), dir, nil, out, errOut)
 		},
 	}
 	cmd.Flags().Bool("force", false, "overwrite existing configuration and persona files")
@@ -89,6 +92,17 @@ const offlineHint = " — retry with --force --offline to use the embedded built
 // error; a roster persona the index does not advertise is skipped with a warning
 // (init still succeeds).
 //
+// The roster reconciliation is Option B (closes 19.6's TD-011 HIGH): when roster
+// is nil — the sole production caller shape from both `init` (init.go) and
+// `quickstart` (quickstart.go) — the install set is derived from the fetched
+// index's own entries, so online init/quickstart install exactly what the index
+// publishes and self-heal as it grows (no hardcoded builtins.Names() list to keep
+// in lockstep, no misleading "not found" warnings). Both call sites pass nil, so
+// this derivation is expressed in exactly ONE shared location and the two cannot
+// drift the way TD-006/TD-007 did. A non-nil roster restricts the install to those
+// names (a name absent from the index is skip-with-warning) — the shape tests use
+// and the escape hatch that keeps the genuine-absence warning path reachable.
+//
 // The roster install is all-or-nothing: any fetch/validation failure aborts with
 // a descriptive error (naming the failure and suggesting --offline) and rolls back
 // every persona file this run created, so a mid-roster failure never leaves a
@@ -104,6 +118,16 @@ func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir s
 	indexed := make(map[string]struct{}, len(entries))
 	for _, e := range entries {
 		indexed[e.Name] = struct{}{}
+	}
+
+	// Option B reconciliation: a nil roster means "install what the index
+	// publishes." Derive it from the already-fetched entries (no extra network
+	// round-trip), preserving index order so the install is deterministic.
+	if roster == nil {
+		roster = make([]string, 0, len(entries))
+		for _, e := range entries {
+			roster = append(roster, e.Name)
+		}
 	}
 
 	// Track every unit file this run might create, with whether it pre-existed, so

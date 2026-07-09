@@ -99,7 +99,10 @@ func runQuickstart(o quickstartOpts) error {
 		if err != nil {
 			return err
 		}
-		if err := installCommunityPersonas(personasClient, commpersonas.BaseURL(), dir, builtins.Names(), o.out, o.errOut); err != nil {
+		// nil roster → the index-derived community set (Option B / TD-011), the
+		// same shared reconciliation source `init` consumes; builtins.Names() below
+		// remains the embedded-scaffold / synthetic-registry roster, untouched.
+		if err := installCommunityPersonas(personasClient, commpersonas.BaseURL(), dir, nil, o.out, o.errOut); err != nil {
 			return err
 		}
 	}

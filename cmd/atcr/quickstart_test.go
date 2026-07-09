@@ -141,6 +141,43 @@ func TestQuickstart_FetchAndPin_InstallsCommunity(t *testing.T) {
 	assert.FileExists(t, filepath.Join(destDir, "bruce.yaml"), "community persona fetched and pinned during quickstart")
 }
 
+// TestQuickstart_Online_InstallsNonEmptyCommunityRoster covers AC 07-01
+// Scenario 2 end-to-end through `runQuickstart`: online quickstart installs the
+// identical non-empty, index-derived community roster as `init`, via the same
+// shared reconciliation source (not builtins.Names()). Against an index disjoint
+// from the built-ins, today it would pin zero — this proves the reconciled path.
+func TestQuickstart_Online_InstallsNonEmptyCommunityRoster(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	index := `[
+	  {"name":"anthony","version":"1.2.0","description":"d","path":"anthony.yaml"},
+	  {"name":"sonny","version":"1.2.0","description":"d","path":"sonny.yaml"}
+	]`
+	srv := unitServer(t, index, map[string]string{
+		"/anthony.yaml": communityUnitYAML,
+		"/sonny.yaml":   communityUnitYAML,
+	})
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	destDir := filepath.Join(home, ".config", "atcr", "personas")
+	oldDir := personasDir
+	personasDir = func() (string, error) { return destDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:            dir,
+		fetchCommunity: true,
+		in:             strings.NewReader(quickstartInput),
+		out:            &bytes.Buffer{},
+		errOut:         &bytes.Buffer{},
+	}))
+
+	assert.Equal(t, []string{"anthony", "sonny"}, communityPinNames(t, destDir),
+		"online quickstart installs the same index-derived roster as init")
+}
+
 func TestQuickstart_WritesSyntheticRegistry(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()

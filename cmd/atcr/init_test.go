@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -477,6 +479,109 @@ func TestInstallCommunityPersonas_MidRosterFailure_RollsBack(t *testing.T) {
 	entries, rerr := os.ReadDir(dest)
 	require.NoError(t, rerr)
 	assert.Empty(t, entries, "personas installed before the failure are rolled back (all-or-nothing)")
+}
+
+// --- AC 07-01: index-derived community roster (TD-011) ----------------------
+
+// communityPinNames returns the sorted <name>s of the <name>.yaml units installed
+// under dir — the personas actually pinned by a community install.
+func communityPinNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".yaml") {
+			names = append(names, strings.TrimSuffix(e.Name(), ".yaml"))
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// TestInstallCommunityPersonas_NilRosterDerivesFromIndex covers AC 07-01
+// Scenario 1 + the LOCKED Option B reconciliation: with a nil roster,
+// installCommunityPersonas derives the install set from the fetched index's own
+// entries — not builtins.Names(). The index publishes names DISJOINT from the
+// built-ins (anthony/sonny), so a non-empty install proves the roster came from
+// the index, not the hardcoded built-in list.
+func TestInstallCommunityPersonas_NilRosterDerivesFromIndex(t *testing.T) {
+	index := `[
+	  {"name":"anthony","version":"1.2.0","description":"d","path":"anthony.yaml"},
+	  {"name":"sonny","version":"1.2.0","description":"d","path":"sonny.yaml"}
+	]`
+	srv := unitServer(t, index, map[string]string{
+		"/anthony.yaml": communityUnitYAML,
+		"/sonny.yaml":   communityUnitYAML,
+	})
+	dest := t.TempDir()
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, &bytes.Buffer{}))
+
+	assert.Equal(t, []string{"anthony", "sonny"}, communityPinNames(t, dest),
+		"nil roster installs exactly the fetched index's entries")
+	// A built-in name absent from the index is never conjured into the install set.
+	assert.NoFileExists(t, filepath.Join(dest, "bruce.yaml"),
+		"roster is the index, not builtins.Names()")
+}
+
+// TestInstallCommunityPersonas_RosterTracksIndexContents covers AC 07-01 Edge
+// Case 2: the derived roster reflects the index at fetch time, so adding or
+// removing an index entry changes the next run's installed set with NO code
+// change (self-healing) — the antithesis of a hardcoded builtins.Names() list.
+func TestInstallCommunityPersonas_RosterTracksIndexContents(t *testing.T) {
+	run := func(index string, files map[string]string) []string {
+		srv := unitServer(t, index, files)
+		dest := t.TempDir()
+		require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, &bytes.Buffer{}))
+		return communityPinNames(t, dest)
+	}
+
+	one := run(
+		`[{"name":"anthony","version":"1.2.0","description":"d","path":"anthony.yaml"}]`,
+		map[string]string{"/anthony.yaml": communityUnitYAML},
+	)
+	assert.Equal(t, []string{"anthony"}, one, "single-entry index installs exactly that entry")
+
+	two := run(
+		`[
+		  {"name":"anthony","version":"1.2.0","description":"d","path":"anthony.yaml"},
+		  {"name":"glenna","version":"1.2.0","description":"d","path":"glenna.yaml"}
+		]`,
+		map[string]string{"/anthony.yaml": communityUnitYAML, "/glenna.yaml": communityUnitYAML},
+	)
+	assert.Equal(t, []string{"anthony", "glenna"}, two,
+		"a grown index installs the added entry without a code change")
+}
+
+// TestInit_Online_InstallsNonEmptyCommunityRoster covers AC 07-01 Scenario 1
+// end-to-end through `atcr init`: against an index whose entries are disjoint
+// from builtins.Names(), the online init pins a NON-EMPTY community roster (the
+// TD-011 regression: today it pins zero and only warns).
+func TestInit_Online_InstallsNonEmptyCommunityRoster(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	index := `[
+	  {"name":"anthony","version":"1.2.0","description":"d","path":"anthony.yaml"},
+	  {"name":"sonny","version":"1.2.0","description":"d","path":"sonny.yaml"}
+	]`
+	srv := unitServer(t, index, map[string]string{
+		"/anthony.yaml": communityUnitYAML,
+		"/sonny.yaml":   communityUnitYAML,
+	})
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	pinDir := t.TempDir()
+	oldDir := personasDir
+	personasDir = func() (string, error) { return pinDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	_, err := execute(t, "init")
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"anthony", "sonny"}, communityPinNames(t, pinDir),
+		"online init installs the index-derived community roster")
 }
 
 func TestPersonas_EmbeddedSetComplete(t *testing.T) {
