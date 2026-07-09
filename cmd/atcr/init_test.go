@@ -739,8 +739,20 @@ func TestRosterReconciliation_InitQuickstartParity(t *testing.T) {
 		errOut:         &bytes.Buffer{},
 	}))
 
+	// Expected set = the fetched index's own entry names (sorted). Comparing
+	// against this — not merely init==quickstart — proves the install is
+	// INDEX-DERIVED, closing the hole where both sites could share one hardcoded
+	// non-nil roster yet still "agree."
+	entries, err := commpersonas.FetchIndex(srv.Client(), srv.URL)
+	require.NoError(t, err)
+	want := make([]string, 0, len(entries))
+	for _, e := range entries {
+		want = append(want, e.Name)
+	}
+	sort.Strings(want)
+
 	initSet := communityPinNames(t, initPin)
-	assert.NotEmpty(t, initSet, "init installs a non-empty roster")
+	assert.Equal(t, want, initSet, "init installs exactly the fetched index's roster (index-derived)")
 	assert.Equal(t, initSet, communityPinNames(t, qsPin),
 		"init and quickstart install the identical index-derived roster (one shared reconciliation point)")
 }
@@ -765,8 +777,13 @@ func TestInstallCommunityPersonas_NilRoster_MidRosterFailure_RollsBack(t *testin
 	dest := t.TempDir()
 
 	err := installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, &bytes.Buffer{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "c", "the failing persona is named")
+	require.Error(t, err, "a mid-roster unit failure must error (not a silent no-op)")
+	// Assert the specific install-failure wrapping — this proves the nil roster
+	// DERIVED to include c and failed installing it, isolating "rollback works"
+	// from a reverted-Option-B empty roster that would install nothing and also
+	// leave dest empty (a false pass on the emptiness check alone).
+	assert.Contains(t, err.Error(), `failed to install community persona "c"`,
+		"the derived roster reached c and the rollback fired on its failure")
 
 	entries, rerr := os.ReadDir(dest)
 	require.NoError(t, rerr)
@@ -781,15 +798,16 @@ func TestInstallCommunityPersonas_NilRoster_MidRosterFailure_RollsBack(t *testin
 // from the project .atcr/personas scaffold dir; the test mirrors that separation.
 func TestInit_BuiltinScaffoldUntouchedByCommunityInstall(t *testing.T) {
 	srv := realCommunityServer(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home) // community pin dir resolves under here (production routing)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
 
-	pinDir := t.TempDir() // separate from .atcr/personas, mirroring production
-	oldDir := personasDir
-	personasDir = func() (string, error) { return pinDir, nil }
-	t.Cleanup(func() { personasDir = oldDir })
-
+	// No personasDir override: the community pin dir is production-resolved
+	// (~/.config/atcr/personas), a different tree from the project's
+	// .atcr/personas scaffold dir — so the decoupling assertion below genuinely
+	// exercises the routing rather than a test-imposed dir split.
 	_, _, err := executeSplit(t, "init")
 	require.NoError(t, err)
 
@@ -799,10 +817,11 @@ func TestInit_BuiltinScaffoldUntouchedByCommunityInstall(t *testing.T) {
 		require.NoError(t, rerr, "built-in scaffold %s.md present after community install", name)
 		assert.Contains(t, string(data), "## Role", "%s.md scaffold content intact", name)
 	}
-	// The community roster lands in the separate pin dir — never among the scaffolds.
-	assert.NotEmpty(t, communityPinNames(t, pinDir), "community roster installed to the pin dir")
+	// Community units route to the resolved pin dir, never into the scaffold dir.
+	pinDir := filepath.Join(home, ".config", "atcr", "personas")
+	assert.NotEmpty(t, communityPinNames(t, pinDir), "community roster installed to the resolved pin dir")
 	assert.NoFileExists(t, filepath.Join(dir, ".atcr", "personas", "anthony.yaml"),
-		"community units never land among the built-in scaffolds (decoupled)")
+		"community units never leak into the built-in scaffold dir (decoupled)")
 }
 
 func TestPersonas_EmbeddedSetComplete(t *testing.T) {
