@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -32,9 +33,17 @@ const envCatalogSnapshot = "ATCR_CATALOG_SNAPSHOT"
 func SnapshotModels() ([]CatalogModel, error) {
 	data := embeddedSnapshot
 	if p := strings.TrimSpace(os.Getenv(envCatalogSnapshot)); p != "" {
-		d, err := os.ReadFile(p)
+		f, err := os.Open(p)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load catalog snapshot: %w", err)
+		}
+		defer f.Close()
+		d, err := io.ReadAll(io.LimitReader(f, fetchBodyLimit+1))
+		if err != nil {
+			return nil, fmt.Errorf("failed to load catalog snapshot: %w", err)
+		}
+		if int64(len(d)) > fetchBodyLimit {
+			return nil, fmt.Errorf("failed to load catalog snapshot: snapshot exceeds %d-byte limit", fetchBodyLimit)
 		}
 		data = d
 	}
