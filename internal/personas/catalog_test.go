@@ -230,6 +230,46 @@ func TestResolveModel_Latest_AliasUnaffected(t *testing.T) {
 	assert.Equal(t, "~google/gemini-pro-latest", got)
 }
 
+// TestResolveModel_AgainstFixture_ScanFamilies is the fixture↔resolver contract
+// guard (Phase 3 gate): it feeds the checked-in catalog_snapshot.json through
+// ResolveModel for the created-timestamp families and asserts the end-to-end
+// result, so a future fixture edit or filter regression that would break Phase 4's
+// zero-migration cannot ship green. It also documents, against the REAL fixture,
+// why quinn is an explicit-pin (not created-timestamp) persona: the newest qwen/
+// member is the general qwen3.7-plus, NOT the coder pin.
+func TestResolveModel_AgainstFixture_ScanFamilies(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/catalog_snapshot.json")
+	require.NoError(t, err)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(fixture)
+	}))
+	defer ts.Close()
+	models, err := (&CatalogClient{HTTPClient: ts.Client(), BaseURL: ts.URL}).FetchModels()
+	require.NoError(t, err)
+
+	// delia + glenna: newest eligible in-prefix EQUALS the 19.6 pin under @stable
+	// (deepseek-v3.2-exp preview-excluded; z-ai glm-4.5 + glm-5v-turbo deprecation-
+	// excluded) — proving the seed-lock zero-migration Phase 4 depends on.
+	for _, tc := range []struct{ family, channel, want string }{
+		{"deepseek", "@stable", "deepseek/deepseek-v4-pro"},
+		{"deepseek", "@latest", "deepseek/deepseek-v4-pro"}, // exp member older than v4-pro
+		{"glm", "@stable", "z-ai/glm-5.2"},
+		{"glm", "@latest", "z-ai/glm-5.2"}, // turbo/4.5 deprecated → excluded under both
+	} {
+		got, err := ResolveModel(Binding{Family: tc.family, Channel: tc.channel}, models)
+		require.NoError(t, err, "%s %s", tc.family, tc.channel)
+		assert.Equal(t, tc.want, got, "%s %s resolves to the 19.6 pin", tc.family, tc.channel)
+	}
+
+	// quinn: scanning qwen/ yields the general newest (qwen3.7-plus), NOT the coder
+	// pin — this is precisely why the spike reclassified quinn to explicit-pin.
+	got, err := ResolveModel(Binding{Family: "qwen", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "qwen/qwen3.7-plus", got)
+	assert.NotEqual(t, "qwen/qwen3-coder-plus", got,
+		"newest-in-prefix drops the coder specialization → quinn must pin explicitly")
+}
+
 // TestResolveModel_UnrecognizedChannel_Error covers AC 03-05 Error Scenario 1: a
 // channel that is neither @stable nor @latest fails closed with a descriptive
 // error rather than silently defaulting.

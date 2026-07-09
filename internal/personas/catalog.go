@@ -128,6 +128,18 @@ type Binding struct {
 	Pin     string
 }
 
+// Family grammar (contract for Phase 4's binding-string parser). A Binding.Family
+// is matched by EXACT string against the two tables below, in strategy order
+// pin → alias → created-timestamp; any family in neither table is an error. The
+// key space is deliberately heterogeneous, sourced from the live catalog:
+//   - alias families are vendor/tier (e.g. "anthropic/claude-opus", "moonshotai/kimi");
+//   - created-timestamp families are the bare brand token (e.g. "deepseek", "qwen",
+//     "glm") — note "glm" maps to the catalog namespace "z-ai/", never "glm/".
+// Phase 4 must emit these exact shapes when parsing a persona's binding string; a
+// mis-parsed family surfaces as the descriptive "no …strategy found" error rather
+// than a silent wrong resolution. TestResolveModel_AgainstFixture_ScanFamilies
+// locks the created-timestamp families against the checked-in fixture.
+
 // aliasTable maps an alias-covered family/tier to its provider-owned ~…-latest
 // alias slug (confirmed completion-routable by the Phase 1 spike, AC 01-01). The
 // provider resolves these server-side, so the resolver passes them through
