@@ -322,14 +322,17 @@ func TestResolveModel_Pin_EmptyFallsThrough(t *testing.T) {
 	}
 }
 
-// TestResolveModel_Pin_InvalidNoSlash_Error covers AC 03-03 Error Scenario 1: a
-// pin that is not a plausible vendor/model slug (no "/") is rejected, never passed
-// through blindly.
-func TestResolveModel_Pin_InvalidNoSlash_Error(t *testing.T) {
-	got, err := ResolveModel(Binding{Pin: "not-a-slug"}, nil)
-	require.Error(t, err)
-	assert.Empty(t, got)
-	assert.Contains(t, err.Error(), "pin")
+// TestResolveModel_Pin_Invalid_Error covers AC 03-03 Error Scenario 1 and pins the
+// security invariant to the pin short-circuit itself: an implausible pin (no "/",
+// a control character, or a bare vendor/model segment) is rejected with an error
+// and an empty slug — an untrusted community pin never reaches a lock unvalidated.
+func TestResolveModel_Pin_Invalid_Error(t *testing.T) {
+	for _, pin := range []string{"not-a-slug", "deepseek/x\ny", "z-ai/", "/glm-5.2"} {
+		got, err := ResolveModel(Binding{Pin: pin}, nil)
+		require.Error(t, err, "invalid pin %q must be rejected on the pin path", pin)
+		assert.Empty(t, got)
+		assert.Contains(t, err.Error(), "pin")
+	}
 }
 
 // TestResolveModel_CreatedScan_ControlCharSlug_Rejected proves the scan output is
