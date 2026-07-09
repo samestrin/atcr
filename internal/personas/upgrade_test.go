@@ -713,6 +713,12 @@ func TestIsMajorJump(t *testing.T) {
 		{"v4.9.2", "v5.0.0-rc.1", true, "pre-release major still classifies major"},
 		{"", "v5.0.0", false, "no prior version (establishing) is not a major jump"},
 		{"v4.9.2", "", false, "absent remote version is not a major jump"},
+		// TD-010 fallback: version-shaped tokens semver.IsValid rejects (4+
+		// components / leading zeros) must still classify by leading numeric major,
+		// so a non-semver advance is never silently treated as "not major".
+		{"4.8.1.2", "5.0.1.2", true, "4+-component major crossing gates via leading-segment fallback"},
+		{"4.9.1.2", "4.10.1.2", false, "4+-component same-major does not gate"},
+		{"latest", "stable", false, "both non-numeric tokens are not a major jump"},
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.want, isMajorJump(c.local, c.remote), "isMajorJump(%q, %q): %s", c.local, c.remote, c.why)
@@ -771,4 +777,35 @@ func TestUpgrade_NoChangeNoGateNoFixture(t *testing.T) {
 
 	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "delia.yaml"))
 	assert.Equal(t, minorJumpPersonaYAML, string(got), "an up-to-date persona is byte-for-byte unchanged")
+}
+
+// TestUpgrade_NonSemverMajorJumpStillGates is the TD-010 regression guard: a
+// version token semver.IsValid rejects (4-component "4.8.1.2") that isNewer
+// advances via string-inequality must NOT slip past the gate. A v4→v5 crossing
+// on such tokens must still classify major, run the fixture, and — with a failing
+// fixture — block the write, never silently advancing the lock.
+func TestUpgrade_NonSemverMajorJumpStillGates(t *testing.T) {
+	nonSemver := `provider: openrouter
+model: deepseek/deepseek-v4.8.1.2
+role: reviewer
+binding: deepseek@stable
+version: "1.0.0"
+`
+	cat := catalogJSON([2]string{"deepseek/deepseek-v5.0.1.2", "1780000000"})
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	installFixture(t, dir, "vendor/delia", nonSemver)
+	runner := &spyRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 0, Total: 1}}
+	withStubRunner(t, runner)
+
+	res, err := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", false)
+	require.NoError(t, err)
+	assert.True(t, res.MajorJump, "a non-semver v4→v5 crossing must still classify as a major jump")
+	assert.True(t, res.FixtureBlocked, "the gate must run and block on a failing fixture")
+	assert.False(t, res.SlugChanged, "a blocked non-semver major jump must not advance the lock")
+	assert.Equal(t, 1, runner.calls, "the fixture must run on the non-semver major jump")
+
+	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "delia.yaml"))
+	assert.Equal(t, nonSemver, string(got), "a blocked non-semver major jump leaves the lock unchanged")
 }

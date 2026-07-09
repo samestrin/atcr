@@ -398,17 +398,50 @@ func normalizeSemver(v string) string {
 
 // isMajorJump reports whether remote crosses a major-version boundary relative to
 // local. It reuses normalizeSemver — the same normalization isNewer applies — and
-// fires only when BOTH sides are valid semver with differing majors; any
-// non-comparable input (mixed or absent validity) is conservatively NOT a major
-// jump, matching isNewer's mixed-validity "treat as up-to-date" posture so the
-// gate degrades safely rather than misclassifying (AC 06-02 Edge Case 1).
+// compares semver.Major when both sides are valid semver.
+//
+// When a side is version-shaped but NOT valid semver (a 4+-component or
+// leading-zero token that versionFromSlug's looser regex accepts, e.g. "4.8.1.2"),
+// it falls back to comparing the leading numeric component so a genuine major
+// crossing still gates: without this fallback isNewer's string-inequality branch
+// would advance the lock while isMajorJump reported "not major", silently carrying
+// a lock across an unverified major boundary (the exact HIGH-impact failure Story
+// 06 exists to prevent — TD-010). An ABSENT version on either side (empty, or an
+// alias slug with no numeric token) is conservatively NOT a major jump, so both
+// establishing a lock from empty and alias resolution stay ungated (AC 04-01
+// Edge Case 2; AC 06-02 Edge Case 1's mixed-validity "degrade safely" posture).
 func isMajorJump(local, remote string) bool {
 	lv := normalizeSemver(local)
 	rv := normalizeSemver(remote)
-	if !semver.IsValid(lv) || !semver.IsValid(rv) {
+	if semver.IsValid(lv) && semver.IsValid(rv) {
+		return semver.Major(lv) != semver.Major(rv)
+	}
+	lMaj := leadingMajor(local)
+	rMaj := leadingMajor(remote)
+	if lMaj == "" || rMaj == "" {
 		return false
 	}
-	return semver.Major(lv) != semver.Major(rv)
+	return lMaj != rMaj
+}
+
+// leadingMajor returns the leading numeric component of a version-shaped token
+// (stripping an optional "v" prefix and any dotted remainder), or "" when the
+// token has no numeric leading segment. It is the fail-safe major key for tokens
+// semver.IsValid rejects.
+func leadingMajor(v string) string {
+	v = strings.TrimPrefix(v, "v")
+	if i := strings.IndexByte(v, '.'); i >= 0 {
+		v = v[:i]
+	}
+	if v == "" {
+		return ""
+	}
+	for _, r := range v {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return v
 }
 
 // isNewer reports whether remote is a newer version than local. Valid semver
