@@ -232,7 +232,10 @@ func validateResolvedSlug(slug string) error {
 	}) >= 0 {
 		return fmt.Errorf("resolved slug %q contains control characters", slug)
 	}
-	if !strings.Contains(slug, "/") {
+	// Require a non-empty segment on BOTH sides of the first "/", so a malformed
+	// vendor-only ("z-ai/") or model-only ("/glm-5.2") slug is rejected rather
+	// than written into a lock.
+	if i := strings.IndexByte(slug, '/'); i <= 0 || i == len(slug)-1 {
 		return fmt.Errorf("resolved slug %q is not a vendor/model slug", slug)
 	}
 	return nil

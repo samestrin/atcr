@@ -250,6 +250,42 @@ func TestResolveModel_CreatedScan_NoEligible_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "z-ai/")
 }
 
+// TestResolveModel_CreatedScan_ControlCharSlug_Rejected proves the scan output is
+// sanitized: a selected entry whose slug carries a control character fails closed
+// with an error rather than resolving to a poisoned lock value.
+func TestResolveModel_CreatedScan_ControlCharSlug_Rejected(t *testing.T) {
+	got, err := ResolveModel(Binding{Family: "deepseek", Channel: "@stable"},
+		[]CatalogModel{cm("deepseek/x\ny", 100)})
+	require.Error(t, err)
+	assert.Empty(t, got)
+}
+
+// TestValidateResolvedSlug covers the sanitization guard directly: empty,
+// control-char, bare-vendor, bare-model, and valid inputs (mirrors 19.6 TD-008).
+func TestValidateResolvedSlug(t *testing.T) {
+	cases := []struct {
+		slug    string
+		wantErr bool
+	}{
+		{"deepseek/deepseek-v4-pro", false},
+		{"z-ai/glm-5.2", false},
+		{"", true},
+		{"   ", true},
+		{"no-slash-here", true},
+		{"z-ai/", true},         // bare vendor, empty model
+		{"/glm-5.2", true},      // empty vendor
+		{"deepseek/x\ny", true}, // control char
+	}
+	for _, tc := range cases {
+		err := validateResolvedSlug(tc.slug)
+		if tc.wantErr {
+			assert.Error(t, err, "slug %q must be rejected", tc.slug)
+		} else {
+			assert.NoError(t, err, "slug %q must be accepted", tc.slug)
+		}
+	}
+}
+
 // TestCatalogClient_FetchModels_MalformedJSON covers the parse-failure path:
 // invalid catalog JSON returns a wrapped, descriptive error, not a partial list.
 func TestCatalogClient_FetchModels_MalformedJSON(t *testing.T) {
