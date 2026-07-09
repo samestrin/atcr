@@ -424,5 +424,25 @@ func TestModelsCheckExit_MalformedSnapshot_Two(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to parse catalog snapshot")
 }
 
+// TestModelsCheckExit_ReadFailureOnly_Zero covers the 5.8.A LOW: a per-persona
+// read failure with NO valid findings still exits 0 (the check completed; the
+// failure is advisory on stderr), identical in default and --json modes.
+func TestModelsCheckExit_ReadFailureOnly_Zero(t *testing.T) {
+	dir := withEmptyPersonasDir(t)
+	withCatalogSnapshot(t, driftFixtureCatalog)
+	// The only community persona is unreadable → zero findings.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "anthony.yaml"), []byte("::: not yaml :::\n"), 0o644))
+
+	out, _, err := executeSplit(t, "models", "check")
+	require.NoError(t, err)
+	assert.Equal(t, 0, exitCode(err))
+	assert.Contains(t, out, "No drift, deprecation, or missing-slug conditions found.")
+
+	jsonOut, _, jerr := executeSplit(t, "models", "check", "--json")
+	require.NoError(t, jerr)
+	assert.Equal(t, 0, exitCode(jerr))
+	assert.Equal(t, "[]\n", jsonOut)
+}
+
 var _ = httptest.NewServer
 var _ = http.StatusOK

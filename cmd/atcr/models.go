@@ -71,7 +71,10 @@ func runModelsCheck(cmd *cobra.Command, args []string) error {
 
 	dir, err := personasDir()
 	if err != nil {
-		return err
+		// Failing to resolve the personas directory is a command/environment
+		// failure (exit 2), not a "conditions found" (1) result — consistent with
+		// the SnapshotModels failure below.
+		return usageError(err)
 	}
 
 	// Load the catalog snapshot up front. A missing/corrupt snapshot is a command
@@ -121,9 +124,13 @@ func runModelsCheck(cmd *cobra.Command, args []string) error {
 	findings := commpersonas.CheckDrift(locks, models)
 
 	if jsonOut {
-		if err := renderDriftJSON(cmd.OutOrStdout(), findings); err != nil {
-			return err
-		}
+		// A stdout write error is ignored symmetrically with the text path
+		// (renderDriftText also ignores its Fprintln errors), so the exit code is
+		// derived purely from the findings in BOTH modes — the identical-exit-code
+		// contract (AC 05-03 EC2). renderDriftJSON cannot fail on marshaling
+		// (DriftFinding is always encodable); the only possible error is an
+		// unrecoverable stdout write, which is not a usage/command failure.
+		_ = renderDriftJSON(cmd.OutOrStdout(), findings)
 	} else {
 		renderDriftText(cmd.OutOrStdout(), findings, checked, filter)
 	}
