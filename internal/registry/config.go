@@ -290,6 +290,12 @@ type AgentConfig struct {
 	RateLimited bool     `yaml:"rate_limited,omitempty"`
 	Fallback    string   `yaml:"fallback,omitempty"`
 	Payload     string   `yaml:"payload,omitempty"`
+	// Binding is the logical family/channel target (e.g. "anthropic/claude-opus@stable")
+	// the Epic 19.7 resolver reads at `atcr personas upgrade` time to recompute Model
+	// (the resolved lock the review path consumes). Additive and inert here: decoded
+	// permissively, never read on the review path, so a 19.6 config with no binding
+	// keeps loading unchanged and Model alone continues to serve as the lock.
+	Binding string `yaml:"binding,omitempty"`
 
 	// Active in Epic 2.0 — the engine acts on these (tool loop + budgets).
 	Tools           bool   `yaml:"tools"`             // enables the multi-turn tool loop

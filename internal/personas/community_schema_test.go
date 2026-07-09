@@ -119,3 +119,23 @@ func TestValidateCommunityPersonaYAML_RejectsOutOfRangeRole(t *testing.T) {
 	require.Error(t, registry.ValidateCommunityPersonaYAML("bad", []byte(yaml)),
 		"an out-of-range role must be rejected")
 }
+
+// TestValidateCommunityPersonaYAML_AcceptsBinding covers AC 02-01 Scenario 2: a
+// community YAML declaring `binding:` decodes through the strict KnownFields(true)
+// gate with no "unknown field" error, because Binding is inlined into AgentConfig
+// and is therefore a recognized key automatically.
+func TestValidateCommunityPersonaYAML_AcceptsBinding(t *testing.T) {
+	const yaml = "name: anthony\nversion: 1.0.0\ndescription: a sample\nprovider: openrouter\nmodel: anthropic/claude-opus-4.8\nbinding: anthropic/claude-opus@stable\n"
+	require.NoError(t, registry.ValidateCommunityPersonaYAML("anthony", []byte(yaml)),
+		"a recognized binding key must pass the strict community-persona decode")
+}
+
+// TestValidateCommunityPersonaYAML_BindingDoesNotWidenGate covers AC 02-01 Edge
+// Case 3: adding `binding` to the schema must NOT relax KnownFields(true) — a
+// genuinely unknown key still fails, even when a valid `binding` is also present.
+func TestValidateCommunityPersonaYAML_BindingDoesNotWidenGate(t *testing.T) {
+	const yaml = "provider: openrouter\nmodel: anthropic/claude-opus-4.8\nbinding: anthropic/claude-opus@stable\nfoobar: 1\n"
+	err := registry.ValidateCommunityPersonaYAML("bad", []byte(yaml))
+	require.Error(t, err, "a genuinely unknown key must still be rejected alongside a valid binding")
+	require.Contains(t, strings.ToLower(err.Error()), "foobar")
+}
