@@ -1336,12 +1336,12 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
 ## Final Phase: Validation
 
 ### Validation Checklist
-- [ ] All tests passing (T3: `go test ./...`)
-- [ ] Coverage meets threshold (≥80%, `go test -coverprofile=coverage.out ./...`)
-- [ ] Lint/format clean (`golangci-lint run`, `go vet ./...`, `gofmt`/`goimports`)
-- [ ] Build succeeds (`go build ./...`)
-- [ ] Zero live network in CI (httptest + checked-in snapshot)
-- [ ] All 8 ACs from original-requirements.md satisfied (AC1–AC8)
+- [x] All tests passing (T3: `go test ./...`) — full suite exit 0
+- [x] Coverage meets threshold (≥80%, `go test -coverprofile=coverage.out ./...`) — 89.1% repo total
+- [x] Lint/format clean (`golangci-lint run`, `go vet ./...`, `gofmt`/`goimports`) — 0 issues / clean / clean
+- [x] Build succeeds (`go build ./...`)
+- [x] Zero live network in CI (httptest + checked-in snapshot) — no live-OpenRouter dial in any test; `models refresh` gated off in CI
+- [x] All 8 ACs from original-requirements.md satisfied (AC1–AC8) — see Drift Analysis below
 
 ### Optional: Targeted Mutation Testing
 Mutation tooling is **UNAVAILABLE** in this project (no `cargo-mutants`/`mutmut`/`stryker`). Skip mutation testing. If a Go mutation tool (e.g. `go-mutesting`) is added later, target ONLY the high-risk changed files (`internal/personas/catalog.go`, `internal/personas/upgrade.go`).
@@ -1349,13 +1349,13 @@ Mutation tooling is **UNAVAILABLE** in this project (no `cargo-mutants`/`mutmut`
 
 ### Drift Analysis
 Compare the delivered implementation against [plan/original-requirements.md](plan/original-requirements.md):
-- [ ] AC1: alias routability confirmed/refuted + `@stable` heuristic recorded (Phase 1)
-- [ ] AC2: family/channel binding → locked slug; review runs the lock, zero endpoint call (Phase 2)
-- [ ] AC3: 7 alias-covered personas + created-timestamp for DeepSeek/Qwen/GLM (`z-ai/`) + explicit-pin never floats (Phase 3)
-- [ ] AC4: `personas upgrade` advances lock + before→after report; no silent runtime change (Phase 4)
-- [ ] AC5: `models check [--json]` drift/deprecation/missing + exit codes (Phase 5)
-- [ ] AC6: major-bump gate + verify flag; minor auto-locks (Phase 6)
-- [ ] AC7: init/quickstart working non-noisy roster; 19.6 HIGH closed; backward compat (Phase 7)
-- [ ] AC8: `go test ./...` green with checked-in snapshot (zero live network); docs updated (Phase 8)
+- [x] AC1: alias routability confirmed/refuted + `@stable` heuristic recorded (Phase 1)
+- [x] AC2: family/channel binding → locked slug; review runs the lock, zero endpoint call (Phase 2)
+- [x] AC3: 7 alias-covered personas + created-timestamp for DeepSeek/Qwen/GLM (`z-ai/`) + explicit-pin never floats (Phase 3)
+- [x] AC4: `personas upgrade` advances lock + before→after report; no silent runtime change (Phase 4)
+- [x] AC5: `models check [--json]` drift/deprecation/missing + exit codes (Phase 5)
+- [x] AC6: major-bump gate + verify flag; minor auto-locks (Phase 6)
+- [x] AC7: init/quickstart working non-noisy roster; 19.6 HIGH closed; backward compat (Phase 7)
+- [x] AC8: `go test ./...` green with checked-in snapshot (zero live network); docs updated (Phase 8)
 
 **Next:** `/execute-code-review @.planning/sprints/active/19.7_live_model_resolution/`
