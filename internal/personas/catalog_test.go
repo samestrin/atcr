@@ -250,6 +250,88 @@ func TestResolveModel_CreatedScan_NoEligible_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "z-ai/")
 }
 
+// --- Element 3 (AC 03-03): explicit-slug pin resolves unchanged, never floats --
+
+// TestResolveModel_Pin_ResolvesVerbatim covers AC 03-03 Scenario 1: a pinned
+// binding returns the pinned slug exactly, ignoring catalog contents.
+func TestResolveModel_Pin_ResolvesVerbatim(t *testing.T) {
+	models := []CatalogModel{cm("deepseek/deepseek-v9", 9999)}
+	got, err := ResolveModel(Binding{Pin: "deepseek/deepseek-v4-pro"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek/deepseek-v4-pro", got)
+}
+
+// TestResolveModel_Pin_InvariantAcrossSnapshots covers AC 03-03 Scenario 2: the
+// pin is identical across two catalogs whose newest vendor member differs —
+// proving it never floats onto the newer entry an unpinned persona would take.
+func TestResolveModel_Pin_InvariantAcrossSnapshots(t *testing.T) {
+	snapA := []CatalogModel{cm("deepseek/deepseek-v4-pro", 100)}
+	snapB := []CatalogModel{
+		cm("deepseek/deepseek-v4-pro", 100),
+		cm("deepseek/deepseek-v5", 999), // newer member exists in B
+	}
+	b := Binding{Family: "deepseek", Pin: "deepseek/deepseek-v4-pro", Channel: "@stable"}
+	gotA, err := ResolveModel(b, snapA)
+	require.NoError(t, err)
+	gotB, err := ResolveModel(b, snapB)
+	require.NoError(t, err)
+	assert.Equal(t, "deepseek/deepseek-v4-pro", gotA)
+	assert.Equal(t, gotA, gotB, "pin must not float onto the newer snapshot-B member")
+}
+
+// TestResolveModel_Pin_OverridesChannel covers AC 03-03 Scenario 3: a pin plus a
+// @latest channel still returns the pin unchanged — channel is irrelevant to a pin.
+func TestResolveModel_Pin_OverridesChannel(t *testing.T) {
+	got, err := ResolveModel(Binding{Pin: "z-ai/glm-5.2", Channel: "@latest"},
+		[]CatalogModel{cm("z-ai/glm-9", 9999)})
+	require.NoError(t, err)
+	assert.Equal(t, "z-ai/glm-5.2", got)
+}
+
+// TestResolveModel_Pin_PrecedenceOverAlias covers AC 03-03 Edge Case 1: a pin on a
+// family that would otherwise route through the alias table wins — the alias table
+// is never consulted (strategy order pin → alias → created-timestamp).
+func TestResolveModel_Pin_PrecedenceOverAlias(t *testing.T) {
+	got, err := ResolveModel(Binding{Family: "anthropic/claude-opus", Pin: "custom/override"}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "custom/override", got)
+	assert.NotEqual(t, "~anthropic/claude-opus-latest", got)
+}
+
+// TestResolveModel_Pin_PrecedenceOverCreatedScan covers AC 03-03 Edge Case 2: a pin
+// on a created-timestamp family wins over a newer vendor-prefix member.
+func TestResolveModel_Pin_PrecedenceOverCreatedScan(t *testing.T) {
+	models := []CatalogModel{
+		cm("z-ai/glm-5.2", 100),
+		cm("z-ai/glm-9", 9999), // newer; an unpinned glm binding would take this
+	}
+	got, err := ResolveModel(Binding{Family: "glm", Pin: "z-ai/glm-5.2", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, "z-ai/glm-5.2", got, "pin must win over the newer created-timestamp member")
+}
+
+// TestResolveModel_Pin_EmptyFallsThrough covers AC 03-03 Edge Case 3: an empty or
+// whitespace-only pin is treated as "no pin" and control falls through to the
+// alias/created-timestamp strategy, never returned as a valid empty slug.
+func TestResolveModel_Pin_EmptyFallsThrough(t *testing.T) {
+	for _, pin := range []string{"", "   ", "\t"} {
+		got, err := ResolveModel(Binding{Family: "anthropic/claude-opus", Pin: pin}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "~anthropic/claude-opus-latest", got,
+			"empty/whitespace pin %q must fall through to the alias strategy", pin)
+	}
+}
+
+// TestResolveModel_Pin_InvalidNoSlash_Error covers AC 03-03 Error Scenario 1: a
+// pin that is not a plausible vendor/model slug (no "/") is rejected, never passed
+// through blindly.
+func TestResolveModel_Pin_InvalidNoSlash_Error(t *testing.T) {
+	got, err := ResolveModel(Binding{Pin: "not-a-slug"}, nil)
+	require.Error(t, err)
+	assert.Empty(t, got)
+	assert.Contains(t, err.Error(), "pin")
+}
+
 // TestResolveModel_CreatedScan_ControlCharSlug_Rejected proves the scan output is
 // sanitized: a selected entry whose slug carries a control character fails closed
 // with an error rather than resolving to a poisoned lock value.

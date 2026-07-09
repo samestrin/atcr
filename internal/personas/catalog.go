@@ -162,7 +162,16 @@ var vendorPrefixTable = map[string]string{
 // upgrade). The alias and pin paths ignore models entirely; only the
 // created-timestamp scan reads it.
 func ResolveModel(b Binding, models []CatalogModel) (string, error) {
-	// Strategy 1 — explicit pin short-circuit (added in Element 3).
+	// Strategy 1 — explicit pin short-circuit. A non-empty pin is the always-
+	// available escape hatch: it is returned verbatim and NEVER floats, regardless
+	// of family, channel, or catalog contents. An empty/whitespace pin is treated
+	// as "no pin" and falls through to the alias/created-timestamp strategies.
+	if pin := strings.TrimSpace(b.Pin); pin != "" {
+		if err := validateResolvedSlug(pin); err != nil {
+			return "", fmt.Errorf("invalid pin %q for family %q: %w", pin, b.Family, err)
+		}
+		return pin, nil
+	}
 
 	// Strategy 2 — alias passthrough: a static map lookup, exact-match, no scan.
 	if slug, ok := aliasTable[b.Family]; ok {
