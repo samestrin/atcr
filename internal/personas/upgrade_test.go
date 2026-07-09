@@ -244,6 +244,59 @@ func TestUpgrade_BindingResolveFailAbortsCleanly(t *testing.T) {
 	assert.Equal(t, bindingPersonaYAML, string(got), "failed resolution must leave the lock unchanged")
 }
 
+// TestUpgrade_BindingEstablishesLockFromEmpty covers AC 04-01 Edge Case 2: a
+// persona with a binding but no prior lock (empty Model) adopts the resolved slug
+// to establish the lock, reporting "(none)" as the before side — the version-
+// advance gate applies only once a lock exists.
+func TestUpgrade_BindingEstablishesLockFromEmpty(t *testing.T) {
+	cat := catalogJSON([2]string{"deepseek/deepseek-v4.1", "1780000000"})
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	noLock := `provider: openrouter
+model: ""
+role: reviewer
+binding: deepseek@stable
+version: "1.0.0"
+`
+	installFixture(t, dir, "vendor/delia", noLock)
+
+	res, err := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", false)
+	require.NoError(t, err)
+	assert.True(t, res.SlugChanged, "an empty lock must be established, not reported up-to-date")
+	assert.Equal(t, "(none)", res.FromSlug)
+	assert.Equal(t, "deepseek/deepseek-v4.1", res.ToSlug)
+
+	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "delia.yaml"))
+	assert.Contains(t, string(got), "deepseek/deepseek-v4.1")
+}
+
+// TestUpgrade_AliasFamilyDoesNotAdvance encodes the documented alias semantic: an
+// alias family resolves to the constant provider alias slug (no numeric version),
+// which is non-comparable to the concrete lock, so the lock is retained and the
+// persona is reported unchanged — real model movement is provider-side.
+func TestUpgrade_AliasFamilyDoesNotAdvance(t *testing.T) {
+	srv := testServer(t, map[string]string{"/models": `{"data":[]}`})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	aliasPersona := `provider: openrouter
+model: anthropic/claude-opus-4.8
+role: reviewer
+binding: anthropic/claude-opus@stable
+version: "1.0.0"
+`
+	installFixture(t, dir, "vendor/anthony", aliasPersona)
+
+	res, err := Upgrade(srv.Client(), srv.URL, dir, "vendor/anthony", false)
+	require.NoError(t, err)
+	assert.True(t, res.Resolved)
+	assert.False(t, res.SlugChanged, "an alias family resolves to a constant, non-version slug — no advance")
+	assert.True(t, res.UpToDate)
+
+	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "anthony.yaml"))
+	assert.Equal(t, aliasPersona, string(got), "an unchanged alias persona must be byte-for-byte identical")
+}
+
 // TestUpgrade_EmptyBindingUsesVersionPath is the bindingless-persona case both
 // the maintainer and the gate reviewer flagged as unspecified: a persona with no
 // binding must fall through to 19.6's unchanged version-based upgrade path and

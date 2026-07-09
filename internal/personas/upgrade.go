@@ -226,8 +226,12 @@ func upgradeResolvedLock(client HTTPClient, baseURL, name, dest string, localDat
 	}
 
 	res := UpgradeResult{Name: name, Resolved: true, FromSlug: slugOrPlaceholder(currentSlug), ToSlug: newSlug}
-	if newSlug == currentSlug || !isNewer(versionFromSlug(currentSlug), versionFromSlug(newSlug)) {
-		// Unchanged or not a version-advance: retain the current lock, report unchanged.
+	// A persona with no prior lock (empty Model) always adopts the resolved slug to
+	// establish the lock — the version-advance gate only applies once a lock exists
+	// (AC 04-01 Edge Case 2). With a prior lock, advance only when the resolved slug
+	// both differs and is a version-advance; otherwise retain it and report unchanged.
+	noPriorLock := strings.TrimSpace(currentSlug) == ""
+	if !noPriorLock && (newSlug == currentSlug || !isNewer(versionFromSlug(currentSlug), versionFromSlug(newSlug))) {
 		res.UpToDate = true
 		res.ToSlug = slugOrPlaceholder(currentSlug)
 		return res, nil
