@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -690,4 +691,135 @@ func TestCatalogModel_TolerantCreated(t *testing.T) {
 	assert.Equal(t, int64(0), got["a/3"], "non-numeric string → 0")
 	assert.Equal(t, int64(0), got["a/4"], "bool → 0")
 	assert.Equal(t, int64(0), got["a/5"], "absent → 0")
+}
+
+// --- Story 08 (AC 08-01): the checked-in snapshot fixture exercises EVERY
+// resolver branch, proven by loading the real testdata file through the same
+// zero-live-network httptest path the resolver uses ---------------------------
+
+// loadFixtureModels serves the checked-in testdata/catalog_snapshot.json through
+// an httptest server and returns the parsed model list, so AC 08-01's coverage
+// assertions run against the real fixture with zero live network.
+func loadFixtureModels(t *testing.T) []CatalogModel {
+	t.Helper()
+	fixture, err := os.ReadFile("testdata/catalog_snapshot.json")
+	require.NoError(t, err, "catalog snapshot fixture must exist")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(fixture)
+	}))
+	t.Cleanup(ts.Close)
+	models, err := (&CatalogClient{HTTPClient: ts.Client(), BaseURL: ts.URL}).FetchModels()
+	require.NoError(t, err)
+	return models
+}
+
+// TestCatalogSnapshot_CoversAliasAndPrefixBranches (AC 08-01 Scenarios 1-3) asserts
+// the fixture carries an entry for every alias-covered vendor tier, ≥2 members
+// under each created-scan vendor prefix (deepseek/, qwen/, z-ai/), and all 10 of
+// Epic 19.6's pinned slugs (zero-migration coverage).
+func TestCatalogSnapshot_CoversAliasAndPrefixBranches(t *testing.T) {
+	models := loadFixtureModels(t)
+	byID := make(map[string]CatalogModel, len(models))
+	prefixCount := map[string]int{}
+	scanPrefixes := []string{"deepseek/", "qwen/", "z-ai/"}
+	for _, m := range models {
+		byID[m.ID] = m
+		for _, p := range scanPrefixes {
+			if strings.HasPrefix(m.ID, p) {
+				prefixCount[p]++
+			}
+		}
+	}
+
+	// Every alias slug the resolver can emit must be a real fixture entry.
+	for family, alias := range aliasTable {
+		assert.Contains(t, byID, alias, "fixture must contain alias entry %q (family %q)", alias, family)
+	}
+
+	// ≥2 candidates under each created-scan prefix (so newest-selection is exercised,
+	// not just a singleton), including z-ai/ for glenna — never glm/.
+	for _, p := range scanPrefixes {
+		assert.GreaterOrEqual(t, prefixCount[p], 2, "fixture needs ≥2 %s members", p)
+	}
+	assert.Zero(t, prefixCount["glm/"], "fixture must never use a glm/ namespace")
+
+	// All 10 of Epic 19.6's pinned slugs (zero-migration coverage): no `models check`
+	// missing condition for any seed lock.
+	for _, slug := range []string{
+		"anthropic/claude-opus-4.8", "anthropic/claude-sonnet-5",
+		"openai/gpt-5.5", "openai/gpt-5.4-mini",
+		"google/gemini-2.5-pro", "google/gemini-2.5-flash",
+		"deepseek/deepseek-v4-pro", "qwen/qwen3-coder-plus",
+		"moonshotai/kimi-k2.7-code", "z-ai/glm-5.2",
+	} {
+		assert.Contains(t, byID, slug, "fixture must contain pinned slug %q", slug)
+	}
+}
+
+// TestCatalogSnapshot_CoversPreviewUnderScanPrefix (AC 08-01 Edge Case 1) requires
+// the fixture to contain a qwen/ preview-tokened model whose `created` is NEWER
+// than the newest GA qwen model, so @stable must skip it and @latest must select
+// it — exercising the preview-exclusion branch of the created-timestamp scan
+// against real fixture data.
+func TestCatalogSnapshot_CoversPreviewUnderScanPrefix(t *testing.T) {
+	models := loadFixtureModels(t)
+
+	var newestGA, newestPreview *CatalogModel
+	for i := range models {
+		m := &models[i]
+		if !strings.HasPrefix(m.ID, "qwen/") || m.Created <= 0 {
+			continue
+		}
+		if hasPreviewToken(*m) {
+			if newestPreview == nil || m.Created > newestPreview.Created {
+				newestPreview = m
+			}
+		} else if newestGA == nil || m.Created > newestGA.Created {
+			newestGA = m
+		}
+	}
+	require.NotNil(t, newestGA, "fixture needs a GA (non-preview) qwen model")
+	require.NotNil(t, newestPreview, "fixture needs a preview-tokened qwen model (EC1 coverage)")
+	assert.Greater(t, newestPreview.Created, newestGA.Created,
+		"the preview qwen must be newer than the newest GA to exercise the skip branch")
+
+	// @stable skips the newer preview and selects the newest GA; @latest selects the
+	// newest preview — proving the fixture drives both sides of the branch.
+	stable, err := ResolveModel(Binding{Family: "qwen", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, newestGA.ID, stable, "@stable skips the preview, selects newest GA")
+	latest, err := ResolveModel(Binding{Family: "qwen", Channel: "@latest"}, models)
+	require.NoError(t, err)
+	assert.Equal(t, newestPreview.ID, latest, "@latest selects the newest preview")
+}
+
+// TestCatalogSnapshot_CoversExpiringNewestUnderScanPrefix (AC 08-01 Edge Case 2)
+// requires the fixture to contain a deepseek/ model that is the newest by `created`
+// under the prefix AND carries a non-null expiration_date, so @stable excludes it
+// and falls through to the next-newest non-expiring member — exercising the
+// deprecation-exclusion branch of the created-timestamp scan against real data.
+func TestCatalogSnapshot_CoversExpiringNewestUnderScanPrefix(t *testing.T) {
+	models := loadFixtureModels(t)
+	byID := make(map[string]CatalogModel, len(models))
+
+	var newest *CatalogModel
+	for i := range models {
+		m := &models[i]
+		byID[m.ID] = *m
+		if !strings.HasPrefix(m.ID, "deepseek/") || m.Created <= 0 {
+			continue
+		}
+		if newest == nil || m.Created > newest.Created {
+			newest = m
+		}
+	}
+	require.NotNil(t, newest, "fixture needs deepseek/ members")
+	require.True(t, isDeprecated(*newest),
+		"the newest-by-created deepseek member must carry an expiration_date (EC2 coverage)")
+
+	// @stable must exclude the expiring newest and select an older, non-expiring member.
+	stable, err := ResolveModel(Binding{Family: "deepseek", Channel: "@stable"}, models)
+	require.NoError(t, err)
+	assert.NotEqual(t, newest.ID, stable, "@stable must not select the expiring newest")
+	assert.False(t, isDeprecated(byID[stable]), "@stable selection must itself be non-expiring")
 }

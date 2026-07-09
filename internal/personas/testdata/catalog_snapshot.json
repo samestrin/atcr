@@ -21,11 +21,13 @@
     { "id": "google/gemini-2.5-flash", "canonical_slug": "google/gemini-2.5-flash", "created": 1776000005, "expiration_date": null },
     { "id": "moonshotai/kimi-k2.7-code", "canonical_slug": "moonshotai/kimi-k2.7-code", "created": 1776000006, "expiration_date": null },
 
+    { "id": "deepseek/deepseek-v5-pro", "canonical_slug": "deepseek/deepseek-v5-pro", "created": 1785000000, "expiration_date": "2027-06-30" },
     { "id": "deepseek/deepseek-v4-pro", "canonical_slug": "deepseek/deepseek-v4-pro", "created": 1777000679, "expiration_date": null },
     { "id": "deepseek/deepseek-v3.2-exp", "canonical_slug": "deepseek/deepseek-v3.2-exp", "created": 1759150481, "expiration_date": null },
 
-    { "id": "qwen/qwen3-coder-plus", "canonical_slug": "qwen/qwen3-coder-plus", "created": 1770000000, "expiration_date": null },
+    { "id": "qwen/qwen4-preview", "canonical_slug": "qwen/qwen4-preview", "created": 1785500000, "expiration_date": null },
     { "id": "qwen/qwen3.7-plus", "canonical_slug": "qwen/qwen3.7-plus", "created": 1780491783, "expiration_date": null },
+    { "id": "qwen/qwen3-coder-plus", "canonical_slug": "qwen/qwen3-coder-plus", "created": 1770000000, "expiration_date": null },
 
     { "id": "z-ai/glm-5.2", "canonical_slug": "z-ai/glm-5.2", "created": 1781631930, "expiration_date": null },
     { "id": "z-ai/glm-4.5", "canonical_slug": "z-ai/glm-4.5", "created": 1760000000, "expiration_date": "2026-12-31" },
