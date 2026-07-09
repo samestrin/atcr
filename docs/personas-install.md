@@ -153,6 +153,59 @@ atcr personas upgrade security/owasp
 
 Version comparison uses semantic-version ordering; non-semver version strings fall back to string inequality.
 
+**Resolved-lock reporting (Epic 19.7).** For a persona that declares a `binding:` (see [authoring §6](personas-authoring.md#6-model-familychannel-bindings-and-resolved-locks-epic-197)), `upgrade` re-resolves the binding and advances the recorded slug **lock**, printing the before→after slug:
+
+```bash
+atcr personas upgrade anthony
+# Upgraded anthony: anthropic/claude-opus-4.8 → anthropic/claude-opus-5.0
+```
+
+- A resolution that does not change the slug reports `<name>: <slug> (unchanged)`; a dry run reports `Would upgrade <name>: <from> → <to>`.
+- `upgrade` is the **only** command that advances a lock. It is also the only path that contacts the model catalog — resolution never happens on the review path.
+- **Major-bump verify flag:** when an upgrade crosses a major version (e.g. `4.x → 5.x`), the report appends `  ⚠ prompt tuned for the prior major — verify`. A major jump is additionally gated on the persona's fixture re-passing; if it does not, the lock is held and the command prints `Blocked <name>: <from> → <to> not applied — major version jump; … (lock unchanged)`. A minor advance auto-locks.
+
+## The `atcr models` commands
+
+The `models` command family inspects the resolved-slug locks against a checked-in catalog snapshot. It is read-only and deterministic — no network I/O on the default path.
+
+### `atcr models check [name] [--json]`
+
+Reports three conditions per installed community persona: a newer family member is available (**drift**), the locked slug is expiring (**deprecation**), or the locked slug is absent from the catalog (**missing**).
+
+```bash
+atcr models check
+# anthony: anthropic/claude-opus-4.8 → anthropic/claude-opus-5.0 (newer member)
+# glenna: z-ai/glm-4.5 has expiration 2026-12-31 (deprecation)
+# quinn: qwen/qwen3-legacy no longer in catalog (missing)
+```
+
+- A clean run prints `No drift, deprecation, or missing-slug conditions found.`
+- **Exit codes:** `0` = clean, `1` = one or more conditions found, `2` = usage or command failure. This exit-code contract is the seam Epic 19.8's mechanical maintenance agent wraps.
+- `--json` emits a machine-readable array (one object per condition); an empty result is `[]`.
+- `check` changes nothing — it only reports. Use `atcr personas upgrade` to act on drift.
+- The comparison uses a catalog snapshot compiled into the binary. Point `ATCR_CATALOG_SNAPSHOT` at a file to compare against a different snapshot.
+
+### `atcr models refresh` (maintainer-only)
+
+Regenerates the checked-in catalog snapshot from a live OpenRouter `/api/v1/models` fetch. This is a **maintainer** command — it is the only live-network touchpoint and is never run in CI:
+
+```bash
+OPENROUTER_API_KEY=… atcr models refresh
+# Wrote 344 models to internal/personas/testdata/catalog_snapshot.json
+```
+
+- On the live path it **requires `OPENROUTER_API_KEY`** and refuses to run under a CI environment, failing closed (exit 2) so CI can never fetch live.
+- It refuses to overwrite the snapshot with an empty catalog and leaves the existing snapshot untouched on any fetch or write error (atomic replace).
+- A refreshed snapshot reaches the default `models check` path by rebuilding the binary (the snapshot is embedded at build time) or, at runtime, via the `ATCR_CATALOG_SNAPSHOT` override.
+
+The catalog schema, exit-code contract, and `--json` shape are specified in the plan documentation: [models-check-command.md](../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/models-check-command.md), [openrouter-catalog-api.md](../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/openrouter-catalog-api.md), and [catalog-snapshot-fixture.md](../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/catalog-snapshot-fixture.md).
+
+## Reproducible by default: locks, not live models
+
+Reviews are **reproducible by default**. A persona's `model` field is a resolved **lock** — a concrete slug — and every review runs that locked slug. The resolver and the model catalog endpoint are **never touched on the review hot path**: a clean diff can never sprout new findings from a model that silently changed underneath it.
+
+The model changes only when you explicitly run `atcr personas upgrade`, which re-resolves any `binding:`, advances the lock, and reports exactly what changed. A persona installed before Epic 19.7 needs no migration — its pinned `model` value already serves as its initial lock. Silent runtime "always latest" resolution is deliberately not offered; opting into a floating channel is done through a persona's `binding:` at authoring time, not at review time. The reproducibility posture and the `fetch()`/`Upgrade()` reuse seams are detailed in [existing-resolver-patterns.md](../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/existing-resolver-patterns.md).
+
 ## Discover and install a persona by model
 
 Each community persona carries structured `provider`/`model` metadata (see [personas-authoring.md](personas-authoring.md)), so you can find one by the model you already have — search matches the structured `model` in `index.json`, not free-text. The end-to-end flow:
