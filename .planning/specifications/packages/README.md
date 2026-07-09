@@ -1,9 +1,9 @@
 # Package Documentation
 
 **Generated:** 2026-06-10
-**Last Reviewed:** 2026-07-02
+**Last Reviewed:** July 08, 2026 05:30:56PM
 **Package Manager:** go
-**Total Packages:** 6 (+ consolidated standard-library reference)
+**Total Packages:** 7 (+ consolidated standard-library reference)
 
 ---
 
@@ -29,6 +29,14 @@ Focused documentation with key APIs.
 | [github.com/google/jsonschema-go](jsonschema-go.md) | v0.4.3 | [Official](https://pkg.go.dev/github.com/google/jsonschema-go) |
 | [go-gitdiff](go-gitdiff.md) | v0.8.1 | [Official](https://github.com/bluekeyes/go-gitdiff) |
 
+### Utilities (1)
+
+Consolidated in [utilities.md](utilities.md).
+
+| Package | Version | Docs |
+|---------|---------|------|
+| [golang.org/x/mod](utilities.md#golangorgxmod) | v0.37.0 | [Official](https://pkg.go.dev/golang.org/x/mod) |
+
 ### Standard Library (consolidated)
 
 All other functionality is standard library by design (small-dependency-tree constraint). See [standard-library.md](standard-library.md) for per-subsystem usage: `net/http` + `encoding/json` (provider client + retries), `os/exec` (git), `text/template` (persona prompts), `context`/`sync` (fan-out lanes and timeouts), `testing` + `httptest` (provider mocks).
@@ -39,7 +47,7 @@ All other functionality is standard library by design (small-dependency-tree con
 
 - **Project:** atcr — Go CLI + MCP server (Epic 1.0)
 - **Go version:** 1.25+
-- **Last Full Refresh:** 2026-07-02
+- **Last Full Refresh (this run):** July 08, 2026 05:30:56PM
 - **Update with:** `/init-documentation --update`
 
 ---
