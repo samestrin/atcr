@@ -28,6 +28,21 @@ Before each phase, review `/CLAUDE.md` (or AGENTS.md).
 - Task 1.1: one authenticated `POST` to `/api/v1/chat/completions` with `"model": "~openai/gpt-latest"` + minimal message; record status, resolved model, and verbatim outcome.
 - Task 1.2: one authenticated `GET /api/v1/models`; scan `id`/`canonical_slug` for preview/beta/exp substrings actually present; confirm `z-ai/`, `deepseek/`, `qwen/` prefixes; record the `@stable` exclusion list + `expiration_date` rule.
 
+### Phase 4 Clarifications (recorded 2026-07-09)
+
+**Key Decisions:**
+- **Binding-string grammar (fully fail-closed; extends the forward-declared contract at `catalog.go:131-141`):** the persona's `binding:` string parses to `Binding{Family, Channel, Pin}` in this order — (1) empty `binding` → no resolution (see below); (2) `pin:` prefix → `Pin` = remainder (validated, verbatim, never floats); (3) contains `@` → split on the LAST `@`: `Family` = left part, `Channel` = the `@…` suffix (`@stable`/`@latest`); (4) bare, EXACT match against `aliasTable ∪ vendorPrefixTable` → that `Family` with default `@stable`; (5) anything else → ERROR `unrecognized binding %q: expected pin:<slug>, <family>@<channel>, or a known bare family`. Resolver dispatch order stays pin → alias → created-timestamp (`ResolveModel`).
+- **Typo gap CLOSED (Option A, `pin:` sigil):** because pins now require the `pin:` prefix, the old "else → pin" fallback becomes "else → error," so an alias-shaped family typo (`anthropic/claude-opu`) fails cleanly at the resolver instead of being silently accepted as a pin and 404-ing downstream. Zero migration cost — no persona declares a `binding:` field today and no plan example shows a bare-pin string. Authoring rule: explicit pins are written `pin:<vendor>/<model>` (no `@channel`; pins ignore channels per AC 03-03).
+- **Empty-binding upgrade behavior (required for AC7 / zero-migration):** when `binding` is empty (all 10 current personas), `Upgrade()` SKIPS the resolver entirely and keeps 19.6's unchanged `isNewer`/write version path (`upgrade.go:27-68`). Resolution engages only when a binding is present. An explicit test/AC-parity test for the bindingless persona is added this phase (both reviewer and maintainer flagged it as currently unspecified/untested).
+
+**Scope Boundaries:**
+- Phase 4 does NOT implement Phase 6's major-bump gate; AC 04-03 Error Scenario 1 gets a reportable hook only.
+- `internal/registry.ResolvePersona` and `internal/fanout/review.go` stay UNTOUCHED (AC 04-02 guardrail).
+- Story 3 is landed → tests call the real `personas.ResolveModel` and inject the catalog via an `httptest`-backed `HTTPClient`; no separate resolver-seam interface is added (minimum code).
+
+**Technical Approach:**
+- `Upgrade()` constructs `CatalogClient{HTTPClient: <injected>, BaseURL: CatalogBaseURL}` and fetches the catalog once per `Upgrade()` call (per-persona; AC 04-01 permits one fetch per persona). Resolved slug passes `validateResolvedSlug` before any lock write; a failed catalog fetch aborts cleanly with a descriptive error, leaving the existing lock unchanged (no partial advance, no stale fallback).
+
 ## Sprint Overview
 
 **Metadata:** See [metadata.md](metadata.md) for complete plan and sprint tracking details.
@@ -592,12 +607,12 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
 **Story:** [04: Reproducible Upgrade with Before→After Lock Reporting](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)
 **Focus:** Wire the Phase 3 resolver into `Upgrade()` immediately before the existing `isNewer`/write logic; extend `atcr personas upgrade` reporting to show before→after resolved slug; prove zero endpoint calls occur outside this explicit path.
 
-### 4.1 [ ] **[Upgrade resolves & advances lock + before→after report — RED](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
+### 4.1 [x] **[Upgrade resolves & advances lock + before→after report — RED](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
    **AC:** [04-01](plan/acceptance-criteria/04-01-upgrade-resolves-advances-lock-slug-report.md)
    Write failing tests: `upgrade` re-resolves, advances the lock, and reports before→after per persona (e.g. `anthony: opus-4.8 → 5.0`). Verify fail correctly.
    **Files:** `internal/personas/upgrade_test.go`, `cmd/atcr/personas_test.go` | **Duration:** 3h
 
-### 4.2 [ ] **[Upgrade resolves & advances lock — GREEN](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
+### 4.2 [x] **[Upgrade resolves & advances lock — GREEN](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
    Insert resolver call into `Upgrade()` before `isNewer`/write; extend reporting. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(personas): upgrade re-resolves + before→after lock report (green)"`
    **Files:** `internal/personas/upgrade.go`, `cmd/atcr/personas.go` | **Duration:** 4h
 
@@ -609,31 +624,33 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 4.2`
    - prompt: Files above + verbatim checklist, plus: "SECURITY — resolved slug validated before write to lock; ERROR HANDLING — a failed catalog fetch aborts cleanly (no partial lock advance, no silent stale fallback)." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (fresh-context general-purpose subagent) — 0 CRITICAL/HIGH:**
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | upgrade.go (upgradeResolvedLock gate) | An empty current lock never establishes: `isNewer("", newSlug)` hits the mixed-validity branch → false, so a no-prior-lock persona is reported up-to-date and the resolved slug is never written — violates AC 04-01 Edge Case 2 | FIXED inline in 4.3 — an empty current lock establishes the resolved slug unconditionally (skips the version-advance gate); added `TestUpgrade_BindingEstablishesLockFromEmpty` |
+   | MEDIUM | upgrade.go (writePersonaUnit reuse) | The binding path re-fetches the co-located `.md`; a transient non-404 `.md` error aborts an otherwise-successful lock advance, and a local custom prompt is re-synced from remote | CAPTURED → tech-debt-captured.md TD-003 (LOW). Reusing `writePersonaUnit` is the story's explicit mandate ("writes continue to flow through writePersonaUnit so install and upgrade stay consistent") and the `.md` fetch is AC 04-02's expected "persona-unit fetch"; write-only-yaml is a future robustness optimization |
+   | MEDIUM | upgrade.go:218 / personas.go:374 | `--all` fetches the full catalog once per bound persona (N fetches) | ACCEPTED AS DESIGNED — AC 04-01 & AC 04-03 explicitly state "one resolver/catalog fetch per persona, no batching optimization required by this story." No change |
+   | LOW | upgrade.go (gate) | Selection authority mismatch: `resolveNewestInPrefix` picks newest-by-`created`, but the lock gate advances only on higher semver — a newer-created-but-lower-semver slug is selected yet not adopted | CAPTURED → tech-debt-captured.md TD-004 (LOW, Story 6). This is the created-vs-semver divergence surfaced to the maintainer at the Phase 4 safety gate; story mandates `isNewer` reuse. Story 6's major/minor classification revisits it |
+   | LOW | upgrade_test.go | Coverage gaps: no empty-lock advance, no alias-family-through-Upgrade, no `.md`-preservation test | FIXED inline in 4.3 — added `TestUpgrade_BindingEstablishesLockFromEmpty` and `TestUpgrade_AliasFamilyDoesNotAdvance` (encodes the documented alias-is-constant semantic). `.md` preservation tied to TD-003 |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 4.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action Taken:** No CRITICAL/HIGH. One MEDIUM was a genuine AC-04-01-EC2 violation in this element's own code → fixed inline in 4.3 (+ 2 tests). One MEDIUM + one LOW captured to `tech-debt-captured.md` (TD-003, TD-004). One MEDIUM + test-gap LOW are AC-grounded/addressed. Proceeding.
 
-### 4.3 [ ] **[Upgrade resolves & advances lock — REFACTOR](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
+### 4.3 [x] **[Upgrade resolves & advances lock — REFACTOR](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
    1. Fix CRITICAL/HIGH issues from 4.2.A (if any)
    2. Improve quality, maintain green (T1), validate (T3)
    3. COMMIT: `git commit -m "refactor(personas): clean up upgrade resolver integration"`
    **Duration:** 2h
 
-### 4.4 [ ] **[Resolution isolated to upgrade path — RED](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
+### 4.4 [x] **[Resolution isolated to upgrade path — RED](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
    **AC:** [04-02](plan/acceptance-criteria/04-02-resolution-isolated-to-upgrade-path.md)
    Write failing tests proving NO endpoint/catalog call occurs on any path except explicit `upgrade`/`models` (inject an `HTTPClient` that fails on unexpected calls; exercise review + other commands). **High-complexity AC — most adversarial test design.** Verify fail correctly.
    **Files:** `internal/personas/upgrade_test.go` | **Duration:** 3h
+   **Note — transparent regression-lock RED:** Like AC 02-02/02-03, 04-02 is a negative-space/guardrail AC — the isolation already holds by construction after task 4.2 (the catalog is fetched only inside `upgradeResolvedLock`'s binding branch, and `internal/registry`↔`internal/personas` is an import cycle so `ResolvePersona`/review fan-out structurally cannot reach the catalog client). So the two tests PASS on first run rather than failing. They are permanent guards: `TestUpgrade_CatalogFetchedOnlyOnBindingPath` (recording `HTTPClient`) is genuinely discriminating — it fails if a bindingless upgrade fetches the catalog OR if the binding path stops fetching it; `TestReviewAndResolvePathsCannotReachCatalog` fails the build the moment any file in `internal/registry` or `internal/fanout` imports `internal/personas` (a superset of the "no import in persona.go/review.go" DoD bullet — compile-enforced, stronger than a per-path behavioral check).
 
-### 4.5 [ ] **[Resolution isolated to upgrade path — GREEN](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
+### 4.5 [x] **[Resolution isolated to upgrade path — GREEN](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
    Ensure resolution is invoked ONLY on the explicit upgrade path. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(personas): isolate resolution to upgrade path (green)"`
    **Files:** `internal/personas/upgrade.go` | **Duration:** 2h
+   **Done:** No production change required — the isolation was satisfied by task 4.2's design (single catalog construction site in `upgradeResolvedLock`; no cross-package import path to the catalog). Confirmed by both 4.4 tests. `--all` uses the same `runPersonaUpgrades`→`Upgrade` loop (each name through the same binding branch) and is exercised directly by AC 04-03. Committed test-only.
 
 ### 4.5.A [ ] **[Resolution isolation — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
    **Changed Files:** `internal/personas/upgrade.go`, `internal/personas/upgrade_test.go`
@@ -643,31 +660,30 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 4.5`
    - prompt: Files above + verbatim checklist, plus: "Prove no hot-path or incidental command triggers a catalog fetch — enumerate every caller of the resolver." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (fresh-context general-purpose subagent) — claim NOT refuted:**
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | upgrade.go:218 | Claim confirmed. Only production `CatalogClient{}` construction + only `FetchModels`/`ResolveModel` callers are in `upgradeResolvedLock`, reached solely from `Upgrade` when `parseBinding` returns present=true; bindingless branch never touches the catalog. `personas test/list/search/install` reach none of it. `registry.ResolvePersona` imports the embedded-prompt `personas` package, NOT `internal/personas`; `internal/fanout` imports neither — `go list -deps` reports ZERO transitive dependency on `internal/personas` from both. Both isolation tests genuinely discriminating (recordingClient wraps the exact client threaded into CatalogClient; import-scan matches the exact quoted path). | — |
+   | LOW (advisory) | upgrade_test.go (import-scan) | The import-scan was direct-only/non-recursive — a future subpackage under `internal/registry`/`internal/fanout` could evade it | FIXED inline in 4.6 — `TestReviewAndResolvePathsCannotReachCatalog` now `filepath.WalkDir`s the trees recursively (own freshly-authored test surface). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 4.6, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action Taken:** Claim confirmed (0 CRITICAL/HIGH/MEDIUM). One advisory LOW hardened inline (recursive import-scan). Production code unchanged — the isolation holds by construction. Proceeding.
 
-### 4.6 [ ] **[Resolution isolation — REFACTOR](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
-   1. Fix CRITICAL/HIGH issues from 4.5.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
+### 4.6 [x] **[Resolution isolation — REFACTOR](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
+   1. Fix CRITICAL/HIGH issues from 4.5.A (if any) — none; hardened the one advisory LOW (recursive import-scan) inline
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ green, lint 0 issues
    3. COMMIT: `git commit -m "refactor(personas): clean up resolution isolation"`
    **Duration:** 1h
 
-### 4.7 [ ] **[Dry-run reports without writing — RED](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
+### 4.7 [x] **[Dry-run reports without writing — RED](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
    **AC:** [04-03](plan/acceptance-criteria/04-03-dry-run-reports-without-writing.md)
    Write failing tests: a dry-run reports the before→after it WOULD apply and writes nothing to disk. Verify fail correctly.
    **Files:** `internal/personas/upgrade_test.go`, `cmd/atcr/personas_test.go` | **Duration:** 2h
+   **Note — transparent regression-lock RED:** the dry-run path (`if dryRun { return res }` before the write) and the CLI `Would upgrade … → …` report already landed in task 4.2, so the library dry-run tests PASS on first run. The genuinely-new, discriminating coverage is `TestUpgrade_BindingDryRunParity` (dry-run == real-run UpgradeResult, disk unchanged — the shared-computation guarantee) and `TestPersonasUpgrade_AllDryRunReportsNoWrite` (multi-persona `--all` fan-out: one line per persona, changing + unchanged, zero writes). AC 04-03 Error Scenario 1 (blocked major-bump reporting) is Story 6/Phase 6 (the gate does not exist yet) — reportable-hook only per the Phase 4 clarification.
 
-### 4.8 [ ] **[Dry-run reports without writing — GREEN](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
+### 4.8 [x] **[Dry-run reports without writing — GREEN](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
    Implement dry-run reporting path. (T1), verify all pass (T2), COMMIT: `git commit -m "feat(personas): upgrade dry-run reports without writing (green)"`
    **Files:** `internal/personas/upgrade.go`, `cmd/atcr/personas.go` | **Duration:** 2h
+   **Done:** No production change required — dry-run report parity was satisfied by task 4.2 (shared computation up to the `if dryRun` short-circuit; CLI dry-run branch). Committed test-only.
 
 ### 4.8.A [ ] **[Dry-run — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
    **Changed Files:** `internal/personas/upgrade.go`, `cmd/atcr/personas.go`, `internal/personas/upgrade_test.go`
@@ -677,31 +693,39 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Adversarial review: 4.8`
    - prompt: Files above + verbatim checklist, plus: "Confirm dry-run writes NOTHING (no lock file, no persona YAML mutation) on any branch." Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (fresh-context general-purpose subagent) — core claim confirmed:**
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE (core) | upgrade.go / unit.go | "No disk write on dry-run" holds: every filesystem mutation is confined to `writePersonaUnit`, called only AFTER the dryRun short-circuit on BOTH the 19.6 version path and the 19.7 resolution path; `from/to` slug + `SlugChanged` computed before the branch (report parity); tests compare byte-for-byte + per-persona `--all` | — |
+   | LOW | upgrade.go (resolution dryRun return) | Report-parity deviation: dry-run returned BEFORE `setModelField`+`ValidateCommunityPersonaYAML`, so a dry-run could advertise a would-be advance a real run would ERROR on (e.g. a binding persona with no `model:` key). Asymmetric with the 19.6 path, which validates before its dry-run return | FIXED inline in 4.9 — moved `setModelField`+validation BEFORE the dryRun short-circuit (only the write stays gated); added `TestUpgrade_BindingDryRunReportsValidationError` asserting dry-run and real-run errors are identical |
+   | LOW | upgrade_test.go | "No `.md` write/delete on dry-run" proven by code path but not by a test | FIXED inline in 4.9 — added `TestUpgrade_BindingDryRunLeavesMarkdownUntouched` (pre-plants a stale `.md`, asserts it survives a dry-run advance) |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 4.9, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action Taken:** Core claim confirmed. Two LOWs in this element's own code fixed inline in 4.9 (report-parity + the missing `.md`-untouched test). No tech-debt captured. Proceeding.
 
-### 4.9 [ ] **[Dry-run — REFACTOR](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
-   1. Fix CRITICAL/HIGH issues from 4.8.A (if any)
-   2. Improve quality, maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(personas): clean up dry-run path"`
+### 4.9 [x] **[Dry-run — REFACTOR](plan/user-stories/04-reproducible-upgrade-before-after-lock-reporting.md)**
+   1. Fix CRITICAL/HIGH issues from 4.8.A (if any) — none; fixed 2 LOW report-parity/test gaps inline
+   2. Improve quality, maintain green (T1), validate (T3) — ✅ full suite green, lint 0 issues
+   3. COMMIT: `git commit -m "refactor(personas): dry-run report parity + .md-untouched guard"`
    **Duration:** 1h
 
-### 4.10 [ ] **Phase 4 — DoD**
-   - [ ] All Phase 4 tests passing (T3)
-   - [ ] Coverage ≥80%; zero live network
-   - [ ] Lint/vet/fmt clean; build succeeds
-   - [ ] No silent runtime model change anywhere; failed fetch aborts cleanly
-   - [ ] DoD report per template
+### 4.10 [x] **Phase 4 — DoD**
+   - [x] All Phase 4 tests passing (T3: `go test ./...`) — full suite exit 0
+   - [x] Coverage ≥80%; zero live network — personas 85.9%, cmd/atcr 84.0%; all resolver/catalog tests use `httptest` + `ATCR_CATALOG_URL` (no live network)
+   - [x] Lint/vet/fmt clean; build succeeds — `golangci-lint run` 0 issues, `go vet ./...` clean, `gofmt -l` empty, `go build ./...` OK
+   - [x] No silent runtime model change anywhere; failed fetch aborts cleanly — resolution confined to `Upgrade`'s binding branch (AC 04-02 spy + import-zero tests); `TestUpgrade_BindingResolveFailAbortsCleanly` proves a failed fetch/unresolvable binding leaves the lock unchanged
+   - [x] DoD report per template
 
-### 4.11 [ ] **Phase 4 — GATE: Integration & Exit Review (subagent)**
+   ```
+   Story-04 DoD Complete
+   Auto: 3/3 (tests passing, lint/vet/fmt clean, build succeeds)
+   Story-Specific (AC 04-01/02/03): 5/5 + 4/4 + 4/4
+     04-01: Upgrade resolves binding → advances lock only on differ+version-advance; before→after slug report (change + unchanged, never omitted); empty-lock establishes with "(none)" placeholder; resolver/validation failures reported per-persona without corrupting the persona; catalog-fetch failure aborts cleanly (no partial advance / stale fallback)
+     04-02: recording-HTTPClient proves catalog fetched only on the binding branch (bindingless never fetches); recursive import-zero guard proves internal/registry (ResolvePersona) + internal/fanout (review) cannot reach the catalog (compile-enforced, go list -deps confirms zero transitive dep)
+     04-03: dry-run reports identical before→after with zero writes (byte-for-byte); dry-run/real-run UpgradeResult + error parity (setModelField+validate before the write gate); --all fan-out one line per persona; .md-untouched on dry-run. NOTE: blocked-major-bump reporting (AC 04-03 ErrorScenario1) is Story 6/Phase 6 — gate not yet built
+   Manual Review: [ ] Code reviewed (deferred to /execute-code-review)
+   ```
+
+### 4.11 [x] **Phase 4 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 4.
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -709,16 +733,16 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Phase 4 gate review`
    - prompt: Phase 4 changed files + verbatim hostile-integrator checklist. Emphasize: resolution happens ONLY at upgrade; before→after report is accurate; graceful degradation on fetch failure. Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (fresh-context hostile-integrator subagent) — 0 CRITICAL/HIGH:**
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | upgrade.go (upgradeResolvedLock → writePersonaUnit) | Resolved-lock advance re-fetches/deletes the co-located `.md`; a binding persona with a locally-customized `.md` but no upstream `.md` loses its prompt on a slug bump, and the advance is coupled to the personas endpoint; contradicts the `setModelField` doc-comment | DEFERRED → tech-debt TD-003 (upgraded LOW→MEDIUM, 2nd reviewer + data-loss framing). Not exploitable today (zero binding personas), and `writePersonaUnit` reuse is the story's mandate; the correct decoupling interacts with how future personas ship bindings. FIXED inline at the gate: the misleading `setModelField` "only change written to disk" comment (honesty) |
+   | LOW | upgrade.go (parseBinding @-branch) | Empty channel `family@` parsed as valid `Channel:"@"`: alias family silently ignores it (hides typo) while scan family fails at `normalizeChannel` — asymmetric | FIXED inline at the gate — `parseBinding` now rejects a bare trailing `@` (empty channel) for ALL families; added `TestParseBinding/empty_channel_errors` |
+   | LOW | upgrade.go (dry-run) | Dry-run parity excludes the `.md` write step (real run fetches/writes `.md`, dry-run does not) | Subsumed by TD-003 — the write-only-yaml resolution path closes both the data-loss risk and this parity gap |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Checklist items that held (subagent-confirmed):** resolver confinement sound (no `ResolveModel`/`FetchModels`/`CatalogClient` outside `catalog.go`/`upgrade.go`; import-zero guard bans registry/fanout from `internal/personas` → C3 holds); CLI switch in `runPersonaUpgrades` covers every `UpgradeResult` shape with a `default`, errors to stderr with `failed=true`, `--all` uses `continue` (no persona omitted, no partial corruption); `parseBinding`↔`ResolveModel` grammar consistent (multi-`@`/unknown families fail closed before any write); `binding` is a recognized `KnownFields(true)` key so strict decode accepts resolved YAML; byte-for-byte zero-migration preserved for unchanged personas; AC7 parity gate + paired-write rollback intact.
+
+   **Action Taken:** 0 CRITICAL/HIGH → no gate re-run required. 1 MEDIUM deferred (TD-003, enriched) with its concrete doc-comment inconsistency fixed inline; 1 LOW fixed inline (empty-channel fail-closed + test); 1 LOW subsumed by TD-003. ✅ **Phase gate passed.**
    **Duration:** 15-30 min
 
 **🚧 GATED STOP:** Phase 4 complete. Await review before Phase 5.
