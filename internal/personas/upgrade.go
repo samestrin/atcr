@@ -45,6 +45,17 @@ type UpgradeResult struct {
 	// SlugChanged is true when the resolved slug advanced the lock (written,
 	// unless dryRun).
 	SlugChanged bool
+
+	// MajorJump is true when the resolved transition crosses a major-version
+	// boundary (semver.Major differs). It drives the unconditional "prompt tuned
+	// for the prior major — verify" flag in the report, surfaced regardless of the
+	// fixture outcome (AC 06-01 Edge Case 1).
+	MajorJump bool
+	// FixtureBlocked is true when a major jump's fixture re-check did not pass, so
+	// the lock write was withheld; ToSlug still names the would-be slug.
+	FixtureBlocked bool
+	// FixtureReason is a human-readable explanation of a FixtureBlocked outcome.
+	FixtureReason string
 }
 
 // Upgrade re-fetches name from baseURL, compares its version to the installed
@@ -79,7 +90,7 @@ func Upgrade(client HTTPClient, baseURL, personasDir, name string, dryRun bool) 
 		return UpgradeResult{}, fmt.Errorf("persona %q has an invalid binding: %w", name, err)
 	}
 	if present {
-		return upgradeResolvedLock(client, name, dest, localData, lockMeta.Model, binding, dryRun)
+		return upgradeResolvedLock(client, name, personasDir, dest, localData, lockMeta.Model, binding, dryRun)
 	}
 
 	remoteData, err := FetchPersonaYAML(client, baseURL, name)
@@ -227,7 +238,7 @@ func versionFromSlug(slug string) string {
 // second network fetch (TD-003 resolution). This deliberately diverges from the
 // 19.6 version path's writePersonaUnit, whose .md re-sync is correct for a
 // full-unit version upgrade but wrong for a model-only lock advance.
-func upgradeResolvedLock(client HTTPClient, name, dest string, localData []byte, currentSlug string, b Binding, dryRun bool) (UpgradeResult, error) {
+func upgradeResolvedLock(client HTTPClient, name, personasDir, dest string, localData []byte, currentSlug string, b Binding, dryRun bool) (UpgradeResult, error) {
 	cat := &CatalogClient{HTTPClient: client, BaseURL: catalogBaseURL()}
 	models, err := cat.FetchModels()
 	if err != nil {
@@ -251,6 +262,30 @@ func upgradeResolvedLock(client HTTPClient, name, dest string, localData []byte,
 	}
 	res.SlugChanged = true
 	res.Upgraded = true
+
+	// Major-bump re-validation gate (Story 06): when the resolved transition
+	// crosses a major-version boundary, always surface the verify flag and gate
+	// the lock write on the persona's committed fixture re-passing. A minor advance
+	// (same major) falls straight through unchanged — the fixture never runs on the
+	// common path (AC 06-01 Edge Case 3). A passing fixture proves only that the
+	// template still renders, never that the prompt is well-tuned for the new
+	// major, so the verify flag is unconditional on every major jump.
+	if isMajorJump(versionFromSlug(currentSlug), versionFromSlug(newSlug)) {
+		res.MajorJump = true
+		outcome, ferr := newUpgradeFixtureRunner(personasDir).RunFixture(name)
+		if ferr != nil {
+			return UpgradeResult{}, fmt.Errorf("persona %q: major-version fixture re-check failed: %w", name, ferr)
+		}
+		if !fixturePassed(outcome) {
+			// Withhold the write, but still report the would-be slug (res.ToSlug)
+			// and the reason the lock did not advance.
+			res.SlugChanged = false
+			res.Upgraded = false
+			res.FixtureBlocked = true
+			res.FixtureReason = fixtureBlockReason(outcome)
+			return res, nil
+		}
+	}
 
 	// Compute and validate the new lock BEFORE the dry-run short-circuit, so a
 	// dry-run surfaces exactly the error a real run would and never advertises a
@@ -328,14 +363,62 @@ func setModelField(data []byte, newModel string) ([]byte, error) {
 	return nil, fmt.Errorf("persona has no model field to advance")
 }
 
+// newUpgradeFixtureRunner builds the FixtureRunner the major-bump gate uses to
+// re-check a persona's committed fixture before advancing a lock across a major
+// boundary. It is a package var so tests inject a deterministic stub without
+// changing Upgrade's signature (mirrors the envCatalogURL override seam).
+var newUpgradeFixtureRunner = func(personasDir string) FixtureRunner {
+	return TemplateFixtureRunner{PersonasDir: func() (string, error) { return personasDir, nil }}
+}
+
+// fixturePassed reports whether a fixture outcome counts as a passing re-check for
+// the major-bump gate: a present fixture with every case passing. An absent
+// fixture is treated as non-passing — an untestable major jump must not advance
+// the lock silently (AC 06-01 Edge Case 2).
+func fixturePassed(o FixtureOutcome) bool {
+	return o.HasFixture && o.Total > 0 && o.Passed == o.Total
+}
+
+// fixtureBlockReason renders the human-readable reason a major-jump lock write was
+// withheld, distinguishing an absent fixture from one that ran but did not pass.
+func fixtureBlockReason(o FixtureOutcome) string {
+	if !o.HasFixture {
+		return "no committed fixture to re-check"
+	}
+	return fmt.Sprintf("fixture re-check failed (%d/%d cases passed)", o.Passed, o.Total)
+}
+
+// normalizeSemver renders a bare or "v"-prefixed version token in the single
+// "v"-prefixed form isNewer and the major-jump classifier both consume, so both
+// checks validate and compare the exact same normalized string — no divergent
+// parsing path (AC 06-01/06-02 Input Validation).
+func normalizeSemver(v string) string {
+	return "v" + strings.TrimPrefix(v, "v")
+}
+
+// isMajorJump reports whether remote crosses a major-version boundary relative to
+// local. It reuses normalizeSemver — the same normalization isNewer applies — and
+// fires only when BOTH sides are valid semver with differing majors; any
+// non-comparable input (mixed or absent validity) is conservatively NOT a major
+// jump, matching isNewer's mixed-validity "treat as up-to-date" posture so the
+// gate degrades safely rather than misclassifying (AC 06-02 Edge Case 1).
+func isMajorJump(local, remote string) bool {
+	lv := normalizeSemver(local)
+	rv := normalizeSemver(remote)
+	if !semver.IsValid(lv) || !semver.IsValid(rv) {
+		return false
+	}
+	return semver.Major(lv) != semver.Major(rv)
+}
+
 // isNewer reports whether remote is a newer version than local. Valid semver
 // is compared structurally. When exactly one side is valid semver the versions
 // are not comparable, so the local copy is treated as up-to-date to avoid
 // silently overwriting a newer or customized local persona. Otherwise any
 // difference is treated as an upgrade.
 func isNewer(local, remote string) bool {
-	lv := "v" + strings.TrimPrefix(local, "v")
-	rv := "v" + strings.TrimPrefix(remote, "v")
+	lv := normalizeSemver(local)
+	rv := normalizeSemver(remote)
 	lValid := semver.IsValid(lv)
 	rValid := semver.IsValid(rv)
 	switch {

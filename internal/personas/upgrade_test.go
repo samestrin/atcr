@@ -1,6 +1,7 @@
 package personas
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -544,4 +545,151 @@ version: "1.1.0"
 	assert.True(t, res.Upgraded)
 	assert.Equal(t, "1.0.0", res.FromVersion)
 	assert.Equal(t, "1.1.0", res.ToVersion)
+}
+
+// --- Phase 6: major-bump re-validation gate (AC 06-01) ----------------------
+
+// spyRunner is a deterministic FixtureRunner stub. It records call count so a
+// test can assert whether the major-jump gate invoked the fixture, and returns a
+// controlled outcome/error without any real LLM or render call.
+type spyRunner struct {
+	outcome FixtureOutcome
+	err     error
+	calls   int
+}
+
+func (s *spyRunner) RunFixture(string) (FixtureOutcome, error) {
+	s.calls++
+	return s.outcome, s.err
+}
+
+// withStubRunner swaps the package-level upgrade fixture-runner seam for the
+// duration of a test, restoring it afterward. This injects a deterministic
+// FixtureRunner into Upgrade's major-jump gate without changing Upgrade's public
+// signature or touching its ~20 existing call sites.
+func withStubRunner(t *testing.T, s FixtureRunner) {
+	t.Helper()
+	prev := newUpgradeFixtureRunner
+	newUpgradeFixtureRunner = func(string) FixtureRunner { return s }
+	t.Cleanup(func() { newUpgradeFixtureRunner = prev })
+}
+
+// majorJumpPersonaYAML locks a deepseek persona at v4.9; a catalog offering
+// deepseek-v5.0 is a major-boundary crossing (v4 → v5).
+const majorJumpPersonaYAML = `provider: openrouter
+model: deepseek/deepseek-v4.9
+role: reviewer
+binding: deepseek@stable
+version: "1.0.0"
+`
+
+// TestUpgrade_MajorJumpPassingFixtureAdvancesAndFlags: AC 06-01 Scenario 1 — a
+// major jump whose fixture re-passes advances the lock AND still surfaces the
+// unconditional verify flag.
+func TestUpgrade_MajorJumpPassingFixtureAdvancesAndFlags(t *testing.T) {
+	cat := catalogJSON([2]string{"deepseek/deepseek-v5.0", "1780000000"})
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	installFixture(t, dir, "vendor/delia", majorJumpPersonaYAML)
+	runner := &spyRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}}
+	withStubRunner(t, runner)
+
+	res, err := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", false)
+	require.NoError(t, err)
+	assert.True(t, res.SlugChanged, "a passing major-jump fixture must advance the lock")
+	assert.True(t, res.MajorJump, "a v4→v5 crossing must be classified as a major jump")
+	assert.False(t, res.FixtureBlocked, "a passing fixture does not block the write")
+	assert.Equal(t, "deepseek/deepseek-v4.9", res.FromSlug)
+	assert.Equal(t, "deepseek/deepseek-v5.0", res.ToSlug)
+	assert.Equal(t, 1, runner.calls, "the fixture must run exactly once on a major jump")
+
+	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "delia.yaml"))
+	assert.Contains(t, string(got), "deepseek/deepseek-v5.0", "the lock advanced on disk")
+}
+
+// TestUpgrade_MajorJumpFailingFixtureBlocksWrite: AC 06-01 Scenario 2 — a failing
+// fixture on a major jump blocks the lock write, reports the would-be slug + a
+// block reason + the verify flag, and leaves the on-disk lock untouched.
+func TestUpgrade_MajorJumpFailingFixtureBlocksWrite(t *testing.T) {
+	cat := catalogJSON([2]string{"deepseek/deepseek-v5.0", "1780000000"})
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	installFixture(t, dir, "vendor/delia", majorJumpPersonaYAML)
+	runner := &spyRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 0, Total: 1}}
+	withStubRunner(t, runner)
+
+	res, err := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", false)
+	require.NoError(t, err, "a fixture that merely fails is not a command error")
+	assert.True(t, res.MajorJump)
+	assert.True(t, res.FixtureBlocked, "a failing major-jump fixture must block the write")
+	assert.False(t, res.SlugChanged, "a blocked major jump must not advance the lock")
+	assert.Equal(t, "deepseek/deepseek-v5.0", res.ToSlug, "the report still names the would-be slug")
+	assert.NotEmpty(t, res.FixtureReason, "the block must carry a human-readable reason")
+	assert.Equal(t, 1, runner.calls)
+
+	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "delia.yaml"))
+	assert.Equal(t, majorJumpPersonaYAML, string(got), "a blocked major jump must leave the lock byte-for-byte unchanged")
+}
+
+// TestUpgrade_MajorJumpNoFixtureBlocks: AC 06-01 Edge Case 2 — an absent fixture
+// on a major jump is treated as non-passing; the lock does not silently advance.
+func TestUpgrade_MajorJumpNoFixtureBlocks(t *testing.T) {
+	cat := catalogJSON([2]string{"deepseek/deepseek-v5.0", "1780000000"})
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	installFixture(t, dir, "vendor/delia", majorJumpPersonaYAML)
+	runner := &spyRunner{outcome: FixtureOutcome{HasFixture: false}}
+	withStubRunner(t, runner)
+
+	res, err := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", false)
+	require.NoError(t, err)
+	assert.True(t, res.MajorJump)
+	assert.True(t, res.FixtureBlocked, "an untestable major jump must not advance the lock")
+	assert.False(t, res.SlugChanged)
+
+	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "delia.yaml"))
+	assert.Equal(t, majorJumpPersonaYAML, string(got), "no-fixture major jump must leave the lock unchanged")
+}
+
+// TestUpgrade_MajorJumpFixtureRunErrors: AC 06-01 Error Scenario 1 — a fixture
+// that ERRORS (not merely fails) surfaces as a command error and does not advance.
+func TestUpgrade_MajorJumpFixtureRunErrors(t *testing.T) {
+	cat := catalogJSON([2]string{"deepseek/deepseek-v5.0", "1780000000"})
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	installFixture(t, dir, "vendor/delia", majorJumpPersonaYAML)
+	runner := &spyRunner{err: fmt.Errorf("render persona \"delia\": boom")}
+	withStubRunner(t, runner)
+
+	_, err := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "major-version fixture re-check failed")
+
+	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "delia.yaml"))
+	assert.Equal(t, majorJumpPersonaYAML, string(got), "a fixture execution error must leave the lock unchanged")
+}
+
+// TestUpgrade_MajorJumpDryRunReportsWithoutWriting: report parity (AC 04-03) — a
+// dry-run major jump surfaces the same classification and would-be advance while
+// writing nothing.
+func TestUpgrade_MajorJumpDryRunReportsWithoutWriting(t *testing.T) {
+	cat := catalogJSON([2]string{"deepseek/deepseek-v5.0", "1780000000"})
+	srv := testServer(t, map[string]string{"/models": cat})
+	t.Setenv(envCatalogURL, srv.URL)
+	dir := t.TempDir()
+	installFixture(t, dir, "vendor/delia", majorJumpPersonaYAML)
+	runner := &spyRunner{outcome: FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}}
+	withStubRunner(t, runner)
+
+	res, err := Upgrade(srv.Client(), srv.URL, dir, "vendor/delia", true)
+	require.NoError(t, err)
+	assert.True(t, res.MajorJump)
+	assert.True(t, res.SlugChanged, "dry-run must still report the would-be advance")
+
+	got, _ := os.ReadFile(filepath.Join(dir, "vendor", "delia.yaml"))
+	assert.Equal(t, majorJumpPersonaYAML, string(got), "dry-run must write nothing")
 }

@@ -378,6 +378,10 @@ func runPersonaUpgrades(cmd *cobra.Command, dir string, names []string, dryRun b
 			continue
 		}
 		switch {
+		case res.Resolved && res.FixtureBlocked:
+			// 19.7 major-bump gate: the fixture re-check did not pass, so the lock
+			// is withheld. Report the would-be slug and the reason; the lock stays.
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Blocked %s: %s → %s not applied — major version jump; %s (lock unchanged)\n", name, res.FromSlug, res.ToSlug, res.FixtureReason)
 		case res.Resolved && res.SlugChanged && dryRun:
 			// 19.7 resolved-lock path (dry run): report the before→after slug.
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would upgrade %s: %s → %s\n", name, res.FromSlug, res.ToSlug)
@@ -392,6 +396,12 @@ func runPersonaUpgrades(cmd *cobra.Command, dir string, names []string, dryRun b
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would upgrade %s: %s → %s\n", name, res.FromVersion, res.ToVersion)
 		default:
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Upgraded %s: %s → %s\n", name, res.FromVersion, res.ToVersion)
+		}
+		// A major-version jump always surfaces the verify flag, independent of the
+		// fixture outcome: a passing fixture proves the template renders, never that
+		// the prompt is still well-tuned for the new major (AC 06-01 Edge Case 1).
+		if res.MajorJump {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  ⚠ prompt tuned for the prior major — verify\n")
 		}
 	}
 	if failed {
