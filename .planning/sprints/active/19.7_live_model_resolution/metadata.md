@@ -57,10 +57,10 @@ _Populated by `/execute-sprint` as phases complete._
 | 2 | 02: Family/Channel Binding & Resolved Lock | ✅ Complete |
 | 3 | 03: Hybrid Resolver (Alias / Created-Timestamp / Explicit-Pin) | ✅ Complete |
 | 4 | 04: Reproducible Upgrade with Before→After Lock Reporting | ✅ Complete |
-| 5 | 05: `atcr models check` Drift Report | ✅ Complete (gated stop) |
-| 6 | 06: Major-Bump Re-Validation Gate | ⬜ Not started |
-| 7 | 07: init/quickstart Roster Reconciliation | ⬜ Not started |
-| 8 | 08: Catalog Snapshot Fixture, Refresh Command & Documentation | ⬜ Not started |
+| 5 | 05: `atcr models check` Drift Report | ✅ Complete |
+| 6 | 06: Major-Bump Re-Validation Gate | ✅ Complete |
+| 7 | 07: init/quickstart Roster Reconciliation | ✅ Complete |
+| 8 | 08: Catalog Snapshot Fixture, Refresh Command & Documentation | ✅ Complete |
 
 ---
 
@@ -70,21 +70,23 @@ _Populated by `/execute-sprint` as phases complete._
 
 ## Execution Metrics
 
-_Populated by `/execute-sprint` upon completion_
+**Status:** Ready for Review
 
-**Executed:** _Not yet executed_
-**Runtime:** _TBD_
-**Status:** _TBD_
+**Executed:** 2026-07-09 (final phase; Phases 1–7 executed across prior gated sessions)
 
 ### Progress
-- **Phases:** _TBD_
-- **Work Items:** _TBD_
+- **Phases:** 8/8
+- **Stories:** 8/8
+- **Tasks:** 160/160
 
 ### Quality
-- **Tests:** _TBD_
-- **Coverage:** _TBD_
-- **Lint:** _TBD_
+- **Tests:** full suite `go test ./...` passing (709 tests in internal/personas + cmd/atcr); zero live network in CI
+- **Coverage:** 89.1% repo total (personas 83.8%, cmd/atcr 84.4%; ≥80% baseline met)
+- **Lint:** Clean (`golangci-lint run` 0 issues, `go vet` clean, `gofmt` clean, `go build ./...` OK)
 
 ### Changes
-- **Files Changed:** _TBD_
-- **Commits:** _TBD_
+- **Files Changed:** 36 (26 code/docs, 10 planning) vs `main`
+- **Commits:** 57 on `feature/19.7_live_model_resolution`
+
+### Tech Debt Captured
+- 16 items in `tech-debt-captured.md` (TD-001…TD-016); TD-001/002/003/010 resolved in-sprint. Phase 8 added TD-014 (slug validation on refresh write), TD-015 (docs link into `active/` path breaks on archive), TD-016 (AC 08-02 Security prose vs unauthenticated-GET code).
