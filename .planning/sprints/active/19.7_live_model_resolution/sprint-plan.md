@@ -563,7 +563,7 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    Manual Review: [ ] Code reviewed (deferred to /execute-code-review)
    ```
 
-### 3.17 [ ] **Phase 3 — GATE: Integration & Exit Review (subagent)**
+### 3.17 [x] **Phase 3 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3.
 
    **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
@@ -571,16 +571,16 @@ Full standards: [coding-standards.md](../../../specifications/coding-standards.m
    - description: `Phase 3 gate review`
    - prompt: Phase 3 changed files + verbatim hostile-integrator checklist (CONTRACT EXIT / CONFIG SURFACE / INTEGRATION / PHASE-EXIT CONTRACT / REGRESSION). Emphasize: three strategies are independently testable and don't cross-contaminate; catalog client is the ONLY code that talks to the external API; `ResolvePersona` untouched. Output: ONLY the findings table.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (fresh-context hostile-integrator subagent) — 0 CRITICAL/HIGH:**
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | catalog_test.go | The checked-in `catalog_snapshot.json` was only parsed, never fed through `ResolveModel` → fixture↔resolver drift (or a filter regression) could break Phase 4 zero-migration with a green suite | FIXED inline (`e64a3bdb`) — added `TestResolveModel_AgainstFixture_ScanFamilies`: deepseek→`deepseek-v4-pro`, glm→`z-ai/glm-5.2` (@stable + @latest) EQUAL the 19.6 pins; qwen→`qwen3.7-plus` ≠ coder pin (documents why quinn is explicit-pin). Fixed inline (not deferred): it locks the exact artifact Phase 4 inherits + is own freshly-authored test code |
+   | LOW | catalog.go (Family tables) | Heterogeneous `Family` key space (vendor/tier for alias, bare-brand for scan, `glm`→`z-ai/`); Phase 4's binding parser must emit exact shapes or hit the generic unresolvable-family error | FIXED inline (`e64a3bdb`) — added a "Family grammar" contract doc comment beside the tables; the new fixture test asserts each scan family resolves |
+   | LOW | catalog.go (resolveNewestInPrefix) | Channel validated only on the scan path; a typo'd channel on an alias/pin binding is silently ignored (8/10 personas) | ACCEPTED AS DESIGNED — uniform top-level channel validation would contradict AC 03-03 (pin overrides/ignores channel) and AC 03-05 EC2 (alias ignores channel entirely). `TestResolveModel_InvalidChannel_IgnoredOnAliasAndPin` encodes this deliberate, AC-grounded behavior. No change |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Subagent confirmed:** `persona.go`/`client.go` empty diff vs main (genuinely untouched); `CatalogClient` is the ONLY OpenRouter caller (reuses `fetch()` guards, not forked); all 10 of 19.6's pinned slugs present in the fixture; no strategy cross-contamination (pin can't float, alias isn't scanned, channel doesn't leak onto alias/pin).
+
+   **Action Taken:** 0 CRITICAL/HIGH → no re-run required. 1 MEDIUM + 1 LOW were gaps in this phase's own freshly-authored test/doc surface guarding Phase 4's inherited contract → fixed inline (`e64a3bdb`). 1 LOW accepted as AC-grounded design. No tech-debt captured. ✅ **Phase gate passed.**
    **Duration:** 15-30 min
 
 **🚧 GATED STOP:** Phase 3 complete. Await review before Phase 4.
