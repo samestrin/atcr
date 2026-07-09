@@ -62,16 +62,25 @@ func MarshalSnapshot(models []CatalogModel) ([]byte, error) {
 		Data []snapshotModelOut `json:"data"`
 	}{Data: make([]snapshotModelOut, len(models))}
 	for i, m := range models {
-		out.Data[i] = snapshotModelOut{
-			ID:             m.ID,
-			CanonicalSlug:  m.CanonicalSlug,
-			Created:        m.Created,
-			ExpirationDate: m.ExpirationDate,
-		}
+		// CatalogModel and snapshotModelOut share an identical field layout (the
+		// latter only adds JSON tags), so a struct conversion is exact.
+		out.Data[i] = snapshotModelOut(m)
 	}
 	b, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	return append(b, '\n'), nil
+}
+
+// WriteSnapshot marshals models into the snapshot envelope and writes it to path
+// ATOMICALLY (temp file + rename in the same directory, via writeFileAtomic), so a
+// partial or failed write can never truncate or corrupt an existing snapshot — the
+// prior file survives any marshal or write failure. Used by `atcr models refresh`.
+func WriteSnapshot(path string, models []CatalogModel) error {
+	data, err := MarshalSnapshot(models)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(path, data)
 }

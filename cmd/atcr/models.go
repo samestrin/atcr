@@ -77,16 +77,29 @@ func newModelsRefreshCmd() *cobra.Command {
 
 func runModelsRefresh(cmd *cobra.Command, _ []string) error {
 	output, _ := cmd.Flags().GetString("output")
+	overridden := commpersonas.CatalogURLOverride() != ""
+
+	// Default-output guard: under an ATCR_CATALOG_URL override (tests / a pointed-at
+	// server) require an explicit --output, so an override run can never silently
+	// rewrite the checked-in default fixture from an arbitrary override catalog.
 	if strings.TrimSpace(output) == "" {
+		if overridden {
+			return usageError(fmt.Errorf("--output is required when ATCR_CATALOG_URL is set (refusing to rewrite the default fixture from an override catalog)"))
+		}
 		output = defaultSnapshotOutput
 	}
 
-	// Maintainer-auth gate: on the live default path (no ATCR_CATALOG_URL override)
-	// require OPENROUTER_API_KEY. CI has no key, so refresh fails closed there and
-	// can never fetch live — the key presence is the maintainer gate even though the
-	// catalog GET itself is unauthenticated (AC 08-02 Error Scenario 1).
-	if commpersonas.CatalogURLOverride() == "" && strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) == "" {
-		return usageError(fmt.Errorf("OPENROUTER_API_KEY is required to refresh the catalog snapshot"))
+	// Never-CI-invoked guard (AC 08-02): on the live path (no override) refuse to run
+	// under a CI environment AND require OPENROUTER_API_KEY. Both fail closed (exit 2)
+	// so CI — which sets CI/GITHUB_ACTIONS and may export the key — can never fetch
+	// live. The catalog GET itself is unauthenticated; the key is the maintainer gate.
+	if !overridden {
+		if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+			return usageError(fmt.Errorf("atcr models refresh is a maintainer-only command and must not run in CI"))
+		}
+		if strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) == "" {
+			return usageError(fmt.Errorf("OPENROUTER_API_KEY is required to refresh the catalog snapshot"))
+		}
 	}
 
 	// Fetch once. Any transport/status error leaves the existing fixture untouched
@@ -95,20 +108,34 @@ func runModelsRefresh(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return usageError(err)
 	}
-	if len(models) == 0 {
+	// Refuse to overwrite the fixture with an empty or substanceless catalog: require
+	// at least one entry carrying a non-empty id (a {"data":[{}]} payload is empty in
+	// substance even though len == 1).
+	if substantiveModelCount(models) == 0 {
 		return usageError(fmt.Errorf("refusing to overwrite fixture with empty catalog"))
 	}
 
-	data, err := commpersonas.MarshalSnapshot(models)
-	if err != nil {
-		return usageError(err)
-	}
-	if err := os.WriteFile(output, data, 0o644); err != nil {
+	// Atomic write: WriteSnapshot writes to a temp file and renames, so a failed
+	// write can never truncate or corrupt an existing snapshot.
+	if err := commpersonas.WriteSnapshot(output, models); err != nil {
 		return usageError(fmt.Errorf("writing catalog snapshot to %s: %w", output, err))
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Wrote %d models to %s\n", len(models), output)
 	return nil
+}
+
+// substantiveModelCount counts catalog entries carrying a non-empty id, so a
+// structurally-present but blank payload (e.g. {"data":[{}]}) is treated as empty
+// and cannot overwrite a good fixture.
+func substantiveModelCount(models []commpersonas.CatalogModel) int {
+	n := 0
+	for _, m := range models {
+		if strings.TrimSpace(m.ID) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 func newModelsCheckCmd() *cobra.Command {

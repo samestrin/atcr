@@ -521,12 +521,13 @@ func fakeCatalogServer(t *testing.T, status int, catalogBody string) *httptest.S
 }
 
 // refreshCatalogBody is a small but structurally complete {"data":[...]} catalog:
-// a pinned slug, an alias entry, and a z-ai/ entry — enough to prove the written
-// fixture round-trips through the resolver's parser.
+// a pinned slug (null expiration), an alias entry, and an expiring z-ai/ entry
+// (non-null expiration) — enough to prove the written fixture round-trips through
+// the resolver's parser with both expiration_date shapes preserved.
 const refreshCatalogBody = `{"data":[
   {"id":"anthropic/claude-opus-4.8","canonical_slug":"anthropic/claude-opus-4.8","created":1776000000,"expiration_date":null},
   {"id":"~openai/gpt-latest","canonical_slug":"openai/gpt-latest","created":1783000002,"expiration_date":null},
-  {"id":"z-ai/glm-5.2","canonical_slug":"z-ai/glm-5.2","created":1781631930,"expiration_date":null}
+  {"id":"z-ai/glm-4.5","canonical_slug":"z-ai/glm-4.5","created":1760000000,"expiration_date":"2026-12-31"}
 ]}`
 
 func TestModelsRefresh_IsRegistered(t *testing.T) {
@@ -559,24 +560,48 @@ func TestModelsRefresh_WritesFixtureFromLiveFetch(t *testing.T) {
 
 	// Round-trip: the written file must parse through the same code path the
 	// resolver tests use, proving structural compatibility (AC 08-02 Scenario 2).
+	// Assert field fidelity — not just the count — including nil vs non-null
+	// expiration_date survival, so a MarshalSnapshot regression cannot pass silently.
 	t.Setenv("ATCR_CATALOG_SNAPSHOT", out)
 	models, serr := commpersonas.SnapshotModels()
 	require.NoError(t, serr)
-	assert.Len(t, models, 3)
+	require.Len(t, models, 3)
+	byID := make(map[string]commpersonas.CatalogModel, len(models))
+	for _, m := range models {
+		byID[m.ID] = m
+	}
+	opus, ok := byID["anthropic/claude-opus-4.8"]
+	require.True(t, ok)
+	assert.Equal(t, "anthropic/claude-opus-4.8", opus.CanonicalSlug, "canonical_slug survives")
+	assert.Equal(t, int64(1776000000), opus.Created, "created survives")
+	assert.Nil(t, opus.ExpirationDate, "null expiration_date survives as nil")
+	glm, ok := byID["z-ai/glm-4.5"]
+	require.True(t, ok)
+	require.NotNil(t, glm.ExpirationDate, "non-null expiration_date survives as non-nil")
+	assert.Equal(t, "2026-12-31", *glm.ExpirationDate, "expiration_date value survives")
 }
 
 // TestModelsRefresh_RefusesEmptyCatalog covers AC 08-02 Edge Case 1: an empty data
-// array is refused with a clear error and exit 2; no file is written.
+// array — and a substanceless blank-entry payload — are refused with a clear error
+// and exit 2; no file is written.
 func TestModelsRefresh_RefusesEmptyCatalog(t *testing.T) {
-	fakeCatalogServer(t, http.StatusOK, `{"data":[]}`)
-	out := filepath.Join(t.TempDir(), "catalog_snapshot.json")
+	for name, body := range map[string]string{
+		"empty array":    `{"data":[]}`,
+		"blank entry":    `{"data":[{}]}`,
+		"empty-id entry": `{"data":[{"id":"","canonical_slug":"","created":0,"expiration_date":null}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			fakeCatalogServer(t, http.StatusOK, body)
+			out := filepath.Join(t.TempDir(), "catalog_snapshot.json")
 
-	stdout, err := execute(t, "models", "refresh", "--output", out)
-	require.Error(t, err)
-	assert.Equal(t, exitUsage, exitCode(err))
-	assert.Contains(t, err.Error()+stdout, "empty")
-	_, statErr := os.Stat(out)
-	assert.True(t, os.IsNotExist(statErr), "no file must be written on an empty catalog")
+			stdout, err := execute(t, "models", "refresh", "--output", out)
+			require.Error(t, err)
+			assert.Equal(t, exitUsage, exitCode(err))
+			assert.Contains(t, err.Error()+stdout, "empty")
+			_, statErr := os.Stat(out)
+			assert.True(t, os.IsNotExist(statErr), "no file must be written on an empty catalog")
+		})
+	}
 }
 
 // TestModelsRefresh_FetchFailure_LeavesFixtureUntouched covers AC 08-02 Edge Case 2:
@@ -596,12 +621,15 @@ func TestModelsRefresh_FetchFailure_LeavesFixtureUntouched(t *testing.T) {
 }
 
 // TestModelsRefresh_MissingAPIKey_LiveDefault_Exit2 covers AC 08-02 Error Scenario 1:
-// on the live default path (no ATCR_CATALOG_URL override) a missing OPENROUTER_API_KEY
-// fails closed with exit 2 and the pinned message — no file written, no network. This
-// is what keeps `refresh` from ever running in CI (which has no key).
+// on the live default path (no ATCR_CATALOG_URL override, not under CI) a missing
+// OPENROUTER_API_KEY fails closed with exit 2 and the pinned message — no file
+// written, no network.
 func TestModelsRefresh_MissingAPIKey_LiveDefault_Exit2(t *testing.T) {
-	// No ATCR_CATALOG_URL → the live default path; ensure no key is present.
+	// No ATCR_CATALOG_URL → the live default path; clear CI so the key gate (not the
+	// CI guard) is the one exercised; ensure no key is present.
 	t.Setenv("ATCR_CATALOG_URL", "")
+	t.Setenv("CI", "")
+	t.Setenv("GITHUB_ACTIONS", "")
 	t.Setenv("OPENROUTER_API_KEY", "")
 	out := filepath.Join(t.TempDir(), "catalog_snapshot.json")
 
@@ -611,6 +639,60 @@ func TestModelsRefresh_MissingAPIKey_LiveDefault_Exit2(t *testing.T) {
 	assert.Contains(t, err.Error(), "OPENROUTER_API_KEY is required to refresh the catalog snapshot")
 	_, statErr := os.Stat(out)
 	assert.True(t, os.IsNotExist(statErr), "no file must be written when the key is missing")
+}
+
+// TestModelsRefresh_RefusesInCI covers the never-CI-invoked guard: on the live path
+// with CI set, refresh fails closed (exit 2) even if a key is present — so CI that
+// exports OPENROUTER_API_KEY can still never fetch live. No file written.
+func TestModelsRefresh_RefusesInCI(t *testing.T) {
+	t.Setenv("ATCR_CATALOG_URL", "") // live path
+	t.Setenv("CI", "true")
+	t.Setenv("OPENROUTER_API_KEY", "present-but-ignored")
+	out := filepath.Join(t.TempDir(), "catalog_snapshot.json")
+
+	_, err := execute(t, "models", "refresh", "--output", out)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "must not run in CI")
+	_, statErr := os.Stat(out)
+	assert.True(t, os.IsNotExist(statErr), "no file must be written under CI")
+}
+
+// TestModelsRefresh_DefaultOutputUnderOverride_Requires_Output covers the
+// default-output guard: with an ATCR_CATALOG_URL override set and no --output, the
+// command refuses (exit 2) rather than rewriting the checked-in default fixture from
+// an override catalog.
+func TestModelsRefresh_DefaultOutputUnderOverride_Requires_Output(t *testing.T) {
+	fakeCatalogServer(t, http.StatusOK, refreshCatalogBody) // sets ATCR_CATALOG_URL
+
+	_, err := execute(t, "models", "refresh") // no --output
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "--output is required")
+}
+
+// TestModelsRefresh_WriteFailure_PreservesExistingFixture covers AC 08-02
+// requirement (3): a failed write leaves an EXISTING fixture byte-for-byte intact
+// (the atomic temp+rename never truncates the target). The write is forced to fail
+// by making the output's directory read-only after seeding a prior fixture.
+func TestModelsRefresh_WriteFailure_PreservesExistingFixture(t *testing.T) {
+	fakeCatalogServer(t, http.StatusOK, refreshCatalogBody)
+	dir := t.TempDir()
+	out := filepath.Join(dir, "catalog_snapshot.json")
+	const prior = `{"data":[{"id":"old/model","canonical_slug":"old/model","created":1,"expiration_date":null}]}`
+	require.NoError(t, os.WriteFile(out, []byte(prior), 0o644))
+
+	require.NoError(t, os.Chmod(dir, 0o500)) // read-only dir → temp create fails
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	_, err := execute(t, "models", "refresh", "--output", out)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+
+	require.NoError(t, os.Chmod(dir, 0o700))
+	after, rerr := os.ReadFile(out)
+	require.NoError(t, rerr)
+	assert.Equal(t, prior, string(after), "existing fixture must survive a failed write byte-for-byte")
 }
 
 // TestModelsRefresh_UnwritablePath_Exit2 covers AC 08-02 Error Scenario 2: an
