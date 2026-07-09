@@ -120,13 +120,12 @@ func runModelsRefresh(cmd *cobra.Command, _ []string) error {
 	}
 	// Refuse to overwrite the fixture with an empty or substanceless catalog: require
 	// at least one entry carrying a non-empty id (a {"data":[{}]} payload is empty in
-	// substance even though len == 1).
-	if substantiveModelCount(models) == 0 {
+	// substance even though len == 1). Then persist only substantive entries so the
+	// success message and the fixture agree.
+	models = substantiveModels(models)
+	if len(models) == 0 {
 		return usageError(fmt.Errorf("refusing to overwrite fixture with empty catalog"))
 	}
-
-	// Persist only substantive entries so the success message and the fixture agree.
-	models = substantiveModels(models)
 
 	// Atomic write: WriteSnapshot writes to a temp file and renames, so a failed
 	// write can never truncate or corrupt an existing snapshot.
@@ -136,13 +135,6 @@ func runModelsRefresh(cmd *cobra.Command, _ []string) error {
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Wrote %d models to %s\n", len(models), output)
 	return nil
-}
-
-// substantiveModelCount counts catalog entries carrying a non-empty id, so a
-// structurally-present but blank payload (e.g. {"data":[{}]}) is treated as empty
-// and cannot overwrite a good fixture.
-func substantiveModelCount(models []commpersonas.CatalogModel) int {
-	return len(substantiveModels(models))
 }
 
 // substantiveModels returns only catalog entries carrying a non-empty id. The
