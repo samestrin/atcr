@@ -96,7 +96,41 @@ verification a maintainer must perform before enabling any agent role.
 
 ## Provisioning
 
-_To be completed by Task 04 (runtime-provisioning runbook)._
+One-time runtime setup on the hermes host (`nucleus.lan`) so the mechanical
+`no_agent` cron job can run `atcr models check --json` and open PRs. This section
+is **documentation only** — it introduces no `cmd/atcr` code changes; it records
+the host-side steps a maintainer performs on nucleus.lan.
+
+1. **Install the `atcr` binary.** Build from source (`go build -o bin/atcr
+   ./cmd/atcr`) or copy a release binary onto the host, and place it on the
+   `PATH` of the hermes cron execution environment (e.g. `~/docker/hermes/bin/`
+   or `/usr/local/bin/atcr`). Confirm with `atcr --version`.
+
+2. **Establish a repo checkout.** Clone the atcr repository under
+   `~/docker/hermes/` (or an adjacent path the cron script references), e.g.
+   `~/docker/hermes/atcr/`. This checkout is what `atcr models check --json`
+   reads the current `personas/community/*` state and model locks from.
+
+3. **Configure GitHub auth for PR opening.** Run `gh auth login` on the host, or
+   provide a token-based credential (`GH_TOKEN` / `GITHUB_TOKEN` env var scoped
+   for PR creation) in the cron job's environment, so the mechanical script can
+   open PRs via `gh pr create`. Use the shared hermes PR skill
+   (`data/skills/github/github-pr-workflow`) as the opening mechanism.
+
+4. **Pull before every run (mandatory).** The `no_agent` cron script MUST fetch
+   and fast-forward the checkout to the current default branch
+   (`git pull --ff-only` against `main`) **before** invoking `atcr models check
+   --json`. Without this, drift is evaluated against a stale checkout and the
+   agent can emit false drift findings or bump a slug that was already changed.
+   Pull-before-run is a hard prerequisite of every mechanical invocation, not an
+   optimization.
+
+**Cron job shape.** The mechanical agent is a `no_agent` (no-LLM) job in
+`data/profiles/<agent>/cron/jobs.json` — an entry with `no_agent: true` and a
+`script` field pointing at the pull-then-`atcr models check --json`-then-open-PR
+wrapper. Use brian's `fleet-sweep` job (`7 3 * * *`, which SSHes the fleet and
+writes a status file) as the structural precedent for the script-based entry.
+The job configuration itself lives on the hermes host, not in the atcr repo.
 
 ## Judgment Classification Rule
 
