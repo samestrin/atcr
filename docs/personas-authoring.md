@@ -173,6 +173,8 @@ Before submitting your persona, confirm every item:
 - [ ] **No secrets, credentials, or network instructions** in the prompt.
 - [ ] **Index entry** (if the persona ships in the community `index.json`) carries non-empty `provider` and `model` that **exactly match** the persona YAML's `provider`/`model` — enforced by a `go test` gate, not editorial review.
 
+> **Automated gate.** Running [`atcr personas submit <name>`](personas-install.md#atcr-personas-submit-name) enforces the **Fixture test passes** item above automatically: it calls the same `TestPersona` / `TemplateFixtureRunner` path as `atcr personas test` and refuses to open a PR unless the fixture passes. It automates *only* that one item — the YAML-schema, `language`-form, prompt-structure, category-word, and index-entry items remain manual checks you perform yourself. Once your persona clears this checklist, `submit` opens the fork+PR; a maintainer then [graduates](#8-graduating-a-submitted-persona) it into the vetted library.
+
 > **Discoverable by model.** The `provider`/`model` you set in the persona YAML above become the structured fields a user searches by: `atcr personas search --model <model>` / `--provider <provider>` surfaces your persona to anyone who already has that model. See the [discover-and-install-by-model flow](personas-install.md#discover-and-install-a-persona-by-model) for the end-to-end path.
 
 ## 5. The community index entry
@@ -237,6 +239,21 @@ binding: anthropic/claude-opus@stable   # OPTIONAL logical binding (Epic 19.7)
 Implementation detail — the catalog schema (`id`, `canonical_slug`, `created`, `expiration_date`), the `~…-latest` alias behavior, and the `@stable` preview/deprecation heuristic are specified in the plan documentation: [openrouter-catalog-api.md](../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/openrouter-catalog-api.md) and [existing-resolver-patterns.md](../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/existing-resolver-patterns.md).
 
 See [personas-install.md](personas-install.md) for installing and using personas, and [registry.md](registry.md) for the full agent schema and routing semantics.
+
+## 7. From submitted to graduated
+
+A persona is described by two **independent axes**. Keeping them separate is the whole point of the curation model — do not conflate them:
+
+- **Provenance — *where a persona came from*.** This is the `Source` field (`internal/personas/list.go`), and it only ever takes `built-in`, `community`, or `project`. A persona you contribute is **community-contributed**, and its `Source` stays `community` — before submission, after submission, and after graduation. `submitted` is **never** a fourth `Source` value.
+- **Status — *how far along curation it is*.** When [`atcr personas submit <name>`](personas-install.md#atcr-personas-submit-name) succeeds, the persona is recorded with a separate, orthogonal **`submitted`** status: fixture-passing but **not yet vetted**. This status is a per-user marker (a small YAML sidecar at `~/.config/atcr/submissions/<name>.yaml`), tracked entirely apart from `Source`.
+
+The two terms are not interchangeable: "community-contributed" describes *provenance* (the `Source` field), while "submitted" describes *curation status*. A persona can be community-contributed and `submitted`, or community-contributed and graduated — the provenance never changes with the status.
+
+**A `submitted` persona is not yet trusted.** A fixture pass is a *mechanical* check — it proves the persona template renders cleanly and its expected finding category is present — **not** a human security or quality review. Treat installing a `submitted`-status persona with the same caution as any community persona (see the Trust note in [personas-install.md](personas-install.md#where-personas-live)). Graduation is the signal that a maintainer has battle-tested it.
+
+**Graduation** is the maintainer action that promotes a `submitted` persona into the shipped, vetted library. Through the ordinary GitHub PR review-and-merge flow, a maintainer moves the persona into `personas/community/`, adds its `index.json` entry, and clears the `submitted` marker. Graduation changes the *status*, never the *provenance*: `Source` stays `community` throughout. The exact maintainer steps are in [§8. Graduating a submitted persona](#8-graduating-a-submitted-persona).
+
+**No marketplace, ever.** The entire lifecycle — submission, review, and graduation — happens through `atcr personas submit`, the `gh` CLI, and a standard GitHub pull request. There is no marketplace, website, hosted persona registry, or ranking/approval UI of any kind.
 
 ## 8. Graduating a submitted persona
 
