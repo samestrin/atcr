@@ -264,11 +264,26 @@ func copyPersonaUnit(personasDir, name, workDir string) error {
 	if err != nil {
 		return fmt.Errorf("reading persona %q: %w", name, err)
 	}
-	dest := filepath.Join(workDir, "personas", "community", filepath.FromSlash(name)+".yaml")
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+	yamlDest := filepath.Join(workDir, "personas", "community", filepath.FromSlash(name)+".yaml")
+	if err := os.MkdirAll(filepath.Dir(yamlDest), 0o755); err != nil {
 		return fmt.Errorf("preparing submission tree: %w", err)
 	}
-	return writeFileAtomic(dest, data)
+	if err := writeFileAtomic(yamlDest, data); err != nil {
+		return err
+	}
+	// A persona unit is the .yaml PLUS its optional co-located <name>.md custom
+	// prompt (see writePersonaUnit). "Locally-tuned" lives in that .md, so a
+	// submission that dropped it would push a PR that diverges from the unit the
+	// local fixture gate actually validated. Copy it when present; a binding-only
+	// persona (no .md) is complete with the YAML alone.
+	mdData, mdErr := os.ReadFile(strings.TrimSuffix(src, ".yaml") + ".md")
+	if mdErr != nil {
+		if os.IsNotExist(mdErr) {
+			return nil
+		}
+		return fmt.Errorf("reading persona prompt %q: %w", name, mdErr)
+	}
+	return writeFileAtomic(strings.TrimSuffix(yamlDest, ".yaml")+".md", mdData)
 }
 
 // runGit runs a git subcommand under a bounded context, capturing stderr for a

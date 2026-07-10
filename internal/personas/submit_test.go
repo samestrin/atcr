@@ -238,16 +238,35 @@ func TestCopyPersonaUnit(t *testing.T) {
 	personasDir := t.TempDir()
 	workDir := t.TempDir()
 	body := []byte("provider: anthropic\nmodel: claude-sonnet-4-6\nrole: reviewer\n")
+	prompt := []byte("# Sasha\nLocally-tuned custom reviewer prompt.\n")
 	require.NoError(t, os.WriteFile(filepath.Join(personasDir, "sasha.yaml"), body, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(personasDir, "sasha.md"), prompt, 0o600))
 
 	require.NoError(t, copyPersonaUnit(personasDir, "sasha", workDir))
-	got, err := os.ReadFile(filepath.Join(workDir, "personas", "community", "sasha.yaml"))
+	gotYAML, err := os.ReadFile(filepath.Join(workDir, "personas", "community", "sasha.yaml"))
 	require.NoError(t, err)
-	assert.Equal(t, body, got)
+	assert.Equal(t, body, gotYAML)
+	// The co-located <name>.md custom prompt — where local tuning lives — must ride
+	// along, or the PR diverges from the fixture-validated unit (2.5 gate HIGH).
+	gotMD, err := os.ReadFile(filepath.Join(workDir, "personas", "community", "sasha.md"))
+	require.NoError(t, err)
+	assert.Equal(t, prompt, gotMD)
 
 	err = copyPersonaUnit(personasDir, "../escape", workDir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid persona name")
+}
+
+// TestCopyPersonaUnit_BindingOnly covers a persona with no co-located .md: the
+// YAML alone is the whole unit, so the copy succeeds and writes no stray .md.
+func TestCopyPersonaUnit_BindingOnly(t *testing.T) {
+	personasDir := t.TempDir()
+	workDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(personasDir, "binder.yaml"), []byte("provider: anthropic\nmodel: x\n"), 0o600))
+
+	require.NoError(t, copyPersonaUnit(personasDir, "binder", workDir))
+	_, statErr := os.Stat(filepath.Join(workDir, "personas", "community", "binder.md"))
+	assert.True(t, os.IsNotExist(statErr), "no .md is written for a binding-only persona")
 }
 
 // TestNewGitHubSubmitter confirms the production constructor returns a usable,
