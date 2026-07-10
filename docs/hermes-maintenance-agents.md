@@ -231,9 +231,9 @@ selection` when absent), and `vendor_guide_url` (extracted from the persona's
 
 **Structural invariant.** The mandatory persona section structure from
 [`docs/personas-authoring.md`](personas-authoring.md) —
-`## Role` / `## Focus` / `## Scope` / `## Severity Rubric` /
-`## Output Format` (the exact 7-column pipe-delimited reviewer-finding contract) /
-`## Payload`, plus the optional `## Tool-Assisted Review` block where present —
+`## Role` / `## Focus` / `## Scope` / `## Tool-Assisted Review`
+(optional, only where present) / `## Severity Rubric` / `## Output Format`
+(the exact 7-column pipe-delimited reviewer-finding contract) / `## Payload` —
 must be preserved **byte-for-byte**: never restructured, reordered, renamed, and
 no headings added or removed. The template tokens (`{{.AgentName}}`,
 `{{.ScopeRule}}`, `{{.Payload}}`, etc.) and the 7-column `## Output Format`
