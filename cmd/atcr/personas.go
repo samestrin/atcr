@@ -110,9 +110,18 @@ func newPersonasCmd() *cobra.Command {
 		newPersonasRemoveCmd(),
 		newPersonasTestCmd(),
 		newPersonasUpgradeCmd(),
+		newPersonasSubmitCmd(),
 	)
 	return cmd
 }
+
+// personasSubmitContinuation is the seam the fork+PR flow (Phase 2) attaches to.
+// In this phase it is a no-op stub: `personas submit` runs only the local gate
+// (name validation + fixture check) and, on a clean pass, hands off here. Tests
+// swap it for a spy to assert the gate reaches the continuation only on a full
+// fixture pass and never on a failure — the structural guarantee that no
+// fork/PR/`gh` side effect can precede a passing gate.
+var personasSubmitContinuation = func(_ string) error { return nil }
 
 func newPersonasInstallCmd() *cobra.Command {
 	return &cobra.Command{
@@ -323,6 +332,38 @@ func newPersonasTestCmd() *cobra.Command {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "FAIL: %s (%d/%d cases)\n", name, outcome.Passed, outcome.Total)
 				return fmt.Errorf("persona %q fixture failed: %d/%d cases passed", name, outcome.Passed, outcome.Total)
 			}
+		},
+	}
+}
+
+// newPersonasSubmitCmd builds `atcr personas submit <name>`: the intake command
+// that contributes a locally-tuned persona back to the community library. This
+// phase wires only the local safety gate — name validation plus the reused
+// fixture gate — behind commpersonas.SubmitGate; on a clean pass it hands off to
+// personasSubmitContinuation, the stub Phase 2 replaces with the `gh` fork+PR
+// flow. No `gh`/network code runs here: a failing gate returns before any
+// continuation, so an unvetted or invalid persona never reaches GitHub.
+func newPersonasSubmitCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "submit <name>",
+		Short: "Submit a locally-tuned persona back to the community library via a fork+PR",
+		Long: "Contribute a locally-tuned reviewer persona back to the canonical library.\n" +
+			"submit runs the persona's fixture gate locally and, only if it passes, opens\n" +
+			"a fork+PR under your own gh authentication — no marketplace or hosted registry.\n" +
+			"A missing or failing fixture, or an invalid name, blocks submission with no\n" +
+			"fork/PR side effects.",
+		Args: usageArgs(cobra.ExactArgs(1)),
+		RunE: func(_ *cobra.Command, args []string) error {
+			name := args[0]
+			// Local gate first: validate the name and run the fixture check. Both
+			// must pass before any GitHub interaction. SubmitGate returns a non-nil
+			// error (exit 1 via main's mapping) on any failure, so control never
+			// reaches the continuation on a blocked submission.
+			if err := commpersonas.SubmitGate(name, personasFixtureRunner); err != nil {
+				return err
+			}
+			// Phase 2 replaces this stub with the fork+PR flow.
+			return personasSubmitContinuation(name)
 		},
 	}
 }
