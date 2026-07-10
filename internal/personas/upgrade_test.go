@@ -173,6 +173,28 @@ func TestVersionFromSlug(t *testing.T) {
 	}
 }
 
+// TestVersionFromSlug_ScanFamilyGluedVersions covers the qwen/glm scan families
+// whose version token is FUSED onto the brand or a variant token instead of living
+// in a standalone hyphen segment. Before the two-pass fix, versionFromSlug returned
+// "" for all of these, so a qwen/glm-BOUND lock could never advance (its advance
+// gate at upgrade.go:258 saw !isNewer("","")=true → UpToDate — a silent freeze) and
+// the same call at drift.go:158 blinded `models check` to their newer-member drift.
+// The existing vendor/tier-hyphen-version cases (TestVersionFromSlug) must keep
+// their exact outputs: the fix is a pure fallback, never a rewrite of the primary
+// standalone-segment pass.
+func TestVersionFromSlug_ScanFamilyGluedVersions(t *testing.T) {
+	cases := []struct{ slug, want string }{
+		{"qwen/qwen3-coder-plus", "3"}, // version glued to the brand token
+		{"qwen/qwen3.7-plus", "3.7"},   // dotted version glued to the brand token
+		{"qwen/qwen4-preview", "4"},    // major-only glued to the brand token
+		{"z-ai/glm-5v-turbo", "5"},     // version fused into a variant token (5v)
+		{"qwen/qwen-max", ""},          // no numeric version anywhere → non-comparable
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, versionFromSlug(c.slug), "versionFromSlug(%q)", c.slug)
+	}
+}
+
 // --- Phase 4: Upgrade resolves & advances the lock (AC 04-01) ----------------
 
 // bindingPersonaYAML is an installed community persona carrying a family/channel
