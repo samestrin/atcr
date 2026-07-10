@@ -182,4 +182,10 @@ jobs:
           set -euo pipefail
           # --match-head-commit makes the merge fail (not force) if the PR head is
           # no longer the SHA we evaluated — the definitive TOCTOU close.
-          gh pr merge "$PR_NUMBER" -R "$REPO" --squash --delete-branch --match-head-commit "$PIN_SHA"
+          echo "Merging PR #${PR_NUMBER} at pinned SHA ${PIN_SHA}..."
+          if gh pr merge "$PR_NUMBER" -R "$REPO" --squash --delete-branch --match-head-commit "$PIN_SHA"; then
+            echo "Merge succeeded for PR #${PR_NUMBER} at ${PIN_SHA}."
+          else
+            echo "Merge failed for PR #${PR_NUMBER} at ${PIN_SHA}: HEAD may have moved or the PR state changed."
+            exit 1
+          fi
