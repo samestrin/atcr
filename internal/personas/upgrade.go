@@ -199,16 +199,36 @@ func parseBinding(s string) (Binding, bool, error) {
 	return Binding{}, false, fmt.Errorf("unrecognized binding %q: expected pin:<slug>, <family>@<channel>, or a known bare family", s)
 }
 
-// versionSegRe matches a hyphen-delimited slug segment that is a version token:
-// an optional leading "v" then a dotted numeric run (e.g. "4.8", "5", "v4.1").
+// versionSegRe matches a hyphen-delimited slug segment that is EXACTLY a version
+// token: an optional leading "v" then a dotted numeric run (e.g. "4.8", "5", "v4.1").
 var versionSegRe = regexp.MustCompile(`^v?\d+(\.\d+)*$`)
+
+// embeddedVersionRe matches a version token FUSED inside a segment — an optional
+// "v" then a dotted numeric run — anywhere in the string. It is the Pass-2 fallback
+// for scan families that glue the version onto a brand or variant token
+// ("qwen3-coder-plus", "qwen3.7-plus", "glm-5v-turbo") instead of giving it a
+// standalone hyphen segment.
+var embeddedVersionRe = regexp.MustCompile(`v?\d+(\.\d+)*`)
 
 // versionFromSlug extracts the version token from a resolved model slug so the
 // existing isNewer/semver machinery can classify a lock transition (story note,
 // upgrade.go reuse of isNewer). It strips the vendor prefix and any :variant
-// suffix, then returns the RIGHTMOST hyphen segment that looks like a version
-// (e.g. "anthropic/claude-opus-4.8" → "4.8", "deepseek/deepseek-v4-pro" → "v4").
-// A slug with no numeric version segment (e.g. a "-latest" alias) yields "", which
+// suffix, then:
+//
+//   - Pass 1 (primary, unchanged): returns the RIGHTMOST hyphen segment that is
+//     EXACTLY a version token ("anthropic/claude-opus-4.8" → "4.8",
+//     "deepseek/deepseek-v4-pro" → "v4"). This preserves the historical behavior
+//     verbatim for every vendor/tier-hyphen-version slug.
+//   - Pass 2 (fallback): when NO segment is a standalone version, returns the FIRST
+//     version fused inside a segment, scanning left-to-right so the brand-glued
+//     version wins ("qwen3-coder-plus" → "3", "qwen3.7-plus" → "3.7",
+//     "glm-5v-turbo" → "5"). The qwen/glm scan families glue the version onto the
+//     brand/variant token, so without this pass versionFromSlug returned "" for all
+//     of them: their advance gate (upgrade.go) saw !isNewer("","")=true → UpToDate,
+//     freezing a qwen/glm-bound lock forever, and the same call in drift.go blinded
+//     `models check` to their newer-member drift.
+//
+// A slug with no numeric version anywhere (e.g. a "-latest" alias) yields "", which
 // isNewer treats as non-comparable — conservatively NOT an advance.
 func versionFromSlug(slug string) string {
 	if i := strings.LastIndexByte(slug, '/'); i >= 0 {
@@ -218,9 +238,18 @@ func versionFromSlug(slug string) string {
 		slug = slug[:i]
 	}
 	segs := strings.Split(slug, "-")
+	// Pass 1: a standalone version segment (verbatim, preserves historical output).
 	for i := len(segs) - 1; i >= 0; i-- {
 		if versionSegRe.MatchString(segs[i]) {
 			return segs[i]
+		}
+	}
+	// Pass 2: no standalone version — extract a version fused inside a segment
+	// (qwen/glm), left-to-right so the brand-glued version wins over any trailing
+	// incidental digits.
+	for _, seg := range segs {
+		if v := embeddedVersionRe.FindString(seg); v != "" {
+			return v
 		}
 	}
 	return ""
