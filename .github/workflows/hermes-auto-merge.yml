@@ -199,8 +199,29 @@ jobs:
           # Without the app.slug guard, such an impostor run reporting success
           # (before the real CI starts) could satisfy this gate. Filtering on the
           # app slug requires the success to come from our own Actions CI.
-          conclusions="$(gh api "repos/${REPO}/commits/${PIN_SHA}/check-runs" --paginate \
-            --jq '[.check_runs[] | select(.name == "Go Lint & Test" and .app.slug == "github-actions")] | sort_by(.started_at) | last | (.conclusion // "pending")')"
+          # Retry transient GitHub API failures with the same policy this repo
+          # already ships in internal/ghaction/client.go: 4 attempts, 250ms
+          # back-off doubling each time. A plain exit-code retry stands in for
+          # status-class inspection (reading 5xx/429/Retry-After from bash needs
+          # `gh api -i` header parsing — unwarranted complexity for a low-freq
+          # background job): gh api exits non-zero on any HTTP error, so a hard
+          # 403 simply exhausts the 4 quick attempts and then no-ops fail-closed
+          # below (green=false, exit 0) — never "green" on uncertainty.
+          attempt=0
+          backoff=0.25
+          conclusions=""
+          until conclusions="$(gh api "repos/${REPO}/commits/${PIN_SHA}/check-runs" --paginate \
+                  --jq '[.check_runs[] | select(.name == "Go Lint & Test" and .app.slug == "github-actions")] | sort_by(.started_at) | last | (.conclusion // "pending")')"; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -gt 3 ]; then
+              echo "check-runs API still failing after 4 attempts — deferring; the next triggering event re-evaluates."
+              echo "green=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "check-runs API call failed (attempt ${attempt}/4) — retrying in ${backoff}s..."
+            sleep "$backoff"
+            backoff="$(awk "BEGIN{print ${backoff} * 2}")"
+          done
 
           if [ -z "$conclusions" ]; then
             echo "No 'Go Lint & Test' run on ${PIN_SHA} yet — will re-evaluate when CI completes."
