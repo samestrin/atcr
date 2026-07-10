@@ -80,7 +80,14 @@ identical gate a human contributor does.
 **Off/opt-in posture:**
 
 - **Mechanical auto-merge-on-green** (`.github/workflows/hermes-auto-merge.yml`)
-  is **off by default** and must be explicitly enabled per repo.
+  is **off by default** and must be explicitly enabled per repo by setting the
+  repository variable `HERMES_AUTO_MERGE_ENABLED` to `'true'` (any other value,
+  or unset, keeps it off). Auto-merge additionally requires each mechanical PR to
+  (a) carry the `hermes:mechanical` label and (b) touch **only**
+  `personas/community/*.yaml` paths — the mechanical cron script must apply that
+  label and restrict its diff accordingly (see [Provisioning](#provisioning)). A
+  PR missing the label, or touching any other path (including a single `.md`), is
+  never auto-merged.
 - **Judgment and drafting** automation is likewise **opt-in** — no role runs
   against a live PR target until the maintainer enables it.
 - **Prompt PRs always require explicit human approval** and never auto-merge,
@@ -88,8 +95,9 @@ identical gate a human contributor does.
 
 **Manual maintainer step (branch protection):** confirm that the GitHub
 Settings → Branches → branch-protection rule for `main` lists the
-`Go CI / Go Lint & Test` check (job name at `.github/workflows/ci.yml`) as a
-**required status check**. This could not be verified programmatically during
+`Go Lint & Test` check (the job / check-run name inside the `Go CI` workflow at
+`.github/workflows/ci.yml` — `Go CI` is the workflow name, `Go Lint & Test` is
+the selectable required-check entry) as a **required status check**. This could not be verified programmatically during
 sprint execution (`gh api repos/samestrin/atcr/branches/main/protection` returns
 `403` for this private-repo tier), so it is handed off as an explicit manual
 verification a maintainer must perform before enabling any agent role.
@@ -131,6 +139,16 @@ the host-side steps a maintainer performs on nucleus.lan.
 wrapper. Use brian's `fleet-sweep` job (`7 3 * * *`, which SSHes the fleet and
 writes a status file) as the structural precedent for the script-based entry.
 The job configuration itself lives on the hermes host, not in the atcr repo.
+
+**Auto-merge eligibility (the wrapper's responsibility).** For a mechanical PR to
+be eligible for auto-merge, the wrapper must open it so that it (a) applies the
+`hermes:mechanical` label (`gh pr create --label hermes:mechanical`) and (b)
+restricts its diff to `personas/community/*.yaml` slug-lock changes only — no
+`.md` prompt edits, no other paths. These are the exact signals the
+[auto-merge workflow](../.github/workflows/hermes-auto-merge.yml) checks (in
+addition to the `HERMES_AUTO_MERGE_ENABLED='true'` opt-in and a green
+`Go Lint & Test`). A PR that omits the label or touches any other path is never
+auto-merged — it simply waits for a human, exactly like a prompt PR.
 
 ## Judgment Classification Rule
 
@@ -234,8 +252,9 @@ is a cross-reference, not a new decision.
 
 - Opens a PR **separate** from any mechanical slug-bump PR — never mixed into the
   same PR or commit.
-- The PR touches `personas/community/*.md` only (and, only when step-5-authorized,
-  the paired `.yaml`) — a path the [auto-merge workflow](../.github/workflows/hermes-auto-merge.yml)'s
+- The PR touches `personas/community/*.md` only (and the paired `.yaml` only when
+  the re-tune payload carries a concrete `SuggestedSlug`, per the **`.yaml`
+  off-limits** rule above) — a path the [auto-merge workflow](../.github/workflows/hermes-auto-merge.yml)'s
   fail-closed allow-list explicitly **excludes**, so this PR is structurally
   incapable of matching the mechanical auto-merge path.
 - The PR is explicitly a **draft** and requires explicit **human approval** before
