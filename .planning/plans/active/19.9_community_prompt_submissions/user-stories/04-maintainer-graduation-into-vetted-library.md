@@ -30,14 +30,20 @@
 - **Relevant:** Closes AC2's curation loop — without a documented graduation path, `submitted` personas would accumulate with no defined route into the vetted library, leaving the two-tier model half-built.
 - **Time-bound:** Documentation-only story completed alongside Theme 5 (Story 5) in the same sprint, after Story 3's status/provenance marker lands and before the sprint's documentation pass is considered complete for AC4.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-documented-persona-placement-and-index-entry.md) | Documented Persona Placement and Index Entry Creation | Manual (Documentation) |
+| [04-02](../acceptance-criteria/04-02-submitted-marker-clearing-without-touching-source.md) | Submitted Marker Clearing Without Touching Source | Manual (Documentation) |
+| [04-03](../acceptance-criteria/04-03-manual-pr-native-process-with-checklist-cross-reference.md) | Manual PR-Native Process with Contribution Checklist Cross-Reference | Manual (Documentation) |
+
+## Original Criteria Overview
 
 1. A maintainer graduation procedure is documented describing how to promote a `submitted` PR's persona into `personas/community/`, including adding a matching `PersonaIndexEntry` to `personas/community/index.json` with provider/model consistent with the persona's YAML.
 2. The procedure explicitly states that graduation clears/removes the `submitted` status marker introduced in Story 3 without modifying the persona's `Source` field.
 3. The procedure confirms graduation is performed entirely via the existing human-review PR-merge process (review, requested changes, approve, merge/edit) with no new CLI command, script, or automated promotion pathway introduced.
 4. The documentation cross-references this graduation procedure from the existing contribution checklist context so a maintainer encountering a `submitted` PR can find it.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.9_community_prompt_submissions/`_
 
 ## Technical Considerations
 

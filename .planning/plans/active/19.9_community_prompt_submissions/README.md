@@ -7,7 +7,7 @@ Establishes a GitHub-native intake and curation flow so users can contribute loc
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/19.9_community_prompt_submissions/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/19.9_community_prompt_submissions/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/19.9_community_prompt_submissions/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/19.9_community_prompt_submissions/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/19.9_community_prompt_submissions/`
 
@@ -49,4 +49,4 @@ See [documentation/README.md](documentation/README.md) for the full index. Summa
 - [Codebase Discovery](codebase-discovery.json)
 - [Package Recommendations](package-recommendations.md)
 - [User Stories](user-stories/)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [Acceptance Criteria](acceptance-criteria/)

@@ -30,14 +30,20 @@
 - **Relevant:** Directly implements AC1's blocking requirement and is the safety precondition every later theme (fork/PR automation, status/provenance, docs) depends on — no submission-blocking work here means no later fork/PR call can be trusted to run only on vetted-locally-passing personas.
 - **Time-bound:** Completed within this sprint's first implementation phase, before any `gh`-integration code (Theme 2) is started.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-invalid-persona-name-rejection.md) | Invalid Persona Name Rejection | Unit |
+| [01-02](../acceptance-criteria/01-02-missing-fixture-blocks-submission.md) | Missing Fixture Blocks Submission | Unit |
+| [01-03](../acceptance-criteria/01-03-fixture-gate-pass-fail-evaluation.md) | Fixture Gate Pass/Fail Evaluation Gates Progression | Unit |
+
+## Original Criteria Overview
 
 1. `atcr personas submit <name>` with an invalid persona name (fails `validatePersonaName`) exits non-zero with a clear stderr error and performs no fork/PR work.
 2. `atcr personas submit <name>` on a persona with no fixture defined (`HasFixture: false`) exits non-zero with a clear stderr error identifying the missing fixture, and performs no fork/PR work.
 3. `atcr personas submit <name>` on a persona whose fixture fails (`Passed != Total`) exits non-zero with a clear stderr error reporting the pass/fail counts, and performs no fork/PR work.
 4. `atcr personas submit <name>` on a persona whose fixture fully passes proceeds past the local gate (subsequent fork/PR behavior is out of scope for this story and covered by Theme 2).
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.9_community_prompt_submissions/`_
 
 ## Technical Considerations
 

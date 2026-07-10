@@ -38,13 +38,19 @@
 - **Relevant:** This is the core delivery mechanism for AC1 (fork+PR automation) and AC3 (no marketplace/hosted surface — GitHub-PR-native only); without it, `submit` cannot get a persona out of the user's local machine and into the canonical repo's review queue.
 - **Time-bound:** Deliverable within this sprint's implementation phase alongside the fixture-gate story; `go test ./...` must pass with the new seam fully unit-tested via stubs before the sprint's code-review gate.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-gh-precondition-check.md) | `gh` Precondition Check (PATH + Auth) Before Any Fork/Branch Work | Unit |
+| [02-02](../acceptance-criteria/02-02-fork-branch-push-and-pr-create.md) | Fork, Branch/Push, and PR Create with PR URL Reported to the User | Unit |
+| [02-03](../acceptance-criteria/02-03-injectable-gh-seam-for-testing.md) | Injectable `gh` Seam Matching `personasClient`/`personasFixtureRunner` Conventions | Unit |
+
+## Original Criteria Overview
 
 1. On a fixture-passing persona, `submit` verifies `gh` is on `PATH` and authenticated before performing any fork/branch/commit work, halting with a clear, actionable error if either check fails.
 2. `submit` forks `samestrin/atcr` (or detects and reuses an existing fork), pushes a branch containing the persona's files, and opens a PR via `gh pr create`, reporting the resulting PR URL back to the user on success.
 3. The `gh` interaction is wrapped behind an injectable seam consistent with `personasClient`/`personasFixtureRunner`, allowing tests to stub fork/branch/PR behavior without invoking a real `gh` binary or network call.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.9_community_prompt_submissions/`_
 
 ## Technical Considerations
 

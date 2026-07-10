@@ -30,13 +30,19 @@
 - **Relevant:** Directly resolves AC2 and the epic's recorded terminology-collision finding, which blocks graduation semantics (Theme 4) from being built on a corrupted provenance field.
 - **Time-bound:** Deliverable within this plan's sprint, landing before or alongside Story 4 (maintainer graduation), which depends on a clean `submitted` marker to flip during promotion.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-submitted-status-is-not-a-source-value.md) | `submitted` Status Is Not a Fourth `Source` Value | Unit |
+| [03-02](../acceptance-criteria/03-02-submitted-marker-attribution-and-atomic-persistence.md) | `submitted` Marker Carries Attribution and Persists Only via Atomic Write | Unit |
+| [03-03](../acceptance-criteria/03-03-marker-stored-outside-community-tree-and-list-extension-point.md) | Marker Lives Outside `personas/community/` and `List` Extension Point Leaves Existing Output Unchanged | Unit/Integration |
+
+## Original Criteria Overview
 
 1. A `submitted` status/marker concept is introduced as a field or sidecar artifact distinct from `PersonaMeta.Source`; no existing `Source` value, call site, or test is modified in meaning or behavior.
 2. The `submitted` marker records attribution/provenance metadata (at minimum: submitter identity and confirmation the local fixture gate passed) and is persisted only via an existing atomic-write helper (`writeFileAtomic` or `atomicfs.WriteFileAtomic`), never a bare file write, and lives outside `personas/community/`.
 3. `List` (or a clearly scoped extension point built for future use) can, in principle, surface `submitted` status without altering its existing `Source`-based output for `built-in`/`community`/`project` rows; existing `personas list` output and tests are unaffected.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.9_community_prompt_submissions/`_
 
 ## Technical Considerations
 

@@ -38,13 +38,19 @@
 - **Relevant:** Directly satisfies AC4's documentation requirement and is the only remaining uncovered piece of AC4 once `go test ./...` passes; without it, the two-tier curation model implemented by Themes 3–4 would exist in code but be undiscoverable by users or maintainers.
 - **Time-bound:** Completed within this sprint's implementation phase, after Themes 1–4 land (so the documented behavior matches shipped behavior), and verified before the sprint's code-review gate alongside the `go test ./...` full-suite pass.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-submit-subcommand-documented-in-install-guide.md) | `atcr personas submit <name>` Documented as the Seventh Subcommand | Manual (documentation review) |
+| [05-02](../acceptance-criteria/05-02-contribution-checklist-cross-references-submit.md) | Contribution Checklist Cross-References `atcr personas submit` | Manual (documentation review) |
+| [05-03](../acceptance-criteria/05-03-submitted-to-graduated-two-tier-model-section.md) | New Section Explains the `submitted` → Graduated Two-Tier Model | Manual (documentation review) |
+
+## Original Criteria Overview
 
 1. `docs/personas-install.md` documents `atcr personas submit <name>` as the seventh subcommand, in the existing per-subcommand format (description, example, error cases), positioned after `test` and before `upgrade`, with the section heading updated to "The seven subcommands."
 2. `docs/personas-authoring.md`'s contribution checklist cross-references `atcr personas submit` as the automated equivalent of the "Fixture test passes" checklist item, noting that a failing fixture blocks submission.
 3. `docs/personas-authoring.md` gains a new section describing the `submitted` → graduated two-tier model: `Source` stays `community`, `submitted` is an orthogonal status assigned on successful submission, and graduation is a maintainer PR-merge action that promotes the persona into `personas/community/`.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/19.9_community_prompt_submissions/`_
 
 ## Technical Considerations
 
