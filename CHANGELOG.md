@@ -1,3 +1,18 @@
+## [19.8.0] - 2026-07-10
+
+Add an opt-in, off-by-default CI workflow that auto-merges mechanical persona slug-bump PRs, plus the hermes maintenance-agents configuration doc covering host provisioning, drift-judgment classification, and the drafting-agent contract for maintainer-side model/persona upkeep.
+
+### Added
+
+- `.github/workflows/hermes-auto-merge.yml`: opt-in, off-by-default CI workflow that auto-merges mechanical persona slug-bump PRs only after the required CI check passes, gated by a fail-closed structural path/label filter that never keys on PR authorship.
+- `docs/hermes-maintenance-agents.md`: documents the hermes maintenance-agent configuration surface, host provisioning runbook, judgment classification rule, and drafting agent contract.
+
+### Fixed
+
+- Closed a TOCTOU gap in the auto-merge workflow by pinning the PR's head SHA across the file filter, CI-status gate, and merge step.
+- Auto-merge filter now rejects renamed files, closing a `.md`→`.yaml` bypass, and requires the `github-actions` app slug on the CI check-run to prevent a name-collision bypass.
+- Auto-merge workflow now retries the check-runs API with backoff and fails closed on exhaustion, matches `hermes:mechanical` labels case-insensitively, bounds runtime with a job-level timeout, restricts merges to PRs targeting `main`, and handles an inaccessible PR gracefully.
+
 ## [19.7.0] - 2026-07-09
 
 Layer live, auto-updating model resolution over persona `model` bindings — personas now bind to a vendor family/channel and resolve to a concrete slug recorded in a lock, so reviews stay reproducible by default and only change on an explicit `atcr personas upgrade`.
