@@ -256,6 +256,52 @@ func TestListSubmissions_EmptyDir(t *testing.T) {
 	assert.Empty(t, subs)
 }
 
+// TestListSubmissions_SkipsMalformed confirms one corrupt marker is skipped with a
+// joined warning rather than aborting the whole listing (mirrors listCommunity).
+func TestListSubmissions_SkipsMalformed(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, WriteSubmissionMarker(dir, SubmissionStatus{Persona: "good", Submitter: "octocat", FixturePassed: true, SubmittedAt: time.Now().UTC()}))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bad.yaml"), []byte("::: not valid: [yaml"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".DS_Store"), []byte("junk"), 0o600)) // non-YAML, silently skipped
+
+	subs, err := ListSubmissions(dir)
+	require.Error(t, err, "a corrupt marker surfaces a warning")
+	assert.Contains(t, err.Error(), "could not parse submission marker")
+	names := make([]string, len(subs))
+	for i, s := range subs {
+		names[i] = s.Persona
+	}
+	assert.Contains(t, names, "good", "the valid marker is still listed")
+}
+
+// TestListSubmissions_SkipsSymlink confirms a symlinked entry in the storage dir
+// is skipped (it may point outside the dir), never followed or parsed.
+func TestListSubmissions_SkipsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, WriteSubmissionMarker(dir, SubmissionStatus{Persona: "good", Submitter: "octocat", FixturePassed: true, SubmittedAt: time.Now().UTC()}))
+	outside := filepath.Join(t.TempDir(), "outside.yaml")
+	require.NoError(t, os.WriteFile(outside, []byte("persona: sneaky\n"), 0o600))
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "link.yaml")))
+
+	subs, err := ListSubmissions(dir)
+	require.NoError(t, err)
+	for _, s := range subs {
+		assert.NotEqual(t, "sneaky", s.Persona, "a symlinked marker is not followed")
+	}
+	assert.Len(t, subs, 1, "only the real marker is listed")
+}
+
+// TestReadSubmission_Malformed confirms a present-but-unparseable marker surfaces a
+// parse error rather than being silently treated as "not submitted".
+func TestReadSubmission_Malformed(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sasha.yaml"), []byte("::: not valid: [yaml"), 0o600))
+	_, ok, err := ReadSubmission(dir, "sasha")
+	require.Error(t, err)
+	assert.False(t, ok)
+	assert.Contains(t, err.Error(), "parsing submission marker")
+}
+
 // --- Wiring: marker fires only after a successful PR -------------------------
 
 // TestSubmit_WritesMarkerAfterPR covers the Story 3 wiring: on a successful PR,
