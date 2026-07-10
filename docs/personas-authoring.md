@@ -209,4 +209,31 @@ Here "Required" means **gate-enforced at `go test` time, not enforced by the Go 
 
 **Enforcement (hard gate, not editorial):** a Go test iterates every entry in `personas/community/index.json`, loads each entry's source persona YAML via its `path`, and fails `go test` if any entry's `provider`/`model` is empty or drifts from the YAML. A library persona with missing or mismatched metadata cannot merge. Embedded built-in personas are **exempt** — they are never enumerated in the community index. `provider`/`model`/`tasks`/`tags` are display/search metadata only: never embed executable content, secrets, or network instructions in them.
 
+## 6. Model family/channel bindings and resolved locks (Epic 19.7)
+
+A persona's `model` field is the **resolved lock** — the concrete slug reviews actually run. By default that is exactly the pinned slug you author (e.g. `anthropic/claude-opus-4.8`), and there is **zero migration**: a persona written before Epic 19.7 keeps working unchanged, because its pinned `model` *is* its initial lock. Every persona shipped in `personas/community/index.json` today is a bindingless pinned slug.
+
+Optionally, a persona may add an **additive** `binding:` field declaring a *logical* family/channel instead of hand-editing the slug on every vendor release. `atcr` resolves the binding to a concrete slug and records it in the `model` lock; reviews still run the lock, never the binding (see [personas-install.md](personas-install.md#reproducible-by-default-locks-not-live-models)). The field is `omitempty` — omit it and nothing changes.
+
+```yaml
+# ── Agent binding (validated against the registry schema) ──
+provider: openrouter
+model: anthropic/claude-opus-4.8        # the resolved lock — what reviews run
+binding: anthropic/claude-opus@stable   # OPTIONAL logical binding (Epic 19.7)
+```
+
+**Binding grammar** — a `binding:` string parses to one of three strategies, fail-closed (an unrecognized shape is an error, never a silent wrong resolution):
+
+| Shape | Example | Resolves via |
+|-------|---------|--------------|
+| `pin:<vendor>/<model>` | `pin:anthropic/claude-opus-4.8` | Explicit pin — returned verbatim, **never floats**; channels are ignored. |
+| `<family>@<channel>` | `anthropic/claude-opus@stable` | Alias family (provider-owned `-latest`) or newest-in-vendor-prefix scan. |
+| bare `<family>` | `deepseek` | Same as `<family>@stable` (the default channel). |
+
+**Channels** — `@stable` (default) selects the newest generally-available family member, excluding preview/beta/exp-tokened models and any model carrying an `expiration_date`. `@latest` additionally includes preview-tagged members (it still excludes expiring ones). An explicit `pin:` never floats regardless of channel.
+
+**Families** — alias-covered families (Anthropic, OpenAI, Google, Moonshot tiers) bind to a provider-owned `~…-latest` alias the provider resolves server-side; the alias-less brands resolve by newest `created` timestamp under their catalog vendor prefix. Note `glm` keys the `z-ai/` catalog namespace — there is no `glm/` namespace.
+
+Implementation detail — the catalog schema (`id`, `canonical_slug`, `created`, `expiration_date`), the `~…-latest` alias behavior, and the `@stable` preview/deprecation heuristic are specified in the plan documentation: [openrouter-catalog-api.md](../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/openrouter-catalog-api.md) and [existing-resolver-patterns.md](../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/existing-resolver-patterns.md).
+
 See [personas-install.md](personas-install.md) for installing and using personas, and [registry.md](registry.md) for the full agent schema and routing semantics.

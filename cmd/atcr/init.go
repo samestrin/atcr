@@ -44,7 +44,10 @@ func newInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return installCommunityPersonas(personasClient, commpersonas.BaseURL(), dir, builtins.Names(), out, errOut)
+			// nil roster → install the community set the fetched index publishes
+			// (Option B / TD-011); builtins.Names() is the embedded-scaffold roster,
+			// not the community fetch-and-pin roster.
+			return installCommunityPersonas(personasClient, commpersonas.BaseURL(), dir, nil, out, errOut)
 		},
 	}
 	cmd.Flags().Bool("force", false, "overwrite existing configuration and persona files")
@@ -89,6 +92,17 @@ const offlineHint = " — retry with --force --offline to use the embedded built
 // error; a roster persona the index does not advertise is skipped with a warning
 // (init still succeeds).
 //
+// The roster reconciliation is Option B (closes 19.6's TD-011 HIGH): when roster
+// is nil — the sole production caller shape from both `init` (init.go) and
+// `quickstart` (quickstart.go) — the install set is derived from the fetched
+// index's own entries, so online init/quickstart install exactly what the index
+// publishes and self-heal as it grows (no hardcoded builtins.Names() list to keep
+// in lockstep, no misleading "not found" warnings). Both call sites pass nil, so
+// this derivation is expressed in exactly ONE shared location and the two cannot
+// drift the way TD-006/TD-007 did. A non-nil roster restricts the install to those
+// names (a name absent from the index is skip-with-warning) — the shape tests use
+// and the escape hatch that keeps the genuine-absence warning path reachable.
+//
 // The roster install is all-or-nothing: any fetch/validation failure aborts with
 // a descriptive error (naming the failure and suggesting --offline) and rolls back
 // every persona file this run created, so a mid-roster failure never leaves a
@@ -101,25 +115,40 @@ func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir s
 	if len(entries) == 0 {
 		return fmt.Errorf("community persona index is empty: no personas to install%s", offlineHint)
 	}
+	// Pre-filter index entries whose name fails persona-name validation (empty or
+	// containing characters outside [a-zA-Z0-9_/-]): skip-with-warning here so one
+	// malformed index entry does not reach InstallUnit->validatePersonaName and trip
+	// the all-or-nothing rollback that would abort init/quickstart for every user.
+	// This is distinct from the AC-07-03 rollback on genuine per-unit INSTALL failures.
 	indexed := make(map[string]struct{}, len(entries))
+	indexOrder := make([]string, 0, len(entries))
 	for _, e := range entries {
+		if !commpersonas.ValidName(e.Name) {
+			_, _ = fmt.Fprintf(errOut, "persona %q from the community index has an invalid name — skipping\n", e.Name)
+			continue
+		}
 		indexed[e.Name] = struct{}{}
+		indexOrder = append(indexOrder, e.Name)
 	}
 
-	// Track every unit file this run might create, with whether it pre-existed, so
-	// a failure rolls back exactly the files this run created — never a pre-existing
-	// one (all-or-nothing). Candidates are recorded BEFORE the install call so the
-	// currently-failing persona's own partial write is included in the rollback,
-	// not just prior successes.
-	type rbCandidate struct {
-		path       string
-		preExisted bool
+	// Option B reconciliation: a nil roster means "install what the index
+	// publishes." Derive it from the validated, already-fetched entries (no extra
+	// network round-trip), preserving index order so the install is deterministic.
+	if roster == nil {
+		roster = indexOrder
 	}
-	var candidates []rbCandidate
+
+	// Track every unit file this run might create so a failure rolls back exactly
+	// the files this run created — never a pre-existing one (all-or-nothing).
+	// Candidates are recorded BEFORE the install call so the currently-failing
+	// persona's own partial write is included in the rollback, not just prior
+	// successes. The file-exists guard above has already proven both paths absent
+	// when a candidate is recorded, so pre-existence tracking is unnecessary.
+	var candidates []string
 	rollback := func() {
-		for _, c := range candidates {
-			if !c.preExisted && fileExists(c.path) {
-				_ = os.Remove(c.path)
+		for _, path := range candidates {
+			if fileExists(path) {
+				_ = os.Remove(path)
 			}
 		}
 	}
@@ -139,10 +168,7 @@ func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir s
 			_, _ = fmt.Fprintf(errOut, "persona %q already installed — leaving it untouched\n", name)
 			continue
 		}
-		candidates = append(candidates,
-			rbCandidate{yamlPath, fileExists(yamlPath)},
-			rbCandidate{mdPath, fileExists(mdPath)},
-		)
+		candidates = append(candidates, yamlPath, mdPath)
 
 		if err := commpersonas.InstallUnit(client, baseURL, name, destDir); err != nil {
 			rollback()

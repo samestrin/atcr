@@ -414,3 +414,32 @@ func TestPersonaResolution_AuthoredCommunityPromptsResolveEndToEnd(t *testing.T)
 		})
 	})
 }
+
+// TestPersonaPromptLenDecoupledFromExecutorCap proves the registry (community)
+// persona length cap is its own constant, raised above the old 4096 alias so a
+// legitimate reviewer persona (e.g. the 4128-byte pace.md) is no longer rejected,
+// while the unrelated executor system-prompt cap (Epic 7.0.1) stays put and an
+// adversarially oversized persona still fails at the persona-specific cap. This
+// reproduces the TD: MaxPersonaPromptLen was a literal Go alias of
+// MaxExecutorSystemPromptLen (4096), hard-blocking pace.md at resolve time.
+func TestPersonaPromptLenDecoupledFromExecutorCap(t *testing.T) {
+	// The persona cap must no longer equal the executor system-prompt cap: raising
+	// the persona cap must not silently raise the unrelated executor cap.
+	assert.Greater(t, MaxPersonaPromptLen, MaxExecutorSystemPromptLen,
+		"persona cap must be decoupled from and larger than the executor system-prompt cap")
+	// The executor cap is an unrelated Epic 7.0.1 limit — the split must leave it at 4096.
+	assert.Equal(t, 4096, MaxExecutorSystemPromptLen,
+		"executor system_prompt cap must be unchanged by the persona-cap split")
+
+	// A legitimate reviewer persona just over the OLD 4096 cap (pace.md is 4128
+	// bytes) must now pass. Plain text is valid template content, so length is the
+	// only gate exercised here.
+	legit := strings.Repeat("a", MaxExecutorSystemPromptLen+32) // 4128 bytes, like pace.md
+	assert.NoError(t, ValidateFetchedPersonaPrompt(legit),
+		"a ~4128-byte persona prompt must pass under the raised persona cap")
+
+	// An adversarially oversized persona still fails at the new persona-specific cap.
+	oversized := strings.Repeat("a", MaxPersonaPromptLen+1)
+	assert.Error(t, ValidateFetchedPersonaPrompt(oversized),
+		"a persona prompt over the persona cap must still be rejected")
+}

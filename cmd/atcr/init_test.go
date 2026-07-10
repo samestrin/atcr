@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -366,7 +368,8 @@ func TestInstallCommunityPersonas_MissingRosterSkipsWithWarning(t *testing.T) {
 	require.NoError(t, err, "a missing roster persona is skip-with-warning, not a hard failure")
 
 	assert.FileExists(t, filepath.Join(dest, "owasp.yaml"))
-	assert.NoFileExists(t, filepath.Join(dest, "tracer.yaml"))
+	assert.NoFileExists(t, filepath.Join(dest, "penny.yaml"),
+		"the genuinely-absent roster persona is not written to disk")
 	assert.Contains(t, errOut.String(), "penny", "the skipped persona is named in the warning")
 }
 
@@ -479,6 +482,348 @@ func TestInstallCommunityPersonas_MidRosterFailure_RollsBack(t *testing.T) {
 	assert.Empty(t, entries, "personas installed before the failure are rolled back (all-or-nothing)")
 }
 
+// --- AC 07-01: index-derived community roster (TD-011) ----------------------
+
+// communityPinNames returns the sorted <name>s of the <name>.yaml units installed
+// under dir — the personas actually pinned by a community install.
+func communityPinNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".yaml") {
+			names = append(names, strings.TrimSuffix(e.Name(), ".yaml"))
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// TestInstallCommunityPersonas_NilRosterDerivesFromIndex covers AC 07-01
+// Scenario 1 + the LOCKED Option B reconciliation: with a nil roster,
+// installCommunityPersonas derives the install set from the fetched index's own
+// entries — not builtins.Names(). The index publishes names DISJOINT from the
+// built-ins (anthony/sonny), so a non-empty install proves the roster came from
+// the index, not the hardcoded built-in list.
+func TestInstallCommunityPersonas_NilRosterDerivesFromIndex(t *testing.T) {
+	index := `[
+	  {"name":"anthony","version":"1.2.0","description":"d","path":"anthony.yaml"},
+	  {"name":"sonny","version":"1.2.0","description":"d","path":"sonny.yaml"}
+	]`
+	srv := unitServer(t, index, map[string]string{
+		"/anthony.yaml": communityUnitYAML,
+		"/sonny.yaml":   communityUnitYAML,
+	})
+	dest := t.TempDir()
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, &bytes.Buffer{}))
+
+	assert.Equal(t, []string{"anthony", "sonny"}, communityPinNames(t, dest),
+		"nil roster installs exactly the fetched index's entries")
+	// A built-in name absent from the index is never conjured into the install set.
+	assert.NoFileExists(t, filepath.Join(dest, "bruce.yaml"),
+		"roster is the index, not builtins.Names()")
+}
+
+// TestInstallCommunityPersonas_RosterTracksIndexContents covers AC 07-01 Edge
+// Case 2: the derived roster reflects the index at fetch time, so adding or
+// removing an index entry changes the next run's installed set with NO code
+// change (self-healing) — the antithesis of a hardcoded builtins.Names() list.
+func TestInstallCommunityPersonas_RosterTracksIndexContents(t *testing.T) {
+	run := func(index string, files map[string]string) []string {
+		srv := unitServer(t, index, files)
+		dest := t.TempDir()
+		require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, &bytes.Buffer{}))
+		return communityPinNames(t, dest)
+	}
+
+	one := run(
+		`[{"name":"anthony","version":"1.2.0","description":"d","path":"anthony.yaml"}]`,
+		map[string]string{"/anthony.yaml": communityUnitYAML},
+	)
+	assert.Equal(t, []string{"anthony"}, one, "single-entry index installs exactly that entry")
+
+	two := run(
+		`[
+		  {"name":"anthony","version":"1.2.0","description":"d","path":"anthony.yaml"},
+		  {"name":"glenna","version":"1.2.0","description":"d","path":"glenna.yaml"}
+		]`,
+		map[string]string{"/anthony.yaml": communityUnitYAML, "/glenna.yaml": communityUnitYAML},
+	)
+	assert.Equal(t, []string{"anthony", "glenna"}, two,
+		"a grown index installs the added entry without a code change")
+}
+
+// TestInit_Online_InstallsNonEmptyCommunityRoster covers AC 07-01 Scenario 1
+// end-to-end through `atcr init`: against an index whose entries are disjoint
+// from builtins.Names(), the online init pins a NON-EMPTY community roster (the
+// TD-011 regression: today it pins zero and only warns).
+func TestInit_Online_InstallsNonEmptyCommunityRoster(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	index := `[
+	  {"name":"anthony","version":"1.2.0","description":"d","path":"anthony.yaml"},
+	  {"name":"sonny","version":"1.2.0","description":"d","path":"sonny.yaml"}
+	]`
+	srv := unitServer(t, index, map[string]string{
+		"/anthony.yaml": communityUnitYAML,
+		"/sonny.yaml":   communityUnitYAML,
+	})
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	pinDir := t.TempDir()
+	oldDir := personasDir
+	personasDir = func() (string, error) { return pinDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	_, err := execute(t, "init")
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"anthony", "sonny"}, communityPinNames(t, pinDir),
+		"online init installs the index-derived community roster")
+}
+
+// --- AC 07-02: no misleading "not found in community index" warnings --------
+
+// realCommunityServer serves the repo's ACTUAL personas/community/index.json and
+// every co-located unit file, so AC 07-02's negative assertion ("zero skip
+// warnings") is proven against production data rather than a synthetic stand-in.
+// The community dir is anchored to this test file's own location via
+// runtime.Caller so the helper is robust to a test that t.Chdir()s first.
+//
+// Assumes normal `go test` (the project's CI + hooks run `go test -race ./...`,
+// no -trimpath), where runtime.Caller yields the absolute source path. Under a
+// hypothetical -trimpath test build the recorded path would be package-relative
+// and the ReadFile below fails LOUD via require.NoError (never a false green).
+func realCommunityServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok, "runtime.Caller must resolve the test file path")
+	dir := filepath.Join(filepath.Dir(thisFile), "..", "..", "personas", "community")
+
+	index, err := os.ReadFile(filepath.Join(dir, "index.json"))
+	require.NoError(t, err, "the real community index must be readable")
+	routes := map[string][]byte{"/index.json": index}
+	files, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, f := range files {
+		if f.IsDir() {
+			continue
+		}
+		body, rerr := os.ReadFile(filepath.Join(dir, f.Name()))
+		require.NoError(t, rerr)
+		routes["/"+f.Name()] = body
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if body, ok := routes[r.URL.Path]; ok {
+			_, _ = w.Write(body)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestInstallCommunityPersonas_NilRoster_NoSkipWarnings_RealIndex covers AC 07-02
+// Scenario 1 against the REAL index: the index-derived (nil) roster emits zero
+// "not found in community index — skipping" warnings, because every derived name
+// is present in the index by construction.
+//
+// Transparent vacuous-RED (mirrors this sprint's 2.4/2.7 notes): Element 1's
+// GREEN (7.2 — derive the roster from the fetched index) is the SAME line of code
+// that removes the misleading warning, so AC 07-02 is already satisfied and this
+// test passes on first run. Its value is the permanent regression guard: it fails
+// if the roster is ever reverted to a hardcoded list disjoint from the index (the
+// skip warnings would return). The discriminating counterpart —
+// TestInstallCommunityPersonas_MissingRosterSkipsWithWarning — proves the warning
+// path still fires for a genuinely-absent name, so this is not an always-green
+// tautology.
+func TestInstallCommunityPersonas_NilRoster_NoSkipWarnings_RealIndex(t *testing.T) {
+	srv := realCommunityServer(t)
+	dest := t.TempDir()
+	errOut := &bytes.Buffer{}
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, errOut))
+
+	assert.NotContains(t, errOut.String(), "not found in community index",
+		"the index-derived roster produces zero misleading skip warnings")
+	assert.NotEmpty(t, communityPinNames(t, dest), "a non-empty set installs from the real index")
+}
+
+// TestInit_Online_NoSkipWarnings covers AC 07-02 Scenario 1 end-to-end through
+// `atcr init`: stderr contains zero skip warnings against the real index.
+func TestInit_Online_NoSkipWarnings(t *testing.T) {
+	srv := realCommunityServer(t) // resolve the real community dir BEFORE t.Chdir
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	pinDir := t.TempDir()
+	oldDir := personasDir
+	personasDir = func() (string, error) { return pinDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	_, stderr, err := executeSplit(t, "init")
+	require.NoError(t, err)
+	assert.NotContains(t, stderr, "not found in community index",
+		"online init emits no misleading skip warnings against the real index")
+	// Positive guard: a silent regression that derives an empty roster would also
+	// emit zero warnings — assert a non-empty install so this is not passed by
+	// installing nothing.
+	assert.NotEmpty(t, communityPinNames(t, pinDir),
+		"online init installs a non-empty community roster (not a silent zero-install)")
+}
+
+// TestInstallCommunityPersonas_NeverOverwriteWarningDistinct covers AC 07-02 Edge
+// Case 2 + DoD bullet 3: the pre-existing "already installed — leaving it
+// untouched" notice still prints for an on-disk unit and is NOT conflated with the
+// "not found in community index" skip-warning this AC targets.
+func TestInstallCommunityPersonas_NeverOverwriteWarningDistinct(t *testing.T) {
+	srv := realCommunityServer(t)
+	dest := t.TempDir()
+	// Pre-seed one real-index persona so the never-overwrite path fires for it.
+	require.NoError(t, os.WriteFile(filepath.Join(dest, "anthony.yaml"), []byte("HANDEDITED"), 0o644))
+	errOut := &bytes.Buffer{}
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, errOut))
+
+	s := errOut.String()
+	assert.Contains(t, s, "already installed — leaving it untouched",
+		"the never-overwrite notice still prints for a pre-existing unit")
+	assert.NotContains(t, s, "not found in community index",
+		"the never-overwrite notice is not conflated with the skip-warning")
+	got, err := os.ReadFile(filepath.Join(dest, "anthony.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, "HANDEDITED", string(got), "the pre-existing hand-edited unit is untouched")
+}
+
+// --- AC 07-03: single shared reconciliation point + backward compat ---------
+
+// TestRosterReconciliation_InitQuickstartParity covers AC 07-03 Scenario 1: the
+// `init` and `quickstart` call paths resolve to the IDENTICAL index-derived
+// roster because both consume the same shared reconciliation point
+// (installCommunityPersonas, nil roster) — the TD-006/TD-007 two-call-site drift
+// guard. Both paths run against the same real index and must install the same set.
+//
+// Transparent vacuous-RED: 7.2's nil-roster derivation already made both call
+// sites share one source, so this passes on first run. It is the drift guard —
+// it fails if either call site is ever changed to pass a different roster.
+func TestRosterReconciliation_InitQuickstartParity(t *testing.T) {
+	srv := realCommunityServer(t) // resolve real dir before any t.Chdir
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	oldDir := personasDir
+	t.Cleanup(func() { personasDir = oldDir })
+
+	// init call path: writes .atcr into cwd, community units into its pin dir.
+	initProj := t.TempDir()
+	initPin := t.TempDir()
+	t.Chdir(initProj)
+	personasDir = func() (string, error) { return initPin, nil }
+	_, _, err := executeSplit(t, "init")
+	require.NoError(t, err)
+
+	// quickstart call path: explicit dir arg (cwd-independent), its own pin dir.
+	qsProj := t.TempDir()
+	qsPin := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	personasDir = func() (string, error) { return qsPin, nil }
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:            qsProj,
+		fetchCommunity: true,
+		in:             strings.NewReader(quickstartInput),
+		out:            &bytes.Buffer{},
+		errOut:         &bytes.Buffer{},
+	}))
+
+	// Expected set = the fetched index's own entry names (sorted). Comparing
+	// against this — not merely init==quickstart — proves the install is
+	// INDEX-DERIVED, closing the hole where both sites could share one hardcoded
+	// non-nil roster yet still "agree."
+	entries, err := commpersonas.FetchIndex(srv.Client(), srv.URL)
+	require.NoError(t, err)
+	want := make([]string, 0, len(entries))
+	for _, e := range entries {
+		want = append(want, e.Name)
+	}
+	sort.Strings(want)
+
+	initSet := communityPinNames(t, initPin)
+	assert.Equal(t, want, initSet, "init installs exactly the fetched index's roster (index-derived)")
+	assert.Equal(t, initSet, communityPinNames(t, qsPin),
+		"init and quickstart install the identical index-derived roster (one shared reconciliation point)")
+}
+
+// TestInstallCommunityPersonas_NilRoster_MidRosterFailure_RollsBack covers AC
+// 07-03 Edge Case 1: the all-or-nothing rollback is preserved under the reconciled
+// (nil) roster — a mid-roster install failure removes every file this run created.
+func TestInstallCommunityPersonas_NilRoster_MidRosterFailure_RollsBack(t *testing.T) {
+	index := `[
+	  {"name":"a","version":"1.0.0","description":"d","path":"a.yaml"},
+	  {"name":"b","version":"1.0.0","description":"d","path":"b.yaml"},
+	  {"name":"c","version":"1.0.0","description":"d","path":"c.yaml"}
+	]`
+	srv := statusServer(t,
+		map[string]string{
+			"/index.json": index,
+			"/a.yaml":     communityUnitYAML,
+			"/b.yaml":     communityUnitYAML,
+		},
+		map[string]int{"/c.yaml": 500},
+	)
+	dest := t.TempDir()
+
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err, "a mid-roster unit failure must error (not a silent no-op)")
+	// Assert the specific install-failure wrapping — this proves the nil roster
+	// DERIVED to include c and failed installing it, isolating "rollback works"
+	// from a reverted-Option-B empty roster that would install nothing and also
+	// leave dest empty (a false pass on the emptiness check alone).
+	assert.Contains(t, err.Error(), `failed to install community persona "c"`,
+		"the derived roster reached c and the rollback fired on its failure")
+
+	entries, rerr := os.ReadDir(dest)
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "nil-roster install is all-or-nothing: earlier installs are rolled back")
+}
+
+// TestInit_BuiltinScaffoldUntouchedByCommunityInstall covers AC 07-03 Edge Case 2:
+// the embedded built-in .md scaffolds `atcr init` writes under .atcr/personas are
+// not modified, renamed, or removed by the community-install step (Option B never
+// touches the built-in scaffold or builtins.Names() — the two are decoupled). In
+// production the community pin dir (~/.config/atcr/personas) is a DIFFERENT dir
+// from the project .atcr/personas scaffold dir; the test mirrors that separation.
+func TestInit_BuiltinScaffoldUntouchedByCommunityInstall(t *testing.T) {
+	srv := realCommunityServer(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home) // community pin dir resolves under here (production routing)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	// No personasDir override: the community pin dir is production-resolved
+	// (~/.config/atcr/personas), a different tree from the project's
+	// .atcr/personas scaffold dir — so the decoupling assertion below genuinely
+	// exercises the routing rather than a test-imposed dir split.
+	_, _, err := executeSplit(t, "init")
+	require.NoError(t, err)
+
+	// Every built-in .md scaffold is present and intact after the community install.
+	for _, name := range personaNames {
+		data, rerr := os.ReadFile(filepath.Join(dir, ".atcr", "personas", name+".md"))
+		require.NoError(t, rerr, "built-in scaffold %s.md present after community install", name)
+		assert.Contains(t, string(data), "## Role", "%s.md scaffold content intact", name)
+	}
+	// Community units route to the resolved pin dir, never into the scaffold dir.
+	pinDir := filepath.Join(home, ".config", "atcr", "personas")
+	assert.NotEmpty(t, communityPinNames(t, pinDir), "community roster installed to the resolved pin dir")
+	assert.NoFileExists(t, filepath.Join(dir, ".atcr", "personas", "anthony.yaml"),
+		"community units never leak into the built-in scaffold dir (decoupled)")
+}
+
 func TestPersonas_EmbeddedSetComplete(t *testing.T) {
 	assert.ElementsMatch(t, personaNames, personas.Names())
 	for _, name := range personaNames {
@@ -495,4 +840,25 @@ func TestPersonas_UnknownName(t *testing.T) {
 	_, err := personas.Get("nonexistent")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nonexistent")
+}
+
+// TestInstallCommunityPersonas_SkipsInvalidIndexNames: a community index entry whose
+// name fails persona-name validation (empty/invalid) is skipped with a warning
+// BEFORE the install loop, so one malformed index entry does not reach
+// InstallUnit->validatePersonaName and trip the all-or-nothing rollback that would
+// abort init/quickstart for every user. Valid entries still install; the call
+// succeeds (exit 0). Distinct from the AC-07-03 rollback on genuine install failures.
+func TestInstallCommunityPersonas_SkipsInvalidIndexNames(t *testing.T) {
+	index := `[{"name":"bad name!","version":"1.0.0","description":"d","path":"bad.yaml"},{"name":"owasp","version":"1.2.0","description":"sec","path":"owasp.yaml"}]`
+	srv := unitServer(t, index, map[string]string{
+		"/owasp.yaml": communityUnitYAML,
+		"/owasp.md":   communityUnitMD,
+	})
+	dest := t.TempDir()
+	errOut := &bytes.Buffer{}
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, errOut),
+		"one invalid index name must not fail the whole install")
+	assert.FileExists(t, filepath.Join(dest, "owasp.yaml"), "the valid persona still installs")
+	assert.Contains(t, errOut.String(), "invalid name", "the invalid entry is skipped with a warning")
 }

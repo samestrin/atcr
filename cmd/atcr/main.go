@@ -200,6 +200,7 @@ func newRootCmd() *cobra.Command {
 		newLeaderboardCmd(),
 		newBenchmarkCmd(),
 		newPersonasCmd(),
+		newModelsCmd(),
 		newDebtCmd(),
 		newHistoryCmd(),
 		newAuditReportCmd(),
