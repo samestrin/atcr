@@ -36,7 +36,7 @@
 **Edge Case 1: `@latest` still honors `expiration_date` (deprecation), only the preview/beta/exp token exclusion is bypassed**
 - **Given** the newest-by-`created` entry under a vendor prefix has a non-null `expiration_date` (deprecated) but no preview/beta/exp token
 - **When** resolution runs with channel `@latest`
-- **Then** the expected/documented behavior is made explicit by this AC's test: either (a) `@latest` also returns a deprecated entry (channels only ever affect preview inclusion, deprecation is always excluded), or (b) `@latest` excludes it too — whichever the implementation chooses must be a single, tested, documented rule, since the story text ties the exclusion clause ("unless the channel is `@latest`") to the whole `@stable` heuristic sentence and this is the one place the two signals (preview-token vs. `expiration_date`) could be conflated; this AC requires the test suite to assert one explicit, unambiguous behavior rather than leaving it implicit
+- **Then** `@latest` bypasses ONLY the preview/beta/exp token exclusion and STILL excludes any model with a non-null `expiration_date` — identically to `@stable`. Rationale: a non-null `expiration_date` is a hard availability signal (the model is sunsetting and will 404 at review time), independent of preview status; channels govern preview/GA inclusion only, never deprecation. Concretely: under `@latest` a preview-tagged newest entry IS selected, but a deprecated (expiring) newest entry is skipped in favor of the next-newest non-expiring entry, and resolution fails closed (no-eligible-entry error) if no non-expiring entry exists. The test suite asserts this exact rule against a fixture whose newest entry is deprecated.
 
 **Edge Case 2: `@latest` on an alias-covered persona is a no-op**
 - **Given** an alias-covered persona (e.g. gia) has channel `@latest`
@@ -70,7 +70,7 @@
 **Story-Specific:**
 - [ ] `@latest` returns a preview-tagged newest entry that `@stable` excludes, against the identical fixture
 - [ ] `@latest` still performs exactly-one-newest selection, not "return all preview builds"
-- [ ] The `expiration_date` vs. preview-token distinction under `@latest` is resolved to one explicit, tested rule (not left ambiguous)
+- [ ] Under `@latest`, a non-null `expiration_date` (deprecation) is still excluded and ONLY the preview/beta/exp token exclusion is bypassed — asserted by a test whose fixture's newest entry is deprecated (skipped in favor of the next-newest non-expiring entry; fails closed if none)
 - [ ] An unrecognized channel value produces a descriptive error rather than a silent default
 - [ ] Alias-covered personas are unaffected by channel value (confirms channel only gates the `created`-timestamp strategy)
 

@@ -30,7 +30,7 @@
 **Scenario 3: Deprecation and missing JSON objects carry their condition-specific fields**
 - **Given** the `gene` deprecation and `milo` missing findings from Scenario 1
 - **When** the JSON output is decoded
-- **Then** the `gene` object carries `current_slug` plus the non-null `expiration_date`, and the `milo` object carries `current_slug` with no expiration or suggested-slug field required (or those fields rendered null/omitted rather than fabricated)
+- **Then** the `gene` object carries `current_slug` plus the non-null `expiration_date`, and the `milo` object carries exactly `persona`, `condition`, and `current_slug`; condition-inapplicable fields (`expiration_date`/`suggested_slug`/`family`/`channel`) are OMITTED via Go `omitempty`, never emitted as `null` or a fabricated value
 
 ## Edge Cases
 **Edge Case 1: No conditions found in `--json` mode**

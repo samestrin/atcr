@@ -48,6 +48,10 @@
 - Error message: `"persona %q failed validation: %w"` (existing `registry.ValidateCommunityPersonaYAML` error, now also covering the resolved-slug field)
 - HTTP status / error code: N/A; no lock write occurs and the previously installed persona is left untouched
 
+**Error Scenario 3: Catalog fetch fails (transport error) or returns a malformed/oversized body during a single-name upgrade**
+- Error message: `"failed to resolve model binding for persona %q: %w"` (wrapping the catalog client's transport/decoding error; `client.go`'s body-size cap and timeout bound the request)
+- HTTP status / error code: N/A (library-level Go error); the command aborts cleanly with a descriptive error, leaves the existing lock unchanged (no partial advance), and never silently falls back to a stale or zero-value slug — per the sprint-design graceful-degradation posture
+
 ## Performance Requirements
 - **Response Time:** A single-name upgrade completes within the existing fetch + validate + resolve budget; resolver invocation adds at most one additional catalog fetch (already bounded by `client.go`'s `fetchTimeout` convention), no additional round trip per persona beyond what Story 3's resolver requires
 - **Throughput:** N/A — this AC covers single-name invocation; `--all` fan-out throughput is covered by AC 04-03
@@ -72,6 +76,7 @@
 - [ ] `atcr personas upgrade <name>` prints an explicit `name: old-slug → new-slug` line on change and an explicit unchanged line otherwise — no persona is silently omitted
 - [ ] A persona with no prior lock entry renders a placeholder before-slug rather than erroring or printing an empty value
 - [ ] Resolver and validation failures are reported per-persona without crashing the command or corrupting the existing installed persona
+- [ ] A catalog-fetch transport error or malformed/oversized response during a single-name upgrade aborts cleanly with a descriptive error and leaves the existing lock unchanged (no partial advance, no silent stale fallback)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

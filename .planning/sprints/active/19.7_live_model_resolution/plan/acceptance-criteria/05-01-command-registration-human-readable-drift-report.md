@@ -24,7 +24,7 @@
 - **Then** the command is found (no "unknown command" error), it enumerates installed personas via the same tier-walking/dedup logic as `atcr personas list`, and produces human-readable output on `cmd.OutOrStdout()`
 
 **Scenario 2: Newer-family-member drift renders in the documented line format**
-- **Given** an installed persona `anthony` whose resolved lock is `anthropic/claude-opus-4.8` and the catalog snapshot's `anthropic/claude-opus` family has a newer stable-channel member `anthropic/claude-opus-5.0`
+- **Given** an installed persona `anthony` whose resolved lock is `anthropic/claude-opus-4.8` and the catalog snapshot's `anthropic/claude-opus` family has a newer stable-channel member `anthropic/claude-opus-5.0` (family membership for the newer-member comparison is derived from the persona's binding family/channel when present, falling back to the locked slug's vendor+family prefix — so an alias-covered persona is compared against the same family the resolver would upgrade it within)
 - **When** `atcr models check` runs
 - **Then** stdout contains a line matching `anthony: anthropic/claude-opus-4.8 → anthropic/claude-opus-5.0 (newer member)`
 
@@ -36,7 +36,7 @@
 **Scenario 4: No drift, deprecation, or missing conditions found**
 - **Given** every installed persona's resolved lock matches the newest stable-channel catalog entry for its family, with no non-null `expiration_date` and no missing slug
 - **When** `atcr models check` runs
-- **Then** stdout reports an explicit "no issues found" (or equivalent) message rather than empty output, so the absence of drift is visibly confirmed rather than silently implied
+- **Then** stdout reports the exact canonical message `No drift, deprecation, or missing-slug conditions found.` (a single stable, scriptable string) rather than empty output, so the absence of drift is visibly confirmed rather than silently implied
 
 ## Edge Cases
 **Edge Case 1: No personas installed**
@@ -47,7 +47,7 @@
 **Edge Case 2: A persona has multiple conditions simultaneously**
 - **Given** a persona whose locked slug both has a non-null `expiration_date` and is also behind a newer family member
 - **When** `atcr models check` runs
-- **Then** both conditions are reported for that persona (one line per condition, or a combined multi-condition line), and neither condition is silently dropped in favor of the other
+- **Then** both conditions are reported for that persona as one line per condition (one line per (persona, condition) pair — matching the one-object-per-condition JSON contract in AC 05-02), and neither condition is silently dropped in favor of the other
 
 **Edge Case 3: Persona enumeration matches `atcr personas list` exactly**
 - **Given** an installed persona set spanning built-in, community, and project tiers with a name collision across tiers

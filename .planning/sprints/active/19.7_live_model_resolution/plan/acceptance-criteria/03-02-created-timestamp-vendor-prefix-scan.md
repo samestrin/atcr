@@ -46,7 +46,12 @@
 **Edge Case 3: Two candidate entries share an identical `created` timestamp**
 - **Given** two `qwen/` entries tie on `created`
 - **When** quinn is resolved
-- **Then** the resolver deterministically picks one (e.g. by stable secondary sort on slug string, or first-encountered in catalog order) rather than non-deterministically alternating between runs — the exact tiebreak rule is documented in code and covered by a test asserting repeatability across multiple invocations against the same snapshot
+- **Then** the resolver deterministically selects the entry whose slug (`id`/`canonical_slug`) sorts last lexicographically (descending string comparison); catalog-array order is NOT used as a tiebreak because array order is not a guaranteed-stable property of the OpenRouter response. A test asserts identical selection across repeated invocations AND against a shuffled-order copy of the same fixture.
+
+**Edge Case 4: A candidate entry has an absent, zero, or unparseable `created` timestamp**
+- **Given** a `deepseek/`-prefixed entry whose `created` field is absent, zero, or otherwise unparseable
+- **When** delia is resolved via the `created`-timestamp scan
+- **Then** that entry is treated as ineligible for newest-selection (never chosen, never crashes the scan); selection proceeds among the remaining entries with a valid `created`, and if no entry under the prefix has a valid `created` the resolver fails closed per Error Scenario 1
 
 ## Error Conditions
 **Error Scenario 1: No eligible entries exist under the vendor's prefix**
@@ -79,7 +84,8 @@
 **Story-Specific:**
 - [ ] delia and quinn resolve to the newest eligible `deepseek/`/`qwen/`-prefixed slug respectively
 - [ ] glenna resolves to the newest eligible `z-ai/`-prefixed slug, with an explicit regression test proving the resolver never assumes a `glm/` namespace exists
-- [ ] A tie on `created` timestamp resolves deterministically and repeatably
+- [ ] A tie on `created` timestamp resolves deterministically (descending lexicographic slug sort) and repeatably, including against a shuffled-order fixture
+- [ ] A candidate with absent/zero/unparseable `created` is excluded from newest-selection without crashing the scan
 - [ ] No eligible entries under a vendor prefix produces a descriptive error, not a silent empty/zero-value slug
 
 **Manual Review:**

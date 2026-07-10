@@ -1,0 +1,221 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
+# Sprint 19.7: Live Model Resolution
+
+---
+executor: /execute-sprint
+execution_mode: gated
+context_recovery: On context compaction, read .planning/.temp/execute-sprint/context.env for phase state. Resume at first unchecked phase below.
+---
+
+**Directions:** Work through Sprint 19.7 step-by-step. Complete each step, check off work immediately. This sprint runs in **gated mode** — after each phase's DoD and phase-boundary gate, `/execute-sprint` stops for review before the next phase.
+
+Before each phase, review `/CLAUDE.md` (or AGENTS.md).
+
+---
+
+## Clarifications
+
+### Phase 1 Clarifications (recorded 2026-07-08)
+
+**Key Decisions:**
+- API key source: reuse the existing `LLM_OPENROUTER_API_KEY` env var, read inline at call time (`Authorization: Bearer $LLM_OPENROUTER_API_KEY`) for both the task 1.1 completion call and the task 1.2 `/api/v1/models` re-list. Never export, print, commit, or echo the value (Phase 1 API-key handling rule).
+- Network egress to `https://openrouter.ai` confirmed permitted (unauthenticated `GET /api/v1/models` → HTTP 200).
+
+**Scope Boundaries:**
+- Phase 1 remains a manual design spike — findings recorded in `plan/documentation/openrouter-catalog-api.md`; no shipped resolver code.
+- Existing docs-cited evidence in that file is retained; the spike ADDS an independently-confirmed live-call outcome so Stories 2/3 cite a real result, not just the quickstart docs.
+
+**Technical Approach:**
+- Task 1.1: one authenticated `POST` to `/api/v1/chat/completions` with `"model": "~openai/gpt-latest"` + minimal message; record status, resolved model, and verbatim outcome.
+- Task 1.2: one authenticated `GET /api/v1/models`; scan `id`/`canonical_slug` for preview/beta/exp substrings actually present; confirm `z-ai/`, `deepseek/`, `qwen/` prefixes; record the `@stable` exclusion list + `expiration_date` rule.
+
+### Phase 4 Clarifications (recorded 2026-07-09)
+
+**Key Decisions:**
+- **Binding-string grammar (fully fail-closed; extends the forward-declared contract at `catalog.go:131-141`):** the persona's `binding:` string parses to `Binding{Family, Channel, Pin}` in this order — (1) empty `binding` → no resolution (see below); (2) `pin:` prefix → `Pin` = remainder (validated, verbatim, never floats); (3) contains `@` → split on the LAST `@`: `Family` = left part, `Channel` = the `@…` suffix (`@stable`/`@latest`); (4) bare, EXACT match against `aliasTable ∪ vendorPrefixTable` → that `Family` with default `@stable`; (5) anything else → ERROR `unrecognized binding %q: expected pin:<slug>, <family>@<channel>, or a known bare family`. Resolver dispatch order stays pin → alias → created-timestamp (`ResolveModel`).
+- **Typo gap CLOSED (Option A, `pin:` sigil):** because pins now require the `pin:` prefix, the old "else → pin" fallback becomes "else → error," so an alias-shaped family typo (`anthropic/claude-opu`) fails cleanly at the resolver instead of being silently accepted as a pin and 404-ing downstream. Zero migration cost — no persona declares a `binding:` field today and no plan example shows a bare-pin string. Authoring rule: explicit pins are written `pin:<vendor>/<model>` (no `@channel`; pins ignore channels per AC 03-03).
+- **Empty-binding upgrade behavior (required for AC7 / zero-migration):** when `binding` is empty (all 10 current personas), `Upgrade()` SKIPS the resolver entirely and keeps 19.6's unchanged `isNewer`/write version path (`upgrade.go:27-68`). Resolution engages only when a binding is present. An explicit test/AC-parity test for the bindingless persona is added this phase (both reviewer and maintainer flagged it as currently unspecified/untested).
+
+**Scope Boundaries:**
+- Phase 4 does NOT implement Phase 6's major-bump gate; AC 04-03 Error Scenario 1 gets a reportable hook only.
+- `internal/registry.ResolvePersona` and `internal/fanout/review.go` stay UNTOUCHED (AC 04-02 guardrail).
+- Story 3 is landed → tests call the real `personas.ResolveModel` and inject the catalog via an `httptest`-backed `HTTPClient`; no separate resolver-seam interface is added (minimum code).
+
+**Technical Approach:**
+- `Upgrade()` constructs `CatalogClient{HTTPClient: <injected>, BaseURL: CatalogBaseURL}` and fetches the catalog once per `Upgrade()` call (per-persona; AC 04-01 permits one fetch per persona). Resolved slug passes `validateResolvedSlug` before any lock write; a failed catalog fetch aborts cleanly with a descriptive error, leaving the existing lock unchanged (no partial advance, no stale fallback).
+
+## Sprint Overview
+
+**Metadata:** See [metadata.md](metadata.md) for complete plan and sprint tracking details.
+
+**Original Request:** [Full details in plan/original-requirements.md](plan/original-requirements.md)
+
+### What We're Building
+
+A live, auto-updating model-resolution layer over the persona `model` bindings Epic 19.6 shipped. A persona binds to a model *family/channel* (e.g. `anthropic/claude-opus@stable`); atcr resolves that to a concrete slug recorded in a **lock**; reviews always run the locked slug. The model changes only on an explicit `atcr personas upgrade` — never silently mid-review. A new `atcr models check` command reports drift, deprecation, and missing-slug conditions.
+
+### Why This Matters
+
+19.6's frozen slugs must be hand-edited on every vendor release across 10 personas, and a sunset model silently 404s a persona at review time with no warning. This sprint rides each vendor family's capability curve automatically while keeping code reviews reproducible by default.
+
+### Key Deliverables
+
+- Two-layer binding: logical family/channel binding + resolved concrete-slug lock (19.6's pinned `model` seeds the first lock — zero migration).
+- Hybrid resolver: alias-bind (7 alias-covered personas), `created`-timestamp newest-in-vendor-prefix (DeepSeek/Qwen/GLM via `z-ai/`), explicit-pin escape hatch; `@stable`/`@latest` channels.
+- Reproducible `atcr personas upgrade` with before→after lock reporting; resolution isolated to the upgrade path (zero endpoint calls on the review path).
+- `atcr models check [--json]` drift report with a 0/1/2 exit-code contract.
+- Major-bump re-validation gate (fixture must re-pass + human "verify" flag); minor jumps auto-lock.
+- init/quickstart roster reconciliation (closes 19.6's deferred TD-011 HIGH).
+- Checked-in catalog snapshot fixture + `atcr models refresh` command; zero live network in CI; updated docs.
+
+### Success Criteria
+
+- A persona resolves its family/channel binding to a locked slug; reviews consume the lock with no endpoint call (AC2).
+- `atcr personas upgrade` advances the lock and reports before→after per persona; no silent runtime model change (AC4).
+- `atcr models check [--json]` reports drift/deprecation/missing with the exit-code contract (AC5).
+- A major jump gates on fixture re-pass + verify flag; a minor jump auto-locks (AC6).
+- Online `init`/`quickstart` deliver a working, non-noisy community persona set (AC7).
+- `go test ./...` passes with all resolver/catalog tests backed by a checked-in snapshot (zero live network); docs updated (AC8).
+
+**CRITICAL REMINDER:** Every task in this sprint must contribute to fulfilling the original request. If a task seems unrelated to what the user actually asked for, STOP and validate before proceeding. Do not add scope beyond the original request.
+
+---
+
+## TDD Strategy
+
+**Mode:** Strict 🔒 for all stories (derived from complexity 10/12 — VERY COMPLEX).
+
+Every code element follows RED → GREEN → 🎯 ADVERSARIAL → REFACTOR:
+1. **RED** — write comprehensive failing tests, verify they fail correctly.
+2. **GREEN** — minimal code, one test at a time (T1), verify all pass (T2), COMMIT.
+3. **🎯 ADVERSARIAL** — spawn a **fresh subagent** (no memory of the implementation) to review the changed files against the security/edge/error/performance checklist.
+4. **REFACTOR** — fix CRITICAL/HIGH findings inline, improve quality, maintain green (T3), COMMIT.
+
+**Adversarial inline-fix bar:** CRITICAL/HIGH fixed inline in REFACTOR; MEDIUM/LOW deferred to `clarifications/tech-debt-captured.md`.
+
+**Gated execution:** each phase ends with a DoD task and a Phase-Boundary Gate (subagent integration review). `/execute-sprint` stops at each phase boundary.
+
+**Phase 1 exception:** Phase 1 is a design spike (manual, no shipped code) — it produces findings written into `plan/documentation/openrouter-catalog-api.md`, not RED/GREEN tests. This mirrors 19.6 Phase 1's precedent.
+
+---
+
+## About This Document
+
+| Document | Purpose |
+|----------|---------|
+| [sprint-design.md](plan/sprint-design.md) | Architecture, decomposition, test strategy, risk analysis |
+| [original-requirements.md](plan/original-requirements.md) | User's actual request (source of truth) |
+| [user-stories/](plan/user-stories/) | Feature requirements |
+| [acceptance-criteria/](plan/acceptance-criteria/) | Validation requirements with DoD |
+| [documentation/](plan/documentation/) | OpenRouter API, existing patterns, fixture discipline, command design, semver |
+
+---
+
+## Sprint Conventions
+
+### Testing Tiers
+
+| Tier | When | Command |
+|------|------|---------|
+| T1: Focused | After each small change | `go test ./internal/personas/ -run <TestName>` |
+| T2: Module | After completing an element | `go test ./internal/personas/...` / `go test ./cmd/atcr/...` |
+| T3: Full | DoD validation, pre-commit | `go test ./...` |
+
+**Coverage:** `go test -coverprofile=coverage.out ./...` (≥80% baseline). **Zero live network in CI** — all resolver/catalog tests use `httptest.NewServer` + the checked-in `internal/personas/testdata/catalog_snapshot.json`.
+
+### DoD Verification Checklist
+1. Tests (T3): `go test ./...` all passing
+2. Coverage: ≥80%
+3. Lint: `golangci-lint run` clean; `go vet ./...` clean; `gofmt`/`goimports` applied
+4. Build: `go build ./...` succeeds
+5. Docs: Updated where behavior changed
+
+### DoD Report Template
+```
+Story-{N} DoD Complete
+Auto: {X}/5 | Story-Specific: {Y}/{Z}
+Manual Review: [ ] Code reviewed
+```
+
+### Commit Process
+Stage only files changed by this phase — do NOT use `git add .` or `git add -A` (other sessions may have uncommitted work).
+`git add [specific files] && git commit -m "<type>(<scope>): <message>"`
+
+Conventional Commits (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`); scope = package (e.g. `personas`, `models`, `registry`).
+
+---
+
+## Development Standards
+
+Full standards: [coding-standards.md](../../../specifications/coding-standards.md), [implementation-standards.md](../../../specifications/implementation-standards.md), [git-strategy.md](../../../specifications/git-strategy.md).
+
+**Key rules for this sprint (Go):**
+- **Error handling:** return `error` last; never ignore; wrap with `fmt.Errorf("doing action: %w", err)`. Resolver failures produce a clear, actionable CLI error and abort — never a silent fallback to a stale/wrong model.
+- **Additive schema:** new binding field is `omitempty` with permissive decode, per 19.6 convention — do NOT alter or bypass the 19.6 AC7 `Provider`/`Model` exact-match gate.
+- **Boundary rule:** `internal/registry.ResolvePersona` (`persona.go:47`) resolves prompt text and is strictly downstream — the resolver is a separate upstream concern; do not touch `ResolvePersona`.
+- **Injection seam:** the catalog client talks to OpenRouter only through `internal/personas.HTTPClient` (the same seam `client.go`'s `fetch()` uses) so it is swappable for `httptest.NewServer` in every test. Reuse `fetch()`'s body-size cap + timeout + backoff unchanged.
+- **Input validation:** catalog-derived slugs are validated as plain, printable identifiers before being written to the lock or `AgentConfig.Model` (mirrors 19.6's TD-008 control-char sanitization).
+- **Testing:** table-driven `*_test.go` colocated in the package under test; `testify/assert`/`require`; integration tests behind `//go:build integration` where applicable.
+- **Formatting/Lint:** `gofmt`/`goimports`, `golangci-lint run`, `go vet ./...` before every commit.
+
+---
+
+## External Resources
+
+- **[CRITICAL]** [openrouter-catalog-api.md](plan/documentation/openrouter-catalog-api.md) — model schema (`id`, `canonical_slug`, `created`, `expiration_date`), missing stability flag, `~`-alias behavior (AC1/AC2/AC3/AC5).
+- **[CRITICAL]** [existing-resolver-patterns.md](plan/documentation/existing-resolver-patterns.md) — `fetch()` retry template, `Upgrade()`/`isNewer()` extension seam, additive-schema convention, `ResolvePersona` boundary, command-registration points, AC7 two-call-site drift risk.
+- **[IMPORTANT]** [catalog-snapshot-fixture.md](plan/documentation/catalog-snapshot-fixture.md) — checked-in `testdata/catalog_snapshot.json`, zero-live-network `httptest` discipline, refresh command (AC8).
+- **[IMPORTANT]** [models-check-command.md](plan/documentation/models-check-command.md) — drift/deprecation/missing reporting, exit codes, `--json` shape, registration next to `personas` (AC5).
+- **[IMPORTANT]** [semver-version-comparison.md](plan/documentation/semver-version-comparison.md) — `golang.org/x/mod/semver`, existing `isNewer`, AC6 major/minor gate via `semver.Major` (AC6).
+
+---
+
+## Sprint Phases
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 1: Research & Spike (1 day)
+
+**Story:** [01: Catalog Routability Spike & Stable-Channel Heuristic](plan/user-stories/01-catalog-routability-spike-stable-channel-heuristic.md)
+**Focus:** Design spike only — no shipped resolver code. Record findings in `plan/documentation/openrouter-catalog-api.md` before Phase 3 begins.
+
+> ⚠️ **API key handling:** treat `OPENROUTER_API_KEY` exactly as 19.6's `quickstart.go` treats Synthetic keys — never print it, never commit it, never echo it to logs/terminal history. Record only the outcome (routable: yes/no), never the raw request/response.
+
+### 1.1 [x] **[Alias routability spike — MANUAL](plan/user-stories/01-catalog-routability-spike-stable-channel-heuristic.md)**
+   **AC:** [01-01](plan/acceptance-criteria/01-01-latest-alias-routability-confirmed.md)
+   1. Make ONE authenticated completion call against a `~…-latest` alias (e.g. `~anthropic/claude-opus-latest`) to confirm real server-side routability.
+   2. Record the finding (routable: yes/no) in `plan/documentation/openrouter-catalog-api.md`.
+   3. If NOT routable: note the fallback path (hybrid resolver uses `created`-timestamp/explicit-pin for affected personas — no epic-blocking failure per `HAS_GATED_WORK: false`).
+   **Files:** `plan/documentation/openrouter-catalog-api.md` | **Duration:** 2-3h
+
+### 1.2 [x] **[@stable heuristic & z-ai prefix — MANUAL](plan/user-stories/01-catalog-routability-spike-stable-channel-heuristic.md)**
+   **AC:** [01-02](plan/acceptance-criteria/01-02-stable-channel-heuristic-z-ai-prefix.md)
+   1. Against the live schema, enumerate preview/beta/exp token patterns; define the `@stable` exclusion heuristic (exclude preview/beta/exp tokens + honor non-null `expiration_date`).
+   2. Pin the GLM vendor prefix as `z-ai/` (NOT `glm/`) for glenna; confirm `delia → deepseek/`, `quinn → qwen/`.
+   3. Record the heuristic + confirmed prefixes in `plan/documentation/openrouter-catalog-api.md`.
+   **Files:** `plan/documentation/openrouter-catalog-api.md` | **Duration:** 2-3h
+
+### 1.3 [x] **Phase 1 — DoD**
+   - [x] Both spike findings recorded in `plan/documentation/openrouter-catalog-api.md`
+   - [x] `@stable` heuristic defined against live schema; `z-ai/` prefix pinned
+   - [x] No API key printed/committed
+   - [x] COMMIT: `git add plan/documentation/openrouter-catalog-api.md && git commit -m "docs(personas): record catalog routability spike + @stable heuristic"`
+
+### 1.4 [x] **Phase 1 — GATE: Integration & Exit Review (subagent)**
+   **Scope:** The recorded spike findings (informs Phase 3 resolver design).
+
+   **Spawn a fresh subagent** via the Agent tool. Do NOT review inline.
+   - subagent_type: `general-purpose`
+   - description: `Phase 1 gate review`
+   - prompt: Self-contained brief including:
+     - File: `plan/documentation/openrouter-catalog-api.md` (absolute path)
+     - Checkl
+----- END SPRINT PLAN -----
+
