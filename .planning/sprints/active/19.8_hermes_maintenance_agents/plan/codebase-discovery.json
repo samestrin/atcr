@@ -1,0 +1,219 @@
+{
+  "generated": "2026-07-10",
+  "discovery_method": "semantic",
+  "queries": [
+    "models check command CLI",
+    "CI fixture gate workflow",
+    "persona prompt length cap validation",
+    "GitHub Actions PR workflow",
+    "community registry schema validation",
+    "auto-merge pull request workflow policy",
+    "persona authoring vendor-guidance anchor"
+  ],
+  "match_count": 21,
+  "build_from": {
+    "primary_file": "cmd/atcr/models.go",
+    "reason": "Epic 19.7 already shipped `atcr models check [--json]` (cmd/atcr/models.go:153, newModelsCheckCmd; runModelsCheck at cmd/atcr/models.go:174) with exit codes 0=clean/1=conditions found/2=usage failure explicitly documented in-code (driftFoundError comment at cmd/atcr/models.go:16) as read by Epic 19.8's mechanical agent. The JSON output path renders a stable array of DriftFinding objects via renderDriftJSON at cmd/atcr/models.go:304. This is the exact primitive item 1 of the Proposed Solution wraps — no new atcr command is needed for the mechanical agent, only CI/docs wiring around it.",
+    "suggested_approach": "Treat cmd/atcr/models.go as read-only/consumed, not modified. The atcr-repo footprint of this plan is CI workflow wiring (.github/workflows/) that documents/enforces the fixture gate for agent-authored PRs, plus docs/ describing the hermes-side configuration (cron jobs.json, role assignment, dry-run mode) that lives entirely outside this repo on nucleus.lan."
+  },
+  "existing_patterns": [
+    {
+      "name": "Composite GitHub Action for PR automation",
+      "description": "action.yml at the repo root + docs/github-action.md document a maintained composite Action pattern (build atcr, run review, reconcile, post check run/inline comments) that consumer repos wire into their own PR workflow. Establishes the doc-first convention (Inputs table, required-permissions callout, manual smoke-test section) this epic's own docs/ additions should mirror.",
+      "files": ["action.yml", "docs/github-action.md"],
+      "follow_for": "Structuring any new docs/*.md that documents PR-automation surface (e.g. how the mechanical/drafting agents' PRs interact with CI)."
+    },
+    {
+      "name": "Fixture gate + C3 untrusted-input guardrails",
+      "description": "Community personas are validated by a strict registry schema (internal/registry/validate.go:49 ValidateCommunityPersonaYAML), a length cap decoupled from the executor's own cap (internal/registry/persona_test.go: TestPersonaPromptLenDecoupledFromExecutorCap, TestPersonaResolution_RegistryLengthCapRejects), and a fixture-based CI gate (internal/personas/community_fixture_test.go:16 TestTemplateFixtureRunner_CommunityPersonasPass, internal/personas/community_schema_test.go) that proves each persona works with no LLM/network call before it can be installed. internal/tools/limits.go defines tool-result caps, while the persona prompt length cap lives in the registry persona resolution path.",
+      "files": ["internal/registry/validate.go", "internal/registry/persona_test.go", "internal/personas/community_fixture_test.go", "internal/personas/community_schema_test.go", "internal/tools/limits.go"],
+      "follow_for": "AC5 — any agent-authored persona prompt PR must pass these same tests unmodified; the epic reuses this machinery rather than building a parallel gate."
+    },
+    {
+      "name": "Persona `.md` authoring convention (drafting agent's edit target)",
+      "description": "docs/personas-authoring.md is the complete authoring reference: canonical prompt structure (## Role/## Focus/## Scope/## Severity Rubric/## Output Format 7-column contract/## Payload), required template variables, the 'category word must appear in the prompt' fixture rule, and a contribution checklist. personas/community/anthony.md:1, personas/community/gene.md:1, personas/community/celeste.md:1, and every other community persona show the established `<!-- vendor-guidance: ... -->` HTML-comment preamble that already cites the vendor's prompting-guide URL per persona — this is the exact anchor the drafting agent's re-tune PRs should update.",
+      "files": ["docs/personas-authoring.md", "personas/community/anthony.md", "personas/community/gene.md", "personas/community/celeste.md", "personas/community/sonny.md", "personas/community/milo.md", "personas/community/quinn.md", "personas/community/gia.md", "personas/community/flint.md", "personas/community/glenna.md", "personas/community/delia.md"],
+      "follow_for": "Drafting agent (item 3): edits target the persona's .md prompt file, must preserve the vendor-guidance preamble comment (updating its cited URL/summary when the guide changes), must keep the 7-column Output Format contract byte-for-byte, and must not touch the paired .yaml (provider/model/binding) file unless the re-tune task specifically says so."
+    },
+    {
+      "name": "Existing CI workflows",
+      "description": ".github/workflows/ci.yml (Go Lint & Test on push/PR, plus reconcile-module and braceparser-module jobs), .github/workflows/reconcile-module.yml, and .github/workflows/refresh-synthetic-manifest.yml are the current workflow inventory. ci.yml already runs `go test ./...` on every pull_request and therefore already exercises the persona/registry guardrails on every PR. No workflow yet exists for agent-authored-PR fixture gating or auto-merge policy.",
+      "files": [".github/workflows/ci.yml", ".github/workflows/reconcile-module.yml", ".github/workflows/refresh-synthetic-manifest.yml"],
+      "follow_for": "AC1/AC4/AC5 — a new or extended workflow that runs the existing `go test ./...` fixture suite on any PR (agent-authored or human) and gates merge; auto-merge-on-green is an opt-in policy layered on top, not a new test suite."
+    },
+    {
+      "name": "Drift finding data model",
+      "description": "internal/personas/drift.go defines the DriftFinding struct (line 32) and CheckDrift logic (line 90) consumed by cmd/atcr/models.go. The mechanical agent parses the JSON array of these findings (ConditionNewerMember, ConditionDeprecation, ConditionMissing) from `atcr models check --json`.",
+      "files": ["internal/personas/drift.go"],
+      "follow_for": "Reference for documenting the JSON output contract in docs/hermes-maintenance-agents.md and for any hermes-side skill that branches on condition type."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "cmd/atcr/models.go",
+      "relevance": "high",
+      "purpose": "Implements `atcr models`, `atcr models check [--json]`, and `atcr models refresh`. check is the deterministic drift/deprecation/missing-slug primitive; refresh is the maintainer-only live-catalog-fetch command (blocked in CI by design).",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "cmd/atcr/models_test.go",
+      "relevance": "medium",
+      "purpose": "Tests for models command registration and check behavior, including exit-code contract and --json output.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "docs/github-action.md",
+      "relevance": "medium",
+      "purpose": "Documents the existing composite Action for PR review automation; a template for how this epic's own docs should be structured.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "docs/personas-authoring.md",
+      "relevance": "high",
+      "purpose": "Authoritative persona-authoring contract (schema, fixture, naming, vendor-guidance convention) the drafting agent's PRs must satisfy.",
+      "likely_modification": "reference-only, possibly extend with a short note on agent-authored re-tune PRs"
+    },
+    {
+      "path": "personas/community/*.md",
+      "relevance": "high",
+      "purpose": "The actual edit target of drafting-agent PRs (agent-authored PRs, not this plan's own diff).",
+      "likely_modification": "reference-only (edited only by the hermes drafting agent's own PRs, out of this repo-plan's direct diff)"
+    },
+    {
+      "path": "personas/community/*.yaml",
+      "relevance": "medium",
+      "purpose": "Paired provider/model binding files for each community persona. The drafting agent edits only the .md prompt unless the re-tune task explicitly includes a model change.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/registry/validate.go",
+      "relevance": "high",
+      "purpose": "Strict schema validation for persona/agent YAML fields — one of the reused C3 guardrails.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/tools/limits.go",
+      "relevance": "medium",
+      "purpose": "Length caps for tool results/dispatcher — reused guardrail reference, though the persona prompt length cap is enforced in the registry resolution path.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/personas/community_fixture_test.go",
+      "relevance": "high",
+      "purpose": "CI-blocking fixture gate every community persona (including agent-drafted ones) must pass.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/personas/community_schema_test.go",
+      "relevance": "high",
+      "purpose": "Schema compliance tests for community persona YAML files.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "relevance": "high",
+      "purpose": "Current CI entry point; extension point for gating/labeling agent-authored PRs and wiring an opt-in auto-merge-on-green policy for mechanical slug-bump PRs.",
+      "likely_modification": "extend"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "cmd/atcr/models.go:runModelsCheck (exit codes 0/1/2, --json flag)",
+      "type": "entry-point",
+      "description": "The mechanical agent's cron script invokes `atcr models check --json` and branches on exit code / parses the JSON finding array to decide whether to open a slug-bump PR."
+    },
+    {
+      "location": ".github/workflows/ci.yml",
+      "type": "hook",
+      "description": "Fixture-gate CI check that must run (and block merge) on every PR, including hermes-agent-authored ones; auto-merge-on-green for mechanical PRs is layered on top of this same required check."
+    },
+    {
+      "location": "personas/community/<slug>.md vendor-guidance preamble",
+      "type": "entry-point",
+      "description": "The drafting agent reads the cited vendor prompting-guide URL from the existing `<!-- vendor-guidance: ... -->` comment, fetches the current guide, and drafts an update to the persona body below it."
+    },
+    {
+      "location": "nucleus.lan:~/docker/hermes/",
+      "type": "external-system",
+      "description": "Live hermes host where cron jobs, profiles (brian/nolan/marcus/cole), skills, and the no_agent mechanical script live. The atcr repo documents the contract; the actual role assignment and scheduling happen hermes-side."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "atcr models check --json",
+      "path": "cmd/atcr/models.go",
+      "can_extend": false,
+      "usage_example": "atcr models check --json  # emits a JSON array of DriftFinding objects; exit 1 if any found, 0 if clean, 2 on usage/command failure"
+    },
+    {
+      "name": "Community fixture + schema gate",
+      "path": "internal/personas/community_fixture_test.go, internal/personas/community_schema_test.go, internal/registry/validate.go",
+      "can_extend": false,
+      "usage_example": "go test ./internal/personas/... ./internal/registry/...  # the exact CI-blocking gate any agent-authored persona PR must pass"
+    }
+  ],
+  "architecture_notes": [
+    "19.7 (Live Model Resolution) is complete and merged; `atcr models check --json` is live in cmd/atcr/models.go and was explicitly written with Epic 19.8's mechanical agent as its documented consumer.",
+    "Per the epic's own 'Hermes Integration Surface' section, the hermes agent framework, cron scheduling, and profile/role assignment live entirely outside this repo (nucleus.lan:~/docker/hermes/) — this plan's atcr-repo-side artifacts are limited to CI workflow wiring and docs/ that describe the contract the external hermes agents consume, plus one-time runtime provisioning notes for installing atcr + a repo checkout on the hermes host.",
+    "The C3 untrusted-input guardrail chain (schema validation → length cap → fixture gate) is fully implemented from Epic 19.6 and requires no new code — only confirmation that it stays wired as a required, blocking CI check reachable by agent-authored PRs the same way it is by human PRs.",
+    "Separate-PR discipline (mechanical slug bumps vs. prompt re-tunes) is a hermes-side cron/skill convention (two distinct jobs/skills opening two distinct PRs), not an atcr-repo code constraint — nothing in this repo currently conflates the two, so there is no existing anti-pattern to unwind.",
+    "The auto-merge-on-green policy for mechanical PRs must be opt-in and off by default; it must key on a narrow path/label filter that cannot match prompt-edit PRs, and it must require the same `Go CI` fixture-gate check as every other PR."
+  ],
+  "files_to_modify": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "reason": "Confirm/extend the fixture-gate job so it is a required check reachable by agent-authored PRs. The existing `go test ./...` step already exercises internal/personas/... and internal/registry/...; this task may add job-level metadata (name/check-id clarity), confirm branch-protection wiring notes, or optionally add labeling/branch-protection hooks that an auto-merge-on-green policy can key off of. No new test suite is required.",
+      "scope": "minor"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "docs/hermes-maintenance-agents.md",
+      "purpose": "Documents the role→agent configuration surface (mechanical/judgment/drafting), the drafting-model default (marcus/qwen-3.7-plus) and fallback (nolan/glm-5.2), the dry-run/preview mode, the judgment classification rule (minor → mechanical; major/deprecation → re-tune task with vendor guide URL), the drafting agent's vendor-guidance-anchored edit contract, and the guardrail contract agent-authored PRs must satisfy — the maintainer-facing configuration surface required by AC6.",
+      "based_on": "docs/github-action.md (structure: overview, usage/config table, required permissions, manual verification section) and .planning/epics/active/19.8_hermes_maintenance_agents.md (Hermes Integration Surface section)"
+    },
+    {
+      "path": ".github/workflows/hermes-auto-merge.yml",
+      "purpose": "Opt-in, off-by-default workflow that auto-merges a PR only when it matches a narrow mechanical-slug-bump path/label filter AND the `Go CI` fixture-gate check is green. Must never trigger on prompt-edit PRs. Required permissions: contents:write (to merge), pull-requests:write (to label/comment). Triggered by pull_request with filters, or by check_run/completion of the fixture gate, depending on implementation.",
+      "based_on": ".github/workflows/ci.yml (reuse the same self-hosted runner group and required check name) and docs/github-action.md (permission documentation pattern)"
+    }
+  ],
+  "integration_gaps": [
+    {
+      "gap": "No dedicated workflow enforces auto-merge-on-green for mechanical slug-bump PRs",
+      "addressed_by": ".github/workflows/hermes-auto-merge.yml",
+      "notes": "Must be opt-in, off by default, and scoped to a path/label filter that cannot match prompt-edit PRs."
+    },
+    {
+      "gap": "Branch protection / required-check configuration is repo-setting metadata, not code",
+      "addressed_by": "docs/hermes-maintenance-agents.md (configuration surface section) + maintainer manual step",
+      "notes": "The `Go CI` check must be marked required in the GitHub repository settings so it blocks merge for agent-authored PRs the same as human PRs."
+    },
+    {
+      "gap": "One-time runtime provisioning on nucleus.lan is not automated from this repo",
+      "addressed_by": "docs/hermes-maintenance-agents.md (provisioning runbook section)",
+      "notes": "Install the atcr binary, ensure a pull-before-run repo checkout, and configure `gh` auth so the mechanical no_agent cron job can open PRs."
+    },
+    {
+      "gap": "Separate-PR discipline is a hermes-side convention, not an atcr-repo enforcement",
+      "addressed_by": "docs/hermes-maintenance-agents.md (guardrails section)",
+      "notes": "Mechanical slug-bump PRs and prompt re-tune PRs must originate from distinct hermes cron jobs/skills with distinct branch/label patterns so the auto-merge filter cannot accidentally match a prompt PR."
+    },
+    {
+      "gap": "Path/label filter design for mechanical vs prompt PRs must be documented but is not code in this repo",
+      "addressed_by": "docs/hermes-maintenance-agents.md + .github/workflows/hermes-auto-merge.yml",
+      "notes": "Mechanical PRs should touch only lock/slug files (e.g. personas/community/*.yaml or a lockfile); prompt PRs touch personas/community/*.md. Labels like `hermes:mechanical` and `hermes:prompt` can be used, but path filters are the primary guard."
+    },
+    {
+      "gap": "Dry-run/preview mode is a hermes-side skill behavior, not an atcr CLI flag",
+      "addressed_by": "docs/hermes-maintenance-agents.md",
+      "notes": "The configuration surface must specify a dry-run mode in which the agent prints the PR it would open without actually opening it, before any real PR is created."
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test",
+    "test_location": "cmd/atcr/*_test.go, internal/personas/*_test.go, internal/registry/*_test.go",
+    "naming_convention": "*_test.go, Test<Subject>_<Scenario>",
+    "example_test": "internal/registry/persona_test.go (TestPersonaResolution_RegistryLengthCapRejects)"
+  }
+}
