@@ -155,7 +155,7 @@ jobs:
           # so a re-run that produced multiple runs (a stale success beside a
           # current failure/in-progress) cannot slip through.
           conclusions="$(gh api "repos/${REPO}/commits/${PIN_SHA}/check-runs" --paginate \
-            --jq '.check_runs[] | select(.name == "Go Lint & Test") | (.conclusion // "pending")')"
+            --jq '[.check_runs[] | select(.name == "Go Lint & Test")] | sort_by(.started_at) | last | (.conclusion // "pending")')"
 
           if [ -z "$conclusions" ]; then
             echo "No 'Go Lint & Test' run on ${PIN_SHA} yet — will re-evaluate when CI completes."
