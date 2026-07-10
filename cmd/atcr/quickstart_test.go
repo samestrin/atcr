@@ -141,6 +141,77 @@ func TestQuickstart_FetchAndPin_InstallsCommunity(t *testing.T) {
 	assert.FileExists(t, filepath.Join(destDir, "bruce.yaml"), "community persona fetched and pinned during quickstart")
 }
 
+// TestQuickstart_Online_InstallsNonEmptyCommunityRoster covers AC 07-01
+// Scenario 2 end-to-end through `runQuickstart`: online quickstart installs the
+// identical non-empty, index-derived community roster as `init`, via the same
+// shared reconciliation source (not builtins.Names()). Against an index disjoint
+// from the built-ins, today it would pin zero — this proves the reconciled path.
+func TestQuickstart_Online_InstallsNonEmptyCommunityRoster(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	index := `[
+	  {"name":"anthony","version":"1.2.0","description":"d","path":"anthony.yaml"},
+	  {"name":"sonny","version":"1.2.0","description":"d","path":"sonny.yaml"}
+	]`
+	srv := unitServer(t, index, map[string]string{
+		"/anthony.yaml": communityUnitYAML,
+		"/sonny.yaml":   communityUnitYAML,
+	})
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	destDir := filepath.Join(home, ".config", "atcr", "personas")
+	oldDir := personasDir
+	personasDir = func() (string, error) { return destDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:            dir,
+		fetchCommunity: true,
+		in:             strings.NewReader(quickstartInput),
+		out:            &bytes.Buffer{},
+		errOut:         &bytes.Buffer{},
+	}))
+
+	assert.Equal(t, []string{"anthony", "sonny"}, communityPinNames(t, destDir),
+		"online quickstart installs the same index-derived roster as init")
+}
+
+// TestQuickstart_Online_NoSkipWarnings covers AC 07-02 Scenario 2 end-to-end
+// through `runQuickstart`: the errOut stream contains zero "not found in community
+// index — skipping" warnings against the real index. Transparent vacuous-RED — it
+// passes because 7.2's index-derived roster already removed the misleading warning
+// (same mechanism); its value is the regression guard against a reverted roster.
+func TestQuickstart_Online_NoSkipWarnings(t *testing.T) {
+	srv := realCommunityServer(t)
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	destDir := filepath.Join(home, ".config", "atcr", "personas")
+	oldDir := personasDir
+	personasDir = func() (string, error) { return destDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	errOut := &bytes.Buffer{}
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:            dir,
+		fetchCommunity: true,
+		in:             strings.NewReader(quickstartInput),
+		out:            &bytes.Buffer{},
+		errOut:         errOut,
+	}))
+
+	assert.NotContains(t, errOut.String(), "not found in community index",
+		"online quickstart emits no misleading skip warnings against the real index")
+	// Positive guard: reject a silent zero-install regression (which would also
+	// emit zero warnings) by asserting a non-empty install.
+	assert.NotEmpty(t, communityPinNames(t, destDir),
+		"online quickstart installs a non-empty community roster (not a silent zero-install)")
+}
+
 func TestQuickstart_WritesSyntheticRegistry(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()
@@ -519,7 +590,7 @@ func TestQuickstart_AppendExportAndGuardResolveSamePath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	profile := "~/.atcr-test-profile"
-	require.NoError(t, appendExport(profile, "TEST_KEY", "secret"))
+	require.NoError(t, appendExport(profile, "TEST_KEY", "secret", &bytes.Buffer{}))
 	expected := resolveProfilePath(profile)
 	assert.FileExists(t, expected)
 	assert.Equal(t, filepath.Join(home, ".atcr-test-profile"), expected)
@@ -531,7 +602,7 @@ func TestQuickstart_AppendExport_PreservesExistingProfileMode(t *testing.T) {
 	profile := filepath.Join(home, ".zshrc")
 	require.NoError(t, os.WriteFile(profile, []byte("# existing profile\n"), 0o644))
 
-	require.NoError(t, appendExport(profile, "TEST_KEY", "secret"))
+	require.NoError(t, appendExport(profile, "TEST_KEY", "secret", &bytes.Buffer{}))
 
 	info, err := os.Stat(profile)
 	require.NoError(t, err)
@@ -544,10 +615,40 @@ func TestQuickstart_AppendExport_CreatesNewProfileAt0600(t *testing.T) {
 	t.Setenv("HOME", home)
 	profile := filepath.Join(home, ".new-profile")
 
-	require.NoError(t, appendExport(profile, "TEST_KEY", "secret"))
+	require.NoError(t, appendExport(profile, "TEST_KEY", "secret", &bytes.Buffer{}))
 
 	info, err := os.Stat(profile)
 	require.NoError(t, err)
 	assert.Equal(t, fs.FileMode(0o600), info.Mode().Perm(),
 		"a profile appendExport creates holds a secret, so it must be restricted to 0600")
+}
+
+// TestQuickstart_AppendExport_WarnsOnGroupReadableExistingProfile: when the user
+// names a pre-existing shell profile, appendExport still leaves its mode untouched
+// (the ownership boundary at quickstart.go:304-307), but must WARN when that file is
+// group/other-readable so the user knows the plaintext key was appended to a file
+// other users can read. A profile already at 0600 is safe and draws no warning.
+func TestQuickstart_AppendExport_WarnsOnGroupReadableExistingProfile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	t.Run("group-readable existing profile warns, mode untouched", func(t *testing.T) {
+		profile := filepath.Join(home, ".zshrc")
+		require.NoError(t, os.WriteFile(profile, []byte("# existing\n"), 0o644))
+		var warn bytes.Buffer
+		require.NoError(t, appendExport(profile, "TEST_KEY", "secret", &warn))
+		info, err := os.Stat(profile)
+		require.NoError(t, err)
+		assert.Equal(t, fs.FileMode(0o644), info.Mode().Perm(), "mode left untouched")
+		assert.Contains(t, warn.String(), "group/other-readable",
+			"warns that the key sink is group/other-readable")
+	})
+
+	t.Run("already-0600 existing profile does not warn", func(t *testing.T) {
+		profile := filepath.Join(home, ".bashrc")
+		require.NoError(t, os.WriteFile(profile, []byte("# existing\n"), 0o600))
+		var warn bytes.Buffer
+		require.NoError(t, appendExport(profile, "TEST_KEY", "secret", &warn))
+		assert.Empty(t, warn.String(), "a 0600 profile is already safe — no warning")
+	})
 }

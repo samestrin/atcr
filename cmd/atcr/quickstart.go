@@ -99,7 +99,10 @@ func runQuickstart(o quickstartOpts) error {
 		if err != nil {
 			return err
 		}
-		if err := installCommunityPersonas(personasClient, commpersonas.BaseURL(), dir, builtins.Names(), o.out, o.errOut); err != nil {
+		// nil roster → the index-derived community set (Option B / TD-011), the
+		// same shared reconciliation source `init` consumes; builtins.Names() below
+		// remains the embedded-scaffold / synthetic-registry roster, untouched.
+		if err := installCommunityPersonas(personasClient, commpersonas.BaseURL(), dir, nil, o.out, o.errOut); err != nil {
 			return err
 		}
 	}
@@ -245,7 +248,7 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 		_, _ = fmt.Fprintf(o.errOut, "Refusing to write the key into an atcr-owned file (%s) — choose a shell profile like ~/.zshrc instead.\n", profile)
 		return nil
 	}
-	if err := appendExport(profile, env, key); err != nil {
+	if err := appendExport(profile, env, key, o.errOut); err != nil {
 		_, _ = fmt.Fprintf(o.errOut, "could not append to %s: %v\n", profile, err)
 		return nil
 	}
@@ -293,7 +296,7 @@ func expandHome(path string) (string, error) {
 // a leading ~/ and creating the file if absent. This is the one place the key
 // value touches disk, and only into a file the user explicitly named — never a
 // file atcr owns.
-func appendExport(profile, env, key string) error {
+func appendExport(profile, env, key string, errOut io.Writer) error {
 	profile, err := expandHome(profile)
 	if err != nil {
 		return err
@@ -317,6 +320,12 @@ func appendExport(profile, env, key string) error {
 	}
 	if created {
 		return os.Chmod(profile, 0o600)
+	}
+	// Pre-existing profile: respect the ownership boundary (do not re-permission a
+	// file we did not create), but warn if it is group/other-readable so the user
+	// knows the plaintext key was appended to a file other users on the host can read.
+	if info, serr := os.Stat(profile); serr == nil && info.Mode().Perm()&0o077 != 0 {
+		_, _ = fmt.Fprintf(errOut, "warning: %s is group/other-readable — the exported key may be exposed to other users; consider `chmod 600 %s`\n", profile, profile)
 	}
 	return nil
 }

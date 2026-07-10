@@ -1,9 +1,9 @@
 {
-  "skill": "sprint-complete",
-  "args": "@.planning/sprints/active/19.6_community_registry_hub/",
-  "invocation": "/sprint-complete @.planning/sprints/active/19.6_community_registry_hub/",
+  "skill": "finalize-sprint",
+  "args": "@.planning/sprints/active/19.7_live_model_resolution/",
+  "invocation": "/finalize-sprint @.planning/sprints/active/19.7_live_model_resolution/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "76bc8d68-289c-42a8-9c6f-3c097f851101",
-  "timestamp": "2026-07-08T23:11:00.378Z"
+  "session_id": "7c559794-f0f9-44be-a55b-b3ef9ad6fe68",
+  "timestamp": "2026-07-10T02:07:59.696Z"
 }

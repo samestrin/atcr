@@ -1,43 +1,7 @@
-generated_at: "July 02, 2026 10:03:44PM"
+generated_at: July 08, 2026 05:30:56PM
 manifest_file: go.mod
 package_manager: go
 packages:
-  github.com/spf13/cobra:
-    doc_file: cobra.md
-    docs_url: https://pkg.go.dev/github.com/spf13/cobra
-    last_updated: June 10, 2026
-    name: github.com/spf13/cobra
-    parent: null
-    status: complete
-    tier: critical
-    version: v1.10.2
-  github.com/modelcontextprotocol/go-sdk:
-    doc_file: mcp-go-sdk.md
-    docs_url: https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp
-    last_updated: June 10, 2026
-    name: github.com/modelcontextprotocol/go-sdk
-    parent: null
-    status: complete
-    tier: critical
-    version: v1.6.1
-  gopkg.in/yaml.v3:
-    doc_file: yaml-v3.md
-    docs_url: https://pkg.go.dev/gopkg.in/yaml.v3
-    last_updated: June 10, 2026
-    name: gopkg.in/yaml.v3
-    parent: null
-    status: complete
-    tier: important
-    version: v3.0.1
-  github.com/stretchr/testify:
-    doc_file: testify.md
-    docs_url: https://pkg.go.dev/github.com/stretchr/testify
-    last_updated: "2026-06-10"
-    name: github.com/stretchr/testify
-    parent: null
-    status: complete
-    tier: important
-    version: v1.11.1
   github.com/google/jsonschema-go:
     doc_file: jsonschema-go.md
     docs_url: https://pkg.go.dev/github.com/google/jsonschema-go
@@ -47,14 +11,59 @@ packages:
     status: complete
     tier: important
     version: v0.4.3
+  github.com/modelcontextprotocol/go-sdk:
+    doc_file: mcp-go-sdk.md
+    docs_url: https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp
+    last_updated: June 10, 2026
+    name: github.com/modelcontextprotocol/go-sdk
+    parent: null
+    status: complete
+    tier: critical
+    version: v1.6.1
+  github.com/spf13/cobra:
+    doc_file: cobra.md
+    docs_url: https://pkg.go.dev/github.com/spf13/cobra
+    last_updated: June 10, 2026
+    name: github.com/spf13/cobra
+    parent: null
+    status: complete
+    tier: critical
+    version: v1.10.2
+  github.com/stretchr/testify:
+    doc_file: testify.md
+    docs_url: https://pkg.go.dev/github.com/stretchr/testify
+    last_updated: "2026-06-10"
+    name: github.com/stretchr/testify
+    parent: null
+    status: complete
+    tier: important
+    version: v1.11.1
   go-gitdiff:
     doc_file: go-gitdiff.md
     docs_url: https://github.com/bluekeyes/go-gitdiff
-    last_updated: "July 02, 2026 10:03:44PM"
+    last_updated: July 02, 2026 10:03:44PM
     name: go-gitdiff
     parent: null
     status: complete
     tier: important
     version: v0.8.1
-packages_count: 6
+  golang.org/x/mod:
+    doc_file: utilities.md
+    docs_url: https://pkg.go.dev/golang.org/x/mod
+    last_updated: July 08, 2026 05:30:56PM
+    name: golang.org/x/mod
+    parent: null
+    status: complete
+    tier: utility
+    version: v0.37.0
+  gopkg.in/yaml.v3:
+    doc_file: yaml-v3.md
+    docs_url: https://pkg.go.dev/gopkg.in/yaml.v3
+    last_updated: June 10, 2026
+    name: gopkg.in/yaml.v3
+    parent: null
+    status: complete
+    tier: important
+    version: v3.0.1
+packages_count: 7
 version: 1.0
