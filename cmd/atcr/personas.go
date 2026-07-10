@@ -89,14 +89,15 @@ var personasFixtureRunner commpersonas.FixtureRunner = commpersonas.TemplateFixt
 	PersonasDir: func() (string, error) { return personasDir() },
 }
 
-// newPersonasCmd builds `atcr personas`: a parent command hosting the six
+// newPersonasCmd builds `atcr personas`: a parent command hosting the seven
 // community-persona lifecycle sub-subcommands.
 func newPersonasCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "personas",
 		Short: "Manage community reviewer personas",
 		Long: "Manage community-contributed reviewer personas: install, list, search,\n" +
-			"remove, test, and upgrade personas fetched from a configurable repository.\n\n" +
+			"remove, test, and upgrade personas fetched from a configurable repository,\n" +
+			"and submit a locally-tuned persona back to the community library via a fork+PR.\n\n" +
 			"Installed personas live under ~/.config/atcr/personas/ and are available to\n" +
 			"the reviewer panel on the next review. The repository base URL defaults to\n" +
 			"the public community repo and is overridable via ATCR_PERSONAS_URL.",
