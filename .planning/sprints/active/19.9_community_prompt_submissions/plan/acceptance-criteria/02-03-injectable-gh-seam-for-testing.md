@@ -67,15 +67,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A package-level seam (interface or var) wraps all `gh` interaction used by `personas submit`, following the `personasClient`/`personasFixtureRunner` pattern
-- [ ] Unit tests fully exercise `newPersonasSubmitCmd` via a stubbed seam with zero real `gh` process invocations or network calls
-- [ ] The seam is defined independently of `internal/ghaction.Client`, with no shared types or package vars between the two integration points
-- [ ] Test overrides of the seam are restored after each test (no cross-test leakage)
+- [x] A package-level seam (interface or var) wraps all `gh` interaction used by `personas submit`, following the `personasClient`/`personasFixtureRunner` pattern (`personasGitHub` var + `GitHubSubmitter` interface)
+- [x] Unit tests fully exercise `newPersonasSubmitCmd` via a stubbed seam with zero real `gh` process invocations or network calls (`stubGitHub`; `TestPersonasSubmit_ForkPR*`)
+- [x] The seam is defined independently of `internal/ghaction.Client`, with no shared types or package vars between the two integration points
+- [x] Test overrides of the seam are restored after each test (`withPersonasGitHub` via `t.Cleanup`; `swapPreconditionSeams`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

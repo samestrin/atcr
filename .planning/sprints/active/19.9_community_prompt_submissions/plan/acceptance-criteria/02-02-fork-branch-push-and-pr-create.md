@@ -34,7 +34,7 @@
 **Edge Case 1: Persona files already match an existing open PR's branch content (re-submission)**
 - **Given** the user re-runs `submit` for a persona they already submitted, with no local changes since the last submission
 - **When** the branch/push step runs
-- **Then** the push is treated as a no-op update to the existing remote branch (or a new PR-create call surfaces GitHub's "a pull request already exists" condition), and the flow reports the existing/updated PR URL rather than crashing or silently opening a duplicate PR
+- **Then** the branch push updates the existing remote branch, and if `gh pr create` reports that a pull request already exists for that branch, the flow captures and prints that existing PR's URL and exits 0 — never crashing or silently opening a duplicate PR
 
 **Edge Case 2: Provenance metadata carried in PR body**
 - **Given** a persona submission destined for Theme 3's `submitted` status and Theme 4's maintainer graduation review
@@ -58,7 +58,7 @@
 - **Then** the command exits non-zero but does not attempt to roll back the already-pushed branch, and the error message gives the user a concrete recovery path
 
 ## Performance Requirements
-- **Response Time:** The full fork/branch/push/PR-create sequence depends on GitHub API and git network latency; the command itself adds no additional polling or retry loops beyond a single attempt per step (typically completes within a few seconds to ~30s depending on repo size and network conditions)
+- **Response Time:** The full fork/branch/push/PR-create sequence depends on GitHub API and git network latency; the command itself adds no additional polling or retry loops beyond a single attempt per step (typically completes within a few seconds to ~30s depending on repo size and network conditions). Each `gh.ExecContext` call runs under a bounded `context` deadline so a stalled network fails fast with a clear error instead of hanging the CLI indefinitely.
 - **Throughput:** N/A (single-invocation CLI command, one submission per run)
 
 ## Security Considerations
@@ -72,15 +72,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Fork, branch/push, and PR-create each invoked exactly once per successful `submit` run, in that order
-- [ ] "Fork already exists" is handled as a non-fatal, expected outcome that proceeds to branch/push
-- [ ] Resulting PR URL is printed to stdout on success
-- [ ] A failure at any step halts before the next step runs, with an actionable, step-specific error message
+- [x] Fork, branch/push, and PR-create each invoked exactly once per successful `submit` run, in that order (`TestSubmit_HappyPath`, `TestSubmit_ExactlyOnce`)
+- [x] "Fork already exists" is handled as a non-fatal, expected outcome that proceeds to branch/push (`forkAlreadyExists`; `TestForkAlreadyExists`)
+- [x] Resulting PR URL is printed to stdout on success (`TestPersonasSubmit_ForkPRHappyPath`)
+- [x] A failure at any step halts before the next step runs, with an actionable, step-specific error message (`TestSubmit_{Fork,Push,PR}Fail*`)
+- [x] Every `gh.ExecContext` call is passed a bounded `context` deadline (`personasSubmitTimeout` via `context.WithTimeout` in `personasSubmitContinuation`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

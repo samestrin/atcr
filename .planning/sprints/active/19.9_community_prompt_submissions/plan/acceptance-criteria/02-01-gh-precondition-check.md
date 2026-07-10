@@ -62,15 +62,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `checkGHPrecondition` runs before any fork/branch/push/PR-create call in `newPersonasSubmitCmd`
-- [ ] Missing-`gh`-on-PATH halts with the exact actionable message including the install URL
-- [ ] Failed `gh auth status` halts with an error message that surfaces the captured stderr
-- [ ] Unit tests cover both precondition failure modes without invoking a real `gh` binary or network call
+- [x] `checkGHPrecondition` runs before any fork/branch/push/PR-create call in `newPersonasSubmitCmd` (`Submit` calls `CheckPrecondition` first; `TestSubmit_PreconditionShortCircuits`)
+- [x] Missing-`gh`-on-PATH halts with the exact actionable message including the install URL (`TestCheckGHPrecondition_NotOnPath`)
+- [x] Failed `gh auth status` halts with an error message that surfaces the captured stderr (`TestCheckGHPrecondition_NotAuthed`)
+- [x] Unit tests cover both precondition failure modes without invoking a real `gh` binary or network call (ghPath/ghAuthStatus seams stubbed)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

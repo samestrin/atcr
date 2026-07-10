@@ -3,6 +3,8 @@ package personas
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -212,6 +214,59 @@ func TestExistingPRURL(t *testing.T) {
 func TestForkAlreadyExists(t *testing.T) {
 	assert.True(t, forkAlreadyExists("! octocat/atcr already exists"))
 	assert.False(t, forkAlreadyExists("HTTP 403: forbidden"))
+}
+
+// TestGHError confirms the leaf error helper preserves the underlying error (so a
+// context timeout is detectable and never surfaces blank) and appends stderr only
+// when present (2.2.A fix).
+func TestGHError(t *testing.T) {
+	base := context.DeadlineExceeded
+
+	withStderr := ghError(base, "  HTTP 403  ")
+	assert.Equal(t, "context deadline exceeded: HTTP 403", withStderr.Error())
+	assert.ErrorIs(t, withStderr, context.DeadlineExceeded, "underlying error is unwrappable")
+
+	blank := ghError(base, "   ")
+	assert.Equal(t, "context deadline exceeded", blank.Error(), "empty stderr is elided, error still surfaces")
+	assert.ErrorIs(t, blank, context.DeadlineExceeded)
+}
+
+// TestCopyPersonaUnit covers the fork-copy step's file logic without any gh/git:
+// a resolved persona unit is written into personas/community/<name>.yaml under the
+// work tree, byte-for-byte, and an invalid name is rejected before any write.
+func TestCopyPersonaUnit(t *testing.T) {
+	personasDir := t.TempDir()
+	workDir := t.TempDir()
+	body := []byte("provider: anthropic\nmodel: claude-sonnet-4-6\nrole: reviewer\n")
+	require.NoError(t, os.WriteFile(filepath.Join(personasDir, "sasha.yaml"), body, 0o600))
+
+	require.NoError(t, copyPersonaUnit(personasDir, "sasha", workDir))
+	got, err := os.ReadFile(filepath.Join(workDir, "personas", "community", "sasha.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, body, got)
+
+	err = copyPersonaUnit(personasDir, "../escape", workDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid persona name")
+}
+
+// TestNewGitHubSubmitter confirms the production constructor returns a usable,
+// non-nil seam implementation.
+func TestNewGitHubSubmitter(t *testing.T) {
+	assert.NotNil(t, NewGitHubSubmitter())
+}
+
+// TestGHSubmitterCheckPrecondition confirms the default seam's precondition
+// delegates to checkGHPrecondition, exercised via the Path/AuthStatus sub-seams so
+// no real gh binary is touched (AC 02-03).
+func TestGHSubmitterCheckPrecondition(t *testing.T) {
+	restore := swapPreconditionSeams(t,
+		func() (string, error) { return "/usr/bin/gh", nil },
+		func(context.Context) (string, error) { return "", nil },
+	)
+	defer restore()
+
+	assert.NoError(t, NewGitHubSubmitter().CheckPrecondition(context.Background()))
 }
 
 // swapPreconditionSeams overrides the low-level ghPath/ghAuthStatus seams for a
