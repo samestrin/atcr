@@ -172,7 +172,7 @@ jobs:
           echo "green=true" >> "$GITHUB_OUTPUT"
 
       - name: Squash-merge the mechanical PR (aborts if HEAD moved)
-        if: steps.gate.outputs.green == 'true'
+        if: steps.gate.outputs.green == 'true' && (github.event.pull_request.base.ref == 'main' || github.event.check_suite.pull_requests[0].base.ref == 'main')
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
