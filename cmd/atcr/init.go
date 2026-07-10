@@ -130,20 +130,17 @@ func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir s
 		}
 	}
 
-	// Track every unit file this run might create, with whether it pre-existed, so
-	// a failure rolls back exactly the files this run created — never a pre-existing
-	// one (all-or-nothing). Candidates are recorded BEFORE the install call so the
-	// currently-failing persona's own partial write is included in the rollback,
-	// not just prior successes.
-	type rbCandidate struct {
-		path       string
-		preExisted bool
-	}
-	var candidates []rbCandidate
+	// Track every unit file this run might create so a failure rolls back exactly
+	// the files this run created — never a pre-existing one (all-or-nothing).
+	// Candidates are recorded BEFORE the install call so the currently-failing
+	// persona's own partial write is included in the rollback, not just prior
+	// successes. The file-exists guard above has already proven both paths absent
+	// when a candidate is recorded, so pre-existence tracking is unnecessary.
+	var candidates []string
 	rollback := func() {
-		for _, c := range candidates {
-			if !c.preExisted && fileExists(c.path) {
-				_ = os.Remove(c.path)
+		for _, path := range candidates {
+			if fileExists(path) {
+				_ = os.Remove(path)
 			}
 		}
 	}
@@ -163,10 +160,7 @@ func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir s
 			_, _ = fmt.Fprintf(errOut, "persona %q already installed — leaving it untouched\n", name)
 			continue
 		}
-		candidates = append(candidates,
-			rbCandidate{yamlPath, fileExists(yamlPath)},
-			rbCandidate{mdPath, fileExists(mdPath)},
-		)
+		candidates = append(candidates, yamlPath, mdPath)
 
 		if err := commpersonas.InstallUnit(client, baseURL, name, destDir); err != nil {
 			rollback()
