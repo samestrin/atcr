@@ -166,7 +166,7 @@ No external specifications cleared the relevance threshold for this plan (see [p
 **Duration:** 1.5 days
 **Focus:** Build the sprint's one code artifact — `.github/workflows/hermes-auto-merge.yml`, opt-in and off-by-default, whose structural path/label filter (never actor-based) is this sprint's Critical-risk surface — depending on Task 01's confirmed check name. In parallel, append the `## Provisioning` section to the Task 03 skeleton (depends only on the skeleton existing). Task 02 gets a mandatory fresh-subagent adversarial review.
 
-### 2.1 [ ] **🏗️ Opt-In Auto-Merge Policy for Mechanical PRs Only** ([task-02](plan/tasks/task-02-auto-merge-policy.md))
+### 2.1 [x] **🏗️ Opt-In Auto-Merge Policy for Mechanical PRs Only** ([task-02](plan/tasks/task-02-auto-merge-policy.md))
    **Task:** Create `.github/workflows/hermes-auto-merge.yml`: opt-in (gated on a repo variable, e.g. `vars.HERMES_AUTO_MERGE_ENABLED == 'true'`, default off), triggered on `pull_request` (`opened`, `synchronize`, `labeled`) and/or check-completion. Auto-merge proceeds only when a structural allow-list filter confirms **every** changed file matches `personas/community/*.yaml` (and/or the `hermes:mechanical` label) — rejecting the run if **any** file matches `personas/community/*.md` or falls outside the allow-list — and only after the required `Go CI` (`Go Lint & Test`) check reports success. Filter is path/label-only, **never** keyed on `github.actor`/PR author/"is a bot".
    **Priority:** P1 | **Effort:** M
    1. Understand the two PR shapes (mechanical `*.yaml` slug bump vs. prompt `*.md` re-tune) and the fail-closed allow-list requirement; identify `Go CI` check name from `ci.yml` (Task 01).
@@ -179,7 +179,7 @@ No external specifications cleared the relevance threshold for this plan (see [p
    **Success Criteria:** Workflow exists, opt-in/off by default; filter matches only `*.yaml`/lockfile paths and/or the label, never `*.md`; merge gated on green `Go CI`; permissions scoped to `contents:write`+`pull-requests:write`; no bot-authorship condition anywhere.
    **Files:** `.github/workflows/hermes-auto-merge.yml` (create) | **Duration:** 1.5d | **AC:** AC1, AC4
 
-### 2.1.A [ ] **Auto-Merge Workflow — ADVERSARIAL REVIEW (subagent)**
+### 2.1.A [x] **Auto-Merge Workflow — ADVERSARIAL REVIEW (subagent)**
    **Changed Files:** `.github/workflows/hermes-auto-merge.yml`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.1 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -198,25 +198,23 @@ No external specifications cleared the relevance threshold for this plan (see [p
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh general-purpose subagent, no impl memory):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | CRITICAL | hermes-auto-merge.yml (filter/gate/merge) | TOCTOU — no head-SHA pin between filter, gate, and merge; author could push a `.md` commit after the `.yaml`-only filter passed and `gh pr merge` would land the newer HEAD (Go CI trivially green on a `.md`), breaking the "structurally incapable of merging a prompt PR" guarantee. | Pin the triggering head SHA once; evaluate files + check-runs against it; `gh pr merge --match-head-commit "$SHA"` so merge aborts if HEAD moved. |
+   | MEDIUM | hermes-auto-merge.yml (gate) | `select(.name=="Go Lint & Test").conclusion | head -n1` picks an arbitrary run; a re-run creates multiple runs on the same SHA so a stale `success` could win over a current `failure`. | Require ≥1 matching run AND every matching run == `success` (fail-closed). |
+   | MEDIUM | hermes-auto-merge.yml (concurrency) | Group key differs by event (`pull_request.number` vs `check_suite.head_sha`), so two evaluations of the same PR run concurrently and `cancel-in-progress:false` never supersedes a stale one — widening the TOCTOU window. | Normalize the group to the PR number for both events; `cancel-in-progress: true`. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 2.1.R, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action Taken:** All three fixed inline in 2.1.R (the two MEDIUMs are coupled to the CRITICAL TOCTOU surface and cheap — fixed rather than deferred). Re-verified below.
 
-### 2.1.R [ ] **Auto-Merge Workflow — REFACTOR (address review)**
+### 2.1.R [x] **Auto-Merge Workflow — REFACTOR (address review)**
    1. Fix CRITICAL/HIGH issues from 2.1.A (if any).
    2. Re-verify the 3 filter scenarios still hold after fixes (T1).
    3. Confirm YAML well-formed and permissions unchanged/minimal (T2).
    4. COMMIT: `git add .github/workflows/hermes-auto-merge.yml && git commit -m "ci(hermes): address adversarial review of auto-merge filter"`
    **Duration:** 0.5d (only if findings)
 
-### 2.2 [ ] **🏗️ Hermes Host Provisioning Runbook** ([task-04](plan/tasks/task-04-provisioning-runbook.md))
+### 2.2 [x] **🏗️ Hermes Host Provisioning Runbook** ([task-04](plan/tasks/task-04-provisioning-runbook.md))
    **Task:** Append a `## Provisioning` section to `docs/hermes-maintenance-agents.md` (replacing Task 03's placeholder) documenting the one-time nucleus.lan setup: install the `atcr` binary (`go build ./cmd/atcr` or release binary on PATH), clone a repo checkout under `~/docker/hermes/`, configure `gh auth` / token, and a **mandatory pull-before-run** step so drift is evaluated against current personas/lock. Cross-reference the `no_agent` cron shape (`data/profiles/<agent>/cron/jobs.json`) and brian's `fleet-sweep` job as precedent. Documentation only — no `cmd/atcr` changes.
    **Priority:** P1 | **Effort:** S
    1. Read the current `docs/hermes-maintenance-agents.md` (Task 03 state) to match heading level/style and confirm the `## Provisioning` placeholder text.
@@ -226,7 +224,7 @@ No external specifications cleared the relevance threshold for this plan (see [p
    **Success Criteria:** `## Provisioning` documents binary install, checkout location, `gh` auth, and mandatory pull-before-run; cross-references `cron/jobs.json` `no_agent` shape; no `cmd/atcr` changes.
    **Files:** `docs/hermes-maintenance-agents.md` (edit) | **Duration:** 0.5d | **AC:** AC1
 
-### 2.3 [ ] **Phase 2 — Definition of Done**
+### 2.3 [x] **Phase 2 — Definition of Done**
    1. `.github/workflows/hermes-auto-merge.yml` created, opt-in/off by default, filter fail-closed, permissions minimal, no actor gating.
    2. Adversarial review (2.1.A) run by a fresh subagent; CRITICAL/HIGH fixed in 2.1.R, MEDIUM/LOW deferred to `clarifications/tech-debt-captured.md`.
    3. `## Provisioning` placeholder replaced; pull-before-run mandatory; no `cmd/atcr` changes.

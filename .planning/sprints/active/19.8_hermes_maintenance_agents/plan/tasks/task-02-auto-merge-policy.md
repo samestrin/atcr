@@ -45,14 +45,14 @@ This task directly contributes to the following acceptance criteria from `origin
 - `personas/community/*.md` — prompt-edit path the filter must never match
 
 ## Success Criteria
-- [ ] `.github/workflows/hermes-auto-merge.yml` exists, is disabled/opt-in by default
-- [ ] Filter matches only mechanical-slug-bump changes (lockfile/`*.yaml`, never `*.md`) and/or a `hermes:mechanical` label
-- [ ] Auto-merge only proceeds when the `Go CI` (`Go Lint & Test`) fixture-gate check is green
-- [ ] Workflow permissions scoped to `contents: write` + `pull-requests: write` only
-- [ ] No condition anywhere keys on bot authorship alone
+- [x] `.github/workflows/hermes-auto-merge.yml` exists, is disabled/opt-in by default
+- [x] Filter matches only mechanical-slug-bump changes (lockfile/`*.yaml`, never `*.md`) and/or a `hermes:mechanical` label
+- [x] Auto-merge only proceeds when the `Go CI` (`Go Lint & Test`) fixture-gate check is green
+- [x] Workflow permissions scoped to `contents: write` + `pull-requests: write` only
+- [x] No condition anywhere keys on bot authorship alone
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -74,6 +74,6 @@ This task directly contributes to the following acceptance criteria from `origin
 - Task 01 (CI fixture-gate confirmation) — this workflow depends on the `Go CI` check name/behavior confirmed there
 
 ## Definition of Done
-- [ ] Opt-in auto-merge workflow created and default-disabled
-- [ ] Path/label filter verified to exclude all prompt-edit PR shapes
-- [ ] Permissions minimally scoped
+- [x] Opt-in auto-merge workflow created and default-disabled
+- [x] Path/label filter verified to exclude all prompt-edit PR shapes
+- [x] Permissions minimally scoped

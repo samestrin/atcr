@@ -32,13 +32,13 @@ This task directly contributes to the following acceptance criteria from `origin
 - `cmd/atcr/models.go`
 
 ## Success Criteria
-- [ ] `## Provisioning` section documents atcr binary install, repo checkout location, and `gh` auth setup on nucleus.lan
-- [ ] Pull-before-run step is explicitly specified as a prerequisite of every mechanical cron invocation
-- [ ] Section cross-references the hermes `no_agent` cron job shape (`cron/jobs.json`)
-- [ ] No `cmd/atcr` code changes introduced by this task
+- [x] `## Provisioning` section documents atcr binary install, repo checkout location, and `gh` auth setup on nucleus.lan
+- [x] Pull-before-run step is explicitly specified as a prerequisite of every mechanical cron invocation
+- [x] Section cross-references the hermes `no_agent` cron job shape (`cron/jobs.json`)
+- [x] No `cmd/atcr` code changes introduced by this task
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -57,5 +57,5 @@ This task directly contributes to the following acceptance criteria from `origin
 - Task 03 (Configuration Surface Documentation Skeleton) — this task extends the same `docs/hermes-maintenance-agents.md` file
 
 ## Definition of Done
-- [ ] Provisioning runbook section written and appended to docs/hermes-maintenance-agents.md
-- [ ] Pull-before-run requirement unambiguous
+- [x] Provisioning runbook section written and appended to docs/hermes-maintenance-agents.md
+- [x] Pull-before-run requirement unambiguous
