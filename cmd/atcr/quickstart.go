@@ -321,6 +321,12 @@ func appendExport(profile, env, key string, errOut io.Writer) error {
 	if created {
 		return os.Chmod(profile, 0o600)
 	}
+	// Pre-existing profile: respect the ownership boundary (do not re-permission a
+	// file we did not create), but warn if it is group/other-readable so the user
+	// knows the plaintext key was appended to a file other users on the host can read.
+	if info, serr := os.Stat(profile); serr == nil && info.Mode().Perm()&0o077 != 0 {
+		_, _ = fmt.Fprintf(errOut, "warning: %s is group/other-readable — the exported key may be exposed to other users; consider `chmod 600 %s`\n", profile, profile)
+	}
 	return nil
 }
 
