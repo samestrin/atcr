@@ -135,7 +135,10 @@ jobs:
 
           # (1) Required label. The label is combined WITH the path allow-list,
           #     never a substitute for it.
-          if ! printf '%s\n' "$labels" | grep -qx 'hermes:mechanical'; then
+          # Case-insensitive: GitHub's UI auto-capitalizes label input, so
+          # 'Hermes:Mechanical' is the same intended gate. Safe because the label
+          # is combined WITH the fail-closed path allow-list, never a substitute.
+          if ! printf '%s\n' "$labels" | grep -qix 'hermes:mechanical'; then
             echo "Missing required 'hermes:mechanical' label — no-op."
             echo "match=false" >> "$GITHUB_OUTPUT"
             exit 0
