@@ -244,7 +244,7 @@ No external specifications cleared the relevance threshold for this plan (see [p
 **Duration:** 1 day
 **Focus:** Replace the Task 03 `## Judgment Classification Rule` placeholder with the minor/major classification mapping grounded in `internal/personas/drift.go`'s actual `DriftFinding.Condition` constants, the `ConditionMissing` + co-occurring `ConditionDeprecation` escalation edge case, and the re-tune task payload spec that Phase 4's Task 06 consumes as its input contract. Isolated as its own phase because Task 06 has a hard dependency on this task's output shape.
 
-### 3.1 [ ] **🏗️ Judgment Classification Rule Documentation** ([task-05](plan/tasks/task-05-judgment-classification-rule.md))
+### 3.1 [x] **🏗️ Judgment Classification Rule Documentation** ([task-05](plan/tasks/task-05-judgment-classification-rule.md))
    **Task:** Replace the `## Judgment Classification Rule` placeholder with a mapping table grounded in `internal/personas/drift.go:23-26` constants: `ConditionNewerMember`→minor (→mechanical slug-bump), `ConditionDeprecation`→major (→re-tune task), `ConditionMissing`→minor by default **unless** it co-occurs with a `ConditionDeprecation` for the same persona in the same `atcr models check --json` run → major. Document the "same persona, same run" grouping rule, the re-tune task payload (persona=`DriftFinding.Persona`, old=`CurrentSlug`, new=`SuggestedSlug` or literal `"none suggested — requires manual selection"`, vendor-guide URL from the persona's `<!-- vendor-guidance: <description>, <url> -->` preamble), and name the judgment agents (brian/`glm-5.1` or cole/`kimi-k2.7-code`). Cross-reference `renderDriftJSON` (`cmd/atcr/models.go:304`) and exit-code 1 as the trigger.
    **Priority:** P2 | **Effort:** S
    1. Read the current `docs/hermes-maintenance-agents.md` (Tasks 03/04 state) to confirm the placeholder heading and match style.
@@ -255,7 +255,7 @@ No external specifications cleared the relevance threshold for this plan (see [p
    **Success Criteria:** Each `DriftFinding` condition mapped to minor/major; `ConditionMissing`+`ConditionDeprecation` co-occurrence escalation documented; re-tune payload (incl. vendor-guidance marker format and the "none suggested" literal) unambiguous; judgment agents named; implementable hermes-side with no atcr-repo changes.
    **Files:** `docs/hermes-maintenance-agents.md` (edit) | **Duration:** 0.5d | **AC:** AC2
 
-### 3.2 [ ] **Phase 3 — Definition of Done**
+### 3.2 [x] **Phase 3 — Definition of Done**
    1. `## Judgment Classification Rule` placeholder replaced; mapping grounded in `internal/personas/drift.go` constants.
    2. Co-occurrence escalation rule and re-tune payload spec (the input contract for Task 06) present and unambiguous.
    3. T3: `go test ./...` green (unaffected); markdown clean; no other placeholders disturbed.

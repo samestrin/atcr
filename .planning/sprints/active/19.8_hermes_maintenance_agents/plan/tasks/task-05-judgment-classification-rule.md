@@ -45,14 +45,14 @@ This task directly contributes to the following acceptance criteria from `origin
 - `cmd/atcr/models.go`
 
 ## Success Criteria
-- [ ] `## Judgment Classification Rule` section maps each DriftFinding condition type (`ConditionNewerMember`, `ConditionDeprecation`, `ConditionMissing`) to minor/major
-- [ ] The `ConditionMissing` + co-occurring `ConditionDeprecation` escalation rule is documented explicitly
-- [ ] Re-tune task payload (persona, old model, new/suggested model, vendor prompting-guide URL) is unambiguously specified, including the exact `<!-- vendor-guidance: ... -->` marker format
-- [ ] Judgment role's hermes agents (brian/`glm-5.1` or cole/`kimi-k2.7-code`) are named
-- [ ] Section is implementable by a hermes-side skill with no further atcr-repo changes
+- [x] `## Judgment Classification Rule` section maps each DriftFinding condition type (`ConditionNewerMember`, `ConditionDeprecation`, `ConditionMissing`) to minor/major
+- [x] The `ConditionMissing` + co-occurring `ConditionDeprecation` escalation rule is documented explicitly
+- [x] Re-tune task payload (persona, old model, new/suggested model, vendor prompting-guide URL) is unambiguously specified, including the exact `<!-- vendor-guidance: ... -->` marker format
+- [x] Judgment role's hermes agents (brian/`glm-5.1` or cole/`kimi-k2.7-code`) are named
+- [x] Section is implementable by a hermes-side skill with no further atcr-repo changes
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -74,5 +74,5 @@ This task directly contributes to the following acceptance criteria from `origin
 > **Downstream note:** The re-tune task payload this task specifies is consumed by [Task 06: Drafting Agent Contract Documentation](task-06-drafting-agent-contract.md).
 
 ## Definition of Done
-- [ ] Judgment classification rule section written and appended to `docs/hermes-maintenance-agents.md`, replacing the Task 03 placeholder
-- [ ] Mapping table grounded in actual `DriftFinding` condition types and constants from `internal/personas/drift.go`
+- [x] Judgment classification rule section written and appended to `docs/hermes-maintenance-agents.md`, replacing the Task 03 placeholder
+- [x] Mapping table grounded in actual `DriftFinding` condition types and constants from `internal/personas/drift.go`
