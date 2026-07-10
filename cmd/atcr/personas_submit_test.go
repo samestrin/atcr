@@ -158,6 +158,23 @@ func TestPersonasSubmit_ZeroCaseFixtureProceeds(t *testing.T) {
 	assert.True(t, *called, "a zero-case fixture (0==0) proceeds past the gate")
 }
 
+// TestPersonasSubmit_ContinuationErrorPropagates confirms the phase-exit
+// contract Phase 2 depends on: once the local gate passes and control reaches the
+// continuation seam, an error the seam returns is surfaced by RunE (non-nil,
+// exit 1) rather than swallowed. Phase 2 attaches the fork+PR flow here, so a
+// fork/push/PR failure must fail the command.
+func TestPersonasSubmit_ContinuationErrorPropagates(t *testing.T) {
+	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
+	old := personasSubmitContinuation
+	personasSubmitContinuation = func(string) error { return errors.New("fork+PR failed") }
+	t.Cleanup(func() { personasSubmitContinuation = old })
+
+	_, _, err := executeSplit(t, "personas", "submit", "sasha")
+	require.Error(t, err)
+	assert.Equal(t, exitFailure, exitCode(err))
+	assert.Contains(t, err.Error(), "fork+PR failed")
+}
+
 // TestPersonas_HelpListsSubmit confirms `submit` is registered as the seventh
 // persona subcommand.
 func TestPersonas_HelpListsSubmit(t *testing.T) {
