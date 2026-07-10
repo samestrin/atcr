@@ -712,6 +712,38 @@ func TestPersonasUpgrade_AllEmpty(t *testing.T) {
 	assert.Contains(t, out, "No community personas installed")
 }
 
+// TestPersonasUpgrade_FetchFailure_ExitsUsage covers the exit-code contract:
+// a pure catalog fetch failure during a bound-persona upgrade is an infra/
+// environment failure and must exit 2 (usage/command failure), not 1 (substantive
+// result), so CI consumers can distinguish infra problems from real upgrades.
+func TestPersonasUpgrade_FetchFailure_ExitsUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			http.Error(w, "upstream boom", http.StatusInternalServerError)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	dir := withPersonasEnv(t, srv)
+	t.Setenv("ATCR_CATALOG_URL", srv.URL)
+
+	installed := `provider: openrouter
+model: deepseek/deepseek-v4.0
+role: reviewer
+binding: deepseek@stable
+version: "1.0.0"
+`
+	p := filepath.Join(dir, "vendor", "delia.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte(installed), 0o644))
+
+	_, err := execute(t, "personas", "upgrade", "vendor/delia")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err), "fetch/environment failure must exit 2, not 1")
+}
+
 func TestPersonasTest_ZeroCasesWarn(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{})
 	withPersonasEnv(t, srv)
