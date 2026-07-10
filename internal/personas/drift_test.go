@@ -143,3 +143,20 @@ func TestSnapshotModels_EnvOverride_SizeCap(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed to load catalog snapshot")
 }
+
+// TestDeriveFamilyPrefix_NonTrailingVersionSegment: a version segment that is NOT
+// the last hyphen segment (a tiered slug like openai/gpt-5.4-mini) must still be
+// stripped so the slug derives to its family tier (openai/gpt-mini) and groups with
+// a newer sibling — not to itself, which only ever matches itself and reports no
+// drift forever. Trailing-version and no-version slugs keep their existing output.
+func TestDeriveFamilyPrefix_NonTrailingVersionSegment(t *testing.T) {
+	cases := []struct{ slug, want string }{
+		{"openai/gpt-5.4-mini", "openai/gpt-mini"},                       // non-trailing version stripped
+		{"anthropic/claude-opus-4.8", "anthropic/claude-opus"},           // trailing version (unchanged)
+		{"z-ai/glm-5.2", "z-ai/glm"},                                     // trailing version (unchanged)
+		{"anthropic/claude-opus-latest", "anthropic/claude-opus-latest"}, // no version segment (unchanged)
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, deriveFamilyPrefix(c.slug), "deriveFamilyPrefix(%q)", c.slug)
+	}
+}
