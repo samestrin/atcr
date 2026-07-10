@@ -1,0 +1,150 @@
+# Opt-in auto-merge for MECHANICAL hermes PRs only.
+#
+# A mechanical PR is a deterministic model-slug bump: it edits ONLY
+# `personas/community/<slug>.yaml` file(s) — the resolved `model:` lock — and
+# carries the `hermes:mechanical` label. Such a PR involves no LLM judgment and
+# is safe to merge automatically once the required `Go CI` fixture gate is green.
+#
+# A prompt re-tune PR edits a persona `personas/community/<slug>.md` body and
+# MUST always get human review. This workflow is structurally incapable of
+# auto-merging it: the allow-list below is fail-closed — a single non-`.yaml`
+# path (a `.md`, anything) in the diff disqualifies the WHOLE PR, regardless of
+# label or author.
+#
+# GUARD — DO NOT gate this workflow on `github.actor`,
+# `github.event.pull_request.user.login`, "is this a bot", or any author/actor
+# identity. The ONLY permitted gates are (1) the opt-in repo variable, (2) the
+# structural path allow-list, (3) the required `hermes:mechanical` label, and
+# (4) the required `Go Lint & Test` check reporting success. An actor-based gate
+# would let anything impersonating a trusted identity bypass review.
+name: Hermes Auto-Merge (mechanical)
+
+on:
+  # React to the PR being opened/updated/labeled...
+  pull_request:
+    types: [opened, synchronize, labeled]
+  # ...and to CI finishing, so a PR that was not yet green when opened gets
+  # re-evaluated the moment the `Go CI` fixture gate completes.
+  check_suite:
+    types: [completed]
+
+# Minimum scope: merge the one PR (contents) and read/label it (pull-requests).
+# Deliberately NO `checks: write`, NO `actions: write`.
+permissions:
+  contents: write
+  pull-requests: write
+
+# Never race two evaluations of the same PR against each other.
+concurrency:
+  group: hermes-auto-merge-${{ github.event.pull_request.number || github.event.check_suite.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  auto-merge:
+    name: Auto-merge mechanical slug bump
+    runs-on: ubuntu-latest
+    # OPT-IN GATE (fail-closed): the entire job is inert unless a maintainer has
+    # explicitly set the repository variable HERMES_AUTO_MERGE_ENABLED to 'true'.
+    # Unset/any-other-value => the job is skipped entirely.
+    if: vars.HERMES_AUTO_MERGE_ENABLED == 'true'
+    steps:
+      - name: Resolve target PR number
+        id: pr
+        env:
+          # From a pull_request event the number is on the event payload; from a
+          # check_suite event it comes from the suite's associated PRs (empty for
+          # cross-fork suites, which then no-op below — fail-closed).
+          PR_FROM_PR_EVENT: ${{ github.event.pull_request.number }}
+          PR_FROM_CHECK_SUITE: ${{ github.event.check_suite.pull_requests[0].number }}
+        run: |
+          set -euo pipefail
+          num="${PR_FROM_PR_EVENT:-${PR_FROM_CHECK_SUITE:-}}"
+          if [ -z "${num}" ]; then
+            echo "No PR associated with this event — nothing to do."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "number=${num}" >> "$GITHUB_OUTPUT"
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Evaluate structural filter (fail-closed allow-list + required label)
+        id: filter
+        if: steps.pr.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+
+          # Changed files and labels are read via the API as data (never
+          # interpolated into the shell), so a crafted PR title/branch/label
+          # cannot inject shell here.
+          files="$(gh pr view "$PR_NUMBER" -R "$REPO" --json files --jq '.files[].path')"
+          labels="$(gh pr view "$PR_NUMBER" -R "$REPO" --json labels --jq '.labels[].name')"
+
+          if [ -z "$files" ]; then
+            echo "PR touches no files — no-op."
+            echo "match=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # (1) Required label. The label is combined WITH the path allow-list,
+          #     never a substitute for it.
+          if ! printf '%s\n' "$labels" | grep -qx 'hermes:mechanical'; then
+            echo "Missing required 'hermes:mechanical' label — no-op."
+            echo "match=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # (2) Fail-closed allow-list: EVERY changed file must be a community
+          #     persona YAML lock. Any single path outside the allow-list
+          #     (a '.md' prompt edit, or anything else) disqualifies the whole PR.
+          allow_re='^personas/community/[^/]+\.ya?ml$'
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            if ! printf '%s' "$f" | grep -Eq "$allow_re"; then
+              echo "Disallowed path in diff: '$f' — this PR is NOT auto-mergeable."
+              echo "match=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done <<< "$files"
+
+          echo "All changed files are community persona YAML locks and the label is present."
+          echo "match=true" >> "$GITHUB_OUTPUT"
+
+      - name: Require Go CI fixture gate to be green
+        id: gate
+        if: steps.filter.outputs.match == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+
+          # Resolve the PR head SHA, then require the SPECIFIC required check
+          # 'Go Lint & Test' (job name in .github/workflows/ci.yml) to have
+          # concluded 'success' on that SHA — not merely "some checks exist".
+          head_sha="$(gh pr view "$PR_NUMBER" -R "$REPO" --json headRefOid --jq '.headRefOid')"
+          conclusion="$(gh api "repos/${REPO}/commits/${head_sha}/check-runs" \
+            --jq '.check_runs[] | select(.name == "Go Lint & Test") | .conclusion' \
+            | head -n1)"
+
+          if [ "$conclusion" != "success" ]; then
+            echo "Go Lint & Test is '${conclusion:-absent/pending}', not success — will re-evaluate when CI completes."
+            echo "green=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Go Lint & Test = success."
+          echo "green=true" >> "$GITHUB_OUTPUT"
+
+      - name: Squash-merge the mechanical PR
+        if: steps.gate.outputs.green == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          gh pr merge "$PR_NUMBER" -R "$REPO" --squash --delete-branch
