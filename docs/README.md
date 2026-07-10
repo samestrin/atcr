@@ -41,6 +41,9 @@ single source of truth the website build consumes, so it links every doc in
 - [CI Integration](ci-integration.md) — wiring atcr into a CI gate.
 - [GitHub Action — PR Review](github-action.md) — posting reconciled findings to
   a pull request.
+- [Hermes Maintenance Agents](hermes-maintenance-agents.md) — configuration
+  surface for wiring the external hermes agents to `atcr models check` across the
+  mechanical/judgment/drafting roles.
 - [Using atcr as a code-review backend (`--output-dir`)](code-review-backend.md)
   — driving atcr as the reviewer backend for a separate pipeline.
 - [Technical-Debt Tooling (`atcr debt`)](technical-debt.md) — query, capture, and

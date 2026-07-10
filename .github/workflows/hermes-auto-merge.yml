@@ -1,0 +1,257 @@
+# Opt-in auto-merge for MECHANICAL hermes PRs only.
+#
+# A mechanical PR is a deterministic model-slug bump: it edits ONLY
+# `personas/community/<slug>.yaml` file(s) — the resolved `model:` lock — and
+# carries the `hermes:mechanical` label. Such a PR involves no LLM judgment and
+# is safe to merge automatically once the required `Go CI` fixture gate is green.
+#
+# A prompt re-tune PR edits a persona `personas/community/<slug>.md` body and
+# MUST always get human review. This workflow is structurally incapable of
+# auto-merging it: the allow-list below is fail-closed — a single non-`.yaml`
+# path (a `.md`, anything) in the diff disqualifies the WHOLE PR, regardless of
+# label or author.
+#
+# The whole evaluation is PINNED to the head SHA that triggered the run: the
+# file allow-list and the CI-green check are read at that SHA, and the merge is
+# `--match-head-commit "$SHA"` so it ABORTS if HEAD moved after evaluation. This
+# closes the TOCTOU window where a PR could pass the `.yaml`-only filter and then
+# push a `.md` commit before merge.
+#
+# GUARD — DO NOT gate this workflow on `github.actor`,
+# `github.event.pull_request.user.login`, "is this a bot", or any author/actor
+# identity. The ONLY permitted gates are (1) the opt-in repo variable, (2) the
+# structural path allow-list, (3) the required `hermes:mechanical` label, and
+# (4) the required `Go Lint & Test` check reporting success. An actor-based gate
+# would let anything impersonating a trusted identity bypass review.
+name: Hermes Auto-Merge (mechanical)
+
+on:
+  # React to the PR being opened/updated/labeled...
+  pull_request:
+    types: [opened, synchronize, labeled]
+  # ...and to CI finishing, so a PR that was not yet green when opened gets
+  # re-evaluated the moment the `Go CI` fixture gate completes.
+  check_suite:
+    types: [completed]
+
+# Minimum scope: merge the one PR (contents) and read/label it (pull-requests).
+# `checks: read` lets the gate step query check-runs via `gh api`; when a
+# permissions block is declared, every unlisted scope defaults to `none`, so
+# the check-runs read would 403 without it. Deliberately NO `checks: write`,
+# NO `actions: write`.
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+# One evaluation per PR at a time, keyed on the PR number for BOTH event shapes
+# so a pull_request run and a check_suite run for the same PR never race; a newer
+# event supersedes an in-flight (stale-SHA) evaluation.
+concurrency:
+  group: hermes-auto-merge-${{ github.event.pull_request.number || github.event.check_suite.pull_requests[0].number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    name: Auto-merge mechanical slug bump
+    runs-on: ubuntu-latest
+    # Bound worst-case runtime: a hung `gh` call or network stall must not leave
+    # the runner spinning indefinitely. The job is a handful of API calls.
+    timeout-minutes: 10
+    # OPT-IN GATE (fail-closed): the entire job is inert unless a maintainer has
+    # explicitly set the repository variable HERMES_AUTO_MERGE_ENABLED to 'true'.
+    # Unset/any-other-value => the job is skipped entirely.
+    # For check_suite events, only act on suites that (a) map to a PR and
+    # (b) concluded 'success' — a failed/cancelled/neutral suite has nothing to
+    # merge, so evaluating it just burns Actions minutes. The gate step still
+    # independently re-verifies 'Go Lint & Test' = success on the pinned SHA.
+    if: vars.HERMES_AUTO_MERGE_ENABLED == 'true' && (github.event_name != 'check_suite' || (github.event.check_suite.pull_requests[0] != null && github.event.check_suite.conclusion == 'success'))
+    steps:
+      - name: Resolve target PR and pin its head SHA
+        id: pr
+        env:
+          # The PR number and the head SHA both come from the triggering event
+          # payload so the entire evaluation is anchored to ONE commit. A
+          # check_suite for a cross-fork PR has no associated PR number here and
+          # then no-ops below (fail-closed).
+          PR_FROM_PR_EVENT: ${{ github.event.pull_request.number }}
+          PR_FROM_CHECK_SUITE: ${{ github.event.check_suite.pull_requests[0].number }}
+          SHA_FROM_PR_EVENT: ${{ github.event.pull_request.head.sha }}
+          SHA_FROM_CHECK_SUITE: ${{ github.event.check_suite.head_sha }}
+        run: |
+          set -euo pipefail
+          num="${PR_FROM_PR_EVENT:-${PR_FROM_CHECK_SUITE:-}}"
+          sha="${SHA_FROM_PR_EVENT:-${SHA_FROM_CHECK_SUITE:-}}"
+          if [ -z "${num}" ] || [ -z "${sha}" ]; then
+            echo "No PR/head SHA associated with this event — nothing to do."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "number=${num}" >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Evaluate structural filter (fail-closed allow-list + required label)
+        id: filter
+        if: steps.pr.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PIN_SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          # Anchor to the pinned SHA: if the PR's current head has already moved
+          # past the SHA that triggered this run, do nothing — the newer commit's
+          # own event will (re-)evaluate it. This keeps the file list we read
+          # below consistent with the SHA we later require CI-green and merge.
+          cur_head="$(gh pr view "$PR_NUMBER" -R "$REPO" --json headRefOid --jq '.headRefOid')"
+          if [ "$cur_head" != "$PIN_SHA" ]; then
+            echo "PR head moved ($cur_head != pinned $PIN_SHA) — no-op; the new head triggers its own run."
+            echo "match=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Fail-closed on RENAMES. The path allow-list below sees only the NEW
+          # path, so a rename of `personas/community/foo.md` -> `foo.yaml` would
+          # pass the `.yaml` filter while smuggling a markdown prompt body into a
+          # YAML-looking path. `gh pr view --json files` exposes only path (never
+          # status/previous_filename), so detect renames via the lower-level REST
+          # endpoint, which reports `.status`. Any rename disqualifies the whole
+          # PR. API failure no-ops cleanly, exactly like every other failure path.
+          if ! renamed="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate --jq '.[] | select(.status == "renamed") | .filename')"; then
+            echo "PR files not accessible — no-op."
+            echo "match=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$renamed" ]; then
+            echo "PR renames file(s): $renamed — a rename can smuggle a .md prompt body into a .yaml path; NOT auto-mergeable."
+            echo "match=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Changed files and labels are read via the API as data (never
+          # interpolated into the shell), so a crafted PR title/branch/label
+          # cannot inject shell here.
+          if ! files_json="$(gh pr view "$PR_NUMBER" -R "$REPO" --json files)"; then
+            echo "PR no longer accessible — no-op."
+            echo "match=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! labels="$(gh pr view "$PR_NUMBER" -R "$REPO" --json labels --jq '.labels[].name')"; then
+            echo "PR no longer accessible — no-op."
+            echo "match=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$(jq -j '.files[].path' <<< "$files_json")" ]; then
+            echo "PR touches no files — no-op."
+            echo "match=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # (1) Required label. The label is combined WITH the path allow-list,
+          #     never a substitute for it.
+          # Case-insensitive: GitHub's UI auto-capitalizes label input, so
+          # 'Hermes:Mechanical' is the same intended gate. Safe because the label
+          # is combined WITH the fail-closed path allow-list, never a substitute.
+          if ! printf '%s\n' "$labels" | grep -qix 'hermes:mechanical'; then
+            echo "Missing required 'hermes:mechanical' label — no-op."
+            echo "match=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # (2) Fail-closed allow-list: EVERY changed file must be a community
+          #     persona YAML lock. Any single path outside the allow-list
+          #     (a '.md' prompt edit, or anything else) disqualifies the whole PR.
+          allow_re='^personas/community/[^/]+\.ya?ml$'
+          while IFS= read -r -d '' f; do
+            [ -z "$f" ] && continue
+            if ! printf '%s' "$f" | grep -Eq "$allow_re"; then
+              echo "Disallowed path in diff: '$f' — this PR is NOT auto-mergeable."
+              echo "match=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done < <(jq -j '.files[].path + "\u0000"' <<< "$files_json")
+
+          echo "All changed files are community persona YAML locks and the label is present."
+          echo "match=true" >> "$GITHUB_OUTPUT"
+
+      - name: Require Go CI fixture gate to be green (on the pinned SHA)
+        id: gate
+        if: steps.filter.outputs.match == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PIN_SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          # Require the SPECIFIC required check 'Go Lint & Test' (job name in
+          # .github/workflows/ci.yml) on the pinned head SHA. Fail-closed:
+          #   - at least one such run must exist, AND
+          #   - EVERY matching run must have concluded 'success'
+          # so a re-run that produced multiple runs (a stale success beside a
+          # current failure/in-progress) cannot slip through.
+          # Also pin the producing app to 'github-actions': a third-party GitHub
+          # App can create a check-run with ANY name, including 'Go Lint & Test'.
+          # Without the app.slug guard, such an impostor run reporting success
+          # (before the real CI starts) could satisfy this gate. Filtering on the
+          # app slug requires the success to come from our own Actions CI.
+          # Retry transient GitHub API failures with the same policy this repo
+          # already ships in internal/ghaction/client.go: 4 attempts, 250ms
+          # back-off doubling each time. A plain exit-code retry stands in for
+          # status-class inspection (reading 5xx/429/Retry-After from bash needs
+          # `gh api -i` header parsing — unwarranted complexity for a low-freq
+          # background job): gh api exits non-zero on any HTTP error, so a hard
+          # 403 simply exhausts the 4 quick attempts and then no-ops fail-closed
+          # below (green=false, exit 0) — never "green" on uncertainty.
+          attempt=0
+          backoff=0.25
+          conclusions=""
+          until conclusions="$(gh api "repos/${REPO}/commits/${PIN_SHA}/check-runs" --paginate \
+                  --jq '[.check_runs[] | select(.name == "Go Lint & Test" and .app.slug == "github-actions")] | sort_by(.started_at) | last | (.conclusion // "pending")')"; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -gt 3 ]; then
+              echo "check-runs API still failing after 4 attempts — deferring; the next triggering event re-evaluates."
+              echo "green=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "check-runs API call failed (attempt ${attempt}/4) — retrying in ${backoff}s..."
+            sleep "$backoff"
+            backoff="$(awk "BEGIN{print ${backoff} * 2}")"
+          done
+
+          if [ -z "$conclusions" ]; then
+            echo "No 'Go Lint & Test' run on ${PIN_SHA} yet — will re-evaluate when CI completes."
+            echo "green=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if printf '%s\n' "$conclusions" | grep -qvx 'success'; then
+            echo "A 'Go Lint & Test' run on ${PIN_SHA} is not success:"
+            printf '%s\n' "$conclusions"
+            echo "green=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "All 'Go Lint & Test' runs on ${PIN_SHA} = success."
+          echo "green=true" >> "$GITHUB_OUTPUT"
+
+      - name: Squash-merge the mechanical PR (aborts if HEAD moved)
+        if: steps.gate.outputs.green == 'true' && (github.event.pull_request.base.ref == 'main' || github.event.check_suite.pull_requests[0].base.ref == 'main')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PIN_SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # --match-head-commit makes the merge fail (not force) if the PR head is
+          # no longer the SHA we evaluated — the definitive TOCTOU close.
+          echo "Merging PR #${PR_NUMBER} at pinned SHA ${PIN_SHA}..."
+          if gh pr merge "$PR_NUMBER" -R "$REPO" --squash --delete-branch --match-head-commit "$PIN_SHA"; then
+            echo "Merge succeeded for PR #${PR_NUMBER} at ${PIN_SHA}."
+          else
+            echo "Merge failed for PR #${PR_NUMBER} at ${PIN_SHA}: HEAD may have moved or the PR state changed."
+            exit 1
+          fi
