@@ -183,4 +183,68 @@ requires **no atcr-repo code changes**.
 
 ## Drafting Agent Contract
 
-_To be completed by Task 06._
+The drafting agent turns a **major**/re-tune task (from the [Judgment
+Classification Rule](#judgment-classification-rule)) into a **separate**,
+LLM-drafted persona prompt-edit PR. It never auto-merges and always requires
+human approval.
+
+**Input.** The re-tune task payload defined by the Judgment Classification Rule:
+`persona` (`DriftFinding.Persona`), `old` (`DriftFinding.CurrentSlug`), `new`
+(`DriftFinding.SuggestedSlug`, or the literal `none suggested — requires manual
+selection` when absent), and `vendor_guide_url` (extracted from the persona's
+`<!-- vendor-guidance: <description>, <url> -->` preamble).
+
+**Edit procedure (ordered).**
+
+1. Read the target persona's `.md` file and parse its `<!-- vendor-guidance:
+   <description>, <url> -->` preamble comment — the same marker the Judgment rule
+   documents, test-enforced by `personas/community_test.go`'s `vendorGuidanceRe`
+   (a non-empty value is required; the convention is a free-text vendor/guide
+   description followed by a URL, as in `personas/community/anthony.md:1`,
+   `gene.md:1`, `celeste.md:1`).
+2. Fetch the current guide at the cited URL.
+3. Edit **only the persona body below the preamble comment** — never the
+   preamble's HTML-comment line itself, except as in step 4.
+4. If (and only if) the guide's location or title changed, update the preamble's
+   description/URL to match; otherwise leave the preamble untouched.
+
+**Structural invariant.** The mandatory persona section structure from
+[`docs/personas-authoring.md`](personas-authoring.md) —
+`## Role` / `## Focus` / `## Scope` / `## Severity Rubric` /
+`## Output Format` (the exact 7-column pipe-delimited reviewer-finding contract) /
+`## Payload`, plus the optional `## Tool-Assisted Review` block where present —
+must be preserved **byte-for-byte**: never restructured, reordered, renamed, and
+no headings added or removed. The template tokens (`{{.AgentName}}`,
+`{{.ScopeRule}}`, `{{.Payload}}`, etc.) and the 7-column `## Output Format`
+contract must survive untouched (the reconciler parses that format). The drafting
+agent may change only the **prose content within** these existing sections.
+
+**`.yaml` off-limits.** The drafting agent must **never** touch the paired
+`personas/community/<slug>.yaml` (provider/model binding) file unless the re-tune
+payload explicitly calls for a model change — i.e. it carries a concrete
+`SuggestedSlug`, not the `none suggested — requires manual selection` placeholder.
+A pure prompt re-tune touches the `.md` only.
+
+**Model assignment.** marcus (`openai/qwen-3.7-plus`) default, nolan
+(`glm-5.2`) fallback — see [Role → Agent Configuration](#role--agent-configuration)
+and [Drafting Model Default & Fallback](#drafting-model-default--fallback). This
+is a cross-reference, not a new decision.
+
+**Hard output contract.**
+
+- Opens a PR **separate** from any mechanical slug-bump PR — never mixed into the
+  same PR or commit.
+- The PR touches `personas/community/*.md` only (and, only when step-5-authorized,
+  the paired `.yaml`) — a path the [auto-merge workflow](../.github/workflows/hermes-auto-merge.yml)'s
+  fail-closed allow-list explicitly **excludes**, so this PR is structurally
+  incapable of matching the mechanical auto-merge path.
+- The PR is explicitly a **draft** and requires explicit **human approval** before
+  merge; it **never auto-merges** under any configuration.
+- Before it is even reviewable it must pass the reused Epic 19.6 **C3 guardrail
+  chain** unmodified — schema validation (`internal/registry/validate.go`), length
+  caps (`internal/tools/limits.go`), and the fixture gate
+  (`internal/personas/community_fixture_test.go`,
+  `internal/personas/community_schema_test.go`) — the same gate any human PR faces.
+
+This section records a contract for a hermes-side skill to implement; it requires
+**no atcr-repo code changes**.
