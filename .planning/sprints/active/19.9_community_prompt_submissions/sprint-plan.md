@@ -324,7 +324,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    - [x] ACs 02-01, 02-02, 02-03 satisfied; checkboxes marked
    - [x] All `gh` interaction behind the injectable `personasGitHub` seam
 
-### 2.5 [ ] **Phase 2 — GATE: Integration & Exit Review (subagent)**
+### 2.5 [x] **Phase 2 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase implementation. Do NOT review inline.
@@ -343,16 +343,15 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (first pass):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | internal/personas/submit.go copyPersonaUnit | Copied only `<name>.yaml`, omitting the co-located `<name>.md` custom prompt where local tuning lives → PR diverges from the fixture-validated unit | **Fixed inline before boundary** (commit c9847cf4): copy sibling `.md` when present, binding-only persona still succeeds; `TestCopyPersonaUnit` + `TestCopyPersonaUnit_BindingOnly` added. Gate re-run: HIGH resolved, no new findings. |
+   | LOW | internal/personas/submit.go Fork/PushBranch | First-ever fork can 404 the immediate clone (async fork provisioning) | Deferred → TD-005 (gh/git shell-out layer, transient/retry-able, untestable per AC 02-03) |
+   | LOW | cmd/atcr/personas.go personasSubmitContinuation | Continuation returns only `error`; Phase 3 must re-thread the PR URL to key the marker off it | Advisory for Phase 3 — `Submit` already returns `(url, nil)` with an empty-URL guard, so the "real PR exists" signal survives at the package boundary; noted for Phase 3 wiring |
+   | LOW | dep go.mod | `gh` CLI prerequisite (installed+authenticated) undocumented for `personas submit` | In scope for Phase 4 AC 05-01 (install-guide doc) — confirm the `gh` prerequisite note lands before sprint close |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
-   - None found → Note "Phase gate passed"
+   **Action Required:** One HIGH found and **fixed inline before the phase boundary** (gate re-run confirmed resolution, zero new findings). LOWs: one deferred to TD-005, two are forward-looking notes already covered by Phase 3 wiring / Phase 4 AC 05-01. Phase gate passed.
    **Duration:** 15-30 min
 
    🚧 **GATED STOP:** Halt here. Await go-ahead before starting Phase 3.

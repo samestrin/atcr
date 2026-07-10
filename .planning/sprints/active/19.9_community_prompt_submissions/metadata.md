@@ -54,8 +54,8 @@ _Note: This section is updated when sprint is created with `/create-sprint`_
 
 | Phase | Story | Status |
 |-------|-------|--------|
-| 1 — Foundation: Local Fixture-Gate Reuse & Submission Blocking | Story 1 | Not started |
-| 2 — Core: Fork + PR Automation via `gh` | Story 2 | Not started |
+| 1 — Foundation: Local Fixture-Gate Reuse & Submission Blocking | Story 1 | ✅ Complete (2026-07-10) |
+| 2 — Core: Fork + PR Automation via `gh` | Story 2 | ✅ Complete (2026-07-10) |
 | 3 — Core: `submitted` Status Distinct from `Source` | Story 3 | Not started |
 | 4 — Integration: Documentation (Graduation + Submit Flow) | Stories 4 & 5 | Not started |
 | 5 — Validation | All | Not started |
