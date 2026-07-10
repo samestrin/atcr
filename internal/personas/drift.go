@@ -66,6 +66,18 @@ func LoadLock(personasDir, name string) (InstalledLock, error) {
 	return InstalledLock{Name: name, Model: strings.TrimSpace(meta.Model), Binding: meta.Binding}, nil
 }
 
+// aliasSlugSet is the set of provider-owned ~…-latest alias slugs ResolveModel's
+// passthrough (catalog.go aliasTable) returns. They resolve server-side regardless
+// of catalog-snapshot completeness, so CheckDrift must never report an alias-bound
+// lock `missing` merely because a refreshed snapshot omits the synthetic id (TD-005).
+var aliasSlugSet = func() map[string]struct{} {
+	s := make(map[string]struct{}, len(aliasTable))
+	for _, slug := range aliasTable {
+		s[slug] = struct{}{}
+	}
+	return s
+}()
+
 // CheckDrift compares each installed lock against the catalog and returns the
 // drift findings in a deterministic order: locks in the given order, and within a
 // single persona newer-member before deprecation. A slug absent from the catalog
@@ -94,6 +106,13 @@ func CheckDrift(locks []InstalledLock, models []CatalogModel) []DriftFinding {
 		}
 		entry, present := bySlug[slug]
 		if !present {
+			// An alias-bound lock holds a synthetic ~vendor/…-latest slug the provider
+			// resolves server-side; it stays resolvable regardless of catalog-snapshot
+			// completeness, so a refreshed snapshot that omits the id must not report it
+			// `missing` (TD-005). A genuine concrete slug that vanished still does.
+			if _, isAlias := aliasSlugSet[slug]; isAlias {
+				continue
+			}
 			findings = append(findings, DriftFinding{
 				Persona:     lock.Name,
 				Condition:   ConditionMissing,
