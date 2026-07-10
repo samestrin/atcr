@@ -58,7 +58,7 @@
 - **Throughput:** N/A — one-shot command
 
 ## Security Considerations
-- **Authentication/Authorization:** Reads `OPENROUTER_API_KEY` from the environment and sends it as a Bearer token to `api.openrouter.ai`; no key is logged or written to the fixture
+- **Authentication/Authorization:** Reads `OPENROUTER_API_KEY` from the environment only as a local maintainer/CI presence gate — the key is NEVER transmitted. The catalog GET to `api.openrouter.ai` is unauthenticated (confirmed by the Phase 1 spike): no Bearer header is sent, and no key is logged or written to the fixture
 - **Input Validation:** The fetched JSON is decoded into the catalog-entry struct before writing; malformed responses are rejected with an error and do not overwrite the fixture
 
 ## Test Implementation Guidance
