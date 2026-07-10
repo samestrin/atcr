@@ -274,7 +274,7 @@ No external specifications cleared the relevance threshold for this plan (see [p
 **Duration:** 1.5 days
 **Focus:** Replace the final Task 03 placeholder with the drafting agent's full contract (input payload from Task 05, edit procedure, structural invariant preserving the persona's mandatory section format, model assignment cross-reference, hard output contract). Closes the last placeholder in `docs/hermes-maintenance-agents.md`, then runs the cumulative adversarial + Definition-of-Done validation pass over the whole sprint.
 
-### 4.1 [ ] **🏗️ Drafting Agent Contract Documentation** ([task-06](plan/tasks/task-06-drafting-agent-contract.md))
+### 4.1 [x] **🏗️ Drafting Agent Contract Documentation** ([task-06](plan/tasks/task-06-drafting-agent-contract.md))
    **Task:** Replace the `## Drafting Agent Contract` placeholder with: **input** (Task 05's re-tune payload); **edit procedure** (read persona `<!-- vendor-guidance: ... -->` preamble → fetch guide → edit only the body below the preamble → conditionally update the preamble URL/description if the guide moved); **invariant** (the mandatory persona section structure from `docs/personas-authoring.md` — `## Role`/`## Focus`/`## Scope`/`## Severity Rubric`/`## Output Format` (7-column contract)/`## Payload` — preserved byte-for-byte, content-only edits; never touch the paired `.yaml` unless the payload carries a concrete `SuggestedSlug`); **model assignment** (marcus/`openai/qwen-3.7-plus` default, nolan/`glm-5.2` fallback — cross-reference Task 03, don't restate as a new decision); **hard output contract** (separate PR from mechanical, structurally excluded from Task 02's `*.md`-rejecting filter, always a draft, human approval required, never auto-merges, must pass the reused C3 gate before review).
    **Priority:** P2 | **Effort:** S
    1. Read the current `docs/hermes-maintenance-agents.md` (Tasks 03/04/05 state) to confirm the placeholder and match conventions.
@@ -284,7 +284,7 @@ No external specifications cleared the relevance threshold for this plan (see [p
    **Success Criteria:** Placeholder replaced with input payload, ordered edit procedure, byte-for-byte 7-section invariant, `.yaml`-off-limits-unless-model-change rule, model assignment cross-reference, and the separate-PR/draft/human-approval/never-auto-merge/must-pass-C3 output contract.
    **Files:** `docs/hermes-maintenance-agents.md` (edit) | **Duration:** 0.5d | **AC:** AC3, AC4, AC5
 
-### 4.2 [ ] **Sprint Documentation — CUMULATIVE ADVERSARIAL REVIEW (subagent)**
+### 4.2 [x] **Sprint Documentation — CUMULATIVE ADVERSARIAL REVIEW (subagent)**
    **Changed Files:** `docs/hermes-maintenance-agents.md` (full file, Tasks 03–06), `.github/workflows/hermes-auto-merge.yml`
 
    **Spawn a fresh subagent** via the Agent tool to perform this cumulative review. The subagent has no memory of the implementation — intentional, to avoid bias. Do NOT review inline.
@@ -303,18 +303,16 @@ No external specifications cleared the relevance threshold for this plan (see [p
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh cumulative review, no impl memory):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | docs/hermes-maintenance-agents.md (Guardrail/Provisioning) | Doc never named the `hermes:mechanical` label or the `HERMES_AUTO_MERGE_ENABLED` variable the workflow requires; a maintainer following only the doc would open mechanical PRs that never auto-merge — AC1/AC4 auto-merge capability documented-but-unreachable (fails safe, no wrong merge). | Named the repo variable + label + `.yaml`-only path discipline in Guardrail Contract and Provisioning (cron wrapper applies `--label hermes:mechanical`). |
+   | MEDIUM | docs/hermes-maintenance-agents.md (Drafting output contract) | "only when step-5-authorized" referenced a nonexistent step 5 (edit procedure has steps 1–4). | Replaced with a pointer to the `.yaml` off-limits rule (concrete `SuggestedSlug`). |
+   | LOW | docs/hermes-maintenance-agents.md (Guardrail branch-protection) | Called `Go CI / Go Lint & Test` the "job name"; `Go Lint & Test` is the job/check-run name, `Go CI` is the workflow. | Clarified which is the selectable required-check entry. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix inline before Final Validation, do NOT proceed until fixed; COMMIT the fix.
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Cumulative adversarial review passed" and proceed
+   **Action Taken:** HIGH fixed inline + committed (required before Final Validation). MEDIUM/LOW were cheap same-file doc-accuracy corrections fixed in the same pass rather than deferred. No CRITICAL. Cumulative adversarial review resolved.
 
-### 4.3 [ ] **Phase 4 — Definition of Done (cumulative sprint validation)**
+### 4.3 [x] **Phase 4 — Definition of Done (cumulative sprint validation)**
    1. `## Drafting Agent Contract` placeholder replaced; all three anchors now fully populated (no `_To be completed_` remaining).
    2. Cumulative adversarial review (4.2) run by a fresh subagent; CRITICAL/HIGH fixed + committed, MEDIUM/LOW deferred.
    3. Role→Agent table internally consistent across Tasks 03/05/06; every AC (AC1–AC6) traces to a completed task.

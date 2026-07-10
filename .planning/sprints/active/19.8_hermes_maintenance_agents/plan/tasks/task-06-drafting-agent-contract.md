@@ -53,15 +53,15 @@ This task directly contributes to the following acceptance criteria from `origin
 - `internal/personas/community_schema_test.go`
 
 ## Success Criteria
-- [ ] `## Drafting Agent Contract` placeholder replaced with content specifying the re-tune task input payload
-- [ ] Edit procedure (read vendor-guidance preamble → fetch guide → edit body only → conditionally update preamble) is unambiguous and ordered
-- [ ] Invariant preserving the mandatory 7-section persona structure byte-for-byte (content-only edits) is stated
-- [ ] `.yaml` binding file is documented as off-limits unless the re-tune task explicitly calls for a model change
-- [ ] Model assignment (marcus/`openai/qwen-3.7-plus` default, nolan/`glm-5.2` fallback) documented, cross-referencing Task 03 rather than restating it
-- [ ] Output contract states: separate PR from mechanical, structurally excluded from Task 02's auto-merge path filter, always a draft, human approval required, never auto-merges, must pass the reused C3 fixture gate before review
+- [x] `## Drafting Agent Contract` placeholder replaced with content specifying the re-tune task input payload
+- [x] Edit procedure (read vendor-guidance preamble → fetch guide → edit body only → conditionally update preamble) is unambiguous and ordered
+- [x] Invariant preserving the mandatory 7-section persona structure byte-for-byte (content-only edits) is stated
+- [x] `.yaml` binding file is documented as off-limits unless the re-tune task explicitly calls for a model change
+- [x] Model assignment (marcus/`openai/qwen-3.7-plus` default, nolan/`glm-5.2` fallback) documented, cross-referencing Task 03 rather than restating it
+- [x] Output contract states: separate PR from mechanical, structurally excluded from Task 02's auto-merge path filter, always a draft, human approval required, never auto-merges, must pass the reused C3 fixture gate before review
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -83,5 +83,5 @@ This task directly contributes to the following acceptance criteria from `origin
 - Task 05 (Judgment Classification Rule) — this task's input is the re-tune task payload Task 05 specifies
 
 ## Definition of Done
-- [ ] Drafting agent contract section written, replacing the Task 03 placeholder in `docs/hermes-maintenance-agents.md`
-- [ ] Contract is implementable by a hermes-side skill (marcus) with no further atcr-repo changes
+- [x] Drafting agent contract section written, replacing the Task 03 placeholder in `docs/hermes-maintenance-agents.md`
+- [x] Contract is implementable by a hermes-side skill (marcus) with no further atcr-repo changes
