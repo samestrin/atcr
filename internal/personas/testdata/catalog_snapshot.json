@@ -1,0 +1,39 @@
+{
+  "_fixture_meta": {
+    "note": "Checked-in snapshot of OpenRouter /api/v1/models for zero-live-network resolver tests (Epic 19.7). Regenerate with `atcr models refresh` (Phase 8). Only the `data` array is consumed by CatalogClient.FetchModels; this key is ignored.",
+    "fetched": "2026-07-08",
+    "source": "https://openrouter.ai/api/v1/models"
+  },
+  "data": [
+    { "id": "~anthropic/claude-opus-latest", "canonical_slug": "anthropic/claude-opus-latest", "created": 1783000000, "expiration_date": null },
+    { "id": "~anthropic/claude-sonnet-latest", "canonical_slug": "anthropic/claude-sonnet-latest", "created": 1783000001, "expiration_date": null },
+    { "id": "~openai/gpt-latest", "canonical_slug": "openai/gpt-latest", "created": 1783000002, "expiration_date": null },
+    { "id": "~openai/gpt-mini-latest", "canonical_slug": "openai/gpt-mini-latest", "created": 1783000003, "expiration_date": null },
+    { "id": "~google/gemini-pro-latest", "canonical_slug": "google/gemini-pro-latest", "created": 1783000004, "expiration_date": null },
+    { "id": "~google/gemini-flash-latest", "canonical_slug": "google/gemini-flash-latest", "created": 1783000005, "expiration_date": null },
+    { "id": "~moonshotai/kimi-latest", "canonical_slug": "moonshotai/kimi-latest", "created": 1783000006, "expiration_date": null },
+
+    { "id": "anthropic/claude-opus-4.8", "canonical_slug": "anthropic/claude-opus-4.8", "created": 1776000000, "expiration_date": null },
+    { "id": "anthropic/claude-sonnet-5", "canonical_slug": "anthropic/claude-sonnet-5", "created": 1776000001, "expiration_date": null },
+    { "id": "openai/gpt-5.5", "canonical_slug": "openai/gpt-5.5", "created": 1776000002, "expiration_date": null },
+    { "id": "openai/gpt-5.4-mini", "canonical_slug": "openai/gpt-5.4-mini", "created": 1776000003, "expiration_date": null },
+    { "id": "google/gemini-2.5-pro", "canonical_slug": "google/gemini-2.5-pro", "created": 1776000004, "expiration_date": null },
+    { "id": "google/gemini-2.5-flash", "canonical_slug": "google/gemini-2.5-flash", "created": 1776000005, "expiration_date": null },
+    { "id": "moonshotai/kimi-k2.7-code", "canonical_slug": "moonshotai/kimi-k2.7-code", "created": 1776000006, "expiration_date": null },
+
+    { "id": "deepseek/deepseek-v5-pro", "canonical_slug": "deepseek/deepseek-v5-pro", "created": 1785000000, "expiration_date": "2027-06-30" },
+    { "id": "deepseek/deepseek-v4-pro", "canonical_slug": "deepseek/deepseek-v4-pro", "created": 1777000679, "expiration_date": null },
+    { "id": "deepseek/deepseek-v3.2-exp", "canonical_slug": "deepseek/deepseek-v3.2-exp", "created": 1759150481, "expiration_date": null },
+    { "id": "deepseek/deepseek-legacy", "canonical_slug": "deepseek/deepseek-legacy", "created": 0, "expiration_date": null },
+
+    { "id": "qwen/qwen4-preview", "canonical_slug": "qwen/qwen4-preview", "created": 1785500000, "expiration_date": null },
+    { "id": "qwen/qwen3.7-plus", "canonical_slug": "qwen/qwen3.7-plus", "created": 1780491783, "expiration_date": null },
+    { "id": "qwen/qwen3-coder-plus", "canonical_slug": "qwen/qwen3-coder-plus", "created": 1770000000, "expiration_date": null },
+
+    { "id": "z-ai/glm-5.2", "canonical_slug": "z-ai/glm-5.2", "created": 1781631930, "expiration_date": null },
+    { "id": "z-ai/glm-4.5", "canonical_slug": "z-ai/glm-4.5", "created": 1760000000, "expiration_date": "2026-12-31" },
+    { "id": "z-ai/glm-5v-turbo", "canonical_slug": "z-ai/glm-5v-turbo", "created": 1782000000, "expiration_date": "2098-12-31" },
+
+    { "id": "google/gemini-2.5-flash-lite-preview-09-2025", "canonical_slug": "google/gemini-2.5-flash-lite-preview-09-2025", "created": 1758000000, "expiration_date": "2026-07-09" }
+  ]
+}

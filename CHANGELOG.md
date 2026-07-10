@@ -1,3 +1,30 @@
+## [19.7.0] - 2026-07-09
+
+Layer live, auto-updating model resolution over persona `model` bindings — personas now bind to a vendor family/channel and resolve to a concrete slug recorded in a lock, so reviews stay reproducible by default and only change on an explicit `atcr personas upgrade`.
+
+### Added
+
+- `atcr personas upgrade` now resolves family/channel bindings against the live OpenRouter catalog and reports a before→after slug per persona.
+- `atcr models check [--json]` reports model drift (newer family member available), deprecation, and missing-slug conditions with machine-readable output and exit codes.
+- `atcr models refresh` regenerates the checked-in catalog snapshot from the live OpenRouter catalog (maintainer-only, never runs in CI).
+- Persona bindings support a family/channel grammar (`<family>@stable`/`@latest`, `pin:<slug>`) resolved via provider aliases, a created-timestamp vendor scan, or an explicit pin that never floats.
+- A major-version model jump now gates on the persona's fixture still passing and surfaces a "verify" flag; a minor jump auto-locks.
+
+### Changed
+
+- Online `atcr init`/`atcr quickstart` now derive the installed community persona roster from the fetched index itself, instead of a hardcoded built-in list, eliminating misleading "not found in community index" warnings.
+- `atcr personas upgrade` classifies OpenRouter fetch failures as usage errors (exit code 2), matching `atcr models`' exit-code contract.
+
+### Fixed
+
+- A single malformed community-index entry no longer aborts online `init`/`quickstart` for every user (invalid names are now skipped with a warning).
+- `appendExport` now warns when appending an API key to an existing group/other-readable shell profile.
+- `atcr models check` no longer reports a false "missing" condition for alias-bound personas.
+- Model family-prefix detection now correctly handles a non-trailing version segment (e.g. `gpt-5.4-mini`).
+- Model version extraction now handles vendor-glued version tokens (qwen/glm), preventing a bound persona's lock from silently freezing.
+- `atcr models refresh` now persists only substantive catalog entries and bounds its env-override snapshot read.
+- Persona binding configuration now rejects control characters and oversized values at load time.
+
 ## [19.6.0] - 2026-07-08
 
 Make the community persona channel canonical (fetched from `samestrin/atcr`, not compiled into the binary), add structured provider/model metadata for discover-by-model search, ship a model-indexed human-named persona library, and lead onboarding docs with the monetizing Synthetic path.

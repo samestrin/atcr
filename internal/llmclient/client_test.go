@@ -969,6 +969,34 @@ func TestWithRetry_NegativeMaxRetriesClampedToSingleAttempt(t *testing.T) {
 	assert.Equal(t, int32(1), calls.Load(), "negative maxRetries must clamp to a single attempt")
 }
 
+func TestNew_DoesNotSetHardcodedClientTimeout(t *testing.T) {
+	// A client-level Timeout competes with the per-request context.Context
+	// deadline passed to Complete. New() must not impose its own timeout so
+	// the caller's context (e.g., .atcr/config.yaml timeout_secs) is the only
+	// bound on a request.
+	c := New()
+	assert.Equal(t, time.Duration(0), c.httpClient.Timeout, "default client must not impose its own timeout")
+}
+
+func TestComplete_ContextDeadlineControlsSlowResponse(t *testing.T) {
+	// Regression guard: the per-request context deadline, not a hardcoded
+	// client timeout, must govern how long a slow-but-successful call can take.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(5 * time.Millisecond)
+		okResponse(w, "ok")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	out, err := fastRetry(srv.Client()).Complete(ctx, Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "ok", out)
+}
+
 func TestClampBackoff_BoundsGrowth(t *testing.T) {
 	assert.Equal(t, maxBackoff, clampBackoff(maxBackoff+time.Hour))
 	assert.Equal(t, 5*time.Second, clampBackoff(5*time.Second))

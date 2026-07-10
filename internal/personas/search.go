@@ -12,14 +12,20 @@ import "strings"
 // grouping are by Model. Tasks and Tags are forward-looking schema only: decoded
 // and stored additively but not yet consumed by any search filter.
 type PersonaIndexEntry struct {
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	Description string   `json:"description"`
-	Path        string   `json:"path"`
-	Provider    string   `json:"provider,omitempty"`
-	Model       string   `json:"model,omitempty"`
-	Tasks       []string `json:"tasks,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Description string `json:"description"`
+	Path        string `json:"path"`
+	Provider    string `json:"provider,omitempty"`
+	Model       string `json:"model,omitempty"`
+	// Binding is the logical family/channel target (e.g. "anthropic/claude-opus@stable")
+	// a future resolver (Epic 19.7 Theme 3) reads at `atcr personas upgrade` time to
+	// recompute Model (the resolved lock). Additive and inert in Phase 2: decoded
+	// permissively like Provider/Model, never read on any path, so an absent key
+	// decodes as "" with no error and existing indexes stay backward-compatible.
+	Binding string   `json:"binding,omitempty"`
+	Tasks   []string `json:"tasks,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
 }
 
 // SearchOptions carries the filters for a community-index search. Every supplied

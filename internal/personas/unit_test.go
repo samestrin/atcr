@@ -179,7 +179,7 @@ func TestInstallUnit_RefusesSymlinkedIntermediateDir(t *testing.T) {
 // length cap is rejected at install with a descriptive error — never truncated,
 // never written.
 func TestInstallUnit_RejectsOversizedPrompt(t *testing.T) {
-	oversized := strings.Repeat("a", registry.MaxExecutorSystemPromptLen+1)
+	oversized := strings.Repeat("a", registry.MaxPersonaPromptLen+1)
 	srv := testServer(t, map[string]string{
 		"/security/owasp.yaml": validPersonaYAML,
 		"/security/owasp.md":   oversized,

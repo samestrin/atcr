@@ -365,19 +365,48 @@ func newPersonasUpgradeCmd() *cobra.Command {
 	return cmd
 }
 
+// isUpgradeInfraError reports whether err is a fetch or environment failure
+// bubbled from the personas package, as opposed to a substantive per-persona
+// failure (validation, not found, etc.). The error chain is inspected by
+// message because the internal package does not export typed fetch errors.
+func isUpgradeInfraError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "failed to fetch")
+}
+
 // runPersonaUpgrades upgrades each named persona sequentially, reporting per
 // persona. A fetch/validation failure for one persona is reported and skipped;
-// the command exits non-zero if any persona failed.
+// the command exits non-zero if any persona failed. Pure fetch/environment
+// failures exit 2 (usage/command failure) so they are not mistaken for
+// substantive upgrade results.
 func runPersonaUpgrades(cmd *cobra.Command, dir string, names []string, dryRun bool) error {
-	var failed bool
+	var failed, infra bool
 	for _, name := range names {
 		res, err := commpersonas.Upgrade(personasClient, commpersonas.BaseURL(), dir, name, dryRun)
 		if err != nil {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "failed to upgrade %s: %v (skipping)\n", name, err)
 			failed = true
+			if isUpgradeInfraError(err) {
+				infra = true
+			}
 			continue
 		}
 		switch {
+		case res.Resolved && res.FixtureBlocked:
+			// 19.7 major-bump gate: the fixture re-check did not pass, so the lock
+			// is withheld. Report the would-be slug and the reason; the lock stays.
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Blocked %s: %s → %s not applied — major version jump; %s (lock unchanged)\n", name, res.FromSlug, res.ToSlug, res.FixtureReason)
+		case res.Resolved && res.SlugChanged && dryRun:
+			// 19.7 resolved-lock path (dry run): report the before→after slug.
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would upgrade %s: %s → %s\n", name, res.FromSlug, res.ToSlug)
+		case res.Resolved && res.SlugChanged:
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Upgraded %s: %s → %s\n", name, res.FromSlug, res.ToSlug)
+		case res.Resolved:
+			// Resolution ran but the lock did not advance — report explicitly, never omit.
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s (unchanged)\n", name, res.ToSlug)
 		case res.UpToDate:
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already up to date (%s)\n", name, res.ToVersion)
 		case dryRun:
@@ -385,6 +414,15 @@ func runPersonaUpgrades(cmd *cobra.Command, dir string, names []string, dryRun b
 		default:
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Upgraded %s: %s → %s\n", name, res.FromVersion, res.ToVersion)
 		}
+		// A major-version jump always surfaces the verify flag, independent of the
+		// fixture outcome: a passing fixture proves the template renders, never that
+		// the prompt is still well-tuned for the new major (AC 06-01 Edge Case 1).
+		if res.MajorJump {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  ⚠ prompt tuned for the prior major — verify\n")
+		}
+	}
+	if infra {
+		return usageError(fmt.Errorf("one or more persona upgrades failed due to a fetch or environment error"))
 	}
 	if failed {
 		return fmt.Errorf("one or more personas failed to upgrade")

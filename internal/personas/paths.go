@@ -57,6 +57,15 @@ func validatePersonaName(name string) error {
 	return nil
 }
 
+// ValidName reports whether name passes the community persona-name guard
+// (validatePersonaName). It is the exported wrapper cmd/atcr uses to pre-filter
+// fetched community-index entries, so one malformed/empty index name is skipped with
+// a warning rather than reaching InstallUnit->validatePersonaName and tripping the
+// all-or-nothing rollback that would abort init/quickstart for every user.
+func ValidName(name string) bool {
+	return validatePersonaName(name) == nil
+}
+
 // personaPath validates name and maps it to its destination file under dir,
 // confirming the cleaned result stays within dir (defense in depth beyond the
 // name guard).

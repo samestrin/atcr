@@ -282,3 +282,46 @@ agents:
 	assert.Contains(t, err.Error(), "bruce")
 	assert.Contains(t, err.Error(), "persona")
 }
+
+// AgentConfig.Binding is the logical family/channel/pin the resolver later parses
+// (the pin path flows through validateResolvedSlug into a lock and an outbound
+// request). It is the one new free-text agent string with no load-time guard,
+// unlike the sibling Persona/Scope/Language fields. A control character in it must
+// be rejected at load, mirroring the persona guard, so a malformed binding fails
+// fast in the config-error context the user is editing rather than far downstream
+// at resolve time.
+func TestRegistryLoad_AgentBindingWithNewline(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    binding: "anthropic/claude-opus@stable\nmalicious"
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bruce")
+	assert.Contains(t, err.Error(), "binding")
+}
+
+// An over-long binding is rejected at load, mirroring the persona length cap, so an
+// unbounded free-text binding cannot slip through config validation and reach the
+// resolver.
+func TestRegistryLoad_AgentBindingTooLong(t *testing.T) {
+	long := strings.Repeat("a", MaxBindingLen+1)
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    binding: "`+long+`"
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bruce")
+	assert.Contains(t, err.Error(), "binding")
+}
