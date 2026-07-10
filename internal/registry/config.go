@@ -91,6 +91,13 @@ const (
 	// 4096 alias rejected outright) while still bounding prompt-stuffing by untrusted
 	// free text.
 	MaxPersonaPromptLen = 8192
+	// MaxBindingLen caps AgentConfig.Binding — the logical family/channel/pin string
+	// the Epic 19.7 resolver parses (parseBinding) into a family+channel, an explicit
+	// pin, or an alias. A binding is a short token ("anthropic/claude-opus@stable",
+	// "pin:vendor/model-name:variant"), so 256 is generous headroom while still
+	// bounding an unbounded/abusive value that would otherwise be accepted silently at
+	// load and only surface far downstream at resolve time.
+	MaxBindingLen = 256
 	// MaxExecutorRuleLen caps each executor coding rule (Epic 7.0.1). Each rule is
 	// interpolated verbatim into the fix prompt as a constraint line, so it is
 	// bounded like the persona to limit prompt-stuffing by untrusted free text.
