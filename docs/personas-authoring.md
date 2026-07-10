@@ -257,7 +257,7 @@ The two terms are not interchangeable: "community-contributed" describes *proven
 
 ## 8. Graduating a submitted persona
 
-Graduation is performed **by a maintainer**, entirely through the existing GitHub pull-request review-and-merge workflow that Epic 19.6 established — the same human-review gate every community persona already passes. It introduces **no new tooling**: there is **no** `atcr personas graduate` command, no automated promotion script, no ranking or approval UI, and no hosted registry or approval surface of any kind. A maintainer makes the edits below either by requesting changes on the `submitted` PR or by checking the branch out (`gh pr checkout <n>`) and committing them directly before merge — both are ordinary git operations a maintainer already performs, and neither implies distinct tooling.
+Graduation is performed **by a maintainer**, entirely through the existing GitHub pull-request review-and-merge workflow that Epic 19.6 established — the same human-review gate every community persona already passes. It introduces **no new tooling**: no new CLI subcommand is added for graduation (there is no `graduate` verb alongside `submit`), no automated promotion script, no ranking or approval UI, and no hosted registry or approval surface of any kind. A maintainer makes the edits below either by requesting changes on the `submitted` PR or by checking the branch out (`gh pr checkout <n>`) and committing them directly before merge — both are ordinary git operations a maintainer already performs, and neither implies distinct tooling.
 
 To graduate a fixture-passing `submitted` PR:
 
