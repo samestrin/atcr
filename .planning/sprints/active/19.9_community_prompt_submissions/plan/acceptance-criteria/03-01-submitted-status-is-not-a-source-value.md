@@ -58,15 +58,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A new type distinct from `PersonaMeta` exists to carry `submitted` status/metadata
-- [ ] `PersonaMeta.Source`'s field comment, type, and value set (`"built-in"|"community"|"project"`) are unchanged
-- [ ] Signatures of `List`, `ListTiers`, `listCommunity`, `listProject` are unchanged
-- [ ] A regression test asserts no `Source` value outside the three existing strings is ever observed, including when a `submitted` marker exists
+- [x] A new type distinct from `PersonaMeta` exists to carry `submitted` status/metadata (`SubmissionStatus` in `internal/personas/submissions.go`)
+- [x] `PersonaMeta.Source`'s field comment, type, and value set (`"built-in"|"community"|"project"`) are unchanged
+- [x] Signatures of `List`, `ListTiers`, `listCommunity`, `listProject` are unchanged
+- [x] A regression test asserts no `Source` value outside the three existing strings is ever observed, including when a `submitted` marker exists (`TestSubmissionStatus_NotASourceValue`, `TestList_IdenticalWithAndWithoutMarkers`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

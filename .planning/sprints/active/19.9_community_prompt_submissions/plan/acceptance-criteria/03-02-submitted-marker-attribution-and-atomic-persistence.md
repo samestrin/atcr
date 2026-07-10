@@ -6,13 +6,13 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Component Type | Go struct + atomic file writer | Marker struct (submitter identity, source persona name/version, timestamp, fixture-pass flag) serialized to a sidecar file |
-| Serialization | YAML or JSON (match existing repo convention — `list.go` already uses `gopkg.in/yaml.v3` for persona metadata) | Pick one and keep it consistent with sibling marker/status files if any exist |
+| Serialization | YAML via `gopkg.in/yaml.v3` (matches `list.go`'s existing persona-metadata serialization) | Kept consistent with sibling marker/status files if any exist |
 | Test Framework | Go `testing` package, `os`/`path/filepath` for symlink and tmpdir fixtures | Mirrors existing `writeFileAtomic` test patterns in `internal/personas`; testify is not used in this codebase |
-| Key Dependencies | `internal/personas/unit.go:writeFileAtomic` (line 180) or `internal/atomicfs.WriteFileAtomic` (line 24) | No bare `os.WriteFile` anywhere in the new code path |
+| Key Dependencies | `internal/personas/unit.go:writeFileAtomic` (line 180) exclusively — 0600 perms plus its existing `Lstat`-based symlink refusal (unit.go:181) | No bare `os.WriteFile` and no `atomicfs.WriteFileAtomic` fallback in the new code path |
 
 ### Related Files (from codebase-discovery.json)
 - `internal/personas/unit.go` (modify, or a new sibling file in the same package) — add the marker-writing function that calls `writeFileAtomic` (line 180) exclusively for persisting the `submitted` marker
-- `internal/atomicfs/atomic.go` (reference only, no modification expected) — `WriteFileAtomic` (line 24) is an acceptable alternative persistence primitive if the marker lives outside the `personas` package's existing symlink-refusing writer
+- (Persistence uses `internal/personas/unit.go:writeFileAtomic` exclusively; `internal/atomicfs.WriteFileAtomic` is intentionally NOT used here so the marker's symlink-refusal guarantee is unconditional rather than dependent on an added pre-check)
 - `internal/personas/<new_file>_test.go` (create) — tests for marker content, atomic-write usage, and symlink refusal
 
 ## Design References
@@ -27,7 +27,12 @@
 **Scenario 2: The marker is written through the existing atomic-write helper**
 - **Given** a marker is about to be persisted for a fresh submission
 - **When** the write occurs
-- **Then** it goes through `writeFileAtomic` (sibling-temp-file-then-rename, 0600 perms) or `atomicfs.WriteFileAtomic` (0644) — never a direct `os.WriteFile` or `os.Create` call — verifiable by the write leaving no partially-written file visible to a concurrent reader mid-write
+- **Then** it goes through `writeFileAtomic` (sibling-temp-file-then-rename, 0600 perms) — never `atomicfs.WriteFileAtomic`, a direct `os.WriteFile`, or `os.Create` call — verifiable by the write leaving no partially-written file visible to a concurrent reader mid-write
+
+**Scenario 3: First-ever submission creates the marker storage directory**
+- **Given** a clean machine where the marker storage directory does not yet exist
+- **When** the first `submitted` marker is written
+- **Then** the marker writer creates the storage directory via `os.MkdirAll(dir, 0700)` before the atomic write, so the first submission succeeds rather than failing on a missing parent directory
 
 ## Edge Cases
 **Edge Case 1: Marker destination pre-exists as a symlink**
@@ -38,15 +43,16 @@
 **Edge Case 2: Re-submission of the same persona overwrites the marker cleanly**
 - **Given** a persona already has a `submitted` marker from a prior submission attempt
 - **When** it is submitted again (e.g., after local edits)
-- **Then** the marker is atomically replaced (sibling-temp-then-rename) with the new attribution metadata — no partial/mixed old-and-new content is ever readable
+- **Then** the marker is atomically replaced (sibling-temp-then-rename) with the new attribution metadata and a refreshed submission timestamp — no partial/mixed old-and-new content is ever readable
 
 ## Error Conditions
-**Error Scenario 1: Marker write fails because the parent directory does not exist**
+**Error Scenario 1: Marker write fails because the storage directory is unwritable**
+- **Given** the storage directory exists (or was created per Happy Path Scenario 3) but is not writable — e.g. permission denied or a read-only filesystem — so the atomic write cannot complete (distinct from a missing-on-first-run directory, which Scenario 3 handles)
 - Error message: `"failed to write persona temp file: <underlying os error>"` (or equivalent wording consistent with `writeFileAtomic`'s existing error wrapping at `internal/personas/unit.go:186`)
 - HTTP status / error code: N/A (CLI process exits non-zero; no HTTP boundary)
 
 **Error Scenario 2: Marker write attempted through a symlinked destination**
-- Error message: `"refusing to write persona to symlink at <path>"`-style message (matching `writeFileAtomic`'s existing phrasing at `internal/personas/unit.go:182`) or an equivalent explicit refusal if using `atomicfs.WriteFileAtomic` plus a pre-check
+- Error message: `"refusing to write persona to symlink at <path>"`-style message (matching `writeFileAtomic`'s existing phrasing at `internal/personas/unit.go:182`)
 - HTTP status / error code: N/A
 
 ## Performance Requirements
@@ -55,7 +61,7 @@
 
 ## Security Considerations
 - **Authentication/Authorization:** Submitter identity in the marker is self-reported metadata (e.g., from `gh` CLI auth context or git config), not an authorization credential — must not be treated as a trust boundary by any downstream graduation logic
-- **Input Validation:** Marker file permissions must match the writer used (0600 via `writeFileAtomic` or 0644 via `atomicfs.WriteFileAtomic`); symlink destinations must be refused per Edge Case 1; attribution string fields (submitter handle, persona name) must not be interpreted as paths without sanitization if used to construct the marker's own file path
+- **Input Validation:** Marker file permissions are 0600 (via `writeFileAtomic`); symlink destinations must be refused per Edge Case 1; attribution string fields (submitter handle, persona name) must not be interpreted as paths without sanitization if used to construct the marker's own file path
 
 ## Test Implementation Guidance
 **Test Type:** UNIT
@@ -64,15 +70,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Marker struct/schema includes submitter identity, persona name/version, timestamp, and fixture-pass flag
-- [ ] Marker persistence calls only `writeFileAtomic` or `atomicfs.WriteFileAtomic` — grep confirms no bare `os.WriteFile`/`os.Create` in the new code path
-- [ ] A test confirms the marker write refuses a pre-existing symlink at the destination
-- [ ] A test confirms re-submission atomically replaces a prior marker without partial-write exposure
+- [x] Marker struct/schema includes submitter identity, persona name/version, timestamp, and fixture-pass flag (`SubmissionStatus`; `TestWriteSubmissionMarker_Attribution`)
+- [x] Marker persistence calls only `writeFileAtomic` (not `atomicfs.WriteFileAtomic`) — grep confirms no bare `os.WriteFile`/`os.Create` in the new code path
+- [x] The marker writer creates the storage directory (`os.MkdirAll`, 0700) if absent, verified by a first-run test on an empty temp dir (`TestWriteSubmissionMarker_CreatesDirOnFirstRun`, `TestWriteSubmissionMarker_Perms0700Dir`)
+- [x] A test confirms the marker write refuses a pre-existing symlink at the destination (`TestWriteSubmissionMarker_RefusesSymlink`; intermediate-component guard: `TestWriteSubmissionMarker_RefusesSymlinkedIntermediate`)
+- [x] A test confirms re-submission atomically replaces a prior marker (with a refreshed timestamp) without partial-write exposure (`TestWriteSubmissionMarker_ResubmitOverwrites`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

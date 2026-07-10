@@ -422,18 +422,18 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
    **Action Required:** No CRITICAL/HIGH — proceed. The single LOW (symlinked-intermediate gap) is a cheap, AC-03-03-reinforcing security-consistency fix reusing an existing helper, so it is fixed inline in 3.3 rather than deferred. Adversarial review passed.
 
-### 3.3 [ ] **[`submitted` marker — REFACTOR](plan/user-stories/03-submitted-status-distinct-from-source.md)**
+### 3.3 [x] **[`submitted` marker — REFACTOR](plan/user-stories/03-submitted-status-distinct-from-source.md)**
    1. Fix CRITICAL/HIGH issues from 3.2.A (if any).
    2. Improve code and tests (T1), validate (T3).
    3. COMMIT: `git commit -m "refactor(personas): address review + clean up submitted marker"`
    **Duration:** 0.5d
 
-### 3.4 [ ] **Phase 3 — Definition of Done**
-   - [ ] Tests (T3): `go test ./...` passing
-   - [ ] Coverage ≥80% on changed files
-   - [ ] `go vet ./...` + `golangci-lint run` clean; `go fmt ./...` clean
-   - [ ] ACs 03-01, 03-02, 03-03 satisfied; checkboxes marked
-   - [ ] `PersonaMeta.Source` and existing `List*` signatures unchanged (explicit test asserts `Source` ∈ {built-in, community, project})
+### 3.4 [x] **Phase 3 — Definition of Done**
+   - [x] Tests (T3): `go test ./...` passing
+   - [x] Coverage ≥80% on changed files (Submit 95.8%; submissions.go per-func ≥80% except `SubmissionsDir` 75% — its sole uncovered branch is the `DefaultRegistryPath` OS-error path, identical to the pre-existing untested branch in its sibling `PersonasDir`; changed-files aggregate 83.5%)
+   - [x] `go vet ./...` + `golangci-lint run` clean (0 issues); `go fmt ./...` clean
+   - [x] ACs 03-01, 03-02, 03-03 satisfied; checkboxes marked in AC files
+   - [x] `PersonaMeta.Source` and existing `List*` signatures unchanged (explicit test `TestSubmissionStatus_NotASourceValue` asserts `Source` ∈ {built-in, community, project})
 
 ### 3.5 [ ] **Phase 3 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3

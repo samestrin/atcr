@@ -12,7 +12,7 @@
 ### Related Files (from codebase-discovery.json)
 - `internal/personas/list.go` (modify) — add an additive, separately-named extension point (e.g., a new exported function such as `ListSubmissions` or a method on the new marker type) that can surface `submitted` status without changing `List`/`ListTiers`'s existing return type or values
 - `internal/personas/list_test.go` (modify) — add a test asserting `personas list` (i.e., `List`/`ListTiers`) output and row count/order are identical whether or not `submitted` markers exist on disk
-- `<marker storage path, e.g. internal/personas/submissions/ or .atcr/submissions/>` (create) — path constant/location definition, distinct from and outside `personas/community/`
+- `internal/personas/submissions.go` (create) — defines the marker storage path as a **per-user runtime location** under atcr's config/state dir (a `submissions/` sibling of `commpersonas.PersonasDir()`, i.e. `~/.config/atcr/submissions/`), **not** an in-repo path (which would commit user runtime state into source); distinct from and outside `personas/community/`
 
 ## Design References
 - [Status/Provenance Separation and Atomic Persistence](../documentation/status-provenance-and-atomic-writes.md) — why the marker must live outside `personas/community/` and why `List`/`ListTiers` output must remain unchanged
@@ -63,15 +63,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Marker storage path constant is defined outside `personas/community/` and covered by a path-prefix test
-- [ ] `List`/`ListTiers` output is identical (values, order, count) with and without `submitted` markers present, verified by test
-- [ ] A new, separately named extension point exists to surface `submitted` status without altering `List`/`ListTiers` signatures or behavior
-- [ ] Existing `personas list` command tests pass unmodified
+- [x] Marker storage path constant is defined outside `personas/community/` and covered by a path-prefix test (`SubmissionsDir`; `TestSubmissionsDir_OutsideCommunityTree`, `TestMarkerPathNeverUnderCommunity`)
+- [x] `List`/`ListTiers` output is identical (values, order, count) with and without `submitted` markers present, verified by test (`TestList_IdenticalWithAndWithoutMarkers`)
+- [x] A new, separately named extension point exists to surface `submitted` status without altering `List`/`ListTiers` signatures or behavior (`ListSubmissions`/`ReadSubmission`; `TestListSubmissions_ExtensionPoint`)
+- [x] Existing `personas list` command tests pass unmodified
 
 **Manual Review:**
 - [ ] Code reviewed and approved
