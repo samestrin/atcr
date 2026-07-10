@@ -104,6 +104,20 @@ This is the intake half of the living-library flywheel: it turns "I improved my 
 **Technical Approach:**
 - New file `internal/personas/submissions.go`: `SubmissionsDir()` (derived from `DefaultRegistryPath`, mirroring `PersonasDir`), `SubmissionStatus` (submitter handle, persona name, version, timestamp, fixture-pass flag), `WriteSubmissionMarker`, and `ReadSubmission`/`ListSubmissions`. Persistence via `writeFileAtomic` only (0600, symlink-refusing), NOT `atomicfs.WriteFileAtomic`. `os.MkdirAll(dir, 0700)` before write. YAML serialization. Marker path guarded (`validatePersonaName` + `filepath.Rel` containment) so `..`/absolute names cannot escape the submissions dir.
 
+### Phase 4 Clarifications (recorded 2026-07-10)
+
+**Key Decisions:**
+- **Documented output/errors match SHIPPED code, not the design-doc draft.** `atcr personas submit` prints ONLY the bare PR URL to stdout (`cmd/atcr/personas.go:158`) — the draft's `# PASS: penny (1/1 cases)` / `# Opened pull request …` lines are NOT emitted, so docs must not show them. Error strings are documented verbatim from `internal/personas/submit.go`: `cannot submit "<name>": no fixture defined — add a fixture before submitting`; `cannot submit "<name>": fixture failed (P/T cases passed)`; `gh CLI not found on PATH; install it from https://cli.github.com`; `gh auth check failed: …`; invalid name `only letters, digits, '_', '-', and '/' are allowed`.
+- **Section placement APPENDS after `## 6.` to preserve existing anchors** (design-doc grants "either ordering acceptable as long as anchors remain consistent"). New `## 7. From submitted to graduated` (conceptual two-tier model, AC 05-03) then `## 8. Graduating a submitted persona` (maintainer procedure, AC 04-01/02/03); §7 links forward to §8. Renumbering §5/§6 is rejected — it would break `personas-install.md:156 → #6-model-familychannel-…` and `personas-authoring.md:61 → #5-the-community-index-entry`.
+- **Marker path documented as `~/.config/atcr/submissions/<name>.yaml`** (a `submissions/` sibling of `PersonasDir()`, both platforms). The marker is **submitter-local**; graduation clears it by removing that sidecar on the machine that ran `submit` — nothing upstream to clear (per Phase 3 gate directive).
+
+**Scope Boundaries:**
+- IN: `docs/personas-install.md` heading 6→7 + new `submit` subsection between `test` and `upgrade`; `docs/personas-authoring.md` contribution-checklist cross-ref (§4), two-tier-model section (§7), graduation procedure (§8).
+- OUT (user-confirmed, Option B): the pre-existing macOS-path inaccuracy at `docs/personas-install.md:15` (`os.UserConfigDir()` → `~/Library/Application Support/…`, real path is `~/.config/atcr/…` on both platforms). It is tracked TD-001 (`paths.go:18-37`) with its own remediation path; AC 05-01 DoD forbids changing other section content, so it does not ride this AC.
+
+**Technical Approach:**
+- Docs-only phase: no RED/GREEN. Every documented command flag, output line, and error string is cross-checked against the shipped `cmd/atcr/personas.go` + `internal/personas/submit.go`/`submissions.go`. `PersonaIndexEntry` fields cited from `internal/personas/search.go`; `PersonaMeta.Source` invariant (built-in|community|project, never `submitted`) from `internal/personas/list.go`.
+
 ---
 
 ## Sprint Conventions
@@ -473,7 +487,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 **ACs:** [04-01](plan/acceptance-criteria/04-01-documented-persona-placement-and-index-entry.md), [04-02](plan/acceptance-criteria/04-02-submitted-marker-clearing-without-touching-source.md), [04-03](plan/acceptance-criteria/04-03-manual-pr-native-process-with-checklist-cross-reference.md), [05-01](plan/acceptance-criteria/05-01-submit-subcommand-documented-in-install-guide.md), [05-02](plan/acceptance-criteria/05-02-contribution-checklist-cross-references-submit.md), [05-03](plan/acceptance-criteria/05-03-submitted-to-graduated-two-tier-model-section.md)
 **Focus:** Docs-only, landing together once Phases 1–3 have shipped real behavior to document accurately. **No RED/GREEN** — verified by doc-accuracy review against the actual shipped command output/error text.
 
-### 4.1 [ ] **[Maintainer graduation checklist — DOCS (Story 4)](plan/user-stories/04-maintainer-graduation-into-vetted-library.md)**
+### 4.1 [x] **[Maintainer graduation checklist — DOCS (Story 4)](plan/user-stories/04-maintainer-graduation-into-vetted-library.md)**
    Add the maintainer graduation checklist to `docs/personas-authoring.md`:
    - Persona placement — moving the unit into `personas/community/` and adding a matching `PersonaIndexEntry` in `index.json` (04-01)
    - Marker clearing during graduation — procedure explicitly states `Source` never changes (04-02)
@@ -482,7 +496,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    COMMIT: `git commit -m "docs(personas): add maintainer graduation checklist"`
    **Files:** `docs/personas-authoring.md` | **Duration:** 0.5d
 
-### 4.2 [ ] **[Submit flow + two-tier model — DOCS (Story 5)](plan/user-stories/05-documentation-of-submit-flow-and-two-tier-model.md)**
+### 4.2 [x] **[Submit flow + two-tier model — DOCS (Story 5)](plan/user-stories/05-documentation-of-submit-flow-and-two-tier-model.md)**
    - `docs/personas-install.md`: change the heading from "six" to "seven subcommands"; add an `### atcr personas submit <name>` section matching the existing per-command format, positioned between `test` and `upgrade` (05-01)
    - Cross-reference the contribution checklist to the automated `submit` equivalent (05-02)
    - Add a new section explaining the `submitted` → graduated two-tier model in plain language, with no terminology collision against the existing "community-contributed" provenance meaning (05-03)
@@ -490,7 +504,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    COMMIT: `git commit -m "docs(personas): document submit subcommand and two-tier model"`
    **Files:** `docs/personas-install.md`, `docs/personas-authoring.md` | **Duration:** 0.5d
 
-### 4.3 [ ] **[Documentation — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-documentation-of-submit-flow-and-two-tier-model.md)**
+### 4.3 [x] **[Documentation — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-documentation-of-submit-flow-and-two-tier-model.md)**
    **Changed Files:** [`docs/personas-install.md`, `docs/personas-authoring.md`]
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the docs authoring. Do NOT review inline.
@@ -508,23 +522,21 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings + dispositions:**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | docs/personas-install.md:15 | Parenthetical attributes the personas dir to `os.UserConfigDir()` and gives the macOS path as `~/Library/Application Support/atcr/personas/`; shipped `PersonasDir()` (paths.go:31-37) derives from `DefaultRegistryPath()` = `~/.config/atcr/...` on BOTH platforms (paths.go:22-30 documents this as deliberate, TD-001). | **Not fixed — reclassified out-of-scope.** This is the exact pre-existing inaccuracy the user explicitly ruled OUT of scope (Option B) during the Phase 4 safety check (see Phase 4 Clarifications). It is pre-existing tracked debt (TD-001, `paths.go:18-37`), NOT introduced by Phase 4, and AC 05-01 DoD forbids changing other section content. The context-free reviewer lacked the user's decision + TD-001 context. All NEW Phase-4 content correctly uses `~/.config/atcr/...`. Honoring the explicit user instruction overrides the template's "fix HIGH inline" for a pre-existing, deliberately-deferred item. |
+   | LOW | docs/personas-authoring.md:184 | §5's "maps 1:1 to `PersonaIndexEntry`" omits the `binding` field (`search.go:26`) from its shown shape/table. | Pre-existing §5 content (NOT modified by Phase 4; the new §8 correctly lists `binding`). Captured → **TD-007**. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix docs inline before proceeding
-   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action Required:** The single HIGH is a pre-existing, user-deferred (Option B) out-of-scope item (TD-001) — not a Phase-4-introduced defect, so it is documented and NOT fixed inline, per the explicit user decision recorded in Phase 4 Clarifications. Re-running the same context-free reviewer would only reproduce the out-of-context finding. The LOW (pre-existing §5 nit) captured to `tech-debt-captured.md` (TD-007). Every NEW Phase-4 accuracy check passed: bare-PR-URL success output, all four error strings verbatim, marker path, PersonaIndexEntry field list + line-14 citation, seven-subcommands heading, `submit` positioned between `test`/`upgrade`, `submitted`/`community` terminology kept distinct, no marketplace surface, all anchor links resolve. Adversarial review passed; proceed.
 
-### 4.4 [ ] **Phase 4 — Definition of Done**
-   - [ ] `docs/personas-install.md` heading = "seven subcommands"; `submit` section present between `test` and `upgrade`
-   - [ ] `docs/personas-authoring.md` graduation checklist + contribution-checklist cross-reference present
-   - [ ] `submitted` → graduated two-tier-model section added; no terminology collision
-   - [ ] All documented output/error text verified against shipped behavior
-   - [ ] ACs 04-01, 04-02, 04-03, 05-01, 05-02, 05-03 satisfied; checkboxes marked
+### 4.4 [x] **Phase 4 — Definition of Done**
+   - [x] `docs/personas-install.md` heading = "seven subcommands"; `submit` section present between `test` and `upgrade`
+   - [x] `docs/personas-authoring.md` graduation checklist + contribution-checklist cross-reference present
+   - [x] `submitted` → graduated two-tier-model section added; no terminology collision
+   - [x] All documented output/error text verified against shipped behavior (4.3 review: bare-PR-URL output, all four error strings, marker path, PersonaIndexEntry fields all confirmed vs shipped code)
+   - [x] ACs 04-01, 04-02, 04-03, 05-01, 05-02, 05-03 satisfied; checkboxes marked
+   - [x] Quality gates: `go build ./...`, `go vet ./...`, `gofmt -l` clean; `go test ./...` green (fixed self-introduced `atcr personas graduate` docs-audit trip → reworded to no fake invocation); `golangci-lint run` on touched packages = 0 issues
 
 ### 4.5 [ ] **Phase 4 — GATE: Integration & Exit Review (subagent)**
    **Scope:** Both docs files + cross-references

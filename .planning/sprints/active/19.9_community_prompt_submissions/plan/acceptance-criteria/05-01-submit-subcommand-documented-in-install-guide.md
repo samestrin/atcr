@@ -69,15 +69,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (no test suite changes; pre-existing suite remains green)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (no test suite changes; pre-existing suite remains green)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Heading at `docs/personas-install.md:40` reads "## The seven subcommands"
-- [ ] New `### atcr personas submit <name>` subsection is inserted between `test` and `upgrade`, matching the description → example → error-cases format of the surrounding subcommand sections
-- [ ] Subsection documents the `gh` precondition, the fixture-gate blocking cases (no fixture / partial fail / complete fail) with wording matching Theme 1's acceptance criteria, and the success case's PR-URL output format
-- [ ] No other subcommand section's content changed beyond the heading text and the insertion point
+- [x] Heading at `docs/personas-install.md:40` reads "## The seven subcommands"
+- [x] New `### atcr personas submit <name>` subsection is inserted between `test` and `upgrade`, matching the description → example → error-cases format of the surrounding subcommand sections
+- [x] Subsection documents the `gh` precondition, the fixture-gate blocking cases (no fixture / partial fail / complete fail) with wording matching Theme 1's acceptance criteria, and the success case's PR-URL output format
+- [x] No other subcommand section's content changed beyond the heading text and the insertion point
+- [x] The new `### atcr personas submit <name>` heading produces a stable slug anchor (`#atcr-personas-submit-name`) so the cross-reference AC 05-02 adds resolves deterministically
 
 **Manual Review:**
 - [ ] Code reviewed and approved

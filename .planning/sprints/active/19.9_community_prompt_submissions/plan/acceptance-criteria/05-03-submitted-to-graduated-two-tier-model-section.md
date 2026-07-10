@@ -70,15 +70,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (no test suite changes; pre-existing suite remains green)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (no test suite changes; pre-existing suite remains green)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] New section states `Source` stays `community` (or `project`/`built-in` as applicable) for every submission and is never set to `submitted`
-- [ ] New section states `submitted` is an orthogonal status assigned on successful `atcr personas submit`
-- [ ] New section states graduation is a maintainer PR-merge action promoting the persona into `personas/community/`, links to Theme 4's procedural section for the exact steps, and does not duplicate that section's step-by-step content
-- [ ] New section uses "community-contributed" only for provenance and "submitted" only for status, with no interchangeable use or invented synonym, and explicitly denies any marketplace/website/hosted-registry surface
+- [x] New section states `Source` stays `community` (or `project`/`built-in` as applicable) for every submission and is never set to `submitted`
+- [x] New section states `submitted` is an orthogonal status assigned on successful `atcr personas submit`
+- [x] New section states graduation is a maintainer PR-merge action promoting the persona into `personas/community/`, links to Theme 4's procedural section for the exact steps, and does not duplicate that section's step-by-step content
+- [x] New section uses "community-contributed" only for provenance and "submitted" only for status, with no interchangeable use or invented synonym, and explicitly denies any marketplace/website/hosted-registry surface
 
 **Manual Review:**
 - [ ] Code reviewed and approved

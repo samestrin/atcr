@@ -60,14 +60,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (Story 3's pre-existing `Source`-invariant test remains green; no new test added by this AC)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (Story 3's pre-existing `Source`-invariant test remains green; no new test added by this AC)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Graduation section includes an explicit "clear the `submitted` marker" step that names Story 3's actual marker storage mechanism
-- [ ] The same section states, in immediate proximity to the marker-clearing step, that `Source` is never touched and remains `community` before and after graduation
-- [ ] The documentation is updated (if needed) once Story 3 lands, so the marker-clearing step matches Story 3's actual implementation shape rather than a placeholder assumption
+- [x] Graduation section includes an explicit "clear the `submitted` marker" step that names Story 3's actual marker storage mechanism
+- [x] The same section states, in immediate proximity to the marker-clearing step, that `Source` is never touched and remains `community` before and after graduation
+- [x] The documentation is updated (if needed) once Story 3 lands, so the marker-clearing step matches Story 3's actual implementation shape rather than a placeholder assumption
 
 **Manual Review:**
 - [ ] Code reviewed and approved

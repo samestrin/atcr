@@ -59,14 +59,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (pre-existing `go test` suite, including the index-consistency gate, remains green — no test is added or modified by this AC)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (pre-existing `go test` suite, including the index-consistency gate, remains green — no test is added or modified by this AC)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `docs/personas-authoring.md` contains a "Graduating a submitted persona" section listing persona-file placement and `index.json` entry creation as explicit numbered steps
-- [ ] The section cites `internal/personas/search.go:14` and lists all `PersonaIndexEntry` fields (`name`, `version`, `description`, `path`, `provider`, `model`, plus optional `tasks`/`tags`/`binding`)
-- [ ] The section states `provider`/`model` must exactly match the persona's own YAML frontmatter, consistent with the existing enforcement gate described in `## 5. The community index entry`
+- [x] `docs/personas-authoring.md` contains a "Graduating a submitted persona" section listing persona-file placement and `index.json` entry creation as explicit numbered steps
+- [x] The section cites `internal/personas/search.go:14` and lists all `PersonaIndexEntry` fields (`name`, `version`, `description`, `path`, `provider`, `model`, plus optional `tasks`/`tags`/`binding`)
+- [x] The section states `provider`/`model` must exactly match the persona's own YAML frontmatter, consistent with the existing enforcement gate described in `## 5. The community index entry`
 
 **Manual Review:**
 - [ ] Code reviewed and approved

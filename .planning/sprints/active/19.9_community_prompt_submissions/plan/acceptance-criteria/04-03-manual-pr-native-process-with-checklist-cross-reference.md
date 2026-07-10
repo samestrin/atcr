@@ -59,14 +59,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (no test suite changes introduced by this AC; pre-existing suite remains green)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (no test suite changes introduced by this AC; pre-existing suite remains green)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Graduation section explicitly states the procedure is performed entirely through the existing GitHub PR-review-and-merge workflow, reusing Epic 19.6's human-review gate
-- [ ] Graduation section explicitly lists what is not introduced: no new CLI command, no automated promotion script, no ranking/approval UI, no hosted registry surface
-- [ ] `## 4. Contribution checklist` contains a working cross-reference (link or explicit pointer) to the new graduation section
+- [x] Graduation section explicitly states the procedure is performed entirely through the existing GitHub PR-review-and-merge workflow, reusing Epic 19.6's human-review gate
+- [x] Graduation section explicitly lists what is not introduced: no new CLI command, no automated promotion script, no ranking/approval UI, no hosted registry surface
+- [x] `## 4. Contribution checklist` contains a working cross-reference (link or explicit pointer) to the new graduation section
 
 **Manual Review:**
 - [ ] Code reviewed and approved

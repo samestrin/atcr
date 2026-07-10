@@ -63,15 +63,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (no test suite changes; pre-existing suite remains green)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (no test suite changes; pre-existing suite remains green)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A cross-reference to `atcr personas submit` is added immediately adjacent to the "Fixture test passes" checklist item (docs/personas-authoring.md:172) without altering the item's original wording
-- [ ] The cross-reference links to the new `### atcr personas submit <name>` subsection in `docs/personas-install.md` (added by AC 05-01) and the link resolves correctly
-- [ ] The cross-reference's claim is scoped to fixture verification only — it does not claim `submit` automates any other checklist item
-- [ ] No other checklist item (lines 166-174) is reordered or reworded
+- [x] A cross-reference to `atcr personas submit` is added immediately adjacent to the "Fixture test passes" checklist item (docs/personas-authoring.md:172) without altering the item's original wording
+- [x] The cross-reference links to the new `### atcr personas submit <name>` subsection in `docs/personas-install.md` (added by AC 05-01) and the link resolves correctly
+- [x] The cross-reference's claim is scoped to fixture verification only — it does not claim `submit` automates any other checklist item
+- [x] No other checklist item (lines 166-174) is reordered or reworded
 
 **Manual Review:**
 - [ ] Code reviewed and approved
