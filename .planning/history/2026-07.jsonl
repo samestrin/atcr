@@ -9,3 +9,9 @@
 {"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/fanout","severity":"LOW","id":"995c54d622a29ca5","file":"internal/fanout/response_truncation_test.go","category":"testing"}
 {"ts":"2026-07-06T13:18:49.705727-07:00","package":"internal/fanout","severity":"LOW","id":"e4b8238cc04217b7","file":"internal/fanout/response_truncation_e2e_test.go","category":"testing"}
 {"ts":"2026-07-08T09:51:33.040767-07:00","package":"cmd/atcr","severity":"HIGH","id":"7786b083945e26f8","file":"cmd/atcr/quickstart.go","category":"configuration"}
+{"ts":"2026-07-09T14:15:00.643778-07:00","package":"internal/personas","severity":"CRITICAL","id":"19f96e5683214852","file":"internal/personas/snapshot.go","category":"security"}
+{"ts":"2026-07-09T14:15:00.643778-07:00","package":"cmd/atcr","severity":"HIGH","id":"9ed134f925e8a59d","file":"cmd/atcr/init.go","category":"concurrency"}
+{"ts":"2026-07-09T14:15:00.643778-07:00","package":"internal/personas","severity":"HIGH","id":"a411c73e8cc6aabc","file":"internal/personas/drift_test.go","category":"state-corruption"}
+{"ts":"2026-07-09T14:15:00.643778-07:00","package":"internal/personas","severity":"MEDIUM","id":"e8cdae49e128d87a","file":"internal/personas/snapshot.go","category":"input-abuse"}
+{"ts":"2026-07-09T14:15:00.643778-07:00","package":"internal/personas/testdata","severity":"MEDIUM","id":"de9787a4257fbc76","file":"internal/personas/testdata/catalog_snapshot.json","category":"out-of-scope"}
+{"ts":"2026-07-09T14:15:00.643778-07:00","package":"internal/personas","severity":"HIGH","id":"b36a0f2f9c0e35eb","file":"internal/personas/snapshot.go","category":"failure-amplification"}
