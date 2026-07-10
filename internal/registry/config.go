@@ -781,6 +781,19 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	if len(a.Persona) > MaxExecutorPersonaLen {
 		errs = append(errs, agentErrf(name, "agent '%s': persona must be at most %d characters", name, MaxExecutorPersonaLen))
 	}
+	// AgentConfig.Binding (Epic 19.7) is free text the resolver parses into a
+	// family/channel/pin; the pin path flows through validateResolvedSlug into a lock
+	// and an outbound request. It is the one new free-text agent string with no
+	// load-time guard, so guard it here like the sibling Persona/Scope/Language
+	// fields — reject control characters (CR/LF could forge lines wherever the binding
+	// is echoed) and cap the length — so a malformed binding fails fast in the
+	// config-error context the user is editing rather than far downstream at resolve time.
+	if strings.IndexFunc(a.Binding, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) >= 0 {
+		errs = append(errs, agentErrf(name, "agent '%s': binding must not contain control characters", name))
+	}
+	if len(a.Binding) > MaxBindingLen {
+		errs = append(errs, agentErrf(name, "agent '%s': binding must be at most %d characters", name, MaxBindingLen))
+	}
 	return errs
 }
 
