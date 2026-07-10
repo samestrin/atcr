@@ -176,8 +176,13 @@ jobs:
           #   - EVERY matching run must have concluded 'success'
           # so a re-run that produced multiple runs (a stale success beside a
           # current failure/in-progress) cannot slip through.
+          # Also pin the producing app to 'github-actions': a third-party GitHub
+          # App can create a check-run with ANY name, including 'Go Lint & Test'.
+          # Without the app.slug guard, such an impostor run reporting success
+          # (before the real CI starts) could satisfy this gate. Filtering on the
+          # app slug requires the success to come from our own Actions CI.
           conclusions="$(gh api "repos/${REPO}/commits/${PIN_SHA}/check-runs" --paginate \
-            --jq '[.check_runs[] | select(.name == "Go Lint & Test")] | sort_by(.started_at) | last | (.conclusion // "pending")')"
+            --jq '[.check_runs[] | select(.name == "Go Lint & Test" and .app.slug == "github-actions")] | sort_by(.started_at) | last | (.conclusion // "pending")')"
 
           if [ -z "$conclusions" ]; then
             echo "No 'Go Lint & Test' run on ${PIN_SHA} yet — will re-evaluate when CI completes."
