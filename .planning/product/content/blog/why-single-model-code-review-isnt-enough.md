@@ -33,6 +33,8 @@ The result isn't just "more findings" — it's **higher-quality findings with me
 
 Think about how code review actually works in practice:
 
+> "It mirrors how human code review actually works: you don't blindly merge the first junior engineer's comment, you cross-reference it against the senior's review and hash out the disagreements."
+
 1. **Senior engineers have blind spots.** A security expert might miss performance issues. A frontend dev might not catch backend edge cases.
 
 2. **Single models have the same problem.** Claude might excel at catching security issues but miss subtle race conditions that GPT-4 catches. GPT-4 might nail the logic but miss the design pattern violation that Gemini flags.
