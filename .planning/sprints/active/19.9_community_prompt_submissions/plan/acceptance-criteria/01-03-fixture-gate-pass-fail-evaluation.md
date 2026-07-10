@@ -64,15 +64,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `RunE` checks `outcome.Passed != outcome.Total` immediately after the `!outcome.HasFixture` check (AC 01-02) and before any continuation logic, matching the exact ordering in the story's Implementation Notes
-- [ ] Failure-path stderr message includes the literal pass/fail counts (`%d/%d cases passed`)
-- [ ] Full-pass test confirms the command proceeds past the gate without invoking any fork/PR/`gh` side effect (Theme 2 stub only)
-- [ ] Test asserts zero `gh`-related side effects for every non-passing outcome (partial and complete failure)
+- [x] `RunE` checks `outcome.Passed != outcome.Total` immediately after the `!outcome.HasFixture` check (AC 01-02) and before any continuation logic, matching the exact ordering in the story's Implementation Notes (in `SubmitGate`)
+- [x] Failure-path stderr message includes the literal pass/fail counts (`cannot submit %q: fixture failed (%d/%d cases passed)`)
+- [x] Full-pass test confirms the command proceeds past the gate without invoking any fork/PR/`gh` side effect (`TestPersonasSubmit_FixturePasses`; continuation spy asserted true). Zero-case `Total==0` proceeds per Scenario 2 (`TestPersonasSubmit_ZeroCaseFixtureProceeds`), documented inline in `submit.go`
+- [x] Test asserts zero `gh`-related side effects for every non-passing outcome (partial and complete failure) (`TestPersonasSubmit_FixtureFails`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

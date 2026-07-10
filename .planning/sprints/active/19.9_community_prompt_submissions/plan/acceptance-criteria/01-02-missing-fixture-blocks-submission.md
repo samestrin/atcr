@@ -63,14 +63,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `RunE` checks `!outcome.HasFixture` immediately after calling `TestPersona` and returns a distinct, submission-specific stderr message (not `personas test`'s wording)
-- [ ] Test asserts the "no fixture" case exits non-zero with the exact expected message and zero fork/PR/`gh` side effects
-- [ ] Test covers a `TestPersona`/runner error path (non-nil `err`) separately from the `HasFixture: false`, nil-error path
+- [x] `RunE` checks `!outcome.HasFixture` immediately after calling `TestPersona` and returns a distinct, submission-specific stderr message (not `personas test`'s wording) — `SubmitGate` returns `cannot submit %q: no fixture defined — add a fixture before submitting`
+- [x] Test asserts the "no fixture" case exits non-zero with the exact expected message and zero fork/PR/`gh` side effects (`TestPersonasSubmit_NoFixture`)
+- [x] Test covers a `TestPersona`/runner error path (non-nil `err`) separately from the `HasFixture: false`, nil-error path (`TestPersonasSubmit_RunnerError`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

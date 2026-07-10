@@ -77,14 +77,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `newPersonasSubmitCmd()` calls `validatePersonaName`/`personaPath` before any other logic, matching the validation-then-resolve order used by `newPersonasRemoveCmd()`
-- [ ] Table-driven test covers empty name, path traversal, absolute path, and disallowed characters, asserting stderr content and non-zero exit for each
-- [ ] Test asserts zero fork/PR/`gh`-related side effects occur when name validation fails
+- [x] `newPersonasSubmitCmd()` calls `validatePersonaName`/`personaPath` before any other logic, matching the validation-then-resolve order used by `newPersonasRemoveCmd()` — via `SubmitGate`, which calls `validatePersonaName` first (path resolution deferred to Phase 2, which has no dir to resolve against yet)
+- [x] Table-driven test covers empty name, path traversal, absolute path, and disallowed characters, asserting stderr content and non-zero exit for each (`TestPersonasSubmit_InvalidName`; asserts the actual validator message per input)
+- [x] Test asserts zero fork/PR/`gh`-related side effects occur when name validation fails (continuation spy asserted false)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

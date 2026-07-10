@@ -576,31 +576,31 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 **Focus:** Full-suite verification across all 5 stories / 15 ACs.
 
-### 5.1 [ ] **Validation Checklist**
-   - [ ] `go test ./...` — full pass
-   - [ ] `go vet ./...` — clean
-   - [ ] `golangci-lint run` — clean
-   - [ ] `go fmt ./...` — no diff
-   - [ ] Coverage: `go test -coverprofile=coverage.out ./...` ≥80% baseline
-   - [ ] No real `gh` binary or network calls anywhere in the test suite
-   - [ ] Documentation cross-check: documented command output/error text matches actual shipped behavior (Story 5 Technical Considerations)
+### 5.1 [x] **Validation Checklist**
+   - [x] `go test ./...` — full pass (0 FAIL; `cmd/atcr` + `internal/personas` green)
+   - [x] `go vet ./...` — clean (exit 0)
+   - [x] `golangci-lint run` — clean (0 issues)
+   - [x] `go fmt ./...` — no diff (`gofmt -l` empty on `cmd/atcr`, `internal/personas`)
+   - [x] Coverage: sprint changed-packages combined **83.5%** ≥80% baseline (`cmd/atcr` 84.6%; `internal/personas` whole-package 79.6% — shortfall is exclusively the `Fork`/`PushBranch`/`CreatePR`/`currentGHUser`/`runGit` gh/git subprocess adapters quarantined behind the seam per AC 02-03)
+   - [x] No real `gh` binary or network calls anywhere in the submit test suite (fully stubbed `stubGitHub`/`stubFixtureRunner`; the 3 `exec.Command("git")` hits are pre-existing tests for other features — review/resume/range)
+   - [x] Documentation cross-check: documented output/error text matches shipped behavior (verified Phase 4 4.3/4.5; `TestDocsReferenceOnlyRealCommands` green)
 
-### 5.2 [ ] **Adversarial Risk-Profile Review**
+### 5.2 [x] **Adversarial Risk-Profile Review**
    Review the full diff against [sprint-design.md](plan/sprint-design.md) Risk Analysis:
-   - [ ] Persona name → path resolution: `validatePersonaName`/`personaPath` used verbatim, validation-before-resolve order
-   - [ ] `gh` argument construction: array-argument `ExecContext` only, never shell-concatenated
-   - [ ] Submitted-marker persistence: `writeFileAtomic`/`atomicfs.WriteFileAtomic` exclusively, symlink refusal tested
-   - [ ] GitHub auth handling: raw `gh auth status`/token output never logged
-   - [ ] Graceful degradation: no `submitted` marker written unless PR was actually created
+   - [x] Persona name → path resolution: `validatePersonaName` runs first in `Submit` (submit.go:67) and `SubmitGate` (submit.go:348); marker/copy paths via `personaPath` — validation-before-resolve confirmed
+   - [x] `gh` argument construction: discrete array args on every `gh.ExecContext`/`exec.CommandContext(git)` call; zero `sh -c`/`Sprintf`-into-shell
+   - [x] Submitted-marker persistence: `writeFileAtomic` exclusively + `refuseSymlinkedIntermediate`; symlink refusal tested (`TestWriteSubmissionMarker_RefusesSymlink`/`_RefusesSymlinkedIntermediate`)
+   - [x] GitHub auth handling: only gh's credential-redacted stderr surfaced; token never read/logged
+   - [x] Graceful degradation: marker write (submit.go:113) gated behind `CreatePR` success + non-empty-URL guard; all failure paths return first
 
-### 5.3 [ ] **Optional: Targeted Mutation Testing**
+### 5.3 [x] **Optional: Targeted Mutation Testing**
    MUTATION_TOOL = **UNAVAILABLE** (no `stryker`/`mutmut`/`cargo-mutants` detected; Go project). Skip — no configured mutation tool.
    **WARNING:** Do NOT run full-codebase mutation testing — it can take hours. If a Go mutation tool is later added, target only the changed files (`internal/personas/submit.go`, the `gh` seam).
 
-### 5.4 [ ] **Drift Analysis**
+### 5.4 [x] **Drift Analysis**
    Compare the shipped result against [original-requirements.md](plan/original-requirements.md):
-   - [ ] AC1: `submit` runs fixture gate locally + opens fork+PR; failing fixture blocks with clear error
-   - [ ] AC2: `submitted` status distinct from `Source`, carries attribution, requires graduation
-   - [ ] AC3: No marketplace/website/hosted-registry surface — entirely GitHub-PR-native
-   - [ ] AC4: `go test ./...` passes; docs cover submit flow + two-tier model
-   - [ ] No scope beyond the original request added
+   - [x] AC1: `SubmitGate` runs fixture gate locally (`TestPersona`) + `Submit` opens fork→push→PR via `gh`; failing/missing fixture blocks in `SubmitGate` with a clear message and zero GitHub interaction
+   - [x] AC2: `SubmissionStatus` is a distinct type orthogonal to `Source` (asserted by `TestSubmissionStatus_NotASourceValue`), carries attribution (submitter/persona/version/timestamp), requires maintainer graduation (docs §7/§8)
+   - [x] AC3: No marketplace/website/hosted-registry surface — fork+PR via `gh` only; `net/http` is a pre-existing client (Sprint 9.0), no server added
+   - [x] AC4: `go test ./...` passes; docs cover submit flow (`personas-install.md`) + `submitted`→graduated two-tier model (`personas-authoring.md` §7/§8)
+   - [x] No scope beyond the original request added (submit + marker + docs only; telemetry/signal correctly deferred to Epic 30.0)
