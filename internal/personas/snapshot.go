@@ -37,7 +37,7 @@ func SnapshotModels() ([]CatalogModel, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load catalog snapshot: %w", err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		d, err := io.ReadAll(io.LimitReader(f, fetchBodyLimit+1))
 		if err != nil {
 			return nil, fmt.Errorf("failed to load catalog snapshot: %w", err)
