@@ -1,4 +1,4 @@
-generated_at: July 08, 2026 05:30:56PM
+generated_at: July 10, 2026 10:43:02AM
 manifest_file: go.mod
 package_manager: go
 packages:
@@ -38,6 +38,15 @@ packages:
     status: complete
     tier: important
     version: v1.11.1
+  go-gh:
+    doc_file: go-gh.md
+    docs_url: https://pkg.go.dev/github.com/cli/go-gh/v2
+    last_updated: July 10, 2026 10:43:02AM
+    name: github.com/cli/go-gh/v2
+    parent: <nil>
+    status: complete
+    tier: important
+    version: v2.13.0
   go-gitdiff:
     doc_file: go-gitdiff.md
     docs_url: https://github.com/bluekeyes/go-gitdiff
@@ -65,5 +74,5 @@ packages:
     status: complete
     tier: important
     version: v3.0.1
-packages_count: 7
+packages_count: 8
 version: 1.0
