@@ -81,11 +81,23 @@ const (
 	// at load to limit prompt-stuffing. It is larger than the persona cap because it
 	// is a full instruction block, not a single token interpolated mid-sentence.
 	MaxExecutorSystemPromptLen = 4096
-	// MaxPersonaPromptLen caps fetched/pinned community persona prompts before they
-	// are written to disk or resolved. It aliases MaxExecutorSystemPromptLen because
-	// both bound untrusted free-text prompts that are interpolated verbatim into LLM
-	// instructions; the shared value is intentional, not coincidental.
-	MaxPersonaPromptLen = MaxExecutorSystemPromptLen
+	// MaxPersonaPromptLen caps fetched/pinned community (Registry-tier) persona
+	// prompts before they are written to disk or resolved (ValidateFetchedPersonaPrompt).
+	// It is an independent constant, NOT an alias of MaxExecutorSystemPromptLen: the two
+	// bound unrelated inputs (a full reviewer persona vs an Epic 7.0.1 executor
+	// system-prompt override) and must move independently — raising one must never
+	// silently raise the other. 8192 gives ~2x headroom over the largest legitimate
+	// built-in/community reviewer persona (e.g. pace.md at 4128 bytes, which the old
+	// 4096 alias rejected outright) while still bounding prompt-stuffing by untrusted
+	// free text.
+	MaxPersonaPromptLen = 8192
+	// MaxBindingLen caps AgentConfig.Binding — the logical family/channel/pin string
+	// the Epic 19.7 resolver parses (parseBinding) into a family+channel, an explicit
+	// pin, or an alias. A binding is a short token ("anthropic/claude-opus@stable",
+	// "pin:vendor/model-name:variant"), so 256 is generous headroom while still
+	// bounding an unbounded/abusive value that would otherwise be accepted silently at
+	// load and only surface far downstream at resolve time.
+	MaxBindingLen = 256
 	// MaxExecutorRuleLen caps each executor coding rule (Epic 7.0.1). Each rule is
 	// interpolated verbatim into the fix prompt as a constraint line, so it is
 	// bounded like the persona to limit prompt-stuffing by untrusted free text.
@@ -290,6 +302,12 @@ type AgentConfig struct {
 	RateLimited bool     `yaml:"rate_limited,omitempty"`
 	Fallback    string   `yaml:"fallback,omitempty"`
 	Payload     string   `yaml:"payload,omitempty"`
+	// Binding is the logical family/channel target (e.g. "anthropic/claude-opus@stable")
+	// the Epic 19.7 resolver reads at `atcr personas upgrade` time to recompute Model
+	// (the resolved lock the review path consumes). Additive and inert here: decoded
+	// permissively, never read on the review path, so a 19.6 config with no binding
+	// keeps loading unchanged and Model alone continues to serve as the lock.
+	Binding string `yaml:"binding,omitempty"`
 
 	// Active in Epic 2.0 — the engine acts on these (tool loop + budgets).
 	Tools           bool   `yaml:"tools"`             // enables the multi-turn tool loop
@@ -762,6 +780,19 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	}
 	if len(a.Persona) > MaxExecutorPersonaLen {
 		errs = append(errs, agentErrf(name, "agent '%s': persona must be at most %d characters", name, MaxExecutorPersonaLen))
+	}
+	// AgentConfig.Binding (Epic 19.7) is free text the resolver parses into a
+	// family/channel/pin; the pin path flows through validateResolvedSlug into a lock
+	// and an outbound request. It is the one new free-text agent string with no
+	// load-time guard, so guard it here like the sibling Persona/Scope/Language
+	// fields — reject control characters (CR/LF could forge lines wherever the binding
+	// is echoed) and cap the length — so a malformed binding fails fast in the
+	// config-error context the user is editing rather than far downstream at resolve time.
+	if strings.IndexFunc(a.Binding, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) >= 0 {
+		errs = append(errs, agentErrf(name, "agent '%s': binding must not contain control characters", name))
+	}
+	if len(a.Binding) > MaxBindingLen {
+		errs = append(errs, agentErrf(name, "agent '%s': binding must be at most %d characters", name, MaxBindingLen))
 	}
 	return errs
 }

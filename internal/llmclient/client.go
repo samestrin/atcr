@@ -30,7 +30,6 @@ const (
 	defaultMaxRetries     = 2 // 3 attempts total
 	defaultInitialBackoff = 500 * time.Millisecond
 	defaultBackoffFactor  = 1.5
-	defaultHTTPTimeout    = 120 * time.Second
 
 	// maxErrorBodyBytes bounds how much of a non-200 response body is read for
 	// error reporting; the remainder is drained so the connection can be reused.
@@ -52,9 +51,9 @@ var retryableStatus = map[int]bool{
 	http.StatusGatewayTimeout:      true, // 504
 }
 
-// Client is a reusable OpenAI-compatible chat-completions client. The HTTP
-// transport timeout guards a single exchange; per-agent and global deadlines
-// live in the context passed to Complete.
+// Client is a reusable OpenAI-compatible chat-completions client. The
+// per-request context passed to Complete guards each exchange; no additional
+// client-level timeout is imposed.
 type Client struct {
 	httpClient     *http.Client
 	maxRetries     int
@@ -104,7 +103,6 @@ func WithRetry(maxRetries int, initialBackoff time.Duration, factor float64) Opt
 func New(opts ...Option) *Client {
 	c := &Client{
 		httpClient: &http.Client{
-			Timeout: defaultHTTPTimeout,
 			// Do not follow redirects: a 3xx is a hard failure (only 200
 			// succeeds), and auto-following would forward the Bearer header to
 			// the redirect target.
