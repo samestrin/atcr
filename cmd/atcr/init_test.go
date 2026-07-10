@@ -841,3 +841,24 @@ func TestPersonas_UnknownName(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nonexistent")
 }
+
+// TestInstallCommunityPersonas_SkipsInvalidIndexNames: a community index entry whose
+// name fails persona-name validation (empty/invalid) is skipped with a warning
+// BEFORE the install loop, so one malformed index entry does not reach
+// InstallUnit->validatePersonaName and trip the all-or-nothing rollback that would
+// abort init/quickstart for every user. Valid entries still install; the call
+// succeeds (exit 0). Distinct from the AC-07-03 rollback on genuine install failures.
+func TestInstallCommunityPersonas_SkipsInvalidIndexNames(t *testing.T) {
+	index := `[{"name":"bad name!","version":"1.0.0","description":"d","path":"bad.yaml"},{"name":"owasp","version":"1.2.0","description":"sec","path":"owasp.yaml"}]`
+	srv := unitServer(t, index, map[string]string{
+		"/owasp.yaml": communityUnitYAML,
+		"/owasp.md":   communityUnitMD,
+	})
+	dest := t.TempDir()
+	errOut := &bytes.Buffer{}
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, errOut),
+		"one invalid index name must not fail the whole install")
+	assert.FileExists(t, filepath.Join(dest, "owasp.yaml"), "the valid persona still installs")
+	assert.Contains(t, errOut.String(), "invalid name", "the invalid entry is skipped with a warning")
+}
