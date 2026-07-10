@@ -9,11 +9,14 @@
 | Test Framework | None (docs-only); manual read-through against Themes 1-2's specified command behavior | No `go test` is added or run by this AC |
 | Key Dependencies | None — pure content edit; sourced from Theme 1/2 ACs (`01-01`, `01-02`, `01-03`, `02-01`, `02-02`) and the actual `cmd/atcr/personas.go`/`internal/personas/submit.go` once those themes land | |
 
-## Related Files
-- `docs/personas-install.md` - modify: change the heading at line 40 from `## The six subcommands` to `## The seven subcommands`; insert a new `### atcr personas submit <name>` subsection between the existing `test` subsection (lines 124-137) and the `upgrade` subsection (starting line 139), following the same one-line-description → example invocation/output → error-cases structure used by every other subcommand
-- `.planning/plans/active/19.9_community_prompt_submissions/acceptance-criteria/02-02-fork-branch-push-and-pr-create.md` - reference only: source of the exact PR-URL output format (`https://github.com/<owner>/<repo>/pull/<n>`) and fork/push/PR-create error strings this AC's example/error-cases text must match
-- `.planning/plans/active/19.9_community_prompt_submissions/acceptance-criteria/01-02-missing-fixture-blocks-submission.md` - reference only: source of the exact "no fixture defined" and fixture-failure error wording (deliberately distinct from `personas test`'s wording) this AC's error-cases text must match verbatim
-- `internal/personas/submit.go` - reference only (not yet created as of this story's authoring; verify final wording against it once Themes 1-2 land, per the story's Implementation Notes) - the actual implementation is the source of truth for exact strings at doc-finalization time
+### Related Files (from codebase-discovery.json)
+- `docs/personas-install.md` (modify) — change the heading at line 40 from `## The six subcommands` to `## The seven subcommands`; insert a new `### atcr personas submit <name>` subsection between the existing `test` subsection (lines 124-137) and the `upgrade` subsection (starting line 139), following the same one-line-description → example invocation/output → error-cases structure used by every other subcommand
+- `.planning/plans/active/19.9_community_prompt_submissions/acceptance-criteria/02-02-fork-branch-push-and-pr-create.md` (reference only) — source of the exact PR-URL output format (`https://github.com/<owner>/<repo>/pull/<n>`) and fork/push/PR-create error strings this AC's example/error-cases text must match
+- `.planning/plans/active/19.9_community_prompt_submissions/acceptance-criteria/01-02-missing-fixture-blocks-submission.md` (reference only) — source of the exact "no fixture defined" and fixture-failure error wording (deliberately distinct from `personas test`'s wording) this AC's error-cases text must match verbatim
+- `internal/personas/submit.go` (reference only, not yet created as of this story's authoring; verify final wording against it once Themes 1-2 land, per the story's Implementation Notes) — the actual implementation is the source of truth for exact strings at doc-finalization time
+
+## Design References
+- [Personas Install & Authoring Doc Updates (AC4)](../documentation/personas-docs-updates.md) — the exact `docs/personas-install.md` edits required (heading change, subsection placement, example/error-case content)
 
 ## Happy Path Scenarios
 **Scenario 1: A reader locates the seventh subcommand's heading and description**

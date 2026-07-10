@@ -6,13 +6,17 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Component Type | Cobra CLI subcommand (`RunE`) | `newPersonasSubmitCmd()` in cmd/atcr/personas.go |
-| Test Framework | Go `testing` + `testify` (`assert`/`require`) | Table-driven, mirrors `TestPersonasRemove_*` traversal cases |
+| Test Framework | Go `testing` package | Table-driven, mirrors `TestPersonasRemove_*` traversal cases; testify is not used in this codebase |
 | Key Dependencies | `internal/personas.validatePersonaName` (via `personaPath`), `github.com/spf13/cobra` | No new dependency introduced |
 
-## Related Files
-- `cmd/atcr/personas.go` - modify: add `newPersonasSubmitCmd()` (new function, alongside `newPersonasTestCmd` at line 298) and register it in `newPersonasCmd()`'s `cmd.AddCommand(...)` block (lines 106-113)
-- `internal/personas/paths.go` - reference only (no change): `validatePersonaName` (line 42) and `personaPath` (line 72) are called verbatim, mirroring the validation order already used by `newPersonasRemoveCmd()` (personas.go:279-296)
-- `cmd/atcr/personas_test.go` - modify: add `TestPersonasSubmit_InvalidName` (or table-driven equivalent) using the `executeSplit` helper (line 35)
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/personas.go` (modify) — add `newPersonasSubmitCmd()` alongside `newPersonasTestCmd` (line 298) and register it in `newPersonasCmd()`'s `cmd.AddCommand(...)` block (lines 106-113)
+- `internal/personas/paths.go` (reference only) — `validatePersonaName` (line 42) and `personaPath` (line 72) are called verbatim, mirroring the validation order already used by `newPersonasRemoveCmd()` (personas.go:279-296)
+- `cmd/atcr/personas_test.go` (modify) — add `TestPersonasSubmit_InvalidName` (or table-driven equivalent) using the `executeSplit` helper (line 35)
+
+## Design References
+- [Local Fixture-Gate Reuse (TestPersona)](../documentation/fixture-gate-reuse.md) — name/path validation conventions `submit` must reuse
+- [Cobra Subcommand & Injectable-Seam Conventions](../documentation/cobra-subcommand-patterns.md) — where `newPersonasSubmitCmd()` registers and how CLI output is formatted
 
 ## Happy Path Scenarios
 **Scenario 1: Well-formed, resolvable name proceeds past name validation**

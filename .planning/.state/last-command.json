@@ -1,9 +1,9 @@
 {
-  "skill": "create-documentation",
+  "skill": "design-sprint",
   "args": "@.planning/plans/active/19.9_community_prompt_submissions/",
-  "invocation": "/create-documentation @.planning/plans/active/19.9_community_prompt_submissions/",
+  "invocation": "/design-sprint @.planning/plans/active/19.9_community_prompt_submissions/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "8e2bd097-61fb-4051-aa44-2f4a6e1e8cce",
-  "timestamp": "2026-07-10T17:46:35.566Z"
+  "session_id": "0af3fbcc-889b-42f4-9806-3deef33a5602",
+  "timestamp": "2026-07-10T19:01:37.535Z"
 }

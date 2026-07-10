@@ -50,3 +50,4 @@ See [documentation/README.md](documentation/README.md) for the full index. Summa
 - [Package Recommendations](package-recommendations.md)
 - [User Stories](user-stories/)
 - [Acceptance Criteria](acceptance-criteria/)
+- [Sprint Design](sprint-design.md)

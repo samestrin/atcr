@@ -7,13 +7,16 @@
 |-----------|------------|-------|
 | Component Type | Go struct + atomic file writer | Marker struct (submitter identity, source persona name/version, timestamp, fixture-pass flag) serialized to a sidecar file |
 | Serialization | YAML or JSON (match existing repo convention — `list.go` already uses `gopkg.in/yaml.v3` for persona metadata) | Pick one and keep it consistent with sibling marker/status files if any exist |
-| Test Framework | Go `testing` package, `os`/`path/filepath` for symlink and tmpdir fixtures | Mirrors existing `writeFileAtomic` test patterns in `internal/personas` |
+| Test Framework | Go `testing` package, `os`/`path/filepath` for symlink and tmpdir fixtures | Mirrors existing `writeFileAtomic` test patterns in `internal/personas`; testify is not used in this codebase |
 | Key Dependencies | `internal/personas/unit.go:writeFileAtomic` (line 180) or `internal/atomicfs.WriteFileAtomic` (line 24) | No bare `os.WriteFile` anywhere in the new code path |
 
-## Related Files
-- `internal/personas/unit.go` - modify (or a new sibling file in the same package): add the marker-writing function that calls `writeFileAtomic` (line 180) exclusively for persisting the `submitted` marker
-- `internal/atomicfs/atomic.go` - reference only (no modification expected): `WriteFileAtomic` (line 24) is an acceptable alternative persistence primitive if the marker lives outside the `personas` package's existing symlink-refusing writer
-- `internal/personas/<new_file>_test.go` - create: tests for marker content, atomic-write usage, and symlink refusal
+### Related Files (from codebase-discovery.json)
+- `internal/personas/unit.go` (modify, or a new sibling file in the same package) — add the marker-writing function that calls `writeFileAtomic` (line 180) exclusively for persisting the `submitted` marker
+- `internal/atomicfs/atomic.go` (reference only, no modification expected) — `WriteFileAtomic` (line 24) is an acceptable alternative persistence primitive if the marker lives outside the `personas` package's existing symlink-refusing writer
+- `internal/personas/<new_file>_test.go` (create) — tests for marker content, atomic-write usage, and symlink refusal
+
+## Design References
+- [Status/Provenance Separation and Atomic Persistence](../documentation/status-provenance-and-atomic-writes.md) — the atomic-write helpers (`writeFileAtomic`, `atomicfs.WriteFileAtomic`) and the requirement to keep the marker outside `personas/community/`
 
 ## Happy Path Scenarios
 **Scenario 1: A submission produces a marker with complete attribution metadata**

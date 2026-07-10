@@ -9,10 +9,13 @@
 | Test Framework | None (docs-only) | No CLI command, API endpoint, or automated script is introduced or tested; verification is documentation accuracy |
 | Key Dependencies | Epic 19.6's existing human-review PR-merge gate (reference only); `gh` PR review/merge workflow | No new GitHub App, webhook, bot, or hosted approval surface |
 
-## Related Files
-- `docs/personas-authoring.md` - modify: add a statement in the graduation section confirming the entire procedure (review, requested changes, approve, merge/edit) is performed through the existing GitHub PR-review workflow, with an explicit "not introduced" list (no new CLI command, no ranking/approval UI, no hosted registry surface); also add a cross-reference link/pointer from `## 4. Contribution checklist` (docs/personas-authoring.md:162-177) to the new graduation section so a maintainer reviewing a `submitted` PR against the checklist can find the graduation steps
-- `cmd/atcr/personas.go` - reference only (no change): confirms no new subcommand (e.g. `personas graduate`) is added alongside existing `newPersonasSubmitCmd()`/`newPersonasTestCmd()`/`newPersonasRemoveCmd()`, consistent with the "no new CLI command" constraint
-- `.planning/plans/active/19.9_community_prompt_submissions/user-stories/03-submitted-status-distinct-from-source.md` - reference only: cited to confirm the graduation section's cross-reference correctly points readers from the `submitted`-marker concept (Story 3) to its resolution (Story 4's graduation procedure)
+### Related Files (from codebase-discovery.json)
+- `docs/personas-authoring.md` (modify) — add a statement in the graduation section confirming the entire procedure (review, requested changes, approve, merge/edit) is performed through the existing GitHub PR-review workflow, with an explicit "not introduced" list (no new CLI command, no ranking/approval UI, no hosted registry surface); also add a cross-reference link/pointer from `## 4. Contribution checklist` (docs/personas-authoring.md:162-177) to the new graduation section so a maintainer reviewing a `submitted` PR against the checklist can find the graduation steps
+- `cmd/atcr/personas.go` (reference only, no change) — confirms no new subcommand (e.g. `personas graduate`) is added alongside existing `newPersonasSubmitCmd()`/`newPersonasTestCmd()`/`newPersonasRemoveCmd()`, consistent with the "no new CLI command" constraint
+- `.planning/plans/active/19.9_community_prompt_submissions/user-stories/03-submitted-status-distinct-from-source.md` (reference only) — cited to confirm the graduation section's cross-reference correctly points readers from the `submitted`-marker concept (Story 3) to its resolution (Story 4's graduation procedure)
+
+## Design References
+- [Personas Install & Authoring Doc Updates (AC4)](../documentation/personas-docs-updates.md) — the graduation section's process-boundary language and contribution-checklist cross-reference
 
 ## Happy Path Scenarios
 **Scenario 1: Maintainer discovers graduation steps from the contribution checklist**

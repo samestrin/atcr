@@ -6,13 +6,16 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Component Type | Path constant/convention + read-only extension function | A status-tracking path sits alongside (not inside) the vetted `personas/community/` tree |
-| Test Framework | Go `testing` package | Golden-output comparison for `personas list` command and direct `List`/`ListTiers` assertions |
+| Test Framework | Go `testing` package | Golden-output comparison for `personas list` command and direct `List`/`ListTiers` assertions; testify is not used in this codebase |
 | Key Dependencies | `internal/personas/list.go` (`List`, `ListTiers`) — read-only integration, no signature change | |
 
-## Related Files
-- `internal/personas/list.go` - modify: add an additive, separately-named extension point (e.g., a new exported function such as `ListSubmissions` or a method on the new marker type) that can surface `submitted` status without changing `List`/`ListTiers`'s existing return type or values
-- `internal/personas/list_test.go` - modify: add a test asserting `personas list` (i.e., `List`/`ListTiers`) output and row count/order are identical whether or not `submitted` markers exist on disk
-- `<marker storage path, e.g. internal/personas/submissions/ or .atcr/submissions/>` - create: path constant/location definition, distinct from and outside `personas/community/`
+### Related Files (from codebase-discovery.json)
+- `internal/personas/list.go` (modify) — add an additive, separately-named extension point (e.g., a new exported function such as `ListSubmissions` or a method on the new marker type) that can surface `submitted` status without changing `List`/`ListTiers`'s existing return type or values
+- `internal/personas/list_test.go` (modify) — add a test asserting `personas list` (i.e., `List`/`ListTiers`) output and row count/order are identical whether or not `submitted` markers exist on disk
+- `<marker storage path, e.g. internal/personas/submissions/ or .atcr/submissions/>` (create) — path constant/location definition, distinct from and outside `personas/community/`
+
+## Design References
+- [Status/Provenance Separation and Atomic Persistence](../documentation/status-provenance-and-atomic-writes.md) — why the marker must live outside `personas/community/` and why `List`/`ListTiers` output must remain unchanged
 
 ## Happy Path Scenarios
 **Scenario 1: Marker storage path never resolves under `personas/community/`**
@@ -34,7 +37,7 @@
 **Edge Case 2: Namespaced/nested persona name submitted marker**
 - **Given** a project persona with a nested name (e.g., `team/reviewer`, per `listProject`'s slash-path handling at `internal/personas/list.go:112`)
 - **When** a marker is written for it
-- **Then** the marker path construction correctly derives a safe on-disk location outside `personas/community/` without colliding with or escaping into the persona's own namespaced directory structure
+- **Then** the marker path construction produces an on-disk location that stays within the configured marker storage directory (verified by `filepath.Clean` and a `filepath.Rel` check against the storage root), remains outside `personas/community/`, and rejects `..`/absolute-path segments without colliding with or escaping into the persona's own namespaced directory structure
 
 ## Error Conditions
 **Error Scenario 1: Extension point queried against a personas dir that cannot be walked**

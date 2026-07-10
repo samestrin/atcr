@@ -9,10 +9,14 @@
 | Test Framework | None (docs-only); references Story 3's existing unit test asserting `Source` never takes a fourth value | No new test file is added by this story; Story 3 already owns the `Source`-invariant test |
 | Key Dependencies | Story 3's `submitted` marker mechanism (`internal/personas/list.go`, `PersonaMeta.Source`) - reference only | This AC must not describe or imply any code change to `PersonaMeta` or `Source` |
 
-## Related Files
-- `docs/personas-authoring.md` - modify: add the sub-step "clear the `submitted` status marker for this persona" to the graduation procedure, immediately followed by an explicit statement that `Source` (`built-in`/`community`/`project`) is never edited during graduation
-- `internal/personas/list.go` - reference only (no change): `PersonaMeta.Source` (line 22) and its three valid values are cited as the field that must remain untouched; graduation clears Story 3's separate `submitted` marker, never this field
-- `.planning/plans/active/19.9_community_prompt_submissions/user-stories/03-submitted-status-distinct-from-source.md` - reference only: the graduation documentation must describe clearing whichever marker shape Story 3 lands (sidecar file, frontmatter key, or submission-specific struct field), matching its actual storage location/format rather than assuming one
+### Related Files (from codebase-discovery.json)
+- `docs/personas-authoring.md` (modify) — add the sub-step "clear the `submitted` status marker for this persona" to the graduation procedure, immediately followed by an explicit statement that `Source` (`built-in`/`community`/`project`) is never edited during graduation
+- `internal/personas/list.go` (reference only) — `PersonaMeta.Source` (line 22) and its three valid values are cited as the field that must remain untouched; graduation clears Story 3's separate `submitted` marker, never this field
+- `.planning/plans/active/19.9_community_prompt_submissions/user-stories/03-submitted-status-distinct-from-source.md` (reference only) — the graduation documentation must describe clearing whichever marker shape Story 3 lands (sidecar file, frontmatter key, or submission-specific struct field), matching its actual storage location/format rather than assuming one
+
+## Design References
+- [Status/Provenance Separation and Atomic Persistence](../documentation/status-provenance-and-atomic-writes.md) — the `Source`/`submitted` orthogonality that graduation must preserve
+- [Personas Install & Authoring Doc Updates (AC4)](../documentation/personas-docs-updates.md) — the graduation section content and the explicit warning that `Source` stays `community`
 
 ## Happy Path Scenarios
 **Scenario 1: Maintainer clears the marker during graduation, `Source` stays `community`**

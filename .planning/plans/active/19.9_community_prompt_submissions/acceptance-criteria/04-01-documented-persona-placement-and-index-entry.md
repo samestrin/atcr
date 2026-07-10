@@ -9,10 +9,13 @@
 | Test Framework | None (docs-only); existing `go test` gate over `personas/community/index.json` (referenced, not modified) | The existing index-consistency gate described in docs/personas-authoring.md:178-210 already enforces `provider`/`model` match at merge time — this AC documents how a maintainer satisfies that gate during graduation, it does not add a new gate |
 | Key Dependencies | `internal/personas/search.go:14` `PersonaIndexEntry` struct (schema reference only) | No Go package, dependency, or schema change |
 
-## Related Files
-- `docs/personas-authoring.md` - modify: add a numbered "Graduating a submitted persona" procedure section covering (a) moving/copying the persona YAML (and its fixture, per `## 3. The fixture`) into `personas/community/`, and (b) adding a `PersonaIndexEntry`-shaped entry to `personas/community/index.json` with `name`/`version`/`description`/`path`/`provider`/`model` matching the persona's own YAML frontmatter
-- `internal/personas/search.go` - reference only (no change): `PersonaIndexEntry` (line 14) is cited verbatim as the exact shape the new `index.json` entry must match, including which fields are gate-enforced (`provider`, `model`) versus optional (`tasks`, `tags`, `binding`)
-- `personas/community/index.json` - reference only (no change): existing entries (e.g. `anthony`, `sonny`) are cited as the worked example of a correctly-shaped entry the documentation points to
+### Related Files (from codebase-discovery.json)
+- `docs/personas-authoring.md` (modify) — add a numbered "Graduating a submitted persona" procedure section covering (a) moving/copying the persona YAML (and its fixture, per `## 3. The fixture`) into `personas/community/`, and (b) adding a `PersonaIndexEntry`-shaped entry to `personas/community/index.json` with `name`/`version`/`description`/`path`/`provider`/`model` matching the persona's own YAML frontmatter
+- `internal/personas/search.go` (reference only) — `PersonaIndexEntry` (line 14) is cited verbatim as the exact shape the new `index.json` entry must match, including which fields are gate-enforced (`provider`, `model`) versus optional (`tasks`, `tags`, `binding`)
+- `personas/community/index.json` (reference only) — existing entries (e.g. `anthony`, `sonny`) are cited as the worked example of a correctly-shaped entry the documentation points to
+
+## Design References
+- [Personas Install & Authoring Doc Updates (AC4)](../documentation/personas-docs-updates.md) — the required `docs/personas-authoring.md` graduation section content and cross-references
 
 ## Happy Path Scenarios
 **Scenario 1: Maintainer adds a new persona and index entry during graduation**

@@ -6,12 +6,15 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Component Type | Go struct/type addition | New type lives alongside `PersonaMeta`, not inside it |
-| Test Framework | Go `testing` package (`go test ./internal/personas/...`) | Table-driven tests, matching existing style in the package |
+| Test Framework | Go `testing` package (`go test ./internal/personas/...`) | Table-driven tests, matching existing style in the package; testify is not used in this codebase |
 | Key Dependencies | None new — uses only stdlib (`strings`) already imported in `list.go` | |
 
-## Related Files
-- `internal/personas/list.go` - modify: add a new `SubmissionStatus` (or similarly named) type/struct distinct from `PersonaMeta`; `PersonaMeta.Source` field (line 19-24), `List` (line 38), `ListTiers` (line 56), `listProject` (line 87), `listCommunity` (line 201) remain byte-for-byte unchanged in signature and behavior
-- `internal/personas/list_test.go` - modify: add a regression test asserting `Source` only ever takes `"built-in"`, `"community"`, or `"project"` across `List`/`ListTiers` output, including after a submission marker exists on disk
+### Related Files (from codebase-discovery.json)
+- `internal/personas/list.go` (modify) — add a new `SubmissionStatus` (or similarly named) type/struct distinct from `PersonaMeta`; `PersonaMeta.Source` field (lines 19-24), `List` (line 38), `ListTiers` (line 56), `listProject` (line 87), `listCommunity` (line 201) remain byte-for-byte unchanged in signature and behavior
+- `internal/personas/list_test.go` (modify) — add a regression test asserting `Source` only ever takes `"built-in"`, `"community"`, or `"project"` across `List`/`ListTiers` output, including after a submission marker exists on disk
+
+## Design References
+- [Status/Provenance Separation and Atomic Persistence](../documentation/status-provenance-and-atomic-writes.md) — the rationale for keeping `submitted` orthogonal to `PersonaMeta.Source` and the existing `List` extension point
 
 ## Happy Path Scenarios
 **Scenario 1: Existing Source values are unaffected by the new concept's existence**

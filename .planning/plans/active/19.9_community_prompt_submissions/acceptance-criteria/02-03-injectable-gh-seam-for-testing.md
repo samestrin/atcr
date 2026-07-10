@@ -6,14 +6,19 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Component Type | Go interface or package-level var (seam) | e.g. `personasGitHub` package var of an interface type with `Fork`, `PushBranch`, `CreatePR` (and precondition check) methods, defaulting to a `gh.ExecContext`-backed implementation |
-| Test Framework | `go test` + `testify` | Tests substitute a stub implementation via the package var, matching `personasClient`/`personasFixtureRunner` in `cmd/atcr/personas.go` |
+| Test Framework | Go `testing` package | Tests substitute a stub implementation via the package var, matching `personasClient`/`personasFixtureRunner` in `cmd/atcr/personas.go`; testify is not used in this codebase |
 | Key Dependencies | `github.com/cli/go-gh/v2` (default implementation only), no new dependency for the seam itself | Interface lives independent of `go-gh` so stubs need not import it |
 
-## Related Files
-- `cmd/atcr/personas.go` - modify: declare a `personasGitHub` package var (interface-typed) alongside the existing `personasDir`/`personasClient`/`personasFixtureRunner` seams, used by `newPersonasSubmitCmd`
-- `internal/personas/submit.go` - create: define the seam interface (e.g. `GitHubSubmitter`) and its default `gh.ExecContext`-backed implementation
-- `cmd/atcr/personas_test.go` - modify: add a stub `GitHubSubmitter` implementation used to unit-test `newPersonasSubmitCmd` without a real `gh` binary or network call
-- `internal/personas/submit_test.go` - create: unit tests against the seam interface directly (not through the cobra command), verifying stub substitution fully replaces the default implementation
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/personas.go` (modify) — declare a `personasGitHub` package var (interface-typed) alongside the existing `personasDir`/`personasClient`/`personasFixtureRunner` seams, used by `newPersonasSubmitCmd`
+- `internal/personas/submit.go` (create) — define the seam interface (e.g. `GitHubSubmitter`) and its default `gh.ExecContext`-backed implementation
+- `cmd/atcr/personas_test.go` (modify) — add a stub `GitHubSubmitter` implementation used to unit-test `newPersonasSubmitCmd` without a real `gh` binary or network call
+- `internal/personas/submit_test.go` (create) — unit tests against the seam interface directly (not through the cobra command), verifying stub substitution fully replaces the default implementation
+- `internal/ghaction/client.go` (reference only) — existing fixed-bot GitHub REST client (lines 192, 345) that must remain independent of the new `GitHubSubmitter` seam
+
+## Design References
+- [GitHub Fork + PR Integration via go-gh](../documentation/gh-fork-pr-integration.md) — why the `gh` CLI shell-out approach is used instead of `internal/ghaction.Client`
+- [Cobra Subcommand & Injectable-Seam Conventions](../documentation/cobra-subcommand-patterns.md) — the `personasDir`/`personasClient`/`personasFixtureRunner` injectable-seam pattern the new `personasGitHub` seam must follow
 
 ## Happy Path Scenarios
 **Scenario 1: Tests substitute a stub seam with no real `gh` binary present**
@@ -45,7 +50,7 @@
 
 **Error Scenario 2: Missing seam override in a test accidentally invokes the real `gh` binary**
 - **Given** a test forgets to override `personasGitHub` before invoking `newPersonasSubmitCmd`
-- **Then** CI environments without `gh` installed or without network access fail fast with a clear `gh.Path()` "not found" or network error (from AC 02-01's precondition check) rather than hanging or silently skipping — surfacing the missing-stub mistake immediately rather than masking it
+- **Then** CI environments without `gh` installed or without network access exit immediately with a non-zero status and a clear `gh.Path()` "not found" or network error (from AC 02-01's precondition check) rather than hanging or silently skipping — surfacing the missing-stub mistake immediately rather than masking it
 
 ## Performance Requirements
 - **Response Time:** Stub-backed unit tests must run in milliseconds (no real subprocess or network I/O), consistent with the rest of the `internal/personas` unit-test suite

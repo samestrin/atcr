@@ -9,10 +9,13 @@
 | Test Framework | None (docs-only) | No `go test` is added or run by this AC |
 | Key Dependencies | None — pure content edit; the checklist item being cross-referenced already exists (docs/personas-authoring.md:172) | |
 
-## Related Files
-- `docs/personas-authoring.md` - modify: add a cross-reference sentence/note immediately adjacent to the "Fixture test passes" checklist item (`## 4. Contribution checklist`, line 172) stating that `atcr personas submit <name>` automates verification of that one item and blocks submission on a failing fixture; do not rewrite or reorder the existing checklist items (lines 166-174)
-- `docs/personas-install.md` - reference only (no change beyond AC 05-01's edits): the target of the cross-reference link, i.e. the new `### atcr personas submit <name>` subsection added by AC 05-01
-- `.planning/plans/active/19.9_community_prompt_submissions/user-stories/05-documentation-of-submit-flow-and-two-tier-model.md` - reference only: source of the Assumption that this story cross-references the existing checklist item "rather than rewriting the checklist, since `submit` automates verification of that one item, not the whole checklist"
+### Related Files (from codebase-discovery.json)
+- `docs/personas-authoring.md` (modify) — add a cross-reference sentence/note immediately adjacent to the "Fixture test passes" checklist item (`## 4. Contribution checklist`, line 172) stating that `atcr personas submit <name>` automates verification of that one item and blocks submission on a failing fixture; do not rewrite or reorder the existing checklist items (lines 166-174)
+- `docs/personas-install.md` (reference only, no change beyond AC 05-01's edits) — the target of the cross-reference link, i.e. the new `### atcr personas submit <name>` subsection added by AC 05-01
+- `.planning/plans/active/19.9_community_prompt_submissions/user-stories/05-documentation-of-submit-flow-and-two-tier-model.md` (reference only) — source of the Assumption that this story cross-references the existing checklist item "rather than rewriting the checklist, since `submit` automates verification of that one item, not the whole checklist"
+
+## Design References
+- [Personas Install & Authoring Doc Updates (AC4)](../documentation/personas-docs-updates.md) — the contribution-checklist cross-reference wording and the scope claim (fixture verification only)
 
 ## Happy Path Scenarios
 **Scenario 1: A contributor preparing to submit finds the automation note**
@@ -34,7 +37,7 @@
 **Edge Case 2: Contributor has not yet read `docs/personas-install.md`**
 - **Given** a contributor arrives at `docs/personas-authoring.md` first, without prior context on `submit`
 - **When** they follow the cross-reference link
-- **Then** the link resolves correctly to the `### atcr personas submit <name>` subsection added by AC 05-01, giving them the full command syntax and error cases without needing to search the file manually
+- **Then** the link resolves to the `#atcr-personas-submit-name` heading anchor in `docs/personas-install.md`, which is the exact subsection added by AC 05-01, giving them the full command syntax and error cases without needing to search the file manually
 
 ## Error Conditions
 **Error Scenario 1: Cross-reference link is broken or targets the wrong anchor**

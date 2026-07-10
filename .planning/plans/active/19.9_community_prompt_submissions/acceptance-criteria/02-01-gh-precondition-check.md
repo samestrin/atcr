@@ -6,14 +6,18 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Component Type | Go function (CLI precondition check) | `checkGHPrecondition(ctx context.Context) error` invoked at the top of `newPersonasSubmitCmd`'s `RunE`, before any fork/branch/commit call |
-| Test Framework | `go test` + `testify` (`require`/`assert`) | Matches existing `cmd/atcr/personas_test.go` and `internal/personas/*_test.go` conventions |
+| Test Framework | Go `testing` package | Matches existing `cmd/atcr/personas_test.go` and `internal/personas/*_test.go` conventions; testify is not used in this codebase |
 | Key Dependencies | `github.com/cli/go-gh/v2` (`gh.Path()`, `gh.ExecContext`), `github.com/spf13/cobra` | `go-gh/v2` is a new module dependency (not yet in `go.mod`); no custom OAuth/token logic is introduced |
 
-## Related Files
-- `cmd/atcr/personas.go` - modify: add `newPersonasSubmitCmd()` whose `RunE` calls the precondition check first, before fork/branch/PR work, halting on failure
-- `internal/personas/submit.go` - create: `checkGHPrecondition(ctx context.Context) error`, implementing the `gh.Path()` + `gh auth status` check documented in `documentation/gh-fork-pr-integration.md`
-- `cmd/atcr/personas_test.go` - modify: add test coverage asserting the precondition check runs before the fork seam is invoked
-- `skill/SKILL.md` - reference only: source of the "verify binary/tool available, halt with actionable message" precondition pattern (line 18) this check mirrors
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/personas.go` (modify) — add `newPersonasSubmitCmd()` whose `RunE` calls the precondition check first, before fork/branch/PR work, halting on failure
+- `internal/personas/submit.go` (create) — `checkGHPrecondition(ctx context.Context) error`, implementing the `gh.Path()` + `gh auth status` check documented in `documentation/gh-fork-pr-integration.md`
+- `cmd/atcr/personas_test.go` (modify) — add test coverage asserting the precondition check runs before the fork seam is invoked
+- `skill/SKILL.md` (reference only) — source of the "verify binary/tool available, halt with actionable message" precondition pattern (line 18) this check mirrors
+
+## Design References
+- [GitHub Fork + PR Integration via go-gh](../documentation/gh-fork-pr-integration.md) — the `gh.Path()`, `gh.ExecContext`, and precondition-check pattern `submit` must mirror
+- [Cobra Subcommand & Injectable-Seam Conventions](../documentation/cobra-subcommand-patterns.md) — where `newPersonasSubmitCmd()` registers and how the injectable seam for testing replaces the real `gh` implementation
 
 ## Happy Path Scenarios
 **Scenario 1: `gh` on PATH and authenticated**

@@ -6,13 +6,16 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Component Type | Cobra CLI subcommand (`RunE`) | `newPersonasSubmitCmd()` in cmd/atcr/personas.go |
-| Test Framework | Go `testing` + `testify` | Stub `commpersonas.FixtureRunner` via `withFixtureRunner`; `executeSplit` for stdout/stderr separation |
+| Test Framework | Go `testing` package | Stub `commpersonas.FixtureRunner` via `withFixtureRunner`; `executeSplit` for stdout/stderr separation; testify is not used in this codebase |
 | Key Dependencies | `internal/personas.TestPersona`, `internal/personas.FixtureOutcome{Passed, Total}` | Reused verbatim; no reimplementation of pass/fail logic |
 
-## Related Files
-- `cmd/atcr/personas.go` - modify: `newPersonasSubmitCmd()`'s `RunE` evaluates `outcome.Passed != outcome.Total` as the blocking condition (after the `!outcome.HasFixture` check in AC 01-02) and, on a full pass, proceeds to a stubbed/no-op continuation point reserved for Theme 2's fork/PR call (per Implementation Notes in the user story)
-- `internal/personas/test.go` - reference only (no change): `FixtureOutcome{Passed, Total}` (line 14-18), `TestPersona` (line 195)
-- `cmd/atcr/personas_test.go` - modify: add `TestPersonasSubmit_FixtureFails` and `TestPersonasSubmit_FixturePasses` using `stubFixtureRunner` and `executeSplit`, mirroring `TestPersonasTest_FailExitsNonZero` (personas_test.go:648-657) and `TestPersonasTest_Pass` (personas_test.go:638-646)
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/personas.go` (modify) — `newPersonasSubmitCmd()`'s `RunE` evaluates `outcome.Passed != outcome.Total` as the blocking condition (after the `!outcome.HasFixture` check in AC 01-02) and, on a full pass, proceeds to a stubbed/no-op continuation point reserved for Theme 2's fork/PR call (per Implementation Notes in the user story)
+- `internal/personas/test.go` (reference only) — `FixtureOutcome{Passed, Total}` (lines 14-18), `TestPersona` (line 195)
+- `cmd/atcr/personas_test.go` (modify) — add `TestPersonasSubmit_FixtureFails` and `TestPersonasSubmit_FixturePasses` using `stubFixtureRunner` and `executeSplit`, mirroring `TestPersonasTest_FailExitsNonZero` (personas_test.go:648-657) and `TestPersonasTest_Pass` (personas_test.go:638-646)
+
+## Design References
+- [Local Fixture-Gate Reuse (TestPersona)](../documentation/fixture-gate-reuse.md) — the `TestPersona`/`FixtureOutcome` contract and the zero-network, zero-LLM gate `submit` must run before any GitHub call
 
 ## Happy Path Scenarios
 **Scenario 1: Fully passing fixture proceeds past the local gate**

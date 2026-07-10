@@ -6,13 +6,16 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Component Type | Cobra CLI subcommand (`RunE`) | `newPersonasSubmitCmd()` in cmd/atcr/personas.go |
-| Test Framework | Go `testing` + `testify` | Stub `commpersonas.FixtureRunner` via `withFixtureRunner` helper (cmd/atcr/personas_test.go:631) |
+| Test Framework | Go `testing` package | Stub `commpersonas.FixtureRunner` via `withFixtureRunner` helper (cmd/atcr/personas_test.go:631); testify is not used in this codebase |
 | Key Dependencies | `internal/personas.TestPersona` (test.go:195), `internal/personas.FixtureOutcome` (test.go:14) | Reused verbatim; no new fixture logic |
 
-## Related Files
-- `cmd/atcr/personas.go` - modify: `newPersonasSubmitCmd()`'s `RunE` calls `commpersonas.TestPersona(name, personasFixtureRunner)` and checks `!outcome.HasFixture` as an explicit blocking branch (distinct wording from `personas test`'s informational "No fixture defined for persona %q" at personas.go:314)
-- `internal/personas/test.go` - reference only (no change): `TestPersona` (line 195) and `FixtureOutcome.HasFixture` (line 15); `TemplateFixtureRunner.RunFixture` (line 38) is the concrete runner that yields `HasFixture: false` for a persona with no committed fixture (e.g. test.go:43, test.go:69, test.go:81, test.go:102)
-- `cmd/atcr/personas_test.go` - modify: add `TestPersonasSubmit_NoFixture` using `stubFixtureRunner{personas.FixtureOutcome{HasFixture: false}}` (pattern at line 662) and `executeSplit`
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/personas.go` (modify) — `newPersonasSubmitCmd()`'s `RunE` calls `commpersonas.TestPersona(name, personasFixtureRunner)` and checks `!outcome.HasFixture` as an explicit blocking branch (distinct wording from `personas test`'s informational "No fixture defined for persona %q" at personas.go:314)
+- `internal/personas/test.go` (reference only) — `TestPersona` (line 195) and `FixtureOutcome.HasFixture` (line 15); `TemplateFixtureRunner.RunFixture` (line 38) is the concrete runner that yields `HasFixture: false` for a persona with no committed fixture (e.g. test.go:43, test.go:69, test.go:81, test.go:102)
+- `cmd/atcr/personas_test.go` (modify) — add `TestPersonasSubmit_NoFixture` using `stubFixtureRunner{personas.FixtureOutcome{HasFixture: false}}` (pattern at line 662) and `executeSplit`
+
+## Design References
+- [Local Fixture-Gate Reuse (TestPersona)](../documentation/fixture-gate-reuse.md) — the existing `TestPersona`/`TemplateFixtureRunner` gate `submit` must reuse and the submission-specific "no fixture" error wording rationale
 
 ## Happy Path Scenarios
 **Scenario 1: Persona with a defined, passing fixture is not blocked by this AC's check**

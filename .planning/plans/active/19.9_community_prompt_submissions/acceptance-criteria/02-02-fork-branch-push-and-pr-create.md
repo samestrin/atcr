@@ -6,14 +6,18 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Component Type | Go function/seam (`personasGitHub.Submit` or equivalent) invoked from `newPersonasSubmitCmd` | Sequences `gh repo fork` → branch/push → `gh pr create`, each exactly once per invocation |
-| Test Framework | `go test` + `testify` | Stubbed seam records call order/count; no live `gh` process or network call in tests |
+| Test Framework | Go `testing` package | Stubbed seam records call order/count; no live `gh` process or network call in tests; testify is not used in this codebase |
 | Key Dependencies | `github.com/cli/go-gh/v2` (`gh.ExecContext`), `pkg/repository` (`Parse`/`Current`) for validating the `samestrin/atcr` target | `pkg/repository.Parse("samestrin/atcr")` runs before the fork call to confirm the reference is well-formed |
 
-## Related Files
-- `internal/personas/submit.go` - create: fork/branch-push/PR-create sequencing logic, fork-already-exists detection, PR URL extraction and return to the caller
-- `cmd/atcr/personas.go` - modify: `newPersonasSubmitCmd()` calls the submit sequence only after `commpersonas.TestPersona` passes and the AC 02-01 precondition check succeeds, then prints the returned PR URL to stdout
-- `internal/personas/submit_test.go` - create: unit tests asserting fork/branch/PR call order, exactly-once invocation, and PR URL propagation via a stubbed seam
-- `documentation/gh-fork-pr-integration.md` - reference only: source for `gh repo fork`, branch/push, and `gh pr create` sequencing via `gh.ExecContext`
+### Related Files (from codebase-discovery.json)
+- `internal/personas/submit.go` (create) — fork/branch-push/PR-create sequencing logic, fork-already-exists detection, PR URL extraction and return to the caller
+- `cmd/atcr/personas.go` (modify) — `newPersonasSubmitCmd()` calls the submit sequence only after `commpersonas.TestPersona` passes and the AC 02-01 precondition check succeeds, then prints the returned PR URL to stdout
+- `internal/personas/submit_test.go` (create) — unit tests asserting fork/branch/PR call order, exactly-once invocation, and PR URL propagation via a stubbed seam
+- `documentation/gh-fork-pr-integration.md` (reference only) — source for `gh repo fork`, branch/push, and `gh pr create` sequencing via `gh.ExecContext`
+
+## Design References
+- [GitHub Fork + PR Integration via go-gh](../documentation/gh-fork-pr-integration.md) — the `gh repo fork`, branch/push, and `gh pr create` sequence and the "fork already exists" handling
+- [Cobra Subcommand & Injectable-Seam Conventions](../documentation/cobra-subcommand-patterns.md) — the injectable-seam pattern that lets tests stub the `gh` integration without real network calls
 
 ## Happy Path Scenarios
 **Scenario 1: No existing fork — full fork, branch, push, PR-create sequence**
