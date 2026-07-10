@@ -78,6 +78,30 @@ func TestSubmit_ExactlyOnce(t *testing.T) {
 	assert.Equal(t, 1, counts["pr"])
 }
 
+// TestSubmit_InvalidNameShortCircuits is the defense-in-depth guard (2.2.A): even
+// though the command runs SubmitGate first, the orchestrator re-validates the name
+// before any GitHub interaction, so an invalid name never reaches the seam.
+func TestSubmit_InvalidNameShortCircuits(t *testing.T) {
+	s := &stubSubmitter{}
+
+	_, err := Submit(context.Background(), s, "/tmp/personas", "../../etc/passwd")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid persona name")
+	assert.Empty(t, s.calls, "an invalid name reaches neither precondition nor fork")
+}
+
+// TestSubmit_EmptyPRURLIsError covers the 2.2.A empty-response guard: a seam that
+// returns exit-0 with no URL must surface an error, not a silent success that
+// prints a blank stdout line.
+func TestSubmit_EmptyPRURLIsError(t *testing.T) {
+	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prURL: "   "}
+
+	url, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	require.Error(t, err)
+	assert.Empty(t, url)
+	assert.Contains(t, err.Error(), "no URL")
+}
+
 // TestSubmit_PreconditionShortCircuits covers AC 02-01: a failed precondition
 // halts before any fork/branch/PR call.
 func TestSubmit_PreconditionShortCircuits(t *testing.T) {

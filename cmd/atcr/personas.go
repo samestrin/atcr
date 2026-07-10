@@ -145,7 +145,7 @@ var personasSubmitContinuation = func(cmd *cobra.Command, name string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), url)
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), url)
 	return nil
 }
 

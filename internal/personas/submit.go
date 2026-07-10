@@ -57,6 +57,11 @@ type GitHubSubmitter interface {
 // local gate work (SubmitGate's job) and writes no `submitted` marker (Phase 3).
 // The returned string is the PR URL.
 func Submit(ctx context.Context, gh GitHubSubmitter, personasDir, name string) (string, error) {
+	// Defense in depth: never trust the caller's gate. Re-validate the name
+	// before it can reach a branch ref, a file path, or any gh argument.
+	if err := validatePersonaName(name); err != nil {
+		return "", err
+	}
 	if err := gh.CheckPrecondition(ctx); err != nil {
 		return "", err
 	}
@@ -81,6 +86,9 @@ func Submit(ctx context.Context, gh GitHubSubmitter, personasDir, name string) (
 	})
 	if err != nil {
 		return "", fmt.Errorf("branch pushed to fork, but PR creation failed: %w; retry with 'gh pr create' or re-run 'atcr personas submit %s'", err, name)
+	}
+	if strings.TrimSpace(url) == "" {
+		return "", fmt.Errorf("PR reported created but gh returned no URL; verify at https://github.com/%s/pulls", canonicalRepo)
 	}
 	return url, nil
 }
@@ -168,7 +176,7 @@ func (ghSubmitter) Fork(ctx context.Context, repo string) error {
 		if forkAlreadyExists(stderr.String()) {
 			return nil // reusing an existing fork is expected
 		}
-		return fmt.Errorf("%s", strings.TrimSpace(stderr.String()))
+		return ghError(err, stderr.String())
 	}
 	return nil
 }
@@ -200,7 +208,9 @@ func (ghSubmitter) PushBranch(ctx context.Context, branch, personasDir, name str
 	if err := runGit(ctx, workDir, "commit", "-m", "Submit community persona: "+name); err != nil {
 		return "", err
 	}
-	if err := runGit(ctx, workDir, "push", "--force", "origin", branch); err != nil {
+	// --force-with-lease (not --force): a re-submission updates the branch but
+	// refuses to clobber commits the user pushed to their own PR branch since.
+	if err := runGit(ctx, workDir, "push", "--force-with-lease", "origin", branch); err != nil {
 		return "", err
 	}
 	return owner + ":" + branch, nil
@@ -216,7 +226,7 @@ func (ghSubmitter) CreatePR(ctx context.Context, req PRRequest) (string, error) 
 		if url := existingPRURL(stderr.String()); url != "" {
 			return url, nil // a PR already exists for this branch (re-submission)
 		}
-		return "", fmt.Errorf("%s", strings.TrimSpace(stderr.String()))
+		return "", ghError(err, stderr.String())
 	}
 	return strings.TrimSpace(stdout.String()), nil
 }
@@ -226,9 +236,20 @@ func (ghSubmitter) CreatePR(ctx context.Context, req PRRequest) (string, error) 
 func currentGHUser(ctx context.Context) (string, error) {
 	stdout, stderr, err := gh.ExecContext(ctx, "api", "user", "--jq", ".login")
 	if err != nil {
-		return "", fmt.Errorf("could not resolve gh user: %s", strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("could not resolve gh user: %w", ghError(err, stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// ghError builds a single error from a gh/git failure that preserves BOTH the
+// underlying error (so a context timeout is detectable with errors.Is and never
+// surfaces as a blank message when the killed process left no stderr) and the
+// captured stderr text (redacted by gh itself). stderr is elided when empty.
+func ghError(err error, stderr string) error {
+	if s := strings.TrimSpace(stderr); s != "" {
+		return fmt.Errorf("%w: %s", err, s)
+	}
+	return err
 }
 
 // copyPersonaUnit resolves the persona unit under personasDir and writes it into
@@ -260,7 +281,7 @@ func runGit(ctx context.Context, dir string, args ...string) error {
 	var stderr bytes.Buffer
 	c.Stderr = &stderr
 	if err := c.Run(); err != nil {
-		return fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("git %s: %w", strings.Join(args, " "), ghError(err, stderr.String()))
 	}
 	return nil
 }
