@@ -55,6 +55,9 @@ jobs:
   auto-merge:
     name: Auto-merge mechanical slug bump
     runs-on: ubuntu-latest
+    # Bound worst-case runtime: a hung `gh` call or network stall must not leave
+    # the runner spinning indefinitely. The job is a handful of API calls.
+    timeout-minutes: 10
     # OPT-IN GATE (fail-closed): the entire job is inert unless a maintainer has
     # explicitly set the repository variable HERMES_AUTO_MERGE_ENABLED to 'true'.
     # Unset/any-other-value => the job is skipped entirely.
