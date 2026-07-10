@@ -35,10 +35,14 @@ on:
     types: [completed]
 
 # Minimum scope: merge the one PR (contents) and read/label it (pull-requests).
-# Deliberately NO `checks: write`, NO `actions: write`.
+# `checks: read` lets the gate step query check-runs via `gh api`; when a
+# permissions block is declared, every unlisted scope defaults to `none`, so
+# the check-runs read would 403 without it. Deliberately NO `checks: write`,
+# NO `actions: write`.
 permissions:
   contents: write
   pull-requests: write
+  checks: read
 
 # One evaluation per PR at a time, keyed on the PR number for BOTH event shapes
 # so a pull_request run and a check_suite run for the same PR never race; a newer
