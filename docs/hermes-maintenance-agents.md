@@ -134,7 +134,52 @@ The job configuration itself lives on the hermes host, not in the atcr repo.
 
 ## Judgment Classification Rule
 
-_To be completed by Task 05._
+The judgment agent reads `atcr models check --json` output and classifies each
+drift finding as **minor** (route to the mechanical slug-bump PR) or **major**
+(open a re-tune task for the drafting agent). The classification is grounded in
+the `DriftFinding.Condition` constants defined in `internal/personas/drift.go`
+(the same stable `condition` strings emitted in the `--json` output) — switch on
+these values, never on free text:
+
+| `condition` (constant) | Value | Class | Route |
+|------------------------|-------|-------|-------|
+| `ConditionNewerMember` | `newer-member` | minor | Mechanical slug-bump PR (carries `SuggestedSlug`). |
+| `ConditionDeprecation` | `deprecation` | major | Re-tune task (carries `ExpirationDate`; no `SuggestedSlug`). |
+| `ConditionMissing` | `missing` | minor by default (see escalation) | Mechanical slug-bump PR — unless escalated below. |
+
+**Co-occurrence escalation ("same persona, same run").** Group findings by
+`DriftFinding.Persona` within a single `atcr models check --json` invocation. If a
+persona has a `missing` finding **and** a `deprecation` finding in the same run,
+escalate the `missing` to **major** (re-tune) rather than routing it as minor —
+the missing slug and the deprecation are the same underlying event, not two
+independent conditions, so the judgment agent must not slug-bump a slug that is
+simultaneously deprecating. This is a conservative safeguard: `CheckDrift`
+currently emits a `missing` finding only when the locked slug is absent from the
+catalog (and then checks no deprecation for that persona in the same run), so the
+default minor route for `missing` is taken only when no `deprecation` accompanies
+it — the escalation rule keeps the judgment agent correct even if a future run
+surfaces both for one persona.
+
+**Re-tune task payload** (the input contract consumed by the [Drafting Agent
+Contract](#drafting-agent-contract)):
+
+| Field | Source |
+|-------|--------|
+| `persona` | `DriftFinding.Persona` |
+| `old` (current model) | `DriftFinding.CurrentSlug` |
+| `new` (target model) | `DriftFinding.SuggestedSlug` when present; otherwise the literal string `none suggested — requires manual selection` (deprecation/missing findings carry no `SuggestedSlug`, so a slug must never be fabricated). |
+| `vendor_guide_url` | Parsed from the persona `.md`'s `<!-- vendor-guidance: <description>, <url> -->` HTML-comment preamble. The marker format is test-enforced by `personas/community_test.go`'s `vendorGuidanceRe` (`<!--\s*vendor-guidance:\s*(\S.*?)\s*-->`); the captured value is `<description>, <url>` and the agent extracts the URL from it. |
+
+**Trigger.** The judgment agent fires off the `atcr models check --json` output
+rendered by `renderDriftJSON` (`cmd/atcr/models.go`). A non-empty findings set
+exits the command with code `1` (`driftFoundError.ExitCode()` → `exitFailure`),
+which is the cron script's signal that drift was found and classification should
+run; a clean check exits `0` and the agent does nothing.
+
+**Judgment agents.** This classification runs on `brian` (`glm-5.1`) or `cole`
+(`kimi-k2.7-code`) per the [Role → Agent Configuration](#role--agent-configuration)
+table. It is light classification logic implementable entirely hermes-side — it
+requires **no atcr-repo code changes**.
 
 ## Drafting Agent Contract
 
