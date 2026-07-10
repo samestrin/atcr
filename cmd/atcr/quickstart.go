@@ -248,7 +248,7 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 		_, _ = fmt.Fprintf(o.errOut, "Refusing to write the key into an atcr-owned file (%s) — choose a shell profile like ~/.zshrc instead.\n", profile)
 		return nil
 	}
-	if err := appendExport(profile, env, key); err != nil {
+	if err := appendExport(profile, env, key, o.errOut); err != nil {
 		_, _ = fmt.Fprintf(o.errOut, "could not append to %s: %v\n", profile, err)
 		return nil
 	}
@@ -296,7 +296,7 @@ func expandHome(path string) (string, error) {
 // a leading ~/ and creating the file if absent. This is the one place the key
 // value touches disk, and only into a file the user explicitly named — never a
 // file atcr owns.
-func appendExport(profile, env, key string) error {
+func appendExport(profile, env, key string, errOut io.Writer) error {
 	profile, err := expandHome(profile)
 	if err != nil {
 		return err

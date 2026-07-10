@@ -590,7 +590,7 @@ func TestQuickstart_AppendExportAndGuardResolveSamePath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	profile := "~/.atcr-test-profile"
-	require.NoError(t, appendExport(profile, "TEST_KEY", "secret"))
+	require.NoError(t, appendExport(profile, "TEST_KEY", "secret", &bytes.Buffer{}))
 	expected := resolveProfilePath(profile)
 	assert.FileExists(t, expected)
 	assert.Equal(t, filepath.Join(home, ".atcr-test-profile"), expected)
@@ -602,7 +602,7 @@ func TestQuickstart_AppendExport_PreservesExistingProfileMode(t *testing.T) {
 	profile := filepath.Join(home, ".zshrc")
 	require.NoError(t, os.WriteFile(profile, []byte("# existing profile\n"), 0o644))
 
-	require.NoError(t, appendExport(profile, "TEST_KEY", "secret"))
+	require.NoError(t, appendExport(profile, "TEST_KEY", "secret", &bytes.Buffer{}))
 
 	info, err := os.Stat(profile)
 	require.NoError(t, err)
@@ -615,10 +615,40 @@ func TestQuickstart_AppendExport_CreatesNewProfileAt0600(t *testing.T) {
 	t.Setenv("HOME", home)
 	profile := filepath.Join(home, ".new-profile")
 
-	require.NoError(t, appendExport(profile, "TEST_KEY", "secret"))
+	require.NoError(t, appendExport(profile, "TEST_KEY", "secret", &bytes.Buffer{}))
 
 	info, err := os.Stat(profile)
 	require.NoError(t, err)
 	assert.Equal(t, fs.FileMode(0o600), info.Mode().Perm(),
 		"a profile appendExport creates holds a secret, so it must be restricted to 0600")
+}
+
+// TestQuickstart_AppendExport_WarnsOnGroupReadableExistingProfile: when the user
+// names a pre-existing shell profile, appendExport still leaves its mode untouched
+// (the ownership boundary at quickstart.go:304-307), but must WARN when that file is
+// group/other-readable so the user knows the plaintext key was appended to a file
+// other users can read. A profile already at 0600 is safe and draws no warning.
+func TestQuickstart_AppendExport_WarnsOnGroupReadableExistingProfile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	t.Run("group-readable existing profile warns, mode untouched", func(t *testing.T) {
+		profile := filepath.Join(home, ".zshrc")
+		require.NoError(t, os.WriteFile(profile, []byte("# existing\n"), 0o644))
+		var warn bytes.Buffer
+		require.NoError(t, appendExport(profile, "TEST_KEY", "secret", &warn))
+		info, err := os.Stat(profile)
+		require.NoError(t, err)
+		assert.Equal(t, fs.FileMode(0o644), info.Mode().Perm(), "mode left untouched")
+		assert.Contains(t, warn.String(), "group/other-readable",
+			"warns that the key sink is group/other-readable")
+	})
+
+	t.Run("already-0600 existing profile does not warn", func(t *testing.T) {
+		profile := filepath.Join(home, ".bashrc")
+		require.NoError(t, os.WriteFile(profile, []byte("# existing\n"), 0o600))
+		var warn bytes.Buffer
+		require.NoError(t, appendExport(profile, "TEST_KEY", "secret", &warn))
+		assert.Empty(t, warn.String(), "a 0600 profile is already safe — no warning")
+	})
 }
