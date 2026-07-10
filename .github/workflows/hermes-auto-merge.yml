@@ -105,8 +105,16 @@ jobs:
           # Changed files and labels are read via the API as data (never
           # interpolated into the shell), so a crafted PR title/branch/label
           # cannot inject shell here.
-          files_json="$(gh pr view "$PR_NUMBER" -R "$REPO" --json files)"
-          labels="$(gh pr view "$PR_NUMBER" -R "$REPO" --json labels --jq '.labels[].name')"
+          if ! files_json="$(gh pr view "$PR_NUMBER" -R "$REPO" --json files)"; then
+            echo "PR no longer accessible — no-op."
+            echo "match=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! labels="$(gh pr view "$PR_NUMBER" -R "$REPO" --json labels --jq '.labels[].name')"; then
+            echo "PR no longer accessible — no-op."
+            echo "match=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           if [ -z "$(jq -j '.files[].path' <<< "$files_json")" ]; then
             echo "PR touches no files — no-op."
