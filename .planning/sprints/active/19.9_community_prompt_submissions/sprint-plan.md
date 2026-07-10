@@ -386,7 +386,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    3. Verify tests fail correctly.
    **Files:** `tests` | **Duration:** 0.5d
 
-### 3.2 [ ] **[`submitted` marker — GREEN](plan/user-stories/03-submitted-status-distinct-from-source.md)**
+### 3.2 [x] **[`submitted` marker — GREEN](plan/user-stories/03-submitted-status-distinct-from-source.md)**
    Minimal code to pass:
    - New submission-scoped struct/marker (e.g. `SubmissionStatus`) carrying submitter identity, source persona name, timestamp, fixture-pass flag — **not** a field on `PersonaMeta`.
    - Marker path constant lives outside the vetted `personas/community/` tree.
@@ -396,7 +396,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    Verify all pass (T2), COMMIT: `git commit -m "feat(personas): add submitted status marker (green)"`
    **Files:** `impl` | **Duration:** 0.75d
 
-### 3.2.A [ ] **[`submitted` marker — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-submitted-status-distinct-from-source.md)**
+### 3.2.A [x] **[`submitted` marker — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-submitted-status-distinct-from-source.md)**
    **Changed Files:** [LIST FILES MODIFIED IN 3.2]
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the 3.2 implementation. Do NOT review inline.
@@ -415,16 +415,12 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (no CRITICAL/HIGH):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | internal/personas/submissions.go:63 | `WriteSubmissionMarker` guards the leaf via `writeFileAtomic`'s `Lstat`, but for a namespaced name it `os.MkdirAll`s an *intermediate* dir without the `refuseSymlinkedIntermediate` guard the sibling install path (`writePersonaUnit`) applies — a pre-planted symlink at `submissions/<ns>/` could redirect the write, potentially into `personas/community/`. Limited exploitability (local `~/.config`, user-local name), but inconsistent with the install path and undercuts AC 03-03's "never resolves under community tree" guarantee. | **Fixed inline in 3.3** — call `refuseSymlinkedIntermediate(dest, status.Persona)` before `MkdirAll`; regression test `TestWriteSubmissionMarker_RefusesSymlinkedIntermediate` added. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 3.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action Required:** No CRITICAL/HIGH — proceed. The single LOW (symlinked-intermediate gap) is a cheap, AC-03-03-reinforcing security-consistency fix reusing an existing helper, so it is fixed inline in 3.3 rather than deferred. Adversarial review passed.
 
 ### 3.3 [ ] **[`submitted` marker — REFACTOR](plan/user-stories/03-submitted-status-distinct-from-source.md)**
    1. Fix CRITICAL/HIGH issues from 3.2.A (if any).

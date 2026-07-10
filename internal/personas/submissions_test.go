@@ -130,6 +130,25 @@ func TestWriteSubmissionMarker_RefusesSymlink(t *testing.T) {
 	assert.Equal(t, "pre-existing\n", string(data), "no data written through the symlink")
 }
 
+// TestWriteSubmissionMarker_RefusesSymlinkedIntermediate covers the 3.2.A LOW fix:
+// for a namespaced name, a symlink pre-planted at an INTERMEDIATE directory
+// component is refused (mirroring writePersonaUnit), so the marker write cannot be
+// redirected outside the storage dir even though the leaf Lstat alone would not
+// catch it.
+func TestWriteSubmissionMarker_RefusesSymlinkedIntermediate(t *testing.T) {
+	dir := t.TempDir()
+	elsewhere := t.TempDir()
+	// Plant a symlink at the intermediate "team" component the namespaced name needs.
+	require.NoError(t, os.Symlink(elsewhere, filepath.Join(dir, "team")))
+
+	err := WriteSubmissionMarker(dir, SubmissionStatus{Persona: "team/reviewer", Submitter: "octocat", FixturePassed: true, SubmittedAt: time.Now().UTC()})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "symlinked path component")
+	// Nothing was written through the symlink into the outside directory.
+	_, statErr := os.Stat(filepath.Join(elsewhere, "reviewer.yaml"))
+	assert.True(t, os.IsNotExist(statErr), "no marker written through the intermediate symlink")
+}
+
 // TestWriteSubmissionMarker_ResubmitOverwrites covers AC 03-02 Edge Case 2: a
 // re-submission atomically replaces the prior marker with a refreshed timestamp.
 func TestWriteSubmissionMarker_ResubmitOverwrites(t *testing.T) {

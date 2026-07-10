@@ -60,6 +60,13 @@ func WriteSubmissionMarker(dir string, status SubmissionStatus) error {
 	if err != nil {
 		return fmt.Errorf("encoding submission marker for %q: %w", status.Persona, err)
 	}
+	// A namespaced name creates intermediate directories under dir. Refuse to write
+	// through a pre-planted symlink at any intermediate component (mirroring
+	// writePersonaUnit) so the marker can never be redirected outside the storage
+	// dir — the leaf file is separately guarded by writeFileAtomic's own Lstat check.
+	if err := refuseSymlinkedIntermediate(dest, status.Persona); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 		return fmt.Errorf("creating submissions directory: %w", err)
 	}
