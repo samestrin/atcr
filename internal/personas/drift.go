@@ -184,9 +184,20 @@ func deriveFamilyPrefix(slug string) string {
 		vendor = s[:i+1]
 		rest = s[i+1:]
 	}
+	// Strip the version segment wherever it sits, not only when it is last: a tiered
+	// slug carries its version mid-string (openai/gpt-5.4-mini → gpt / 5.4 / mini),
+	// so a last-segment-only check leaves it deriving to itself and never grouping
+	// with a newer sibling. Scan right-to-left for the first versionSegRe match
+	// (mirroring versionFromSlug's Pass-1) and remove exactly that one segment; the
+	// len>1 guard keeps a lone segment intact.
 	segs := strings.Split(rest, "-")
-	if len(segs) > 1 && versionSegRe.MatchString(segs[len(segs)-1]) {
-		segs = segs[:len(segs)-1]
+	if len(segs) > 1 {
+		for i := len(segs) - 1; i >= 0; i-- {
+			if versionSegRe.MatchString(segs[i]) {
+				segs = append(segs[:i], segs[i+1:]...)
+				break
+			}
+		}
 	}
 	return vendor + strings.Join(segs, "-")
 }
