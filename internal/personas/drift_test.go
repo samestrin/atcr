@@ -160,3 +160,16 @@ func TestDeriveFamilyPrefix_NonTrailingVersionSegment(t *testing.T) {
 		assert.Equal(t, c.want, deriveFamilyPrefix(c.slug), "deriveFamilyPrefix(%q)", c.slug)
 	}
 }
+
+// TestCheckDrift_AliasSlugAbsentFromCatalog_NoFalseMissing: an alias-bound persona
+// locks to a synthetic ~vendor/…-latest slug that the provider resolves server-side.
+// A refreshed catalog snapshot need not list that id, so an alias lock absent from
+// the catalog must NOT be reported `missing` (it stays resolvable) — unlike a
+// genuine concrete slug that vanished (TD-005).
+func TestCheckDrift_AliasSlugAbsentFromCatalog_NoFalseMissing(t *testing.T) {
+	f := CheckDrift(
+		[]InstalledLock{{Name: "p", Model: "~anthropic/claude-opus-latest"}},
+		[]CatalogModel{{ID: "anthropic/claude-opus-4.8", Created: 100}},
+	)
+	assert.Empty(t, f, "an alias slug absent from the catalog is not a false missing")
+}
