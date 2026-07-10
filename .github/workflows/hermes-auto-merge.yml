@@ -54,7 +54,7 @@ jobs:
     # OPT-IN GATE (fail-closed): the entire job is inert unless a maintainer has
     # explicitly set the repository variable HERMES_AUTO_MERGE_ENABLED to 'true'.
     # Unset/any-other-value => the job is skipped entirely.
-    if: vars.HERMES_AUTO_MERGE_ENABLED == 'true'
+    if: vars.HERMES_AUTO_MERGE_ENABLED == 'true' && (github.event_name != 'check_suite' || github.event.check_suite.pull_requests[0] != null)
     steps:
       - name: Resolve target PR and pin its head SHA
         id: pr
