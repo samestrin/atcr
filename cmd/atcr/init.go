@@ -115,19 +115,27 @@ func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir s
 	if len(entries) == 0 {
 		return fmt.Errorf("community persona index is empty: no personas to install%s", offlineHint)
 	}
+	// Pre-filter index entries whose name fails persona-name validation (empty or
+	// containing characters outside [a-zA-Z0-9_/-]): skip-with-warning here so one
+	// malformed index entry does not reach InstallUnit->validatePersonaName and trip
+	// the all-or-nothing rollback that would abort init/quickstart for every user.
+	// This is distinct from the AC-07-03 rollback on genuine per-unit INSTALL failures.
 	indexed := make(map[string]struct{}, len(entries))
+	indexOrder := make([]string, 0, len(entries))
 	for _, e := range entries {
+		if !commpersonas.ValidName(e.Name) {
+			_, _ = fmt.Fprintf(errOut, "persona %q from the community index has an invalid name — skipping\n", e.Name)
+			continue
+		}
 		indexed[e.Name] = struct{}{}
+		indexOrder = append(indexOrder, e.Name)
 	}
 
 	// Option B reconciliation: a nil roster means "install what the index
-	// publishes." Derive it from the already-fetched entries (no extra network
-	// round-trip), preserving index order so the install is deterministic.
+	// publishes." Derive it from the validated, already-fetched entries (no extra
+	// network round-trip), preserving index order so the install is deterministic.
 	if roster == nil {
-		roster = make([]string, 0, len(entries))
-		for _, e := range entries {
-			roster = append(roster, e.Name)
-		}
+		roster = indexOrder
 	}
 
 	// Track every unit file this run might create so a failure rolls back exactly
