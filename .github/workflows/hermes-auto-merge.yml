@@ -58,7 +58,11 @@ jobs:
     # OPT-IN GATE (fail-closed): the entire job is inert unless a maintainer has
     # explicitly set the repository variable HERMES_AUTO_MERGE_ENABLED to 'true'.
     # Unset/any-other-value => the job is skipped entirely.
-    if: vars.HERMES_AUTO_MERGE_ENABLED == 'true' && (github.event_name != 'check_suite' || github.event.check_suite.pull_requests[0] != null)
+    # For check_suite events, only act on suites that (a) map to a PR and
+    # (b) concluded 'success' — a failed/cancelled/neutral suite has nothing to
+    # merge, so evaluating it just burns Actions minutes. The gate step still
+    # independently re-verifies 'Go Lint & Test' = success on the pinned SHA.
+    if: vars.HERMES_AUTO_MERGE_ENABLED == 'true' && (github.event_name != 'check_suite' || (github.event.check_suite.pull_requests[0] != null && github.event.check_suite.conclusion == 'success'))
     steps:
       - name: Resolve target PR and pin its head SHA
         id: pr
