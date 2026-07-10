@@ -87,7 +87,10 @@ identical gate a human contributor does.
   `personas/community/*.yaml` paths — the mechanical cron script must apply that
   label and restrict its diff accordingly (see [Provisioning](#provisioning)). A
   PR missing the label, or touching any other path (including a single `.md`), is
-  never auto-merged.
+  never auto-merged. Enabling `HERMES_AUTO_MERGE_ENABLED` does not retroactively
+  re-evaluate already-open mechanical PRs whose required `Go Lint & Test` check
+  already concluded before the flag was flipped; generate a fresh event by
+  re-applying the `hermes:mechanical` label or pushing an update to the PR.
 - **Judgment and drafting** automation is likewise **opt-in** — no role runs
   against a live PR target until the maintainer enables it.
 - **Prompt PRs always require explicit human approval** and never auto-merge,
