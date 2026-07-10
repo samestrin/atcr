@@ -330,12 +330,12 @@ No external specifications cleared the relevance threshold for this plan (see [p
 ## Final Phase: Validation
 
 ### Validation Checklist
-- [ ] All tests passing (T3): `go test ./...` green (unaffected — no Go code changed).
-- [ ] Coverage meets threshold (≥80% baseline unaffected).
-- [ ] Lint/format clean: `gofmt`/`golangci-lint` on touched files; YAML + Markdown well-formed.
-- [ ] Build succeeds: `go build ./cmd/atcr`.
-- [ ] `docs/hermes-maintenance-agents.md` complete — no unreplaced placeholder anchors.
-- [ ] `.github/workflows/hermes-auto-merge.yml` opt-in/off by default; filter fail-closed; no actor gating; permissions minimal.
+- [x] All tests passing (T3): `go test ./...` green (unaffected — no Go code changed).
+- [x] Coverage meets threshold (≥80% baseline unaffected). — 89.2% total.
+- [x] Lint/format clean: `gofmt`/`golangci-lint` on touched files; YAML + Markdown well-formed. — golangci-lint 0 issues; gofmt clean on touched files; hermes-auto-merge.yml valid YAML.
+- [x] Build succeeds: `go build ./cmd/atcr`.
+- [x] `docs/hermes-maintenance-agents.md` complete — no unreplaced placeholder anchors.
+- [x] `.github/workflows/hermes-auto-merge.yml` opt-in/off by default; filter fail-closed; no actor gating; permissions minimal.
 
 ### Optional: Targeted Mutation Testing
 MUTATION_TOOL = UNAVAILABLE for this repo's toolchain, and this sprint introduces no new Go code — **no mutation testing applies**. (If ever run: target only changed files; never full-codebase mutation, which can take hours.)

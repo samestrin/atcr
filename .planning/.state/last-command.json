@@ -1,9 +1,9 @@
 {
-  "skill": "finalize-sprint",
-  "args": "@.planning/sprints/active/19.7_live_model_resolution/",
-  "invocation": "/finalize-sprint @.planning/sprints/active/19.7_live_model_resolution/",
+  "skill": "sprint-complete",
+  "args": "@.planning/sprints/active/19.8_hermes_maintenance_agents",
+  "invocation": "/sprint-complete @.planning/sprints/active/19.8_hermes_maintenance_agents",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "7c559794-f0f9-44be-a55b-b3ef9ad6fe68",
-  "timestamp": "2026-07-10T02:07:59.696Z"
+  "session_id": "e545081f-9982-4afd-848b-4c8e68687439",
+  "timestamp": "2026-07-10T16:01:03.829Z"
 }
