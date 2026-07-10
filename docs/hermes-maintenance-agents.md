@@ -189,7 +189,7 @@ Contract](#drafting-agent-contract)):
 | `persona` | `DriftFinding.Persona` |
 | `old` (current model) | `DriftFinding.CurrentSlug` |
 | `new` (target model) | `DriftFinding.SuggestedSlug` when present; otherwise the literal string `none suggested — requires manual selection` (deprecation/missing findings carry no `SuggestedSlug`, so a slug must never be fabricated). |
-| `vendor_guide_url` | Parsed from the persona `.md`'s `<!-- vendor-guidance: <description>, <url> -->` HTML-comment preamble. The marker format is test-enforced by `personas/community_test.go`'s `vendorGuidanceRe` (`<!--\s*vendor-guidance:\s*(\S.*?)\s*-->`); the captured value is `<description>, <url>` and the agent extracts the URL from it. |
+| `vendor_guide_url` | Parsed from the persona `.md`'s `<!-- vendor-guidance: <description>, <url> -->` HTML-comment preamble. The marker format is test-enforced by `personas/community_test.go`'s `vendorGuidanceRe` (`(?m)<!--\s*vendor-guidance:\s*(\S.*?)\s*-->`); the captured value is `<description>, <url>` and the agent extracts the URL from it. |
 
 **Trigger.** The judgment agent fires off the `atcr models check --json` output
 rendered by `renderDriftJSON` (`cmd/atcr/models.go`). A non-empty findings set
@@ -220,7 +220,7 @@ selection` when absent), and `vendor_guide_url` (extracted from the persona's
 1. Read the target persona's `.md` file and parse its `<!-- vendor-guidance:
    <description>, <url> -->` preamble comment — the same marker the Judgment rule
    documents, test-enforced by `personas/community_test.go`'s `vendorGuidanceRe`
-   (a non-empty value is required; the convention is a free-text vendor/guide
+   (`(?m)<!--\s*vendor-guidance:\s*(\S.*?)\s*-->`); the convention is a free-text vendor/guide
    description followed by a URL, as in `personas/community/anthony.md:1`,
    `gene.md:1`, `celeste.md:1`).
 2. Fetch the current guide at the cited URL.
