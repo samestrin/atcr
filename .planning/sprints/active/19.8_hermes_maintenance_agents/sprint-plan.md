@@ -126,7 +126,7 @@ No external specifications cleared the relevance threshold for this plan (see [p
 **Duration:** 1 day
 **Focus:** Establish the two foundations everything else depends on — confirm the existing CI fixture gate is reachable/blocking for agent-authored PRs (Task 01, a re-verify + formal close of an already-completed zero-diff audit), and create `docs/hermes-maintenance-agents.md` with its full section skeleton (Task 03). No dependency between the two — they run independently.
 
-### 1.1 [ ] **🏗️ CI Fixture-Gate Confirmation for Agent-Authored PRs** ([task-01](plan/tasks/task-01-ci-fixture-gate-confirmation.md))
+### 1.1 [x] **🏗️ CI Fixture-Gate Confirmation for Agent-Authored PRs** ([task-01](plan/tasks/task-01-ci-fixture-gate-confirmation.md))
    **Task:** Re-verify and formally close that `.github/workflows/ci.yml` runs its `Go Lint & Test` job unconditionally on every `pull_request` (no `github.actor`/bot-exclusion condition anywhere), that `go test ./...` reaches `internal/personas/...` and `internal/registry/...` under the root `go.mod`, and that the fixture gate (`internal/personas/community_fixture_test.go`, `internal/registry/validate.go`'s `ValidateCommunityPersonaYAML`) is on the required CI path.
    **Priority:** P1 | **Effort:** S (0d — audit already performed, zero-diff)
    1. Read `.github/workflows/ci.yml` in full; confirm no actor/bot-based `if:` condition at workflow, job, or step level (event-type branching at ci.yml:60-64 is permitted — it keys on event type, not actor).
@@ -136,7 +136,7 @@ No external specifications cleared the relevance threshold for this plan (see [p
    **Success Criteria:** No actor-based exclusion in `ci.yml`; persona/registry coverage confirmed; branch-protection manual step handed to Task 03; `.github/workflows/ci.yml` left unmodified unless a real gap is found.
    **Files:** `.github/workflows/ci.yml` (audit only) | **Duration:** 0d (verify) | **AC:** AC1, AC4, AC5
 
-### 1.2 [ ] **🏗️ Configuration Surface Documentation Skeleton** ([task-03](plan/tasks/task-03-configuration-surface-docs.md))
+### 1.2 [x] **🏗️ Configuration Surface Documentation Skeleton** ([task-03](plan/tasks/task-03-configuration-surface-docs.md))
    **Task:** Create `docs/hermes-maintenance-agents.md` mirroring `docs/github-action.md`'s structure, with the configuration-surface content (Overview, Role→Agent Configuration table, Drafting Model Default & Fallback, Dry-Run/Preview Mode, Guardrail Contract) and three placeholder anchors (`## Provisioning`, `## Judgment Classification Rule`, `## Drafting Agent Contract`) for Tasks 04–06 to populate.
    **Priority:** P1 | **Effort:** M
    1. Read `docs/github-action.md` in full to match heading levels, table style, and the required-permissions/manual-verification callout pattern.
@@ -147,7 +147,7 @@ No external specifications cleared the relevance threshold for this plan (see [p
    **Success Criteria:** File created with all five content sections + three placeholder anchors; Role→Agent table matches SSH-confirmed assignments exactly; opt-in posture and dry-run behavior unambiguous; structure mirrors `docs/github-action.md`.
    **Files:** `docs/hermes-maintenance-agents.md` (create) | **Duration:** 1d | **AC:** AC4, AC5, AC6
 
-### 1.3 [ ] **Phase 1 — Definition of Done**
+### 1.3 [x] **Phase 1 — Definition of Done**
    1. Task 01 audit closed (no actor exclusion; branch-protection manual step recorded).
    2. `docs/hermes-maintenance-agents.md` exists with all sections + three placeholder anchors intact.
    3. T3: `go test ./...` still green (unaffected); touched files `gofmt`/markdown clean.

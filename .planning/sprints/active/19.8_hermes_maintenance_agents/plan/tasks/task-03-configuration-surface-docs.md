@@ -49,14 +49,14 @@ This task directly contributes to the following acceptance criteria from `origin
 - `action.yml`
 
 ## Success Criteria
-- [ ] `docs/hermes-maintenance-agents.md` created with Overview, Role→Agent Configuration table, Drafting Model Default & Fallback, Dry-Run/Preview Mode, and Guardrail Contract sections
-- [ ] Section anchors present (with clear placeholder text) for `## Provisioning`, `## Judgment Classification Rule`, `## Drafting Agent Contract` — to be filled by Tasks 04–06 without needing to restructure the file
-- [ ] Opt-in, off-by-default posture explicitly stated for mechanical auto-merge and for judgment/drafting automation
-- [ ] Dry-run/preview mode behavior (PR title, branch, diff summary, no PR-creation call) specified in enough detail for a hermes skill to implement it
-- [ ] Role→Agent table matches the SSH-confirmed profile/model assignments exactly (no invented agents or models)
+- [x] `docs/hermes-maintenance-agents.md` created with Overview, Role→Agent Configuration table, Drafting Model Default & Fallback, Dry-Run/Preview Mode, and Guardrail Contract sections
+- [x] Section anchors present (with clear placeholder text) for `## Provisioning`, `## Judgment Classification Rule`, `## Drafting Agent Contract` — to be filled by Tasks 04–06 without needing to restructure the file
+- [x] Opt-in, off-by-default posture explicitly stated for mechanical auto-merge and for judgment/drafting automation
+- [x] Dry-run/preview mode behavior (PR title, branch, diff summary, no PR-creation call) specified in enough detail for a hermes skill to implement it
+- [x] Role→Agent table matches the SSH-confirmed profile/model assignments exactly (no invented agents or models)
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -76,6 +76,6 @@ This task directly contributes to the following acceptance criteria from `origin
 - None (this task creates the doc skeleton that Tasks 04, 05, and 06 extend)
 
 ## Definition of Done
-- [ ] `docs/hermes-maintenance-agents.md` exists with all required sections and section anchors
-- [ ] Role→agent, model default/fallback, and dry-run mode are unambiguously documented
-- [ ] Off-by-default/opt-in posture is stated without ambiguity
+- [x] `docs/hermes-maintenance-agents.md` exists with all required sections and section anchors
+- [x] Role→agent, model default/fallback, and dry-run mode are unambiguously documented
+- [x] Off-by-default/opt-in posture is stated without ambiguity
