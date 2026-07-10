@@ -538,7 +538,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    - [x] ACs 04-01, 04-02, 04-03, 05-01, 05-02, 05-03 satisfied; checkboxes marked
    - [x] Quality gates: `go build ./...`, `go vet ./...`, `gofmt -l` clean; `go test ./...` green (fixed self-introduced `atcr personas graduate` docs-audit trip → reworded to no fake invocation); `golangci-lint run` on touched packages = 0 issues
 
-### 4.5 [ ] **Phase 4 — GATE: Integration & Exit Review (subagent)**
+### 4.5 [x] **Phase 4 — GATE: Integration & Exit Review (subagent)**
    **Scope:** Both docs files + cross-references
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the docs authoring. Do NOT review inline.
@@ -557,16 +557,15 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings + dispositions (no CRITICAL/HIGH):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | docs/personas-install.md submit intro | Section led with "locally-tuned persona" + "add a fixture" but `copyPersonaUnit` (submit.go:281-310) pushes only `.yaml`/`.md` (no fixture), and the gate resolves the fixture **embedded** in the binary (`test.go:56-72`, `builtins.CommunityFixture`) — so `submit` clears the gate only for a persona that already ships a fixture; a brand-new persona returns `no fixture defined` and "add a fixture" isn't actionable via the installed binary. | **Fixed inline** — added a paragraph: `submit` pushes only the persona unit (never a fixture); the gate resolves the shipped fixture; `submit` targets a re-tuned community-library persona; a brand-new persona must commit its fixture to `personas/community/testdata/` in-repo first. Verified against `test.go`/`submit.go`. |
+   | MEDIUM | docs/personas-authoring.md §8 step 1 | Step said "its fixture belongs in `personas/community/testdata/`", implying the fixture rides the submit PR; it does not (`copyPersonaUnit` pushes only `.yaml`/`.md`). | **Fixed inline** — step 1 now states the submit PR carries only the persona unit, not a fixture; a re-tuned library persona's fixture is already committed, a brand-new one's is added separately before the `go test` gate passes. |
+   | LOW | docs/personas-install.md precondition | "nothing is ever written into atcr's own config" overreached — `Submit` writes the `submitted` marker sidecar to `~/.config/atcr/submissions/<name>.yaml` (submit.go:113), contradicting the doc's own §7/§8. | **Fixed inline** — scoped the claim to credentials and noted the one local file `submit` writes (the marker sidecar), linking §7. Self-introduced contradiction. |
+   | INFO | docs/personas-install.md:15 | Pre-existing macOS-path inaccuracy (TD-001). | No change — out of scope per user Option B; all NEW Phase-4 content correctly uses `~/.config/atcr/…`. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
-   - None found → Note "Phase gate passed"
+   **Action Required:** No CRITICAL/HIGH — phase boundary not blocked. All three MEDIUM/LOW were doc-accuracy defects in this docs-accuracy phase, so they were **fixed inline** (small, code-verified wording corrections) rather than deferred — each was re-checked against the shipped `test.go`/`submit.go`/`submissions.go`. The docs-audit test (`TestDocsReferenceOnlyRealCommands`) re-run green after the fixes. INFO item is pre-existing TD-001 (user-deferred). Deeper feature-level tier-guard concern (built-in/embedded green-lit by the gate) remains tracked as TD-003 — code, not docs. All anchors resolve; terminology stays separated. Phase gate passed.
    **Duration:** 15-30 min
 
    🚧 **GATED STOP:** Halt here. Await go-ahead before starting Phase 5.

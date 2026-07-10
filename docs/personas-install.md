@@ -140,7 +140,9 @@ The output contract:
 
 Submits a locally-tuned persona back to the canonical `samestrin/atcr` repository as a pull request. The command first runs the **same fixture gate** as [`atcr personas test`](#atcr-personas-test-name); only if the fixture passes does it fork `samestrin/atcr` under your own GitHub identity, push a branch with the persona files, and open a PR. The submission lands as an unvetted **`submitted`** entry pending maintainer graduation — see [authoring §7](personas-authoring.md#7-from-submitted-to-graduated).
 
-**Precondition — `gh` installed and authenticated.** `submit` rides *your own* GitHub CLI session: the [GitHub CLI (`gh`)](https://cli.github.com) must be on your `PATH` and you must have run `gh auth login` first. No bot token, no separate credential, and nothing is ever written into atcr's own config. The precondition is checked before any fork or branch work.
+`submit` pushes only the persona **unit** — its `.yaml` binding plus the optional co-located `.md` prompt where local tuning lives — never a fixture. The gate resolves the fixture that already ships with the persona, so `submit` targets a persona that **already has a committed fixture**: in practice a community-library persona you installed and re-tuned locally. A brand-new persona has no shipped fixture yet — commit its fixture to `personas/community/testdata/` in the repo first (see [authoring §3](personas-authoring.md#3-the-fixture)).
+
+**Precondition — `gh` installed and authenticated.** `submit` rides *your own* GitHub CLI session: the [GitHub CLI (`gh`)](https://cli.github.com) must be on your `PATH` and you must have run `gh auth login` first. No bot token and no separate credential are written into atcr's config. (On success `submit` does write one small local file — the `submitted` marker sidecar at `~/.config/atcr/submissions/<name>.yaml`; see [authoring §7](personas-authoring.md#7-from-submitted-to-graduated).) The precondition is checked before any fork or branch work.
 
 ```bash
 atcr personas submit penny
