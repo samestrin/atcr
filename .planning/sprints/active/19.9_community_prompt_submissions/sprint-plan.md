@@ -91,6 +91,19 @@ This is the intake half of the living-library flywheel: it turns "I improved my 
 - `github.com/cli/go-gh/v2` added via `go get` (network-dependent; `gh` binary confirmed present locally). If the module proxy is unreachable, HARD STOP per the blocker protocol.
 - All real `gh`/`git` interaction stays behind the stubbed seam — zero live `gh`/network calls in any test (hard requirement, AC 02-03).
 
+### Phase 3 Clarifications (recorded 2026-07-10)
+
+**Key Decisions:**
+- **Marker-write failure after a successful PR → error (exit non-zero), with the PR URL embedded in the message.** AC 03-02 Error Scenario 1 mandates exit-non-zero; it constrains only the exit code, not message content — so wrapping the error to include the already-created PR URL is compliant, not a deviation. This keeps a live PR from reading as total failure while preserving the mandated exit code. Idempotent retry (fork/PR reuse is non-fatal, returns the same URL, then re-writes the marker) makes exit-non-zero cheap for the user.
+- Marker write is wired INSIDE `internal/personas/submit.go:Submit`, after the empty-URL guard, so the submitter handle is taken from `head`'s `"<owner>:"` prefix — no extra `gh` call. The submissions base dir is an injectable package seam so unit tests (and existing Submit tests) write to `t.TempDir()`, never real `~/.config`.
+
+**Scope Boundaries:**
+- IN: `SubmissionStatus` type (separate from `PersonaMeta`), atomic sidecar persistence via `unit.go:writeFileAtomic` exclusively, `submissions/` dir outside `personas/community/` (sibling of `PersonasDir()`), a separately-named `List` extension point, wiring the marker write to fire only after a real PR URL.
+- OUT: docs (Phase 4), graduation tooling (Phase 4), any change to `Source` semantics/values/signatures.
+
+**Technical Approach:**
+- New file `internal/personas/submissions.go`: `SubmissionsDir()` (derived from `DefaultRegistryPath`, mirroring `PersonasDir`), `SubmissionStatus` (submitter handle, persona name, version, timestamp, fixture-pass flag), `WriteSubmissionMarker`, and `ReadSubmission`/`ListSubmissions`. Persistence via `writeFileAtomic` only (0600, symlink-refusing), NOT `atomicfs.WriteFileAtomic`. `os.MkdirAll(dir, 0700)` before write. YAML serialization. Marker path guarded (`validatePersonaName` + `filepath.Rel` containment) so `..`/absolute names cannot escape the submissions dir.
+
 ---
 
 ## Sprint Conventions
@@ -364,7 +377,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 **ACs:** [03-01](plan/acceptance-criteria/03-01-submitted-status-is-not-a-source-value.md), [03-02](plan/acceptance-criteria/03-02-submitted-marker-attribution-and-atomic-persistence.md), [03-03](plan/acceptance-criteria/03-03-marker-stored-outside-community-tree-and-list-extension-point.md)
 **Focus:** Introduce `submitted` as an additive status/marker (separate struct or sidecar file) that never touches `PersonaMeta.Source`'s three values or the signatures of `List`/`ListTiers`/`listCommunity`/`listProject`. Persist attribution (submitter identity, fixture-pass confirmation, timestamp) via `writeFileAtomic`/`atomicfs.WriteFileAtomic` at a path **outside** `personas/community/`. Wire the marker write into the Phase 2 submit flow so it fires **only after** a successful PR creation.
 
-### 3.1 [ ] **[`submitted` marker — RED](plan/user-stories/03-submitted-status-distinct-from-source.md)**
+### 3.1 [x] **[`submitted` marker — RED](plan/user-stories/03-submitted-status-distinct-from-source.md)**
    1. Analyze ACs 03-01/03-02/03-03, identify testable units.
    2. Write failing tests:
       - After a submission, `Source` is still exactly `built-in`/`community`/`project` for every persona; `submitted` is never a `Source` value (03-01)

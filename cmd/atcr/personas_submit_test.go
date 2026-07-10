@@ -213,12 +213,24 @@ func withPersonasGitHub(t *testing.T, g personas.GitHubSubmitter) {
 	t.Cleanup(func() { personasGitHub = old })
 }
 
+// withPersonasSubmissionsDir points the `submitted` marker write at a temp dir so
+// a command-level submit test never touches the real ~/.config/atcr/submissions
+// (Phase 3 marker wiring), matching the seam-restoration pattern above.
+func withPersonasSubmissionsDir(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	old := personasSubmissionsDir
+	personasSubmissionsDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { personasSubmissionsDir = old })
+}
+
 // TestPersonasSubmit_ForkPRHappyPath covers AC 02-02 Scenario 1 at the command
 // level: a passing fixture gate hands off to the real continuation, which drives
 // the stubbed seam and prints the resulting PR URL to stdout.
 func TestPersonasSubmit_ForkPRHappyPath(t *testing.T) {
 	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
 	withPersonasGitHub(t, stubGitHub{url: "https://github.com/samestrin/atcr/pull/42"})
+	withPersonasSubmissionsDir(t)
 
 	stdout, stderr, err := executeSplit(t, "personas", "submit", "sasha")
 	require.NoError(t, err)

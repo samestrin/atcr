@@ -55,7 +55,7 @@ func (s *stubSubmitter) CreatePR(_ context.Context, req PRRequest) (string, erro
 func TestSubmit_HappyPath(t *testing.T) {
 	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prURL: "https://github.com/samestrin/atcr/pull/42"}
 
-	url, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	url, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
 	require.NoError(t, err)
 	assert.Equal(t, "https://github.com/samestrin/atcr/pull/42", url)
 	assert.Equal(t, []string{"precondition", "fork:samestrin/atcr", "push:persona-submit/sasha", "pr"}, s.calls)
@@ -67,7 +67,7 @@ func TestSubmit_HappyPath(t *testing.T) {
 // TestSubmit_ExactlyOnce asserts no step is invoked more than once on a clean run.
 func TestSubmit_ExactlyOnce(t *testing.T) {
 	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prURL: "https://x/pull/1"}
-	_, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	_, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
 	require.NoError(t, err)
 
 	counts := map[string]int{}
@@ -86,7 +86,7 @@ func TestSubmit_ExactlyOnce(t *testing.T) {
 func TestSubmit_InvalidNameShortCircuits(t *testing.T) {
 	s := &stubSubmitter{}
 
-	_, err := Submit(context.Background(), s, "/tmp/personas", "../../etc/passwd")
+	_, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "../../etc/passwd")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid persona name")
 	assert.Empty(t, s.calls, "an invalid name reaches neither precondition nor fork")
@@ -98,7 +98,7 @@ func TestSubmit_InvalidNameShortCircuits(t *testing.T) {
 func TestSubmit_EmptyPRURLIsError(t *testing.T) {
 	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prURL: "   "}
 
-	url, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	url, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Empty(t, url)
 	assert.Contains(t, err.Error(), "no URL")
@@ -109,7 +109,7 @@ func TestSubmit_EmptyPRURLIsError(t *testing.T) {
 func TestSubmit_PreconditionShortCircuits(t *testing.T) {
 	s := &stubSubmitter{preconErr: errors.New("gh auth check failed: not logged in")}
 
-	_, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	_, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gh auth check failed")
 	assert.Equal(t, []string{"precondition"}, s.calls, "no fork/push/pr after a failed precondition")
@@ -121,7 +121,7 @@ func TestSubmit_PreconditionShortCircuits(t *testing.T) {
 func TestSubmit_ForkFailShortCircuits(t *testing.T) {
 	s := &stubSubmitter{forkErr: errors.New("HTTP 403: forbidden")}
 
-	_, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	_, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to fork samestrin/atcr")
 	assert.Contains(t, err.Error(), "HTTP 403: forbidden")
@@ -133,7 +133,7 @@ func TestSubmit_ForkFailShortCircuits(t *testing.T) {
 func TestSubmit_PushFailShortCircuits(t *testing.T) {
 	s := &stubSubmitter{pushErr: errors.New("permission denied")}
 
-	_, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	_, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to push branch to fork")
 	assert.Contains(t, err.Error(), "permission denied")
@@ -146,7 +146,7 @@ func TestSubmit_PushFailShortCircuits(t *testing.T) {
 func TestSubmit_PRFailIsRecoverable(t *testing.T) {
 	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prErr: errors.New("could not create pull request")}
 
-	_, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	_, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "PR creation failed")
 	assert.Contains(t, err.Error(), "retry with 'gh pr create'")

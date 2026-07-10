@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cli/go-gh/v2"
 	"github.com/cli/go-gh/v2/pkg/repository"
@@ -54,9 +55,13 @@ type GitHubSubmitter interface {
 // Submit sequences the GitHub side of `personas submit` behind gh: precondition
 // check → fork → branch/push → PR-create, each exactly once, short-circuiting on
 // the first failure with a distinct, actionable message (AC 02-02). It performs no
-// local gate work (SubmitGate's job) and writes no `submitted` marker (Phase 3).
-// The returned string is the PR URL.
-func Submit(ctx context.Context, gh GitHubSubmitter, personasDir, name string) (string, error) {
+// local gate work (SubmitGate's job). ONLY after a real PR URL is confirmed does it
+// record the `submitted` marker under submissionsDir (Phase 3, AC 03-02) — so a
+// fork/push/PR failure never leaves an orphan marker. A marker-write failure after
+// a successful PR returns a non-nil error (exit non-zero, AC 03-02 Error Scenario
+// 1) whose message embeds the already-created PR URL, so a live PR is not misread
+// as total failure. The returned string is the PR URL.
+func Submit(ctx context.Context, gh GitHubSubmitter, personasDir, submissionsDir, name string) (string, error) {
 	// Defense in depth: never trust the caller's gate. Re-validate the name
 	// before it can reach a branch ref, a file path, or any gh argument.
 	if err := validatePersonaName(name); err != nil {
@@ -89,6 +94,24 @@ func Submit(ctx context.Context, gh GitHubSubmitter, personasDir, name string) (
 	}
 	if strings.TrimSpace(url) == "" {
 		return "", fmt.Errorf("PR reported created but gh returned no URL; verify at https://github.com/%s/pulls", canonicalRepo)
+	}
+	// The PR now exists — record the `submitted` marker (Phase 3). The submitter
+	// identity is the fork owner already carried in head ("<owner>:<branch>"), so no
+	// extra gh call is needed. On failure the PR is already live, so the error embeds
+	// the URL rather than reading as a total failure (recorded Phase 3 clarification).
+	owner := head
+	if i := strings.IndexByte(head, ':'); i >= 0 {
+		owner = head[:i]
+	}
+	marker := SubmissionStatus{
+		Persona:       name,
+		Version:       personaUnitVersion(personasDir, name),
+		Submitter:     owner,
+		FixturePassed: true,
+		SubmittedAt:   time.Now().UTC(),
+	}
+	if err := WriteSubmissionMarker(submissionsDir, marker); err != nil {
+		return "", fmt.Errorf("PR created (%s), but recording the submitted marker failed: %w", url, err)
 	}
 	return url, nil
 }

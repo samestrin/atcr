@@ -96,6 +96,12 @@ var personasFixtureRunner commpersonas.FixtureRunner = commpersonas.TemplateFixt
 // defined independently of internal/ghaction.Client.
 var personasGitHub commpersonas.GitHubSubmitter = commpersonas.NewGitHubSubmitter()
 
+// personasSubmissionsDir resolves the per-user submitted-marker storage directory
+// (a sibling of personasDir, outside the vetted community tree). A package var so
+// tests can point the marker write at a temp dir instead of the real ~/.config,
+// matching the personasDir seam convention.
+var personasSubmissionsDir = commpersonas.SubmissionsDir
+
 // personasSubmitTimeout bounds the whole fork/branch/push/PR-create sequence so a
 // stalled network fails fast with a clear error instead of hanging the CLI.
 const personasSubmitTimeout = 90 * time.Second
@@ -141,7 +147,11 @@ var personasSubmitContinuation = func(cmd *cobra.Command, name string) error {
 	if err != nil {
 		return err
 	}
-	url, err := commpersonas.Submit(ctx, personasGitHub, dir, name)
+	subDir, err := personasSubmissionsDir()
+	if err != nil {
+		return err
+	}
+	url, err := commpersonas.Submit(ctx, personasGitHub, dir, subDir, name)
 	if err != nil {
 		return err
 	}
