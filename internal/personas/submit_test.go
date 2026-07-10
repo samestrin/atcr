@@ -1,0 +1,206 @@
+package personas
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// stubSubmitter is an in-memory GitHubSubmitter recorder: it records the order of
+// calls and returns canned results, so Submit's sequencing/short-circuit behavior
+// (AC 02-02) can be unit-tested with zero real gh process or network calls
+// (AC 02-03). Reused across the happy-path, exactly-once, and each-failure tests.
+type stubSubmitter struct {
+	calls []string
+
+	preconErr error
+	forkErr   error
+	pushHead  string
+	pushErr   error
+	prURL     string
+	prErr     error
+
+	gotPR PRRequest
+}
+
+func (s *stubSubmitter) CheckPrecondition(_ context.Context) error {
+	s.calls = append(s.calls, "precondition")
+	return s.preconErr
+}
+
+func (s *stubSubmitter) Fork(_ context.Context, repo string) error {
+	s.calls = append(s.calls, "fork:"+repo)
+	return s.forkErr
+}
+
+func (s *stubSubmitter) PushBranch(_ context.Context, branch, _, _ string) (string, error) {
+	s.calls = append(s.calls, "push:"+branch)
+	return s.pushHead, s.pushErr
+}
+
+func (s *stubSubmitter) CreatePR(_ context.Context, req PRRequest) (string, error) {
+	s.calls = append(s.calls, "pr")
+	s.gotPR = req
+	return s.prURL, s.prErr
+}
+
+// TestSubmit_HappyPath covers AC 02-02 Scenario 1: precondition → fork → push →
+// pr-create run exactly once, in order, and the PR URL is returned. The PR request
+// carries the source persona name for downstream attribution (Edge Case 2).
+func TestSubmit_HappyPath(t *testing.T) {
+	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prURL: "https://github.com/samestrin/atcr/pull/42"}
+
+	url, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	require.NoError(t, err)
+	assert.Equal(t, "https://github.com/samestrin/atcr/pull/42", url)
+	assert.Equal(t, []string{"precondition", "fork:samestrin/atcr", "push:persona-submit/sasha", "pr"}, s.calls)
+	assert.Equal(t, "samestrin/atcr", s.gotPR.Repo)
+	assert.Equal(t, "octocat:persona-submit/sasha", s.gotPR.Head)
+	assert.Contains(t, s.gotPR.Body, "sasha", "PR body carries the source persona name for attribution")
+}
+
+// TestSubmit_ExactlyOnce asserts no step is invoked more than once on a clean run.
+func TestSubmit_ExactlyOnce(t *testing.T) {
+	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prURL: "https://x/pull/1"}
+	_, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	require.NoError(t, err)
+
+	counts := map[string]int{}
+	for _, c := range s.calls {
+		counts[c]++
+	}
+	assert.Equal(t, 1, counts["precondition"])
+	assert.Equal(t, 1, counts["fork:samestrin/atcr"])
+	assert.Equal(t, 1, counts["push:persona-submit/sasha"])
+	assert.Equal(t, 1, counts["pr"])
+}
+
+// TestSubmit_PreconditionShortCircuits covers AC 02-01: a failed precondition
+// halts before any fork/branch/PR call.
+func TestSubmit_PreconditionShortCircuits(t *testing.T) {
+	s := &stubSubmitter{preconErr: errors.New("gh auth check failed: not logged in")}
+
+	_, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "gh auth check failed")
+	assert.Equal(t, []string{"precondition"}, s.calls, "no fork/push/pr after a failed precondition")
+}
+
+// TestSubmit_ForkFailShortCircuits covers AC 02-02 Error Scenario 1: a fork
+// failure (not "already exists") halts before branch/push with the documented
+// message, and no push/pr call is made.
+func TestSubmit_ForkFailShortCircuits(t *testing.T) {
+	s := &stubSubmitter{forkErr: errors.New("HTTP 403: forbidden")}
+
+	_, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fork samestrin/atcr")
+	assert.Contains(t, err.Error(), "HTTP 403: forbidden")
+	assert.Equal(t, []string{"precondition", "fork:samestrin/atcr"}, s.calls)
+}
+
+// TestSubmit_PushFailShortCircuits covers AC 02-02 Error Scenario 2: a push
+// failure after a successful fork halts before pr-create.
+func TestSubmit_PushFailShortCircuits(t *testing.T) {
+	s := &stubSubmitter{pushErr: errors.New("permission denied")}
+
+	_, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to push branch to fork")
+	assert.Contains(t, err.Error(), "permission denied")
+	assert.NotContains(t, s.calls, "pr", "no PR is opened when the branch push failed")
+}
+
+// TestSubmit_PRFailIsRecoverable covers AC 02-02 Error Scenario 3: a pr-create
+// failure after a successful push surfaces an actionable recovery path and does
+// not roll back the pushed branch.
+func TestSubmit_PRFailIsRecoverable(t *testing.T) {
+	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prErr: errors.New("could not create pull request")}
+
+	_, err := Submit(context.Background(), s, "/tmp/personas", "sasha")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PR creation failed")
+	assert.Contains(t, err.Error(), "retry with 'gh pr create'")
+	assert.Contains(t, err.Error(), "atcr personas submit sasha")
+	assert.Equal(t, []string{"precondition", "fork:samestrin/atcr", "push:persona-submit/sasha", "pr"}, s.calls)
+}
+
+// TestCheckGHPrecondition_NotOnPath covers AC 02-01 Error Scenario 1: gh absent
+// from PATH halts with the exact actionable install message.
+func TestCheckGHPrecondition_NotOnPath(t *testing.T) {
+	restore := swapPreconditionSeams(t, func() (string, error) { return "", errors.New("not found") }, nil)
+	defer restore()
+
+	err := checkGHPrecondition(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, "gh CLI not found on PATH; install it from https://cli.github.com", err.Error())
+}
+
+// TestCheckGHPrecondition_NotAuthed covers AC 02-01 Error Scenario 2: gh present
+// but not authenticated surfaces the captured stderr.
+func TestCheckGHPrecondition_NotAuthed(t *testing.T) {
+	restore := swapPreconditionSeams(t,
+		func() (string, error) { return "/usr/bin/gh", nil },
+		func(context.Context) (string, error) {
+			return "You are not logged into any GitHub hosts", errors.New("exit status 1")
+		},
+	)
+	defer restore()
+
+	err := checkGHPrecondition(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, "gh auth check failed: You are not logged into any GitHub hosts", err.Error())
+}
+
+// TestCheckGHPrecondition_OK covers AC 02-01 Scenario 1: gh present and
+// authenticated returns nil.
+func TestCheckGHPrecondition_OK(t *testing.T) {
+	restore := swapPreconditionSeams(t,
+		func() (string, error) { return "/usr/bin/gh", nil },
+		func(context.Context) (string, error) { return "", nil },
+	)
+	defer restore()
+
+	assert.NoError(t, checkGHPrecondition(context.Background()))
+}
+
+// TestSubmissionBranch confirms slashes in a namespaced persona name are made
+// ref-safe so the head branch is a single path segment under persona-submit/.
+func TestSubmissionBranch(t *testing.T) {
+	assert.Equal(t, "persona-submit/sasha", submissionBranch("sasha"))
+	assert.Equal(t, "persona-submit/security-owasp", submissionBranch("security/owasp"))
+}
+
+// TestExistingPRURL covers AC 02-02 Edge Case 1: when gh reports a pull request
+// already exists for the branch, its URL is extracted from stderr; unrelated
+// errors extract nothing.
+func TestExistingPRURL(t *testing.T) {
+	stderr := "a pull request for branch \"persona-submit/sasha\" into branch \"main\" already exists:\nhttps://github.com/samestrin/atcr/pull/7"
+	assert.Equal(t, "https://github.com/samestrin/atcr/pull/7", existingPRURL(stderr))
+	assert.Empty(t, existingPRURL("could not create pull request: network error"))
+}
+
+// TestForkAlreadyExists covers AC 02-02 Scenario 2: a fork that already exists is
+// recognized as the non-fatal reuse case.
+func TestForkAlreadyExists(t *testing.T) {
+	assert.True(t, forkAlreadyExists("! octocat/atcr already exists"))
+	assert.False(t, forkAlreadyExists("HTTP 403: forbidden"))
+}
+
+// swapPreconditionSeams overrides the low-level ghPath/ghAuthStatus seams for a
+// test and returns a restore func, so the precondition check's exact error
+// strings are exercised without a real gh binary (AC 02-01 / AC 02-03).
+func swapPreconditionSeams(t *testing.T, path func() (string, error), auth func(context.Context) (string, error)) func() {
+	t.Helper()
+	oldPath, oldAuth := ghPath, ghAuthStatus
+	if path != nil {
+		ghPath = path
+	}
+	if auth != nil {
+		ghAuthStatus = auth
+	}
+	return func() { ghPath, ghAuthStatus = oldPath, oldAuth }
+}

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/personas"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +29,7 @@ func withSubmitContinuation(t *testing.T) *bool {
 	t.Helper()
 	called := false
 	old := personasSubmitContinuation
-	personasSubmitContinuation = func(string) error { called = true; return nil }
+	personasSubmitContinuation = func(*cobra.Command, string) error { called = true; return nil }
 	t.Cleanup(func() { personasSubmitContinuation = old })
 	return &called
 }
@@ -166,7 +168,7 @@ func TestPersonasSubmit_ZeroCaseFixtureProceeds(t *testing.T) {
 func TestPersonasSubmit_ContinuationErrorPropagates(t *testing.T) {
 	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
 	old := personasSubmitContinuation
-	personasSubmitContinuation = func(string) error { return errors.New("fork+PR failed") }
+	personasSubmitContinuation = func(*cobra.Command, string) error { return errors.New("fork+PR failed") }
 	t.Cleanup(func() { personasSubmitContinuation = old })
 
 	_, _, err := executeSplit(t, "personas", "submit", "sasha")
@@ -181,4 +183,72 @@ func TestPersonas_HelpListsSubmit(t *testing.T) {
 	out, err := execute(t, "personas", "--help")
 	require.NoError(t, err)
 	assert.Contains(t, out, "submit")
+}
+
+// stubGitHub is a command-level GitHubSubmitter stub: it lets the REAL Phase-2
+// continuation run end-to-end while replacing every gh/git interaction, so a
+// command test exercises the full precondition→fork→push→PR flow with zero real
+// gh binary or network calls (AC 02-03).
+type stubGitHub struct {
+	url string
+	err error // returned from CheckPrecondition to fail the whole flow early
+}
+
+func (s stubGitHub) CheckPrecondition(context.Context) error { return s.err }
+func (stubGitHub) Fork(context.Context, string) error        { return nil }
+func (stubGitHub) PushBranch(context.Context, string, string, string) (string, error) {
+	return "octocat:persona-submit/sasha", nil
+}
+func (s stubGitHub) CreatePR(context.Context, personas.PRRequest) (string, error) {
+	return s.url, nil
+}
+
+// withPersonasGitHub swaps the package-level gh seam for a stub for the duration
+// of a test and restores it after, matching the personasClient/personasFixtureRunner
+// restoration pattern so seam state never leaks between tests (AC 02-03 Edge Case 1).
+func withPersonasGitHub(t *testing.T, g personas.GitHubSubmitter) {
+	t.Helper()
+	old := personasGitHub
+	personasGitHub = g
+	t.Cleanup(func() { personasGitHub = old })
+}
+
+// TestPersonasSubmit_ForkPRHappyPath covers AC 02-02 Scenario 1 at the command
+// level: a passing fixture gate hands off to the real continuation, which drives
+// the stubbed seam and prints the resulting PR URL to stdout.
+func TestPersonasSubmit_ForkPRHappyPath(t *testing.T) {
+	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
+	withPersonasGitHub(t, stubGitHub{url: "https://github.com/samestrin/atcr/pull/42"})
+
+	stdout, stderr, err := executeSplit(t, "personas", "submit", "sasha")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "https://github.com/samestrin/atcr/pull/42", "PR URL is printed to stdout on success")
+	assert.Empty(t, stderr)
+}
+
+// TestPersonasSubmit_ForkPRFailurePropagates covers AC 02-01 at the command
+// level: a precondition failure from the seam surfaces as a non-zero exit with
+// the seam's message, and nothing is printed to stdout.
+func TestPersonasSubmit_ForkPRFailurePropagates(t *testing.T) {
+	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
+	withPersonasGitHub(t, stubGitHub{err: errors.New("gh auth check failed: not logged in")})
+
+	stdout, _, err := executeSplit(t, "personas", "submit", "sasha")
+	require.Error(t, err)
+	assert.Equal(t, exitFailure, exitCode(err))
+	assert.Contains(t, err.Error(), "gh auth check failed")
+	assert.Empty(t, stdout, "no PR URL on a blocked submission")
+}
+
+// TestPersonasSubmit_GateBlocksBeforeSeam confirms a failing fixture gate blocks
+// before the gh seam is ever consulted: the stub would panic-free record nothing,
+// and the command fails at the gate (AC 02-01 precondition ordering + Phase 1 gate).
+func TestPersonasSubmit_GateBlocksBeforeSeam(t *testing.T) {
+	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: false}})
+	withPersonasGitHub(t, stubGitHub{url: "https://should.not/pull/1"})
+
+	stdout, _, err := executeSplit(t, "personas", "submit", "sasha")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no fixture defined")
+	assert.Empty(t, stdout, "a blocked gate never reaches the fork+PR seam")
 }

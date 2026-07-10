@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -89,6 +90,16 @@ var personasFixtureRunner commpersonas.FixtureRunner = commpersonas.TemplateFixt
 	PersonasDir: func() (string, error) { return personasDir() },
 }
 
+// personasGitHub is the injectable gh/git seam for `personas submit`'s fork+PR
+// flow (Phase 2), matching the personasClient/personasFixtureRunner pattern. Tests
+// replace it with a stub so no real gh binary or network call occurs. It is
+// defined independently of internal/ghaction.Client.
+var personasGitHub commpersonas.GitHubSubmitter = commpersonas.NewGitHubSubmitter()
+
+// personasSubmitTimeout bounds the whole fork/branch/push/PR-create sequence so a
+// stalled network fails fast with a clear error instead of hanging the CLI.
+const personasSubmitTimeout = 90 * time.Second
+
 // newPersonasCmd builds `atcr personas`: a parent command hosting the seven
 // community-persona lifecycle sub-subcommands.
 func newPersonasCmd() *cobra.Command {
@@ -116,13 +127,27 @@ func newPersonasCmd() *cobra.Command {
 	return cmd
 }
 
-// personasSubmitContinuation is the seam the fork+PR flow (Phase 2) attaches to.
-// In this phase it is a no-op stub: `personas submit` runs only the local gate
-// (name validation + fixture check) and, on a clean pass, hands off here. Tests
-// swap it for a spy to assert the gate reaches the continuation only on a full
-// fixture pass and never on a failure — the structural guarantee that no
-// fork/PR/`gh` side effect can precede a passing gate.
-var personasSubmitContinuation = func(_ string) error { return nil }
+// personasSubmitContinuation is the seam the local gate hands off to once a
+// persona clears name validation + the fixture check. Its production default
+// drives the gh fork+PR flow behind personasGitHub under a bounded context and
+// prints the resulting PR URL to stdout. Tests swap it for a spy to assert the
+// gate reaches the continuation only on a full fixture pass and never on a
+// failure — the structural guarantee that no fork/PR/`gh` side effect can precede
+// a passing gate.
+var personasSubmitContinuation = func(cmd *cobra.Command, name string) error {
+	ctx, cancel := context.WithTimeout(cmd.Context(), personasSubmitTimeout)
+	defer cancel()
+	dir, err := personasDir()
+	if err != nil {
+		return err
+	}
+	url, err := commpersonas.Submit(ctx, personasGitHub, dir, name)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), url)
+	return nil
+}
 
 func newPersonasInstallCmd() *cobra.Command {
 	return &cobra.Command{
@@ -354,7 +379,7 @@ func newPersonasSubmitCmd() *cobra.Command {
 			"A missing or failing fixture, or an invalid name, blocks submission with no\n" +
 			"fork/PR side effects.",
 		Args: usageArgs(cobra.ExactArgs(1)),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			// Local gate first: validate the name and run the fixture check. Both
 			// must pass before any GitHub interaction. SubmitGate returns a non-nil
@@ -363,8 +388,8 @@ func newPersonasSubmitCmd() *cobra.Command {
 			if err := commpersonas.SubmitGate(name, personasFixtureRunner); err != nil {
 				return err
 			}
-			// Phase 2 replaces this stub with the fork+PR flow.
-			return personasSubmitContinuation(name)
+			// On a clean gate, hand off to the fork+PR continuation.
+			return personasSubmitContinuation(cmd, name)
 		},
 	}
 }
