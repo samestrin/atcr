@@ -40,7 +40,7 @@
 **Sprint Reference:** .planning/sprints/active/20.0_standalone_skill_release/
 **Sprint Number:** 20.0
 **Sprint Created:** 2026-07-11
-**Sprint Status:** Created - Ready for `/refine-sprint`
+**Sprint Status:** Executing (BLOCKED) — Phase 1 complete; Phase 2 Story 2 (backend-contract test) complete & committed; **Story 3 (install.sh) PAUSED** on a structural blocker (TD-002): `go install …/atcr@latest` fails for all users due to `go.mod:41` replace directive — prerequisite owned by Epic 8.0/21.0. Phase 3 (Stories 4 & 5) not started (Story 4 depends on Story 3). Resume Story 3 + Story 4 doc-accuracy once the replace directive is removed and remote install resolves.
 **Branch:** feature/20.0_standalone_skill_release
 
 _Note: This section is updated as the sprint progresses through refine → execute → review → complete → finalize._

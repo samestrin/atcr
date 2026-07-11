@@ -12,6 +12,24 @@ Before each phase, review `/CLAUDE.md` (or AGENTS.md).
 
 ---
 
+## Clarifications
+
+### Phase 2 Clarifications (recorded 2026-07-11)
+
+**Key Decisions:**
+- Install-script happy-path integration test (AC03-01, tasks 2.4/2.5) runs against a **real** `go install github.com/samestrin/atcr/cmd/atcr@latest` (real network egress, installs the published `@latest` module — not the local working tree), gated behind the existing `//go:build integration` tag. No new env-var gate is introduced.
+- Stubbing `go` on a temp `PATH` is reserved **only** for the AC03-02 failure-path scenarios (go missing → fatal non-zero + stderr; go-install failure → non-zero propagated; GOPATH/bin absent from `$PATH` → non-fatal warning, exit 0).
+
+**Scope Boundaries:**
+- The `//go:build integration` tag is the sole gate for install-script tests; the happy-path test intentionally does real network I/O and will run under `go test -tags=integration ./...` (incl. Final Validation).
+- `internal/fanout/reviewdir.go` stays read-only — the backend-contract test asserts only the documented output-tree surface.
+- No writes/staged commits to the external `claude-prompts` repo.
+
+**Technical Approach:**
+- Backend-contract test (Story 2) uses in-process `newRootCmd().ExecuteContext` with an `httptest.NewServer` provider mock and `os/exec` git fixtures under `t.TempDir()`, reusing `isolate`/`execCmd`/`fixtureReview` (`cmd/atcr/reconcile_test.go`) + `mockProvider` (`internal/fanout/review_test.go`).
+
+---
+
 ## Sprint Overview
 
 **Metadata:** See [metadata.md](metadata.md) for complete plan and sprint tracking details.
@@ -250,19 +268,19 @@ From [plan/documentation/](plan/documentation/):
 
 **Goal:** Add a backward-compat regression lock (Story 2) and the install script (Story 3). Neither depends on Story 1 nor on each other; run in either order. Stories 2 & 3 (Effort: S each). ACs 02-01…03, 03-01…03.
 
-### 2.1 [ ] **[Backend Contract Test - RED](plan/user-stories/02-backend-contract-backward-compatibility-test.md)**
+### 2.1 [x] **[Backend Contract Test - RED](plan/user-stories/02-backend-contract-backward-compatibility-test.md)**
    **Mode:** Moderate | **AC:** [02-01](plan/acceptance-criteria/02-01-output-tree-contract-assertion.md) · [02-02](plan/acceptance-criteria/02-02-id-or-path-resolution-table.md) · [02-03](plan/acceptance-criteria/02-03-hermetic-provider-and-git-fixtures.md)
    1. Create `cmd/atcr/backend_contract_test.go` (new).
    2. Write failing table-driven assertions: (a) `atcr review --output-dir` + `atcr reconcile` produce the exact documented tree — `manifest.json`, `payload/`, `sources/pool/findings.txt`, `sources/pool/summary.json`, `reconciled/findings.txt`, `reconciled/findings.json`, `reconciled/report.md`, `reconciled/summary.json` (AC02-01, prefer `assert` so all missing files surface in one run); (b) all three id-or-path resolution branches (bare id → `.atcr/reviews/<id>/`, explicit path, omitted → `.atcr/latest`) as `t.Run` subtests (AC02-02); (c) provider mocked via `httptest.NewServer` (zero real network), git fixtures via `os/exec` into `t.TempDir()` — never shell string interpolation (AC02-03).
    3. Verify assertions fail against a fresh fixture (missing wiring), not against real engine behavior.
    **Files:** `cmd/atcr/backend_contract_test.go` | **Duration:** ~0.5 day
 
-### 2.2 [ ] **[Backend Contract Test - GREEN](plan/user-stories/02-backend-contract-backward-compatibility-test.md)**
+### 2.2 [x] **[Backend Contract Test - GREEN](plan/user-stories/02-backend-contract-backward-compatibility-test.md)**
    Wire the fixture + assertions correctly so the contract test passes in-process via `newRootCmd()`/`ExecuteContext` (matching `reconcile_test.go`'s `execCmd` pattern). Do NOT modify `internal/fanout/reviewdir.go` — assert only the documented surface. Run T1/T2, verify pass.
    COMMIT: `git add cmd/atcr/backend_contract_test.go && git commit -m "test(cmd): lock documented --output-dir + reconcile backend contract (green)"`
    **Files:** `cmd/atcr/backend_contract_test.go` (+ shared fixture helpers if extracted) | **Duration:** ~0.5 day
 
-### 2.2.A [ ] **[Backend Contract Test - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-backend-contract-backward-compatibility-test.md)**
+### 2.2.A [x] **[Backend Contract Test - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-backend-contract-backward-compatibility-test.md)**
    **Changed Files:** `cmd/atcr/backend_contract_test.go` (+ any fixture helper files)
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the 2.2 implementation. Do NOT review inline.
@@ -281,18 +299,24 @@ From [plan/documentation/](plan/documentation/):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Result (fresh general-purpose subagent):** One HIGH, two LOW. The HIGH is verified correct against the emitters (`internal/reconcile/emit.go:302-318` writes `ambiguous.json`/`disagreements.json` unconditionally; `internal/fanout/artifacts.go:273` writes `raw/agent/<agent>/` for every succeeded agent) — so the three "conditionally-produced" entries the test excluded ARE in fact produced by the single-agent fixture, making the exclusion rationale (carried over from AC02-01 Edge Case 3) factually false and the lock incomplete. Fixed in 2.3.
+
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | backend_contract_test.go:72-86 | `documentedCoreFiles` drops `sources/pool/raw/agent/<agent>/{review.md,findings.txt,status.json}`, `reconciled/ambiguous.json`, `reconciled/disagreements.json` on a false "single-agent fixture cannot generate them" premise; both emitters write them unconditionally, so a regression that stopped emitting any would pass silently. | Assert all three (present in this fixture) and correct the comment. |
+   | LOW | backend_contract_test.go:174-179 | "bare id resolves" subtest passes for the wrong reason: `fixtureReview` also points `.atcr/latest` at r1, so the assertion holds even if bare-id regressed to the latest fallback. | Point `.atcr/latest` at a decoy so resolution is provably by-id. |
+   | LOW | backend_contract_test.go:191-192 | `NoFileExists(.atcr/latest)` in "explicit path" subtest is vacuous — reconcile never writes `.atcr/latest`. | Replace with `NoDirExists(.atcr/reviews)` which actually distinguishes explicit-path from id resolution. |
+
+   **Action:** HIGH + both LOWs fixed inline in 2.3 (the LOWs are in the same file under active refactor and directly improve the lock's regression value — cheaper and higher-integrity than deferring trivial self-review nits to TD).
+
+   **Paste the subagent's findings table here (delete rows if none):** (above)
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 2.3, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 2.3 [ ] **[Backend Contract Test - REFACTOR](plan/user-stories/02-backend-contract-backward-compatibility-test.md)**
+### 2.3 [x] **[Backend Contract Test - REFACTOR](plan/user-stories/02-backend-contract-backward-compatibility-test.md)**
    1. Fix CRITICAL/HIGH from 2.2.A (if any).
    2. Extract shared fixture helpers if `review_test.go`/`reconcile_test.go` patterns don't already cover them (T1); keep the test fast enough for the default `go test ./cmd/atcr/...` loop.
    3. Validate T3.
