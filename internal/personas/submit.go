@@ -43,6 +43,10 @@ type GitHubSubmitter interface {
 	// Fork forks repo under the invoking user; an already-existing fork is a
 	// non-fatal reuse (AC 02-02 Scenario 2).
 	Fork(ctx context.Context, repo string) error
+	// SyncFork brings the user's (possibly reused, stale) fork default branch up to
+	// date with upstream before branching, so the PR diffs against the current
+	// merge-base and not a stale one (AC 02-02 Scenario 2, repeat contributor).
+	SyncFork(ctx context.Context, repo string) error
 	// PushBranch copies the persona unit named name (resolved under personasDir)
 	// into a working tree, commits it on branch, and pushes to the user's fork,
 	// returning the "<forkOwner>:<branch>" head reference for the PR.
@@ -74,8 +78,25 @@ func Submit(ctx context.Context, gh GitHubSubmitter, personasDir, submissionsDir
 	if _, err := repository.Parse(canonicalRepo); err != nil {
 		return "", fmt.Errorf("invalid canonical repo %q: %w", canonicalRepo, err)
 	}
+	// Nothing local to submit: reject a name that doesn't resolve to an installed
+	// persona unit before any fork/PR side effect, so only submittable local units
+	// reach the gh flow (a lightweight pre-fork existence check, not a SubmitGate/
+	// continuation signature change — clarification 2026-07-10).
+	src, err := personaPath(personasDir, name)
+	if err != nil {
+		return "", fmt.Errorf("nothing local to submit for %q: %w", name, err)
+	}
+	if _, err := os.Stat(src); err != nil {
+		return "", fmt.Errorf("nothing local to submit for %q: no local persona unit found (%w)", name, err)
+	}
 	if err := gh.Fork(ctx, canonicalRepo); err != nil {
 		return "", fmt.Errorf("failed to fork %s: %w", canonicalRepo, err)
+	}
+	// Sync the (possibly reused, stale) fork with upstream before branching so the
+	// PR diff is only the persona file, not a stale merge-base's unrelated commits
+	// (AC 02-02 Scenario 2, repeat contributor).
+	if err := gh.SyncFork(ctx, canonicalRepo); err != nil {
+		return "", fmt.Errorf("failed to sync fork with upstream %s: %w", canonicalRepo, err)
 	}
 	branch := submissionBranch(name)
 	head, err := gh.PushBranch(ctx, branch, personasDir, name)
@@ -156,6 +177,11 @@ var (
 		_, stderr, err := gh.ExecContext(ctx, "auth", "status")
 		return stderr.String(), err
 	}
+	// ghExec is the seam over go-gh's ExecContext used by every ghSubmitter method
+	// that shells out to gh (fork, repo sync, pr-create, api user). A package var so
+	// a unit test can drive the fork/PR reuse branches with canned stderr and zero
+	// real gh process or network calls (AC 02-03) — the ghPath/ghAuthStatus pattern.
+	ghExec = gh.ExecContext
 )
 
 // checkGHPrecondition verifies gh is installed and authenticated before any
@@ -206,11 +232,29 @@ type ghSubmitter struct{}
 func (ghSubmitter) CheckPrecondition(ctx context.Context) error { return checkGHPrecondition(ctx) }
 
 func (ghSubmitter) Fork(ctx context.Context, repo string) error {
-	_, stderr, err := gh.ExecContext(ctx, "repo", "fork", repo, "--remote=false", "--clone=false")
+	_, stderr, err := ghExec(ctx, "repo", "fork", repo, "--remote=false", "--clone=false")
 	if err != nil {
 		if forkAlreadyExists(stderr.String()) {
 			return nil // reusing an existing fork is expected
 		}
+		return ghError(err, stderr.String())
+	}
+	return nil
+}
+
+// SyncFork brings the user's fork default branch up to date with upstream before
+// any branching, so a reused (stale) fork does not produce a PR diff against a
+// moved merge-base — the repeat-contributor path where the fork default lags
+// upstream (AC 02-02 Scenario 2). It resolves the fork owner from the authenticated
+// gh session and runs `gh repo sync <owner>/<repo> --source <upstream>`.
+func (ghSubmitter) SyncFork(ctx context.Context, repo string) error {
+	owner, err := currentGHUser(ctx)
+	if err != nil {
+		return err
+	}
+	canon, _ := repository.Parse(repo)
+	fork := owner + "/" + canon.Name
+	if _, stderr, err := ghExec(ctx, "repo", "sync", fork, "--source", repo); err != nil {
 		return ghError(err, stderr.String())
 	}
 	return nil
@@ -261,7 +305,7 @@ func (ghSubmitter) PushBranch(ctx context.Context, branch, personasDir, name str
 }
 
 func (ghSubmitter) CreatePR(ctx context.Context, req PRRequest) (string, error) {
-	stdout, stderr, err := gh.ExecContext(ctx, "pr", "create",
+	stdout, stderr, err := ghExec(ctx, "pr", "create",
 		"--repo", req.Repo,
 		"--head", req.Head,
 		"--title", req.Title,
@@ -278,7 +322,7 @@ func (ghSubmitter) CreatePR(ctx context.Context, req PRRequest) (string, error) 
 // currentGHUser resolves the authenticated user's login so the fork clone URL and
 // PR head can be constructed. It never logs the raw gh output.
 func currentGHUser(ctx context.Context) (string, error) {
-	stdout, stderr, err := gh.ExecContext(ctx, "api", "user", "--jq", ".login")
+	stdout, stderr, err := ghExec(ctx, "api", "user", "--jq", ".login")
 	if err != nil {
 		return "", fmt.Errorf("could not resolve gh user: %w", ghError(err, stderr.String()))
 	}
@@ -330,10 +374,22 @@ func copyPersonaUnit(personasDir, name, workDir string) error {
 	return writeFileAtomic(strings.TrimSuffix(yamlDest, ".yaml")+".md", mdData)
 }
 
+// gitInvocation prepends the gh credential-helper config to a git argument list so
+// clone/push authenticate via the user's authenticated gh session (the same
+// mechanism `gh auth setup-git` installs) instead of git's own github.com
+// credential helper. Without it, a user who is gh-authed but never ran
+// `gh auth setup-git` has no credential helper for github.com, so the push blocks
+// on a credential prompt until the context timeout kills it with a misleading
+// error. The -c flags are inert for local subcommands (checkout/add/commit) that
+// contact no remote.
+func gitInvocation(args ...string) []string {
+	return append([]string{"-c", "credential.helper=!gh auth git-credential"}, args...)
+}
+
 // runGit runs a git subcommand under a bounded context, capturing stderr for a
 // step-specific error message. dir is the working tree ("" for repo-less clone).
 func runGit(ctx context.Context, dir string, args ...string) error {
-	c := exec.CommandContext(ctx, "git", args...)
+	c := exec.CommandContext(ctx, "git", gitInvocation(args...)...)
 	if dir != "" {
 		c.Dir = dir
 	}

@@ -1,6 +1,7 @@
 package personas
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -21,6 +22,7 @@ type stubSubmitter struct {
 
 	preconErr error
 	forkErr   error
+	syncErr   error
 	pushHead  string
 	pushErr   error
 	prURL     string
@@ -37,6 +39,11 @@ func (s *stubSubmitter) CheckPrecondition(_ context.Context) error {
 func (s *stubSubmitter) Fork(_ context.Context, repo string) error {
 	s.calls = append(s.calls, "fork:"+repo)
 	return s.forkErr
+}
+
+func (s *stubSubmitter) SyncFork(_ context.Context, repo string) error {
+	s.calls = append(s.calls, "sync:"+repo)
+	return s.syncErr
 }
 
 func (s *stubSubmitter) PushBranch(_ context.Context, branch, _, _ string) (string, error) {
@@ -56,10 +63,10 @@ func (s *stubSubmitter) CreatePR(_ context.Context, req PRRequest) (string, erro
 func TestSubmit_HappyPath(t *testing.T) {
 	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prURL: "https://github.com/samestrin/atcr/pull/42"}
 
-	url, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "sasha")
+	url, err := Submit(context.Background(), s, personasDirWith(t, "sasha"), t.TempDir(), "sasha")
 	require.NoError(t, err)
 	assert.Equal(t, "https://github.com/samestrin/atcr/pull/42", url)
-	assert.Equal(t, []string{"precondition", "fork:samestrin/atcr", "push:persona-submit/sasha", "pr"}, s.calls)
+	assert.Equal(t, []string{"precondition", "fork:samestrin/atcr", "sync:samestrin/atcr", "push:persona-submit/sasha", "pr"}, s.calls)
 	assert.Equal(t, "samestrin/atcr", s.gotPR.Repo)
 	assert.Equal(t, "octocat:persona-submit/sasha", s.gotPR.Head)
 	assert.Contains(t, s.gotPR.Body, "sasha", "PR body carries the source persona name for attribution")
@@ -68,7 +75,7 @@ func TestSubmit_HappyPath(t *testing.T) {
 // TestSubmit_ExactlyOnce asserts no step is invoked more than once on a clean run.
 func TestSubmit_ExactlyOnce(t *testing.T) {
 	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prURL: "https://x/pull/1"}
-	_, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "sasha")
+	_, err := Submit(context.Background(), s, personasDirWith(t, "sasha"), t.TempDir(), "sasha")
 	require.NoError(t, err)
 
 	counts := map[string]int{}
@@ -77,6 +84,7 @@ func TestSubmit_ExactlyOnce(t *testing.T) {
 	}
 	assert.Equal(t, 1, counts["precondition"])
 	assert.Equal(t, 1, counts["fork:samestrin/atcr"])
+	assert.Equal(t, 1, counts["sync:samestrin/atcr"])
 	assert.Equal(t, 1, counts["push:persona-submit/sasha"])
 	assert.Equal(t, 1, counts["pr"])
 }
@@ -99,7 +107,7 @@ func TestSubmit_InvalidNameShortCircuits(t *testing.T) {
 func TestSubmit_EmptyPRURLIsError(t *testing.T) {
 	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prURL: "   "}
 
-	url, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "sasha")
+	url, err := Submit(context.Background(), s, personasDirWith(t, "sasha"), t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Empty(t, url)
 	assert.Contains(t, err.Error(), "no URL")
@@ -122,7 +130,7 @@ func TestSubmit_PreconditionShortCircuits(t *testing.T) {
 func TestSubmit_ForkFailShortCircuits(t *testing.T) {
 	s := &stubSubmitter{forkErr: errors.New("HTTP 403: forbidden")}
 
-	_, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "sasha")
+	_, err := Submit(context.Background(), s, personasDirWith(t, "sasha"), t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to fork samestrin/atcr")
 	assert.Contains(t, err.Error(), "HTTP 403: forbidden")
@@ -134,11 +142,11 @@ func TestSubmit_ForkFailShortCircuits(t *testing.T) {
 func TestSubmit_PushFailShortCircuits(t *testing.T) {
 	s := &stubSubmitter{pushErr: errors.New("permission denied")}
 
-	_, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "sasha")
+	_, err := Submit(context.Background(), s, personasDirWith(t, "sasha"), t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to push branch to fork")
 	assert.Contains(t, err.Error(), "permission denied")
-	assert.Equal(t, []string{"precondition", "fork:samestrin/atcr", "push:persona-submit/sasha"}, s.calls, "push failure short-circuits before pr-create")
+	assert.Equal(t, []string{"precondition", "fork:samestrin/atcr", "sync:samestrin/atcr", "push:persona-submit/sasha"}, s.calls, "push failure short-circuits before pr-create")
 }
 
 // TestSubmit_PRFailIsRecoverable covers AC 02-02 Error Scenario 3: a pr-create
@@ -147,12 +155,12 @@ func TestSubmit_PushFailShortCircuits(t *testing.T) {
 func TestSubmit_PRFailIsRecoverable(t *testing.T) {
 	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prErr: errors.New("could not create pull request")}
 
-	_, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "sasha")
+	_, err := Submit(context.Background(), s, personasDirWith(t, "sasha"), t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "PR creation failed")
 	assert.Contains(t, err.Error(), "retry with 'gh pr create'")
 	assert.Contains(t, err.Error(), "atcr personas submit sasha")
-	assert.Equal(t, []string{"precondition", "fork:samestrin/atcr", "push:persona-submit/sasha", "pr"}, s.calls)
+	assert.Equal(t, []string{"precondition", "fork:samestrin/atcr", "sync:samestrin/atcr", "push:persona-submit/sasha", "pr"}, s.calls)
 }
 
 // TestCheckGHPrecondition_NotOnPath covers AC 02-01 Error Scenario 1: gh absent
@@ -217,6 +225,11 @@ func TestExistingPRURL(t *testing.T) {
 	stderr := "a pull request for branch \"persona-submit/sasha\" into branch \"main\" already exists:\nhttps://github.com/samestrin/atcr/pull/7"
 	assert.Equal(t, "https://github.com/samestrin/atcr/pull/7", existingPRURL(stderr))
 	assert.Empty(t, existingPRURL("could not create pull request: network error"))
+	// Characterization (TD-004): an "already exists" error that carries no pull URL
+	// yields "" — the caller then surfaces it as a real failure rather than a reused
+	// PR. Pins the no-URL branch of the lenient match.
+	assert.Empty(t, existingPRURL("a pull request already exists but gh printed no url"),
+		"'already exists' without a /pull/ URL returns no URL (lenient match, TD-004)")
 }
 
 // TestForkAlreadyExists covers AC 02-02 Scenario 2: a fork that already exists is
@@ -224,6 +237,13 @@ func TestExistingPRURL(t *testing.T) {
 func TestForkAlreadyExists(t *testing.T) {
 	assert.True(t, forkAlreadyExists("! octocat/atcr already exists"))
 	assert.False(t, forkAlreadyExists("HTTP 403: forbidden"))
+	// Characterization of the accepted lenient match (TD-004): gh exposes no
+	// structured "fork already exists" signal, so ANY stderr containing the phrase
+	// reads as benign reuse — including a non-reuse failure that incidentally
+	// contains it. This pins that intentional false-positive so a future tightening
+	// is a conscious, tested change, not an accident.
+	assert.True(t, forkAlreadyExists("fatal: destination path already exists and is not empty"),
+		"lenient substring match treats any 'already exists' text as reuse (TD-004 accepted tradeoff)")
 }
 
 // TestGHError confirms the leaf error helper preserves the underlying error (so a
@@ -358,4 +378,104 @@ func TestSubmit_WritesMarkerAfterPR_MalformedHead(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, "persona-submit/sasha", got.Submitter, "submitter falls back to the whole head when owner is missing")
+}
+
+// personasDirWith returns a personas dir containing a minimal <name>.yaml unit so
+// Submit's pre-fork "nothing local to submit" existence check passes and the
+// gh-sequencing assertions reach the seam.
+func personasDirWith(t *testing.T, name string) string {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name+".yaml"), []byte(validPersonaYAML), 0o600))
+	return dir
+}
+
+// swapGhExec overrides the ghExec seam for a test and restores it on cleanup, so
+// ghSubmitter.Fork/SyncFork/CreatePR can be driven with canned stdout/stderr and
+// zero real gh process or network calls (AC 02-03).
+func swapGhExec(t *testing.T, fn func(context.Context, ...string) (bytes.Buffer, bytes.Buffer, error)) {
+	t.Helper()
+	old := ghExec
+	ghExec = fn
+	t.Cleanup(func() { ghExec = old })
+}
+
+// cannedGhExec returns a ghExec stub yielding the given stdout/stderr and error.
+func cannedGhExec(stdout, stderr string, err error) func(context.Context, ...string) (bytes.Buffer, bytes.Buffer, error) {
+	return func(context.Context, ...string) (bytes.Buffer, bytes.Buffer, error) {
+		var out, errb bytes.Buffer
+		out.WriteString(stdout)
+		errb.WriteString(stderr)
+		return out, errb, err
+	}
+}
+
+// TestSubmit_NoLocalUnitShortCircuits covers the pre-fork existence check: a name
+// with no installed local persona unit is rejected before any fork/sync/push, so
+// only submittable local units reach the gh flow (clarification 2026-07-10).
+func TestSubmit_NoLocalUnitShortCircuits(t *testing.T) {
+	s := &stubSubmitter{}
+
+	_, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "ghost")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nothing local to submit")
+	assert.Equal(t, []string{"precondition"}, s.calls, "a missing local unit halts before fork/sync/push")
+}
+
+// TestSubmit_SyncFailShortCircuits covers AC 02-02 Scenario 2: a fork-sync failure
+// after a successful fork halts before branch/push so a stale fork never produces a
+// garbage PR.
+func TestSubmit_SyncFailShortCircuits(t *testing.T) {
+	s := &stubSubmitter{syncErr: errors.New("merge conflict")}
+
+	_, err := Submit(context.Background(), s, personasDirWith(t, "sasha"), t.TempDir(), "sasha")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to sync fork with upstream samestrin/atcr")
+	assert.Contains(t, err.Error(), "merge conflict")
+	assert.Equal(t, []string{"precondition", "fork:samestrin/atcr", "sync:samestrin/atcr"}, s.calls, "sync failure short-circuits before push")
+}
+
+// TestGitInvocation routes git through gh's credential helper so a gh-authed user
+// who never ran `gh auth setup-git` does not hang on a credential prompt.
+func TestGitInvocation(t *testing.T) {
+	got := gitInvocation("clone", "--depth", "1", "https://github.com/octocat/atcr.git", "/tmp/x")
+	assert.Equal(t, []string{
+		"-c", "credential.helper=!gh auth git-credential",
+		"clone", "--depth", "1", "https://github.com/octocat/atcr.git", "/tmp/x",
+	}, got, "clone/push authenticate via gh's token, not git's own github.com helper")
+}
+
+// TestGhSubmitterFork_ReuseAndError drives the production adapter's fork reuse and
+// real-error branches (submit.go) through the ghExec seam with canned stderr — the
+// wiring that consumes forkAlreadyExists, previously untested.
+func TestGhSubmitterFork_ReuseAndError(t *testing.T) {
+	swapGhExec(t, cannedGhExec("", "! octocat/atcr already exists", errors.New("exit status 1")))
+	assert.NoError(t, ghSubmitter{}.Fork(context.Background(), "samestrin/atcr"), "an already-existing fork is non-fatal reuse")
+
+	swapGhExec(t, cannedGhExec("", "HTTP 403: forbidden", errors.New("exit status 1")))
+	err := ghSubmitter{}.Fork(context.Background(), "samestrin/atcr")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP 403: forbidden", "a non-reuse fork error surfaces")
+}
+
+// TestGhSubmitterCreatePR_ReuseAndError drives the production adapter's existing-PR
+// reuse and real-error branches through the ghExec seam — the wiring that consumes
+// existingPRURL, previously untested.
+func TestGhSubmitterCreatePR_ReuseAndError(t *testing.T) {
+	req := PRRequest{Repo: "samestrin/atcr", Head: "octocat:persona-submit/sasha", Title: "t", Body: "b"}
+
+	swapGhExec(t, cannedGhExec("https://github.com/samestrin/atcr/pull/99\n", "", nil))
+	url, err := ghSubmitter{}.CreatePR(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, "https://github.com/samestrin/atcr/pull/99", url, "a created PR returns its trimmed URL")
+
+	swapGhExec(t, cannedGhExec("", "a pull request for branch \"persona-submit/sasha\" into branch \"main\" already exists:\nhttps://github.com/samestrin/atcr/pull/7", errors.New("exit status 1")))
+	url, err = ghSubmitter{}.CreatePR(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, "https://github.com/samestrin/atcr/pull/7", url, "an existing PR yields that PR's URL, not an error")
+
+	swapGhExec(t, cannedGhExec("", "could not create pull request: network error", errors.New("exit status 1")))
+	_, err = ghSubmitter{}.CreatePR(context.Background(), req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "network error", "a non-reuse pr-create error surfaces")
 }

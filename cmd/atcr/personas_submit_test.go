@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/personas"
@@ -209,6 +211,7 @@ type stubGitHub struct {
 
 func (s stubGitHub) CheckPrecondition(context.Context) error { return s.err }
 func (stubGitHub) Fork(context.Context, string) error        { return nil }
+func (stubGitHub) SyncFork(context.Context, string) error    { return nil }
 func (stubGitHub) PushBranch(context.Context, string, string, string) (string, error) {
 	return "octocat:persona-submit/sasha", nil
 }
@@ -238,12 +241,27 @@ func withPersonasSubmissionsDir(t *testing.T) string {
 	return dir
 }
 
+// withPersonasDir points the personasDir seam at a temp dir holding a local
+// <name>.yaml unit, so the continuation's Submit passes its pre-fork "nothing local
+// to submit" existence check and resolves the unit version (matching the
+// personasSubmissionsDir seam-restoration pattern).
+func withPersonasDir(t *testing.T, name, yaml string) string {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name+".yaml"), []byte(yaml), 0o600))
+	old := personasDir
+	personasDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { personasDir = old })
+	return dir
+}
+
 // TestPersonasSubmit_ForkPRHappyPath covers AC 02-02 Scenario 1 at the command
 // level: a passing fixture gate hands off to the real continuation, which drives
 // the stubbed seam and prints the resulting PR URL to stdout.
 func TestPersonasSubmit_ForkPRHappyPath(t *testing.T) {
 	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
 	withPersonasGitHub(t, stubGitHub{url: "https://github.com/samestrin/atcr/pull/42"})
+	withPersonasDir(t, "sasha", "provider: anthropic\nmodel: claude-sonnet-4-6\nrole: reviewer\nversion: 1.0.0\n")
 	subDir := withPersonasSubmissionsDir(t)
 
 	stdout, stderr, err := executeSplit(t, "personas", "submit", "sasha")
@@ -255,7 +273,7 @@ func TestPersonasSubmit_ForkPRHappyPath(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok, "submitted marker must be persisted after a successful PR")
 	assert.Equal(t, "octocat", got.Submitter, "submitter is derived from the pushed head ref")
-	assert.Equal(t, "-", got.Version, "version falls back to '-' when the persona unit is not installed locally")
+	assert.Equal(t, "1.0.0", got.Version, "version is read from the resolved local persona unit")
 	assert.True(t, got.FixturePassed, "marker records that the fixture gate passed")
 }
 

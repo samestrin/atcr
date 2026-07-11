@@ -332,7 +332,7 @@ func TestSubmit_NoMarkerWhenPRFails(t *testing.T) {
 	subDir := t.TempDir()
 	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prErr: errors.New("could not create pull request")}
 
-	_, err := Submit(context.Background(), s, t.TempDir(), subDir, "sasha")
+	_, err := Submit(context.Background(), s, personasDirWith(t, "sasha"), subDir, "sasha")
 	require.Error(t, err)
 	_, ok, rerr := ReadSubmission(subDir, "sasha")
 	require.NoError(t, rerr)
@@ -346,6 +346,7 @@ func TestSubmit_NoMarkerWhenPRFails(t *testing.T) {
 func TestSubmit_MarkerFailureIncludesPRURL(t *testing.T) {
 	personasDir := t.TempDir()
 	subDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(personasDir, "sasha.yaml"), []byte(validPersonaYAML), 0o600))
 	// Plant a symlink at the marker destination so the atomic write is refused.
 	target := filepath.Join(t.TempDir(), "target.yaml")
 	require.NoError(t, os.WriteFile(target, []byte("x\n"), 0o600))
