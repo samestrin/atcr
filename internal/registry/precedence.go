@@ -90,7 +90,11 @@ type Settings struct {
 	// "bulk" (whole diff in one prompt per persona) or "chunked" (bin-packed
 	// per-persona calls capped by each agent's max_context_lines).
 	ReviewStrategy string
-	TimeoutSecs    int
+	// OnOverflow is the resolved F4 degradation policy (plan 19.10) —
+	// chunk/truncate/fallback/fail — dispatched by internal/fanout when a payload
+	// exceeds budget (see Task 04). Resolved once here, like ReviewStrategy.
+	OnOverflow  string
+	TimeoutSecs int
 	// PayloadByteBudget is the per-payload byte budget fed to
 	// payload.ApplyByteBudget; 0 is the documented unlimited escape hatch
 	// (AC 06-03).
@@ -125,6 +129,7 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	s := Settings{
 		PayloadMode:       DefaultPayloadMode,
 		ReviewStrategy:    DefaultReviewStrategy,
+		OnOverflow:        DefaultOnOverflow,
 		TimeoutSecs:       DefaultTimeoutSecs,
 		PayloadByteBudget: DefaultPayloadByteBudget,
 		MaxParallel:       DefaultMaxParallel,
@@ -156,6 +161,11 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		if v := strings.TrimSpace(reg.ReviewStrategy); v != "" {
 			s.ReviewStrategy = v
 		}
+		// OnOverflow (F4) lives at the registry and project tiers only, like
+		// ReviewStrategy. Empty/whitespace is "unset" and falls through.
+		if v := strings.TrimSpace(reg.OnOverflow); v != "" {
+			s.OnOverflow = v
+		}
 	}
 	if proj != nil {
 		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
@@ -164,6 +174,9 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		}
 		if v := strings.TrimSpace(proj.ReviewStrategy); v != "" {
 			s.ReviewStrategy = v
+		}
+		if v := strings.TrimSpace(proj.OnOverflow); v != "" {
+			s.OnOverflow = v
 		}
 	}
 
@@ -226,6 +239,12 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	// resolved value so the engine never receives an unknown strategy.
 	if !reviewStrategyValid(s.ReviewStrategy) {
 		return Settings{}, fmt.Errorf("invalid review_strategy '%s': must be one of bulk, chunked", s.ReviewStrategy)
+	}
+	// OnOverflow (F4): the file tiers are checked at load, but the project tier
+	// and a directly-constructed proj/reg bypass that — re-check the resolved
+	// value so internal/fanout never receives an unknown policy.
+	if !onOverflowValid(s.OnOverflow) {
+		return Settings{}, fmt.Errorf("invalid on_overflow '%s': must be one of chunk, truncate, fallback, fail", s.OnOverflow)
 	}
 	// Retry tunables (Epic 4.6): a directly-constructed reg (bypassing the file
 	// loader) can carry out-of-range values; catch them so the engine never

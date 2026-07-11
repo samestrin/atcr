@@ -423,6 +423,11 @@ type Registry struct {
 	// registry and project tiers (there is intentionally no CLI override); the
 	// per-agent max_context_lines governs each bin's size when chunking is on.
 	ReviewStrategy string `yaml:"review_strategy,omitempty"`
+	// OnOverflow is the registry (global) tier of the F4 degradation policy (plan
+	// 19.10): chunk (default), truncate, fallback, or fail. The project tier
+	// (ProjectConfig.OnOverflow) overrides it; unset falls through to the embedded
+	// DefaultOnOverflow. Resolved once in ResolveSettings, like ReviewStrategy.
+	OnOverflow string `yaml:"on_overflow,omitempty"`
 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
 	// application in ResolveSettings.
 	MaxParallel *int `yaml:"max_parallel,omitempty"`
@@ -528,6 +533,9 @@ func (r *Registry) validate() error {
 	}
 	if !reviewStrategyValid(r.ReviewStrategy) {
 		errs = append(errs, fmt.Errorf("invalid review_strategy '%s': must be one of bulk, chunked", r.ReviewStrategy))
+	}
+	if !onOverflowValid(r.OnOverflow) {
+		errs = append(errs, fmt.Errorf("invalid on_overflow '%s': must be one of chunk, truncate, fallback, fail", r.OnOverflow))
 	}
 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
 	// any non-empty value must be a canonical review severity. Error wording lists

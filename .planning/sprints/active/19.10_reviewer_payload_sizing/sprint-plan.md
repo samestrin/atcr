@@ -147,7 +147,7 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
 
 *Establish the two foundational primitives — window lookup and policy config surface — that every downstream task consumes. Tasks 01 and 05 have no hard dependency on each other and may proceed in parallel.*
 
-### 1.1 [ ] **🏗️ Per-Model Context-Window Resolver (F1)**
+### 1.1 [x] **🏗️ Per-Model Context-Window Resolver (F1)**
    **Task:** Add a static `model → token window` table keyed by model id, with a conservative default for unknown models, exposing each roster model's token window. Deterministic; no hot-path network call. Name it distinctly (`ContextWindowTokens`) so it is never confused with the per-chunk diff-line budget `MaxContextLines`.
    **Priority:** High | **Effort:** S
    1. Understand issue, identify affected files (`internal/payload`)
@@ -159,7 +159,7 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
    **Files:** `internal/payload/contextwindow.go` | `internal/payload/contextwindow_test.go` | **Duration:** ~0.5 day
    **Task File:** [task-01](plan/tasks/task-01-context-window-resolver.md)
 
-### 1.2 [ ] **🏗️ `on_overflow` Config Schema (F4 config)**
+### 1.2 [x] **🏗️ `on_overflow` Config Schema (F4 config)**
    **Task:** Parse/validate/resolve the `on_overflow` policy string through the registry→project precedence chain. Enum validation (`onOverflowValid`) for exactly 4 legal values (`chunk`/`truncate`/`fallback`/`fail`); strict `KnownFields(true)` YAML decoding at every tier; whitespace-only falls through to the next tier (mirroring existing `ReviewStrategy` behavior). Physically separate edits near the closest existing precedent field (`ReviewStrategy`) to minimize merge risk with Task 11.
    **Priority:** High | **Effort:** S
    1. Understand precedence chain (`internal/registry` config.go / project.go / precedence.go)
@@ -171,15 +171,15 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
    **Files:** `internal/registry/*.go` | `internal/registry/on_overflow_test.go`, `precedence_test.go` | `.atcr/config.yaml` | **Duration:** ~0.5 day
    **Task File:** [task-05](plan/tasks/task-05-on-overflow-config-schema.md)
 
-### 1.3 [ ] **Phase 1 — DoD Validation**
-   - [ ] `go test ./internal/payload/... ./internal/registry/...` passing (T3 scoped)
-   - [ ] Coverage ≥80% on new code
-   - [ ] `go vet ./...` clean
-   - [ ] `go build ./...` succeeds
-   - [ ] `ContextWindowTokens` + `on_overflow` config key documented
-   - [ ] DoD report emitted
+### 1.3 [x] **Phase 1 — DoD Validation**
+   - [x] `go test ./internal/payload/... ./internal/registry/...` passing (T3 scoped)
+   - [x] Coverage ≥80% on new code (new fns 100%; modules 90.2% / 92.0%)
+   - [x] `go vet ./...` clean
+   - [x] `go build ./...` succeeds
+   - [x] `ContextWindowTokens` + `on_overflow` config key documented
+   - [x] DoD report emitted
 
-### 1.4 [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+### 1.4 [x] **Phase 1 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -198,16 +198,12 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context integration review, 2026-07-10):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | docs/registry.md:122,164 | `on_overflow` key absent from canonical reference doc (present in scaffold + struct comments) | Deferred → TD-001 in `tech-debt-captured.md` |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   No CRITICAL/HIGH. Verified clean: `internal/payload` free of `internal/registry` import; precedence overlays at both tiers + post-resolution re-check; `onOverflowValid` symmetric with `reviewStrategyValid`; back-compat holds; no stray `Effective*()` resolver. **Phase gate passed** (single LOW deferred to TD-001).
    **Duration:** 15-30 min
 
 ---

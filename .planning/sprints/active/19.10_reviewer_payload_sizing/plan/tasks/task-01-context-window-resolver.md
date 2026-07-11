@@ -51,16 +51,16 @@ The exported resolver `ContextWindowTokens(model string) int` keys on the same m
 
 ## Success Criteria
 
-- [ ] `internal/payload/contextwindow.go` exists with an exported `ContextWindowTokens(model string) int`.
-- [ ] `ContextWindowTokens` returns the correct window for every known model in the static table.
-- [ ] `ContextWindowTokens` returns a conservative default (e.g., 32768) for any unmapped model, never zero and never an error.
-- [ ] No config-schema changes are made to `AgentConfig`, `Provider`, `ProjectConfig`, `Registry`, or `Settings` for context-window lookup — the table is purely static.
-- [ ] Unit tests cover known models, unknown-model default, and persona coverage (AC1).
-- [ ] `go build ./...` succeeds and `go test ./...` passes.
+- [x] `internal/payload/contextwindow.go` exists with an exported `ContextWindowTokens(model string) int`.
+- [x] `ContextWindowTokens` returns the correct window for every known model in the static table.
+- [x] `ContextWindowTokens` returns a conservative default (e.g., 32768) for any unmapped model, never zero and never an error.
+- [x] No config-schema changes are made to `AgentConfig`, `Provider`, `ProjectConfig`, `Registry`, or `Settings` for context-window lookup — the table is purely static.
+- [x] Unit tests cover known models, unknown-model default, and persona coverage (AC1).
+- [x] `go build ./...` succeeds and `go test ./...` passes.
 
 ## Manual Code Review
 
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 
@@ -90,8 +90,8 @@ The exported resolver `ContextWindowTokens(model string) int` keys on the same m
 
 ## Definition of Done
 
-- [ ] `internal/payload/contextwindow.go` created with `ContextWindowTokens(model string) int` exported from package `payload`
-- [ ] `internal/payload/contextwindow_test.go` created covering known-model, unknown-model-default, and persona-coverage cases
-- [ ] `go build ./...` succeeds
-- [ ] `go test ./...` passes
-- [ ] No changes made to `internal/payload/budget.go`, `internal/registry/config.go`, `internal/registry/project.go`, `internal/registry/precedence.go`, or any other existing file — this task is purely additive
+- [x] `internal/payload/contextwindow.go` created with `ContextWindowTokens(model string) int` exported from package `payload`
+- [x] `internal/payload/contextwindow_test.go` created covering known-model, unknown-model-default, and persona-coverage cases
+- [x] `go build ./...` succeeds
+- [x] `go test ./...` passes
+- [x] No changes made to `internal/payload/budget.go`, `internal/registry/config.go`, `internal/registry/project.go`, `internal/registry/precedence.go`, or any other existing file — this task is purely additive

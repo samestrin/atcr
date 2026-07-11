@@ -19,6 +19,13 @@ const (
 	// sends the whole diff in one prompt per persona, keeping API cost strictly
 	// bounded; users opt into "chunked" for higher accuracy on large PRs.
 	DefaultReviewStrategy = "bulk"
+	// DefaultOnOverflow is the embedded F4 degradation policy (plan 19.10) used
+	// when a per-agent payload exceeds its effective budget: "chunk" delivers the
+	// whole diff across window-sized chunks with no content dropped. The full
+	// ladder is chunk/truncate/fallback/fail; "fallback"/"fail" are recognized as
+	// config values but recognized-but-gated per AC4 (dispatch enforcement lives
+	// in internal/fanout / Task 04, not here).
+	DefaultOnOverflow = "chunk"
 	// DefaultPayloadByteBudget is the embedded per-payload byte budget:
 	// 512 KiB ≈ 128k tokens at ~4 bytes/token, fitting the dominant
 	// 128k-context model tier with prompt headroom. 0 is the documented
@@ -45,7 +52,11 @@ type ProjectConfig struct {
 	// ReviewStrategy overrides the run-wide fan-out strategy (Epic 14.3): "bulk"
 	// or "chunked". Empty inherits the registry tier or the embedded default.
 	ReviewStrategy string `yaml:"review_strategy,omitempty"`
-	TimeoutSecs    *int   `yaml:"timeout_secs,omitempty"`
+	// OnOverflow selects the F4 degradation policy (plan 19.10) when a payload
+	// exceeds budget: chunk (default), truncate, fallback, or fail. Empty inherits
+	// the registry tier or the embedded default.
+	OnOverflow  string `yaml:"on_overflow,omitempty"`
+	TimeoutSecs *int   `yaml:"timeout_secs,omitempty"`
 	// PayloadByteBudget is a pointer so an explicit 0 (unlimited) survives
 	// default application.
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
@@ -97,6 +108,12 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   Unchanged diffs are served from cache, skipping the LLM call. Default 50 MiB;\n")
 	b.WriteString("#   least-recently-used entries are evicted past the cap. Set to 0 for unbounded.\n")
 	fmt.Fprintf(&b, "cache_max_bytes: %d\n", DefaultCacheMaxBytes)
+	b.WriteString("# on_overflow: degradation policy (plan 19.10 F4) when a per-agent payload\n")
+	b.WriteString("#   exceeds its per-model budget. One of: chunk (default — deliver the whole\n")
+	b.WriteString("#   diff across window-sized chunks, no content dropped), truncate (drop the\n")
+	b.WriteString("#   lowest-priority tail, flagged), fallback, or fail. fallback/fail are\n")
+	b.WriteString("#   recognized but their dispatch prerequisites may not yet be shipped.\n")
+	fmt.Fprintf(&b, "on_overflow: %s\n", DefaultOnOverflow)
 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
 	b.WriteString("# auto_fix: opt-in remediation for `atcr review --auto-fix`. Off unless the flag\n")
 	b.WriteString("#   is passed; leave this stanza commented to keep the default review path.\n")
@@ -160,6 +177,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	}
 	if !reviewStrategyValid(cfg.ReviewStrategy) {
 		return nil, fmt.Errorf("%s: invalid review_strategy '%s': must be one of bulk, chunked", base, strings.TrimSpace(cfg.ReviewStrategy))
+	}
+	if !onOverflowValid(cfg.OnOverflow) {
+		return nil, fmt.Errorf("%s: invalid on_overflow '%s': must be one of chunk, truncate, fallback, fail", base, strings.TrimSpace(cfg.OnOverflow))
 	}
 	if err := cfg.Sandbox.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)

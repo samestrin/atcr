@@ -52,16 +52,16 @@ Add `on_overflow` as a plain string policy key (not a pointer — unlike `max_sp
 - `internal/registry/review_strategy.go` – existing plain-string-enum pattern this task mirrors exactly
 
 ## Success Criteria
-- [ ] `on_overflow` is a recognized YAML key in `.atcr/config.yaml`, `~/.config/atcr/registry.yaml` (project overlay), and any project config — strict `KnownFields(true)` decoding accepts it without error
-- [ ] An unset `on_overflow` at every tier resolves to `chunk` via `ResolveSettings`
-- [ ] `on_overflow: chunk` in `.atcr/config.yaml` resolves correctly through `LoadProjectConfig` → `ResolveSettings` to `Settings.OnOverflow == "chunk"`
-- [ ] An explicit `on_overflow: truncate` (or `fallback`, or `fail`) at the project tier overrides the registry tier and the embedded default
-- [ ] An invalid value (e.g. `on_overflow: yolo`) is rejected at load time in both `LoadProjectConfig` and `LoadRegistry`/`Registry.validate()` with a clear error naming the four legal values
-- [ ] A typo'd key (e.g. `on_overlow:`) is rejected at load time by strict YAML decoding (proves the struct tag is correctly wired, not that a stray key was silently ignored)
-- [ ] `Registry.OnOverflow` and `ProjectConfig.OnOverflow` have no `Effective*()` resolver method (resolution happens once, centrally, in `ResolveSettings`) — confirmed by code review, not a runtime check
+- [x] `on_overflow` is a recognized YAML key in `.atcr/config.yaml`, `~/.config/atcr/registry.yaml` (project overlay), and any project config — strict `KnownFields(true)` decoding accepts it without error
+- [x] An unset `on_overflow` at every tier resolves to `chunk` via `ResolveSettings`
+- [x] `on_overflow: chunk` in `.atcr/config.yaml` resolves correctly through `LoadProjectConfig` → `ResolveSettings` to `Settings.OnOverflow == "chunk"`
+- [x] An explicit `on_overflow: truncate` (or `fallback`, or `fail`) at the project tier overrides the registry tier and the embedded default
+- [x] An invalid value (e.g. `on_overflow: yolo`) is rejected at load time in both `LoadProjectConfig` and `LoadRegistry`/`Registry.validate()` with a clear error naming the four legal values
+- [x] A typo'd key (e.g. `on_overlow:`) is rejected at load time by strict YAML decoding (proves the struct tag is correctly wired, not that a stray key was silently ignored)
+- [x] `Registry.OnOverflow` and `ProjectConfig.OnOverflow` have no `Effective*()` resolver method (resolution happens once, centrally, in `ResolveSettings`) — confirmed by code review, not a runtime check
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -94,13 +94,13 @@ Add `on_overflow` as a plain string policy key (not a pointer — unlike `max_sp
 - None hard — can run in parallel with Task-04 (dispatch logic consumes this schema's output, but Task 04 can be developed/tested against a hand-built `Settings{OnOverflow: ...}` without waiting on this task to land)
 
 ## Definition of Done
-- [ ] `internal/registry/on_overflow.go` created with `validOnOverflowPolicies` and `onOverflowValid`
-- [ ] `Registry.OnOverflow`, `ProjectConfig.OnOverflow`, and `Settings.OnOverflow` all added with correct `yaml:"on_overflow,omitempty"` tags where applicable
-- [ ] `LoadProjectConfig` and `Registry.validate()` both reject invalid `on_overflow` values with a clear error
-- [ ] `ResolveSettings` resolves `on_overflow` through the registry → project precedence chain, defaulting to `chunk`, with a post-resolution sanity re-check
-- [ ] `.atcr/config.yaml` documents and sets `on_overflow: chunk`
-- [ ] `DefaultProjectConfigYAML` in `internal/registry/project.go` emits a documented `on_overflow` line for `atcr init`-generated configs
-- [ ] All new unit tests pass
-- [ ] `go build ./...` succeeds
-- [ ] `go test ./...` passes
-- [ ] No changes to `internal/fanout` or any dispatch logic — this task is config-schema only
+- [x] `internal/registry/on_overflow.go` created with `validOnOverflowPolicies` and `onOverflowValid`
+- [x] `Registry.OnOverflow`, `ProjectConfig.OnOverflow`, and `Settings.OnOverflow` all added with correct `yaml:"on_overflow,omitempty"` tags where applicable
+- [x] `LoadProjectConfig` and `Registry.validate()` both reject invalid `on_overflow` values with a clear error
+- [x] `ResolveSettings` resolves `on_overflow` through the registry → project precedence chain, defaulting to `chunk`, with a post-resolution sanity re-check
+- [x] `.atcr/config.yaml` documents and sets `on_overflow: chunk`
+- [x] `DefaultProjectConfigYAML` in `internal/registry/project.go` emits a documented `on_overflow` line for `atcr init`-generated configs
+- [x] All new unit tests pass
+- [x] `go build ./...` succeeds
+- [x] `go test ./...` passes
+- [x] No changes to `internal/fanout` or any dispatch logic — this task is config-schema only
