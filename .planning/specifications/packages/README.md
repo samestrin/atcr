@@ -1,9 +1,9 @@
 # Package Documentation
 
 **Generated:** 2026-06-10
-**Last Reviewed:** July 08, 2026 05:30:56PM
+**Last Reviewed:** July 10, 2026 10:43:02AM
 **Package Manager:** go
-**Total Packages:** 7 (+ consolidated standard-library reference)
+**Total Packages:** 8 (+ consolidated standard-library reference)
 
 ---
 
@@ -18,7 +18,7 @@ Full documentation with API references and examples.
 | [github.com/spf13/cobra](cobra.md) | v1.10.2 | [Official](https://pkg.go.dev/github.com/spf13/cobra) |
 | [github.com/modelcontextprotocol/go-sdk](mcp-go-sdk.md) | v1.6.1 | [Official](https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp) |
 
-### Important (4)
+### Important (5)
 
 Focused documentation with key APIs.
 
@@ -28,6 +28,7 @@ Focused documentation with key APIs.
 | [github.com/stretchr/testify](testify.md) | v1.11.1 | [Official](https://pkg.go.dev/github.com/stretchr/testify) |
 | [github.com/google/jsonschema-go](jsonschema-go.md) | v0.4.3 | [Official](https://pkg.go.dev/github.com/google/jsonschema-go) |
 | [go-gitdiff](go-gitdiff.md) | v0.8.1 | [Official](https://github.com/bluekeyes/go-gitdiff) |
+| [go-gh](go-gh.md) | v2.13.0 | [Official](https://pkg.go.dev/github.com/cli/go-gh/v2) |
 
 ### Utilities (1)
 
@@ -47,7 +48,7 @@ All other functionality is standard library by design (small-dependency-tree con
 
 - **Project:** atcr — Go CLI + MCP server (Epic 1.0)
 - **Go version:** 1.25+
-- **Last Full Refresh (this run):** July 08, 2026 05:30:56PM
+- **Last Full Refresh (this run):** July 10, 2026 10:43:02AM (targeted: go-gh)
 - **Update with:** `/init-documentation --update`
 
 ---
