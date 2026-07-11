@@ -188,7 +188,11 @@ func mergeChunkResults(results []Result, serialAgents ...map[string]bool) []Resu
 // FallbackUsed/FallbackFrom are unioned across the group (fallbackFromSet below),
 // so a persona whose chunks partly fell back is recorded as one fallback slot —
 // feeding the run-level Summary.FallbackCount / PoolSummary.FallbackCount tally
-// (Epic 19.10 F5) identically to the bulk path.
+// (Epic 19.10 F5) identically to the bulk path. FallbackModel is the F5 collapse
+// key: it must name a SINGLE net model so reconcile can de-weight personas served
+// by the same model. When chunks fell back to different models, pick the modal
+// (most frequent) model, tie-breaking by first appearance, instead of joining them
+// into a composite value that would never match another persona's key.
 func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out := g[0] // inherit stable per-slot identity (Agent, Model, PayloadMode, constraints)
 	out.Err = nil
@@ -215,7 +219,8 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	okCount := 0
 	anyOK, sawTimeout, allCacheHit := false, false, true
 	fallbackFromSet := make(map[string]struct{})
-	fallbackModelSet := make(map[string]struct{})
+	fallbackModelCounts := make(map[string]int)
+	var fallbackModelOrder []string
 	for _, r := range g {
 		if strings.TrimSpace(r.Content) != "" {
 			contents = append(contents, r.Content)
@@ -242,7 +247,10 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 				fallbackFromSet[r.FallbackFrom] = struct{}{}
 			}
 			if r.FallbackModel != "" {
-				fallbackModelSet[r.FallbackModel] = struct{}{}
+				if fallbackModelCounts[r.FallbackModel] == 0 {
+					fallbackModelOrder = append(fallbackModelOrder, r.FallbackModel)
+				}
+				fallbackModelCounts[r.FallbackModel]++
 			}
 		}
 		out.Tools = out.Tools || r.Tools
@@ -275,13 +283,16 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		sort.Strings(fallbacks)
 		out.FallbackFrom = strings.Join(fallbacks, ",")
 	}
-	if len(fallbackModelSet) > 0 {
-		models := make([]string, 0, len(fallbackModelSet))
-		for m := range fallbackModelSet {
-			models = append(models, m)
+	if len(fallbackModelCounts) > 0 {
+		var bestModel string
+		var bestCount int
+		for _, m := range fallbackModelOrder {
+			if c := fallbackModelCounts[m]; c > bestCount {
+				bestCount = c
+				bestModel = m
+			}
 		}
-		sort.Strings(models)
-		out.FallbackModel = strings.Join(models, ",")
+		out.FallbackModel = bestModel
 	}
 	// A persona with a mix of succeeded and failed chunks still reports OK (it
 	// contributed findings), but the failed chunks' files went unreviewed — a
