@@ -56,9 +56,9 @@ _Note: This section is updated when sprint is created with `/create-sprint`_
 |-------|-------|--------|
 | 1 — Foundation: Local Fixture-Gate Reuse & Submission Blocking | Story 1 | ✅ Complete (2026-07-10) |
 | 2 — Core: Fork + PR Automation via `gh` | Story 2 | ✅ Complete (2026-07-10) |
-| 3 — Core: `submitted` Status Distinct from `Source` | Story 3 | Not started |
-| 4 — Integration: Documentation (Graduation + Submit Flow) | Stories 4 & 5 | Not started |
-| 5 — Validation | All | Not started |
+| 3 — Core: `submitted` Status Distinct from `Source` | Story 3 | ✅ Complete (2026-07-10) |
+| 4 — Integration: Documentation (Graduation + Submit Flow) | Stories 4 & 5 | ✅ Complete (2026-07-10) |
+| 5 — Validation | All | ✅ Complete (2026-07-10) |
 
 ---
 
@@ -68,21 +68,20 @@ _Note: This section is updated when sprint is created with `/create-sprint`_
 
 ## Execution Metrics
 
-_Populated by `/execute-sprint` upon completion_
+**Status:** Ready for Review
 
-**Executed:** _Not yet executed_
-**Runtime:** _TBD_
-**Status:** _TBD_
+**Executed:** 2026-07-10
 
 ### Progress
-- **Phases:** _TBD_
-- **Work Items:** _TBD_
+- **Phases:** 5/5
+- **Stories:** 5/5
+- **Tasks:** 67/67
 
 ### Quality
-- **Tests:** _TBD_
-- **Coverage:** _TBD_
-- **Lint:** _TBD_
+- **Tests:** All passing (0 failures across all packages)
+- **Coverage:** 83.5% (sprint changed-packages; `cmd/atcr` 84.6%)
+- **Lint:** Clean (`go vet` exit 0, `golangci-lint` 0 issues, `gofmt` clean)
 
 ### Changes
-- **Files Changed:** _TBD_
-- **Commits:** _TBD_
+- **Files Changed:** 29 (branch vs `main`); 10 code/doc files
+- **Commits:** 19
