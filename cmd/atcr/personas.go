@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -89,14 +90,31 @@ var personasFixtureRunner commpersonas.FixtureRunner = commpersonas.TemplateFixt
 	PersonasDir: func() (string, error) { return personasDir() },
 }
 
-// newPersonasCmd builds `atcr personas`: a parent command hosting the six
+// personasGitHub is the injectable gh/git seam for `personas submit`'s fork+PR
+// flow (Phase 2), matching the personasClient/personasFixtureRunner pattern. Tests
+// replace it with a stub so no real gh binary or network call occurs. It is
+// defined independently of internal/ghaction.Client.
+var personasGitHub commpersonas.GitHubSubmitter = commpersonas.NewGitHubSubmitter()
+
+// personasSubmissionsDir resolves the per-user submitted-marker storage directory
+// (a sibling of personasDir, outside the vetted community tree). A package var so
+// tests can point the marker write at a temp dir instead of the real ~/.config,
+// matching the personasDir seam convention.
+var personasSubmissionsDir = commpersonas.SubmissionsDir
+
+// personasSubmitTimeout bounds the whole fork/branch/push/PR-create sequence so a
+// stalled network fails fast with a clear error instead of hanging the CLI.
+const personasSubmitTimeout = 90 * time.Second
+
+// newPersonasCmd builds `atcr personas`: a parent command hosting the seven
 // community-persona lifecycle sub-subcommands.
 func newPersonasCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "personas",
 		Short: "Manage community reviewer personas",
 		Long: "Manage community-contributed reviewer personas: install, list, search,\n" +
-			"remove, test, and upgrade personas fetched from a configurable repository.\n\n" +
+			"remove, test, and upgrade personas fetched from a configurable repository,\n" +
+			"and submit a locally-tuned persona back to the community library via a fork+PR.\n\n" +
 			"Installed personas live under ~/.config/atcr/personas/ and are available to\n" +
 			"the reviewer panel on the next review. The repository base URL defaults to\n" +
 			"the public community repo and is overridable via ATCR_PERSONAS_URL.",
@@ -110,8 +128,35 @@ func newPersonasCmd() *cobra.Command {
 		newPersonasRemoveCmd(),
 		newPersonasTestCmd(),
 		newPersonasUpgradeCmd(),
+		newPersonasSubmitCmd(),
 	)
 	return cmd
+}
+
+// personasSubmitContinuation is the seam the local gate hands off to once a
+// persona clears name validation + the fixture check. Its production default
+// drives the gh fork+PR flow behind personasGitHub under a bounded context and
+// prints the resulting PR URL to stdout. Tests swap it for a spy to assert the
+// gate reaches the continuation only on a full fixture pass and never on a
+// failure — the structural guarantee that no fork/PR/`gh` side effect can precede
+// a passing gate.
+var personasSubmitContinuation = func(cmd *cobra.Command, name string) error {
+	ctx, cancel := context.WithTimeout(cmd.Context(), personasSubmitTimeout)
+	defer cancel()
+	dir, err := personasDir()
+	if err != nil {
+		return err
+	}
+	subDir, err := personasSubmissionsDir()
+	if err != nil {
+		return err
+	}
+	url, err := commpersonas.Submit(ctx, personasGitHub, dir, subDir, name)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), url)
+	return nil
 }
 
 func newPersonasInstallCmd() *cobra.Command {
@@ -323,6 +368,38 @@ func newPersonasTestCmd() *cobra.Command {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "FAIL: %s (%d/%d cases)\n", name, outcome.Passed, outcome.Total)
 				return fmt.Errorf("persona %q fixture failed: %d/%d cases passed", name, outcome.Passed, outcome.Total)
 			}
+		},
+	}
+}
+
+// newPersonasSubmitCmd builds `atcr personas submit <name>`: the intake command
+// that contributes a locally-tuned persona back to the community library. This
+// phase wires only the local safety gate — name validation plus the reused
+// fixture gate — behind commpersonas.SubmitGate; on a clean pass it hands off to
+// personasSubmitContinuation, the stub Phase 2 replaces with the `gh` fork+PR
+// flow. No `gh`/network code runs here: a failing gate returns before any
+// continuation, so an unvetted or invalid persona never reaches GitHub.
+func newPersonasSubmitCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "submit <name>",
+		Short: "Submit a locally-tuned persona back to the community library via a fork+PR",
+		Long: "Contribute a locally-tuned reviewer persona back to the canonical library.\n" +
+			"submit runs the persona's fixture gate locally and, only if it passes, opens\n" +
+			"a fork+PR under your own gh authentication — no marketplace or hosted registry.\n" +
+			"A missing or failing fixture, or an invalid name, blocks submission with no\n" +
+			"fork/PR side effects.",
+		Args: usageArgs(cobra.ExactArgs(1)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			// Local gate first: validate the name and run the fixture check. Both
+			// must pass before any GitHub interaction. SubmitGate returns a non-nil
+			// error (exit 1 via main's mapping) on any failure, so control never
+			// reaches the continuation on a blocked submission.
+			if err := commpersonas.SubmitGate(name, personasFixtureRunner); err != nil {
+				return err
+			}
+			// On a clean gate, hand off to the fork+PR continuation.
+			return personasSubmitContinuation(cmd, name)
 		},
 	}
 }
