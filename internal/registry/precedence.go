@@ -90,7 +90,11 @@ type Settings struct {
 	// "bulk" (whole diff in one prompt per persona) or "chunked" (bin-packed
 	// per-persona calls capped by each agent's max_context_lines).
 	ReviewStrategy string
-	TimeoutSecs    int
+	// OnOverflow is the resolved F4 degradation policy (plan 19.10) —
+	// chunk/truncate/fallback/fail — dispatched by internal/fanout when a payload
+	// exceeds budget (see Task 04). Resolved once here, like ReviewStrategy.
+	OnOverflow  string
+	TimeoutSecs int
 	// PayloadByteBudget is the per-payload byte budget fed to
 	// payload.ApplyByteBudget; 0 is the documented unlimited escape hatch
 	// (AC 06-03).
@@ -101,6 +105,10 @@ type Settings struct {
 	// CacheMaxBytes is the resolved total-size cap for the diff cache (Epic 5.2)
 	// passed to cache.NewStore; 0 is the documented unbounded escape hatch.
 	CacheMaxBytes int64
+	// MaxSprintPlanBytes is the resolved byte ceiling applied to a --sprint-plan
+	// file's SCOPE CONSTRAINT injection (plan 19.10 F9); see
+	// internal/payload.ReadSprintPlan / ScopeConstraint. Always > 0.
+	MaxSprintPlanBytes int64
 	// MaxRetries is the resolved retry budget passed to the llmclient per call
 	// (Epic 4.6); 0 means a single attempt with no retry.
 	MaxRetries int
@@ -123,14 +131,16 @@ type CLIOverrides struct {
 // here because they bypass the load-time checks the file tiers go through.
 func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Settings, error) {
 	s := Settings{
-		PayloadMode:       DefaultPayloadMode,
-		ReviewStrategy:    DefaultReviewStrategy,
-		TimeoutSecs:       DefaultTimeoutSecs,
-		PayloadByteBudget: DefaultPayloadByteBudget,
-		MaxParallel:       DefaultMaxParallel,
-		CacheMaxBytes:     DefaultCacheMaxBytes,
-		MaxRetries:        DefaultMaxRetries,
-		InitialBackoffMs:  DefaultInitialBackoffMs,
+		PayloadMode:        DefaultPayloadMode,
+		ReviewStrategy:     DefaultReviewStrategy,
+		OnOverflow:         DefaultOnOverflow,
+		TimeoutSecs:        DefaultTimeoutSecs,
+		PayloadByteBudget:  DefaultPayloadByteBudget,
+		MaxParallel:        DefaultMaxParallel,
+		CacheMaxBytes:      DefaultCacheMaxBytes,
+		MaxSprintPlanBytes: DefaultMaxSprintPlanBytes,
+		MaxRetries:         DefaultMaxRetries,
+		InitialBackoffMs:   DefaultInitialBackoffMs,
 	}
 
 	if reg != nil {
@@ -140,6 +150,11 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		// four-field signature. A pointer means an explicit 0 (unbounded) survives.
 		if reg.CacheMaxBytes != nil {
 			s.CacheMaxBytes = *reg.CacheMaxBytes
+		}
+		// MaxSprintPlanBytes (F9) lives at the registry and project tiers only, like
+		// CacheMaxBytes — overlaid explicitly, not through applyTier's fixed signature.
+		if reg.MaxSprintPlanBytes != nil {
+			s.MaxSprintPlanBytes = *reg.MaxSprintPlanBytes
 		}
 		// Retry tunables live only at the registry (global) tier and the agent
 		// tier (Epic 4.6) — the project tier intentionally does not carry them,
@@ -156,14 +171,25 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		if v := strings.TrimSpace(reg.ReviewStrategy); v != "" {
 			s.ReviewStrategy = v
 		}
+		// OnOverflow (F4) lives at the registry and project tiers only, like
+		// ReviewStrategy. Empty/whitespace is "unset" and falls through.
+		if v := strings.TrimSpace(reg.OnOverflow); v != "" {
+			s.OnOverflow = v
+		}
 	}
 	if proj != nil {
 		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
 		if proj.CacheMaxBytes != nil {
 			s.CacheMaxBytes = *proj.CacheMaxBytes
 		}
+		if proj.MaxSprintPlanBytes != nil {
+			s.MaxSprintPlanBytes = *proj.MaxSprintPlanBytes
+		}
 		if v := strings.TrimSpace(proj.ReviewStrategy); v != "" {
 			s.ReviewStrategy = v
+		}
+		if v := strings.TrimSpace(proj.OnOverflow); v != "" {
+			s.OnOverflow = v
 		}
 	}
 
@@ -221,11 +247,23 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	if s.CacheMaxBytes < 0 {
 		return Settings{}, fmt.Errorf("cache_max_bytes must be >= 0 (0 = unbounded), got %d", s.CacheMaxBytes)
 	}
+	// MaxSprintPlanBytes (F9): 0/negative has no valid meaning (no unbounded
+	// plan-injection use case). Catches a directly-constructed proj/reg that
+	// bypassed the file loaders.
+	if s.MaxSprintPlanBytes <= 0 {
+		return Settings{}, fmt.Errorf("max_sprint_plan_bytes must be > 0, got %d", s.MaxSprintPlanBytes)
+	}
 	// ReviewStrategy (Epic 14.3): the file tiers are checked at load, but the
 	// project tier and a directly-constructed proj/reg bypass that — re-check the
 	// resolved value so the engine never receives an unknown strategy.
 	if !reviewStrategyValid(s.ReviewStrategy) {
 		return Settings{}, fmt.Errorf("invalid review_strategy '%s': must be one of bulk, chunked", s.ReviewStrategy)
+	}
+	// OnOverflow (F4): the file tiers are checked at load, but the project tier
+	// and a directly-constructed proj/reg bypass that — re-check the resolved
+	// value so internal/fanout never receives an unknown policy.
+	if !onOverflowValid(s.OnOverflow) {
+		return Settings{}, fmt.Errorf("invalid on_overflow '%s': must be one of chunk, truncate, fallback, fail", s.OnOverflow)
 	}
 	// Retry tunables (Epic 4.6): a directly-constructed reg (bypassing the file
 	// loader) can carry out-of-range values; catch them so the engine never

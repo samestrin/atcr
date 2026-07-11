@@ -245,3 +245,76 @@ func TestFindingsFor_UsesCachedCount(t *testing.T) {
 	fr := findingsFor(r, nil)
 	assert.Empty(t, fr.Findings, "findingsFor should trust the cached zero count")
 }
+
+// TestStatusFor_DiagnosabilityPassThrough verifies statusFor copies the five
+// Epic 19.10 F8 diagnosability values from Result to AgentStatus verbatim, with no
+// recomputation, and leaves them zero for a Result that never went through
+// per-model sizing.
+func TestStatusFor_DiagnosabilityPassThrough(t *testing.T) {
+	sized := Result{
+		Agent: "dax", Status: StatusOK, PayloadMode: "diff",
+		EffectiveBudget: 114688, ResolvedWindow: 32768, ReservedOutputTokens: 8192,
+		ChunkCount: 6, DegradationAction: "chunk",
+	}
+	st := statusFor(sized, findingsResult{})
+	assert.Equal(t, int64(114688), st.EffectiveBudget)
+	assert.Equal(t, 32768, st.ResolvedWindow)
+	assert.Equal(t, 8192, st.ReservedOutputTokens)
+	assert.Equal(t, 6, st.ChunkCount)
+	assert.Equal(t, "chunk", st.DegradationAction)
+
+	// An unsized result leaves all five at their zero values (omitempty then fires).
+	bare := statusFor(Result{Agent: "greta", Status: StatusOK}, findingsResult{})
+	assert.Zero(t, bare.EffectiveBudget)
+	assert.Zero(t, bare.ResolvedWindow)
+	assert.Zero(t, bare.ReservedOutputTokens)
+	assert.Zero(t, bare.ChunkCount)
+	assert.Empty(t, bare.DegradationAction)
+}
+
+// TestWritePool_DiagnosabilityFieldsInSummary is the AC8 end-to-end proof: a run
+// over a roster with a chunked agent and a truncate-degraded agent produces a
+// summary.json whose agents[] entries carry the per-agent effective budget,
+// resolved window, reserved output tokens, chunk count, and degradation action —
+// while an unsized agent's entry omits all five.
+func TestWritePool_DiagnosabilityFieldsInSummary(t *testing.T) {
+	pool := filepath.Join(t.TempDir(), "pool")
+
+	chunked := okResult("dax", findingsBody)
+	chunked.EffectiveBudget, chunked.ResolvedWindow, chunked.ReservedOutputTokens = 114688, 32768, 8192
+	chunked.ChunkCount, chunked.DegradationAction = 6, "chunk"
+
+	truncated := okResult("otto", findingsBody)
+	truncated.EffectiveBudget, truncated.ResolvedWindow, truncated.ReservedOutputTokens = 507904, 144941, 8192
+	truncated.DegradationAction = "truncate"
+
+	unsized := okResult("legacy", findingsBody) // e.g. a cache-hit/bare result
+
+	_, err := WritePool(pool, []Result{chunked, truncated, unsized}, nil)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(pool, "summary.json"))
+	require.NoError(t, err)
+	var ps PoolSummary
+	require.NoError(t, json.Unmarshal(data, &ps))
+
+	byAgent := map[string]AgentStatus{}
+	for _, a := range ps.Agents {
+		byAgent[a.Agent] = a
+	}
+
+	assert.Equal(t, 6, byAgent["dax"].ChunkCount)
+	assert.Equal(t, "chunk", byAgent["dax"].DegradationAction)
+	assert.Equal(t, int64(114688), byAgent["dax"].EffectiveBudget)
+	assert.Equal(t, 32768, byAgent["dax"].ResolvedWindow)
+	assert.Equal(t, 8192, byAgent["dax"].ReservedOutputTokens)
+
+	assert.Equal(t, "truncate", byAgent["otto"].DegradationAction)
+	assert.Equal(t, int64(507904), byAgent["otto"].EffectiveBudget)
+	assert.Zero(t, byAgent["otto"].ChunkCount, "a bulk (unchunked) degraded agent has no chunk count")
+
+	// The unsized agent's entry omits every diagnosability field entirely.
+	assert.Zero(t, byAgent["legacy"].EffectiveBudget)
+	assert.Zero(t, byAgent["legacy"].ResolvedWindow)
+	assert.Empty(t, byAgent["legacy"].DegradationAction)
+}

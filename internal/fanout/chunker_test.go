@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,6 +54,35 @@ func TestSplitDiffFiles(t *testing.T) {
 		require.Len(t, segs, 1)
 		assert.Equal(t, diff, segs[0])
 	})
+}
+
+// TestChunkDiff_WindowDerivedMaxLines proves F3/AC3: feeding chunkDiff a maxLines
+// derived from a 32k model's window opens MORE chunks than one derived from a 128k
+// model's window for the identical diff, and both plans reassemble the whole diff
+// with zero files dropped. chunkDiff itself is unchanged; only its maxLines source
+// (payload.ChunkMaxLines) differs per model.
+func TestChunkDiff_WindowDerivedMaxLines(t *testing.T) {
+	const outputTokens = 8192 // mirrors defaultMaxTokens
+	var b strings.Builder
+	for i := 0; i < 20; i++ {
+		b.WriteString(fileSeg("f"+itoa(i)+".go", 200))
+	}
+	diff := b.String()
+
+	smallML := payload.ChunkMaxLines("unlisted-small-model", outputTokens) // 32768 window
+	largeML := payload.ChunkMaxLines("openai/gpt-5.5", outputTokens)       // 128000 window
+	require.Less(t, smallML, largeML, "a 32k window must derive fewer lines-per-chunk than a 128k window")
+
+	smallChunks := chunkDiff(diff, smallML)
+	largeChunks := chunkDiff(diff, largeML)
+
+	assert.Greater(t, len(smallChunks), len(largeChunks),
+		"the 32k window must split the same diff into more chunks than the 128k window")
+	// Zero files dropped: both plans reproduce the original diff exactly.
+	assert.Equal(t, diff, strings.Join(smallChunks, ""), "32k chunk plan must be lossless")
+	assert.Equal(t, diff, strings.Join(largeChunks, ""), "128k chunk plan must be lossless")
+	// Respect the 64-chunk ceiling.
+	assert.LessOrEqual(t, len(smallChunks), maxChunksPerAgent)
 }
 
 func TestChunkDiff(t *testing.T) {
@@ -234,6 +264,24 @@ func TestMergeResultGroupFallbackFromDistinct(t *testing.T) {
 	assert.True(t, merged.FallbackUsed)
 	assert.Contains(t, merged.FallbackFrom, "primary-a", "first fallback source should be recorded")
 	assert.Contains(t, merged.FallbackFrom, "primary-b", "second fallback source should be recorded")
+}
+
+// TestMergeResultGroup_FallbackModelModal covers the F5 collapse-key contract:
+// FallbackModel is reconcile's signal that two personas were served by the same
+// net model. When a chunked persona's chunks fell back to DIFFERENT models,
+// joining them comma-separated ("model-a,model-b") produces a composite key that
+// never matches another persona's single-model key, so the persona escapes the
+// intended de-weighting. The merged result must report ONE representative model
+// (the modal/most-frequent fallback) instead.
+func TestMergeResultGroup_FallbackModelModal(t *testing.T) {
+	g := []Result{
+		{Agent: "reviewer", Status: StatusOK, FallbackUsed: true, FallbackModel: "model-a"},
+		{Agent: "reviewer", Status: StatusOK, FallbackUsed: true, FallbackModel: "model-b"},
+		{Agent: "reviewer", Status: StatusOK, FallbackUsed: true, FallbackModel: "model-a"},
+	}
+	merged := mergeResultGroup(g, nil)
+	assert.Equal(t, "model-a", merged.FallbackModel, "modal fallback model should be the F5 collapse key")
+	assert.NotContains(t, merged.FallbackModel, ",", "composite FallbackModel breaks F5 collapse")
 }
 
 func TestMergeResultGroup_AggregatesResponseTruncated(t *testing.T) {

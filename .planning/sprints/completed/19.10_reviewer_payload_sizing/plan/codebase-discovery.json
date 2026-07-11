@@ -1,0 +1,558 @@
+{
+  "generated": "2026-07-11",
+  "discovery_method": "semantic",
+  "queries": [
+    "per model context window resolver",
+    "window aware diff chunking",
+    "on overflow policy dispatch",
+    "fallback provenance summary reconcile",
+    "cache key effective budget chunk plan"
+  ],
+  "match_count": 21,
+  "build_from": {
+    "primary_file": "internal/payload/budget.go",
+    "reason": "ApplyByteBudget (line 46), FileEntry (line 11) and Truncation (line 23) are the current shed-to-fit primitives that F1/F2 must sit alongside — the new per-model context-window resolver and effective-budget calculation live in sibling files in the same package, reusing FileEntry as the input shape.",
+    "suggested_approach": "Add internal/payload/contextwindow.go exposing ContextWindowTokens(model string) int and a conservative default; add internal/payload/sizing.go with an effective-budget helper that reserves defaultMaxTokens + prompt overhead. Keep ApplyByteBudget untouched (it remains the on_overflow=truncate mechanism)."
+  },
+  "semantic_matches": [
+    {
+      "file": "internal/payload/budget.go",
+      "symbol": "ApplyByteBudget",
+      "type": "function",
+      "line": 46,
+      "score": 1.0,
+      "query": "payload byte budget shedding files",
+      "relevance": "The existing byte-shed primitive (Fork A). Stays as the on_overflow=truncate mechanism; F1/F2 sit alongside it, not inside it."
+    },
+    {
+      "file": "internal/payload/budget.go",
+      "symbol": "FileEntry",
+      "type": "struct",
+      "line": 11,
+      "score": 0.996,
+      "query": "payload byte budget shedding files",
+      "relevance": "The shared input shape (Path/Size/Body) that both ApplyByteBudget and the new per-model sizing/chunk-plan derivation (F2/F3) must consume identically for in-memory per-agent sizing at dispatch."
+    },
+    {
+      "file": "internal/payload/budget.go",
+      "symbol": "Truncation",
+      "type": "struct",
+      "line": 23,
+      "score": 0.9995,
+      "query": "payload byte budget shedding files",
+      "relevance": "The non-silent degradation-record pattern (Truncated/FilesDropped/AllDropped) to mirror for F8's diagnosability fields (effective budget/window/chunks/degradation action)."
+    },
+    {
+      "file": "internal/fanout/chunker.go",
+      "symbol": "chunkDiff",
+      "type": "function",
+      "line": 111,
+      "score": 1.0,
+      "query": "chunker diff line splitting chunks",
+      "relevance": "The Epic 14.3 chunker (Fork B mechanism) F3 must make window-aware: currently bin-packs on a caller-supplied maxLines with no token awareness. Splits only on file boundaries, capped at maxChunksPerAgent."
+    },
+    {
+      "file": "internal/fanout/chunker.go",
+      "symbol": "maxChunksPerAgent",
+      "type": "const",
+      "line": 99,
+      "score": 0.985,
+      "query": "chunker diff line splitting chunks",
+      "relevance": "The existing 64-chunk/agent ceiling F3 must respect per Constraints ('do not reimplement chunking, reuse the 64-chunk ceiling')."
+    },
+    {
+      "file": "internal/fanout/chunker.go",
+      "symbol": "mergeChunkResults",
+      "type": "function",
+      "line": 154,
+      "score": 0.92,
+      "query": "chunker diff line splitting chunks",
+      "relevance": "Collapses N chunk results per persona back into one — F3's window-aware chunking must keep feeding into this unchanged merge path; F5's fallback-provenance union (FallbackFrom) already has a merge pattern here to extend."
+    },
+    {
+      "file": "internal/fanout/chunker.go",
+      "symbol": "mergeResultGroup",
+      "type": "function",
+      "line": 188,
+      "score": 0.90,
+      "query": "chunker diff line splitting chunks",
+      "relevance": "Where FallbackFrom/FallbackUsed are already unioned across chunks (comma-joined, sorted) via fallbackFromSet — F5's fallback-provenance recording in summary.json should follow this exact aggregation pattern rather than inventing a new one."
+    },
+    {
+      "file": "internal/fanout/chunker_test.go",
+      "symbol": "TestChunkDiff",
+      "type": "test",
+      "line": 58,
+      "score": 0.998,
+      "query": "chunker diff line splitting chunks",
+      "relevance": "Existing table-driven test structure for chunkDiff — the pattern to extend for AC3's window-aware chunk-count assertions (more chunks for 32k model, fewer for 144k)."
+    },
+    {
+      "file": "internal/cache/key.go",
+      "symbol": "Key",
+      "type": "function",
+      "line": 26,
+      "score": 0.882,
+      "query": "cache key effective budget chunk plan",
+      "relevance": "The content-addressed cache key (promptHash, model, tuning NUL-joined). F7 needs the per-agent effective budget / chunk plan folded into the tuning token (mirroring how baseURL was folded in) so a per-agent-sized payload is never served a stale full-payload hit."
+    },
+    {
+      "file": "internal/fanout/review.go",
+      "symbol": "diffCacheKey",
+      "type": "function",
+      "line": 975,
+      "score": 0.9973,
+      "query": "cache key effective budget chunk plan",
+      "relevance": "Caller of cache.Key; already folds baseURL into the tuning token via NUL-separation. F7's effective-budget/chunk-plan value should be folded in here the same way, and the key comment block explaining what's deliberately included/excluded needs updating."
+    },
+    {
+      "file": "internal/fanout/review.go",
+      "symbol": "defaultMaxTokens / maxTokensPtr",
+      "type": "const/function",
+      "line": 954,
+      "score": 0.99,
+      "query": "per model context window resolver",
+      "relevance": "The confirmed root cause of the dax 24577+8192>32768 overflow: an 8192-token output cap applied to every model regardless of window, never reserved against input sizing. F2 must consume this constant when computing contextWindow - defaultMaxTokens - promptOverhead."
+    },
+    {
+      "file": "internal/fanout/review.go",
+      "symbol": "PayloadByteBudget usage",
+      "type": "call-sites",
+      "line": 464,
+      "score": 1.0,
+      "query": "payload byte budget shedding files",
+      "relevance": "First of two identical ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget) call sites (the second at line 726) applying the SAME global budget to every agent — the exact defect F1/F2 replace with per-model sizing."
+    },
+    {
+      "file": "internal/registry/config.go",
+      "symbol": "DefaultTimeoutSecs / DefaultMaxContextLines",
+      "type": "const",
+      "line": 25,
+      "score": 0.97,
+      "query": "reviewer timeout configuration scaling",
+      "relevance": "DefaultTimeoutSecs=600 (the F6 wall greta/vera/brad hit) and DefaultMaxContextLines=1500 (the line-gated, not window-gated, chunk budget F3 replaces) are both defined here with adjacent doc comments already referencing an approximate 22k-27k token estimate for 1500 lines — a useful existing conversion anchor."
+    },
+    {
+      "file": "internal/registry/config.go",
+      "symbol": "AgentConfig.EffectiveTimeoutSecs",
+      "type": "method",
+      "line": 948,
+      "score": 0.95,
+      "query": "reviewer timeout configuration scaling",
+      "relevance": "Already-resolved per-agent timeout accessor that fanout/review.go:1039/1113 read. Per the plan's Constraints, F6 timeout scaling should read THIS resolved value in internal/fanout rather than modifying this registry resolver."
+    },
+    {
+      "file": "internal/fanout/artifacts.go",
+      "symbol": "PoolSummary / writePool",
+      "type": "struct/function",
+      "line": 31,
+      "score": 0.92,
+      "query": "cache key effective budget chunk plan",
+      "relevance": "The run-level summary.json record F8 must extend with per-agent effective budget/window/reserved-output/chunk-count/degradation fields — writePool (line 93) is where AgentStatus entries are assembled from Results before being written."
+    },
+    {
+      "file": "internal/fanout/status.go",
+      "symbol": "AgentStatus",
+      "type": "struct",
+      "line": 286,
+      "score": 0.9,
+      "query": "reviewer timeout configuration scaling",
+      "relevance": "The per-agent status.json record already carrying Model, PayloadMode, Truncated/FilesDropped, FallbackUsed/FallbackFrom, CacheHit, UnreviewedChunks — F8's new fields (effective budget, resolved window, reserved output, chunk count, degradation action) extend this struct following its existing omitempty/pointer conventions."
+    },
+    {
+      "file": "internal/registry/config.go",
+      "symbol": "AgentConfig.Model",
+      "type": "field",
+      "line": 298,
+      "score": 0.9,
+      "query": "per model context window resolver",
+      "relevance": "The model-id string (yaml: model) that F1's ContextWindowTokens(model string) resolver must key on — this is the same string diffCacheKey/cache.Key already use as the cache-key model component."
+    },
+    {
+      "file": "internal/payload/sprintplan.go",
+      "symbol": "MaxSprintPlanBytes",
+      "type": "const",
+      "line": 20,
+      "score": 1.0,
+      "query": "payload byte budget shedding files",
+      "relevance": "F9's exact target: the hardcoded 16384-byte sprint-plan ceiling to make configurable via max_sprint_plan_bytes (default 65536). ReadSprintPlan (line 35) and ScopeConstraint (line 89) both consume the constant directly and need it threaded as a parameter instead."
+    },
+    {
+      "file": "internal/fanout/engine.go",
+      "symbol": "Agent.CacheKey / invokeAgent timeout",
+      "type": "field/function",
+      "line": 153,
+      "score": 0.94,
+      "query": "reviewer timeout configuration scaling",
+      "relevance": "Agent.CacheKey (line 153) is where F7's enriched key is carried into the engine; invokeAgent (line 604) applies the per-agent TimeoutSecs deadline (line 608) — the seam where F6 scales timeout by chunk count/payload size without touching registry resolvers."
+    },
+    {
+      "file": "internal/reconcile/disagree.go",
+      "symbol": "IndependenceModelReviewerCount / BuildDisagreements",
+      "type": "const/function",
+      "line": 29,
+      "score": 0.96,
+      "query": "fallback provenance summary reconcile",
+      "relevance": "The v1 independence proxy is the count of distinct reviewers on a finding. F5 must make this fallback-aware so a slot served by a fallback model is not double-counted as an additional distinct model voice."
+    },
+    {
+      "file": "internal/reconcile/emit.go",
+      "symbol": "JSONFinding.Reviewers / Confidence",
+      "type": "field",
+      "line": 71,
+      "score": 0.95,
+      "query": "fallback provenance summary reconcile",
+      "relevance": "JSONFinding carries the Reviewers list and Confidence that the disagreements radar and consensus filter consume. F5's fallback-provenance recording must propagate into these records (or the source conversion) so reconcile's calculus is not inflated by a silent model swap."
+    }
+  ],
+  "existing_patterns": [
+    {
+      "name": "Non-silent degradation record",
+      "description": "Truncation{Truncated, FilesDropped, AllDropped} is ALWAYS returned by ApplyByteBudget, never a silent side effect — the caller inspects the struct rather than checking logs. AgentStatus/PoolSummary follow the same convention (Truncated, FallbackUsed/FallbackFrom, ResponseTruncated, UnreviewedChunks all always-present or omitempty-but-explicit fields).",
+      "files": ["internal/payload/budget.go", "internal/fanout/status.go", "internal/fanout/artifacts.go"],
+      "follow_for": "F4 (on_overflow policy result) and F8 (diagnosability fields) should return/record an explicit degradation-action value per agent, never rely on stderr-only signaling alone."
+    },
+    {
+      "name": "Pointer-for-unset-vs-explicit-zero",
+      "description": "Config fields that need to distinguish 'not set, inherit default' from 'explicitly set to zero/default value' use a pointer (e.g. AgentConfig.MaxContextLines *int, TimeoutSecs *int, MaxFindings *int), with an Effective*() method resolving the precedence chain.",
+      "files": ["internal/registry/config.go"],
+      "follow_for": "Any new per-agent or per-project config field this sprint adds (e.g. max_sprint_plan_bytes) should follow the same pointer + Effective*() resolver pattern already established for MaxContextLines/TimeoutSecs. on_overflow is a string policy key and can be a plain string with a default."
+    },
+    {
+      "name": "NUL-separated composite cache/hash keys",
+      "description": "cache.Key and diffCacheKey join heterogeneous string components with a NUL byte before hashing, specifically because NUL cannot appear in any of the component values (hex digest, model id, baseURL, numeric token) — this guarantees no boundary-ambiguity collision between two distinct input tuples.",
+      "files": ["internal/cache/key.go", "internal/fanout/review.go"],
+      "follow_for": "F7's cache-key fix: fold the effective budget / chunk-plan value into the existing NUL-joined tuning token in diffCacheKey rather than inventing a new hashing scheme."
+    },
+    {
+      "name": "Chunk-result merge-by-persona",
+      "description": "mergeChunkResults groups N per-chunk Results by Agent name back into one Result per persona (first-appearance order preserved), with mergeResultGroup accumulating tokens/turns/tool usage, ORing tool/degradation flags, and unioning FallbackFrom values (comma-joined, sorted) across chunks.",
+      "files": ["internal/fanout/chunker.go"],
+      "follow_for": "F3's window-aware chunk plan feeds the same chunkDiff -> per-chunk dispatch -> mergeChunkResults pipeline unchanged; F5's fallback provenance across a multi-chunk persona already has a working aggregation pattern to reuse (fallbackFromSet)."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/fanout/review.go",
+      "relevance": "high",
+      "purpose": "Builds review Agents/Slots per persona (buildSlots, renderAgent), applies the byte budget at two call sites (464, 726), defines defaultMaxTokens/maxTokensPtr (954-958), diffCacheKey (975), and reads AgentConfig.EffectiveTimeoutSecs when constructing Invocations (1039, 1113).",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/fanout/engine.go",
+      "relevance": "high",
+      "purpose": "Runs Slots concurrently/serially, applies the per-agent deadline in invokeAgent (line 608), and consumes Agent.CacheKey in invokeCachedSingleShot (line 691). This is where F6 scales the timeout and F7's enriched key is exercised.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/registry/config.go",
+      "relevance": "high",
+      "purpose": "Defines DefaultTimeoutSecs, DefaultMaxContextLines, MaxContextLinesCap, AgentConfig (Model line 298, MaxContextLines line 369, TimeoutSecs), EffectiveTimeoutSecs/EffectiveMaxContextLines resolvers plus Settings validation (PayloadByteBudget >= 0 check near line 512).",
+      "likely_modification": "extend (add max_sprint_plan_bytes and on_overflow schema/resolver only, per Constraints; do not touch timeout/budget resolvers otherwise)"
+    },
+    {
+      "path": "internal/registry/precedence.go",
+      "relevance": "medium",
+      "purpose": "Settings precedence-chain resolution (ResolveSettings) — where PayloadByteBudget and other project-level settings get their embedded-tier defaults applied. Must thread max_sprint_plan_bytes and on_overflow through the precedence chain.",
+      "likely_modification": "extend (only for max_sprint_plan_bytes/on_overflow precedence, per F9/F4)"
+    },
+    {
+      "path": "internal/registry/project.go",
+      "relevance": "medium",
+      "purpose": "DefaultProjectConfigYAML renders the .atcr/config.yaml scaffold `atcr init` writes, including the payload_byte_budget comment block with its byte/token ratio guidance (~4.1 B/tok implied by '512 KiB ≈ 128k tokens').",
+      "likely_modification": "extend (update the scaffold comment/default for max_sprint_plan_bytes and on_overflow; the byte/token ratio comment itself is a documentation-only NFR concern, not a load-bearing constant)"
+    },
+    {
+      "path": "internal/payload/sprintplan.go",
+      "relevance": "high",
+      "purpose": "MaxSprintPlanBytes constant (16384) plus ReadSprintPlan/ScopeConstraint/capUTF8 which consume it directly to cap sprint-plan content before prepending to every agent prompt.",
+      "likely_modification": "extend (F9: parameterize the byte ceiling instead of reading the package-level const directly)"
+    },
+    {
+      "path": "internal/fanout/chunker.go",
+      "relevance": "high",
+      "purpose": "chunkDiff (bin-packs a diff into ≤maxLines chunks on file boundaries, capped at maxChunksPerAgent=64), mergeChunkResults/mergeResultGroup (fold N chunk Results per persona back to one), isDiffFileMarker/splitDiffFiles/countLines helpers.",
+      "likely_modification": "extend (F3: feed maxLines from a per-model token budget instead of the global EffectiveMaxContextLines value)"
+    },
+    {
+      "path": "internal/fanout/artifacts.go",
+      "relevance": "high",
+      "purpose": "PoolSummary struct and writePool/summarize — the run-level summary.json writer that assembles per-agent AgentStatus records via statusFor (line 275).",
+      "likely_modification": "extend (F8: add per-agent diagnosability fields; F5: surface fallback provenance at run level)"
+    },
+    {
+      "path": "internal/fanout/status.go",
+      "relevance": "high",
+      "purpose": "AgentStatus struct (per-agent status.json shape) and statusFor (derives AgentStatus from a Result).",
+      "likely_modification": "extend (F8: add effective_budget, resolved_window, reserved_output_tokens, chunk_count, degradation_action, and reuse existing fallback_used/fallback_from for F5)"
+    },
+    {
+      "path": "internal/cache/key.go",
+      "relevance": "medium",
+      "purpose": "cache.HashText / cache.Key — the low-level content-addressed key derivation (sha256 over NUL-joined promptHash/model/tuning).",
+      "likely_modification": "reference-only (F7 changes the caller's tuning-token composition in diffCacheKey, not this function's signature)"
+    },
+    {
+      "path": "internal/reconcile/disagree.go",
+      "relevance": "high",
+      "purpose": "BuildDisagreements and the distinct-reviewer-count independence model (IndependenceModelReviewerCount) — the calculus F5 must make fallback-aware so a fallback-served slot is not double-counted as an additional distinct model voice.",
+      "likely_modification": "extend (locate the distinct-reviewer/model counting logic and de-weight fallback-served slots using the new provenance field)"
+    },
+    {
+      "path": "internal/reconcile/emit.go",
+      "relevance": "medium",
+      "purpose": "JSONFinding wire schema carries Reviewers and Confidence consumed by the radar, consensus filter, and gate. F5's fallback provenance must propagate into these records (or the source conversion) so downstream confidence is not inflated.",
+      "likely_modification": "extend (consume fallback-provenance when building/emitting JSONFinding records)"
+    },
+    {
+      "path": "internal/reconcile/adapter/adapter.go",
+      "relevance": "medium",
+      "purpose": "Public-boundary adapter between internal/stream.Finding and the extracted reconcile library. F5 may need to thread fallback/model provenance through this conversion once the library type supports it.",
+      "likely_modification": "reference-only / extend (depends on whether the library type gains a model/fallback field)"
+    },
+    {
+      "path": "internal/fanout/cache_test.go",
+      "relevance": "medium",
+      "purpose": "Existing cache-key regression tests for diffCacheKey (baseURL/temperature boundaries, no-cache cases). AC7 should extend these to verify the budget/chunk-plan component invalidates stale full-payload keys.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/fanout/chunker_test.go",
+      "relevance": "medium",
+      "purpose": "Existing table-driven tests for chunkDiff. AC3 should add cases asserting per-model chunk counts (more chunks for 32k, fewer for 144k) and zero files dropped.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/payload/budget_test.go",
+      "relevance": "medium",
+      "purpose": "Pattern for payload package tests. contextwindow_test.go should mirror its structure for F1/AC1/AC2.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "docs/payload-modes.md",
+      "relevance": "low",
+      "purpose": "User-facing documentation of payload_byte_budget and truncation behavior.",
+      "likely_modification": "extend (document on_overflow policy, per-model sizing, and max_sprint_plan_bytes once implemented)"
+    },
+    {
+      "path": ".atcr/config.yaml",
+      "relevance": "medium",
+      "purpose": "Project-level config currently carrying timeout_secs, payload_byte_budget, max_parallel, fail_on. Must document/default the new max_sprint_plan_bytes and on_overflow keys.",
+      "likely_modification": "extend"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "internal/fanout/review.go:464 and :726 (plus PrepareReviewFromDiff :441)",
+      "type": "hook",
+      "description": "The two ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget) call sites that must become per-agent: compute an effective per-model budget/chunk-plan here (or in a helper these call) instead of applying one global budget to every agent. The diff-ingestion path at :441 builds entries from an external diff and then also calls ApplyByteBudget."
+    },
+    {
+      "location": "internal/fanout/review.go:954-989 (defaultMaxTokens, maxTokensPtr, diffCacheKey)",
+      "type": "hook",
+      "description": "Output-token reservation point (F2) and cache-key composition point (F7) — both already centralized here, making this the natural place to thread contextWindow/effective-budget values through."
+    },
+    {
+      "location": "internal/fanout/review.go:865-876 (chunked-strategy branch)",
+      "type": "hook",
+      "description": "Where EffectiveMaxContextLines() currently feeds chunkDiff's maxLines argument — F3 replaces or supplements this value with a per-model token-derived maxLines."
+    },
+    {
+      "location": "internal/fanout/engine.go:608 and review.go:516 (deadline/timeout application)",
+      "type": "hook",
+      "description": "Where AgentConfig.EffectiveTimeoutSecs is currently applied as a flat deadline — F6 reads this resolved value and scales it by chunk count/payload size without touching the registry resolver itself."
+    },
+    {
+      "location": "internal/fanout/engine.go:691 (invokeCachedSingleShot)",
+      "type": "hook",
+      "description": "Where the diff cache is looked up by Agent.CacheKey. F7's enriched key must be hashed and compared here; a stale full-payload key must miss when the per-agent budget/chunk plan differs."
+    },
+    {
+      "location": "internal/fanout/artifacts.go:93-121 (writePool) / internal/fanout/status.go:275 (statusFor)",
+      "type": "hook",
+      "description": "Where AgentStatus records are assembled per agent before summary.json is written — F5 (fallback provenance) and F8 (diagnosability fields) both attach their new data here."
+    },
+    {
+      "location": "internal/registry/config.go Settings/ProjectConfig/Registry structs + precedence.go ResolveSettings",
+      "type": "hook",
+      "description": "Where new max_sprint_plan_bytes and on_overflow fields and their Effective*()-style resolvers must be added (F9/F4), following the same pointer/precedence pattern as PayloadByteBudget and TimeoutSecs."
+    },
+    {
+      "location": "internal/reconcile/disagree.go:102 (BuildDisagreements) / internal/reconcile/emit.go:71-72 (JSONFinding.Reviewers/Confidence)",
+      "type": "hook",
+      "description": "F5 integration outside internal/fanout/internal/payload: the distinct-reviewer independence model and the JSONFinding wire records must be made fallback-aware so a fallback-served slot does not inflate confidence as an additional distinct reviewer."
+    }
+  ],
+  "integration_gaps": [
+    {
+      "area": "Static context-window table maintenance",
+      "description": "ContextWindowTokens will ship a static model-id -> token-window table. Personas that add new models after this sprint will fall back to a conservative default window, potentially under-filling frontier models or over-filling unlisted small-window models.",
+      "mitigation": "Document the table as the single source of truth in internal/payload/contextwindow.go; add an AC1 regression that asserts every model currently in personas/ is present or receives the conservative default."
+    },
+    {
+      "area": "Reconcile fallback-provenance wire type",
+      "description": "stream.Finding, reconcile.Finding, and JSONFinding currently carry no model/fallback-provenance field. F5's de-weighting cannot be implemented until a provenance field is added and threaded through internal/reconcile/lib.go and internal/reconcile/adapter/adapter.go.",
+      "mitigation": "Add FallbackFrom/FallbackModel (or equivalent) to stream.Finding and JSONFinding, update the library adapter, and adjust BuildDisagreements to treat fallback-served sources as non-distinct for the original model."
+    },
+    {
+      "area": "Live-audit environment coupling",
+      "description": "AC-Live requires a reachable orchestrator.lan litellm proxy and the exact 19.6 commit range. It cannot run in standard CI or `go test ./...`.",
+      "mitigation": "Ship the harness as examples/19.10-live-audit.sh with explicit env-variable prerequisites and an early skip guard when prerequisites are absent; keep it out of the normal unit-test suite."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "FileEntry",
+      "path": "internal/payload/budget.go",
+      "can_extend": true,
+      "usage_example": "Already the shared input shape for byte-budget accounting; the new per-model effective-budget/chunk-plan derivation (F2/F3) should consume []FileEntry directly rather than introducing a parallel type."
+    },
+    {
+      "name": "chunkDiff",
+      "path": "internal/fanout/chunker.go",
+      "can_extend": true,
+      "usage_example": "chunkDiff(diff string, maxLines int) []string — F3 reuses this unchanged; only the maxLines value passed in becomes model-derived instead of EffectiveMaxContextLines()."
+    },
+    {
+      "name": "cache.Key / diffCacheKey NUL-joined tuning token",
+      "path": "internal/cache/key.go, internal/fanout/review.go",
+      "can_extend": true,
+      "usage_example": "tuning := temp; if baseURL != '' { tuning = baseURL + '\\x00' + temp } — F7 extends this composition to additionally fold in the effective budget / chunk-plan identifier."
+    },
+    {
+      "name": "mergeResultGroup fallbackFromSet aggregation",
+      "path": "internal/fanout/chunker.go",
+      "can_extend": true,
+      "usage_example": "for _, r := range g { if r.FallbackUsed { ...fallbackFromSet[r.FallbackFrom] = struct{}{} } } — F5's cross-chunk fallback provenance union already exists here for the chunked-persona case; the single-chunk (bulk) case needs the equivalent single-result plumbing into AgentStatus."
+    }
+  ],
+  "architecture_notes": [
+    "The codebase already has BOTH degradation primitives the plan's Technical Approach describes: ApplyByteBudget (shed) in internal/payload/budget.go and chunkDiff (split) in internal/fanout/chunker.go. No new chunking algorithm is needed — F3 is a wiring change (feed it a per-model maxLines) not a new implementation.",
+    "AgentConfig.Model (internal/registry/config.go:298) is the single string every relevant subsystem already keys on: diffCacheKey's cache key, AgentStatus.Model in status.json, and the persona/model roster. F1's ContextWindowTokens(model string) resolver should key on this exact same string for consistency.",
+    "The 14.3 chunker's existing doc comment at DefaultMaxContextLines (registry/config.go:31-36) already contains an approximate byte/token conversion anchor ('1500 lines ≈ 22k-27k tokens... under the 128k DefaultPayloadByteBudget and the documented 40k-token conservative floor') — useful cross-check data for F1's static table and the NFR's conservative byte→token ratio, though the plan's own NFR explicitly rejects the more optimistic ~4.1 B/token figure at registry/project.go:23-28 in favor of ~3.5 B/token.",
+    "internal/fanout/status.go's AgentStatus and internal/fanout/artifacts.go's PoolSummary both already follow a strict additive/omitempty discipline explicitly to keep old summary.json/status.json byte-identical when a new field is unused — F8's new fields must follow this same discipline (pointers or omitempty, not required fields) to avoid breaking existing artifact consumers (reconcile, scorecard).",
+    "internal/reconcile's distinct-reviewer CONFIDENCE calculus (F5/AC5) is spread across internal/reconcile/disagree.go (BuildDisagreements, IndependenceModelReviewerCount) and internal/reconcile/emit.go (JSONFinding.Reviewers/Confidence). Fallback provenance must de-weight substituted slots in both the disagreement independence score and any downstream consensus/gate logic.",
+    "The fan-out cache wrapper is NOT a separate internal/fanout/cache.go file; the cache integration lives in internal/fanout/engine.go (invokeCachedSingleShot, line 691) and internal/fanout/review.go (diffCacheKey, line 975). Any reference to internal/fanout/cache.go in planning should be treated as deprecated."
+  ],
+  "files_to_modify": [
+    {
+      "path": "internal/payload/budget.go",
+      "reason": "Reference point only — ApplyByteBudget itself is NOT modified (it remains the on_overflow=truncate mechanism); a sibling file provides the new context-window resolver and effective-budget helper.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/fanout/review.go",
+      "reason": "Replace the two identical global-budget ApplyByteBudget call sites (464, 726) with per-agent effective-budget/chunk-plan derivation; reserve defaultMaxTokens in the input-budget calculation (F2); extend diffCacheKey's tuning-token composition (F7); feed chunkDiff a per-model maxLines (F3).",
+      "scope": "major"
+    },
+    {
+      "path": "internal/fanout/chunker.go",
+      "reason": "Make chunkDiff's caller supply a per-model maxLines derived from the token budget instead of the global EffectiveMaxContextLines (F3); extend mergeResultGroup/AgentStatus wiring for fallback provenance if needed (F5).",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/fanout/engine.go",
+      "reason": "Apply a load-scaled timeout (chunk count / payload size) at the deadline-setting point (line 608) using the already-resolved EffectiveTimeoutSecs value (F6); verify cache-key propagation through invokeCachedSingleShot (line 691) once diffCacheKey's composition changes (F7).",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/fanout/cache_test.go",
+      "reason": "Add a regression test asserting that folding the per-agent effective budget / chunk plan into diffCacheKey prevents a stale full-payload cache hit (AC7).",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/fanout/artifacts.go",
+      "reason": "Extend PoolSummary/writePool assembly to surface F5/F8 fields at the run level.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/fanout/status.go",
+      "reason": "Extend AgentStatus with effective_budget, resolved_window, reserved_output_tokens, chunk_count, degradation_action fields (F8) and thread fallback provenance from the single-call (bulk) path (F5).",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/registry/config.go",
+      "reason": "Add max_sprint_plan_bytes to Settings/ProjectConfig/Registry plus its Effective*() resolver, and add the on_overflow policy key (F9/F4). Follow the PayloadByteBudget/TimeoutSecs pointer pattern. Do not touch DefaultTimeoutSecs/DefaultMaxContextLines/EffectiveTimeoutSecs/EffectiveMaxContextLines per Constraints.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/registry/precedence.go",
+      "reason": "Thread max_sprint_plan_bytes and on_overflow through ResolveSettings precedence chain (F9/F4).",
+      "scope": "trivial"
+    },
+    {
+      "path": "internal/payload/sprintplan.go",
+      "reason": "Replace the package-level MaxSprintPlanBytes constant usage in ReadSprintPlan/ScopeConstraint with a parameter sourced from the new config value, defaulting to 65536 (F9).",
+      "scope": "minor"
+    },
+    {
+      "path": ".atcr/config.yaml",
+      "reason": "Document/default the new max_sprint_plan_bytes and on_overflow keys, mirroring the existing payload_byte_budget/timeout_secs comment style.",
+      "scope": "trivial"
+    },
+    {
+      "path": "internal/registry/project.go",
+      "reason": "Update DefaultProjectConfigYAML's scaffold comment block to surface max_sprint_plan_bytes and on_overflow defaults for `atcr init`-generated config.yaml.",
+      "scope": "trivial"
+    },
+    {
+      "path": "docs/payload-modes.md",
+      "reason": "Document the new on_overflow policy, per-model sizing behavior, and max_sprint_plan_bytes knob for operators.",
+      "scope": "trivial"
+    },
+    {
+      "path": "internal/reconcile/disagree.go",
+      "reason": "Make the distinct-reviewer independence model fallback-aware so a slot served by a fallback model is not counted as the original distinct reviewer (F5/AC5).",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/reconcile/emit.go",
+      "reason": "Consume fallback/model provenance when building JSONFinding records so downstream confidence/radar values are not inflated by a silent model swap (F5).",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/fanout/cache.go",
+      "status": "deprecated",
+      "reason": "This file does not exist in the current codebase. Fan-out cache logic lives in internal/fanout/engine.go (invokeCachedSingleShot) and internal/fanout/review.go (diffCacheKey); planning references should use those locations instead.",
+      "scope": "none"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "internal/payload/contextwindow.go",
+      "purpose": "F1: static ContextWindowTokens(model string) int table keyed by model id, with a conservative default for unknown models. Named distinctly from MaxContextLines per the plan's explicit naming guidance.",
+      "based_on": "internal/payload/budget.go (sibling file in the same package, same doc-comment style)"
+    },
+    {
+      "path": "internal/payload/contextwindow_test.go",
+      "purpose": "Unit tests for F1 (known model lookup, unknown-model conservative default) and AC1/AC2 (32k-window and 144k-window models, output-reservation regression covering the dax 24577+8192>32768 case).",
+      "based_on": "internal/payload/budget_test.go"
+    },
+    {
+      "path": "internal/payload/sizing.go",
+      "purpose": "F2/F3: per-agent effective input budget (contextWindow - defaultMaxTokens - overhead, converted to bytes with a conservative ~3.5 B/token ratio) and chunk-plan derivation (maxLines) consumed by fanout/review.go at dispatch time.",
+      "based_on": "internal/payload/budget.go"
+    },
+    {
+      "path": "internal/fanout/overflow.go",
+      "purpose": "F4: on_overflow policy dispatch (chunk default, truncate, fallback-recognized, fail-recognized) mapping onto the existing chunk/shed primitives plus the new fallback/fail arms.",
+      "based_on": "internal/fanout/chunker.go's existing dispatch style"
+    },
+    {
+      "path": "internal/fanout/overflow_test.go",
+      "purpose": "AC4: unit tests for on_overflow policy dispatch — chunk default, truncate implemented, fallback/fail recognized and error clearly when prerequisites are unmet.",
+      "based_on": "internal/fanout/chunker_test.go"
+    },
+    {
+      "path": "examples/19.10-live-audit.sh",
+      "purpose": "AC-Live: scripted, standalone-runnable harness that re-runs the exact 19.6 range against the real roster on orchestrator.lan, hard-gated on zero ContextWindowExceededError and the five previously-failing agents completing status=ok.",
+      "based_on": "examples/ci-gate.sh"
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test (standard testing package + testify assert/require)",
+    "test_location": "same package directory as code under test (*_test.go)",
+    "naming_convention": "TestXxx_Scenario (e.g. TestBudget_OverLimit_DropsLargestFirst, TestChunkDiff)",
+    "example_test": "internal/payload/budget_test.go"
+  }
+}

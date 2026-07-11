@@ -1,9 +1,9 @@
 {
-  "skill": "design-sprint",
-  "args": "@.planning/plans/active/19.9_community_prompt_submissions/",
-  "invocation": "/design-sprint @.planning/plans/active/19.9_community_prompt_submissions/",
+  "skill": "sprint-complete",
+  "args": "@.planning/sprints/active/19.10_reviewer_payload_sizing",
+  "invocation": "/sprint-complete @.planning/sprints/active/19.10_reviewer_payload_sizing",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "0af3fbcc-889b-42f4-9806-3deef33a5602",
-  "timestamp": "2026-07-10T19:01:37.535Z"
+  "session_id": "ce760273-3af4-44c6-874a-08d9f6cde0f1",
+  "timestamp": "2026-07-11T18:53:28.590Z"
 }
