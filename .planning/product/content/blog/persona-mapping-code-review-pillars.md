@@ -17,31 +17,31 @@ The traditional approach is to train human reviewers to look for all of these si
 
 At ATCR, we take a different approach. We've built an infinitely scalable AI review panel powered by **Personas**—specialized AI agents with distinct, opinionated focuses. Instead of asking one model to "find all the problems," we run specialized personas in parallel. We gave them human names, but under the hood, they map directly to the industry's core audit pillars.
 
-## 1. Bug Detection: Meet Dax (The Pragmatic Developer)
+## 1. Bug Detection: Meet Bruce (The Generalist)
 
-Dax is our baseline developer persona. His primary directive is simple: *Does this code actually work as intended?*
-- **Focus:** Edge cases, logical flaws, and syntax correctness.
-- **Why it matters:** In the age of AI-generated code, LLMs frequently hallucinate APIs or miss subtle boundary conditions. Dax acts as the frontline defense against functional regressions.
+Bruce is our baseline correctness reviewer. His primary directive is simple: *Does this code actually work as intended?*
+- **Focus:** Edge cases, logical flaws, syntax correctness, and lying comments.
+- **Why it matters:** In the age of AI-generated code, LLMs frequently hallucinate APIs or miss subtle boundary conditions. Bruce acts as the frontline defense against functional regressions.
 
-## 2. Reliability & Maintainability: The Architect
+## 2. Reliability & Maintainability: Meet Kai (The Architect)
 
-Code that works today might break tomorrow if it's not maintainable. This persona focuses entirely on the structural integrity of the codebase.
-- **Focus:** Technical debt, SOLID principles, DRY violations, and architectural consistency.
-- **Why it matters:** AI tools are notorious for churning out working, but highly non-idiomatic or redundant code. The Architect ensures that AI-generated PRs don't degrade the long-term health of your repository.
+Code that works today might break tomorrow if it's not maintainable. Kai focuses entirely on the structural integrity of the codebase.
+- **Focus:** Technical debt, boundaries, coupling, contracts, and the cost of the next change.
+- **Why it matters:** AI tools are notorious for churning out working, but highly non-idiomatic or redundant code. Kai ensures that AI-generated PRs don't degrade the long-term health of your repository.
 
-## 3. Performance: The Profiler
+## 3. Performance: Meet Penny (The Profiler)
 
-A feature might be functionally correct but computationally disastrous. The Profiler persona ignores stylistic debates and focuses purely on efficiency.
-- **Focus:** Time/space complexity (Big O), N+1 queries, memory leaks, and inefficient loops.
-- **Why it matters:** Human reviewers often miss subtle performance degradations in large PRs. The Profiler acts as a dedicated set of eyes for algorithmic optimization.
+A feature might be functionally correct but computationally disastrous. Penny ignores stylistic debates and hunts work the program does not need to do.
+- **Focus:** Repeated queries, leaked resources, needless allocation, and accidental quadratic behavior.
+- **Why it matters:** Human reviewers often miss subtle performance degradations in large PRs. Penny acts as a dedicated set of eyes for algorithmic optimization at scale.
 
-## 4. Security: The Auditor
+## 4. Security: Meet Sasha (The Auditor)
 
-Security cannot be an afterthought in code review. The Auditor persona is prompted with strict adversarial instructions to assume the code is vulnerable and attempt to exploit it.
-- **Focus:** OWASP Top 10, injection vulnerabilities, improper data sanitization, and insecure dependencies.
-- **Why it matters:** AI models can easily replicate insecure patterns from their training data. A dedicated Security persona ensures every PR passes a baseline adversarial audit before merge.
+Security cannot be an afterthought in code review. Sasha is prompted with strict adversarial instructions to assume the code is vulnerable and attempt to exploit it.
+- **Focus:** Untrusted input reaching a dangerous sink, broken authentication, leaked secrets, and insecure defaults.
+- **Why it matters:** AI models can easily replicate insecure patterns from their training data. Sasha ensures every PR passes a baseline adversarial audit before merge.
 
-## Beyond the Big Four: The Anti-Slop Persona
+## Beyond the Big Four: The Anti-Slop Persona (Coming Soon)
 
 ATCR goes beyond standard review pillars by addressing the unique challenges of AI-assisted development. Enter our **Anti-Slop** persona.
 - **Focus:** AI bloat, redundant comments, over-engineered abstractions, and unnecessary boilerplate.
@@ -51,7 +51,7 @@ ATCR goes beyond standard review pillars by addressing the unique challenges of 
 
 The magic of ATCR isn't just that these personas exist—it's that they **operate in parallel and are aggregated by the Reconciler.** 
 
-When Dax finds a logical bug, the Architect flags technical debt, and the Auditor catches a security flaw in the same file, the Reconciler merges these findings, deduplicates the noise, and presents a single, high-confidence report.
+When Bruce finds a logical bug, Kai flags technical debt, and Sasha catches a security flaw in the same file, the Reconciler merges these findings, deduplicates the noise, and presents a single, high-confidence report.
 
 You get the thoroughness of a four-person expert review panel on every single PR, in minutes, for pennies.
 
@@ -59,5 +59,5 @@ You get the thoroughness of a four-person expert review panel on every single PR
 
 ## Next Steps
 - [ ] Map out exact prompt configurations for each persona in the ATCR registry.
-- [ ] Add examples of specific code snippets where Dax misses a bug that the Auditor catches.
+- [ ] Add examples of specific code snippets where Bruce misses a bug that Sasha catches.
 - [ ] Publish to ATCR Blog.
