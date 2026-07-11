@@ -922,6 +922,15 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// file. Only a genuine single-file diff (exactly one marker) qualifies.
 					if fileCount == 1 && lineCount > ml {
 						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines) exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, lineCount, ml)
+					} else if fileCount > 1 && lineCount > ml {
+						// A MULTI-file chunk can only exceed ml at the maxChunksPerAgent
+						// ceiling: normal packing seals a chunk before it overflows, so the
+						// sole way many files land in one over-budget chunk is chunkDiff's
+						// coalesce-into-final-chunk cap (chunker.go:130). Flag it pre-dispatch
+						// with distinct "ceiling" wording so the broken "each chunk fits the
+						// window" invariant is not silent; if the oversized call then fails it
+						// is additionally counted in UnreviewedChunks post-dispatch.
+						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a %d-file chunk (%d lines) exceeds max_context_lines (%d); the %d-chunk ceiling was reached, so remaining files were coalesced into one oversized chunk (may overflow the model)\n", name, fileCount, lineCount, ml, maxChunksPerAgent)
 					}
 				}
 			}
