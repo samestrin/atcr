@@ -810,6 +810,39 @@ func resolveScopeConstraint(req ReviewRequest, maxSprintPlanBytes int64) (constr
 // aborts the whole run fail-fast: these are configuration errors the user must
 // fix, not transient per-agent outcomes, so there is nothing useful to preserve
 // — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
+// capScopeConstraintPlan trims the plan body of a formatted SCOPE CONSTRAINT block
+// (the text between the BEGIN/END markers) to at most maxPlanBytes on a UTF-8
+// boundary, preserving the wrapper instruction text. It returns the block unchanged
+// when it has no markers, the plan already fits, or maxPlanBytes < 0. Extracted from
+// buildSlots' one-time global cap so the identical trim is reused for the per-agent
+// cap (Epic 19.10): the block is prepended uncounted in renderAgent, so each agent
+// must bound the plan against its OWN window, not a single global budget.
+func capScopeConstraintPlan(block string, maxPlanBytes int) string {
+	if len(block) == 0 || maxPlanBytes < 0 {
+		return block
+	}
+	const beginMark = "----- BEGIN SPRINT PLAN -----\n"
+	const endMark = "\n----- END SPRINT PLAN -----"
+	bs := strings.Index(block, beginMark)
+	if bs < 0 {
+		return block
+	}
+	planStart := bs + len(beginMark)
+	rest := strings.Index(block[planStart:], endMark)
+	if rest < 0 {
+		return block
+	}
+	planEnd := planStart + rest
+	if planEnd-planStart <= maxPlanBytes {
+		return block
+	}
+	cut := planStart + maxPlanBytes
+	for cut > planStart && block[cut]&0xC0 == 0x80 {
+		cut--
+	}
+	return block[:cut] + block[planEnd:]
+}
+
 func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool) ([]Slot, map[string]string, error) {
 	// Budget-aware plan content cap: scopeConstraint is prepended uncounted in
 	// renderAgent (Payload: scopeConstraint + payloadText), so a small PayloadByteBudget
@@ -818,22 +851,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	// min(cfg.Settings.MaxSprintPlanBytes, budget/8), preserving the wrapper
 	// instruction text (F9: the ceiling is the resolved max_sprint_plan_bytes).
 	if budget := cfg.Settings.PayloadByteBudget; budget > 0 && len(scopeConstraint) > 0 {
-		const beginMark = "----- BEGIN SPRINT PLAN -----\n"
-		const endMark = "\n----- END SPRINT PLAN -----"
-		if bs := strings.Index(scopeConstraint, beginMark); bs >= 0 {
-			planStart := bs + len(beginMark)
-			if rest := strings.Index(scopeConstraint[planStart:], endMark); rest >= 0 {
-				planEnd := planStart + rest
-				maxPlan := int(min(cfg.Settings.MaxSprintPlanBytes, budget/8))
-				if planEnd-planStart > maxPlan {
-					cut := planStart + maxPlan
-					for cut > planStart && scopeConstraint[cut]&0xC0 == 0x80 {
-						cut--
-					}
-					scopeConstraint = scopeConstraint[:cut] + scopeConstraint[planEnd:]
-				}
-			}
-		}
+		scopeConstraint = capScopeConstraintPlan(scopeConstraint, int(min(cfg.Settings.MaxSprintPlanBytes, budget/8)))
 	}
 	perAgentMode := map[string]string{}
 	var slots []Slot
@@ -878,6 +896,24 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		}
 		perAgentMode[name] = mode
 
+		// Per-agent SCOPE CONSTRAINT budgeting (Epic 19.10, HIGH TD). The plan block is
+		// prepended UNCOUNTED against this agent's window in renderAgent, so a large plan
+		// on a small-window model reintroduces the dax overflow on the --sprint-plan path.
+		// (B) cap the plan body to THIS model's own budget — EffectiveByteBudget/8, further
+		// bounded by max_sprint_plan_bytes when set — so a big plan cannot starve the diff;
+		// (A) the diff/chunk budgets below then reserve len(agentScopeConstraint) so plan +
+		// diff together fit the window. Base the cap on eff/8 (not min with a possibly-0
+		// max_sprint_plan_bytes, which would blank the plan).
+		agentScopeConstraint := scopeConstraint
+		agentEff := payload.EffectiveByteBudget(ac.Model, defaultMaxTokens)
+		if len(agentScopeConstraint) > 0 && agentEff > 0 {
+			planCap := agentEff / 8
+			if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
+				planCap = mspb
+			}
+			agentScopeConstraint = capScopeConstraintPlan(scopeConstraint, int(planCap))
+		}
+
 		// Chunked strategy (Epic 14.3): bin-pack this persona's diff into multiple
 		// context-limited calls, one Slot per chunk. Every chunk-slot keeps the
 		// SAME persona name, so mergeChunkResults collapses their results into one
@@ -903,6 +939,16 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			ml := payload.ChunkMaxLines(ac.Model, defaultMaxTokens)
 			if ac.MaxContextLines != nil && *ac.MaxContextLines > 0 {
 				ml = ac.EffectiveMaxContextLines()
+			} else if len(agentScopeConstraint) > 0 {
+				// (A) reserve per-chunk line headroom for the SCOPE CONSTRAINT block
+				// prepended to EVERY chunk in renderAgent. The plan is capped to
+				// EffectiveByteBudget/8 above, i.e. at most ml/8 lines, so reserving ml/8
+				// covers it without importing the payload byte/line ratio. An explicit
+				// operator max_context_lines wins (least surprise) and is left untouched.
+				ml -= ml / 8
+				if ml < 1 {
+					ml = 1
+				}
 			}
 			chunks := chunkDiff(mp.Text, ml)
 			// Warn on any chunk that is a lone file exceeding the budget (it could
@@ -958,7 +1004,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// may not even appear in this chunk. Use a neutral truncation for
 					// individual chunks; the single-chunk/bulk path below still carries
 					// the real diff-wide truncation.
-					primary, err := renderAgent(cfg, name, ac, mode, ct, fileCount, payload.Truncation{}, rng, scopeConstraint, chunkSizing)
+					primary, err := renderAgent(cfg, name, ac, mode, ct, fileCount, payload.Truncation{}, rng, agentScopeConstraint, chunkSizing)
 					if err != nil {
 						return err
 					}
@@ -990,10 +1036,20 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// the payload was sized to (per-model, capped by any global PayloadByteBudget).
 		bulkWindow := payload.ContextWindowTokens(ac.Model)
 		var appliedBudget int64
-		if eff := payload.EffectiveByteBudget(ac.Model, defaultMaxTokens); eff > 0 {
-			appliedBudget = eff
+		if agentEff > 0 {
+			appliedBudget = agentEff
 			if global := cfg.Settings.PayloadByteBudget; global > 0 && global < appliedBudget {
 				appliedBudget = global
+			}
+			// (A) reserve room for the per-agent SCOPE CONSTRAINT block, prepended
+			// uncounted in renderAgent, so plan + budgeted diff together fit this model's
+			// window (Epic 19.10 HIGH TD). Floor at 0; the AllDropped guard below is the
+			// net when the reservation leaves too little for even one file.
+			if s := int64(len(agentScopeConstraint)); s > 0 {
+				appliedBudget -= s
+				if appliedBudget < 0 {
+					appliedBudget = 0
+				}
 			}
 		}
 		bulkDegradation := ""
@@ -1035,7 +1091,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			resolvedWindow:  bulkWindow,
 			action:          bulkDegradation,
 		}
-		primary, err := renderAgent(cfg, name, ac, mode, bulkText, bulkFileCount, bulkTrunc, rng, scopeConstraint, bulkSizing)
+		primary, err := renderAgent(cfg, name, ac, mode, bulkText, bulkFileCount, bulkTrunc, rng, agentScopeConstraint, bulkSizing)
 		if err != nil {
 			return err
 		}
