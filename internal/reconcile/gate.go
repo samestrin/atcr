@@ -253,6 +253,12 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 	// anchoring, before Emit, so the narrative rides into findings.json for the
 	// downstream TD-resolution consumer.
 	stampJustifications(jf, reviewDir)
+	// Stamp fallback provenance (Epic 19.10 F5) from the discovered sources'
+	// per-slot status.json (FallbackModel, stamped at discovery). Runs after merge
+	// over the JSONFinding records — parallel to validateFindingPaths — so the
+	// distinct-reviewer independence count can de-weight reviewers sharing a
+	// fallback model. No-op when no source fell back.
+	stampFallbackProvenance(jf, sources)
 	res.jsonFindings = jf
 
 	if err := ctx.Err(); err != nil {

@@ -185,6 +185,10 @@ func mergeChunkResults(results []Result, serialAgents ...map[string]bool) []Resu
 // is Timeout when any chunk timed out, else Failed, carrying the first error.
 // Token/turn usage and per-call telemetry accumulate across chunks so cost and
 // call-count metrics reflect every request the chunked fan-out actually made.
+// FallbackUsed/FallbackFrom are unioned across the group (fallbackFromSet below),
+// so a persona whose chunks partly fell back is recorded as one fallback slot —
+// feeding the run-level Summary.FallbackCount / PoolSummary.FallbackCount tally
+// (Epic 19.10 F5) identically to the bulk path.
 func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out := g[0] // inherit stable per-slot identity (Agent, Model, PayloadMode, constraints)
 	out.Err = nil
@@ -195,6 +199,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out.TrippedBudgets = nil
 	out.FallbackUsed = false
 	out.FallbackFrom = ""
+	out.FallbackModel = ""
 	// Invalidate the parsed-finding memo copied from g[0]. out.Content is rebuilt
 	// below from ALL chunks, so chunk[0]'s cached count is stale — and when chunk[0]
 	// truncated to zero findings the failover gate cached 0/set, which would make
@@ -210,6 +215,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	okCount := 0
 	anyOK, sawTimeout, allCacheHit := false, false, true
 	fallbackFromSet := make(map[string]struct{})
+	fallbackModelSet := make(map[string]struct{})
 	for _, r := range g {
 		if strings.TrimSpace(r.Content) != "" {
 			contents = append(contents, r.Content)
@@ -234,6 +240,9 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			out.FallbackUsed = true
 			if r.FallbackFrom != "" {
 				fallbackFromSet[r.FallbackFrom] = struct{}{}
+			}
+			if r.FallbackModel != "" {
+				fallbackModelSet[r.FallbackModel] = struct{}{}
 			}
 		}
 		out.Tools = out.Tools || r.Tools
@@ -265,6 +274,14 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		}
 		sort.Strings(fallbacks)
 		out.FallbackFrom = strings.Join(fallbacks, ",")
+	}
+	if len(fallbackModelSet) > 0 {
+		models := make([]string, 0, len(fallbackModelSet))
+		for m := range fallbackModelSet {
+			models = append(models, m)
+		}
+		sort.Strings(models)
+		out.FallbackModel = strings.Join(models, ",")
 	}
 	// A persona with a mix of succeeded and failed chunks still reports OK (it
 	// contributed findings), but the failed chunks' files went unreviewed — a

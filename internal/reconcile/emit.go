@@ -91,6 +91,19 @@ type JSONFinding struct {
 	// present. It is advisory only — File (the original cited path) is never
 	// rewritten — and is set only alongside a non-empty path_warning.
 	PathSuggestion string `json:"path_suggestion,omitempty"`
+	// FallbackReviewers maps a reviewer name to the net MODEL that served its slot
+	// when that reviewer was served by a litellm fallback (Epic 19.10 F5) — the
+	// served model, not the per-persona substituted-from name, so two personas on
+	// one net model share a value and collapse. Like PathValid/PathWarning it is
+	// ATCR-internal provenance — NOT a
+	// field on the extracted library Merged — stamped post-merge on the
+	// RunReconcile cached path (stampFallbackProvenance), and left empty on the
+	// no-I/O derived path. omitempty keeps a run with no fallback substitution
+	// byte-identical to pre-19.10 findings.json. Reconcile's distinct-reviewer
+	// independence count (disagree.go) reads it to collapse reviewers sharing one
+	// non-empty fallback target into a single voice, so a net model backing
+	// multiple personas is not double-counted as distinct reviewers.
+	FallbackReviewers map[string]string `json:"fallback_reviewers,omitempty"`
 	// ClusterMerged marks the record that resulted from inline application of a
 	// judge gray-zone "merge" ruling (Epic 6.1): the cross-examination stage
 	// unioned a gray-zone cluster's members into this single finding. omitempty

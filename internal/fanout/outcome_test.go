@@ -90,6 +90,28 @@ func TestOutcome_NotPartialWhenAllSucceed(t *testing.T) {
 	assert.False(t, s.Partial)
 }
 
+// TestSummarize_FallbackCount verifies summarize()/Outcome() tally FallbackCount
+// from Result.FallbackUsed in the same single pass as the status counts, and that
+// a zero-fallback run reports 0 (Epic 19.10 F5, Task 06).
+func TestSummarize_FallbackCount(t *testing.T) {
+	results := []Result{
+		{Agent: "a", Status: StatusOK, FallbackUsed: true, FallbackFrom: "a"},
+		{Agent: "b", Status: StatusOK}, // no fallback
+		{Agent: "c", Status: StatusFailed, Err: errors.New("boom"), FallbackUsed: true, FallbackFrom: "c"},
+		{Agent: "d", Status: StatusTimeout, Err: errors.New("deadline")}, // no fallback
+	}
+	s, err := Outcome(results)
+	require.NoError(t, err, "one success keeps the run non-fatal")
+	assert.Equal(t, 2, s.FallbackCount, "both FallbackUsed results counted, regardless of status")
+	assert.Equal(t, 4, s.Total)
+	assert.Equal(t, 2, s.Succeeded)
+	assert.Equal(t, 2, s.Failed)
+
+	// Zero-fallback run reports 0, not a spurious count.
+	zero := summarize([]Result{{Status: StatusOK}, {Status: StatusOK}})
+	assert.Equal(t, 0, zero.FallbackCount)
+}
+
 func TestOutcome_AllFailIsError(t *testing.T) {
 	results := []Result{
 		{Agent: "reviewer-a", Status: StatusTimeout, Err: errors.New("timeout")},
