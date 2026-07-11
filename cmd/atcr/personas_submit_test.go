@@ -229,12 +229,13 @@ func withPersonasGitHub(t *testing.T, g personas.GitHubSubmitter) {
 // withPersonasSubmissionsDir points the `submitted` marker write at a temp dir so
 // a command-level submit test never touches the real ~/.config/atcr/submissions
 // (Phase 3 marker wiring), matching the seam-restoration pattern above.
-func withPersonasSubmissionsDir(t *testing.T) {
+func withPersonasSubmissionsDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	old := personasSubmissionsDir
 	personasSubmissionsDir = func() (string, error) { return dir, nil }
 	t.Cleanup(func() { personasSubmissionsDir = old })
+	return dir
 }
 
 // TestPersonasSubmit_ForkPRHappyPath covers AC 02-02 Scenario 1 at the command
@@ -243,12 +244,19 @@ func withPersonasSubmissionsDir(t *testing.T) {
 func TestPersonasSubmit_ForkPRHappyPath(t *testing.T) {
 	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
 	withPersonasGitHub(t, stubGitHub{url: "https://github.com/samestrin/atcr/pull/42"})
-	withPersonasSubmissionsDir(t)
+	subDir := withPersonasSubmissionsDir(t)
 
 	stdout, stderr, err := executeSplit(t, "personas", "submit", "sasha")
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "https://github.com/samestrin/atcr/pull/42", "PR URL is printed to stdout on success")
 	assert.Empty(t, stderr)
+
+	got, ok, err := personas.ReadSubmission(subDir, "sasha")
+	require.NoError(t, err)
+	require.True(t, ok, "submitted marker must be persisted after a successful PR")
+	assert.Equal(t, "octocat", got.Submitter, "submitter is derived from the pushed head ref")
+	assert.Equal(t, "-", got.Version, "version falls back to '-' when the persona unit is not installed locally")
+	assert.True(t, got.FixturePassed, "marker records that the fixture gate passed")
 }
 
 // TestPersonasSubmit_ForkPRFailurePropagates covers AC 02-01 at the command
