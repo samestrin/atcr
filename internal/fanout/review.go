@@ -1000,6 +1000,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// net for a file larger than a small window. This also keeps a chunked-strategy
 			// single oversized-file chunk lossless when it falls through to this bulk path.
 			if trunc.AllDropped {
+				// The payload is known to exceed the model window, yet we deliberately
+				// dispatch the whole thing rather than an empty (false-clean) review.
+				// Record this high-risk state so status.json/summary.json can distinguish
+				// an at-risk over-window reviewer from a clean comfortable fit.
+				bulkDegradation = "overflow"
 				if warnOversized {
 					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: no file fits its model window (%d-byte budget); sending the whole payload (may overflow) rather than an empty review\n", name, appliedBudget)
 				}
