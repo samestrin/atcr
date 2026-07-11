@@ -86,3 +86,21 @@ func distinctReviewerCount(reviewers []string, fallback map[string]string) int {
 	}
 	return distinct
 }
+
+// recomputeFallbackConfidence corrects the user-facing findings.json CONFIDENCE for
+// fallback trust-inflation (Epic 19.10 F5). merge.go sets Confidence from the RAW
+// reviewer count (ConfidenceFor(len(Reviewers))), so two personas served by the
+// SAME fallback model both flagging one finding merge to Reviewers=[a,b] and inflate
+// to HIGH — the exact distinct-reviewer inflation F5 de-weights on the disagreement
+// radar, but left uncorrected on the CONFIDENCE column. This recomputes from the
+// DISTINCT reviewer count so those collapse to MEDIUM.
+//
+// It only touches records with an ACTUAL fallback collapse (distinct < raw count):
+// a finding with no fallback provenance, or with fully-distinct targets, keeps
+// whatever confidence merge/authority-promotion assigned — so a single-reviewer
+// finding promoted to HIGH by cross-model authority (promoteByAuthority) is never
+// clobbered down to MEDIUM. A finding a verify verdict owns (Verification set, or an
+// already-VERIFIED tier) is likewise left untouched: the verdict, not the reviewer
+// count, dictates its confidence. Must run AFTER stampFallbackProvenance (which
+// populates FallbackReviewers).
+func recomputeFallbackConfidence(findings []JSONFinding) {}

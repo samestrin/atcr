@@ -110,6 +110,43 @@ func TestBuildDisagreements_GrayZoneFallbackCollapse(t *testing.T) {
 	assert.Equal(t, 1, gray[0].Independence, "gray-zone reviewers sharing a fallback collapse to one voice")
 }
 
+// TD 19.10 (gate.go:261): the findings.json CONFIDENCE column must be recomputed
+// from the DISTINCT reviewer count after fallback provenance is stamped, so two
+// personas served by the same fallback model do not inflate a finding to HIGH —
+// without clobbering a promotion earned by cross-model authority or a verify verdict.
+func TestRecomputeFallbackConfidence(t *testing.T) {
+	// Two personas on the SAME fallback model → one voice → HIGH demoted to MEDIUM.
+	collapse := jf("HIGH", "a.go", 1, "p", []string{"greta", "kai"}, "")
+	collapse.FallbackReviewers = map[string]string{"greta": "net", "kai": "net"}
+
+	// Distinct fallback targets → still two voices → HIGH preserved.
+	distinct := jf("HIGH", "b.go", 2, "p", []string{"greta", "kai"}, "")
+	distinct.FallbackReviewers = map[string]string{"greta": "net1", "kai": "net2"}
+
+	// No fallback provenance → untouched.
+	noFB := jf("HIGH", "c.go", 3, "p", []string{"greta", "kai"}, "")
+
+	// Authority-promoted single-reviewer HIGH (distinct == raw count, no collapse):
+	// must NOT be demoted to MEDIUM — recompute only corrects fallback inflation.
+	authority := jf("HIGH", "d.go", 4, "p", []string{"greta"}, "")
+	authority.Confidence = ConfHigh
+
+	// A verify verdict owns the confidence: a same-model collapse must not demote it.
+	verified := jf("HIGH", "e.go", 5, "p", []string{"greta", "kai"}, "")
+	verified.FallbackReviewers = map[string]string{"greta": "net", "kai": "net"}
+	verified.Verification = &Verification{Verdict: "confirmed", Skeptic: "s"}
+	verified.Confidence = ConfidenceVerified
+
+	findings := []JSONFinding{collapse, distinct, noFB, authority, verified}
+	recomputeFallbackConfidence(findings)
+
+	assert.Equal(t, ConfMedium, findings[0].Confidence, "shared-fallback reviewers collapse to MEDIUM")
+	assert.Equal(t, ConfHigh, findings[1].Confidence, "distinct fallback targets stay HIGH")
+	assert.Equal(t, ConfHigh, findings[2].Confidence, "no fallback → untouched")
+	assert.Equal(t, ConfHigh, findings[3].Confidence, "authority-promoted single-reviewer HIGH not demoted")
+	assert.Equal(t, ConfidenceVerified, findings[4].Confidence, "verify verdict owns confidence")
+}
+
 // TestJSONFindings_DerivedPathLeavesFallbackEmpty: the no-I/O derived path (a
 // Result built without RunReconcile stamping) leaves FallbackReviewers empty,
 // matching the PathValid derived-path behavior.
