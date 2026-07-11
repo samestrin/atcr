@@ -75,3 +75,19 @@ func maxLaneChunkTotal(slots []Slot) int {
 	}
 	return maxChunks
 }
+
+// aggregateTimeoutFactor derives the run-wide deadline scaling factor for runEngine
+// (Epic 19.10 TD-005). maxLaneChunkTotal alone models only the worst SINGLE persona's
+// serial chunk sum; it underestimates wall-clock when MANY personas' chunk-Slots
+// contend for a limited parallel lane. The engine's shared semaphore admits
+// maxParallel non-serial slots at a time, so N parallel slots complete in
+// ceil(N/maxParallel) waves. This returns the LARGER of the serial-lane component
+// and the parallel-lane wave count, so neither lane is under-covered (over-scaling a
+// deadline is safe under the Conservatism NFR; under-scaling is the timeout bug this
+// fixes). A non-positive maxParallel is an unbounded lane — every slot runs at once,
+// one wave — leaving the serial component to govern. Serial slots carry their own
+// summed per-call deadlines and are not parallel-lane load, so they are excluded from
+// the wave numerator.
+func aggregateTimeoutFactor(slots []Slot, maxParallel int) int {
+	return maxLaneChunkTotal(slots)
+}

@@ -117,6 +117,35 @@ func TestMaxLaneChunkTotal(t *testing.T) {
 	assert.Equal(t, 0, maxLaneChunkTotal(nil))
 }
 
+// TD 19.10 (timeout.go:69): the aggregate deadline must also cover PARALLEL-lane
+// contention — many personas' slots queued behind a limited max_parallel run in
+// ceil(N/max_parallel) waves, which the single-persona max ignored.
+func TestAggregateTimeoutFactor(t *testing.T) {
+	// Parallel contention dominates: 10 non-chunked parallel slots through
+	// max_parallel=2 → ceil(10/2)=5 waves > the single-persona max (1).
+	var many []Slot
+	for i := 0; i < 10; i++ {
+		many = append(many, Slot{Primary: Agent{ChunkTotal: 1}, Serial: false})
+	}
+	assert.Equal(t, 5, aggregateTimeoutFactor(many, 2), "wave count governs when the parallel lane is contended")
+
+	// Single-persona serial chunk sum dominates: one persona chunked into 8 (8
+	// parallel slots) with a generous max_parallel=16 → ceil(8/16)=1 wave < 8.
+	var chunked []Slot
+	for i := 0; i < 8; i++ {
+		chunked = append(chunked, Slot{Primary: Agent{ChunkTotal: 8}, Serial: false})
+	}
+	assert.Equal(t, 8, aggregateTimeoutFactor(chunked, 16), "single-persona chunk total governs when the lane is uncontended")
+
+	// Unbounded lane (max_parallel <= 0): all slots run at once → one wave, so the
+	// serial component governs.
+	assert.Equal(t, 1, aggregateTimeoutFactor(many, 0), "unbounded lane adds no wave contention")
+
+	// Serial slots are not parallel-lane load, so they never inflate the wave count.
+	serial := []Slot{{Primary: Agent{ChunkTotal: 1}, Serial: true}, {Primary: Agent{ChunkTotal: 1}, Serial: true}}
+	assert.Equal(t, 1, aggregateTimeoutFactor(serial, 1), "serial slots are not parallel-lane load")
+}
+
 // TestInvokeAgent_ScaledPerCallDeadlineFromChunkTotal verifies the per-call seam
 // (invokeAgent): a chunked agent's context deadline reflects the SCALED value,
 // while an unchunked agent keeps the flat base deadline. Uses the deadline itself
