@@ -20,6 +20,18 @@ func (e errSubmitFixtureRunner) RunFixture(string) (personas.FixtureOutcome, err
 	return personas.FixtureOutcome{}, e.err
 }
 
+// spyFixtureRunner records every RunFixture invocation so tests can assert that
+// the local gate rejects invalid inputs before the runner is ever consulted.
+type spyFixtureRunner struct {
+	outcome personas.FixtureOutcome
+	calls   []string
+}
+
+func (s *spyFixtureRunner) RunFixture(name string) (personas.FixtureOutcome, error) {
+	s.calls = append(s.calls, name)
+	return s.outcome, nil
+}
+
 // withSubmitContinuation swaps the Phase-2 fork+PR continuation seam for the
 // duration of a test and returns a pointer to a flag set true when the seam is
 // reached. The local gate must reach the continuation only on a full fixture
@@ -62,9 +74,9 @@ func TestPersonasSubmit_InvalidName(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			called := withSubmitContinuation(t)
-			// A stub runner would still never be reached; inject one anyway to prove
-			// the gate fails before the fixture runner is consulted.
-			withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}})
+			// A spy runner lets us prove the gate fails before the fixture runner is consulted.
+			spy := &spyFixtureRunner{outcome: personas.FixtureOutcome{HasFixture: true, Passed: 1, Total: 1}}
+			withFixtureRunner(t, spy)
 
 			stdout, _, err := executeSplit(t, "personas", "submit", tc.arg)
 			require.Error(t, err)
@@ -72,6 +84,7 @@ func TestPersonasSubmit_InvalidName(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.wantMsg)
 			assert.Empty(t, stdout, "invalid name must not write to stdout")
 			assert.False(t, *called, "no fork/PR/gh continuation on an invalid name")
+			assert.Empty(t, spy.calls, "fixture runner must not be consulted for an invalid name")
 		})
 	}
 }
