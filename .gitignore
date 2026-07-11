@@ -70,3 +70,8 @@ Thumbs.db
 .planning/**/code-review/multi-agent/
 .planning/**/code-review/reconciled/
 .kimi-code/
+
+# Local multi-module dev workspace (per-developer; must not be committed —
+# a committed root go.work breaks the isolated wasip1 parser modules' builds).
+go.work
+go.work.sum

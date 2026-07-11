@@ -34,8 +34,12 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-// reconcile is the extracted nested module (Epic 8.0). It is developed in-tree
-// via this replace directive; separate-repo publication follows extraction.
-require github.com/samestrin/atcr/reconcile v0.0.0
-
-replace github.com/samestrin/atcr/reconcile => ./reconcile
+// reconcile is the extracted nested module (Epic 8.0), published as its own
+// versioned module (github.com/samestrin/atcr/reconcile, tag reconcile/vX.Y.Z)
+// so `go install github.com/samestrin/atcr/cmd/atcr@latest` works — a published
+// go.mod may not carry replace directives. To develop ./reconcile in-tree,
+// create a LOCAL go.work (uncommitted; `go install` ignores it) with only
+// `use (. ./reconcile)` — do NOT commit it and do NOT add the isolated wasip1
+// parser modules (internal/astgroup/parsers/src/*), whose nested go.mod builds
+// break under a root workspace.
+require github.com/samestrin/atcr/reconcile v0.1.0
