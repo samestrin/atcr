@@ -97,3 +97,28 @@ func TestBuildSlots_PerAgentBudgetNeverEmptyPayload(t *testing.T) {
 	assert.Contains(t, small.Prompt, sentinel,
 		"an oversized single file must NOT be shed to an empty payload (silent false-clean)")
 }
+
+// TestBuildSlots_AllDroppedRecordsOverflowAction proves that when every file exceeds
+// the agent's per-model byte budget, the forced over-window dispatch records a
+// non-empty degradation_action so status.json/summary.json can distinguish it from
+// a clean fit.
+func TestBuildSlots_AllDroppedRecordsOverflowAction(t *testing.T) {
+	cfg := sizingRosterConfig()
+	const sentinel = "SENTINEL_ONLY_FILE_TOKEN"
+	// One file far larger than the 32k window budget — ApplyByteBudget drops
+	// it entirely (AllDropped).
+	body := "// " + sentinel + "\n" + strings.Repeat("x", 300000)
+	payloads := map[string]modePayload{
+		"blocks": {
+			Entries:   []payload.FileEntry{{Path: "huge.go", Size: int64(len(body)), Body: body}},
+			Text:      body,
+			FileCount: 1,
+		},
+	}
+	rng := ReviewRange{Base: "a", Head: "b"}
+
+	small, _, err := buildOneAgent(cfg, "greta", payloads, rng, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "overflow", small.DegradationAction,
+		"AllDropped bulk dispatch must record degradation_action=overflow so operators can distinguish an at-risk reviewer from a clean fit")
+}
