@@ -1,0 +1,481 @@
+package personas
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/cli/go-gh/v2"
+	"github.com/cli/go-gh/v2/pkg/repository"
+)
+
+// canonicalRepo is the upstream target every community submission forks and opens
+// its PR against. It is a fixed constant — never user-supplied — so it can never
+// carry an attacker-influenced repo argument into a gh invocation.
+const canonicalRepo = "samestrin/atcr"
+
+// PRRequest carries the structured inputs for opening the submission PR. Fields
+// are typed (never raw shell strings) so a caller cannot assemble an ad-hoc,
+// injectable gh argument list (AC 02-03 Security).
+type PRRequest struct {
+	Repo   string // canonical upstream target, e.g. "samestrin/atcr"
+	Head   string // "<forkOwner>:<branch>" the PR is opened from
+	Branch string // head branch name on the fork
+	Title  string
+	Body   string // source-persona attribution; the PR author is the submitter identity
+}
+
+// GitHubSubmitter is the injectable seam over every gh/git interaction used by
+// `atcr personas submit`. The default implementation (from NewGitHubSubmitter)
+// shells out via gh.ExecContext and git; tests substitute a stub recording call
+// order and returning canned results, with zero real gh process or network calls
+// (AC 02-03). It is defined independently of internal/ghaction.Client (the fixed-
+// bot flow), so a change to one integration point cannot alter the other.
+type GitHubSubmitter interface {
+	// CheckPrecondition verifies gh is on PATH and authenticated before any
+	// fork/branch/PR work (AC 02-01).
+	CheckPrecondition(ctx context.Context) error
+	// Fork forks repo under the invoking user; an already-existing fork is a
+	// non-fatal reuse (AC 02-02 Scenario 2).
+	Fork(ctx context.Context, repo string) error
+	// SyncFork brings the user's (possibly reused, stale) fork default branch up to
+	// date with upstream before branching, so the PR diffs against the current
+	// merge-base and not a stale one (AC 02-02 Scenario 2, repeat contributor).
+	SyncFork(ctx context.Context, repo string) error
+	// PushBranch copies the persona unit named name (resolved under personasDir)
+	// into a working tree, commits it on branch, and pushes to the user's fork,
+	// returning the "<forkOwner>:<branch>" head reference for the PR.
+	PushBranch(ctx context.Context, branch, personasDir, name string) (head string, err error)
+	// CreatePR opens the pull request and returns its URL; an already-existing PR
+	// for the branch yields that PR's URL rather than an error (AC 02-02 Edge 1).
+	CreatePR(ctx context.Context, req PRRequest) (url string, err error)
+}
+
+// Submit sequences the GitHub side of `personas submit` behind gh: precondition
+// check → fork → branch/push → PR-create, each exactly once, short-circuiting on
+// the first failure with a distinct, actionable message (AC 02-02). It performs no
+// local gate work (SubmitGate's job). ONLY after a real PR URL is confirmed does it
+// record the `submitted` marker under submissionsDir (Phase 3, AC 03-02) — so a
+// fork/push/PR failure never leaves an orphan marker. A marker-write failure after
+// a successful PR returns a non-nil error (exit non-zero, AC 03-02 Error Scenario
+// 1) whose message embeds the already-created PR URL, so a live PR is not misread
+// as total failure. The returned string is the PR URL.
+func Submit(ctx context.Context, gh GitHubSubmitter, personasDir, submissionsDir, name string) (string, error) {
+	// Defense in depth: never trust the caller's gate. Re-validate the name
+	// before it can reach a branch ref, a file path, or any gh argument.
+	if err := validatePersonaName(name); err != nil {
+		return "", err
+	}
+	if err := gh.CheckPrecondition(ctx); err != nil {
+		return "", err
+	}
+	// Confirm the fixed target reference is well-formed before shelling out.
+	if _, err := repository.Parse(canonicalRepo); err != nil {
+		return "", fmt.Errorf("invalid canonical repo %q: %w", canonicalRepo, err)
+	}
+	// Nothing local to submit: reject a name that doesn't resolve to an installed
+	// persona unit before any fork/PR side effect, so only submittable local units
+	// reach the gh flow (a lightweight pre-fork existence check, not a SubmitGate/
+	// continuation signature change — clarification 2026-07-10).
+	src, err := personaPath(personasDir, name)
+	if err != nil {
+		return "", fmt.Errorf("nothing local to submit for %q: %w", name, err)
+	}
+	if _, err := os.Stat(src); err != nil {
+		return "", fmt.Errorf("nothing local to submit for %q: no local persona unit found (%w)", name, err)
+	}
+	if err := gh.Fork(ctx, canonicalRepo); err != nil {
+		return "", fmt.Errorf("failed to fork %s: %w", canonicalRepo, err)
+	}
+	// Sync the (possibly reused, stale) fork with upstream before branching so the
+	// PR diff is only the persona file, not a stale merge-base's unrelated commits
+	// (AC 02-02 Scenario 2, repeat contributor).
+	if err := gh.SyncFork(ctx, canonicalRepo); err != nil {
+		return "", fmt.Errorf("failed to sync fork with upstream %s: %w", canonicalRepo, err)
+	}
+	branch := submissionBranch(name)
+	head, err := gh.PushBranch(ctx, branch, personasDir, name)
+	if err != nil {
+		return "", fmt.Errorf("failed to push branch to fork: %w", err)
+	}
+	url, err := gh.CreatePR(ctx, PRRequest{
+		Repo:   canonicalRepo,
+		Head:   head,
+		Branch: branch,
+		Title:  fmt.Sprintf("Submit community persona: %s", name),
+		Body:   submissionPRBody(name),
+	})
+	if err != nil {
+		return "", fmt.Errorf("branch pushed to fork, but PR creation failed: %w; retry with 'gh pr create' or re-run 'atcr personas submit %s'", err, name)
+	}
+	if strings.TrimSpace(url) == "" {
+		return "", fmt.Errorf("PR reported created but gh returned no URL; verify at https://github.com/%s/pulls", canonicalRepo)
+	}
+	// The PR now exists — record the `submitted` marker (Phase 3). The submitter
+	// identity is the fork owner already carried in head ("<owner>:<branch>"), so no
+	// extra gh call is needed. On failure the PR is already live, so the error embeds
+	// the URL rather than reading as a total failure (recorded Phase 3 clarification).
+	owner := head
+	if i := strings.IndexByte(head, ':'); i >= 0 {
+		owner = head[:i]
+	}
+	marker := SubmissionStatus{
+		Persona:       name,
+		Version:       personaUnitVersion(personasDir, name),
+		Submitter:     owner,
+		FixturePassed: true,
+		SubmittedAt:   time.Now().UTC(),
+	}
+	if err := WriteSubmissionMarker(submissionsDir, marker); err != nil {
+		return "", fmt.Errorf("PR created (%s), but recording the submitted marker failed: %w", url, err)
+	}
+	return url, nil
+}
+
+// submissionBranch derives a ref-safe head branch from a (possibly namespaced)
+// persona name. To avoid collisions between names like "foo/bar" and "foo-bar",
+// '-' is escaped as "--" and '/' is collapsed to '-', making the encoding
+// reversible and collision-free for valid persona names.
+func submissionBranch(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch r {
+		case '-':
+			b.WriteString("--")
+		case '/':
+			b.WriteByte('-')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return "persona-submit/" + b.String()
+}
+
+// submissionPRBody builds the PR description. The submitter identity is the PR
+// author (resolved by the authenticated gh session); the body adds the source
+// persona name so downstream curation has attribution without this command owning
+// the `submitted` status field (Phase 3).
+func submissionPRBody(name string) string {
+	return fmt.Sprintf("Community persona submission via `atcr personas submit`.\n\n"+
+		"- Source persona: `%s`\n"+
+		"- Submitted by: the authenticated `gh` user who opened this PR\n\n"+
+		"This persona passed its local fixture gate. It lands as an unvetted `submitted` "+
+		"entry pending maintainer graduation into the vetted community library.", name)
+}
+
+// ghPath and ghAuthStatus are the low-level seams checkGHPrecondition builds on,
+// so a unit test can simulate "gh not on PATH" and "not authenticated" without a
+// real gh binary (AC 02-01 / AC 02-03). Defaults wrap go-gh.
+var (
+	ghPath       = gh.Path
+	ghAuthStatus = func(ctx context.Context) (string, error) {
+		_, stderr, err := gh.ExecContext(ctx, "auth", "status")
+		return stderr.String(), err
+	}
+	// ghExec is the seam over go-gh's ExecContext used by every ghSubmitter method
+	// that shells out to gh (fork, repo sync, pr-create, api user). A package var so
+	// a unit test can drive the fork/PR reuse branches with canned stderr and zero
+	// real gh process or network calls (AC 02-03) — the ghPath/ghAuthStatus pattern.
+	ghExec = gh.ExecContext
+)
+
+// checkGHPrecondition verifies gh is installed and authenticated before any
+// fork/branch/PR work. It never reads, stores, or logs the token — only gh's exit
+// code and (credential-redacted) stderr. Error strings are dictated by AC 02-01.
+func checkGHPrecondition(ctx context.Context) error {
+	if _, err := ghPath(); err != nil {
+		return fmt.Errorf("gh CLI not found on PATH; install it from https://cli.github.com")
+	}
+	stderr, err := ghAuthStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("gh auth check failed: %s", strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
+// forkAlreadyExists reports whether gh's fork stderr indicates the user already
+// has a fork — the expected, non-fatal reuse case (AC 02-02 Scenario 2).
+func forkAlreadyExists(stderr string) bool {
+	return strings.Contains(strings.ToLower(stderr), "already exists")
+}
+
+// existingPRURL extracts the URL gh prints when a pull request already exists for
+// the pushed branch (AC 02-02 Edge Case 1: re-submission). It returns "" when the
+// stderr is any other failure.
+func existingPRURL(stderr string) string {
+	if !strings.Contains(strings.ToLower(stderr), "already exists") {
+		return ""
+	}
+	for _, f := range strings.Fields(stderr) {
+		if strings.HasPrefix(f, "https://") && strings.Contains(f, "/pull/") {
+			return f
+		}
+	}
+	return ""
+}
+
+// NewGitHubSubmitter returns the production seam implementation backed by gh and
+// git. cmd/atcr wires it into the personasGitHub package var; tests replace that
+// var with a stub.
+func NewGitHubSubmitter() GitHubSubmitter { return ghSubmitter{} }
+
+// ghSubmitter is the default GitHubSubmitter: it shells out to the real gh binary
+// (fork, auth, pr-create) and git (branch/push) under the invoking user's own
+// credentials. It is stateless; each call is self-contained.
+type ghSubmitter struct{}
+
+func (ghSubmitter) CheckPrecondition(ctx context.Context) error { return checkGHPrecondition(ctx) }
+
+func (ghSubmitter) Fork(ctx context.Context, repo string) error {
+	_, stderr, err := ghExec(ctx, "repo", "fork", repo, "--remote=false", "--clone=false")
+	if err != nil {
+		if forkAlreadyExists(stderr.String()) {
+			return nil // reusing an existing fork is expected
+		}
+		return ghError(err, stderr.String())
+	}
+	return nil
+}
+
+// SyncFork brings the user's fork default branch up to date with upstream before
+// any branching, so a reused (stale) fork does not produce a PR diff against a
+// moved merge-base — the repeat-contributor path where the fork default lags
+// upstream (AC 02-02 Scenario 2). It resolves the fork owner from the authenticated
+// gh session and runs `gh repo sync <owner>/<repo> --source <upstream>`.
+func (ghSubmitter) SyncFork(ctx context.Context, repo string) error {
+	owner, err := currentGHUser(ctx)
+	if err != nil {
+		return err
+	}
+	canon, _ := repository.Parse(repo)
+	fork := owner + "/" + canon.Name
+	if _, stderr, err := ghExec(ctx, "repo", "sync", fork, "--source", repo); err != nil {
+		return ghError(err, stderr.String())
+	}
+	return nil
+}
+
+func (ghSubmitter) PushBranch(ctx context.Context, branch, personasDir, name string) (string, error) {
+	owner, err := currentGHUser(ctx)
+	if err != nil {
+		return "", err
+	}
+	workDir, err := os.MkdirTemp("", "atcr-submit-*")
+	if err != nil {
+		return "", fmt.Errorf("creating work dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(workDir) }()
+
+	canon, _ := repository.Parse(canonicalRepo)
+	forkURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, canon.Name)
+	if err := cloneFork(ctx, forkURL, workDir); err != nil {
+		return "", err
+	}
+	if err := runGit(ctx, workDir, "checkout", "-b", branch); err != nil {
+		return "", err
+	}
+	if err := copyPersonaUnit(personasDir, name, workDir); err != nil {
+		return "", err
+	}
+	if err := runGit(ctx, workDir, "add", "-A"); err != nil {
+		return "", err
+	}
+	hasChanges, err := gitHasStagedChanges(ctx, workDir)
+	if err != nil {
+		return "", err
+	}
+	if !hasChanges {
+		return "", fmt.Errorf("no changes to submit; persona %q already matches the fork", name)
+	}
+	if err := runGit(ctx, workDir, "commit", "-m", "Submit community persona: "+name); err != nil {
+		return "", err
+	}
+	// --force-with-lease is preferred over --force, but this is a fresh --depth 1
+	// single-branch clone that never fetched the remote persona-submit/* ref, so the
+	// lease has no baseline and cannot protect against diverging remote commits.
+	if err := runGit(ctx, workDir, "push", "--force-with-lease", "origin", branch); err != nil {
+		return "", err
+	}
+	return owner + ":" + branch, nil
+}
+
+func (ghSubmitter) CreatePR(ctx context.Context, req PRRequest) (string, error) {
+	stdout, stderr, err := ghExec(ctx, "pr", "create",
+		"--repo", req.Repo,
+		"--head", req.Head,
+		"--title", req.Title,
+		"--body", req.Body)
+	if err != nil {
+		if url := existingPRURL(stderr.String()); url != "" {
+			return url, nil // a PR already exists for this branch (re-submission)
+		}
+		return "", ghError(err, stderr.String())
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// currentGHUser resolves the authenticated user's login so the fork clone URL and
+// PR head can be constructed. It never logs the raw gh output.
+func currentGHUser(ctx context.Context) (string, error) {
+	stdout, stderr, err := ghExec(ctx, "api", "user", "--jq", ".login")
+	if err != nil {
+		return "", fmt.Errorf("could not resolve gh user: %w", ghError(err, stderr.String()))
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// ghError builds a single error from a gh/git failure that preserves BOTH the
+// underlying error (so a context timeout is detectable with errors.Is and never
+// surfaces as a blank message when the killed process left no stderr) and the
+// captured stderr text (redacted by gh itself). stderr is elided when empty.
+func ghError(err error, stderr string) error {
+	if s := strings.TrimSpace(stderr); s != "" {
+		return fmt.Errorf("%w: %s", err, s)
+	}
+	return err
+}
+
+// copyPersonaUnit resolves the persona unit under personasDir and writes it into
+// the fork working tree at personas/community/<name>.yaml via the symlink-refusing
+// atomic writer.
+func copyPersonaUnit(personasDir, name, workDir string) error {
+	src, err := personaPath(personasDir, name)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("reading persona %q: %w", name, err)
+	}
+	yamlDest := filepath.Join(workDir, "personas", "community", filepath.FromSlash(name)+".yaml")
+	if err := os.MkdirAll(filepath.Dir(yamlDest), 0o755); err != nil {
+		return fmt.Errorf("preparing submission tree: %w", err)
+	}
+	if err := writeFileAtomic(yamlDest, data); err != nil {
+		return err
+	}
+	// A persona unit is the .yaml PLUS its optional co-located <name>.md custom
+	// prompt (see writePersonaUnit). "Locally-tuned" lives in that .md, so a
+	// submission that dropped it would push a PR that diverges from the unit the
+	// local fixture gate actually validated. Copy it when present; a binding-only
+	// persona (no .md) is complete with the YAML alone.
+	mdData, mdErr := os.ReadFile(strings.TrimSuffix(src, ".yaml") + ".md")
+	if mdErr != nil {
+		if os.IsNotExist(mdErr) {
+			return nil
+		}
+		return fmt.Errorf("reading persona prompt %q: %w", name, mdErr)
+	}
+	return writeFileAtomic(strings.TrimSuffix(yamlDest, ".yaml")+".md", mdData)
+}
+
+// gitInvocation prepends the gh credential-helper config to a git argument list so
+// clone/push authenticate via the user's authenticated gh session (the same
+// mechanism `gh auth setup-git` installs) instead of git's own github.com
+// credential helper. Without it, a user who is gh-authed but never ran
+// `gh auth setup-git` has no credential helper for github.com, so the push blocks
+// on a credential prompt until the context timeout kills it with a misleading
+// error. The -c flags are inert for local subcommands (checkout/add/commit) that
+// contact no remote.
+func gitInvocation(args ...string) []string {
+	return append([]string{"-c", "credential.helper=!gh auth git-credential"}, args...)
+}
+
+// runGit runs a git subcommand under a bounded context, capturing stderr for a
+// step-specific error message. dir is the working tree ("" for repo-less clone).
+func runGit(ctx context.Context, dir string, args ...string) error {
+	c := exec.CommandContext(ctx, "git", gitInvocation(args...)...)
+	if dir != "" {
+		c.Dir = dir
+	}
+	var stderr bytes.Buffer
+	c.Stderr = &stderr
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("git %s: %w", strings.Join(args, " "), ghError(err, stderr.String()))
+	}
+	return nil
+}
+
+// cloneFork clones the user's fork with a short bounded retry. gh repo fork is
+// asynchronous: immediately after Fork returns, the fork may not yet resolve, so
+// a direct clone can 404. We retry only on "not found" errors.
+func cloneFork(ctx context.Context, forkURL, dest string) error {
+	const (
+		maxAttempts = 5
+		backoff     = 2 * time.Second
+	)
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+		lastErr = runGit(ctx, "", "clone", "--depth", "1", forkURL, dest)
+		if lastErr == nil {
+			return nil
+		}
+		if !strings.Contains(strings.ToLower(lastErr.Error()), "not found") {
+			return lastErr
+		}
+	}
+	return fmt.Errorf("fork clone did not resolve after %d attempts: %w", maxAttempts, lastErr)
+}
+
+// gitHasStagedChanges reports whether there are staged changes in dir. It returns
+// an error only if git itself fails.
+func gitHasStagedChanges(ctx context.Context, dir string) (bool, error) {
+	c := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet")
+	c.Dir = dir
+	if err := c.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return true, nil
+		}
+		return false, fmt.Errorf("git diff --cached: %w", err)
+	}
+	return false, nil
+}
+
+// SubmitGate runs the local pre-submission gate for name and reports whether the
+// persona may proceed to a fork+PR. It is the reused, network-free front half of
+// `atcr personas submit`: it validates the persona name with the same guard the
+// install/remove paths use (validatePersonaName), then runs the fixture gate via
+// runner. A nil return means the persona cleared the gate; a non-nil error means
+// submission is blocked and no GitHub interaction (fork/branch/PR) must occur.
+//
+// The three blocking conditions, in order:
+//   - invalid name — rejected before any resolution, closing the path-traversal
+//     class already fixed for install/remove;
+//   - no fixture (outcome.HasFixture is false) — a submission-specific, blocking
+//     error (deliberately distinct from `personas test`'s softer, non-blocking
+//     "No fixture defined" wording), since an unvetted prompt with no fixture
+//     cannot clear the gate;
+//   - fixture not fully passing (outcome.Passed != outcome.Total).
+//
+// A zero-case fixture (HasFixture true, Total 0) satisfies Passed == Total
+// (0 == 0), so the sole failing predicate does not trip and the persona proceeds
+// — an explicit choice: the gate blocks only a genuine fixture failure, never an
+// empty fixture that already rendered.
+func SubmitGate(name string, runner FixtureRunner) error {
+	if err := validatePersonaName(name); err != nil {
+		return err
+	}
+	outcome, err := TestPersona(name, runner)
+	if err != nil {
+		return err
+	}
+	if !outcome.HasFixture {
+		return fmt.Errorf("cannot submit %q: no fixture defined — add a fixture before submitting", name)
+	}
+	if outcome.Passed != outcome.Total {
+		return fmt.Errorf("cannot submit %q: fixture failed (%d/%d cases passed)", name, outcome.Passed, outcome.Total)
+	}
+	return nil
+}

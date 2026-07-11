@@ -1,3 +1,13 @@
+## [19.9.0] - 2026-07-10
+
+Add a GitHub-native `atcr personas submit <name>` command that runs the local fixture gate then forks the repo and opens a pull request via `gh`, plus a `submitted` status for two-tier curation of community persona contributions.
+
+### Added
+
+- `atcr personas submit <name>`: runs the existing fixture gate locally, then forks `samestrin/atcr` and opens a pull request via the user's own `gh` CLI session — no marketplace, website, or hosted registry.
+- A `submitted` status for persona contributions, orthogonal to the existing `Source` provenance field, marking a fixture-passing but unvetted submission pending maintainer graduation into the vetted `personas/community/` library.
+- Documentation for the `submit` subcommand and the `submitted` → graduated two-tier curation model in `docs/personas-install.md` and `docs/personas-authoring.md`.
+
 ## [19.8.0] - 2026-07-10
 
 Add an opt-in, off-by-default CI workflow that auto-merges mechanical persona slug-bump PRs, plus the hermes maintenance-agents configuration doc covering host provisioning, drift-judgment classification, and the drafting-agent contract for maintainer-side model/persona upkeep.
