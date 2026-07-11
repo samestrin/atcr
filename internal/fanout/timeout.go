@@ -89,5 +89,17 @@ func maxLaneChunkTotal(slots []Slot) int {
 // summed per-call deadlines and are not parallel-lane load, so they are excluded from
 // the wave numerator.
 func aggregateTimeoutFactor(slots []Slot, maxParallel int) int {
-	return maxLaneChunkTotal(slots)
+	factor := maxLaneChunkTotal(slots)
+	if maxParallel > 0 {
+		parallelSlots := 0
+		for _, s := range slots {
+			if !s.Serial {
+				parallelSlots++
+			}
+		}
+		if waves := (parallelSlots + maxParallel - 1) / maxParallel; waves > factor {
+			factor = waves
+		}
+	}
+	return factor
 }

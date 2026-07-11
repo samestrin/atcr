@@ -525,7 +525,7 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 		// cannot extend past it, so the parent must carry the room. No-op (max chunk
 		// total <= 1) when nothing is chunked, preserving the flat deadline; unrelated
 		// non-chunked agents stay bounded by their own unscaled per-call deadline.
-		scaled := scaledTimeoutSecs(p.TimeoutSec, maxLaneChunkTotal(p.Slots))
+		scaled := scaledTimeoutSecs(p.TimeoutSec, aggregateTimeoutFactor(p.Slots, p.MaxParallel))
 		runCtx, cancel = context.WithTimeout(ctx, time.Duration(scaled)*time.Second)
 		defer cancel()
 	}
