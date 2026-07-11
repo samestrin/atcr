@@ -74,8 +74,12 @@ func ReadSprintPlan(path string, maxBytes int64) (content string, err error) {
 	if maxBytes > maxSprintPlanReadCeiling {
 		maxBytes = maxSprintPlanReadCeiling
 	}
-	if maxBytes < 0 {
-		maxBytes = 0
+	// A non-positive maxBytes only reaches here when the registry precedence chain
+	// was bypassed (a valid config always resolves a positive ceiling). Treat it as
+	// the defensive read ceiling rather than 0 so a real plan is not truncated to a
+	// single byte and silently blanked downstream in ScopeConstraint.
+	if maxBytes <= 0 {
+		maxBytes = maxSprintPlanReadCeiling
 	}
 	b, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
 	if err != nil {
@@ -113,6 +117,13 @@ func ScopeConstraint(content string, maxBytes int64) (block string, truncated bo
 	plan := strings.TrimSpace(content)
 	if plan == "" {
 		return "", false
+	}
+	// Defensive default (mirrors ReadSprintPlan): a bypassed-validation maxBytes <= 0
+	// must not cap the plan to zero bytes, which would inject a SCOPE CONSTRAINT
+	// block whose plan is silently truncated to nothing. Fall back to the same hard
+	// read ceiling so a real (sub-ceiling) plan is delivered whole.
+	if maxBytes <= 0 {
+		maxBytes = maxSprintPlanReadCeiling
 	}
 	plan, truncated = capUTF8(plan, int(maxBytes))
 	// Defense-in-depth: neutralize any marker lines that could close the framing
