@@ -69,20 +69,33 @@ func mockFindingsServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// documentedCoreFiles is the always-present file contract from
-// docs/code-review-backend.md:44-64 that a backend caller relies on. The
-// conditionally-produced entries (sources/pool/raw/agent/<agent>/,
-// reconciled/ambiguous.json, reconciled/disagreements.json) are intentionally
-// excluded per AC02-01 Edge Case 3: a single-agent, no-gray-zone fixture cannot
-// generate them, so their absence is not a contract regression.
-var documentedCoreFiles = []string{
+// documentedFiles is the full documented file contract from
+// docs/code-review-backend.md:44-64. Every entry is produced by this
+// single-agent hermetic fixture, so all are asserted — a regression that
+// stopped emitting any one would break the documented contract and this lock.
+//
+// This includes entries AC02-01 Edge Case 3 called "conditionally produced":
+// reconcile writes reconciled/ambiguous.json and reconciled/disagreements.json
+// unconditionally (internal/reconcile/emit.go:302-318, rendered even when
+// empty), and review writes sources/pool/raw/agent/<agent>/{review.md,
+// findings.txt,status.json} for every succeeded agent
+// (internal/fanout/artifacts.go:273). The one roster agent ("bruce") succeeds
+// against the mock, so its raw/agent dir is always present here. The only tree
+// entries not asserted are those that genuinely require a multi-agent /
+// gray-zone shape to appear at all — none in the always-present list below.
+var documentedFiles = []string{
 	"manifest.json",
 	filepath.Join("sources", "pool", "findings.txt"),
 	filepath.Join("sources", "pool", "summary.json"),
+	filepath.Join("sources", "pool", "raw", "agent", "bruce", "review.md"),
+	filepath.Join("sources", "pool", "raw", "agent", "bruce", "findings.txt"),
+	filepath.Join("sources", "pool", "raw", "agent", "bruce", "status.json"),
 	filepath.Join("reconciled", "findings.txt"),
 	filepath.Join("reconciled", "findings.json"),
 	filepath.Join("reconciled", "report.md"),
 	filepath.Join("reconciled", "summary.json"),
+	filepath.Join("reconciled", "ambiguous.json"),
+	filepath.Join("reconciled", "disagreements.json"),
 }
 
 // assertFindingsColumns asserts the stream carries the version header and that
@@ -127,10 +140,10 @@ func TestBackendContract_OutputDirTreeMatchesDocumentedShape(t *testing.T) {
 	require.Equal(t, 0, execCmd(t, "reconcile", out),
 		"atcr reconcile <output-dir> must exit 0")
 
-	// AC02-01 Scenario 1: the always-present documented tree.
+	// AC02-01 Scenario 1: the full documented tree.
 	require.DirExists(t, filepath.Join(out, "payload"),
 		"docs/code-review-backend.md output tree: payload/ missing")
-	for _, rel := range documentedCoreFiles {
+	for _, rel := range documentedFiles {
 		require.FileExists(t, filepath.Join(out, rel),
 			"docs/code-review-backend.md output tree: %s missing", rel)
 	}
@@ -174,8 +187,12 @@ func TestBackendContract_IdOrPathResolution(t *testing.T) {
 	t.Run("bare id resolves to .atcr/reviews/<id>", func(t *testing.T) {
 		isolate(t)
 		fixtureReview(t, "r1", source)
+		fixtureReview(t, "decoy", source) // written last → .atcr/latest points at decoy
 		require.Equal(t, 0, execCmd(t, "reconcile", "r1"))
-		require.FileExists(t, filepath.Join(".atcr", "reviews", "r1", "reconciled", "findings.txt"))
+		require.FileExists(t, filepath.Join(".atcr", "reviews", "r1", "reconciled", "findings.txt"),
+			"bare id r1 must resolve to .atcr/reviews/r1, not the latest pointer (decoy)")
+		require.NoFileExists(t, filepath.Join(".atcr", "reviews", "decoy", "reconciled", "findings.txt"),
+			"bare id must not fall back to .atcr/latest")
 	})
 
 	t.Run("explicit path is used as-is", func(t *testing.T) {
@@ -188,8 +205,8 @@ func TestBackendContract_IdOrPathResolution(t *testing.T) {
 
 		require.Equal(t, 0, execCmd(t, "reconcile", ext))
 		require.FileExists(t, filepath.Join(ext, "reconciled", "findings.txt"))
-		require.NoFileExists(t, filepath.Join(".atcr", "latest"),
-			"explicit-path reconcile must not touch .atcr/latest")
+		require.NoDirExists(t, filepath.Join(".atcr", "reviews"),
+			"explicit-path reconcile must operate on the given path, not scaffold under .atcr/reviews")
 	})
 
 	t.Run("omitted argument resolves to .atcr/latest", func(t *testing.T) {
