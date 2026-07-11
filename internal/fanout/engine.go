@@ -643,12 +643,20 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		}
 		last = r
 	}
-	// Slot failed: stamp the primary's identity and payload provenance.
+	// Slot failed: stamp the primary's identity, payload provenance, and F8
+	// diagnosability fields. The last attempt may have been a fallback with its own
+	// budget/window, but the slot is reported under the primary's name, so the
+	// sizing signal must describe the primary's regime.
 	last.Agent = s.Primary.Name
 	last.PayloadMode = s.Primary.PayloadMode
 	last.Truncation = s.Primary.Truncation
 	last.MinSeverity = s.Primary.MinSeverity
 	last.MaxFindings = s.Primary.MaxFindings
+	last.EffectiveBudget = s.Primary.EffectiveBudget
+	last.ResolvedWindow = s.Primary.ResolvedWindow
+	last.ReservedOutputTokens = s.Primary.ReservedOutputTokens
+	last.ChunkCount = s.Primary.ChunkTotal
+	last.DegradationAction = s.Primary.DegradationAction
 	last.DurationMS = time.Since(start).Milliseconds()
 	return last
 }
