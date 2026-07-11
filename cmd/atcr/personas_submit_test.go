@@ -195,7 +195,7 @@ func TestPersonasSubmit_ContinuationErrorPropagates(t *testing.T) {
 func TestPersonas_HelpListsSubmit(t *testing.T) {
 	out, err := execute(t, "personas", "--help")
 	require.NoError(t, err)
-	assert.Contains(t, out, "submit")
+	assert.Regexp(t, `(?m)^  submit\s+`, out, "submit must appear as a registered subcommand in the help list")
 }
 
 // stubGitHub is a command-level GitHubSubmitter stub: it lets the REAL Phase-2
