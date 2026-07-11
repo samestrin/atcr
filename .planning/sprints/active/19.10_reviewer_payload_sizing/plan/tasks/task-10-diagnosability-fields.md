@@ -61,14 +61,14 @@ Extend `AgentStatus` in `internal/fanout/status.go` with five new fields — `ef
 - `internal/payload/budget.go` (`Truncation`, line 17-27 — the non-silent-degradation-record pattern this task's fields must match)
 
 ## Success Criteria
-- [ ] `AgentStatus` carries all 5 new fields (`effective_budget`, `resolved_window`, `reserved_output_tokens`, `chunk_count`, `degradation_action`) with `omitempty` JSON tags
-- [ ] `statusFor` populates all 5 fields from the values Tasks 02/03/04 attach to `Result`, with no independent recomputation of sizing/chunk/overflow logic in `artifacts.go`
-- [ ] `summary.json` records all 5 new fields per agent for a run that goes through per-model sizing/chunking/overflow dispatch (AC8)
-- [ ] A run/agent that predates or bypasses per-model sizing (e.g. a cache-hit replay, or a test fixture built before this task) produces a `status.json`/`summary.json` with the 5 new fields entirely absent (`omitempty` fires), keeping the artifact byte-identical to the pre-F8 shape
-- [ ] `degradation_action` reflects the actual `OverflowResult.Action` value from Task 04's dispatch (`chunk`/`truncate`/`fallback`/`fail`), or is absent when no overflow policy fired for that agent
+- [x] `AgentStatus` carries all 5 new fields (`effective_budget`, `resolved_window`, `reserved_output_tokens`, `chunk_count`, `degradation_action`) with `omitempty` JSON tags
+- [x] `statusFor` populates all 5 fields from the values Tasks 02/03/04 attach to `Result`, with no independent recomputation of sizing/chunk/overflow logic in `artifacts.go`
+- [x] `summary.json` records all 5 new fields per agent for a run that goes through per-model sizing/chunking/overflow dispatch (AC8)
+- [x] A run/agent that predates or bypasses per-model sizing (e.g. a cache-hit replay, or a test fixture built before this task) produces a `status.json`/`summary.json` with the 5 new fields entirely absent (`omitempty` fires), keeping the artifact byte-identical to the pre-F8 shape
+- [x] `degradation_action` reflects the actual `OverflowResult.Action` value from Task 04's dispatch (`chunk`/`truncate`/`fallback`/`fail`), or is absent when no overflow policy fired for that agent
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -96,10 +96,10 @@ Extend `AgentStatus` in `internal/fanout/status.go` with five new fields — `ef
 - Task-06 (Fallback Provenance) — the existing `FallbackUsed`/`FallbackFrom` fields this task's `degradation_action` complements (fallback substitution already recorded separately; no duplication needed)
 
 ## Definition of Done
-- [ ] `AgentStatus` extended with the 5 new fields, all `omitempty`, matching the existing struct's doc-comment and field-grouping style
-- [ ] `statusFor` populates the 5 fields from `Result`, reusing Task 02/03/04/06 output with no independent recomputation
-- [ ] Unit tests confirm JSON round-trip for populated fields and JSON-absence for unset fields
-- [ ] Integration test confirms `summary.json` records the 5 fields per agent end-to-end for a sizing/chunking/overflow-degraded run (AC8)
-- [ ] Existing `status.json`/`summary.json` fixture/golden tests in `internal/fanout` continue to pass unmodified for pre-F8-shaped runs
-- [ ] `go build ./...` succeeds
-- [ ] `go test ./...` passes
+- [x] `AgentStatus` extended with the 5 new fields, all `omitempty`, matching the existing struct's doc-comment and field-grouping style
+- [x] `statusFor` populates the 5 fields from `Result`, reusing Task 02/03/04/06 output with no independent recomputation
+- [x] Unit tests confirm JSON round-trip for populated fields and JSON-absence for unset fields
+- [x] Integration test confirms `summary.json` records the 5 fields per agent end-to-end for a sizing/chunking/overflow-degraded run (AC8)
+- [x] Existing `status.json`/`summary.json` fixture/golden tests in `internal/fanout` continue to pass unmodified for pre-F8-shaped runs
+- [x] `go build ./...` succeeds
+- [x] `go test ./...` passes

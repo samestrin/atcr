@@ -48,15 +48,15 @@ Extend `diffCacheKey`'s tuning-token composition (`internal/fanout/review.go:975
 - `internal/fanout/engine.go` — `invokeCachedSingleShot` (line 691): unchanged; consumes `Agent.CacheKey` as an opaque string, so no change needed once `CacheKey` is derived correctly upstream
 
 ## Success Criteria
-- [ ] `diffCacheKey` folds a per-agent effective-budget/chunk-plan identifier into its tuning token, NUL-separated, following the existing `baseURL` pattern
-- [ ] Two calls with identical `prompt, model, baseURL, temperature` but different effective-budget/chunk-plan values produce DIFFERENT keys — verified by test (AC7)
-- [ ] Two calls with identical everything INCLUDING an unset/zero sizing value produce the SAME key as before this change — verified by test (backward compatibility for non-sized agents)
-- [ ] `renderAgent` and `buildFallbackAgent` both compose and pass a correct `sizingToken` reflecting their OWN agent's/model's effective budget (a fallback's token reflects its own model, not the primary's)
-- [ ] `diffCacheKey`'s doc comment documents the new deliberately-included sizing component
-- [ ] All existing `cache_test.go` assertions (temperature, baseURL/provider, no-cache, tool-agent-never-cached) still pass unmodified in behavior
+- [x] `diffCacheKey` folds a per-agent effective-budget/chunk-plan identifier into its tuning token, NUL-separated, following the existing `baseURL` pattern
+- [x] Two calls with identical `prompt, model, baseURL, temperature` but different effective-budget/chunk-plan values produce DIFFERENT keys — verified by test (AC7)
+- [x] Two calls with identical everything INCLUDING an unset/zero sizing value produce the SAME key as before this change — verified by test (backward compatibility for non-sized agents)
+- [x] `renderAgent` and `buildFallbackAgent` both compose and pass a correct `sizingToken` reflecting their OWN agent's/model's effective budget (a fallback's token reflects its own model, not the primary's)
+- [x] `diffCacheKey`'s doc comment documents the new deliberately-included sizing component
+- [x] All existing `cache_test.go` assertions (temperature, baseURL/provider, no-cache, tool-agent-never-cached) still pass unmodified in behavior
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**

@@ -34,15 +34,15 @@ Add `internal/fanout/overflow.go` implementing a single dispatch function that m
 - `internal/payload/budget.go` — `ApplyByteBudget` (line 46) and `Truncation` (line 17), the `truncate` arm's primitive and its non-silent degradation record pattern
 
 ## Success Criteria
-- [ ] `internal/fanout/overflow.go` exposes a dispatch function/type that accepts a resolved `on_overflow` policy string and routes to the correct arm
-- [ ] `chunk` (default) arm calls `chunkDiff` with the per-model `maxLines` and returns the resulting chunks
-- [ ] `truncate` arm calls `ApplyByteBudget` and returns its `Truncation` record unmodified (no re-implementation of the shed logic)
-- [ ] `fallback` and `fail` arms are recognized as valid policy values and return clear, typed errors rather than silently no-op-ing or falling through to another arm
-- [ ] An unrecognized policy string produces a clear error distinct from the `fallback`/`fail` errors
-- [ ] Every dispatch outcome carries an explicit degradation-action record (never stderr-only signaling), matching the `Truncation` "always returned" convention
+- [x] `internal/fanout/overflow.go` exposes a dispatch function/type that accepts a resolved `on_overflow` policy string and routes to the correct arm
+- [x] `chunk` (default) arm calls `chunkDiff` with the per-model `maxLines` and returns the resulting chunks
+- [x] `truncate` arm calls `ApplyByteBudget` and returns its `Truncation` record unmodified (no re-implementation of the shed logic)
+- [x] `fallback` and `fail` arms are recognized as valid policy values and return clear, typed errors rather than silently no-op-ing or falling through to another arm
+- [x] An unrecognized policy string produces a clear error distinct from the `fallback`/`fail` errors
+- [x] Every dispatch outcome carries an explicit degradation-action record (`OverflowResult.Action`, never stderr-only signaling), matching the `Truncation` "always returned" convention
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -69,9 +69,9 @@ Add `internal/fanout/overflow.go` implementing a single dispatch function that m
 - Task-03 (Window-Aware Chunking) — supplies the per-model maxLines for the chunk arm
 
 ## Definition of Done
-- [ ] `internal/fanout/overflow.go` created and compiles cleanly
-- [ ] `internal/fanout/overflow_test.go` created and covers all four policy arms plus the unrecognized-policy case
-- [ ] `go build ./...` passes
-- [ ] `go test ./...` passes
-- [ ] `chunk` and `truncate` arms verified to delegate to `chunkDiff`/`ApplyByteBudget` without reimplementing their logic
-- [ ] `fallback` and `fail` arms verified to error clearly and never silently no-op
+- [x] `internal/fanout/overflow.go` created and compiles cleanly
+- [x] `internal/fanout/overflow_test.go` created and covers all four policy arms plus the unrecognized-policy case
+- [x] `go build ./...` passes
+- [x] `go test ./...` passes
+- [x] `chunk` and `truncate` arms verified to delegate to `chunkDiff`/`ApplyByteBudget` without reimplementing their logic
+- [x] `fallback` and `fail` arms verified to error clearly and never silently no-op

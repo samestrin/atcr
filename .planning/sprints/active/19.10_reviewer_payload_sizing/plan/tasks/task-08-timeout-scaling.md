@@ -48,15 +48,15 @@ Both scale factors are derived deterministically from `(chunk count, resolved ba
 - `internal/registry/precedence.go` — `MaxTimeoutSecs = 86400` (line 11, reused as the clamp ceiling; NOT modified)
 
 ## Success Criteria
-- [ ] `Agent.ChunkTotal` is threaded from the chunked-strategy branch (`review.go:897-916`) onto every chunk-Slot's `Primary` Agent, reflecting the true `len(chunks)` for that persona
-- [ ] `invokeAgent` (`engine.go:604-612`) applies a scaled per-call deadline derived from `(a.TimeoutSecs, a.ChunkTotal)`, unchanged (`a.TimeoutSecs` as-is) when `ChunkTotal <= 1`
-- [ ] `runEngine` (`review.go:512-518`) applies a scaled aggregate deadline derived from `(p.TimeoutSec, max per-serial-lane chunk total)` instead of the flat `p.TimeoutSec`
-- [ ] The scaled timeout at both seams clamps to `registry.MaxTimeoutSecs` (86400) and is deterministic from `(base, chunkTotal)` alone — no live/network inputs
-- [ ] `internal/registry`'s `EffectiveTimeoutSecs`, `DefaultTimeoutSecs`, and `MaxTimeoutSecs` are unmodified — F6 reads the resolved value and clamp constant only
-- [ ] AC6: `greta`, `vera`, and `brad` (the three previously-timed-out agents) complete on a large-but-valid multi-chunk payload without hitting the wall, verified by test
+- [x] `Agent.ChunkTotal` is threaded from the chunked-strategy branch (`review.go:897-916`) onto every chunk-Slot's `Primary` Agent, reflecting the true `len(chunks)` for that persona
+- [x] `invokeAgent` (`engine.go:604-612`) applies a scaled per-call deadline derived from `(a.TimeoutSecs, a.ChunkTotal)`, unchanged (`a.TimeoutSecs` as-is) when `ChunkTotal <= 1`
+- [x] `runEngine` (`review.go:512-518`) applies a scaled aggregate deadline derived from `(p.TimeoutSec, max per-serial-lane chunk total)` instead of the flat `p.TimeoutSec`
+- [x] The scaled timeout at both seams clamps to `registry.MaxTimeoutSecs` (86400) and is deterministic from `(base, chunkTotal)` alone — no live/network inputs
+- [x] `internal/registry`'s `EffectiveTimeoutSecs`, `DefaultTimeoutSecs`, and `MaxTimeoutSecs` are unmodified — F6 reads the resolved value and clamp constant only
+- [x] AC6: `greta`, `vera`, and `brad` (the three previously-timed-out agents) complete on a large-but-valid multi-chunk payload without hitting the wall, verified by test
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -82,10 +82,10 @@ Both scale factors are derived deterministically from `(chunk count, resolved ba
 - Task-03 (Window-Aware Chunking) — supplies the chunk count (`len(chunks)`) driving the timeout scaling; this task must land after Task-03's chunked-strategy branch exists in `review.go`
 
 ## Definition of Done
-- [ ] `Agent.ChunkTotal` field added and populated from the chunked-strategy branch
-- [ ] `scaledTimeoutSecs` helper implemented, deterministic, and clamped to `registry.MaxTimeoutSecs`
-- [ ] `invokeAgent` (per-call seam, `engine.go:610`) and `runEngine` (aggregate seam, `review.go:516`) both apply the scaled timeout
-- [ ] AC6 verified: `greta`, `vera`, `brad` complete on a large multi-chunk payload without hitting the wall
-- [ ] No changes to `internal/registry`'s `EffectiveTimeoutSecs`, `DefaultTimeoutSecs`, `MaxTimeoutSecs`, or any config-schema timeout field
-- [ ] `go build ./...` succeeds
-- [ ] `go test ./...` passes
+- [x] `Agent.ChunkTotal` field added and populated from the chunked-strategy branch
+- [x] `scaledTimeoutSecs` helper implemented, deterministic, and clamped to `registry.MaxTimeoutSecs`
+- [x] `invokeAgent` (per-call seam, `engine.go:610`) and `runEngine` (aggregate seam, `review.go:516`) both apply the scaled timeout
+- [x] AC6 verified: `greta`, `vera`, `brad` complete on a large multi-chunk payload without hitting the wall
+- [x] No changes to `internal/registry`'s `EffectiveTimeoutSecs`, `DefaultTimeoutSecs`, `MaxTimeoutSecs`, or any config-schema timeout field
+- [x] `go build ./...` succeeds
+- [x] `go test ./...` passes

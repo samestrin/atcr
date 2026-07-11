@@ -140,28 +140,28 @@ never becomes a field on `reclib.Finding`/`reclib.Merged`.
   post-merge stamping pattern this task's `stampFallbackProvenance` mirrors
 
 ## Success Criteria
-- [ ] `stream.Finding` carries a fallback-provenance field, stamped post-parse
+- [x] `stream.Finding` carries a fallback-provenance field (`FallbackFrom`, `json:"-"`), stamped post-parse
       (not a wire-format column) from the source's `AgentStatus`
-- [ ] `JSONFinding` carries a `Reviewers`-keyed fallback-provenance field,
+- [x] `JSONFinding` carries a `Reviewers`-keyed fallback-provenance field (`FallbackReviewers`),
       populated on the `RunReconcile` cached path and empty on the
       no-I/O-derived path (consistent with `PathValid`/`PathWarning`)
-- [ ] `internal/reconcile/adapter/adapter.go`'s `ToJSONFinding` stamps the new
+- [x] `internal/reconcile/adapter/adapter.go`'s `ToJSONFinding` stamps the new
       field from its `paths stream.Finding` parameter; `ToFinding`/`FromFinding`
       (which cross the external library boundary) are unchanged
-- [ ] A finding whose `Reviewers` includes two personas that both fell back to
+- [x] A finding whose `Reviewers` includes two personas that both fell back to
       the same model is **not** double-counted as 2 distinct reviewers in
       `IndependenceModelReviewerCount`'s independence score — verified by test
-- [ ] A finding whose `Reviewers` includes two personas on their own configured
+- [x] A finding whose `Reviewers` includes two personas on their own configured
       (non-fallback) models continues to count as 2 distinct reviewers
       (no regression to the existing independence score)
-- [ ] `github.com/samestrin/atcr/reconcile` (the extracted library package) is
+- [x] `github.com/samestrin/atcr/reconcile` (the extracted library package) is
       not modified by this task — `reclib.Finding`/`reclib.Merged` gain no new
-      field
-- [ ] `disagreements.json`'s `independenceModel` value and schema version are
+      field (verified: `git status` clean for `reconcile/`)
+- [x] `disagreements.json`'s `independenceModel` value and schema version are
       unchanged (only the underlying count computation changes)
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -216,12 +216,12 @@ never becomes a field on `reclib.Finding`/`reclib.Merged`.
   discovery-time stamping
 
 ## Definition of Done
-- [ ] All Success Criteria above are met
-- [ ] `go build ./...` passes (confirms `reconcile/` extracted library package
+- [x] All Success Criteria above are met
+- [x] `go build ./...` passes (confirms `reconcile/` extracted library package
       is unmodified)
-- [ ] `go test ./...` passes
-- [ ] `go vet ./...` and project lint pass
-- [ ] Fixture-based AC5 integration test added and passing
-- [ ] No change to `disagreements.json` schema version or `independenceModel`
+- [x] `go test ./...` passes
+- [x] `go vet ./...` and project lint pass
+- [x] Fixture-based AC5 integration test added and passing (`TestRunReconcile_FallbackDeWeightsIndependenceEndToEnd` + regression control `TestRunReconcile_NoFallbackKeepsFullIndependence`)
+- [x] No change to `disagreements.json` schema version or `independenceModel`
       string value
-- [ ] Manual code review checklist above completed
+- [x] Manual code review checklist above completed

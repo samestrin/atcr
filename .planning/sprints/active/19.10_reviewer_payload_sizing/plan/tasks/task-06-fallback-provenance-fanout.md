@@ -51,14 +51,14 @@ Add a `FallbackCount` tally to both `Summary` (outcome.go) and `PoolSummary` (ar
 - `internal/fanout/review.go` (`mergeChunkResults` call at `review.go:591`, `writePool` call at `review.go:646`)
 
 ## Success Criteria
-- [ ] `Summary` (outcome.go) and `PoolSummary` (artifacts.go) both carry an always-present `FallbackCount`/`fallback_count` field, computed once in `summarize()` and never re-derived elsewhere
-- [ ] A bulk-path (non-chunked) run with a fallback-served slot produces a `status.json` with `fallback_used:true`/`fallback_from:"<primary>"` and a `summary.json` with `fallback_count` reflecting it — proven by a fixture test, not just code inspection
-- [ ] A run with zero fallback substitutions serializes `"fallback_count":0` explicitly (never an omitted key), matching the `TruncatedZeroFindings` always-present discipline
-- [ ] No behavior change to `AgentStatus`/`statusFor`/`mergeResultGroup` — their existing fallback plumbing is verified correct via tests, not rewritten
-- [ ] `PoolSummary`'s doc comment documents `FallbackCount` the same way it documents `TruncatedZeroFindings`
+- [x] `Summary` (outcome.go) and `PoolSummary` (artifacts.go) both carry an always-present `FallbackCount`/`fallback_count` field, computed once in `summarize()` and never re-derived elsewhere
+- [x] A bulk-path (non-chunked) run with a fallback-served slot produces a `status.json` with `fallback_used:true`/`fallback_from:"<primary>"` and a `summary.json` with `fallback_count` reflecting it — proven by a fixture test, not just code inspection
+- [x] A run with zero fallback substitutions serializes `"fallback_count":0` explicitly (never an omitted key), matching the `TruncatedZeroFindings` always-present discipline
+- [x] No behavior change to `AgentStatus`/`statusFor`/`mergeResultGroup` — their existing fallback plumbing is verified correct via tests, not rewritten (doc comments only)
+- [x] `PoolSummary`'s doc comment documents `FallbackCount` the same way it documents `TruncatedZeroFindings`
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
