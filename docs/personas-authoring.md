@@ -204,6 +204,7 @@ Each entry has this shape (the JSON keys map 1:1 to `PersonaIndexEntry` in `inte
 | `path` | yes | Path to the persona YAML relative to the index root (e.g. `security/owasp.yaml`). |
 | `provider` | yes | Routing-endpoint key — **must be non-empty and equal the persona YAML's `provider`**. |
 | `model` | yes | The model id — **must be non-empty and equal the persona YAML's `model`**. Discovery by model matches this structured field, never free-text. |
+| `binding` | no | Optional logical family/channel target (additive, `omitempty`). Omit it for a normal pinned-slug persona — the example above does. Detailed in [§6](#6-model-familychannel-bindings-and-resolved-locks-epic-197). |
 | `tasks` | no | Forward-looking task tags. **Omit the key entirely** when absent — do not emit `"tasks": []`. |
 | `tags` | no | Forward-looking free-form tags. **Omit the key entirely** when absent — do not emit `"tags": []`. |
 
