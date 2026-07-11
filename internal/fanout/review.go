@@ -1054,6 +1054,20 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		}
 		bulkDegradation := ""
 		bulkText, bulkFileCount, bulkTrunc := mp.Text, mp.FileCount, mp.Truncation
+		if agentEff == 0 && len(mp.Entries) > 0 {
+			// Epic 19.10 TD-002: a model whose window <= output cap + prompt overhead makes
+			// EffectiveByteBudget return 0, so the shed below is skipped and the agent keeps
+			// the FULL global-budget payload. A positive byte floor is meaningless here (zero
+			// room for any input regardless of value), so mark the same honest-degradation
+			// state the AllDropped arm records instead of leaving the action unmarked while
+			// silently shipping an over-window payload. Currently unreachable — ContextWindowTokens
+			// floors at 32768 (eff >= 71680) — so this is defense-in-depth for a future
+			// sub-overhead window or a lowered default.
+			bulkDegradation = "overflow"
+			if warnOversized {
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: model window too small to reserve output headroom (effective budget 0); sending the whole payload (may overflow) rather than sizing it\n", name)
+			}
+		}
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
 			kept, trunc := payload.ApplyByteBudget(mp.Entries, appliedBudget)
 			// Never dispatch an EMPTY per-agent payload. If even a single file exceeds
