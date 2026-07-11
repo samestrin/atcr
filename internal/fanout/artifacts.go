@@ -49,6 +49,19 @@ type PoolSummary struct {
 	// is deferred TD, not addressed in this epic. Always present so a 0 is
 	// distinguishable from an older summary.json that predates the field.
 	TruncatedZeroFindings int `json:"truncated_zero_findings"`
+	// FallbackCount is the run-level tally of agents served by a fallback model —
+	// a slot whose configured primary model overflowed/failed and was routed to a
+	// litellm any→any fallback, recorded via Result.FallbackUsed and threaded to
+	// AgentStatus.FallbackUsed/FallbackFrom by statusFor for both the bulk
+	// (single-call) and chunked-merged (mergeResultGroup union) paths. Like
+	// TruncatedZeroFindings it is ALWAYS present (not omitempty), so a 0 is
+	// distinguishable from an older summary.json that predates the field. It is a
+	// pure count of run-level substitutions, unaffected by grounding/post-processing
+	// since fallback state is fixed before findingsFor runs. A downstream reader
+	// (or reconcile's fallback-aware de-weighting, Epic 19.10 F5) uses it as a cheap
+	// "does this run contain any substitution worth reconciling" signal without
+	// walking every Agents entry.
+	FallbackCount int `json:"fallback_count"`
 	// FailureMarker is true only when writeFailureSummary produced this record
 	// after a WritePool I/O fault, never when WritePool wrote a real run. It
 	// makes the summary unambiguously a best-effort marker: a write-phase
@@ -149,6 +162,7 @@ func writePool(poolDir string, results []Result, changed payload.ChangedLines, g
 		Partial:                 sum.Partial,
 		TotalFindings:           len(merged),
 		TruncatedZeroFindings:   truncatedZeroFindings,
+		FallbackCount:           sum.FallbackCount,
 		GroundingEnabled:        &groundingEnabled,
 		GroundingDisabledReason: groundingDisabledReason,
 	}
@@ -283,11 +297,22 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		FilesDropped:           r.Truncation.FilesDropped,
 		FallbackUsed:           r.FallbackUsed,
 		FallbackFrom:           r.FallbackFrom,
+		FallbackModel:          r.FallbackModel,
 		DroppedByMinSeverity:   fr.Dropped,
 		TruncatedByMaxFindings: fr.Truncated,
 		ResponseTruncated:      r.ResponseTruncated,
 		CacheHit:               r.CacheHit,
 		UnreviewedChunks:       r.UnreviewedChunks,
+		// Diagnosability (Epic 19.10 F8): pure pass-through of the per-agent sizing /
+		// degradation values invokeAgent stamped onto the Result from the serving
+		// Agent — no recomputation of sizing/chunk/overflow math here. All zero/empty
+		// for an unsized agent (bare fixture, pre-19.10 run), so the AgentStatus
+		// omitempty tags keep status.json/summary.json byte-identical for those runs.
+		EffectiveBudget:      r.EffectiveBudget,
+		ResolvedWindow:       r.ResolvedWindow,
+		ReservedOutputTokens: r.ReservedOutputTokens,
+		ChunkCount:           r.ChunkCount,
+		DegradationAction:    r.DegradationAction,
 	}
 	if r.Err != nil {
 		st.Error = r.Err.Error()

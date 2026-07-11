@@ -19,7 +19,7 @@ func TestGrayZoneItem_NormalizesMixedCaseSeverity(t *testing.T) {
 			{Severity: "Critical", File: "g.go", Line: 7, Reviewer: "r2"},
 		},
 	}
-	got := grayZoneItem(c)
+	got := grayZoneItem(c, nil)
 	if got.Score != 4 {
 		t.Fatalf("grayZoneItem score = %v, want 4 (rank of CRITICAL); a raw lookup collapses it to the floor", got.Score)
 	}
@@ -53,7 +53,7 @@ func TestGrayZoneItem_NormalizesSeverityField(t *testing.T) {
 			{Severity: "critical", File: "g.go", Line: 7, Reviewer: "r1"},
 		},
 	}
-	got := grayZoneItem(c)
+	got := grayZoneItem(c, nil)
 	if got.Severity != "CRITICAL" {
 		t.Fatalf("grayZoneItem Severity = %q, want normalized CRITICAL; raw maxSev corrupts sort tiebreak", got.Severity)
 	}
