@@ -9,10 +9,16 @@
 | Test Framework | bats-core (or manual bash test harness) | Matches existing repo convention of testing shell scripts by direct invocation; no existing bats suite in repo, so manual/CI-driven invocation tests are acceptable |
 | Key Dependencies | `go` toolchain (Go 1.24+), `go install` | No third-party shell libraries; wraps a single stdlib Go tooling command |
 
-## Related Files
-- `install.sh` - create: thin wrapper script that checks for `go`, runs `go install github.com/samestrin/atcr/cmd/atcr@latest`, and reports success
-- `examples/ci-gate.sh` - reference only: style precedent for shebang, `set -euo pipefail`, comment density, and stdout/stderr message conventions (not modified by this AC)
-- `.planning/plans/active/20.0_standalone_skill_release/documentation/install-script-conventions.md` - reference only: documents the Installation Targets table and Quick Reference this AC implements
+### Related Files (from codebase-discovery.json)
+
+- `install.sh` — create: thin wrapper script that checks for `go`, runs `go install github.com/samestrin/atcr/cmd/atcr@latest`, and reports success
+- `examples/ci-gate.sh` — reference only: style precedent for shebang, `set -euo pipefail`, comment density, and stdout/stderr message conventions (not modified by this AC)
+- `.planning/plans/active/20.0_standalone_skill_release/documentation/install-script-conventions.md` — reference only: documents the Installation Targets table and Quick Reference this AC implements
+- `README.md` — reference only: existing Quickstart section that documents the same `go install` path
+
+## Design References
+
+- [Install Script Conventions](../documentation/install-script-conventions.md) — requirements, installation targets, and scope guard for `install.sh`
 
 ## Happy Path Scenarios
 **Scenario 1: Fresh install with Go toolchain present**

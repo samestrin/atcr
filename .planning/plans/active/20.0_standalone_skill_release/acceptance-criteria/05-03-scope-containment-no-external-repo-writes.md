@@ -9,11 +9,16 @@
 | Test Framework | `git status` / `git diff --name-only` inspection | No code test framework applies |
 | Key Dependencies | None | Verification uses only local git tooling |
 
-## Related Files
-- `docs/external-migration.md` - create: the only new file this story is permitted to introduce outside the plan folder
-- `.planning/plans/active/20.0_standalone_skill_release/user-stories/05-external-migration-descope-note.md` - modify: AC backlink update only (this file), no content drift beyond the `## Acceptance Criteria` section
-- `.planning/plans/active/20.0_standalone_skill_release/documentation/external-migration-descope.md` - read-only source: must not be deleted or moved, only read from
-- `~/Documents/GitHub/claude-prompts/.claude/skills/` (external repo, out of workspace) - explicitly must NOT appear in any diff, stage, or commit produced by this story
+### Related Files (from codebase-discovery.json)
+
+- `docs/external-migration.md` — create: the only new file this story is permitted to introduce outside the plan folder
+- `.planning/plans/active/20.0_standalone_skill_release/user-stories/05-external-migration-descope-note.md` — modify: AC backlink update only (this file), no content drift beyond the `## Acceptance Criteria` section
+- `.planning/plans/active/20.0_standalone_skill_release/documentation/external-migration-descope.md` — read-only source: must not be deleted or moved, only read from
+- `~/Documents/GitHub/claude-prompts/.claude/skills/` (external repo, out of workspace) — explicitly must NOT appear in any diff, stage, or commit produced by this story
+
+## Design References
+
+- [External Private-Skill Migration Descope](../documentation/external-migration-descope.md) — documents the workspace boundary and the manual-operator rationale that makes scope containment the correct outcome
 
 ## Happy Path Scenarios
 **Scenario 1: Only in-scope paths are touched**

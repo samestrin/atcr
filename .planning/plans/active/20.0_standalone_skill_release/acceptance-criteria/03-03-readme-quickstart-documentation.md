@@ -9,10 +9,15 @@
 | Test Framework | Manual/markdown-lint review | No automated test framework for prose; verified via link-check and manual read-through |
 | Key Dependencies | None | Pure documentation change, no build/runtime dependency |
 
-## Related Files
-- `README.md` - modify: Quickstart section (step "1. Install" at `README.md:40-42`) — add `install.sh` as a documented alternative/companion alongside the existing `go install` command
-- `install.sh` - reference only: the script being documented (created/modified by AC 03-01 and AC 03-02)
-- `.planning/plans/active/20.0_standalone_skill_release/documentation/install-script-conventions.md` - reference only: Quick Reference table confirms `README.md Quickstart` as the source of truth for the existing `go install` instruction that must not be removed or contradicted
+### Related Files (from codebase-discovery.json)
+
+- `README.md:40-57` — modify: Quickstart section (step "1. Install" at `README.md:40-42`) — add `install.sh` as a documented alternative/companion alongside the existing `go install` command
+- `install.sh` — reference only: the script being documented (created/modified by AC 03-01 and AC 03-02)
+- `.planning/plans/active/20.0_standalone_skill_release/documentation/install-script-conventions.md` — reference only: Quick Reference table confirms `README.md Quickstart` as the source of truth for the existing `go install` instruction that must not be removed or contradicted
+
+## Design References
+
+- [Install Script Conventions](../documentation/install-script-conventions.md) — scope guard and Quick Reference for how `install.sh` is presented in README.md
 
 ## Happy Path Scenarios
 **Scenario 1: Quickstart documents both install paths**
@@ -55,7 +60,7 @@
 ## Test Implementation Guidance
 **Test Type:** E2E
 **Test Data Requirements:** The final README.md content; no external test data needed
-**Mock/Stub Requirements:** None — verify by rendering/reading the README and confirming (a) the new `install.sh` reference is present and correctly linked, (b) the original `go install` line is unchanged, (c) any link/URL cited resolves to the real file in the repo
+**Mock/Stub Requirements:** None — verify by rendering/reading the README and confirming (a) the new `install.sh` reference is present, (b) the link/URL cited resolves to the repo-root `install.sh` file, (c) the original `go install` line is unchanged
 
 ## Definition of Done
 **Auto-Verified:**

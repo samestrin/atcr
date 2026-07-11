@@ -9,11 +9,17 @@
 | Test Framework | Go `testing` + `testify` (`assert`/`require`) over the embedded string | `skill/skill_test.go` |
 | Key Dependencies | `//go:embed` (`skill/skill.go`), Cobra command tree (`cmd/atcr/main.go`) | routing table must mirror `newRootCmd` registration order and names |
 
-## Related Files
-- `skill/SKILL.md` - modify: rewrite frontmatter `description` and add a Level 2 command-routing table/section that maps `/atcr <command>` to each of the 21 Cobra commands
-- `cmd/atcr/main.go:185-208` - reference only (do not modify): the `newRootCmd` `AddCommand(...)` call is the ground-truth command inventory (`review`, `reconcile`, `verify`, `debate`, `report`, `github`, `range`, `status`, `init`, `quickstart`, `serve`, `doctor`, `trust`, `scorecard`, `leaderboard`, `benchmark`, `personas`, `models`, `debt`, `history`, `audit-report`, `version`)
-- `skill/skill_test.go` - modify: add a routing-table coverage test (e.g. `TestSkill_DispatcherRoutingTable`) that asserts every command name from the ground-truth list appears in `SkillMD`
-- `.planning/specifications/packages/cobra.md` - reference only: known-stale package doc (references a non-existent `anchor` subcommand); must NOT be used as the source of the routing table
+### Related Files (from codebase-discovery.json)
+
+- `skill/SKILL.md` — modify: rewrite frontmatter `description` and add a Level 2 command-routing table/section that maps `/atcr <command>` to each of the 21 Cobra commands
+- `cmd/atcr/main.go:185-208` — reference only (do not modify): the `newRootCmd` `AddCommand(...)` call is the ground-truth command inventory (`review`, `reconcile`, `verify`, `debate`, `report`, `github`, `range`, `status`, `init`, `quickstart`, `serve`, `doctor`, `trust`, `scorecard`, `leaderboard`, `benchmark`, `personas`, `models`, `debt`, `history`, `audit-report`, `version`)
+- `skill/skill_test.go` — modify: add a routing-table coverage test (e.g. `TestSkill_DispatcherRoutingTable`) that asserts every command name from the ground-truth list appears in `SkillMD`
+- `.planning/specifications/packages/cobra.md` — reference only: known-stale package doc (references a non-existent `anchor` subcommand); must NOT be used as the source of the routing table
+
+## Design References
+
+- [CLI Dispatcher Conventions](../documentation/cli-dispatcher-conventions.md) — Cobra command/subcommand conventions the `/atcr` dispatcher must mirror
+- [Agent Skill Format & Progressive Disclosure](../documentation/agent-skill-format.md) — SKILL.md frontmatter and secondary-file loading model governing the dispatcher rewrite
 
 ## Happy Path Scenarios
 **Scenario 1: Every live Cobra command is routed**
@@ -41,6 +47,11 @@
 - **Given** a top-level command that itself has subcommands (`personas install`, `debt list`, `models drift`, `benchmark run`, etc.)
 - **When** the routing table lists it
 - **Then** the top-level command name is routed at Level 2; subcommand-level detail is either a compact inline note or deferred to Level 3 without inventing subcommand names not present in the corresponding `cmd/atcr/*.go` file
+
+**Edge Case 3: No command argument provided**
+- **Given** the agent invokes `/atcr` with no command argument
+- **When** the dispatcher parses the input
+- **Then** it responds with a compact command list or asks for a valid command, and does not silently default to the review-only flow
 
 ## Error Conditions
 **Error Scenario 1: Invented or drifted command name**

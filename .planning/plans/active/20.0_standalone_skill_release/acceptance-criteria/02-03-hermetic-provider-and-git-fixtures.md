@@ -9,12 +9,18 @@
 | Test Framework | stdlib `testing` + `testify` (`assert`/`require`) | `httptest.NewServer` for provider mocks, `os/exec` for git fixtures |
 | Key Dependencies | `net/http/httptest`, `os/exec` (`exec.CommandContext`), `t.TempDir()`, `t.Setenv` | No shell invocation anywhere; no new test harness or fixture DSL per story constraints |
 
-## Related Files
-- `cmd/atcr/backend_contract_test.go` - create/modify: the helper functions backing AC 02-01 and AC 02-02 (mock provider server, git fixture repo builder) must satisfy this AC's hermeticity requirements.
-- `internal/fanout/review_test.go:85-117` - reference: `mockProvider` — the canonical `httptest.NewServer` pattern this story's mock must replicate (registry `base_url` pointed at `server.URL`, zero real network).
-- `cmd/atcr/review_test.go:254-275` - reference: `initGitRepoWithChange` — the canonical `os/exec`-based git fixture pattern (`exec.Command("git", args...)`, never through a shell) with pinned `GIT_AUTHOR_*`/`GIT_COMMITTER_*` env vars for deterministic commits.
-- `cmd/atcr/reconcile_test.go:52-58` - reference: `isolate(t)` — chdirs into a fresh temp working dir and points `HOME`/`XDG_CONFIG_HOME` at another temp dir, so no real registry or repo state leaks into the test.
-- `docs/code-review-backend.md:34-42` (Pre-flight) - reference: the `.atcr/config.yaml` + registry pre-flight the fixture setup must satisfy so `atcr review` does not hard-fail before the mock provider is ever reached.
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/backend_contract_test.go` — create/modify: the helper functions backing AC 02-01 and AC 02-02 (mock provider server, git fixture repo builder) must satisfy this AC's hermeticity requirements
+- `internal/fanout/review_test.go:85-117` — reference: `mockProvider` — the canonical `httptest.NewServer` pattern this story's mock must replicate (registry `base_url` pointed at `server.URL`, zero real network)
+- `cmd/atcr/review_test.go:254-275` — reference: `initGitRepoWithChange` — the canonical `os/exec`-based git fixture pattern (`exec.Command("git", args...)`, never through a shell) with pinned `GIT_AUTHOR_*`/`GIT_COMMITTER_*` env vars for deterministic commits
+- `cmd/atcr/reconcile_test.go:52-58` — reference: `isolate(t)` — chdirs into a fresh temp working dir and points `HOME`/`XDG_CONFIG_HOME` at another temp dir, so no real registry or repo state leaks into the test
+- `docs/code-review-backend.md:34-42` (Pre-flight) — reference: the `.atcr/config.yaml` + registry pre-flight the fixture setup must satisfy so `atcr review` does not hard-fail before the mock provider is ever reached
+
+## Design References
+
+- [Backward-Compatibility Contract Test Patterns](../documentation/backward-compat-test-patterns.md) — `httptest.NewServer` provider mocks, `os/exec` git fixtures, and `isolate` conventions
+- [CLI Dispatcher Conventions](../documentation/cli-dispatcher-conventions.md) — Cobra command registration exercised by the fixtures
 
 ## Happy Path Scenarios
 **Scenario 1: The full backend contract test suite makes zero real network calls**

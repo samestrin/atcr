@@ -9,11 +9,18 @@
 | Test Framework | Manual review / markdown link check | No code test framework applies |
 | Key Dependencies | Story 1's `skill/SKILL.md` (dispatcher template, referenced by path); `docs/code-review-backend.md` (validation-target contract, referenced by path) | Both are read-only citations, no code coupling |
 
-## Related Files
-- `docs/external-migration.md` - create: contains the four-step numbered manual migration checklist and a "Related Documentation" / cross-reference section
-- `docs/skill-usage.md` - modify: add a discoverability cross-link (e.g. in a "See also" or related-docs note) pointing to `docs/external-migration.md`, OR `docs/README.md` - modify: add `docs/external-migration.md` to the documentation index, whichever already has a natural section for related/advanced docs
-- `skill/SKILL.md` - read-only reference: the dispatcher template the checklist instructs the operator to copy or adapt (produced by Story 1)
-- `docs/code-review-backend.md` - read-only reference: the contract the checklist instructs the operator to validate the eventual migration against (produced/locked in by Story 2)
+### Related Files (from codebase-discovery.json)
+
+- `docs/external-migration.md` — create: contains the four-step numbered manual migration checklist and a "Related Documentation" / cross-reference section
+- `docs/skill-usage.md` — modify: add a discoverability cross-link (e.g. in a "See also" or related-docs note) pointing to `docs/external-migration.md`, OR `docs/README.md` — modify: add `docs/external-migration.md` to the documentation index, whichever already has a natural section for related/advanced docs
+- `skill/SKILL.md` — read-only reference: the dispatcher template the checklist instructs the operator to copy or adapt (produced by Story 1)
+- `docs/code-review-backend.md` — read-only reference: the contract the checklist instructs the operator to validate the eventual migration against (produced/locked in by Story 2)
+
+## Design References
+
+- [External Private-Skill Migration Descope](../documentation/external-migration-descope.md) — source checklist and discoverability guidance
+- [CLI Dispatcher Conventions](../documentation/cli-dispatcher-conventions.md) — command surface the migrated private skill must mirror
+- [Backward-Compatibility Contract Test Patterns](../documentation/backward-compat-test-patterns.md) — validation target for the checklist's `docs/code-review-backend.md` contract step
 
 ## Happy Path Scenarios
 **Scenario 1: Checklist contains all four required steps**

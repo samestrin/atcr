@@ -9,11 +9,18 @@
 | Test Framework | stdlib `testing` + `testify` (`assert`/`require`) | Matches `cmd/atcr/reconcile_test.go` convention exactly |
 | Key Dependencies | `cmd/atcr` cobra command tree (`newRootCmd`/`execCmd`), `os/exec` (git, only if a fixture repo is needed for the review step) | No shelling out; in-process invocation only |
 
-## Related Files
-- `cmd/atcr/backend_contract_test.go` - create: table-driven subtest (e.g. `TestBackendContract_IdOrPathResolution`) exercising all three id-or-path resolution branches against `docs/code-review-backend.md`'s contract.
-- `docs/code-review-backend.md:14-33` (Invocation/Pre-flight) - reference: the id-or-path resolution rule this AC locks (bare id → `.atcr/reviews/<id>/`, path → used as-is, omitted → `.atcr/latest`), shared by `atcr reconcile` and `atcr verify`.
-- `cmd/atcr/reconcile_test.go:74-84,162-176,235-251` - reference: `fixtureReview` helper, `TestReconcileCmd_InheritsExternalOutputDir` (path branch), and `TestReconcileCmd_DefaultsToLatest` (omitted branch) — the existing per-branch tests this new table-driven test must not duplicate but must consolidate/lock together as one explicit contract test.
-- `cmd/atcr/reconcile_test.go:52-70` - reference: `isolate`/`execCmd` helpers for hermetic in-process invocation.
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/backend_contract_test.go` — create: table-driven subtest (e.g. `TestBackendContract_IdOrPathResolution`) exercising all three id-or-path resolution branches against `docs/code-review-backend.md`'s contract
+- `docs/code-review-backend.md:14-33` (Invocation/Pre-flight) — reference: the id-or-path resolution rule this AC locks (bare id → `.atcr/reviews/<id>/`, path → used as-is, omitted → `.atcr/latest`), shared by `atcr reconcile` and `atcr verify`
+- `cmd/atcr/reconcile_test.go:74-84,162-176,235-251` — reference: `fixtureReview` helper, `TestReconcileCmd_InheritsExternalOutputDir` (path branch), and `TestReconcileCmd_DefaultsToLatest` (omitted branch) — the existing per-branch tests this new table-driven test must not duplicate but must consolidate/lock together as one explicit contract test
+- `cmd/atcr/reconcile_test.go:52-70` — reference: `isolate`/`execCmd` helpers for hermetic in-process invocation
+
+## Design References
+
+- [Backward-Compatibility Contract Test Patterns](../documentation/backward-compat-test-patterns.md) — table-driven `t.Run` conventions and the id-or-path resolution contract this AC locks
+- [Adversarial Verification Interface](../../../../.planning/specifications/design-concepts/adversarial-verification-interface.md) — source of the id-or-path resolution rules shared by `atcr reconcile` and `atcr verify`
+- [CLI Dispatcher Conventions](../documentation/cli-dispatcher-conventions.md) — Cobra command registration for `reconcile` and `verify`
 
 ## Happy Path Scenarios
 **Scenario 1: Bare review id resolves to `.atcr/reviews/<id>/`**

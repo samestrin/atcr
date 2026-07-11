@@ -9,16 +9,23 @@
 | Test Framework | Manual cross-check against User Story 2's backward-compatibility test assertions and current CLI `--output-dir` flag behavior | No automated doc-linting harness in repo; ground truth is the live test + code, not memory of prior doc content |
 | Key Dependencies | User Story 2's new `--output-dir` backward-compatibility test (source of ground truth for expected output tree/behavior) | This story does not write the test; it verifies the doc against it |
 
-## Related Files
-- `docs/code-review-backend.md` - verify, correct only if drifted: "Output tree" code block (`docs/code-review-backend.md:44-64`) and "Behavioral notes for callers" section (`docs/code-review-backend.md:101-116`)
-- `cmd/atcr/main.go` - read-only ground truth: `--output-dir` flag registration and behavior on the `review`/`reconcile`/`report` commands
-- User Story 2's backward-compatibility test file (path TBD at this story's execution time, created by User Story 2) - read-only ground truth: asserts the actual `--output-dir` output tree shape and behavior this doc must match
+### Related Files (from codebase-discovery.json)
+
+- `docs/code-review-backend.md:44-64` — verify, correct only if drifted: "Output tree" code block
+- `docs/code-review-backend.md:101-116` — verify, correct only if drifted: "Behavioral notes for callers" section
+- `cmd/atcr/main.go` — read-only ground truth: `--output-dir` flag registration and behavior on the `review`/`reconcile`/`report` commands
+- User Story 2's backward-compatibility test file (`cmd/atcr/backend_contract_test.go`, path TBD at this story's execution time, created by User Story 2) — read-only ground truth: asserts the actual `--output-dir` output tree shape and behavior this doc must match
+
+## Design References
+
+- [Backward-Compatibility Contract Test Patterns](../documentation/backward-compat-test-patterns.md) — the test assertions that serve as ground truth for this doc verification
+- [Adversarial Verification Interface](../../../../.planning/specifications/design-concepts/adversarial-verification-interface.md) — id-or-path resolution rules that `docs/code-review-backend.md` documents
 
 ## Happy Path Scenarios
 **Scenario 1: "Output tree" code block matches actual `--output-dir` output**
 - **Given** `docs/code-review-backend.md:44-64` documents the exact directory tree written under `${OUT_DIR}` (`manifest.json`, `payload/`, `sources/pool/{raw,findings.txt,summary.json}`, `reconciled/{findings.txt,findings.json,report.md,summary.json,ambiguous.json,disagreements.json}`)
 - **When** this tree is cross-checked against User Story 2's backward-compatibility test assertions and current `atcr review --output-dir`/`atcr reconcile` behavior
-- **Then** every listed path is confirmed present and correctly named (no missing, renamed, or extra entries), and no edit is required if already accurate
+- **Then** every listed path is confirmed present and named exactly as produced by `atcr review --output-dir` and `atcr reconcile` (no missing, renamed, or extra entries), and no edit is required if already accurate
 
 **Scenario 2: "Behavioral notes for callers" section matches current CLI semantics**
 - **Given** `docs/code-review-backend.md:101-116` documents three behavioral notes: partial runs are normal, finding counts differ from other backends, and review scope is diff-touched-lines-only (temporary, pending a future context-injection epic)

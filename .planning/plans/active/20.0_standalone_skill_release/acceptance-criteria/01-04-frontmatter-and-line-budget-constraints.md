@@ -9,9 +9,15 @@
 | Test Framework | Go `testing` + `testify` (regex assertions) | `skill/skill_test.go` |
 | Key Dependencies | Agent Skill format spec (name/description constraints) | no external package |
 
-## Related Files
-- `skill/SKILL.md` - modify: frontmatter `name` and `description` fields, and overall body length after adding the command-routing table (AC 01-01) and secondary-file pointers (AC 01-03)
-- `skill/skill_test.go` - modify: `TestSkill_Frontmatter` (lines 16-24) currently only checks `name` starts with `atcr` and `description` is non-empty — extend with explicit length/charset assertions (`name` ≤64 chars, lowercase/numbers/hyphens only, no "anthropic"/"claude" substring; `description` ≤1024 chars) and add a new line-count assertion (SKILL.md body under ~500 lines) so the constraint is enforced automatically rather than only checked manually
+### Related Files (from codebase-discovery.json)
+
+- `skill/SKILL.md` — modify: frontmatter `name` and `description` fields, and overall body length after adding the command-routing table (AC 01-01) and secondary-file pointers (AC 01-03)
+- `skill/skill_test.go:16-24` — modify: `TestSkill_Frontmatter` currently only checks `name` starts with `atcr` and `description` is non-empty — extend with explicit length/charset assertions (`name` ≤64 chars, lowercase/numbers/hyphens only, no "anthropic"/"claude" substring; `description` ≤1024 chars) and add a new line-count assertion (SKILL.md body under ~500 lines) so the constraint is enforced automatically rather than only checked manually
+
+## Design References
+
+- [Agent Skill Format & Progressive Disclosure](../documentation/agent-skill-format.md) — frontmatter `name`/`description` constraints and the ~500-line Level 2 budget
+- [CLI Dispatcher Conventions](../documentation/cli-dispatcher-conventions.md) — command inventory whose size drives the line-budget pressure
 
 ## Happy Path Scenarios
 **Scenario 1: Frontmatter passes all format constraints**

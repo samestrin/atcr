@@ -9,14 +9,20 @@
 | Test Framework | Go `testing` + `testify`, `//go:embed` | `skill/skill.go`, `skill/skill_test.go` |
 | Key Dependencies | `docs/findings-format.md` (versioned findings contract, must be referenced not redefined) | |
 
-## Related Files
-- `skill/SKILL.md` - modify: replace the inline "Host Review Instructions" (current lines 53-92), "Ambiguity Adjudication" (lines 94-118), and "Findings Format Reference" (lines 120-126) sections with short pointers to the new secondary files, loaded on demand
-- `skill/host-review.md` - create: verbatim (byte-for-byte content, only location changes) copy of the current "Host Review Instructions" section content (adversarial personality clause, grounding/anti-hallucination clause, `sources/host/findings.txt` writing rules, example row)
-- `skill/ambiguity-adjudication.md` - create: verbatim copy of the current "Ambiguity Adjudication" section content (gatekeeper-against-false-positives framing, `ambiguous.json`/`adjudication.json` contract, `baseline_hash`/`ambiguous_hash` binding, merge/distinct/skipped decisions)
-- `skill/findings-format.md` - create: verbatim copy of the current "Findings Format Reference" section content, still pointing to `docs/findings-format.md` as the canonical versioned contract rather than redefining it
-- `skill/skill.go` - modify: add `//go:embed` directives (or a combined embed) for the three new secondary files so their content is verifiable at build/test time, matching the existing pattern for `SkillMD`
-- `skill/skill_test.go` - modify: `TestSkill_RequiredSections`, `TestSkill_HostFindingsFormat`, `TestSkill_SeverityEnum`, `TestSkill_AdversarialClause`, `TestSkill_GroundingClause`, and `TestSkill_AdjudicationDocumented` currently assert this content is *inside* `SkillMD` directly (lines 26-106) — these must be updated to check the correct file (`SkillMD` for section headings/pointers, the new embedded secondary-file constants for the relocated verbatim content) so the split doesn't silently break the existing test suite
-- `docs/findings-format.md` - reference only: the canonical versioned findings-stream contract; `skill/findings-format.md` must reference it, not redefine its column contract independently
+### Related Files (from codebase-discovery.json)
+
+- `skill/SKILL.md` — modify: replace the inline "Host Review Instructions" (current lines 53-92), "Ambiguity Adjudication" (lines 94-118), and "Findings Format Reference" (lines 120-126) sections with short pointers to the new secondary files, loaded on demand
+- `skill/host-review.md` — create: verbatim (byte-for-byte content, only location changes) copy of the current "Host Review Instructions" section content (adversarial personality clause, grounding/anti-hallucination clause, `sources/host/findings.txt` writing rules, example row)
+- `skill/ambiguity-adjudication.md` — create: verbatim copy of the current "Ambiguity Adjudication" section content (gatekeeper-against-false-positives framing, `ambiguous.json`/`adjudication.json` contract, `baseline_hash`/`ambiguous_hash` binding, merge/distinct/skipped decisions)
+- `skill/findings-format.md` — create: verbatim copy of the current "Findings Format Reference" section content, still pointing to `docs/findings-format.md` as the canonical versioned contract rather than redefining it
+- `skill/skill.go` — modify: add `//go:embed` directives (or a combined embed) for the three new secondary files so their content is verifiable at build/test time, matching the existing pattern for `SkillMD`
+- `skill/skill_test.go:26-106` — modify: `TestSkill_RequiredSections`, `TestSkill_HostFindingsFormat`, `TestSkill_SeverityEnum`, `TestSkill_AdversarialClause`, `TestSkill_GroundingClause`, and `TestSkill_AdjudicationDocumented` currently assert this content is *inside* `SkillMD` directly — these must be updated to check the correct file (`SkillMD` for section headings/pointers, the new embedded secondary-file constants for the relocated verbatim content) so the split doesn't silently break the existing test suite
+- `docs/findings-format.md` — reference only: the canonical versioned findings-stream contract; `skill/findings-format.md` must reference it, not redefine its column contract independently
+
+## Design References
+
+- [Agent Skill Format & Progressive Disclosure](../documentation/agent-skill-format.md) — the three-level loading model that justifies moving Host Review, Ambiguity Adjudication, and Findings Format out of SKILL.md
+- [CLI Dispatcher Conventions](../documentation/cli-dispatcher-conventions.md) — command routing conventions that the secondary-file pointers must not break
 
 ## Happy Path Scenarios
 **Scenario 1: SKILL.md references the secondary files by path**

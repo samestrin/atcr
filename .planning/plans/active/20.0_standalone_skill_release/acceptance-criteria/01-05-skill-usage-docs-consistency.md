@@ -9,10 +9,17 @@
 | Test Framework | Manual cross-reference review (no automated doc test currently exists) | consider a lightweight grep-based check if time allows |
 | Key Dependencies | `skill/SKILL.md` (source of truth for behavior), `docs/findings-format.md`, `docs/providers.md`, `docs/code-review-backend.md` | linked from skill-usage.md line 52-54 |
 
-## Related Files
-- `docs/skill-usage.md` - modify (if needed): Installation section (lines 13-22) and Usage section (lines 24-42) must accurately describe the post-rewrite dispatcher, including installing the full `skill/` directory (per AC 01-03 Edge Case 2) if the secondary-file split requires more than a single-file copy
-- `skill/SKILL.md` - reference only: the rewritten dispatcher is the behavioral source of truth this doc must match
-- `.atcr/reviews/<id>/` artifact layout (`payload/`, `sources/pool/`, `sources/host/`, `reconciled/`) - reference only: unchanged per the story's Data Requirements; `docs/skill-usage.md` Output section (lines 44-52) must continue to match this layout exactly
+### Related Files (from codebase-discovery.json)
+
+- `docs/skill-usage.md` — modify (if needed): Installation section (lines 13-22) and Usage section (lines 24-42) must accurately describe the post-rewrite dispatcher, including installing the full `skill/` directory (per AC 01-03 Edge Case 2) if the secondary-file split requires more than a single-file copy
+- `skill/SKILL.md` — reference only: the rewritten dispatcher is the behavioral source of truth this doc must match
+- `cmd/atcr/main.go:185-208` — reference only: canonical Cobra command tree; any command example in `docs/skill-usage.md` must match these names
+- `.atcr/reviews/<id>/` artifact layout (`payload/`, `sources/pool/`, `sources/host/`, `reconciled/`) — reference only: unchanged per the story's Data Requirements; `docs/skill-usage.md` Output section (lines 44-52) must continue to match this layout exactly
+
+## Design References
+
+- [CLI Dispatcher Conventions](../documentation/cli-dispatcher-conventions.md) — command/subcommand conventions the Usage section must reflect
+- [Agent Skill Format & Progressive Disclosure](../documentation/agent-skill-format.md) — installation implications of the secondary-file split
 
 ## Happy Path Scenarios
 **Scenario 1: Installation instructions match the post-rewrite file set**

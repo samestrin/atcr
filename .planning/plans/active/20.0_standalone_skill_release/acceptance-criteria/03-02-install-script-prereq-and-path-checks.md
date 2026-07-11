@@ -9,10 +9,15 @@
 | Test Framework | bats-core (or manual bash test harness) | Verifies exit codes and stderr/stdout message content under controlled `PATH`/`command -v go` conditions |
 | Key Dependencies | `command -v go`, `go env GOPATH`, `$PATH` string matching | All POSIX/bash builtins plus standard `go env` subcommand; no external libraries |
 
-## Related Files
-- `install.sh` - modify: add the `command -v go` prerequisite guard and the `$(go env GOPATH)/bin` vs `$PATH` warning check, per the four-step structure in the story's Implementation Notes
-- `.planning/plans/active/20.0_standalone_skill_release/documentation/install-script-conventions.md` - reference only: defines the Installation Targets table (`$(go env GOPATH)/bin/atcr` primary target, PATH check requirement) this AC implements
-- `examples/ci-gate.sh` - reference only: style precedent for `set -euo pipefail` and explicit stderr failure messages
+### Related Files (from codebase-discovery.json)
+
+- `install.sh` — modify: add the `command -v go` prerequisite guard and the `$(go env GOPATH)/bin` vs `$PATH` warning check, per the four-step structure in the story's Implementation Notes
+- `.planning/plans/active/20.0_standalone_skill_release/documentation/install-script-conventions.md` — reference only: defines the Installation Targets table (`$(go env GOPATH)/bin/atcr` primary target, PATH check requirement) this AC implements
+- `examples/ci-gate.sh` — reference only: style precedent for `set -euo pipefail` and explicit stderr failure messages
+
+## Design References
+
+- [Install Script Conventions](../documentation/install-script-conventions.md) — prerequisite, PATH-check, and installation-target requirements
 
 ## Happy Path Scenarios
 **Scenario 1: Go present and GOPATH/bin already on PATH**

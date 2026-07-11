@@ -44,7 +44,9 @@
 
 1. `skill/SKILL.md` frontmatter and body describe a `/atcr <command> <flags>` dispatcher that enumerates and routes to the live Cobra command inventory (`cmd/atcr/main.go:185-208`), with no invented or drifted command names.
 2. The existing review-flow orchestration (range resolution, background review + status polling, host review, reconcile, report, output path) remains fully intact and reachable through the dispatcher, with Host Review Instructions, Ambiguity Adjudication, and Findings Format Reference content moved verbatim into secondary markdown files loaded on demand.
-3. `skill/SKILL.md` stays within the ~500-line budget, and `docs/skill-usage.md` is verified (and updated if needed) to still accurately describe the dispatcher's installation, usage, and `.atcr/reviews/<id>/` artifact output per AC2.
+3. Host Review Instructions, Ambiguity Adjudication, and Findings Format Reference sections are relocated to secondary markdown files under `skill/` (e.g., `skill/host-review.md`, `skill/ambiguity-adjudication.md`, `skill/findings-format.md`) and preserved verbatim; `skill/SKILL.md` references each by a resolvable path, and `skill/skill.go`/`skill/skill_test.go` are updated so the embedded content remains verifiable at build/test time.
+4. `skill/SKILL.md` stays within the ~500-line budget, with frontmatter `name` and `description` satisfying the Agent Skill format constraints (`name` ≤64 chars, lowercase/numbers/hyphens only, no reserved words; `description` ≤1024 chars).
+5. `docs/skill-usage.md` is verified (and updated if needed) to still accurately describe the dispatcher's installation, usage, and `.atcr/reviews/<id>/` artifact output per AC2, including any secondary-file copy instructions required by the verbatim split.
 
 ## Technical Considerations
 

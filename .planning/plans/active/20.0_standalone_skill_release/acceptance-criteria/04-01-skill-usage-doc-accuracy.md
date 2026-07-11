@@ -9,10 +9,16 @@
 | Test Framework | Manual line-by-line cross-check (no automated doc-linting harness in repo) | Ground truth is the post-Story-1 `skill/SKILL.md` frontmatter/command surface, not memory of prior doc content |
 | Key Dependencies | None (documentation-only; no build tooling required to verify) | Verification reads `skill/SKILL.md` and `docs/skill-usage.md` side by side |
 
-## Related Files
-- `docs/skill-usage.md` - verify, correct only if drifted: installation steps, usage input table, orchestration step list, and the `.atcr/reviews/<id>/` output section
-- `skill/SKILL.md` - read-only ground truth: post-User-Story-1 dispatcher rewrite (`/atcr <command> <flags>` routing); currently (pre-Story-1) a linear review-only script per `skill/SKILL.md:33-51` ("Orchestration Steps")
-- `cmd/atcr/main.go:185-208` - read-only ground truth: canonical Cobra command tree (`newReviewCmd`, `newReconcileCmd`, `newVerifyCmd`, `newDebateCmd`, `newReportCmd`, `newGithubCmd`, `newRangeCmd`, `newStatusCmd`, `newInitCmd`, `newQuickstartCmd`, `newServeCmd`, `newDoctorCmd`, `newTrustCmd`, `newScorecardCmd`, `newLeaderboardCmd`, `newBenchmarkCmd`, `newPersonasCmd`, `newModelsCmd`, `newDebtCmd`, `newHistoryCmd`, `newAuditReportCmd`, `newVersionCmd`)
+### Related Files (from codebase-discovery.json)
+
+- `docs/skill-usage.md` — verify, correct only if drifted: installation steps, usage input table, orchestration step list, and the `.atcr/reviews/<id>/` output section
+- `skill/SKILL.md` — read-only ground truth: post-User-Story-1 dispatcher rewrite (`/atcr <command> <flags>` routing); currently (pre-Story-1) a linear review-only script per `skill/SKILL.md:33-51` ("Orchestration Steps")
+- `cmd/atcr/main.go:185-208` — read-only ground truth: canonical Cobra command tree (`newReviewCmd`, `newReconcileCmd`, `newVerifyCmd`, `newDebateCmd`, `newReportCmd`, `newGithubCmd`, `newRangeCmd`, `newStatusCmd`, `newInitCmd`, `newQuickstartCmd`, `newServeCmd`, `newDoctorCmd`, `newTrustCmd`, `newScorecardCmd`, `newLeaderboardCmd`, `newBenchmarkCmd`, `newPersonasCmd`, `newModelsCmd`, `newDebtCmd`, `newHistoryCmd`, `newAuditReportCmd`, `newVersionCmd`)
+
+## Design References
+
+- [CLI Dispatcher Conventions](../documentation/cli-dispatcher-conventions.md) — canonical command inventory to cross-check `docs/skill-usage.md` examples
+- [Agent Skill Format & Progressive Disclosure](../documentation/agent-skill-format.md) — installation/secondary-file implications after the dispatcher rewrite
 
 ## Happy Path Scenarios
 **Scenario 1: Post-rewrite command examples match the dispatcher exactly**

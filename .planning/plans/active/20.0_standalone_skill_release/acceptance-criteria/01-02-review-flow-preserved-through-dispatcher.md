@@ -9,10 +9,16 @@
 | Test Framework | Go `testing` + `testify` | `skill/skill_test.go` (`TestSkill_OrchestrationSequence` already exists and must keep passing) |
 | Key Dependencies | `atcr` CLI (`range`, `review`, `status`, `reconcile`, `report`) | ordering contract unchanged from current SKILL.md lines 33-51 |
 
-## Related Files
-- `skill/SKILL.md` - modify: the existing "Orchestration Steps" section (range → review → status → host findings → reconcile → report) must remain reachable as the routed behavior for the `review` command path, unchanged in substance
-- `skill/skill_test.go` - reference/modify: `TestSkill_OrchestrationSequence` (lines 47-60) asserts the ordered substrings `` `atcr range ``, `` `atcr review ``, `` `atcr status ``, `sources/host/findings.txt`, `` `atcr reconcile ``, `` `atcr report `` appear in that order — this must continue to pass after the rewrite
-- `docs/skill-usage.md` - reference only: describes the same 6-step flow (pre-flight range, start+poll, host review, reconcile, optional adjudicate, render+present) that must stay consistent with the dispatcher's routed review flow
+### Related Files (from codebase-discovery.json)
+
+- `skill/SKILL.md` — modify: the existing "Orchestration Steps" section (range → review → status → host findings → reconcile → report) must remain reachable as the routed behavior for the `review` command path, unchanged in substance
+- `skill/skill_test.go:47-60` — reference/modify: `TestSkill_OrchestrationSequence` asserts the ordered substrings `` `atcr range ``, `` `atcr review ``, `` `atcr status ``, `sources/host/findings.txt`, `` `atcr reconcile ``, `` `atcr report `` appear in that order — this must continue to pass after the rewrite
+- `docs/skill-usage.md` — reference only: describes the same 6-step flow (pre-flight range, start+poll, host review, reconcile, optional adjudicate, render+present) that must stay consistent with the dispatcher's routed review flow
+
+## Design References
+
+- [CLI Dispatcher Conventions](../documentation/cli-dispatcher-conventions.md) — command/subcommand conventions that keep the routed review flow aligned with the Cobra CLI
+- [Agent Skill Format & Progressive Disclosure](../documentation/agent-skill-format.md) — secondary-file loading model that lets the review-flow detail move out of SKILL.md without changing behavior
 
 ## Happy Path Scenarios
 **Scenario 1: `/atcr review` still runs the full orchestration**

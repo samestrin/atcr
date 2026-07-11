@@ -9,10 +9,15 @@
 | Test Framework | Manual review / markdown link check | No code test framework applies; verified by direct read and link resolution |
 | Key Dependencies | None (pure prose, no code, no scripts) | Content promoted from `documentation/external-migration-descope.md` |
 
-## Related Files
-- `docs/external-migration.md` - create: durable public doc stating the workspace-boundary rationale and citing Epic 12.0's prior end-to-end backward-compatibility validation
-- `.planning/plans/active/20.0_standalone_skill_release/documentation/external-migration-descope.md` - read-only source: existing Overview / Why It Is Out of Scope content this AC promotes and rephrases for a `docs/` audience
-- `.planning/plans/active/20.0_standalone_skill_release/original-requirements.md` - read-only source: Out of Scope section and 2026-07-05 `/refine-epic` audit language ("the agent only has access to the `/Users/samestrin/Documents/GitHub/atcr` workspace")
+### Related Files (from codebase-discovery.json)
+
+- `docs/external-migration.md` — create: durable public doc stating the workspace-boundary rationale and citing Epic 12.0's prior end-to-end backward-compatibility validation
+- `.planning/plans/active/20.0_standalone_skill_release/documentation/external-migration-descope.md` — read-only source: existing Overview / Why It Is Out of Scope content this AC promotes and rephrases for a `docs/` audience
+- `.planning/plans/active/20.0_standalone_skill_release/original-requirements.md` — read-only source: Out of Scope section and 2026-07-05 `/refine-epic` audit language ("the agent only has access to the `/Users/samestrin/Documents/GitHub/atcr` workspace")
+
+## Design References
+
+- [External Private-Skill Migration Descope](../documentation/external-migration-descope.md) — source content for the rationale and workspace-boundary explanation
 
 ## Happy Path Scenarios
 **Scenario 1: Doc exists and states the workspace-boundary reason**

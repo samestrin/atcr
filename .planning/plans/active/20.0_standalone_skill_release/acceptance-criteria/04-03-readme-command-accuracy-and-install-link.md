@@ -9,10 +9,18 @@
 | Test Framework | Manual cross-check against `cmd/atcr/main.go:185-208` and User Story 3's `install.sh` | No automated doc-linting harness in repo |
 | Key Dependencies | User Story 3's `install.sh` (must exist at repo root before the cross-link can be added) | This story only links to `install.sh`; it does not author it |
 
-## Related Files
-- `README.md` - verify command accuracy and add one cross-link: Commands table (`README.md:75-93`), Quickstart section (`README.md:36-55`, read-only — no functional change permitted), Documentation section (`README.md:199-209`, add `install.sh` link here)
-- `cmd/atcr/main.go:185-208` - read-only ground truth: canonical Cobra command tree (22 registered commands: `review`, `reconcile`, `verify`, `debate`, `report`, `github`, `range`, `status`, `init`, `quickstart`, `serve`, `doctor`, `trust`, `scorecard`, `leaderboard`, `benchmark`, `personas`, `models`, `debt`, `history`, `audit-report`, `version`)
-- `install.sh` - read-only, produced by User Story 3: repo-root install script this story must cross-link from README.md's Documentation section
+### Related Files (from codebase-discovery.json)
+
+- `README.md:36-55` — read-only ground truth: Quickstart section (no functional change permitted)
+- `README.md:75-93` — verify command accuracy: Commands table
+- `README.md:199-209` — modify: Documentation section; add `install.sh` link here
+- `cmd/atcr/main.go:185-208` — read-only ground truth: canonical Cobra command tree (22 registered commands: `review`, `reconcile`, `verify`, `debate`, `report`, `github`, `range`, `status`, `init`, `quickstart`, `serve`, `doctor`, `trust`, `scorecard`, `leaderboard`, `benchmark`, `personas`, `models`, `debt`, `history`, `audit-report`, `version`)
+- `install.sh` — read-only, produced by User Story 3: repo-root install script this story must cross-link from README.md's Documentation section
+
+## Design References
+
+- [CLI Dispatcher Conventions](../documentation/cli-dispatcher-conventions.md) — canonical command inventory for verifying README.md's Commands table
+- [Install Script Conventions](../documentation/install-script-conventions.md) — scope guard for how `install.sh` is linked from README.md
 
 ## Happy Path Scenarios
 **Scenario 1: Commands table entries match the live Cobra command tree**

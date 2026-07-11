@@ -9,13 +9,20 @@
 | Test Framework | stdlib `testing` + `testify` (`assert`/`require`) | Already in `go.mod`; no new dependency |
 | Key Dependencies | `net/http/httptest`, `os/exec` (git), `cmd/atcr` cobra command tree | In-process invocation via `newRootCmd().ExecuteContext`, matching `execCmd` in `reconcile_test.go:62` |
 
-## Related Files
-- `cmd/atcr/backend_contract_test.go` - create: new test file (e.g. `TestBackendContract_OutputDirTreeMatchesDocumentedShape`) that runs `atcr review --output-dir <dir> --base <ref> --head <ref>` followed by `atcr reconcile <dir>` in-process against a fixture git repo and mocked provider, then asserts the full output tree from `docs/code-review-backend.md`.
-- `docs/code-review-backend.md:44-68` - reference: the documented output tree (`manifest.json`, `payload/`, `sources/pool/findings.txt`, `sources/pool/summary.json`, `reconciled/findings.txt`, `reconciled/findings.json`, `reconciled/report.md`, `reconciled/summary.json`) the test asserts against verbatim.
-- `cmd/atcr/review_test.go:235-275` - reference: `writeReviewFixtureConfig`/`initGitRepoWithChange` conventions for scaffolding a fixture repo + registry/project config the new test must follow with no deviation.
-- `internal/fanout/review_test.go:85-117` - reference: `mockProvider` — the `httptest.NewServer` OpenAI-chat-completions-shaped mock returning a pipe-delimited findings line (`CRITICAL|auth.go:3|...`), the pattern the new test's provider mock must replicate so the review actually produces non-empty findings rather than an empty/failed run.
-- `cmd/atcr/review_test.go:347-408` - reference: `outputDirFromFlags` tests establishing `--output-dir` resolves to an absolute path and rejects system directories — the flag this AC's happy path drives.
-- `internal/fanout/reviewdir.go` (`ScaffoldOutputDir`, `ReviewsRoot`) - reference-only: underlying output-directory resolution logic; not modified by this story.
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/backend_contract_test.go` — create: new test file (e.g. `TestBackendContract_OutputDirTreeMatchesDocumentedShape`) that runs `atcr review --output-dir <dir> --base <ref> --head <ref>` followed by `atcr reconcile <dir>` in-process against a fixture git repo and mocked provider, then asserts the full output tree from `docs/code-review-backend.md`
+- `docs/code-review-backend.md:44-68` — reference: the documented output tree (`manifest.json`, `payload/`, `sources/pool/findings.txt`, `sources/pool/summary.json`, `reconciled/findings.txt`, `reconciled/findings.json`, `reconciled/report.md`, `reconciled/summary.json`) the test asserts against verbatim
+- `cmd/atcr/review_test.go:235-275` — reference: `writeReviewFixtureConfig`/`initGitRepoWithChange` conventions for scaffolding a fixture repo + registry/project config the new test must follow with no deviation
+- `internal/fanout/review_test.go:85-117` — reference: `mockProvider` — the `httptest.NewServer` OpenAI-chat-completions-shaped mock returning a pipe-delimited findings line (`CRITICAL|auth.go:3|...`), the pattern the new test's provider mock must replicate so the review actually produces non-empty findings rather than an empty/failed run
+- `cmd/atcr/review_test.go:347-408` — reference: `outputDirFromFlags` tests establishing `--output-dir` resolves to an absolute path and rejects system directories — the flag this AC's happy path drives
+- `internal/fanout/reviewdir.go:155` (`ReviewsRoot`) — reference-only: underlying output-directory resolution logic; not modified by this story
+
+## Design References
+
+- [Backward-Compatibility Contract Test Patterns](../documentation/backward-compat-test-patterns.md) — Go stdlib/testify conventions and the reconcile id-or-path resolution contract the new test must follow
+- [CLI Dispatcher Conventions](../documentation/cli-dispatcher-conventions.md) — Cobra command/subcommand conventions used by in-process invocation
+- [Adversarial Verification Interface](../../../../.planning/specifications/design-concepts/adversarial-verification-interface.md) — documents the id-or-path resolution rules shared by `atcr reconcile` and `atcr verify`
 
 ## Happy Path Scenarios
 **Scenario 1: Full output-dir + reconcile flow produces the documented tree**
