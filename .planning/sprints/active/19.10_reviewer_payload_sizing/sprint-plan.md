@@ -135,6 +135,26 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
 
 ---
 
+## Clarifications
+
+### Phase 4 Clarifications (recorded 2026-07-11)
+
+**Key Decisions:**
+- Phase 4 is pure wiring/observability over Phases 1–3's already-landed sizing math. `EffectiveByteBudget` and `ChunkMaxLines` already compute in `buildSlots` (`review.go:953`/`:892`); Phase 4 threads those values out to timeouts, the cache key, and `summary.json` — it introduces no new sizing logic.
+- `Result` does not yet carry the sizing/chunk/overflow values (verified against `engine.go:177–264`). Minimal carrier fields are added on `Agent`+`Result` once and threaded by required (compile-checked) arguments so a missed call site fails to build rather than silently emitting zeros. Tasks 08/09/10 consume the same threaded values.
+- Timeout-scaling curve (task-08, explicitly an implementation choice): capped multiplier `baseSecs * min(chunkTotal, ceilingFactor)`, monotonic non-decreasing in `chunkTotal`, deterministic from `(baseSecs, chunkTotal)` only, clamped to `registry.MaxTimeoutSecs = 86400`; no-op at `chunkTotal <= 1`.
+- Cache sizing token: `fmt.Sprintf("%d:%d", effectiveByteBudget, maxLines)`, folded NUL-separated into `diffCacheKey`'s tuning token; the `"0:0"` sentinel collapses to today's exact key so existing cache entries/tests are preserved. A fallback composes the token from its OWN model's budget.
+
+**Scope Boundaries:**
+- IN: F6 timeout scaling (AC6), F7 cache-key correctness (AC7), F8 diagnosability fields (AC8), plus their Go unit/integration tests with stub completers.
+- OUT (this phase): the AC-Live harness against the real `orchestrator.lan` roster (Phase 5, explicitly decoupled from `go test ./...`); any change to `internal/registry`'s timeout/budget resolvers (task-08 constraint — read resolved values only); the extracted `github.com/samestrin/atcr/reconcile` library boundary.
+
+**Technical Approach:**
+- No external service dependency in Phase 4 — the gate is `go test ./...` + `go vet ./...` + `go build ./...` clean, all local.
+- Backward-compat is load-bearing: existing `cache_test.go` and `artifacts_test.go` golden/exact-JSON assertions must stay green via the zero/empty sentinel (cache) and `omitempty` absence (diagnosability fields).
+
+---
+
 ## Sprint Phases
 
 ---
@@ -295,7 +315,7 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
 
 *Completes the degradation policy ladder (AC4) and closes the provenance-integrity NFR (AC5) before diagnosability/cache work needs to read from it.*
 
-### 3.1 [ ] **🏗️ `on_overflow` Policy Dispatch (F4 dispatch)**
+### 3.1 [x] **🏗️ `on_overflow` Policy Dispatch (F4 dispatch)**
    **Task:** A single dispatch function (`applyOverflowPolicy` in `internal/fanout/overflow.go`) routing `chunk`/`truncate`/`fallback`/`fail` to the correct primitive. `chunk` (default, → window-aware chunker) and `truncate` (→ in-repo auto-truncate signal, drop lowest-priority tail + flag) implemented; `fallback`/`fail` return typed/sentinel errors when prerequisites unmet — never silent no-ops or accidental fallthrough to another arm.
    **Priority:** High | **Effort:** M | **Depends on:** 2.2
    1. Understand the degradation ladder and existing shed/chunk primitives
@@ -307,7 +327,7 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
    **Files:** `internal/fanout/overflow.go`, `overflow_test.go` | **Duration:** ~1 day
    **Task File:** [task-04](plan/tasks/task-04-on-overflow-policy-dispatch.md)
 
-### 3.2 [ ] **🏗️ Fallback Provenance — Fanout side (F5 part 1)**
+### 3.2 [x] **🏗️ Fallback Provenance — Fanout side (F5 part 1)**
    **Task:** Add a run-level `FallbackCount` tally in `Summary`/`PoolSummary`, plus fixture/e2e proof the bulk path already threads `FallbackUsed`/`FallbackFrom` correctly. Fail-closed: missing/malformed status data → treated as non-fallback, never "assume fallback". `fallback_count` is always present (non-omitted-when-zero, per the `Truncation`/`TruncatedZeroFindings` precedent).
    **Priority:** High | **Effort:** S | **Depends on:** — (parallel with 3.1)
    1. Understand `PoolSummary`/`Summary` in `internal/fanout/artifacts.go` and existing `FallbackUsed`/`FallbackFrom` threading
@@ -319,7 +339,7 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
    **Files:** `internal/fanout/artifacts.go`, `artifacts_test.go`, `outcome_test.go` | **Duration:** ~0.5 day
    **Task File:** [task-06](plan/tasks/task-06-fallback-provenance-fanout.md)
 
-### 3.3 [ ] **🏗️ Reconcile Fallback-Aware De-Weighting (F5 part 2)**
+### 3.3 [x] **🏗️ Reconcile Fallback-Aware De-Weighting (F5 part 2)**
    **Task:** Consume Task 06's provenance to collapse shared-fallback-model reviewers into one independent voice in the distinct-reviewer CONFIDENCE calculus (`distinctReviewerCount`). Stamp provenance only on ATCR-internal `stream.Finding`/`JSONFinding` — do NOT touch the extracted `github.com/samestrin/atcr/reconcile` library boundary (mirrors the `PathValid`/`PathWarning` precedent).
    **Priority:** High | **Effort:** M | **Depends on:** 3.2
    1. Understand `distinctReviewerCount` and the CONFIDENCE calculus in `internal/reconcile`
@@ -331,43 +351,31 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
    **Files:** `internal/reconcile/disagree.go`/`emit.go`, `disagree_test.go`, `emit_test.go`, `adapter/adapter_test.go` | **Duration:** ~1 day
    **Task File:** [task-07](plan/tasks/task-07-reconcile-fallback-deweighting.md)
 
-### 3.4 [ ] **Phase 3 — DoD Validation**
-   - [ ] `go test ./internal/fanout/... ./internal/reconcile/...` passing
-   - [ ] 4-arm dispatch + unrecognized-policy tests passing
-   - [ ] Collapsed-independence fixture passing
-   - [ ] Coverage ≥80% on new code
-   - [ ] `go vet ./...` clean; `go build ./...` succeeds
-   - [ ] DoD report emitted
+### 3.4 [x] **Phase 3 — DoD Validation**
+   - [x] `go test ./internal/fanout/... ./internal/reconcile/...` passing (full `go test ./...` exit=0)
+   - [x] 4-arm dispatch + unrecognized-policy tests passing (`TestApplyOverflowPolicy_*`)
+   - [x] Collapsed-independence fixture passing (`TestRunReconcile_FallbackDeWeightsIndependenceEndToEnd`; regression control `TestRunReconcile_NoFallbackKeepsFullIndependence`)
+   - [x] Coverage ≥80% on new code (applyOverflowPolicy 100%, distinctReviewerCount 100%, stampFallbackProvenance 100%, readSourceFallback 100%; modules fanout 87.9% / reconcile 88.7% / adapter 100%)
+   - [x] `go vet ./...` clean; `go build ./...` succeeds
+   - [x] DoD report emitted
 
-### 3.5 [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+   ```
+   Phase-3 DoD Complete
+   Auto: 5/5 | Task-Specific: 4-arm-dispatch ✓, unrecognized-policy ✓, fallback-count-tally ✓, collapsed-independence ✓
+   Manual Review: [ ] Code reviewed (→ Phase 3 gate subagent, next)
+   ```
+
+### 3.5 [x] **Phase 3 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3 (integration-level, not TDD cadence)
 
-   **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
+   Fresh-context subagent (`general-purpose`) reviewed all Phase 3 changes: `internal/fanout/{overflow.go,overflow_test.go,fallback_provenance_test.go,artifacts.go,chunker.go,outcome.go,outcome_test.go,status.go,engine.go}`, `internal/reconcile/{fallback.go,fallback_test.go,adapter/adapter.go,adapter/adapter_test.go,disagree.go,discover.go,emit.go,emit_test.go,gate.go,severity_consolidation_test.go}`, `internal/stream/parser.go`.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Phase 3 gate review`
-   - prompt: Self-contained brief including:
-     - Files changed during Phase 3 (absolute paths): [LIST]
-     - Checklist (pass verbatim, hostile integrator perspective):
-       - CONTRACT EXIT: Every `on_overflow` arm routes correctly; `fallback`/`fail` error (never silent no-op)?
-       - CONFIG SURFACE: Policy dispatch reads the resolved `on_overflow` value from Phase 1?
-       - INTEGRATION: Reconcile de-weighting stamps only ATCR-internal findings, not the extracted `reconcile` library; fail-closed on malformed provenance?
-       - PHASE-EXIT CONTRACT: Can Phase 4 diagnosability read `fallback_count` + degradation action without rework?
-       - REGRESSION: Chunk default path + earlier reconcile behavior intact?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (fresh-context integration review, 2026-07-11):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | engine.go:559 (consumed at reconcile/fallback.go + discover.go) | F5 fallback-aware de-weighting was **inert in production**: the engine recorded `FallbackFrom = s.Primary.Name` (each persona's UNIQUE name) as the collapse key, so two personas served by the same net model never shared a key and `distinctReviewerCount` never collapsed. The end-to-end reconcile test passed only because it hand-wrote a shared `fallback_from:"net"` the engine never emits. | **FIXED inline** — added `Result.FallbackModel`/`AgentStatus.FallbackModel` (`json:"fallback_model"`) recording the SERVED model (`a.Invocation.Model`) as the collapse key; kept `FallbackFrom` for attribution. Renamed reconcile-side `stream.Finding.FallbackModel`; `readSourceFallback` reads `fallback_model`. Fanout `TestE2E_Fallback_RecordedInArtifacts` now asserts the engine writes `fallback_model`; reconcile integration fixture uses the engine-faithful field. **Re-run gate: clean.** |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   No MEDIUM/LOW deferred (the first pass's MEDIUM — fabricated test input — was resolved by the same fix, which made the fixtures engine-faithful). Re-review verified: produce/consume ends match (`a.Invocation.Model` written → `fallback_model` read); chunked-merge unions `FallbackModel` in parallel with `FallbackFrom`; `json:"-"` keeps ambiguous.json byte-identical; `omitempty` keeps findings.json/status.json byte-identical on non-fallback runs; fail-closed provenance; `on_overflow` dispatch arms correct; extracted `reconcile/` library untouched (`git status` clean). **Phase gate passed** (1 HIGH fixed inline, 0 deferred).
    **Duration:** 15-30 min
 
 ---
@@ -382,7 +390,7 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
 
 *Where every prior task's output becomes observable and safe under caching — the three tasks most exposed to "silent regression" risk per the plan's Risk table (timeout, cache staleness, diagnosability).*
 
-### 4.1 [ ] **🏗️ Timeout Scaling (F6)**
+### 4.1 [x] **🏗️ Timeout Scaling (F6)**
    **Task:** Scale both the per-call (`invokeAgent`) and aggregate (`runEngine`) deadlines from `(base timeout, chunk count)`, monotonic and clamped to `registry.MaxTimeoutSecs` (86400s). Read the already-resolved `EffectiveTimeoutSecs` value in `internal/fanout` (`review.go:516`, `engine.go:610`) — do NOT modify `internal/registry`'s resolvers. No-op at `chunkTotal <= 1`.
    **Priority:** High | **Effort:** S | **Depends on:** 2.2
    1. Understand the deadline seams (`review.go:516`, `engine.go:610`) and `EffectiveTimeoutSecs`
@@ -394,7 +402,7 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
    **Files:** `internal/fanout/review.go`, `engine.go`, `engine_test.go` | **Duration:** ~0.5 day
    **Task File:** [task-08](plan/tasks/task-08-timeout-scaling.md)
 
-### 4.2 [ ] **🏗️ Cache-Key Correctness (F7)**
+### 4.2 [x] **🏗️ Cache-Key Correctness (F7)**
    **Task:** Fold the per-agent effective budget / chunk-plan into `diffCacheKey`'s NUL-separated tuning token (`internal/fanout/cache.go`), so a per-agent-sized payload is never served a stale full-payload (or differently-sized) cache hit. Include the boundary case where two runs render identical prompt text under different sizing regimes.
    **Priority:** High | **Effort:** S | **Depends on:** 2.1, 2.2
    1. Understand `diffCacheKey` and its tuning-token construction
@@ -406,7 +414,7 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
    **Files:** `internal/fanout/cache.go`, `cache_test.go` | **Duration:** ~0.5 day
    **Task File:** [task-09](plan/tasks/task-09-cache-key-correctness.md)
 
-### 4.3 [ ] **🏗️ Diagnosability Fields (F8)**
+### 4.3 [x] **🏗️ Diagnosability Fields (F8)**
    **Task:** Extend `AgentStatus` with `effective_budget`/`resolved_window`/`reserved_output_tokens`/`chunk_count`/`degradation_action` — pure aggregation from Tasks 02/03/04/06's already-computed values. Fields always present with zero/absent per `omitempty` discipline (never silently omitted when `0` is the meaningful answer). JSON round-trip verified.
    **Priority:** High | **Effort:** S | **Depends on:** 2.1, 2.2, 3.1, 3.2
    1. Understand `AgentStatus` and the `omitempty` discipline precedent
@@ -418,43 +426,33 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
    **Files:** `internal/fanout/artifacts.go`/`status.go`, `status_test.go`, `artifacts_test.go` | **Duration:** ~0.5 day
    **Task File:** [task-10](plan/tasks/task-10-diagnosability-fields.md)
 
-### 4.4 [ ] **Phase 4 — DoD Validation**
-   - [ ] `go test ./internal/fanout/...` passing
-   - [ ] `TestEngine_DifferentSizingMissesCache` present and passing
-   - [ ] Diagnosability JSON round-trip passing
-   - [ ] Coverage ≥80% on new code
-   - [ ] `go vet ./...` clean; `go build ./...` succeeds
-   - [ ] DoD report emitted
+### 4.4 [x] **Phase 4 — DoD Validation**
+   - [x] `go test ./internal/fanout/...` passing (full `go test ./...` exit=0)
+   - [x] `TestEngine_DifferentSizingMissesCache` present and passing (structurally fails against pre-F7 4-arg `diffCacheKey`)
+   - [x] Diagnosability JSON round-trip passing (`TestStatusJSON_DiagnosabilityFieldsRoundTrip`; omitempty via `TestStatusJSON_DiagnosabilityFieldsOmittedWhenUnsized`)
+   - [x] Coverage ≥80% on new code (module 88.0%; scaledTimeoutSecs/maxSerialLaneChunkTotal/sizingToken/diffCacheKey/statusFor/invokeAgent 100%, renderAgent/buildFallbackAgent 85.7% — remaining branches pre-existing error paths)
+   - [x] `go vet ./...` clean; `go build ./...` succeeds
+   - [x] DoD report emitted
 
-### 4.5 [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
-   **Scope:** All files changed during Phase 4 (integration-level, not TDD cadence)
+   ```
+   Phase-4 DoD Complete
+   Auto: 5/5 | Task-Specific: scaled-timeout ✓ (per-call + aggregate seams, clamp/monotonic/no-op), sizing-cache-miss ✓ (AC7), diagnosability round-trip+omitempty ✓ (AC8), real-wiring ✓ (buildSlots→renderAgent→invokeAgent→statusFor)
+   Manual Review: [ ] Code reviewed (→ Phase 4 gate subagent, next)
+   ```
 
-   **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
+### 4.5 [x] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All Phase 4 files (integration-level, not TDD cadence): `internal/fanout/{timeout.go (new), engine.go, review.go, status.go, artifacts.go}` + tests `{timeout_test.go (new), cache_test.go, status_test.go, artifacts_test.go, diagnosability_wiring_test.go (new)}`.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Phase 4 gate review`
-   - prompt: Self-contained brief including:
-     - Files changed during Phase 4 (absolute paths): [LIST]
-     - Checklist (pass verbatim, hostile integrator perspective):
-       - CONTRACT EXIT: Timeout scaling clamped + monotonic + no-op at chunkTotal<=1; cache key distinct per sizing regime?
-       - CONFIG SURFACE: No `internal/registry` resolver modified by timeout scaling (reads resolved values only)?
-       - INTEGRATION: Diagnosability fields aggregate real values from Tasks 02/03/04/06; omitempty discipline correct (zero present when meaningful)?
-       - PHASE-EXIT CONTRACT: Can the AC-Live harness read all diagnosability fields from `summary.json`?
-       - REGRESSION: Cache backward-compat + earlier phases intact?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
+   Fresh-context subagent (`general-purpose`) reviewed all Phase 4 changes against the verbatim hostile-integrator checklist (CONTRACT EXIT / CONFIG SURFACE / INTEGRATION / PHASE-EXIT CONTRACT / REGRESSION) plus adversarial probes (sizing-token collapse, omitempty byte-identity, mergeResultGroup field preservation, fallback own-model token, overflow clamp).
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (fresh-context integration review, 2026-07-11):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | review.go runEngine (with timeout.go maxSerialLaneChunkTotal + engine.go invokeAgent) | F6 aggregate-deadline scaling covered only the **serial** lane, but the AC6 agents (`greta`/`vera`/`brad`) run **parallel** (`.atcr/config.yaml` `serial_agents: []`). A child `context.WithTimeout` deadline is capped by its parent, so the per-call scaling in `invokeAgent` can never exceed the flat 600s aggregate `runCtx` → parallel chunked personas stayed pinned to the wall. AC6 was only "verified" by a serial-only test. | **FIXED inline** — generalized `maxSerialLaneChunkTotal` → `maxLaneChunkTotal` (all lanes, dropped the `!s.Serial` skip); `runEngine` now scales the aggregate by the worst per-persona chunk total across both lanes. Safe: non-chunked agents stay bounded by their own unscaled per-call deadline (`ChunkTotal<=1` → `scaledTimeoutSecs` no-op), so the larger aggregate never lets an unrelated agent hang longer. Added `TestRunEngine_ParallelLaneAggregateDeadlineScalesWithChunkTotal` (parallel, `MaxParallel:6`, asserts remaining >601s; fails against the serial-only version). **Re-run gate: clean** (HIGH confirmed fixed). |
+   | LOW | timeout.go `maxLaneChunkTotal` | Aggregate scales by the largest SINGLE-persona chunk total, not full contended parallel-lane load (multiple chunked personas at a small `max_parallel` could exceed the single-persona provision). Bounded heuristic, clamped, dramatically better than the flat wall; not an AC6 violation for the named single-persona scenario. | Deferred → TD-005 |
+   | LOW | review.go / status.go `degradation_action` | Field reports the degradation MECHANISM that fired (`chunk`/`truncate`), not the configured `on_overflow` policy — `applyOverflowPolicy` (Task 04) is not wired into live dispatch (chunking is driven by `review_strategy`). Honest to what happened; pre-existing/out-of-scope for F6/F7/F8. | Deferred → TD-004 + documented in `AgentStatus.DegradationAction` doc-comment |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   Verified clean on re-review: timeout scaling clamped/monotonic/no-op at `chunkTotal<=1`; `internal/registry` resolvers untouched (reads `EffectiveTimeoutSecs`/`MaxTimeoutSecs` only); cache `"0:0"`/empty sentinel collapses to the pre-F7 key (existing entries + `cache_test` assertions preserved); F7 miss-on-different-sizing (AC7); F8 fields aggregate real Task-02/03/04 values with correct omitempty byte-identity for unsized runs; `mergeResultGroup` `out := g[0]` preserves the diagnosability fields for a chunked persona; fallback composes its OWN model's sizing token under the slot's chunk regime; `go build`/`go vet`/`go test ./...` all green. **Phase gate passed** (1 HIGH fixed inline + re-verified, 2 LOW deferred to TD-004/TD-005).
    **Duration:** 15-30 min
 
 ---
@@ -469,7 +467,7 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
 
 *Full-suite regression plus the standalone live-audit dry run. Task 12 is sequenced last by design and depends on Tasks 01–11.*
 
-### 5.1 [ ] **🏗️ Live Audit Harness (AC-Live)**
+### 5.1 [x] **🏗️ Live Audit Harness (AC-Live)**
    **Task:** `examples/19.10-live-audit.sh`: skip-guards on unreachable roster (`atcr doctor`), re-runs the exact confirmed 19.6 range (base `f9d5161…` → head `b6bcb67…`, 101 files) against the real `orchestrator.lan` roster, hard-gates on zero `ContextWindowExceededError` + all five previously-failing agents (`dax`, `otto`, `greta`, `vera`, `brad`) `status=ok` (auto-checked from `summary.json`) + findings from ≥2 agents, and prints a before/after evidence table. Must remain fully decoupled from `go test ./...` so CI never blocks on external reachability.
    **Priority:** High | **Effort:** M | **Depends on:** 1.1–4.3 (all prior tasks)
    1. Understand the confirmed 19.6 range + `summary.json` gate assertions
@@ -481,43 +479,50 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
    **Files:** `examples/19.10-live-audit.sh` | **Duration:** ~1 day + live-audit buffer
    **Task File:** [task-12](plan/tasks/task-12-live-audit-harness.md)
 
-### 5.2 [ ] **Phase 5 — DoD Validation**
-   - [ ] `go test ./...` passing (full suite)
-   - [ ] `go vet ./...` clean; project linters clean; `go build ./...` succeeds
-   - [ ] Coverage ≥80% overall
-   - [ ] Live-audit **skip-path** dry run verified (no live access required); full-path procedure documented
-   - [ ] All 10 ACs (AC1–AC10) + AC-Live traced to a passing test or documented manual verification
-   - [ ] DoD report emitted
+### 5.2 [x] **Phase 5 — DoD Validation**
+   - [x] `go test ./...` passing (full suite) — 40 pkgs ok, exit 0
+   - [x] `go vet ./...` clean; project linters clean; `go build ./...` succeeds
+   - [x] Coverage ≥80% overall — 88.9% (payload 90.3 / fanout 88.0 / registry 92.1 / reconcile 88.9)
+   - [x] Live-audit **skip-path** dry run verified (both unreachability triggers → SKIP + exit 0); full-path procedure documented; **live full-path also executed (PASS)** — `.atcr/live-audit-20260711-092202`
+   - [x] All 10 ACs (AC1–AC10) + AC-Live traced to a passing test or documented manual verification (see trace below)
+   - [x] DoD report emitted
 
-### 5.3 [ ] **Phase 5 - GATE: Integration & Exit Review (subagent)**
+   **AC → verification trace:**
+   | AC | Verified by |
+   |----|-------------|
+   | AC1 (payload ≤ W−O, 32k+144k) | `internal/payload` sizing tests (`EffectiveByteBudget`) |
+   | AC2 (dax `24577+8192>32768` reserve) | `TestEffectiveByteBudget_DaxBoundaryRegression` |
+   | AC3 (chunk, zero files dropped) | `TestChunkDiff_WindowDerivedMaxLines` (lossless) |
+   | AC4 (`on_overflow` chunk/truncate impl, fallback/fail recognized) | `TestApplyOverflowPolicy_*` + registry enum tests |
+   | AC5 (fallback provenance + reconcile de-weight) | `TestRunReconcile_FallbackDeWeightsIndependenceEndToEnd` |
+   | AC6 (greta/vera/brad no wall) | `TestRunEngine_ParallelLaneAggregateDeadlineScalesWithChunkTotal` + **LIVE: all three `status=ok`** |
+   | AC7 (cache key folds sizing) | `TestEngine_DifferentSizingMissesCache` |
+   | AC8 (per-agent summary.json fields) | `TestStatusJSON_DiagnosabilityFields*` + **LIVE: fields populated** |
+   | AC9 (`go test ./...`) | full suite exit 0 |
+   | AC10 (`max_sprint_plan_bytes` configurable) | `sprintplan_settings_test.go` + `sprintplan_test.go` |
+   | AC-Live | **LIVE RUN 2026-07-11 PASS** — 0 CtxWindowError; dax/otto/greta/vera/brad all ok; 7 finders |
+
+   ```
+   Phase-5 DoD Complete
+   Auto: 5/5 | Task-Specific: skip-path ✓ (both triggers), gate-logic ✓ (fixtures), live-audit ✓ (PASS, 5/5 recovered), AC1–AC10+AC-Live traced ✓
+   Manual Review: [ ] Code reviewed (→ Phase 5 gate subagent, next)
+   ```
+
+### 5.3 [x] **Phase 5 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 5 + full-sprint integration (final gate)
 
-   **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
+   Fresh-context subagent (`general-purpose`) reviewed the new `examples/19.10-live-audit.sh` plus the cross-sprint integration surface (`internal/payload/{sizing,contextwindow,sprintplan}.go`, `internal/fanout/{overflow,chunker,cache,timeout,review,engine,artifacts,status}.go`, `internal/reconcile/{fallback,disagree,emit}.go`, `internal/registry/{config,project,precedence}.go`, `.atcr/config.yaml`, `docs/registry.md`) against the verbatim hostile-integrator checklist (CONTRACT EXIT / CONFIG SURFACE / INTEGRATION / PHASE-EXIT CONTRACT / REGRESSION). Ran `go build`/`go vet`/`go test ./...` + `shellcheck` (all green) and empirically confirmed the skip-guard/gate exit-code behaviors.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Phase 5 gate review`
-   - prompt: Self-contained brief including:
-     - Files changed during Phase 5 + cross-sprint integration (absolute paths): [LIST]
-     - Checklist (pass verbatim, hostile integrator perspective):
-       - CONTRACT EXIT: Live-audit harness fully decoupled from `go test ./...`; skip-guard correct?
-       - CONFIG SURFACE: Both new config keys (`on_overflow`, `max_sprint_plan_bytes`) documented + defaulted + back-compat across the full config surface?
-       - INTEGRATION: End-to-end sizing concept (model → window → budget → chunk plan → degradation action) threads correctly through dispatch, cache, timeout, diagnosability, reconcile?
-       - PHASE-EXIT CONTRACT: Sprint delivers every AC (AC1–AC10 + AC-Live)?
-       - REGRESSION: `go test ./...` green; no earlier-phase behavior broken?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (fresh-context final gate, 2026-07-11):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | 19.10-live-audit.sh skip guard | No `command -v "$ATCR_BIN"` guard → a missing/mis-named binary made the doctor call fail (rc 127) → empty JSON → `reachable=0` → green SKIP, masking a usage error as "roster unreachable". | **FIXED inline** — added `command -v "$ATCR_BIN" \|\| die` after the jq check; a broken invocation now exits 2. Verified: `ATCR_BIN=/no/such/atcr` → `FAIL`/exit 2. |
+   | MEDIUM | 19.10-live-audit.sh evidence block | Step 6 evidence jq calls were unguarded inside `{…} \| tee` under `set -euo pipefail`; a present-but-malformed summary.json aborted the script with jq's exit code (rc=5), never reaching the PASS/FAIL contract exit. | **FIXED inline** — added `jq empty` validation of BOTH the baseline and fresh summary up front; a corrupt artifact now `die`s exit 2. Verified: malformed baseline → `FAIL`/exit 2. |
+   | MEDIUM | docs/registry.md:122,164 | `on_overflow` + `max_sprint_plan_bytes` absent from the canonical reference doc (present in scaffold + struct comments + precedence). | Deferred → TD-001 (on_overflow) + TD-006 (max_sprint_plan_bytes) — documentation-surface only; batch in a docs sweep. |
+   | LOW | 19.10-live-audit.sh:63-67 | Skip guard counts aggregate reachable agents, not the 5 gated personas; a proxy-up-but-5-absent env would gate-fail instead of skip. | Deferred → TD-007 — marginal; harness is env-coupled to the 19.6 roster. |
+   | LOW | status.go:375 (TD-004) | Disclosed gap, not a defect: `applyOverflowPolicy` not wired into live dispatch; `degradation_action` reports mechanism not configured policy. | Already tracked → TD-004; AC4 fallback/fail dispatch is config+unit-level (recognized/errors clearly), not end-to-end, by design. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   No CRITICAL/HIGH. Two script correctness bugs (own-phase new file) fixed inline + re-verified; re-ran syntax/shellcheck/skip/PASS/FAIL/guard scenarios all green. Verified clean: harness never referenced by any `*_test.go` (contract-exit decoupling holds); PoolSummary schema matches gate expressions; `status` only ok/failed/timeout (Gate B strict match + absent-agent→FAIL sound); `internal/payload` free of `internal/registry` import; both config keys defined/defaulted/validated/threaded; `go build`/`go vet`/`go test ./...` green. **Phase gate passed** (2 MEDIUM fixed inline, 2 MEDIUM/2 LOW deferred to TD-001/004/006/007).
    **Duration:** 15-30 min
 
 ---

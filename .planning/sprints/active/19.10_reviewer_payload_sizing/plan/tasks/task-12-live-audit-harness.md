@@ -46,13 +46,22 @@ Add `examples/19.10-live-audit.sh`, modeled on the existing sibling `examples/ci
 - `.atcr/config.yaml` — local (uncommitted) roster config; the 11-agent panel that reproduced the confirmed 19.6 failure
 
 ## Success Criteria
-- [ ] `examples/19.10-live-audit.sh` exists, is executable, and follows `examples/ci-gate.sh`'s structural conventions (banner comment, `set -euo pipefail`, env-var overrides, explicit exit codes)
-- [ ] Running the script when the live roster is unreachable prints a `SKIP:` message and exits 0 — never blocks a standard `go test ./...` run or a CI job that happens to invoke it
-- [ ] Running the script against a reachable `orchestrator.lan` roster re-runs the exact 19.6 range (base `f9d5161be5b07214edc3fb435497d169883a3020`, head `b6bcb676d2cbb461ed25f723e7daaae805589450`) and hard-gates on zero `ContextWindowExceededError` across all agents in the fresh `summary.json`
-- [ ] The script hard-gates on `dax`, `otto`, `greta`, `vera`, and `brad` all reporting `status=ok` in the fresh `summary.json`, failing loudly (exit 1, naming the offending agent(s) and their actual status/error) if any do not
-- [ ] The script hard-gates on findings appearing from at least `ATCR_LIVE_AUDIT_MIN_AGENTS` (default 2) distinct agents, not just 1 — matching AC-Live's "grounded findings come from multiple agents" floor
-- [ ] The script prints (and writes to `$OUT_DIR/live-audit-evidence.txt`) a before/after comparison against the committed 19.6 baseline at `.planning/sprints/completed/19.6_community_registry_hub/code-review/multi-agent/sources/pool/summary.json`, satisfying the plan's "before/after counts captured as evidence" requirement
-- [ ] The script is runnable standalone (`bash examples/19.10-live-audit.sh`) with no required arguments, and safely invocable from an execution/CI loop (idempotent, distinct exit codes for skip/pass/fail/usage-error)
+- [x] `examples/19.10-live-audit.sh` exists, is executable, and follows `examples/ci-gate.sh`'s structural conventions (banner comment, `set -euo pipefail`, env-var overrides, explicit exit codes)
+- [x] Running the script when the live roster is unreachable prints a `SKIP:` message and exits 0 — never blocks a standard `go test ./...` run or a CI job that happens to invoke it — *verified 2026-07-11 against both unreachability triggers (doctor exit 2 config-error; doctor 0-reachable)*
+- [x] Running the script against a reachable `orchestrator.lan` roster re-runs the exact 19.6 range (base `f9d5161be5b07214edc3fb435497d169883a3020`, head `b6bcb676d2cbb461ed25f723e7daaae805589450`) and hard-gates on zero `ContextWindowExceededError` across all agents in the fresh `summary.json` — *LIVE RUN 2026-07-11: PASS, zero `ContextWindowExceededError`/truncate errors across the roster*
+- [x] The script hard-gates on `dax`, `otto`, `greta`, `vera`, and `brad` all reporting `status=ok` in the fresh `summary.json`, failing loudly (exit 1, naming the offending agent(s) and their actual status/error) if any do not — *LIVE RUN 2026-07-11: all five now `status=ok` (were failed/timeout in 19.6)*
+- [x] The script hard-gates on findings appearing from at least `ATCR_LIVE_AUDIT_MIN_AGENTS` (default 2) distinct agents, not just 1 — matching AC-Live's "grounded findings come from multiple agents" floor — *LIVE RUN 2026-07-11: 7 agents returned findings (16 total: 5 HIGH/9 MED/2 LOW)*
+- [x] The script prints (and writes to `$OUT_DIR/live-audit-evidence.txt`) a before/after comparison against the committed 19.6 baseline at `.planning/sprints/completed/19.6_community_registry_hub/code-review/multi-agent/sources/pool/summary.json`, satisfying the plan's "before/after counts captured as evidence" requirement — *verified: table renders correctly from baseline + fresh summary (before: 5 ok / 3 timeout / 3 failed, 1 finding)*
+- [x] The script is runnable standalone (`bash examples/19.10-live-audit.sh`) with no required arguments, and safely invocable from an execution/CI loop (idempotent, distinct exit codes for skip/pass/fail/usage-error)
+
+## Execution Status (2026-07-11)
+- **Script delivered + verified offline.** `bash -n` + `shellcheck` clean. Skip-path verified against both unreachability triggers (SKIP + exit 0). Gate/evidence LOGIC verified against fixtures: a synthetic all-`ok`/≥2-findings summary → PASS/exit 0; replaying the **real** confirmed-failing 19.6 baseline as the "after" summary → FAIL/exit 1 with the exact `ContextWindowExceededError` + timeout evidence.
+- **LIVE RUN EXECUTED 2026-07-11 (PASS).** `ATCR_BIN=./bin/atcr bash examples/19.10-live-audit.sh` — the freshly built branch binary was required because the pre-installed on-PATH `atcr` (`~/.local/bin/atcr`, built 2026-07-08) predates this sprint's `max_sprint_plan_bytes`/`on_overflow` config keys and exits 2 → SKIP. Result: all three AC-Live gates PASS.
+  - **Before (19.6):** 5 ok / 3 timeout / 3 failed, 1 agent with findings.
+  - **After (this run, out dir `.atcr/live-audit-20260711-092202`):** 9 ok / 0 timeout / 2 failed, 7 agents with findings; 16 findings (5 HIGH / 9 MED / 2 LOW); elapsed 658s.
+  - **The five previously-failing agents all recovered to `status=ok`:** `dax` (was ContextWindowExceededError → ok, 3 findings, `degradation_action=truncate`, effective_budget 71680 / window 32768 / reserved 8192), `otto` (was BadRequestError/auto-truncate → ok, 3 findings), `greta`/`vera`/`brad` (were timeout → ok).
+  - **Two non-gated agents still fail, both unrelated to input sizing** (zero `ContextWindowExceededError` anywhere): `archer` — `finish_reason=length` with zero parsed findings (model output-cap/parse issue, not context overflow; was ok in 19.6 but produced 0 findings there too); `ronin` — empty completion (identical to its 19.6 baseline failure; pre-existing model behavior). Finding quality reviewed by hand per AC-Live: findings are grounded to the 19.6 diff.
+- **To re-run the live audit:** `ATCR_BIN=./bin/atcr bash examples/19.10-live-audit.sh` — the default `ATCR_BIN=atcr` would use the stale on-PATH binary and always SKIP.
 
 ## Manual Code Review
 - [ ] Codebase has been reviewed
@@ -79,9 +88,9 @@ Add `examples/19.10-live-audit.sh`, modeled on the existing sibling `examples/ci
 - Task-01 through Task-11 — this harness verifies the combined output of the full sprint (context-window resolver, per-agent budget, window-aware chunking, `on_overflow` dispatch, fallback provenance, timeout scaling, cache-key correctness, diagnosability fields, sprint-plan config) against the real 19.6 diff range and roster; sequence last, only after all preceding tasks land
 
 ## Definition of Done
-- [ ] `examples/19.10-live-audit.sh` created, executable, and follows `examples/ci-gate.sh`'s conventions
-- [ ] Skip-guard path verified locally (unreachable environment → `SKIP:` + exit 0)
-- [ ] Full live-run path executed at least once against a reachable `orchestrator.lan` + the real roster, with the three AC-Live gates observed passing (zero `ContextWindowExceededError`; `dax`/`otto`/`greta`/`vera`/`brad` all `status=ok`; findings from ≥2 agents) — this is the plan's ultimate proof-of-fix and cannot be simulated in `go test ./...`
-- [ ] Before/after evidence captured and reviewed by hand for finding quality (per AC-Live's "quality reviewed by hand" note)
-- [ ] `go test ./...` continues to pass unaffected — this script is never invoked by the Go test suite
-- [ ] Script is referenced from the sprint's completion checklist (or equivalent) as the final proof-of-fix step, run manually or via the execution loop once F1-F9 land
+- [x] `examples/19.10-live-audit.sh` created, executable, and follows `examples/ci-gate.sh`'s conventions
+- [x] Skip-guard path verified locally (unreachable environment → `SKIP:` + exit 0)
+- [x] Full live-run path executed at least once against a reachable `orchestrator.lan` + the real roster, with the three AC-Live gates observed passing (zero `ContextWindowExceededError`; `dax`/`otto`/`greta`/`vera`/`brad` all `status=ok`; findings from ≥2 agents) — *2026-07-11: PASS, out dir `.atcr/live-audit-20260711-092202`*
+- [x] Before/after evidence captured and reviewed by hand for finding quality (per AC-Live's "quality reviewed by hand" note) — *evidence at `.atcr/live-audit-20260711-092202/live-audit-evidence.txt`; findings grounded to the 19.6 diff*
+- [x] `go test ./...` continues to pass unaffected — this script is never invoked by the Go test suite (40 pkgs green, exit 0)
+- [x] Script is referenced from the sprint's completion checklist (Phase 5 DoD / task 5.1) as the final proof-of-fix step
