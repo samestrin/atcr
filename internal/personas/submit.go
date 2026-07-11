@@ -117,10 +117,22 @@ func Submit(ctx context.Context, gh GitHubSubmitter, personasDir, submissionsDir
 }
 
 // submissionBranch derives a ref-safe head branch from a (possibly namespaced)
-// persona name, collapsing '/' so the result is a single segment under
-// persona-submit/.
+// persona name. To avoid collisions between names like "foo/bar" and "foo-bar",
+// '-' is escaped as "--" and '/' is collapsed to '-', making the encoding
+// reversible and collision-free for valid persona names.
 func submissionBranch(name string) string {
-	return "persona-submit/" + strings.ReplaceAll(name, "/", "-")
+	var b strings.Builder
+	for _, r := range name {
+		switch r {
+		case '-':
+			b.WriteString("--")
+		case '/':
+			b.WriteByte('-')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return "persona-submit/" + b.String()
 }
 
 // submissionPRBody builds the PR description. The submitter identity is the PR
@@ -215,8 +227,9 @@ func (ghSubmitter) PushBranch(ctx context.Context, branch, personasDir, name str
 	}
 	defer func() { _ = os.RemoveAll(workDir) }()
 
-	forkURL := fmt.Sprintf("https://github.com/%s/atcr.git", owner)
-	if err := runGit(ctx, "", "clone", "--depth", "1", forkURL, workDir); err != nil {
+	canon, _ := repository.Parse(canonicalRepo)
+	forkURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, canon.Name)
+	if err := cloneFork(ctx, forkURL, workDir); err != nil {
 		return "", err
 	}
 	if err := runGit(ctx, workDir, "checkout", "-b", branch); err != nil {
@@ -228,11 +241,19 @@ func (ghSubmitter) PushBranch(ctx context.Context, branch, personasDir, name str
 	if err := runGit(ctx, workDir, "add", "-A"); err != nil {
 		return "", err
 	}
+	hasChanges, err := gitHasStagedChanges(ctx, workDir)
+	if err != nil {
+		return "", err
+	}
+	if !hasChanges {
+		return "", fmt.Errorf("no changes to submit; persona %q already matches the fork", name)
+	}
 	if err := runGit(ctx, workDir, "commit", "-m", "Submit community persona: "+name); err != nil {
 		return "", err
 	}
-	// --force-with-lease (not --force): a re-submission updates the branch but
-	// refuses to clobber commits the user pushed to their own PR branch since.
+	// --force-with-lease is preferred over --force, but this is a fresh --depth 1
+	// single-branch clone that never fetched the remote persona-submit/* ref, so the
+	// lease has no baseline and cannot protect against diverging remote commits.
 	if err := runGit(ctx, workDir, "push", "--force-with-lease", "origin", branch); err != nil {
 		return "", err
 	}
@@ -322,6 +343,48 @@ func runGit(ctx context.Context, dir string, args ...string) error {
 		return fmt.Errorf("git %s: %w", strings.Join(args, " "), ghError(err, stderr.String()))
 	}
 	return nil
+}
+
+// cloneFork clones the user's fork with a short bounded retry. gh repo fork is
+// asynchronous: immediately after Fork returns, the fork may not yet resolve, so
+// a direct clone can 404. We retry only on "not found" errors.
+func cloneFork(ctx context.Context, forkURL, dest string) error {
+	const (
+		maxAttempts = 5
+		backoff     = 2 * time.Second
+	)
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+		lastErr = runGit(ctx, "", "clone", "--depth", "1", forkURL, dest)
+		if lastErr == nil {
+			return nil
+		}
+		if !strings.Contains(strings.ToLower(lastErr.Error()), "not found") {
+			return lastErr
+		}
+	}
+	return fmt.Errorf("fork clone did not resolve after %d attempts: %w", maxAttempts, lastErr)
+}
+
+// gitHasStagedChanges reports whether there are staged changes in dir. It returns
+// an error only if git itself fails.
+func gitHasStagedChanges(ctx context.Context, dir string) (bool, error) {
+	c := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet")
+	c.Dir = dir
+	if err := c.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return true, nil
+		}
+		return false, fmt.Errorf("git diff --cached: %w", err)
+	}
+	return false, nil
 }
 
 // SubmitGate runs the local pre-submission gate for name and reports whether the
