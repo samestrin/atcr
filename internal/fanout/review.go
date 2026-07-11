@@ -1070,6 +1070,24 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		}
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
 			kept, trunc := payload.ApplyByteBudget(mp.Entries, appliedBudget)
+			// F4 on_overflow dispatch (Epic 19.10 TD-004): the payload overflows THIS
+			// agent's window (a file had to be shed). Route the fail/fallback arms through
+			// applyOverflowPolicy so their typed errors propagate out of add()/buildSlots()
+			// and hard-fail the whole run PRE-DISPATCH — the same precedent as the "agent
+			// not found"/"no payload built" errors above — rather than silently degrading.
+			// truncate keeps the byte shed below (applyOverflowPolicy's truncate arm
+			// delegates to this same ApplyByteBudget), and chunk keeps the whole-payload
+			// overflow net below (real bin-packing is the review_strategy=chunked path,
+			// unreachable from a single bulk slot). Gated on ACTUAL overflow so a payload
+			// that fits is never hard-failed by on_overflow=fail.
+			if trunc.Truncated || trunc.AllDropped {
+				switch cfg.Settings.OnOverflow {
+				case OverflowFail, OverflowFallback:
+					if _, err := applyOverflowPolicy(cfg.Settings.OnOverflow, "", 0, mp.Entries, appliedBudget); err != nil {
+						return err
+					}
+				}
+			}
 			// Never dispatch an EMPTY per-agent payload. If even a single file exceeds
 			// this model's window, ApplyByteBudget drops everything (AllDropped);
 			// shipping "" would make the agent silently return "no findings" — a
