@@ -205,3 +205,50 @@ func TestBuildSlots_ChunkedReservesForScopeConstraint(t *testing.T) {
 	assert.Greater(t, len(scoped), len(unscoped),
 		"reserving chunk-line headroom for the scope constraint yields more, smaller chunks")
 }
+
+// overflowingSingleFile returns a one-file payload far larger than greta's 32k window,
+// so ApplyByteBudget drops it entirely (a genuine per-agent overflow).
+func overflowingSingleFile() map[string]modePayload {
+	body := "// x\n" + strings.Repeat("x", 300000)
+	return map[string]modePayload{"blocks": {
+		Entries:   []payload.FileEntry{{Path: "huge.go", Size: int64(len(body)), Body: body}},
+		Text:      body,
+		FileCount: 1,
+	}}
+}
+
+// TestBuildSlots_OnOverflowFailHardFailsRun proves on_overflow=fail is wired into
+// dispatch (review.go:877 TD): when a payload overflows an agent's window, the policy
+// propagates a typed error out of buildSlots, hard-failing the whole run pre-dispatch
+// rather than silently degrading.
+func TestBuildSlots_OnOverflowFailHardFailsRun(t *testing.T) {
+	cfg := sizingRosterConfig()
+	cfg.Settings.OnOverflow = OverflowFail
+	_, _, err := buildOneAgent(cfg, "greta", overflowingSingleFile(), ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.ErrorIs(t, err, ErrOverflowPolicyFail)
+}
+
+// TestBuildSlots_OnOverflowFallbackHardFailsRun: fallback is recognized but not
+// dispatched here (needs F5 provenance), so it too propagates its typed error.
+func TestBuildSlots_OnOverflowFallbackHardFailsRun(t *testing.T) {
+	cfg := sizingRosterConfig()
+	cfg.Settings.OnOverflow = OverflowFallback
+	_, _, err := buildOneAgent(cfg, "greta", overflowingSingleFile(), ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.ErrorIs(t, err, ErrFallbackUnavailable)
+}
+
+// TestBuildSlots_OnOverflowFailAllowsFittingPayload proves the fail arm is gated on
+// ACTUAL overflow: a payload that fits the window must NOT hard-fail the run.
+func TestBuildSlots_OnOverflowFailAllowsFittingPayload(t *testing.T) {
+	cfg := sizingRosterConfig()
+	cfg.Settings.OnOverflow = OverflowFail
+	body := "// small\n" + strings.Repeat("x", 200) // trivially fits greta's window
+	payloads := map[string]modePayload{"blocks": {
+		Entries:   []payload.FileEntry{{Path: "s.go", Size: int64(len(body)), Body: body}},
+		Text:      body,
+		FileCount: 1,
+	}}
+	ag, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err, "on_overflow=fail must not fail a payload that fits the window")
+	assert.Contains(t, ag.Prompt, "small")
+}
