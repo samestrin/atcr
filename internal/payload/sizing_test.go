@@ -78,6 +78,18 @@ func TestEffectiveByteBudget_DegenerateWindowReturnsZero(t *testing.T) {
 	assert.Equal(t, int64(0), got, "a degenerate window must return 0, not a negative budget")
 }
 
+// TestEffectiveByteBudget_NegativeOutputTokens asserts that a negative
+// outputTokens value (a plumbing bug) is clamped to zero rather than inflating
+// the effective token budget beyond the window. Without this guard the formula
+// `window - outputTokens - overhead` grows as outputTokens becomes more
+// negative, returning an oversized byte budget that would over-fill the window.
+func TestEffectiveByteBudget_NegativeOutputTokens(t *testing.T) {
+	got := EffectiveByteBudget(unknownModel, -1000)
+	want := EffectiveByteBudget(unknownModel, 0)
+	assert.LessOrEqual(t, got, want,
+		"negative outputTokens must not inflate the budget past the zero-output case")
+}
+
 // TestChunkMaxLines_SmallerForSmallWindow asserts a 32k model produces a smaller
 // maxLines than a 128k model, so chunkDiff opens MORE chunks for the small window
 // (AC3), from the same effective-budget source.
