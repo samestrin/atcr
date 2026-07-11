@@ -103,4 +103,15 @@ func distinctReviewerCount(reviewers []string, fallback map[string]string) int {
 // already-VERIFIED tier) is likewise left untouched: the verdict, not the reviewer
 // count, dictates its confidence. Must run AFTER stampFallbackProvenance (which
 // populates FallbackReviewers).
-func recomputeFallbackConfidence(findings []JSONFinding) {}
+func recomputeFallbackConfidence(findings []JSONFinding) {
+	for i := range findings {
+		if findings[i].Verification != nil || findings[i].Confidence == ConfidenceVerified {
+			continue // a verify verdict owns this record's confidence
+		}
+		distinct := distinctReviewerCount(findings[i].Reviewers, findings[i].FallbackReviewers)
+		if distinct >= len(findings[i].Reviewers) {
+			continue // no fallback collapse — leave merge/authority confidence intact
+		}
+		findings[i].Confidence = ConfidenceFor(distinct)
+	}
+}

@@ -259,6 +259,12 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 	// distinct-reviewer independence count can de-weight reviewers sharing a
 	// fallback model. No-op when no source fell back.
 	stampFallbackProvenance(jf, sources)
+	// Recompute the user-facing CONFIDENCE from the DISTINCT reviewer count now that
+	// FallbackReviewers is stamped (Epic 19.10 F5): two personas served by the same
+	// fallback model must not inflate a finding to HIGH on the CONFIDENCE column, the
+	// same distinct-reviewer trust-inflation the disagreement radar already de-weights.
+	// Only fallback-collapsed records are touched; authority/verify promotions stand.
+	recomputeFallbackConfidence(jf)
 	res.jsonFindings = jf
 
 	if err := ctx.Err(); err != nil {
