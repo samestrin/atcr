@@ -68,15 +68,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./skill/...`)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./skill/...`)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `name` is ≤64 chars, lowercase/numbers/hyphens only, and excludes "anthropic"/"claude"
-- [ ] `description` is ≤1024 chars
-- [ ] `skill/SKILL.md` body is under ~500 lines
-- [ ] `skill_test.go` gained automated assertions for all three constraints above
+- [x] `name` is ≤64 chars, lowercase/numbers/hyphens only, and excludes "anthropic"/"claude" (`atcr`, 4 chars)
+- [x] `description` is ≤1024 chars (580 chars)
+- [x] `skill/SKILL.md` body is under ~500 lines (99 lines)
+- [x] `skill_test.go` gained automated assertions for all three constraints above (`TestSkill_FrontmatterConstraints`, `TestSkill_BodyLineBudget`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

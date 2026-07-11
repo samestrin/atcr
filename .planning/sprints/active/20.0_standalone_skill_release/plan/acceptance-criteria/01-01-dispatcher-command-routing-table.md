@@ -11,7 +11,7 @@
 
 ### Related Files (from codebase-discovery.json)
 
-- `skill/SKILL.md` — modify: rewrite frontmatter `description` and add a Level 2 command-routing table/section that maps `/atcr <command>` to each of the 21 Cobra commands
+- `skill/SKILL.md` — modify: rewrite frontmatter `description` and add a Level 2 command-routing table/section that maps `/atcr <command>` to each of the 22 Cobra commands
 - `cmd/atcr/main.go:185-208` — reference only (do not modify): the `newRootCmd` `AddCommand(...)` call is the ground-truth command inventory (`review`, `reconcile`, `verify`, `debate`, `report`, `github`, `range`, `status`, `init`, `quickstart`, `serve`, `doctor`, `trust`, `scorecard`, `leaderboard`, `benchmark`, `personas`, `models`, `debt`, `history`, `audit-report`, `version`)
 - `skill/skill_test.go` — modify: add a routing-table coverage test (e.g. `TestSkill_DispatcherRoutingTable`) that asserts every command name from the ground-truth list appears in `SkillMD`
 - `.planning/specifications/packages/cobra.md` — reference only: known-stale package doc (references a non-existent `anchor` subcommand); must NOT be used as the source of the routing table
@@ -25,7 +25,7 @@
 **Scenario 1: Every live Cobra command is routed**
 - **Given** the rewritten `skill/SKILL.md`
 - **When** the routing table/section is scanned for command names
-- **Then** all 21 names registered in `newRootCmd` (`cmd/atcr/main.go:185-208`) are present, each associated with a one-line summary consistent with that command's `Short` description (e.g. `review` → "Fan a code change out to the reviewer pool")
+- **Then** all 22 names registered in `newRootCmd` (`cmd/atcr/main.go:185-208`) are present, each associated with a one-line summary consistent with that command's `Short` description (e.g. `review` → "Fan a code change out to the reviewer pool")
 
 **Scenario 2: Dispatcher invocation pattern is documented**
 - **Given** the rewritten `skill/SKILL.md` body
@@ -39,7 +39,7 @@
 
 ## Edge Cases
 **Edge Case 1: New command added to `newRootCmd` after this rewrite**
-- **Given** a future commit adds a 22nd command to `newRootCmd`
+- **Given** a future commit adds a 23rd command to `newRootCmd`
 - **When** `skill/skill_test.go`'s routing-table test runs unchanged
 - **Then** the test does not silently pass — it must enumerate the same command list from a shared source (or be reviewed) so routing-table drift is caught, not just documented as a manual review step
 
@@ -59,7 +59,7 @@
 - **Then** this is a story-acceptance failure, not a runtime error — flagged during manual/automated review as "routing table references non-existent command `<name>`"
 
 **Error Scenario 2: Missing command**
-- **Given** any of the 21 `newRootCmd` command names is absent from `SkillMD`
+- **Given** any of the 22 `newRootCmd` command names is absent from `SkillMD`
 - **Then** `TestSkill_DispatcherRoutingTable` fails with an assertion message naming the missing command
 
 ## Performance Requirements
@@ -72,20 +72,20 @@
 
 ## Test Implementation Guidance
 **Test Type:** UNIT (Go `testing` over the embedded `SkillMD` string)
-**Test Data Requirements:** The literal list of 21 command names/short descriptions extracted from `cmd/atcr/main.go:185-208` and each command's `Short:` field; no external fixtures needed.
+**Test Data Requirements:** The literal list of 22 command names/short descriptions extracted from `cmd/atcr/main.go:185-208` and each command's `Short:` field; no external fixtures needed.
 **Mock/Stub Requirements:** None — pure string assertions against the embedded constant, consistent with the existing `TestSkill_RequiredSections`/`TestSkill_InputForms` pattern in `skill/skill_test.go`.
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./skill/...`)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./skill/...`)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] All 21 `newRootCmd` command names appear in `SkillMD` with a one-line summary each
-- [ ] Frontmatter `description` reflects a general dispatcher, not a single review-only flow
-- [ ] No command name in the routing table is absent from, or contradicts, `cmd/atcr/main.go:185-208`
-- [ ] `skill/skill_test.go` gains a routing-table coverage test
+- [x] All 22 `newRootCmd` command names appear in `SkillMD` with a one-line summary each
+- [x] Frontmatter `description` reflects a general dispatcher, not a single review-only flow
+- [x] No command name in the routing table is absent from, or contradicts, `cmd/atcr/main.go:185-208`
+- [x] `skill/skill_test.go` gains a routing-table coverage test (`TestSkill_DispatcherRoutingTable`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

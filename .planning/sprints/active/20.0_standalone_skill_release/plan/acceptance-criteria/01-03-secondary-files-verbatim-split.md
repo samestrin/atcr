@@ -75,15 +75,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./skill/...`)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./skill/...`)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `skill/host-review.md`, `skill/ambiguity-adjudication.md`, `skill/findings-format.md` created with verbatim content
-- [ ] `skill/SKILL.md` references each secondary file by a resolvable path
-- [ ] `skill/skill.go` embeds the secondary files; `skill/skill_test.go` updated to verify content in the correct (post-split) location
-- [ ] `docs/skill-usage.md` Installation section reflects copying the full skill directory, not `SKILL.md` alone
+- [x] `skill/host-review.md`, `skill/ambiguity-adjudication.md`, `skill/findings-format.md` created with verbatim content (adversarial `diff` vs `HEAD~1` empty)
+- [x] `skill/SKILL.md` references each secondary file by a resolvable path
+- [x] `skill/skill.go` embeds the secondary files; `skill/skill_test.go` updated to verify content in the correct (post-split) location
+- [x] `docs/skill-usage.md` Installation section reflects copying the full skill directory, not `SKILL.md` alone (completed at Phase 1 gate; re-verified in Phase 3 Story 4 / AC 04-01)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

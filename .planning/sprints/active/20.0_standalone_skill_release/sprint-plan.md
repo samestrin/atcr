@@ -138,14 +138,14 @@ From [plan/documentation/](plan/documentation/):
 
 **Goal:** Rewrite `skill/SKILL.md` into a router + on-demand secondary-file model. Highest-risk item, sequenced first (Stories 4 & 5 depend on its output). Story 1 (Effort: L). ACs 01-01…01-05.
 
-### 1.1 [ ] **[Dispatcher Skill Rewrite - RED](plan/user-stories/01-dispatcher-skill-rewrite.md)**
+### 1.1 [x] **[Dispatcher Skill Rewrite - RED](plan/user-stories/01-dispatcher-skill-rewrite.md)**
    **Mode:** Moderate | **AC:** [01-01](plan/acceptance-criteria/01-01-dispatcher-command-routing-table.md) · [01-02](plan/acceptance-criteria/01-02-review-flow-preserved-through-dispatcher.md) · [01-03](plan/acceptance-criteria/01-03-secondary-files-verbatim-split.md) · [01-04](plan/acceptance-criteria/01-04-frontmatter-and-line-budget-constraints.md)
    1. Analyze ACs, identify testable units against the embedded `SkillMD` string in `skill/skill_test.go`.
    2. Extend `skill/skill_test.go` with failing assertions for: (a) routing table lists exactly the command names registered in `newRootCmd` (`cmd/atcr/main.go:185-208`), zero invented/drifted names (AC01-01); (b) the review→reconcile→report path remains reachable as one routable command path (AC01-02); (c) secondary files `skill/host-review.md`, `skill/ambiguity-adjudication.md`, `skill/findings-format.md` exist and contain the byte-for-byte-moved sections (AC01-03); (d) frontmatter `name` ≤64 chars (lowercase/numbers/hyphens, no reserved words), `description` ≤1024 chars, SKILL.md body ≤~500 lines (AC01-04).
    3. Verify all new assertions FAIL for the right reason (missing files / stale linear-script content), not compile errors.
    **Files:** `skill/skill_test.go` | **Duration:** ~0.5 day
 
-### 1.2 [ ] **[Dispatcher Skill Rewrite - GREEN](plan/user-stories/01-dispatcher-skill-rewrite.md)**
+### 1.2 [x] **[Dispatcher Skill Rewrite - GREEN](plan/user-stories/01-dispatcher-skill-rewrite.md)**
    Perform the minimal rewrite/relocation to pass 1.1:
    1. Move Host Review Instructions → `skill/host-review.md`, Ambiguity Adjudication → `skill/ambiguity-adjudication.md`, Findings Format Reference → `skill/findings-format.md` (byte-for-byte verbatim).
    2. Rewrite `skill/SKILL.md` body into a dispatcher routing table mapping user intent → registered `atcr` commands, with on-demand references to the three secondary files.
@@ -153,8 +153,14 @@ From [plan/documentation/](plan/documentation/):
    4. COMMIT: `git add skill/SKILL.md skill/host-review.md skill/ambiguity-adjudication.md skill/findings-format.md skill/skill_test.go && git commit -m "feat(skill): rewrite SKILL.md as /atcr dispatcher with secondary files (green)"`
    **Files:** `skill/SKILL.md`, `skill/host-review.md`, `skill/ambiguity-adjudication.md`, `skill/findings-format.md` | **Duration:** ~1.5 days
 
-### 1.2.A [ ] **[Dispatcher Skill Rewrite - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-dispatcher-skill-rewrite.md)**
-   **Changed Files:** `skill/SKILL.md`, `skill/host-review.md`, `skill/ambiguity-adjudication.md`, `skill/findings-format.md`, `skill/skill_test.go`
+### 1.2.A [x] **[Dispatcher Skill Rewrite - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-dispatcher-skill-rewrite.md)**
+   **Changed Files:** `skill/SKILL.md`, `skill/host-review.md`, `skill/ambiguity-adjudication.md`, `skill/findings-format.md`, `skill/skill_test.go`, `skill/skill.go`
+
+   **Result (fresh general-purpose subagent):** Adversarial review passed — routing table lists exactly the 22 `newRootCmd` commands (no invented/dropped names, same order); all three secondary-file `diff`s against `HEAD~1` were empty (byte-for-byte verbatim, only heading level changed); `.atcr/reviews/<id>/` contract intact; no-command/typo intents clarify rather than guess; frontmatter `name`=atcr (4 chars), `description`=580 chars (≤1024), body=99 lines (≤500).
+
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | NONE | | Adversarial review passed | |
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
@@ -183,20 +189,32 @@ From [plan/documentation/](plan/documentation/):
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 1.3 [ ] **[Dispatcher Skill Rewrite - REFACTOR](plan/user-stories/01-dispatcher-skill-rewrite.md)**
+### 1.3 [x] **[Dispatcher Skill Rewrite - REFACTOR](plan/user-stories/01-dispatcher-skill-rewrite.md)**
    1. Fix CRITICAL/HIGH issues from 1.2.A (if any).
    2. Tighten each per-command routing entry to one line without losing routing accuracy; improve secondary-file cross-links (T1).
    3. Validate all tests still pass (T3: `go test ./...`).
    4. COMMIT: `git add skill/ && git commit -m "refactor(skill): address review + tighten routing entries"`
    **Duration:** ~0.5 day
 
-### 1.4 [ ] **Phase 1 DoD — Story 1**
+### 1.4 [x] **Phase 1 DoD — Story 1**
    1. Run DoD checklist (Tests T3, Coverage ≥80% for touched code, Lint `golangci-lint run` + `go vet ./...`, Build, Docs).
    2. Manually verify AC01-05: `docs/skill-usage.md` still accurately describes install/usage and the `.atcr/reviews/<id>/` output post-rewrite (mark note; full doc pass is Phase 3 Story 4).
    3. Emit DoD Report (5 ACs: 01-01…01-05).
 
-### 1.5 [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+### 1.5 [x] **Phase 1 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence).
+
+   **Files changed in Phase 1:** `skill/SKILL.md`, `skill/host-review.md`, `skill/ambiguity-adjudication.md`, `skill/findings-format.md`, `skill/skill.go`, `skill/skill_test.go` (+ gate fix: `docs/skill-usage.md`).
+
+   **Gate round 1 (fresh subagent):** routing table == `newRootCmd` (22 commands), tests/vet/build green, orchestration preserved. Found:
+   - **HIGH** — `docs/skill-usage.md` copy-only-`SKILL.md` install trap: post-split, the documented `cp skill/SKILL.md ...` install shipped SKILL.md alone, so on-demand `host-review.md`/`ambiguity-adjudication.md`/`findings-format.md` references would fail at runtime. **FIXED** before boundary (commit `2949c7e7`): install now copies `skill/*.md`; "single Markdown file" framing removed; closes AC01-03 install item.
+   - **MEDIUM** — `skill/findings-format.md` delegates the column contract to `docs/findings-format.md` (outside `skill/`), dangling in a standalone install → deferred to `tech-debt-captured.md` (TD-001); not inlined because the file is a verbatim relocation.
+
+   **Gate round 2 (fresh subagent, re-run after fix):** Phase gate passed.
+
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | NONE | | Phase gate passed (round 2) | |
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
 

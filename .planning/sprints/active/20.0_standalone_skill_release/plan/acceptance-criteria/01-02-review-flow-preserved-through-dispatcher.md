@@ -79,15 +79,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./skill/...`, including `TestSkill_OrchestrationSequence`)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./skill/...`, including `TestSkill_OrchestrationSequence`)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Routed review path preserves the exact range → review → status → host → reconcile → report sequence
-- [ ] Polling interval/timeout values (10s / 60 polls / 10-minute default) are unchanged
-- [ ] All three error messages (empty range, timeout, no reconcile sources) remain verbatim
-- [ ] Non-review commands do not trigger the review orchestration sequence
+- [x] Routed review path preserves the exact range → review → status → host → reconcile → report sequence
+- [x] Polling interval/timeout values (10s / 60 polls / 10-minute default) are unchanged
+- [x] All three error messages (empty range, timeout, no reconcile sources) remain verbatim
+- [x] Non-review commands do not trigger the review orchestration sequence
 
 **Manual Review:**
 - [ ] Code reviewed and approved
