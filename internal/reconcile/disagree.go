@@ -22,10 +22,14 @@ const DisagreementsSchemaVersion = "1.0"
 
 // IndependenceModelReviewerCount documents the v1 independence proxy recorded in
 // the handoff file. The independence factor in the score is the count of distinct
-// reviewers on a finding; the data model carries no model-strength or
-// near-duplicate-model signal (clarification 2026-06-14), so a richer metric is
-// out of scope for this epic. Epic 6.0 reads this field to know which proxy
-// produced the scores.
+// reviewers on a finding — now FALLBACK-AWARE (Epic 19.10 F5): reviewers whose
+// slots were served by the same litellm fallback model collapse to a single voice
+// via distinctReviewerCount, rather than a raw name count, so a net model backing
+// multiple personas no longer inflates independence. The data model still carries
+// no model-strength or near-duplicate-model signal (clarification 2026-06-14), so
+// a richer metric is out of scope. The recorded model string itself is unchanged
+// (still "distinct-reviewer-count"); only its computation is fallback-collapsed.
+// Epic 6.0 reads this field to know which proxy produced the scores.
 const IndependenceModelReviewerCount = "distinct-reviewer-count"
 
 // Disagreement kinds — the tension classes the radar surfaces.
@@ -140,6 +144,27 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 			items = append(items, soloItem(f))
 		}
 	}
+	// Reviewer→fallback-target map for gray-zone de-weighting (Epic 19.10 F5). The
+	// extracted-library AmbiguousCluster.Findings are reclib.Finding values that
+	// carry no ATCR-only FallbackModel, so the gray-zone path cannot read provenance
+	// from its own members. Fallback is a whole-slot property, so a reviewer's
+	// target is identical everywhere it appears; derive it once from the merged
+	// findings' FallbackReviewers (already stamped by stampFallbackProvenance). A
+	// reviewer that fell back but surfaces ONLY inside a gray-zone cluster (never in
+	// a merged finding) is absent here and counts as independent — an accepted
+	// fail-closed edge for this bounded feature.
+	var reviewerFallback map[string]string
+	for _, f := range findings {
+		for rev, target := range f.FallbackReviewers {
+			if target == "" {
+				continue
+			}
+			if reviewerFallback == nil {
+				reviewerFallback = make(map[string]string)
+			}
+			reviewerFallback[rev] = target
+		}
+	}
 	for _, c := range clusters {
 		// Skip empty clusters (no members to surface) and groups where every
 		// member is out-of-scope (fail-closed, matching modalCategory): an
@@ -147,7 +172,7 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 		if len(c.Findings) == 0 || allOutOfScope(c.Findings) {
 			continue
 		}
-		items = append(items, grayZoneItem(c))
+		items = append(items, grayZoneItem(c, reviewerFallback))
 	}
 
 	sortDisagreements(items)
@@ -276,7 +301,7 @@ func atLeastOne(n int) int {
 
 func severitySplitItem(f JSONFinding) DisagreementItem {
 	spread := spreadFromDisagreement(f.Disagreement)
-	indep := atLeastOne(len(f.Reviewers))
+	indep := atLeastOne(distinctReviewerCount(f.Reviewers, f.FallbackReviewers))
 	return DisagreementItem{
 		Kind:         KindSeveritySplit,
 		File:         f.File,
@@ -292,7 +317,7 @@ func severitySplitItem(f JSONFinding) DisagreementItem {
 }
 
 func soloItem(f JSONFinding) DisagreementItem {
-	indep := atLeastOne(len(f.Reviewers))
+	indep := atLeastOne(distinctReviewerCount(f.Reviewers, f.FallbackReviewers))
 	return DisagreementItem{
 		Kind:         KindSoloFinding,
 		File:         f.File,
@@ -311,7 +336,7 @@ func verificationItem(f JSONFinding) DisagreementItem {
 	// score when present so labeling it a verification disagreement never demotes
 	// a high-spread split.
 	spread := spreadFromDisagreement(f.Disagreement)
-	indep := atLeastOne(len(f.Reviewers))
+	indep := atLeastOne(distinctReviewerCount(f.Reviewers, f.FallbackReviewers))
 	var skeptic, notes string
 	if f.Verification != nil {
 		skeptic = f.Verification.Skeptic
@@ -333,7 +358,7 @@ func verificationItem(f JSONFinding) DisagreementItem {
 	}
 }
 
-func grayZoneItem(c AmbiguousCluster) DisagreementItem {
+func grayZoneItem(c AmbiguousCluster, reviewerFallback map[string]string) DisagreementItem {
 	maxRank, minRank := 0, 1<<31
 	var maxSev string
 	revSet := map[string]bool{}
@@ -361,7 +386,20 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 		maxSev = stream.NormalizeSeverity(c.Findings[0].Severity)
 	}
 	reviewers := sortedKeys(revSet)
-	indep := atLeastOne(len(reviewers))
+	// De-weight gray-zone reviewers sharing a fallback model (Epic 19.10 F5).
+	// Restrict the run-level map to this cluster's reviewers so distinctReviewerCount
+	// collapses only members that actually appear here; nil when none fell back
+	// (len==0 → plain len(reviewers), preserving prior behavior).
+	var clusterFallback map[string]string
+	for _, rev := range reviewers {
+		if target := reviewerFallback[rev]; target != "" {
+			if clusterFallback == nil {
+				clusterFallback = make(map[string]string)
+			}
+			clusterFallback[rev] = target
+		}
+	}
+	indep := atLeastOne(distinctReviewerCount(reviewers, clusterFallback))
 	score := scoreFor(spread, indep, SeverityRank[maxSev])
 	// Floor: a real gray-zone cluster (2+ findings, distinct reviewers) must
 	// never sort below a LOW solo (rank 1). When all members carry unknown or

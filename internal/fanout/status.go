@@ -291,9 +291,22 @@ type AgentStatus struct {
 	PayloadMode   string   `json:"payload_mode"`
 	Truncated     bool     `json:"truncated"`
 	FilesDropped  []string `json:"files_dropped"`
-	FallbackUsed  bool     `json:"fallback_used,omitempty"`
-	FallbackFrom  string   `json:"fallback_from,omitempty"`
-	Error         string   `json:"error,omitempty"`
+	// FallbackUsed/FallbackFrom/FallbackModel record that this slot's configured
+	// primary model overflowed/failed and was served by a litellm fallback model
+	// instead. FallbackFrom names the substituted-FROM primary/persona (unique per
+	// slot — attribution only); FallbackModel names the substituted-TO model that
+	// actually served the slot. statusFor copies all three unconditionally from the
+	// Result, populated IDENTICALLY for the bulk (single-call) and chunked-merged
+	// paths: mergeResultGroup unions them across a persona's chunks before statusFor
+	// runs (Epic 19.10 F5). The run-level tally lives in PoolSummary.FallbackCount /
+	// Summary.FallbackCount. reconcile's distinct-reviewer de-weighting reads
+	// FallbackModel (NOT FallbackFrom): two personas backed by the same net model
+	// are one independent voice, so the shared model — not the per-persona name — is
+	// the collapse key.
+	FallbackUsed  bool   `json:"fallback_used,omitempty"`
+	FallbackFrom  string `json:"fallback_from,omitempty"`
+	FallbackModel string `json:"fallback_model,omitempty"`
+	Error         string `json:"error,omitempty"`
 
 	// ResponseTruncated marks that this agent's model response was cut off on
 	// finish_reason "length" (token budget exhausted) — DISTINCT from Truncated
@@ -345,6 +358,28 @@ type AgentStatus struct {
 	// sets it only when the merged result recorded partial coverage, making an
 	// otherwise-green (but incomplete) CI gate auditable.
 	UnreviewedChunks int `json:"unreviewed_chunks,omitempty"`
+
+	// Diagnosability (Epic 19.10 F8): per-agent payload-sizing and degradation
+	// record, populated whenever the per-model sizing / chunk-plan / degradation
+	// path (Tasks 02-04) produced a value for this agent. Plain omitempty scalars,
+	// matching the struct's established additive discipline (see CacheHit /
+	// UnreviewedChunks above): an agent that never entered per-model sizing (a
+	// pre-19.10 run, or a bare fixture) leaves all five zero/empty so its
+	// status.json/summary.json stays byte-identical to the pre-F8 shape.
+	// EffectiveBudget/ResolvedWindow being non-zero is the "was this agent sized"
+	// signal — a legitimately single-chunk, non-degraded reviewer has chunk_count 0
+	// and degradation_action "", indistinguishable from "not chunked", which is the
+	// correct observable state. DegradationAction reports the degradation MECHANISM
+	// that actually fired ("chunk" for a window-aware chunk split, "truncate" for a
+	// per-agent byte shed that dropped files, "" for none) — NOT the configured
+	// on_overflow policy, since on_overflow dispatch (applyOverflowPolicy) is not yet
+	// wired into the live review path (chunking is driven by review_strategy). See
+	// tech-debt-captured.md TD-004.
+	EffectiveBudget      int64  `json:"effective_budget,omitempty"`
+	ResolvedWindow       int    `json:"resolved_window,omitempty"`
+	ReservedOutputTokens int    `json:"reserved_output_tokens,omitempty"`
+	ChunkCount           int    `json:"chunk_count,omitempty"`
+	DegradationAction    string `json:"degradation_action,omitempty"`
 }
 
 // WriteStatus serializes s to path as indented JSON, writing atomically (temp

@@ -25,6 +25,13 @@ type Summary struct {
 	Succeeded int
 	Failed    int
 	Partial   bool
+	// FallbackCount is the run-level tally of results served by a fallback model
+	// (r.FallbackUsed). It is a sibling of Total/Succeeded/Failed, computed once in
+	// summarize() so both Outcome() and writePool observe the same value without
+	// re-deriving it from per-agent statuses. It counts post-merge results (one per
+	// persona), so a persona whose chunks partly fell back is counted once (Epic
+	// 19.10 F5).
+	FallbackCount int
 }
 
 // Outcome aggregates results into a Summary and decides the run-level error.
@@ -56,6 +63,12 @@ func summarize(results []Result) Summary {
 			s.Failed++
 		default:
 			s.Failed++
+		}
+		// Tally fallback substitutions in the same single pass — no second loop.
+		// Fail-closed: only an explicit r.FallbackUsed counts; missing/zero-value
+		// provenance is treated as a non-fallback (independent) voice.
+		if r.FallbackUsed {
+			s.FallbackCount++
 		}
 	}
 	s.Partial = s.Failed > 0 && s.Succeeded > 0

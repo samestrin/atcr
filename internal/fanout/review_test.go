@@ -127,7 +127,7 @@ func twoAgentConfig(srvURL string) *ReviewConfig {
 	return &ReviewConfig{
 		Registry:    reg,
 		Project:     &registry.ProjectConfig{Agents: []string{"greta", "kai"}},
-		Settings:    registry.Settings{PayloadMode: "blocks", TimeoutSecs: 600},
+		Settings:    registry.Settings{PayloadMode: "blocks", TimeoutSecs: 600, MaxSprintPlanBytes: registry.DefaultMaxSprintPlanBytes},
 		PersonaDirs: registry.PersonaDirs{}, // empty → embedded personas
 	}
 }

@@ -361,3 +361,61 @@ func TestStatusJSON_ReservedCountersRoundTrip(t *testing.T) {
 	require.NotNil(t, got.ToolBytes)
 	assert.Equal(t, int64(2048), *got.ToolBytes)
 }
+
+// --- Epic 19.10 F8: per-agent diagnosability fields ---
+
+// TestStatusJSON_DiagnosabilityFieldsRoundTrip verifies the five diagnosability
+// fields serialize and parse back when a per-model-sized run populates them (AC8).
+func TestStatusJSON_DiagnosabilityFieldsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	s := &AgentStatus{
+		Agent:                "dax",
+		Status:               StatusOK,
+		PayloadMode:          "diff",
+		EffectiveBudget:      114688,
+		ResolvedWindow:       32768,
+		ReservedOutputTokens: 8192,
+		ChunkCount:           6,
+		DegradationAction:    "chunk",
+	}
+	require.NoError(t, WriteStatus(path, s))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	// Field names land in the JSON exactly as the omitempty tags declare them.
+	for _, key := range []string{
+		`"effective_budget": 114688`,
+		`"resolved_window": 32768`,
+		`"reserved_output_tokens": 8192`,
+		`"chunk_count": 6`,
+		`"degradation_action": "chunk"`,
+	} {
+		assert.Contains(t, string(data), key)
+	}
+
+	var got AgentStatus
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, int64(114688), got.EffectiveBudget)
+	assert.Equal(t, 32768, got.ResolvedWindow)
+	assert.Equal(t, 8192, got.ReservedOutputTokens)
+	assert.Equal(t, 6, got.ChunkCount)
+	assert.Equal(t, "chunk", got.DegradationAction)
+}
+
+// TestStatusJSON_DiagnosabilityFieldsOmittedWhenUnsized verifies an agent that
+// never went through per-model sizing (a bare/pre-19.10 result) emits none of the
+// five new keys, keeping status.json byte-identical to the pre-F8 shape.
+func TestStatusJSON_DiagnosabilityFieldsOmittedWhenUnsized(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	s := &AgentStatus{Agent: "greta", Status: StatusOK, PayloadMode: "diff"}
+	require.NoError(t, WriteStatus(path, s))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	for _, key := range []string{
+		"effective_budget", "resolved_window", "reserved_output_tokens",
+		"chunk_count", "degradation_action",
+	} {
+		assert.NotContains(t, string(data), key, "diagnosability field %q must be absent for an unsized agent", key)
+	}
+}

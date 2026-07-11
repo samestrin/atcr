@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/log"
-	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,13 +20,13 @@ import (
 // oversized (cap, warn).
 func TestResolveScopeConstraint(t *testing.T) {
 	// No plan: empty path → no constraint, no warning (AC2).
-	if c, w := resolveScopeConstraint(ReviewRequest{}); c != "" || w != "" {
+	if c, w := resolveScopeConstraint(ReviewRequest{}, registry.DefaultMaxSprintPlanBytes); c != "" || w != "" {
 		t.Fatalf("empty path = (%q, %q), want (\"\", \"\")", c, w)
 	}
 
 	// Missing file is ignored silently (AC2).
 	missing := filepath.Join(t.TempDir(), "nope.md")
-	if c, w := resolveScopeConstraint(ReviewRequest{SprintPlanPath: missing}); c != "" || w != "" {
+	if c, w := resolveScopeConstraint(ReviewRequest{SprintPlanPath: missing}, registry.DefaultMaxSprintPlanBytes); c != "" || w != "" {
 		t.Fatalf("missing file = (%q, %q), want (\"\", \"\")", c, w)
 	}
 
@@ -34,21 +34,21 @@ func TestResolveScopeConstraint(t *testing.T) {
 	dir := t.TempDir()
 	planPath := filepath.Join(dir, "plan.md")
 	require.NoError(t, os.WriteFile(planPath, []byte("## Tasks\n- only auth changes\n"), 0o644))
-	c, w := resolveScopeConstraint(ReviewRequest{SprintPlanPath: planPath})
+	c, w := resolveScopeConstraint(ReviewRequest{SprintPlanPath: planPath}, registry.DefaultMaxSprintPlanBytes)
 	require.Contains(t, c, "SCOPE CONSTRAINT")
 	require.Contains(t, c, "only auth changes")
 	require.Empty(t, w, "a valid plan produces no warning")
 
 	// Unreadable plan (a directory): no constraint, but a warning so the review
 	// proceeds diff-wide without crashing (AC3).
-	c, w = resolveScopeConstraint(ReviewRequest{SprintPlanPath: dir})
+	c, w = resolveScopeConstraint(ReviewRequest{SprintPlanPath: dir}, registry.DefaultMaxSprintPlanBytes)
 	require.Empty(t, c, "unreadable plan yields no constraint")
 	require.NotEmpty(t, w, "unreadable plan must warn on stderr")
 
 	// Oversized plan: capped constraint plus a truncation warning (AC6).
 	big := filepath.Join(dir, "big.md")
-	require.NoError(t, os.WriteFile(big, bytes.Repeat([]byte("x"), int(payload.MaxSprintPlanBytes)+1000), 0o644))
-	c, w = resolveScopeConstraint(ReviewRequest{SprintPlanPath: big})
+	require.NoError(t, os.WriteFile(big, bytes.Repeat([]byte("x"), int(registry.DefaultMaxSprintPlanBytes)+1000), 0o644))
+	c, w = resolveScopeConstraint(ReviewRequest{SprintPlanPath: big}, registry.DefaultMaxSprintPlanBytes)
 	require.Contains(t, c, "SCOPE CONSTRAINT")
 	require.NotEmpty(t, w, "an oversized plan must warn that it was truncated")
 	// Tightened: verify the embedded plan length is exactly at the byte cap.
@@ -58,7 +58,7 @@ func TestResolveScopeConstraint(t *testing.T) {
 	require.GreaterOrEqual(t, beginIdx, 0, "constraint must have BEGIN marker")
 	require.GreaterOrEqual(t, endIdx, 0, "constraint must have END marker")
 	embeddedLen := endIdx - (beginIdx + len("----- BEGIN SPRINT PLAN -----\n"))
-	require.Equal(t, int(payload.MaxSprintPlanBytes), embeddedLen,
+	require.Equal(t, int(registry.DefaultMaxSprintPlanBytes), embeddedLen,
 		"embedded plan must be exactly MaxSprintPlanBytes bytes for ASCII-only input")
 }
 
@@ -105,7 +105,7 @@ func TestPrepareReviewFromDiff_LogsScopeWarningToContextLogger(t *testing.T) {
 	req := diffReq(t.TempDir(), out)
 
 	big := filepath.Join(t.TempDir(), "big.md")
-	require.NoError(t, os.WriteFile(big, bytes.Repeat([]byte("x"), int(payload.MaxSprintPlanBytes)+1000), 0o644))
+	require.NoError(t, os.WriteFile(big, bytes.Repeat([]byte("x"), int(registry.DefaultMaxSprintPlanBytes)+1000), 0o644))
 	req.SprintPlanPath = big
 
 	var buf bytes.Buffer
@@ -135,7 +135,7 @@ func TestPrepareReviewFromDiff_ConstraintRespectsByteBudget(t *testing.T) {
 	// Plan exceeds MaxSprintPlanBytes so the existing cap fires first; the
 	// budget/8 cap must then reduce it further to ≤ budget/8 bytes.
 	require.NoError(t, os.WriteFile(planPath,
-		bytes.Repeat([]byte("x"), int(payload.MaxSprintPlanBytes)+1000), 0o644))
+		bytes.Repeat([]byte("x"), int(registry.DefaultMaxSprintPlanBytes)+1000), 0o644))
 	req.SprintPlanPath = planPath
 
 	prep, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)

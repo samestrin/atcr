@@ -104,6 +104,35 @@ type Agent struct {
 	// means "use the global context deadline only".
 	TimeoutSecs int
 
+	// ChunkTotal is the number of chunk-Slots this persona's diff was split into by
+	// the chunked strategy (Epic 19.10 F3/F6). 0 or 1 means unchunked — a single
+	// call. invokeAgent reads it to scale this call's deadline (scaledTimeoutSecs)
+	// and stamps it onto Result.ChunkCount for diagnosability (F8). runEngine reads
+	// the max across a serial lane to scale the aggregate deadline. A bare/direct-
+	// constructed Agent (doctor, tests) leaves it 0 — zero regression.
+	ChunkTotal int
+
+	// Per-agent payload-sizing record (Epic 19.10 F8), computed by buildSlots/
+	// renderAgent from this agent's OWN model window and stamped onto Result by
+	// invokeAgent so status.json/summary.json can report why the payload was sized
+	// as it was. A fallback carries its OWN re-derived budget/window. All zero on a
+	// bare/direct-constructed Agent, so unsized paths stay byte-identical (omitempty
+	// downstream). EffectiveBudget is the input byte budget the payload was
+	// shed/sized to; ResolvedWindow the model's context window (tokens);
+	// ReservedOutputTokens the output cap held back (defaultMaxTokens); and
+	// DegradationAction which action fired ("chunk"/"truncate"/"" for none).
+	EffectiveBudget      int64
+	ResolvedWindow       int
+	ReservedOutputTokens int
+	DegradationAction    string
+
+	// chunkMaxLines is the per-model chunk line budget (Epic 19.10 F3) this agent's
+	// payload was sized under. Unexported because it is never persisted, only folded
+	// into the diff-cache sizing token (F7) and reused by buildFallbackAgent so a
+	// fallback keys under the SAME chunk regime with its OWN byte budget. 0 on the
+	// bulk (non-chunked) path.
+	chunkMaxLines int
+
 	// Retry/backoff (Epic 4.6): the agent's effective retry budget and base
 	// delay (ms), resolved by renderAgent from the per-agent override layered over
 	// the global Settings. invokeAgent threads them onto the call context so the
@@ -168,16 +197,23 @@ type Slot struct {
 // agent actually answered when a fallback took over. Agent names the agent that
 // produced the result (the primary's name — attribution follows the slot, not
 // the substitute), while FallbackFrom records the primary when a fallback ran.
+// FallbackModel records the model that ACTUALLY SERVED the slot when a fallback
+// ran — the substituted-TO net model. It is distinct from FallbackFrom (the
+// substituted-FROM primary/persona name): reconcile's distinct-reviewer
+// de-weighting (Epic 19.10 F5) collapses on FallbackModel, since two personas
+// backed by the SAME net model are one independent voice, whereas each persona's
+// FallbackFrom is its own unique name and would never collapse.
 type Result struct {
-	Agent        string
-	Content      string
-	Status       string
-	Err          error
-	DurationMS   int64
-	FallbackUsed bool
-	FallbackFrom string
-	PayloadMode  string
-	Truncation   payload.Truncation
+	Agent         string
+	Content       string
+	Status        string
+	Err           error
+	DurationMS    int64
+	FallbackUsed  bool
+	FallbackFrom  string
+	FallbackModel string
+	PayloadMode   string
+	Truncation    payload.Truncation
 
 	// Review-constraint guardrails (Epic 2.2), threaded from the resolved
 	// AgentConfig by renderAgent so findingsFor can enforce them per source.
@@ -225,6 +261,22 @@ type Result struct {
 	// surfaces it in status.json/summary.json so a CI gate can react to partial
 	// coverage instead of trusting a green status that hid unreviewed files.
 	UnreviewedChunks int
+
+	// Per-agent payload-sizing / degradation record (Epic 19.10 F8). Stamped by
+	// invokeAgent from the serving Agent so status.json/summary.json record why this
+	// agent's payload was sized as it was: the effective input byte budget it was
+	// shed/sized to, the resolved model context window (tokens), the reserved
+	// output-token cap, the number of chunks its diff was split into, and which
+	// degradation action fired ("chunk"/"truncate"/"" for none). All zero/empty for
+	// an agent that never went through per-model sizing (bare fixture, pre-19.10
+	// run), so statusFor's omitempty tags keep those artifacts byte-identical.
+	// A chunked persona's merged Result inherits these from its first chunk
+	// (mergeResultGroup's out := g[0]) since every chunk shares the same values.
+	EffectiveBudget      int64
+	ResolvedWindow       int
+	ReservedOutputTokens int
+	ChunkCount           int
+	DegradationAction    string
 
 	// Per-agent usage accounting (Epic 3.3 scorecard). Model is the configured
 	// model id; TokensIn/TokensOut are the provider-reported token counts,
@@ -557,6 +609,12 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		if i > 0 {
 			r.FallbackUsed = true
 			r.FallbackFrom = s.Primary.Name
+			// The model that actually served this slot — the substituted-TO net model,
+			// NOT the primary name. reconcile's F5 de-weighting collapses two personas
+			// on the SAME served model into one voice; keying on the persona name (as
+			// FallbackFrom does, for attribution) would never collapse since each name
+			// is unique.
+			r.FallbackModel = a.Invocation.Model
 			r.Agent = s.Primary.Name // attribution follows the slot, not the substitute
 		}
 		// Truncation failover (Epic 19.5): a reviewer response that hit
@@ -585,12 +643,20 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		}
 		last = r
 	}
-	// Slot failed: stamp the primary's identity and payload provenance.
+	// Slot failed: stamp the primary's identity, payload provenance, and F8
+	// diagnosability fields. The last attempt may have been a fallback with its own
+	// budget/window, but the slot is reported under the primary's name, so the
+	// sizing signal must describe the primary's regime.
 	last.Agent = s.Primary.Name
 	last.PayloadMode = s.Primary.PayloadMode
 	last.Truncation = s.Primary.Truncation
 	last.MinSeverity = s.Primary.MinSeverity
 	last.MaxFindings = s.Primary.MaxFindings
+	last.EffectiveBudget = s.Primary.EffectiveBudget
+	last.ResolvedWindow = s.Primary.ResolvedWindow
+	last.ReservedOutputTokens = s.Primary.ReservedOutputTokens
+	last.ChunkCount = s.Primary.ChunkTotal
+	last.DegradationAction = s.Primary.DegradationAction
 	last.DurationMS = time.Since(start).Milliseconds()
 	return last
 }
@@ -607,7 +673,12 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	// loop runs under this same deadline, so timeout_secs covers the whole loop.
 	if a.TimeoutSecs > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.TimeoutSecs)*time.Second)
+		// Epic 19.10 F6: a persona fanned into many chunks on a slow local backend
+		// needs proportionally more per-call wall clock. scaledTimeoutSecs raises
+		// this call's deadline by the persona's chunk count (clamped), and is a no-op
+		// (returns a.TimeoutSecs unchanged) for the unchunked case (ChunkTotal <= 1).
+		scaled := scaledTimeoutSecs(a.TimeoutSecs, a.ChunkTotal)
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(scaled)*time.Second)
 		defer cancel()
 	}
 	// Apply this agent's effective retry budget (Epic 4.6) for the whole dispatch
@@ -651,6 +722,16 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	start := time.Now()
 	r := e.dispatchAgent(ctx, a)
 	metrics.Histogram(metrics.NameAgentDurationSeconds).Observe(time.Since(start).Seconds())
+	// Diagnosability (Epic 19.10 F8): stamp the serving agent's per-model sizing /
+	// degradation record onto its result. Cache-hit, single-shot, and tool-loop all
+	// funnel through dispatchAgent, so this is the single seam. A fallback stamps its
+	// OWN re-derived values (a is the fallback here). Zero values stay absent from
+	// status.json/summary.json via statusFor's omitempty tags.
+	r.EffectiveBudget = a.EffectiveBudget
+	r.ResolvedWindow = a.ResolvedWindow
+	r.ReservedOutputTokens = a.ReservedOutputTokens
+	r.ChunkCount = a.ChunkTotal
+	r.DegradationAction = a.DegradationAction
 	recordAgentOutcome(r)
 	return r
 }

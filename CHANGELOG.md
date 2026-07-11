@@ -1,3 +1,26 @@
+## [19.10.0] - 2026-07-11
+
+Size each multi-agent reviewer's payload to its own model's token window and degrade gracefully via a configurable `on_overflow` policy instead of shipping every reviewer the same global byte budget — fixing the confirmed failure where an oversized diff returned findings from only 1 of 11 reviewers.
+
+### Added
+
+- Per-model context-window resolver (`ContextWindowTokens`) sizing each reviewer's payload to its own model's token window, reserving the output-token budget so input can no longer overflow a small-window model by exactly the unreserved output cap.
+- Window-aware diff chunking: an over-window payload is delivered whole across appropriately-sized chunks per model (more chunks for a small-window model, fewer for a large one) instead of being shed — zero content loss on the default degradation path.
+- Configurable `on_overflow` degradation policy (`chunk` default, `truncate`, `fallback`, `fail`) with per-agent dispatch, replacing the previous hardcoded shed-or-fail behavior.
+- Fallback-model provenance recording in `summary.json`/`status.json` so a reviewer served by a substituted model is never silently counted as an independent distinct reviewer.
+- Load-scaled request timeout (per-call and aggregate, across both serial and parallel lanes) so a small-window model fanned into many chunks on a slow backend no longer hits the flat timeout wall.
+- Per-agent diagnosability fields (`effective_budget`, `resolved_window`, `reserved_output_tokens`, `chunk_count`, `degradation_action`) recorded for every reviewer in `summary.json`.
+- Configurable `max_sprint_plan_bytes` setting (`.atcr/config.yaml`, default 64KB) replacing the previous hardcoded 16KB sprint-plan scope-constraint limit.
+- A standalone, env-coupled live-audit harness (`examples/19.10-live-audit.sh`) that re-runs a known-bad diff range against the real model roster and hard-gates on zero context-window overflows.
+
+### Fixed
+
+- The fan-out diff cache now folds each reviewer's effective sizing/chunk plan into its cache key, so a per-agent-sized payload can never be served a stale, differently-sized cache hit.
+- The sprint-plan `--sprint-plan` SCOPE CONSTRAINT block is now counted and capped against each reviewer's own budget, closing an overflow it could otherwise reintroduce on small-window models.
+- A reviewer whose entire payload exceeds its model's window is no longer dispatched with an indistinguishable-from-healthy status; the overflow is now recorded explicitly.
+- Reconcile's findings CONFIDENCE score is recomputed after fallback-model de-weighting, so two reviewers silently served by the same substituted model no longer inflate a finding's confidence.
+- Assorted hardening: a negative output-token count can no longer inflate a reviewer's byte budget; an oversized final diff chunk at the chunk-count ceiling is now flagged instead of shipped silently oversized; a pathological sprint-plan byte limit can no longer silently blank the plan or integer-overflow the read ceiling; the live-audit skip guard now checks the specific previously-failing agents rather than any reachable agent.
+
 ## [19.9.0] - 2026-07-10
 
 Add a GitHub-native `atcr personas submit <name>` command that runs the local fixture gate then forks the repo and opens a pull request via `gh`, plus a `submitted` status for two-tier curation of community persona contributions.

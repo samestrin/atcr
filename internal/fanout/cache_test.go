@@ -24,7 +24,7 @@ func cacheableSlot(name, model, prompt string) Slot {
 	return Slot{Primary: Agent{
 		Name:        name,
 		PayloadMode: "blocks",
-		CacheKey:    diffCacheKey(prompt, model, "", nil),
+		CacheKey:    diffCacheKey(prompt, model, "", nil, ""),
 		Invocation:  llmclient.Invocation{Model: model, Prompt: prompt},
 	}}
 }
@@ -111,7 +111,7 @@ func TestEngine_DifferentTemperatureMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", "", temp),
+			CacheKey:    diffCacheKey("same prompt", "m", "", temp, ""),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", Temperature: temp},
 		}}
 	}
@@ -133,7 +133,7 @@ func TestEngine_DifferentProviderMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", baseURL, nil),
+			CacheKey:    diffCacheKey("same prompt", "m", baseURL, nil, ""),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", BaseURL: baseURL},
 		}}
 	}
@@ -144,6 +144,53 @@ func TestEngine_DifferentProviderMissesCache(t *testing.T) {
 	r := NewEngine(f, WithCache(store, false)).Run(context.Background(),
 		[]Slot{mk("https://api.provider-b.test/v1")})
 	assert.False(t, r[0].CacheHit, "same model+prompt+temp on a different backend must not replay")
+	assert.Equal(t, 2, f.callCount("m"))
+}
+
+// TestDiffCacheKey_SizingTokenDistinguishesRegimes guards the Epic 19.10 F7
+// contract: the per-agent effective-budget/chunk-plan token is folded into the
+// key, so two calls identical in prompt/model/backend/temperature but sized under
+// different regimes produce DIFFERENT keys — while the "0:0"/empty sentinel
+// collapses to the pre-F7 key so no existing on-disk entry is invalidated.
+func TestDiffCacheKey_SizingTokenDistinguishesRegimes(t *testing.T) {
+	// Backward-compat: empty and the "0:0" no-sizing sentinel both reduce to the
+	// exact pre-F7 (baseURL+temperature-only) key.
+	base := diffCacheKey("p", "m", "", nil, "")
+	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0"),
+		`"0:0" (no per-agent sizing) must collapse to the pre-F7 key`)
+
+	// A real sizing token changes the key, and two distinct regimes never collide —
+	// even though prompt/model/backend/temperature are identical across all three.
+	sizedA := diffCacheKey("p", "m", "", nil, "100000:0")  // bulk, 100KB budget
+	sizedB := diffCacheKey("p", "m", "", nil, "50000:200") // chunked, 50KB budget, 200-line chunks
+	assert.NotEqual(t, base, sizedA, "a real sizing regime must change the key")
+	assert.NotEqual(t, sizedA, sizedB, "different sizing regimes must produce different keys")
+}
+
+// TestEngine_DifferentSizingMissesCache is the AC7 integration regression
+// (mirrors TestEngine_DifferentProviderMissesCache): two slots with identical
+// prompt/model/backend/temperature but different per-agent sizing tokens must NOT
+// share one cache entry, or a per-agent-sized payload would be served a stale
+// full-payload review produced under a different sizing regime. This test fails
+// against the pre-F7 4-arg diffCacheKey — there the two keys would be identical
+// (same prompt/model/backend/temp), so the second run would replay a cache HIT.
+func TestEngine_DifferentSizingMissesCache(t *testing.T) {
+	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
+	f := newFake()
+	mk := func(sizing string) Slot {
+		return Slot{Primary: Agent{
+			Name:        "a",
+			PayloadMode: "blocks",
+			CacheKey:    diffCacheKey("same prompt", "m", "", nil, sizing),
+			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt"},
+		}}
+	}
+	// First run sizes under one regime and warms the cache.
+	NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{mk("100000:0")})
+
+	// Same prompt/model/backend/temp, DIFFERENT sizing regime -> distinct key -> live.
+	r := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{mk("50000:200")})
+	assert.False(t, r[0].CacheHit, "a per-agent-sized payload must not be served a stale full-payload cache hit")
 	assert.Equal(t, 2, f.callCount("m"))
 }
 

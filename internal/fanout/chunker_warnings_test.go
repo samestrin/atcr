@@ -38,6 +38,40 @@ func TestBuildSlots_ChunkedWarnsOnLoneOversizedFile(t *testing.T) {
 	require.Contains(t, out, "greta")
 }
 
+// TD 19.10 (chunker.go:130): once the maxChunksPerAgent ceiling is reached the
+// final chunk absorbs EVERY remaining file and can far exceed max_context_lines —
+// a MULTI-file oversized chunk. The pre-dispatch warning loop only flagged a LONE
+// oversized file (fileCount == 1), so the ceiling-induced oversized chunk shipped
+// silently, breaking the "each chunk fits the window" invariant with no signal.
+// It must now be flagged pre-dispatch (distinct "ceiling" wording) so an operator
+// knows the final chunk may overflow before the call is made.
+func TestBuildSlots_ChunkedWarnsOnCeilingOversizedChunk(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	mcl := 1
+	g := cfg.Registry.Agents["greta"]
+	g.MaxContextLines = &mcl
+	cfg.Registry.Agents["greta"] = g
+
+	// 70 single-line files with mcl=1 forces one chunk per file until the 64-chunk
+	// ceiling is hit; files 64..70 then coalesce into one oversized final chunk.
+	var b strings.Builder
+	for i := 0; i < 70; i++ {
+		b.WriteString(fileSeg("f"+itoa(i)+".go", 1))
+	}
+	payloads := map[string]modePayload{"blocks": {Text: b.String(), FileCount: 70}}
+
+	var slots []Slot
+	out := captureStderr(t, func() {
+		var err error
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		require.NoError(t, err)
+	})
+	require.Len(t, slots, 64, "the slot count is capped at the maxChunksPerAgent ceiling")
+	require.Contains(t, out, "ceiling", "the ceiling-induced multi-file oversized chunk must be flagged pre-dispatch")
+}
+
 func TestBuildSlots_ChunkedSuppressesOversizeWarning(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}

@@ -71,6 +71,26 @@ type Finding struct {
 	// is valid, when no confident single candidate exists, or when no index is
 	// available (non-git repo). Set only alongside a non-empty PathWarning.
 	PathSuggestion string // e.g. "internal/auth/validate.go"; empty when none
+
+	// FallbackModel records the model that SERVED the SOURCE slot this finding came
+	// from when a litellm fallback substituted for the configured primary (Epic
+	// 19.10 F5). Like PathValid/PathWarning it is NOT part of the wire format — no
+	// findings.txt column carries it — and stays empty until reconcile stamps it
+	// post-parse from the source's AgentStatus (status.json fallback_model, written
+	// by fanout's statusFor). A non-empty value is the substituted-TO net model;
+	// empty means the slot ran on its own configured model (an independent voice).
+	// Reconcile's distinct-reviewer independence count collapses reviewers sharing
+	// the same non-empty FallbackModel into a single voice, so one net model backing
+	// multiple personas is not counted as multiple distinct reviewers. Keying on the
+	// served MODEL (not the per-persona substituted-from name, which is unique and
+	// would never collapse) is what makes the de-weighting actually fire.
+	//
+	// json:"-" — this is an in-memory-only stamp (built at discovery, consumed by
+	// stampFallbackProvenance), never a serialized column. The tag keeps it out of
+	// the ambiguous.json wire layout (which marshals raw stream.Finding values with
+	// PascalCase keys), preserving the Epic 8.0 byte-identical baseline that a new
+	// serialized field would otherwise break.
+	FallbackModel string `json:"-"` // served fallback model; empty when not a fallback
 }
 
 // SkippedRow records a line skipped as malformed (wrong column count), with its

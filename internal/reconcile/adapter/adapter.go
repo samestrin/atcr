@@ -64,11 +64,12 @@ func FromFinding(f reconcile.Finding) stream.Finding {
 // internal recon.JSONFinding, the single place ATCR-only path-validation fields
 // are stamped onto the reconciled wire record (Phase 2 Clarification Q1). The 9
 // wire fields, Reviewers, Confidence, and Disagreement carry over from the
-// library finding; PathValid/PathWarning/PathSuggestion are copied from paths
-// (the originating ATCR stream.Finding); the *Verification pointer is shared
-// (identity preserved) so gate.go and internal/debate read/mutate the same block.
+// library finding; PathValid/PathWarning/PathSuggestion and FallbackReviewers are
+// copied from paths (the originating ATCR stream.Finding); the *Verification
+// pointer is shared (identity preserved) so gate.go and internal/debate read/mutate
+// the same block.
 func ToJSONFinding(f reconcile.Finding, paths stream.Finding) recon.JSONFinding {
-	return recon.JSONFinding{
+	jf := recon.JSONFinding{
 		Severity:       f.Severity,
 		File:           f.File,
 		Line:           f.Line,
@@ -85,4 +86,13 @@ func ToJSONFinding(f reconcile.Finding, paths stream.Finding) recon.JSONFinding 
 		PathWarning:    paths.PathWarning,
 		PathSuggestion: paths.PathSuggestion,
 	}
+	// Stamp fallback provenance (Epic 19.10 F5) from the side-channel stream.Finding,
+	// mirroring the PathValid/PathWarning stamping: when the originating slot was
+	// served by a fallback, record reviewer→served-model so reconcile's
+	// distinct-reviewer count can de-weight it. Empty FallbackModel leaves the map
+	// nil (omitempty → byte-identical to a non-fallback finding).
+	if paths.FallbackModel != "" && paths.Reviewer != "" {
+		jf.FallbackReviewers = map[string]string{paths.Reviewer: paths.FallbackModel}
+	}
+	return jf
 }

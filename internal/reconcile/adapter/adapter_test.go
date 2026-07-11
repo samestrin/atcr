@@ -97,6 +97,24 @@ func TestBoundaryAdapter_FindingConversionRoundTrip(t *testing.T) {
 	require.Same(t, verif, jf.Verification)
 }
 
+// TestToJSONFinding_StampsFallbackReviewers verifies the Epic 19.10 F5 fallback
+// provenance is stamped onto JSONFinding from the side-channel stream.Finding,
+// mirroring the PathValid/PathWarning stamping — and left empty when the source
+// slot ran on its own configured model (no fallback).
+func TestToJSONFinding_StampsFallbackReviewers(t *testing.T) {
+	rf := reconcile.Finding{Severity: "HIGH", File: "a.go", Line: 1, Reviewers: []string{"greta"}}
+
+	// Fallback-served source → FallbackReviewers maps reviewer → served model.
+	served := stream.Finding{Reviewer: "greta", FallbackModel: "net-model"}
+	jf := ToJSONFinding(rf, served)
+	assert.Equal(t, map[string]string{"greta": "net-model"}, jf.FallbackReviewers)
+
+	// No fallback → the map stays nil (omitempty keeps findings.json byte-identical).
+	own := stream.Finding{Reviewer: "greta"}
+	jf2 := ToJSONFinding(rf, own)
+	assert.Nil(t, jf2.FallbackReviewers)
+}
+
 // TestJSONFindings_LivePathPreservesVerificationIdentity covers the live path
 // debate/gate depend on: Merged.Verification -> Result.JSONFindings() keeps the
 // same *Verification pointer, not just an equal value. A deep-copy refactor of

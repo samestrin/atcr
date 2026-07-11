@@ -94,6 +94,8 @@ func ConfidenceForVerdict(prior, verdict string) string {
 	return reclib.ConfidenceForVerdict(prior, verdict)
 }
 
+func ConfidenceFor(reviewerCount int) string { return reclib.ConfidenceFor(reviewerCount) }
+
 func ConfidenceAtOrAbove(c, floor string) bool { return reclib.ConfidenceAtOrAbove(c, floor) }
 
 func HasFixAttribution(evidence, name string) bool { return reclib.HasFixAttribution(evidence, name) }

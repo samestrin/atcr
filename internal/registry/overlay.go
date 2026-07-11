@@ -36,8 +36,13 @@ const (
 var sharedSettingsKeys = []string{
 	"roster",
 	"payload_mode",
+	"review_strategy",
+	"on_overflow",
 	"timeout_secs",
+	"payload_byte_budget",
 	"max_parallel",
+	"cache_max_bytes",
+	"max_sprint_plan_bytes",
 	"fail_on",
 }
 

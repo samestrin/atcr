@@ -7,20 +7,32 @@ import (
 	"unicode/utf8"
 )
 
-// MaxSprintPlanBytes is the fixed byte ceiling applied to sprint-plan content
-// before it is wrapped in a SCOPE CONSTRAINT block and prepended to every agent
-// prompt. The constraint is uncounted by ApplyByteBudget (which runs during
-// payload build, before render), so an uncapped plan would inflate every agent
-// prompt past payload_byte_budget. At 16 KiB it is ~3% of the 512 KiB default
-// budget — large enough for any real sprint/epic plan, small enough that the
-// extra bytes cannot meaningfully bloat a prompt. Because the constraint is
-// added after budget accounting, a prompt already near payload_byte_budget can
-// still exceed it; the cap bounds the inflation rather than preventing overflow
+// The sprint-plan byte ceiling is caller-supplied (plan 19.10 F9): it is
+// resolved from max_sprint_plan_bytes through internal/registry's precedence
+// chain and passed into ReadSprintPlan/ScopeConstraint as maxBytes, so this
+// package stays free of any internal/registry dependency (avoiding an import
+// cycle). The ceiling bounds how much plan text is wrapped in a SCOPE CONSTRAINT
+// block and prepended to every agent prompt; because the constraint is uncounted
+// by ApplyByteBudget (which runs during payload build, before render), an
+// uncapped plan would inflate every prompt past payload_byte_budget. The
+// embedded default (registry.DefaultMaxSprintPlanBytes, 64 KiB) is large enough
+// for any real sprint/epic plan; because the constraint is added after budget
+// accounting it bounds the inflation rather than preventing overflow outright
 // (Epic 12.2 AC6).
-const MaxSprintPlanBytes int64 = 16384
+
+// maxSprintPlanReadCeiling is a hard upper bound on how many bytes
+// ReadSprintPlan will ever buffer, regardless of what maxBytes the caller
+// supplies. It protects against a misconfigured (or bypassed-validation) huge
+// maxBytes that would otherwise exhaust memory via io.ReadAll. The value is
+// intentionally generous (1 MiB) compared with the 64 KiB production default so
+// legitimate operator overrides are not silently truncated at the default.
+const maxSprintPlanReadCeiling int64 = 1 << 20
 
 // ReadSprintPlan loads the sprint-plan file at path, returning its raw content.
-// It distinguishes three cases so the caller can scope a review correctly:
+// maxBytes is the caller-supplied byte ceiling (plan 19.10 F9): only maxBytes+1
+// bytes are ever buffered so a huge or non-regular file cannot exhaust memory,
+// and the extra byte lets ScopeConstraint detect an oversized source. It
+// distinguishes three cases so the caller can scope a review correctly:
 //
 //   - path is empty (the --sprint-plan flag was not set) or the file does not
 //     exist → ("", nil): no plan, the review proceeds diff-wide (Epic 12.2 AC2).
@@ -32,7 +44,7 @@ const MaxSprintPlanBytes int64 = 16384
 //
 // The plan file is trusted local operator input (Epic 12.2 Security
 // Considerations), so no path-traversal or content sandboxing is performed here.
-func ReadSprintPlan(path string) (content string, err error) {
+func ReadSprintPlan(path string, maxBytes int64) (content string, err error) {
 	if strings.TrimSpace(path) == "" {
 		return "", nil
 	}
@@ -53,9 +65,23 @@ func ReadSprintPlan(path string) (content string, err error) {
 	}()
 
 	// Bound memory use even if the path points at a huge or non-regular file: only
-	// MaxSprintPlanBytes+1 bytes are ever buffered. The extra byte lets
-	// ScopeConstraint detect that the source was oversized and surface truncation.
-	b, err := io.ReadAll(io.LimitReader(f, MaxSprintPlanBytes+1))
+	// maxBytes+1 bytes are ever buffered. The extra byte lets ScopeConstraint
+	// detect that the source was oversized and surface truncation.
+	//
+	// Clamp to a hard ceiling so a misconfigured huge maxBytes cannot exhaust
+	// memory, and guard maxBytes+1 against int64 overflow (e.g. math.MaxInt64
+	// wraps to negative and makes LimitReader read zero bytes).
+	if maxBytes > maxSprintPlanReadCeiling {
+		maxBytes = maxSprintPlanReadCeiling
+	}
+	// A non-positive maxBytes only reaches here when the registry precedence chain
+	// was bypassed (a valid config always resolves a positive ceiling). Treat it as
+	// the defensive read ceiling rather than 0 so a real plan is not truncated to a
+	// single byte and silently blanked downstream in ScopeConstraint.
+	if maxBytes <= 0 {
+		maxBytes = maxSprintPlanReadCeiling
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
 	if err != nil {
 		return "", err
 	}
@@ -64,34 +90,42 @@ func ReadSprintPlan(path string) (content string, err error) {
 
 // ScopeConstraint formats content as a SCOPE CONSTRAINT block to prepend to a
 // reviewer's payload, immediately before the diff. It returns the block and
-// whether the plan content was truncated to fit MaxSprintPlanBytes.
+// whether the plan content was truncated to fit the caller-supplied maxBytes
+// ceiling (plan 19.10 F9).
 //
 // Empty or whitespace-only content yields ("", false): there is nothing to
 // constrain, so the review proceeds unconstrained (Epic 12.2 AC2). Otherwise the
-// content is capped at MaxSprintPlanBytes on a UTF-8 rune boundary (so the block
-// is never invalid UTF-8) and wrapped with the constraint instruction. The block
-// is a SOFT scope, mirroring ScopeFocus: it steers reviewers toward in-scope
-// changes but explicitly preserves an escape hatch for genuinely critical
-// out-of-scope issues, so a real security/data-loss bug is never silently lost.
+// content is capped at maxBytes on a UTF-8 rune boundary (so the block is never
+// invalid UTF-8) and wrapped with the constraint instruction. The block is a
+// SOFT scope, mirroring ScopeFocus: it steers reviewers toward in-scope changes
+// but explicitly preserves an escape hatch for genuinely critical out-of-scope
+// issues, so a real security/data-loss bug is never silently lost.
 //
-// Cache-invalidation limitation for oversized plans: only the first
-// MaxSprintPlanBytes of the plan are reflected in the rendered prompt (and
-// therefore in the diff-cache key). Two distinct plans that share the same
-// leading bytes produce identical SCOPE CONSTRAINT blocks and identical cache
-// keys, so an edit that changes only content beyond the cap will not invalidate
-// cached review results. Keeping plans under the cap is the recommended fix.
+// Cache-invalidation limitation for oversized plans: only the first maxBytes of
+// the plan are reflected in the rendered prompt (and therefore in the diff-cache
+// key). Two distinct plans that share the same leading bytes produce identical
+// SCOPE CONSTRAINT blocks and identical cache keys, so an edit that changes only
+// content beyond the cap will not invalidate cached review results. Keeping plans
+// under the cap is the recommended fix.
 //
 // Like ScopeFocus, the plan is trusted operator input and template syntax is
 // inert (payload is injected as data, never re-parsed). As a defense-in-depth
 // measure, any BEGIN/END framing markers found in the plan body are neutralized
 // before embedding so that machine-generated plan content crossing an untrusted
 // boundary cannot close the framing block early and inject instructions.
-func ScopeConstraint(content string) (block string, truncated bool) {
+func ScopeConstraint(content string, maxBytes int64) (block string, truncated bool) {
 	plan := strings.TrimSpace(content)
 	if plan == "" {
 		return "", false
 	}
-	plan, truncated = capUTF8(plan, int(MaxSprintPlanBytes))
+	// Defensive default (mirrors ReadSprintPlan): a bypassed-validation maxBytes <= 0
+	// must not cap the plan to zero bytes, which would inject a SCOPE CONSTRAINT
+	// block whose plan is silently truncated to nothing. Fall back to the same hard
+	// read ceiling so a real (sub-ceiling) plan is delivered whole.
+	if maxBytes <= 0 {
+		maxBytes = maxSprintPlanReadCeiling
+	}
+	plan, truncated = capUTF8(plan, int(maxBytes))
 	// Defense-in-depth: neutralize any marker lines that could close the framing
 	// block early and inject instructions to the reviewer model. Sprint plans are
 	// increasingly machine-generated from issue/PR text that crosses an untrusted

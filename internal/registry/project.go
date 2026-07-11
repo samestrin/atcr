@@ -19,6 +19,13 @@ const (
 	// sends the whole diff in one prompt per persona, keeping API cost strictly
 	// bounded; users opt into "chunked" for higher accuracy on large PRs.
 	DefaultReviewStrategy = "bulk"
+	// DefaultOnOverflow is the embedded F4 degradation policy (plan 19.10) used
+	// when a per-agent payload exceeds its effective budget: "chunk" delivers the
+	// whole diff across window-sized chunks with no content dropped. The full
+	// ladder is chunk/truncate/fallback/fail; "fallback"/"fail" are recognized as
+	// config values but recognized-but-gated per AC4 (dispatch enforcement lives
+	// in internal/fanout / Task 04, not here).
+	DefaultOnOverflow = "chunk"
 	// DefaultPayloadByteBudget is the embedded per-payload byte budget:
 	// 512 KiB ≈ 128k tokens at ~4 bytes/token, fitting the dominant
 	// 128k-context model tier with prompt headroom. 0 is the documented
@@ -32,6 +39,14 @@ const (
 	// least-recently-used eviction kicks in. 0 is the documented unbounded
 	// escape hatch (parity with payload_byte_budget / max_parallel).
 	DefaultCacheMaxBytes int64 = 50 * 1024 * 1024
+	// DefaultMaxSprintPlanBytes is the embedded byte ceiling applied to a
+	// --sprint-plan file before it is wrapped in a SCOPE CONSTRAINT block and
+	// prepended to every reviewer's payload (Epic 12.2 / plan 19.10 F9). 64 KiB
+	// gives operators on larger-context models room for a fuller sprint/epic plan
+	// than the original fixed 16 KiB ceiling. Unlike payload_byte_budget /
+	// cache_max_bytes, 0 is NOT an "unbounded" sentinel here — there is no
+	// unbounded plan-injection use case, so <= 0 is rejected at load.
+	DefaultMaxSprintPlanBytes int64 = 65536
 )
 
 // ProjectConfig is the project-level configuration from .atcr/config.yaml:
@@ -45,7 +60,11 @@ type ProjectConfig struct {
 	// ReviewStrategy overrides the run-wide fan-out strategy (Epic 14.3): "bulk"
 	// or "chunked". Empty inherits the registry tier or the embedded default.
 	ReviewStrategy string `yaml:"review_strategy,omitempty"`
-	TimeoutSecs    *int   `yaml:"timeout_secs,omitempty"`
+	// OnOverflow selects the F4 degradation policy (plan 19.10) when a payload
+	// exceeds budget: chunk (default), truncate, fallback, or fail. Empty inherits
+	// the registry tier or the embedded default.
+	OnOverflow  string `yaml:"on_overflow,omitempty"`
+	TimeoutSecs *int   `yaml:"timeout_secs,omitempty"`
 	// PayloadByteBudget is a pointer so an explicit 0 (unlimited) survives
 	// default application.
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
@@ -57,6 +76,10 @@ type ProjectConfig struct {
 	// so an explicit 0 (unbounded) survives default application; unset inherits
 	// the registry tier or the embedded DefaultCacheMaxBytes.
 	CacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty"`
+	// MaxSprintPlanBytes overrides the sprint-plan byte ceiling (plan 19.10 F9). A
+	// pointer so an explicit value survives default application; unset inherits
+	// the registry tier or the embedded DefaultMaxSprintPlanBytes.
+	MaxSprintPlanBytes *int64 `yaml:"max_sprint_plan_bytes,omitempty"`
 	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
 	// nil means execution is unconfigured and `--exec` is refused.
 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
@@ -97,6 +120,16 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   Unchanged diffs are served from cache, skipping the LLM call. Default 50 MiB;\n")
 	b.WriteString("#   least-recently-used entries are evicted past the cap. Set to 0 for unbounded.\n")
 	fmt.Fprintf(&b, "cache_max_bytes: %d\n", DefaultCacheMaxBytes)
+	b.WriteString("# max_sprint_plan_bytes: byte ceiling for a --sprint-plan file's SCOPE\n")
+	b.WriteString("#   CONSTRAINT injection into every reviewer's payload. Default 64 KiB; raise it\n")
+	b.WriteString("#   to give larger-context models more sprint/epic plan detail. Must be > 0.\n")
+	fmt.Fprintf(&b, "max_sprint_plan_bytes: %d\n", DefaultMaxSprintPlanBytes)
+	b.WriteString("# on_overflow: degradation policy (plan 19.10 F4) when a per-agent payload\n")
+	b.WriteString("#   exceeds its per-model budget. One of: chunk (default — deliver the whole\n")
+	b.WriteString("#   diff across window-sized chunks, no content dropped), truncate (drop the\n")
+	b.WriteString("#   lowest-priority tail, flagged), fallback, or fail. fallback/fail are\n")
+	b.WriteString("#   recognized but their dispatch prerequisites may not yet be shipped.\n")
+	fmt.Fprintf(&b, "on_overflow: %s\n", DefaultOnOverflow)
 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
 	b.WriteString("# auto_fix: opt-in remediation for `atcr review --auto-fix`. Off unless the flag\n")
 	b.WriteString("#   is passed; leave this stanza commented to keep the default review path.\n")
@@ -155,11 +188,17 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	if cfg.CacheMaxBytes != nil && *cfg.CacheMaxBytes < 0 {
 		return nil, fmt.Errorf("%s: cache_max_bytes must be >= 0 (0 = unbounded)", base)
 	}
+	if cfg.MaxSprintPlanBytes != nil && *cfg.MaxSprintPlanBytes <= 0 {
+		return nil, fmt.Errorf("%s: max_sprint_plan_bytes must be > 0, got %d", base, *cfg.MaxSprintPlanBytes)
+	}
 	if !payloadModeValid(cfg.PayloadMode) {
 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))
 	}
 	if !reviewStrategyValid(cfg.ReviewStrategy) {
 		return nil, fmt.Errorf("%s: invalid review_strategy '%s': must be one of bulk, chunked", base, strings.TrimSpace(cfg.ReviewStrategy))
+	}
+	if !onOverflowValid(cfg.OnOverflow) {
+		return nil, fmt.Errorf("%s: invalid on_overflow '%s': must be one of chunk, truncate, fallback, fail", base, strings.TrimSpace(cfg.OnOverflow))
 	}
 	if err := cfg.Sandbox.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)

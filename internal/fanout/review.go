@@ -256,7 +256,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	// Sprint-plan scope (Epic 12.2): read the plan once here and prepend its
 	// SCOPE CONSTRAINT to every reviewer's payload via buildSlots. An unreadable
 	// or oversized plan warns but never aborts the review.
-	scopeConstraint, scopeWarn := resolveScopeConstraint(req)
+	scopeConstraint, scopeWarn := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes)
 	if scopeWarn != "" {
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
@@ -351,7 +351,7 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// (second read) rather than threading the result through the function
 	// signature of finalizePreparedReview.
 	if req.SprintPlanPath != "" {
-		if sc, _ := resolveScopeConstraint(req); sc != "" {
+		if sc, _ := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes); sc != "" {
 			if err := atomicWriteFile(filepath.Join(dir, "payload", "scope-constraint.txt"), []byte(sc)); err != nil {
 				return nil, fmt.Errorf("writing scope constraint artifact: %w", err)
 			}
@@ -485,12 +485,14 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	}
 	diffMode := string(payload.ModeDiff)
 	payloads := map[string]modePayload{
-		diffMode: {Text: b.String(), FileCount: len(kept), Truncation: trunc},
+		// Entries keeps the raw pre-budget diff files so buildSlots re-sheds them
+		// per agent against each model's window (Epic 19.10 F2).
+		diffMode: {Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc},
 	}
 	// Sprint-plan scope (Epic 12.2): the ingestion path honors --sprint-plan too,
 	// prepending the SCOPE CONSTRAINT to every reviewer's payload. An unreadable or
 	// oversized plan warns but never aborts the review.
-	scopeConstraint, scopeWarn := resolveScopeConstraint(req)
+	scopeConstraint, scopeWarn := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes)
 	if scopeWarn != "" {
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
@@ -513,7 +515,18 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	runCtx := ctx
 	if p.TimeoutSec > 0 {
 		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, time.Duration(p.TimeoutSec)*time.Second)
+		// Epic 19.10 F6: a chunked persona needs ~N x the base wall clock — a serial
+		// lane runs its N chunk-Slots sequentially, and a parallel lane's N chunks
+		// queue behind max_parallel / a slow backend rather than truly overlapping.
+		// Scale the overall deadline by the largest per-persona chunk total across ALL
+		// lanes (clamped). This aggregate is the load-bearing seam for the production
+		// roster (serial_agents: [], so the confirmed greta/vera/brad timeouts are
+		// parallel): the per-call deadline in invokeAgent is a child of this runCtx and
+		// cannot extend past it, so the parent must carry the room. No-op (max chunk
+		// total <= 1) when nothing is chunked, preserving the flat deadline; unrelated
+		// non-chunked agents stay bounded by their own unscaled per-call deadline.
+		scaled := scaledTimeoutSecs(p.TimeoutSec, aggregateTimeoutFactor(p.Slots, p.MaxParallel))
+		runCtx, cancel = context.WithTimeout(ctx, time.Duration(scaled)*time.Second)
 		defer cancel()
 	}
 
@@ -709,7 +722,13 @@ func RunReview(ctx context.Context, completer Completer, cfg *ReviewConfig, req 
 }
 
 // modePayload is one payload mode's built content shared by every agent using it.
+//
+// Entries holds the UNBUDGETED per-file entries for this mode so buildSlots can
+// re-shed them to each agent's own model window at dispatch (Epic 19.10 F2) —
+// Text/FileCount/Truncation remain the global-budget union used for the on-disk
+// audit artifact and the empty-payload guard.
 type modePayload struct {
+	Entries    []payload.FileEntry
 	Text       string
 	FileCount  int
 	Truncation payload.Truncation
@@ -732,8 +751,10 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 			b.WriteString(e.Body)
 		}
 		// FileCount reflects what the reviewer actually saw (post-truncation), not
-		// the pre-budget total — the dropped files are recorded in trunc.
-		out[mode] = modePayload{Text: b.String(), FileCount: len(kept), Truncation: trunc}
+		// the pre-budget total — the dropped files are recorded in trunc. Entries
+		// keeps the raw pre-budget files so buildSlots re-sheds them per agent
+		// against each model's window (Epic 19.10 F2).
+		out[mode] = modePayload{Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc}
 	}
 	return out, nil
 }
@@ -765,19 +786,20 @@ func neededModes(cfg *ReviewConfig) []string {
 //     the review proceeds unconstrained rather than aborting, after the caller
 //     warns (AC3).
 //   - oversized plan → (capped block, warning): the content is capped at
-//     payload.MaxSprintPlanBytes before injection so it cannot inflate every agent
-//     prompt past payload_byte_budget, and the truncation is surfaced (AC6).
+//     maxSprintPlanBytes (the resolved max_sprint_plan_bytes, plan 19.10 F9)
+//     before injection so it cannot inflate every agent prompt past
+//     payload_byte_budget, and the truncation is surfaced (AC6).
 //
 // It is pure (no I/O beyond the file read) and returns the warning rather than
 // printing it, so the two prepare entry points can route it to their own stderr.
-func resolveScopeConstraint(req ReviewRequest) (constraint, warning string) {
-	raw, err := payload.ReadSprintPlan(req.SprintPlanPath)
+func resolveScopeConstraint(req ReviewRequest, maxSprintPlanBytes int64) (constraint, warning string) {
+	raw, err := payload.ReadSprintPlan(req.SprintPlanPath, maxSprintPlanBytes)
 	if err != nil {
 		return "", fmt.Sprintf("sprint plan %q is unreadable; proceeding with a diff-wide review: %v", req.SprintPlanPath, err)
 	}
-	block, truncated := payload.ScopeConstraint(raw)
+	block, truncated := payload.ScopeConstraint(raw, maxSprintPlanBytes)
 	if truncated {
-		warning = fmt.Sprintf("sprint plan %q exceeded %d bytes and was truncated before injection", req.SprintPlanPath, payload.MaxSprintPlanBytes)
+		warning = fmt.Sprintf("sprint plan %q exceeded %d bytes and was truncated before injection", req.SprintPlanPath, maxSprintPlanBytes)
 	}
 	return block, warning
 }
@@ -788,29 +810,48 @@ func resolveScopeConstraint(req ReviewRequest) (constraint, warning string) {
 // aborts the whole run fail-fast: these are configuration errors the user must
 // fix, not transient per-agent outcomes, so there is nothing useful to preserve
 // — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
+// capScopeConstraintPlan trims the plan body of a formatted SCOPE CONSTRAINT block
+// (the text between the BEGIN/END markers) to at most maxPlanBytes on a UTF-8
+// boundary, preserving the wrapper instruction text. It returns the block unchanged
+// when it has no markers, the plan already fits, or maxPlanBytes < 0. Extracted from
+// buildSlots' one-time global cap so the identical trim is reused for the per-agent
+// cap (Epic 19.10): the block is prepended uncounted in renderAgent, so each agent
+// must bound the plan against its OWN window, not a single global budget.
+func capScopeConstraintPlan(block string, maxPlanBytes int) string {
+	if len(block) == 0 || maxPlanBytes < 0 {
+		return block
+	}
+	const beginMark = "----- BEGIN SPRINT PLAN -----\n"
+	const endMark = "\n----- END SPRINT PLAN -----"
+	bs := strings.Index(block, beginMark)
+	if bs < 0 {
+		return block
+	}
+	planStart := bs + len(beginMark)
+	rest := strings.Index(block[planStart:], endMark)
+	if rest < 0 {
+		return block
+	}
+	planEnd := planStart + rest
+	if planEnd-planStart <= maxPlanBytes {
+		return block
+	}
+	cut := planStart + maxPlanBytes
+	for cut > planStart && block[cut]&0xC0 == 0x80 {
+		cut--
+	}
+	return block[:cut] + block[planEnd:]
+}
+
 func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool) ([]Slot, map[string]string, error) {
 	// Budget-aware plan content cap: scopeConstraint is prepended uncounted in
 	// renderAgent (Payload: scopeConstraint + payloadText), so a small PayloadByteBudget
 	// causes the constraint alone to inflate the rendered prompt past the budget.
 	// Truncate only the plan body (between the BEGIN/END markers) to
-	// min(MaxSprintPlanBytes, budget/8), preserving the wrapper instruction text.
+	// min(cfg.Settings.MaxSprintPlanBytes, budget/8), preserving the wrapper
+	// instruction text (F9: the ceiling is the resolved max_sprint_plan_bytes).
 	if budget := cfg.Settings.PayloadByteBudget; budget > 0 && len(scopeConstraint) > 0 {
-		const beginMark = "----- BEGIN SPRINT PLAN -----\n"
-		const endMark = "\n----- END SPRINT PLAN -----"
-		if bs := strings.Index(scopeConstraint, beginMark); bs >= 0 {
-			planStart := bs + len(beginMark)
-			if rest := strings.Index(scopeConstraint[planStart:], endMark); rest >= 0 {
-				planEnd := planStart + rest
-				maxPlan := int(min(payload.MaxSprintPlanBytes, budget/8))
-				if planEnd-planStart > maxPlan {
-					cut := planStart + maxPlan
-					for cut > planStart && scopeConstraint[cut]&0xC0 == 0x80 {
-						cut--
-					}
-					scopeConstraint = scopeConstraint[:cut] + scopeConstraint[planEnd:]
-				}
-			}
-		}
+		scopeConstraint = capScopeConstraintPlan(scopeConstraint, int(min(cfg.Settings.MaxSprintPlanBytes, budget/8)))
 	}
 	perAgentMode := map[string]string{}
 	var slots []Slot
@@ -855,6 +896,24 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		}
 		perAgentMode[name] = mode
 
+		// Per-agent SCOPE CONSTRAINT budgeting (Epic 19.10, HIGH TD). The plan block is
+		// prepended UNCOUNTED against this agent's window in renderAgent, so a large plan
+		// on a small-window model reintroduces the dax overflow on the --sprint-plan path.
+		// (B) cap the plan body to THIS model's own budget — EffectiveByteBudget/8, further
+		// bounded by max_sprint_plan_bytes when set — so a big plan cannot starve the diff;
+		// (A) the diff/chunk budgets below then reserve len(agentScopeConstraint) so plan +
+		// diff together fit the window. Base the cap on eff/8 (not min with a possibly-0
+		// max_sprint_plan_bytes, which would blank the plan).
+		agentScopeConstraint := scopeConstraint
+		agentEff := payload.EffectiveByteBudget(ac.Model, defaultMaxTokens)
+		if len(agentScopeConstraint) > 0 && agentEff > 0 {
+			planCap := agentEff / 8
+			if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
+				planCap = mspb
+			}
+			agentScopeConstraint = capScopeConstraintPlan(scopeConstraint, int(planCap))
+		}
+
 		// Chunked strategy (Epic 14.3): bin-pack this persona's diff into multiple
 		// context-limited calls, one Slot per chunk. Every chunk-slot keeps the
 		// SAME persona name, so mergeChunkResults collapses their results into one
@@ -872,7 +931,25 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				fmt.Fprintf(os.Stderr, "atcr: warning: review_strategy=chunked has no effect for payload mode %q (no diff --git markers to split on); the whole payload is sent as one chunk\n", mode)
 				warnedChunkedNoop = true
 			}
-			ml := ac.EffectiveMaxContextLines()
+			// Per-chunk line budget: an explicit operator-set max_context_lines wins
+			// (least surprise); otherwise derive maxLines from THIS agent's model
+			// window (Epic 19.10 F3), so a 32k model gets more, smaller chunks and a
+			// 144k model gets fewer — both from the same diff, zero files dropped.
+			// chunkDiff itself is unchanged; only the source of ml changes.
+			ml := payload.ChunkMaxLines(ac.Model, defaultMaxTokens)
+			if ac.MaxContextLines != nil && *ac.MaxContextLines > 0 {
+				ml = ac.EffectiveMaxContextLines()
+			} else if len(agentScopeConstraint) > 0 {
+				// (A) reserve per-chunk line headroom for the SCOPE CONSTRAINT block
+				// prepended to EVERY chunk in renderAgent. The plan is capped to
+				// EffectiveByteBudget/8 above, i.e. at most ml/8 lines, so reserving ml/8
+				// covers it without importing the payload byte/line ratio. An explicit
+				// operator max_context_lines wins (least surprise) and is left untouched.
+				ml -= ml / 8
+				if ml < 1 {
+					ml = 1
+				}
+			}
 			chunks := chunkDiff(mp.Text, ml)
 			// Warn on any chunk that is a lone file exceeding the budget (it could
 			// not be split). This runs over EVERY chunk — not just multi-chunk
@@ -891,10 +968,33 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// file. Only a genuine single-file diff (exactly one marker) qualifies.
 					if fileCount == 1 && lineCount > ml {
 						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a single file's diff (%d lines) exceeds max_context_lines (%d); sent as its own oversized chunk\n", name, lineCount, ml)
+					} else if fileCount > 1 && lineCount > ml {
+						// A MULTI-file chunk can only exceed ml at the maxChunksPerAgent
+						// ceiling: normal packing seals a chunk before it overflows, so the
+						// sole way many files land in one over-budget chunk is chunkDiff's
+						// coalesce-into-final-chunk cap (chunker.go:130). Flag it pre-dispatch
+						// with distinct "ceiling" wording so the broken "each chunk fits the
+						// window" invariant is not silent; if the oversized call then fails it
+						// is additionally counted in UnreviewedChunks post-dispatch.
+						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: a %d-file chunk (%d lines) exceeds max_context_lines (%d); the %d-chunk ceiling was reached, so remaining files were coalesced into one oversized chunk (may overflow the model)\n", name, fileCount, lineCount, ml, maxChunksPerAgent)
 					}
 				}
 			}
 			if len(chunks) > 1 {
+				// Per-agent sizing record for the chunked path (Epic 19.10 F6/F8):
+				// every chunk-Slot of this persona carries the SAME window/budget and
+				// the persona's full chunk count (len(chunks), not 1), so timeout
+				// scaling (F6) and the diagnosability fields (F8) see one consistent
+				// regime. maxLines is the ml this diff was actually split on (operator
+				// override or model-derived). The action is "chunk" — the default,
+				// no-loss degradation path.
+				chunkSizing := agentSizing{
+					effectiveBudget: payload.EffectiveByteBudget(ac.Model, defaultMaxTokens),
+					resolvedWindow:  payload.ContextWindowTokens(ac.Model),
+					maxLines:        ml,
+					chunkTotal:      len(chunks),
+					action:          "chunk",
+				}
 				for _, ct := range chunks {
 					fileCount := countDiffFiles(ct)
 					// Truncation is a diff-wide event decided by buildPayloads, not a
@@ -904,7 +1004,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// may not even appear in this chunk. Use a neutral truncation for
 					// individual chunks; the single-chunk/bulk path below still carries
 					// the real diff-wide truncation.
-					primary, err := renderAgent(cfg, name, ac, mode, ct, fileCount, payload.Truncation{}, rng, scopeConstraint)
+					primary, err := renderAgent(cfg, name, ac, mode, ct, fileCount, payload.Truncation{}, rng, agentScopeConstraint, chunkSizing)
 					if err != nil {
 						return err
 					}
@@ -919,8 +1019,111 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		}
 
 		// Bulk path (or a chunked run that produced a single chunk): one slot over
-		// the whole payload.
-		primary, err := renderAgent(cfg, name, ac, mode, mp.Text, mp.FileCount, mp.Truncation, rng, scopeConstraint)
+		// the whole payload, shed to THIS agent's own model window.
+		//
+		// Epic 19.10 F2: size the payload per agent, reserving the output cap
+		// (defaultMaxTokens). Previously every agent shared one global-budget Text,
+		// so a 32k-window model overflowed — the confirmed dax boundary 24577 input
+		// + 8192 output > 32768 — while a 144k model was starved of context it could
+		// safely use. The configured PayloadByteBudget (when > 0) still caps the
+		// per-agent budget; a small window is never inflated past what it can hold.
+		// Re-shed the UNBUDGETED entries so the budget is genuinely per-model. Do
+		// NOT re-hoist this back into one shared value.
+		// Per-agent sizing record for the bulk path (Epic 19.10 F8): resolve this
+		// model's window and effective input budget up front so they are recorded for
+		// EVERY sized agent (the "was this agent sized" signal), independent of
+		// whether shedding actually dropped a file. appliedBudget is the byte budget
+		// the payload was sized to (per-model, capped by any global PayloadByteBudget).
+		bulkWindow := payload.ContextWindowTokens(ac.Model)
+		var appliedBudget int64
+		if agentEff > 0 {
+			appliedBudget = agentEff
+			if global := cfg.Settings.PayloadByteBudget; global > 0 && global < appliedBudget {
+				appliedBudget = global
+			}
+			// (A) reserve room for the per-agent SCOPE CONSTRAINT block, prepended
+			// uncounted in renderAgent, so plan + budgeted diff together fit this model's
+			// window (Epic 19.10 HIGH TD). Floor at 0; the AllDropped guard below is the
+			// net when the reservation leaves too little for even one file.
+			if s := int64(len(agentScopeConstraint)); s > 0 {
+				appliedBudget -= s
+				if appliedBudget < 0 {
+					appliedBudget = 0
+				}
+			}
+		}
+		bulkDegradation := ""
+		bulkText, bulkFileCount, bulkTrunc := mp.Text, mp.FileCount, mp.Truncation
+		if agentEff == 0 && len(mp.Entries) > 0 {
+			// Epic 19.10 TD-002: a model whose window <= output cap + prompt overhead makes
+			// EffectiveByteBudget return 0, so the shed below is skipped and the agent keeps
+			// the FULL global-budget payload. A positive byte floor is meaningless here (zero
+			// room for any input regardless of value), so mark the same honest-degradation
+			// state the AllDropped arm records instead of leaving the action unmarked while
+			// silently shipping an over-window payload. Currently unreachable — ContextWindowTokens
+			// floors at 32768 (eff >= 71680) — so this is defense-in-depth for a future
+			// sub-overhead window or a lowered default.
+			bulkDegradation = "overflow"
+			if warnOversized {
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: model window too small to reserve output headroom (effective budget 0); sending the whole payload (may overflow) rather than sizing it\n", name)
+			}
+		}
+		if appliedBudget > 0 && len(mp.Entries) > 0 {
+			kept, trunc := payload.ApplyByteBudget(mp.Entries, appliedBudget)
+			// F4 on_overflow dispatch (Epic 19.10 TD-004): the payload overflows THIS
+			// agent's window (a file had to be shed). Route the fail/fallback arms through
+			// applyOverflowPolicy so their typed errors propagate out of add()/buildSlots()
+			// and hard-fail the whole run PRE-DISPATCH — the same precedent as the "agent
+			// not found"/"no payload built" errors above — rather than silently degrading.
+			// truncate keeps the byte shed below (applyOverflowPolicy's truncate arm
+			// delegates to this same ApplyByteBudget), and chunk keeps the whole-payload
+			// overflow net below (real bin-packing is the review_strategy=chunked path,
+			// unreachable from a single bulk slot). Gated on ACTUAL overflow so a payload
+			// that fits is never hard-failed by on_overflow=fail.
+			if trunc.Truncated || trunc.AllDropped {
+				switch cfg.Settings.OnOverflow {
+				case OverflowFail, OverflowFallback:
+					if _, err := applyOverflowPolicy(cfg.Settings.OnOverflow, "", 0, mp.Entries, appliedBudget); err != nil {
+						return err
+					}
+				}
+			}
+			// Never dispatch an EMPTY per-agent payload. If even a single file exceeds
+			// this model's window, ApplyByteBudget drops everything (AllDropped);
+			// shipping "" would make the agent silently return "no findings" — a
+			// false-clean review, the same silent-zero-findings class ErrPayloadFullyDropped
+			// guards against on the global path. Keep the whole (global-budget) payload
+			// and warn instead; Phase 3's on_overflow policy (chunk/truncate) is the real
+			// net for a file larger than a small window. This also keeps a chunked-strategy
+			// single oversized-file chunk lossless when it falls through to this bulk path.
+			if trunc.AllDropped {
+				// The payload is known to exceed the model window, yet we deliberately
+				// dispatch the whole thing rather than an empty (false-clean) review.
+				// Record this high-risk state so status.json/summary.json can distinguish
+				// an at-risk over-window reviewer from a clean comfortable fit.
+				bulkDegradation = "overflow"
+				if warnOversized {
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: no file fits its model window (%d-byte budget); sending the whole payload (may overflow) rather than an empty review\n", name, appliedBudget)
+				}
+			} else {
+				var pb strings.Builder
+				for _, e := range kept {
+					pb.WriteString(e.Body)
+				}
+				bulkText, bulkFileCount, bulkTrunc = pb.String(), len(kept), trunc
+				// The per-agent shed dropped files to fit this model's window — a lossy
+				// degradation. Record it as the diagnosability degradation_action (F8).
+				if trunc.Truncated {
+					bulkDegradation = "truncate"
+				}
+			}
+		}
+		bulkSizing := agentSizing{
+			effectiveBudget: appliedBudget,
+			resolvedWindow:  bulkWindow,
+			action:          bulkDegradation,
+		}
+		primary, err := renderAgent(cfg, name, ac, mode, bulkText, bulkFileCount, bulkTrunc, rng, agentScopeConstraint, bulkSizing)
 		if err != nil {
 			return err
 		}
@@ -957,22 +1160,53 @@ const defaultMaxTokens = 8192
 // (MaxTokens is a pointer so an explicit value always serializes).
 func maxTokensPtr() *int { v := defaultMaxTokens; return &v }
 
+// agentSizing carries the per-agent payload-sizing values buildSlots computed for
+// a reviewer from its OWN model window (Epic 19.10). renderAgent folds them into
+// the diff-cache key (F7) and records them on the Agent for diagnosability (F8)
+// and timeout scaling (F6). The zero value (an unsized/direct-constructed caller)
+// collapses the cache sizing token to "0:0" — the pre-F7 key — and leaves every
+// diagnosability field absent.
+type agentSizing struct {
+	effectiveBudget int64  // per-agent input byte budget the payload was sized to (0 = unsized)
+	resolvedWindow  int    // ContextWindowTokens(model) — the model's context window in tokens
+	maxLines        int    // per-model chunk line budget (0 = bulk/non-chunked)
+	chunkTotal      int    // chunks this persona's diff was split into (0/1 = unchunked)
+	action          string // degradation action: "chunk"/"truncate"/"" (none)
+}
+
+// sizingToken renders the per-agent effective-budget/chunk-plan identifier folded
+// into diffCacheKey (Epic 19.10 F7). "%d:%d" of (effective byte budget, chunk
+// maxLines); the bulk path passes maxLines 0, and a fully unsized agent renders
+// "0:0" which diffCacheKey treats as "no sizing applied" (pre-F7 key preserved).
+func sizingToken(effectiveBudget int64, maxLines int) string {
+	return fmt.Sprintf("%d:%d", effectiveBudget, maxLines)
+}
+
 // diffCacheKey derives the Epic 5.2 diff-cache key for a review call. It keys on
 // the FULL rendered prompt — which already embeds the payload, the resolved
 // persona, the per-agent scope focus (Epic 2.2), and the base/head refs, i.e.
 // every text input the model receives — plus the model id, the resolved backend
-// (baseURL), and the temperature (the tuning param that changes the output).
+// (baseURL), the temperature (the tuning param that changes the output), and the
+// per-agent sizing token (Epic 19.10 F7, below).
 // Keying on the rendered prompt rather than the raw payload+persona is what
 // guarantees a scope or persona change invalidates the entry instead of silently
 // replaying a stale review. The backend is folded in because atcr supports
 // arbitrary OpenAI-compatible providers: two roster agents can share an identical
 // model id (e.g. "gpt-4o-mini" or a local model name) served by different
 // endpoints, and without the backend in the key the second would replay the
-// first endpoint's review — a cross-provider cache collision. MaxTokens is
+// first endpoint's review — a cross-provider cache collision. The sizing token is
+// folded in for the same reason: Task 02/03 size the payload per agent, so two
+// runs with identical prompt/model/backend/temperature can still differ only in
+// how many bytes/lines of context were retained (e.g. a context-window override
+// changed between runs while the retained bytes happen to render identical prompt
+// text) — without the sizing token in the key the second would replay a review
+// produced under a DIFFERENT sizing regime. A cache-regime change SHOULD
+// invalidate: an agent whose effective budget previously produced a non-"0:0"
+// token gets a new key, which is the intended F7 behavior, not a bug. MaxTokens is
 // constant across review agents (defaultMaxTokens), so it is intentionally
 // omitted. min_severity/max_findings are deterministic post-LLM filters and are
 // correctly NOT in the key.
-func diffCacheKey(prompt, model, baseURL string, temperature *float64) string {
+func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing string) string {
 	temp := "default"
 	if temperature != nil {
 		temp = strconv.FormatFloat(*temperature, 'g', -1, 64)
@@ -985,6 +1219,13 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64) string {
 	if baseURL != "" {
 		tuning = baseURL + "\x00" + temp
 	}
+	// Fold the per-agent sizing token in, NUL-separated, same as baseURL. "0:0" (or
+	// empty) means "no per-agent sizing applied" and collapses to the baseURL+temp
+	// token above, preserving every pre-F7 on-disk key and existing cache_test
+	// assertion for bare/unsized agents.
+	if sizing != "" && sizing != "0:0" {
+		tuning = tuning + "\x00" + sizing
+	}
 	return cache.Key(cache.HashText(prompt), model, tuning)
 }
 
@@ -995,7 +1236,7 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64) string {
 // identity but a different diff subset. Passing the payload text in (rather than reading a
 // modePayload) is the seam that lets a chunk render its own slice of the diff
 // and report its own file count in the prompt.
-func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, payloadText string, fileCount int, trunc payload.Truncation, rng ReviewRange, scopeConstraint string) (Agent, error) {
+func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, payloadText string, fileCount int, trunc payload.Truncation, rng ReviewRange, scopeConstraint string, sz agentSizing) (Agent, error) {
 	persona, err := registry.ResolvePersona(name, ac.Persona, nil, cfg.PersonaDirs)
 	if err != nil {
 		return Agent{}, err
@@ -1030,6 +1271,13 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, 
 	if !ok {
 		return Agent{}, fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
 	}
+	// Reserved output cap (Epic 19.10 F8) is recorded only for an agent that
+	// actually went through per-model sizing (resolvedWindow > 0). A bare/unsized
+	// caller (agentSizing{}) leaves it 0 so its status.json stays byte-identical.
+	reservedOut := 0
+	if sz.resolvedWindow > 0 {
+		reservedOut = defaultMaxTokens
+	}
 	return Agent{
 		Name:             name,
 		Provider:         ac.Provider,
@@ -1045,12 +1293,24 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, 
 		ToolBudgetBytes:  derefInt64(ac.ToolBudgetBytes),
 		MinSeverity:      ac.MinSeverity,
 		MaxFindings:      ac.MaxFindings,
+		// Per-agent sizing record (Epic 19.10 F6/F8): threaded from buildSlots so
+		// invokeAgent can scale the deadline by ChunkTotal and stamp the
+		// diagnosability fields onto the Result. chunkMaxLines is kept for
+		// buildFallbackAgent to reuse this slot's chunk regime.
+		ChunkTotal:           sz.chunkTotal,
+		EffectiveBudget:      sz.effectiveBudget,
+		ResolvedWindow:       sz.resolvedWindow,
+		ReservedOutputTokens: reservedOut,
+		DegradationAction:    sz.action,
+		chunkMaxLines:        sz.maxLines,
 		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
-		// + temperature (see diffCacheKey). Tool agents carry a key too but the
-		// engine never caches them (they read live code), so setting it
-		// unconditionally is safe. A chunked run keys each chunk independently
-		// because its prompt (and thus this hash) differs per chunk.
-		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature),
+		// + temperature + the per-agent sizing token (Epic 19.10 F7, see
+		// diffCacheKey). Tool agents carry a key too but the engine never caches them
+		// (they read live code), so setting it unconditionally is safe. A chunked run
+		// keys each chunk independently because its prompt (and thus this hash)
+		// differs per chunk; the sizing token additionally distinguishes two sizing
+		// regimes that render identical prompt text.
+		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(sz.effectiveBudget, sz.maxLines)),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -1101,6 +1361,19 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 	if ac.MinSeverity != "" || ac.MaxFindings != nil || len(ac.Scope) > 0 {
 		fmt.Fprintf(os.Stderr, "warn: fallback agent %q sets its own min_severity/max_findings/scope; these are ignored — the primary lane's constraints govern\n", name)
 	}
+	// Epic 19.10 F7/F8: a fallback reviews the SAME (already-sized/chunked) prompt
+	// as its primary but on its OWN model, so it re-derives its OWN effective budget
+	// and window for the cache sizing token and diagnosability record — its cache
+	// entry must not collide with the primary's and must reflect its own model. It
+	// reuses the primary's chunk regime (chunkMaxLines / ChunkTotal / degradation
+	// action) because the diff was already split for the slot; only the byte budget
+	// is model-specific.
+	fbBudget := payload.EffectiveByteBudget(ac.Model, defaultMaxTokens)
+	fbWindow := payload.ContextWindowTokens(ac.Model)
+	fbReserved := 0
+	if fbWindow > 0 {
+		fbReserved = defaultMaxTokens
+	}
 	return Agent{
 		Name: name,
 		// A fallback keys on its OWN provider: if it uses a different provider than
@@ -1133,11 +1406,21 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		// and max_findings still govern the output.
 		MinSeverity: primary.MinSeverity,
 		MaxFindings: primary.MaxFindings,
+		// Sizing record (Epic 19.10 F6/F8): chunk regime follows the slot (same
+		// split as the primary), byte budget/window are the fallback's OWN model's.
+		ChunkTotal:           primary.ChunkTotal,
+		EffectiveBudget:      fbBudget,
+		ResolvedWindow:       fbWindow,
+		ReservedOutputTokens: fbReserved,
+		DegradationAction:    primary.DegradationAction,
+		chunkMaxLines:        primary.chunkMaxLines,
 		// Diff-cache key (Epic 5.2): a fallback reviews the SAME rendered prompt as
 		// the primary but on its OWN model and temperature, so it keys on the
 		// primary's prompt with the fallback's model/temperature — a substitute
-		// model must not collide with the primary's cache entry.
-		CacheKey: diffCacheKey(primary.Prompt, ac.Model, prov.BaseURL, ac.Temperature),
+		// model must not collide with the primary's cache entry. Its sizing token
+		// (Epic 19.10 F7) uses the fallback's OWN effective budget under the slot's
+		// chunk regime, so it also never collides across sizing regimes.
+		CacheKey: diffCacheKey(primary.Prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbBudget, primary.chunkMaxLines)),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,

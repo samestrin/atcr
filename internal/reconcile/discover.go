@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,10 @@ import (
 const (
 	findingsFileName = "findings.txt"
 	reconciledDir    = "reconciled"
+	// statusFileName is the per-agent status.json sibling of a leaf findings.txt
+	// (written by internal/fanout's statusFor). Read for fallback provenance only
+	// (Epic 19.10 F5); its full schema stays owned by fanout.
+	statusFileName = "status.json"
 )
 
 // Source is a discovered reconcile source: the immediate-child name under
@@ -88,6 +93,18 @@ func Discover(sourcesDir string, allow []string) ([]Source, error) {
 				continue
 			}
 			readable++
+			// Stamp fallback provenance (Epic 19.10 F5) from the leaf's sibling
+			// status.json: when the slot that produced this findings.txt was served
+			// by a litellm fallback model, mark every one of its findings with that
+			// SERVED model so reconcile's distinct-reviewer count can de-weight it.
+			// Fail-closed: a missing/unreadable/malformed status.json (or one with
+			// fallback_used false) leaves FallbackModel empty — the finding counts as
+			// an independent voice, mirroring the PathValid unvalidated default.
+			if fbModel := readSourceFallback(f); fbModel != "" {
+				for i := range res.Findings {
+					res.Findings[i].FallbackModel = fbModel
+				}
+			}
 			src.Findings = append(src.Findings, res.Findings...)
 			src.Skipped = append(src.Skipped, res.Skipped...)
 		}
@@ -164,6 +181,33 @@ func leafFindingsFiles(root string) ([]string, error) {
 	}
 	sort.Strings(leaves)
 	return leaves, nil
+}
+
+// readSourceFallback reads the status.json sibling of a leaf findings.txt and
+// returns the fallback MODEL that served the slot when it was served by a litellm
+// fallback (Epic 19.10 F5), else "". The served model — not the per-persona
+// substituted-from name — is the de-weighting collapse key, since two personas on
+// one net model are a single independent voice. The status.json layout is written
+// by internal/fanout's statusFor; only the provenance fields are decoded here so
+// reconcile stays decoupled from the full fanout AgentStatus type (no
+// internal/fanout import). Fail-closed on any error: a slot with no readable
+// provenance is treated as a non-fallback (independent) voice.
+func readSourceFallback(findingsPath string) string {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(findingsPath), statusFileName))
+	if err != nil {
+		return ""
+	}
+	var st struct {
+		FallbackUsed  bool   `json:"fallback_used"`
+		FallbackModel string `json:"fallback_model"`
+	}
+	if err := json.Unmarshal(data, &st); err != nil {
+		return ""
+	}
+	if !st.FallbackUsed {
+		return ""
+	}
+	return st.FallbackModel
 }
 
 // toSet builds a presence set, ignoring empty entries.

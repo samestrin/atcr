@@ -371,6 +371,10 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
 		// AFTER JSONFindings() from the source review.md narratives — the library
 		// Merged carries no narrative — so they are downstream-only here too.
 		"Justification": true, "SourceReport": true,
+		// FallbackReviewers is stamped by stampFallbackProvenance (Epic 19.10 F5)
+		// AFTER JSONFindings() from the sources' per-slot status.json — the library
+		// Merged carries no fallback provenance — so it is downstream-only here too.
+		"FallbackReviewers": true,
 	}
 	m := Merged{
 		Finding: Finding{
