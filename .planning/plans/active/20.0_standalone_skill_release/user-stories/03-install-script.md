@@ -30,13 +30,19 @@
 - **Relevant:** Directly satisfies AC4's install-script requirement (the one confirmed net-new distribution gap) without re-implementing the self-test or quick-start functionality that `atcr doctor`, `atcr quickstart`, and `docs/skill-usage.md` already provide.
 - **Time-bound:** Completed within this sprint's Story 3 implementation slot, verified before `/create-acceptance-criteria` generates detailed Gherkin scenarios for this story.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-install-script-core-install.md) | Install Script Core Installation Flow | Integration |
+| [03-02](../acceptance-criteria/03-02-install-script-prereq-and-path-checks.md) | Install Script Prerequisite and PATH Checks | Integration |
+| [03-03](../acceptance-criteria/03-03-readme-quickstart-documentation.md) | README Quickstart Documentation for install.sh | E2E |
+
+## Original Criteria Overview
 
 1. `install.sh` exists at the repo root, is executable, and successfully installs `atcr` via `go install github.com/samestrin/atcr/cmd/atcr@latest` when a Go toolchain is present.
 2. The script exits non-zero with a clear stderr message when the Go toolchain is missing or `go install` fails, and warns (without failing) when `$(go env GOPATH)/bin` is not on `$PATH`, suggesting `atcr doctor`/`atcr version` as a post-install check.
 3. README.md's Quickstart section documents `install.sh` as an alternative/companion to the existing manual `go install` command, without removing or contradicting that existing instruction.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/20.0_standalone_skill_release/`_
 
 ## Technical Considerations
 

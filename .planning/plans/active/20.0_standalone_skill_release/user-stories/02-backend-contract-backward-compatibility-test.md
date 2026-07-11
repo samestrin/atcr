@@ -30,7 +30,15 @@
 - **Relevant:** Directly satisfies AC3 of the plan — proving backward compatibility for the private `.planning/` skill consumers without re-touching the external `claude-prompts` repo.
 - **Time-bound:** Completed within this sprint cycle, as a self-contained addition alongside (not blocking) the dispatcher rewrite (Story 1) and `install.sh` (Story 3) work.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-output-tree-contract-assertion.md) | Output Tree Contract Assertion | Integration |
+| [02-02](../acceptance-criteria/02-02-id-or-path-resolution-table.md) | Id-or-Path Resolution Table-Driven Coverage | Unit/Integration |
+| [02-03](../acceptance-criteria/02-03-hermetic-provider-and-git-fixtures.md) | Hermetic Provider Mocking and Git Fixture Isolation | Integration |
+
+## Original Criteria Overview
 
 1. A new test file under `cmd/atcr/` runs the full `atcr review --output-dir` → `atcr reconcile` flow against a fixture git repo and asserts the documented output tree exists with the expected files (`manifest.json`, `payload/`, `sources/pool/findings.txt`, `sources/pool/summary.json`, `reconciled/findings.txt`, `reconciled/findings.json`, `reconciled/report.md`, `reconciled/summary.json`).
 2. The test exercises all three id-or-path resolution branches shared by `atcr reconcile`/`atcr verify` (bare review id → `.atcr/reviews/<id>/`, explicit path → used as-is, omitted argument → `.atcr/latest`) as table-driven subtests, confirming none has drifted from `docs/code-review-backend.md`.

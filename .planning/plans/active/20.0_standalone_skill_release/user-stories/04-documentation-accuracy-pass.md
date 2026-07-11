@@ -30,13 +30,19 @@
 - **Relevant:** Directly satisfies the plan's AC2 (skill artifact-location accuracy) and AC4's quick-start portion (docs/skill-usage.md + atcr quickstart already satisfy the requirement); prevents the public release from shipping documentation that misleads external adopters about the dispatcher's command surface.
 - **Time-bound:** Completed within this plan's single sprint, sequenced after User Story 1 (whose dispatcher rewrite is the change being verified against) and after User Story 3 (whose `install.sh` needs a README cross-link).
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-skill-usage-doc-accuracy.md) | `docs/skill-usage.md` Accuracy Against the Dispatcher Rewrite | Manual |
+| [04-02](../acceptance-criteria/04-02-code-review-backend-doc-accuracy.md) | `docs/code-review-backend.md` `--output-dir` Contract Accuracy | Manual |
+| [04-03](../acceptance-criteria/04-03-readme-command-accuracy-and-install-link.md) | `README.md` Command Accuracy and `install.sh` Cross-Link | Manual |
+
+## Original Criteria Overview
 
 1. `docs/skill-usage.md`'s installation steps, usage table, and `.atcr/reviews/<id>/` output description are verified against the rewritten `skill/SKILL.md` dispatcher, with any drift corrected.
 2. `docs/code-review-backend.md`'s "Output tree" code block and "Behavioral notes for callers" section are verified against the current `--output-dir` contract and current CLI behavior, with any drift corrected.
 3. `README.md`'s command table, Quickstart section, and Documentation section (README.md:199) are verified for accuracy against `cmd/atcr/main.go:185-208` and updated to link the new `install.sh` from User Story 3, with no functional change to the existing `go install` Quickstart path.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/20.0_standalone_skill_release/`_
 
 ## Technical Considerations
 

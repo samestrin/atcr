@@ -4,7 +4,7 @@ Release atcr's standalone skill (`skill/SKILL.md`) publicly as a single dispatch
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/20.0_standalone_skill_release/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/20.0_standalone_skill_release/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/20.0_standalone_skill_release/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/20.0_standalone_skill_release/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/20.0_standalone_skill_release/`
 

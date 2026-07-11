@@ -30,13 +30,21 @@
 - **Relevant:** This is the headline deliverable of the plan and the addendum's explicit rationale (product-quality OSS UX, architectural unification, prompt-size management via progressive disclosure) — without this story the plan has no public-facing dispatcher to release.
 - **Time-bound:** Completed within this plan's single sprint, as the first and highest-risk user story sequenced before the documentation-accuracy pass (Story 4) that depends on it.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-dispatcher-command-routing-table.md) | Dispatcher Command Routing Table | Unit |
+| [01-02](../acceptance-criteria/01-02-review-flow-preserved-through-dispatcher.md) | Review Orchestration Flow Preserved Through the Dispatcher | Unit |
+| [01-03](../acceptance-criteria/01-03-secondary-files-verbatim-split.md) | Secondary Files Verbatim Content Split | Unit |
+| [01-04](../acceptance-criteria/01-04-frontmatter-and-line-budget-constraints.md) | Frontmatter Validity and SKILL.md Line-Budget Constraints | Unit |
+| [01-05](../acceptance-criteria/01-05-skill-usage-docs-consistency.md) | `docs/skill-usage.md` Consistency With the Dispatcher Rewrite | Manual |
+
+## Original Criteria Overview
 
 1. `skill/SKILL.md` frontmatter and body describe a `/atcr <command> <flags>` dispatcher that enumerates and routes to the live Cobra command inventory (`cmd/atcr/main.go:185-208`), with no invented or drifted command names.
 2. The existing review-flow orchestration (range resolution, background review + status polling, host review, reconcile, report, output path) remains fully intact and reachable through the dispatcher, with Host Review Instructions, Ambiguity Adjudication, and Findings Format Reference content moved verbatim into secondary markdown files loaded on demand.
 3. `skill/SKILL.md` stays within the ~500-line budget, and `docs/skill-usage.md` is verified (and updated if needed) to still accurately describe the dispatcher's installation, usage, and `.atcr/reviews/<id>/` artifact output per AC2.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/20.0_standalone_skill_release/`_
 
 ## Technical Considerations
 
@@ -56,4 +64,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/20.0_standalo
 ---
 
 **Created:** July 11, 2026 01:48:34PM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Generated

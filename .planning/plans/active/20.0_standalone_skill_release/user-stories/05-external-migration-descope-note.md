@@ -30,13 +30,19 @@
 - **Relevant:** Closes the loop on Proposed Solution #3 without violating the workspace's single-repo write boundary; without this story, the unification goal from the addendum override would go undocumented and the requirement would appear silently dropped rather than deliberately descoped.
 - **Time-bound:** Completed within this sprint, sequenced after Story 1 (so the dispatcher template it references exists) but independent of Stories 2-4's implementation work.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-external-migration-doc-existence-and-rationale.md) | External Migration Doc Existence and Rationale | Manual |
+| [05-02](../acceptance-criteria/05-02-manual-migration-checklist-and-discoverability.md) | Manual Migration Checklist and Discoverability | Manual |
+| [05-03](../acceptance-criteria/05-03-scope-containment-no-external-repo-writes.md) | Scope Containment — No External-Repo Writes | Manual |
+
+## Original Criteria Overview
 
 1. `docs/external-migration.md` exists, states the workspace boundary reason the migration cannot be automated here, and cites Epic 12.0 as already having validated private-skill backward-compatibility end-to-end.
 2. The file contains a concrete, numbered manual migration checklist (replace fragmented skills, copy/adapt the `skill/SKILL.md` dispatcher template, preserve `.planning/` sprint workflow hooks, validate against `docs/code-review-backend.md`) that a human operator can follow later in the external `claude-prompts` repo.
 3. No files outside this repository's `docs/` tree (and this plan's own `user-stories/`/`documentation/` folders) are modified, and no attempt is made to stage, commit, or write to `~/Documents/GitHub/claude-prompts/`.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/20.0_standalone_skill_release/`_
 
 ## Technical Considerations
 
