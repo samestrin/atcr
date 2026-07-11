@@ -59,6 +59,13 @@ func stampFallbackProvenance(findings []JSONFinding, sources []Source) {
 // multiple personas — collapse to one voice, so the substitution does not inflate
 // the distinct-reviewer independence score. With no fallback data the count is
 // exactly len(reviewers), preserving pre-19.10 behavior.
+//
+// Accepted limitation: this function only sees fallback provenance. If reviewer A
+// ran natively on model M (empty fallback target) while reviewer B overflowed and
+// was served by the same model M as a fallback, both are genuinely backed by one
+// net model but are counted as two independent voices here. Recording the native
+// served model for every slot would be required to collapse that collision; for
+// now the discrepancy is documented as a known edge case.
 func distinctReviewerCount(reviewers []string, fallback map[string]string) int {
 	if len(fallback) == 0 {
 		return len(reviewers)
