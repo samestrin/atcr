@@ -58,6 +58,39 @@ func TestRun_FallbackChainExhaustedMarksFailed(t *testing.T) {
 	assert.Equal(t, 1, f.callCount("fb2"))
 }
 
+// TestRun_FallbackChainExhaustedStampsPrimaryF8 covers the failed-slot re-stamp
+// block: when every agent in a slot fails, the result must report the PRIMARY's
+// F8 diagnosability fields, not the last fallback's. The last attempt's fields
+// would attribute the fallback's larger window/budget to the primary's name.
+func TestRun_FallbackChainExhaustedStampsPrimaryF8(t *testing.T) {
+	f := newFake()
+	f.failFor["p"] = errors.New("connection refused")
+	f.failFor["fb1"] = errors.New("timeout")
+	e := NewEngine(f)
+
+	slot := Slot{Primary: Agent{
+		Name: "p", Invocation: llmclient.Invocation{Model: "p"}, PayloadMode: "blocks",
+		EffectiveBudget: 1000, ResolvedWindow: 32768, ReservedOutputTokens: 8192,
+		ChunkTotal: 4, DegradationAction: "chunk",
+	}, Fallbacks: []Agent{{
+		Name: "fb1", Invocation: llmclient.Invocation{Model: "fb1"}, PayloadMode: "diff",
+		EffectiveBudget: 9999, ResolvedWindow: 999999, ReservedOutputTokens: 1,
+		ChunkTotal: 99, DegradationAction: "truncate",
+	}}}
+
+	results := e.Run(context.Background(), []Slot{slot})
+	require.Len(t, results, 1)
+	r := results[0]
+
+	assert.Equal(t, StatusFailed, r.Status)
+	assert.Equal(t, "p", r.Agent)
+	assert.Equal(t, int64(1000), r.EffectiveBudget, "failed slot must report primary's effective budget")
+	assert.Equal(t, 32768, r.ResolvedWindow, "failed slot must report primary's resolved window")
+	assert.Equal(t, 8192, r.ReservedOutputTokens, "failed slot must report primary's reserved output tokens")
+	assert.Equal(t, 4, r.ChunkCount, "failed slot must report primary's chunk count")
+	assert.Equal(t, "chunk", r.DegradationAction, "failed slot must report primary's degradation action")
+}
+
 func TestRun_FallbackNotTriedWhenPrimarySucceeds(t *testing.T) {
 	f := newFake()
 	e := NewEngine(f)
@@ -88,6 +121,28 @@ func TestOutcome_NotPartialWhenAllSucceed(t *testing.T) {
 	s, err := Outcome([]Result{{Status: StatusOK}, {Status: StatusOK}})
 	require.NoError(t, err)
 	assert.False(t, s.Partial)
+}
+
+// TestSummarize_FallbackCount verifies summarize()/Outcome() tally FallbackCount
+// from Result.FallbackUsed in the same single pass as the status counts, and that
+// a zero-fallback run reports 0 (Epic 19.10 F5, Task 06).
+func TestSummarize_FallbackCount(t *testing.T) {
+	results := []Result{
+		{Agent: "a", Status: StatusOK, FallbackUsed: true, FallbackFrom: "a"},
+		{Agent: "b", Status: StatusOK}, // no fallback
+		{Agent: "c", Status: StatusFailed, Err: errors.New("boom"), FallbackUsed: true, FallbackFrom: "c"},
+		{Agent: "d", Status: StatusTimeout, Err: errors.New("deadline")}, // no fallback
+	}
+	s, err := Outcome(results)
+	require.NoError(t, err, "one success keeps the run non-fatal")
+	assert.Equal(t, 2, s.FallbackCount, "both FallbackUsed results counted, regardless of status")
+	assert.Equal(t, 4, s.Total)
+	assert.Equal(t, 2, s.Succeeded)
+	assert.Equal(t, 2, s.Failed)
+
+	// Zero-fallback run reports 0, not a spurious count.
+	zero := summarize([]Result{{Status: StatusOK}, {Status: StatusOK}})
+	assert.Equal(t, 0, zero.FallbackCount)
 }
 
 func TestOutcome_AllFailIsError(t *testing.T) {
