@@ -20,6 +20,14 @@ import (
 // accounting it bounds the inflation rather than preventing overflow outright
 // (Epic 12.2 AC6).
 
+// maxSprintPlanReadCeiling is a hard upper bound on how many bytes
+// ReadSprintPlan will ever buffer, regardless of what maxBytes the caller
+// supplies. It protects against a misconfigured (or bypassed-validation) huge
+// maxBytes that would otherwise exhaust memory via io.ReadAll. The value is
+// intentionally generous (1 MiB) compared with the 64 KiB production default so
+// legitimate operator overrides are not silently truncated at the default.
+const maxSprintPlanReadCeiling int64 = 1 << 20
+
 // ReadSprintPlan loads the sprint-plan file at path, returning its raw content.
 // maxBytes is the caller-supplied byte ceiling (plan 19.10 F9): only maxBytes+1
 // bytes are ever buffered so a huge or non-regular file cannot exhaust memory,
@@ -59,6 +67,16 @@ func ReadSprintPlan(path string, maxBytes int64) (content string, err error) {
 	// Bound memory use even if the path points at a huge or non-regular file: only
 	// maxBytes+1 bytes are ever buffered. The extra byte lets ScopeConstraint
 	// detect that the source was oversized and surface truncation.
+	//
+	// Clamp to a hard ceiling so a misconfigured huge maxBytes cannot exhaust
+	// memory, and guard maxBytes+1 against int64 overflow (e.g. math.MaxInt64
+	// wraps to negative and makes LimitReader read zero bytes).
+	if maxBytes > maxSprintPlanReadCeiling {
+		maxBytes = maxSprintPlanReadCeiling
+	}
+	if maxBytes < 0 {
+		maxBytes = 0
+	}
 	b, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
 	if err != nil {
 		return "", err
