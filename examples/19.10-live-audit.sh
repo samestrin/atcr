@@ -60,12 +60,21 @@ if [ "$doctor_rc" -eq 2 ]; then
   skip "live roster unreachable — 'atcr doctor' reported a config/usage error (exit 2); check .atcr/config.yaml providers and orchestrator.lan. See examples/19.10-live-audit.sh"
 fi
 
-reachable="$(printf '%s' "$doctor_json" | jq '[.agents[] | select(.status == "ok" or .status == "ok_warning")] | length' 2>/dev/null || echo 0)"
-[ -n "$reachable" ] || reachable=0
-if [ "$reachable" -eq 0 ]; then
-  skip "live roster unreachable — 0 agents reachable via 'atcr doctor' (orchestrator.lan or .atcr/config.yaml providers not configured). See examples/19.10-live-audit.sh"
+# The audit only needs the five previously-failed agents to be reachable. Skip
+# (do not gate-fail) when none of those five are reachable, but allow the audit
+# to proceed if any one of them is live — a partial failure is the signal this
+# gate is designed to inspect.
+reachable_names="$(printf '%s' "$doctor_json" | jq -r '.agents[] | select(.status == "ok" or .status == "ok_warning") | .name' 2>/dev/null || true)"
+reachable_failed=0
+for agent in "${PREV_FAILED_AGENTS[@]}"; do
+  if printf '%s\n' "$reachable_names" | grep -qx "$agent"; then
+    reachable_failed=$((reachable_failed + 1))
+  fi
+done
+if [ "$reachable_failed" -eq 0 ]; then
+  skip "live roster unreachable — none of the previously-failed agents (${PREV_FAILED_AGENTS[*]}) are reachable via 'atcr doctor' (orchestrator.lan or .atcr/config.yaml providers not configured). See examples/19.10-live-audit.sh"
 fi
-echo "doctor: $reachable agent(s) reachable — proceeding with the live audit" >&2
+echo "doctor: $reachable_failed of ${#PREV_FAILED_AGENTS[@]} previously-failed agent(s) reachable — proceeding with the live audit" >&2
 
 # ---------------------------------------------------------------------------
 # Step 2: verify the committed "before" baseline exists (Step 6 reads it).
