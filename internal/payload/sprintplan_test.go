@@ -1,6 +1,7 @@
 package payload
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,6 +90,28 @@ func TestReadSprintPlan_LimitsReadSize(t *testing.T) {
 	_, truncated := ScopeConstraint(got, testMaxBytes)
 	if !truncated {
 		t.Fatalf("ScopeConstraint did not detect truncation after limited read")
+	}
+}
+
+// TestReadSprintPlan_MaxInt64DoesNotReturnEmpty guards against the int64 overflow
+// when ReadSprintPlan computes maxBytes+1. A value of math.MaxInt64 makes the
+// addition wrap to a negative int64; io.LimitReader then reads zero bytes and the
+// function silently returns an empty plan. The fix clamps maxBytes to a hard
+// ceiling and guards the +1 addition, so a misconfigured huge limit still reads
+// the file (or is capped) rather than returning "".
+func TestReadSprintPlan_MaxInt64DoesNotReturnEmpty(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "plan.md")
+	const body = "# Sprint\nkeep planning\n"
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadSprintPlan(p, math.MaxInt64)
+	if err != nil {
+		t.Fatalf("ReadSprintPlan(MaxInt64) error: %v", err)
+	}
+	if !strings.Contains(got, body) {
+		t.Fatalf("ReadSprintPlan(MaxInt64) = %q, must contain %q", got, body)
 	}
 }
 
