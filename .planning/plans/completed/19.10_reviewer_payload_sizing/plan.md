@@ -1,7 +1,7 @@
 # Plan 19.10: Per-Model Payload Sizing & Graceful Degradation
 
 ## Metadata
-- **Plan Type:** bugfix
+- **Plan Type:** infrastructure
 - **Last Modified:** 2026-07-11
 - **Original Requirements:** [original-requirements.md](original-requirements.md)
 
