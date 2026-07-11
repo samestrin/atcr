@@ -256,7 +256,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	// Sprint-plan scope (Epic 12.2): read the plan once here and prepend its
 	// SCOPE CONSTRAINT to every reviewer's payload via buildSlots. An unreadable
 	// or oversized plan warns but never aborts the review.
-	scopeConstraint, scopeWarn := resolveScopeConstraint(req)
+	scopeConstraint, scopeWarn := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes)
 	if scopeWarn != "" {
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
@@ -351,7 +351,7 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// (second read) rather than threading the result through the function
 	// signature of finalizePreparedReview.
 	if req.SprintPlanPath != "" {
-		if sc, _ := resolveScopeConstraint(req); sc != "" {
+		if sc, _ := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes); sc != "" {
 			if err := atomicWriteFile(filepath.Join(dir, "payload", "scope-constraint.txt"), []byte(sc)); err != nil {
 				return nil, fmt.Errorf("writing scope constraint artifact: %w", err)
 			}
@@ -485,12 +485,14 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	}
 	diffMode := string(payload.ModeDiff)
 	payloads := map[string]modePayload{
-		diffMode: {Text: b.String(), FileCount: len(kept), Truncation: trunc},
+		// Entries keeps the raw pre-budget diff files so buildSlots re-sheds them
+		// per agent against each model's window (Epic 19.10 F2).
+		diffMode: {Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc},
 	}
 	// Sprint-plan scope (Epic 12.2): the ingestion path honors --sprint-plan too,
 	// prepending the SCOPE CONSTRAINT to every reviewer's payload. An unreadable or
 	// oversized plan warns but never aborts the review.
-	scopeConstraint, scopeWarn := resolveScopeConstraint(req)
+	scopeConstraint, scopeWarn := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes)
 	if scopeWarn != "" {
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
@@ -709,7 +711,13 @@ func RunReview(ctx context.Context, completer Completer, cfg *ReviewConfig, req 
 }
 
 // modePayload is one payload mode's built content shared by every agent using it.
+//
+// Entries holds the UNBUDGETED per-file entries for this mode so buildSlots can
+// re-shed them to each agent's own model window at dispatch (Epic 19.10 F2) —
+// Text/FileCount/Truncation remain the global-budget union used for the on-disk
+// audit artifact and the empty-payload guard.
 type modePayload struct {
+	Entries    []payload.FileEntry
 	Text       string
 	FileCount  int
 	Truncation payload.Truncation
@@ -732,8 +740,10 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 			b.WriteString(e.Body)
 		}
 		// FileCount reflects what the reviewer actually saw (post-truncation), not
-		// the pre-budget total — the dropped files are recorded in trunc.
-		out[mode] = modePayload{Text: b.String(), FileCount: len(kept), Truncation: trunc}
+		// the pre-budget total — the dropped files are recorded in trunc. Entries
+		// keeps the raw pre-budget files so buildSlots re-sheds them per agent
+		// against each model's window (Epic 19.10 F2).
+		out[mode] = modePayload{Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc}
 	}
 	return out, nil
 }
@@ -765,19 +775,20 @@ func neededModes(cfg *ReviewConfig) []string {
 //     the review proceeds unconstrained rather than aborting, after the caller
 //     warns (AC3).
 //   - oversized plan → (capped block, warning): the content is capped at
-//     payload.MaxSprintPlanBytes before injection so it cannot inflate every agent
-//     prompt past payload_byte_budget, and the truncation is surfaced (AC6).
+//     maxSprintPlanBytes (the resolved max_sprint_plan_bytes, plan 19.10 F9)
+//     before injection so it cannot inflate every agent prompt past
+//     payload_byte_budget, and the truncation is surfaced (AC6).
 //
 // It is pure (no I/O beyond the file read) and returns the warning rather than
 // printing it, so the two prepare entry points can route it to their own stderr.
-func resolveScopeConstraint(req ReviewRequest) (constraint, warning string) {
-	raw, err := payload.ReadSprintPlan(req.SprintPlanPath)
+func resolveScopeConstraint(req ReviewRequest, maxSprintPlanBytes int64) (constraint, warning string) {
+	raw, err := payload.ReadSprintPlan(req.SprintPlanPath, maxSprintPlanBytes)
 	if err != nil {
 		return "", fmt.Sprintf("sprint plan %q is unreadable; proceeding with a diff-wide review: %v", req.SprintPlanPath, err)
 	}
-	block, truncated := payload.ScopeConstraint(raw)
+	block, truncated := payload.ScopeConstraint(raw, maxSprintPlanBytes)
 	if truncated {
-		warning = fmt.Sprintf("sprint plan %q exceeded %d bytes and was truncated before injection", req.SprintPlanPath, payload.MaxSprintPlanBytes)
+		warning = fmt.Sprintf("sprint plan %q exceeded %d bytes and was truncated before injection", req.SprintPlanPath, maxSprintPlanBytes)
 	}
 	return block, warning
 }
@@ -793,7 +804,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	// renderAgent (Payload: scopeConstraint + payloadText), so a small PayloadByteBudget
 	// causes the constraint alone to inflate the rendered prompt past the budget.
 	// Truncate only the plan body (between the BEGIN/END markers) to
-	// min(MaxSprintPlanBytes, budget/8), preserving the wrapper instruction text.
+	// min(cfg.Settings.MaxSprintPlanBytes, budget/8), preserving the wrapper
+	// instruction text (F9: the ceiling is the resolved max_sprint_plan_bytes).
 	if budget := cfg.Settings.PayloadByteBudget; budget > 0 && len(scopeConstraint) > 0 {
 		const beginMark = "----- BEGIN SPRINT PLAN -----\n"
 		const endMark = "\n----- END SPRINT PLAN -----"
@@ -801,7 +813,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			planStart := bs + len(beginMark)
 			if rest := strings.Index(scopeConstraint[planStart:], endMark); rest >= 0 {
 				planEnd := planStart + rest
-				maxPlan := int(min(payload.MaxSprintPlanBytes, budget/8))
+				maxPlan := int(min(cfg.Settings.MaxSprintPlanBytes, budget/8))
 				if planEnd-planStart > maxPlan {
 					cut := planStart + maxPlan
 					for cut > planStart && scopeConstraint[cut]&0xC0 == 0x80 {
@@ -872,7 +884,15 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				fmt.Fprintf(os.Stderr, "atcr: warning: review_strategy=chunked has no effect for payload mode %q (no diff --git markers to split on); the whole payload is sent as one chunk\n", mode)
 				warnedChunkedNoop = true
 			}
-			ml := ac.EffectiveMaxContextLines()
+			// Per-chunk line budget: an explicit operator-set max_context_lines wins
+			// (least surprise); otherwise derive maxLines from THIS agent's model
+			// window (Epic 19.10 F3), so a 32k model gets more, smaller chunks and a
+			// 144k model gets fewer — both from the same diff, zero files dropped.
+			// chunkDiff itself is unchanged; only the source of ml changes.
+			ml := payload.ChunkMaxLines(ac.Model, defaultMaxTokens)
+			if ac.MaxContextLines != nil && *ac.MaxContextLines > 0 {
+				ml = ac.EffectiveMaxContextLines()
+			}
 			chunks := chunkDiff(mp.Text, ml)
 			// Warn on any chunk that is a lone file exceeding the budget (it could
 			// not be split). This runs over EVERY chunk — not just multi-chunk
@@ -919,8 +939,44 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		}
 
 		// Bulk path (or a chunked run that produced a single chunk): one slot over
-		// the whole payload.
-		primary, err := renderAgent(cfg, name, ac, mode, mp.Text, mp.FileCount, mp.Truncation, rng, scopeConstraint)
+		// the whole payload, shed to THIS agent's own model window.
+		//
+		// Epic 19.10 F2: size the payload per agent, reserving the output cap
+		// (defaultMaxTokens). Previously every agent shared one global-budget Text,
+		// so a 32k-window model overflowed — the confirmed dax boundary 24577 input
+		// + 8192 output > 32768 — while a 144k model was starved of context it could
+		// safely use. The configured PayloadByteBudget (when > 0) still caps the
+		// per-agent budget; a small window is never inflated past what it can hold.
+		// Re-shed the UNBUDGETED entries so the budget is genuinely per-model. Do
+		// NOT re-hoist this back into one shared value.
+		bulkText, bulkFileCount, bulkTrunc := mp.Text, mp.FileCount, mp.Truncation
+		if eff := payload.EffectiveByteBudget(ac.Model, defaultMaxTokens); eff > 0 && len(mp.Entries) > 0 {
+			perAgentBudget := eff
+			if global := cfg.Settings.PayloadByteBudget; global > 0 && global < perAgentBudget {
+				perAgentBudget = global
+			}
+			kept, trunc := payload.ApplyByteBudget(mp.Entries, perAgentBudget)
+			// Never dispatch an EMPTY per-agent payload. If even a single file exceeds
+			// this model's window, ApplyByteBudget drops everything (AllDropped);
+			// shipping "" would make the agent silently return "no findings" — a
+			// false-clean review, the same silent-zero-findings class ErrPayloadFullyDropped
+			// guards against on the global path. Keep the whole (global-budget) payload
+			// and warn instead; Phase 3's on_overflow policy (chunk/truncate) is the real
+			// net for a file larger than a small window. This also keeps a chunked-strategy
+			// single oversized-file chunk lossless when it falls through to this bulk path.
+			if trunc.AllDropped {
+				if warnOversized {
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: no file fits its model window (%d-byte budget); sending the whole payload (may overflow) rather than an empty review\n", name, perAgentBudget)
+				}
+			} else {
+				var pb strings.Builder
+				for _, e := range kept {
+					pb.WriteString(e.Body)
+				}
+				bulkText, bulkFileCount, bulkTrunc = pb.String(), len(kept), trunc
+			}
+		}
+		primary, err := renderAgent(cfg, name, ac, mode, bulkText, bulkFileCount, bulkTrunc, rng, scopeConstraint)
 		if err != nil {
 			return err
 		}

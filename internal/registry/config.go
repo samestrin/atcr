@@ -436,6 +436,11 @@ type Registry struct {
 	// application. The project tier overrides it; unset falls through to the
 	// embedded DefaultCacheMaxBytes.
 	CacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty"`
+	// MaxSprintPlanBytes is the user-level (global) tier of the sprint-plan byte
+	// ceiling (plan 19.10 F9), the same limit ProjectConfig.MaxSprintPlanBytes
+	// carries at the project tier. A pointer so unset falls through to the project
+	// tier or the embedded DefaultMaxSprintPlanBytes; <= 0 is rejected.
+	MaxSprintPlanBytes *int64 `yaml:"max_sprint_plan_bytes,omitempty"`
 
 	// Retry/backoff tunables (Epic 4.6) — the user-level (global) tier of the
 	// precedence chain, mirroring TimeoutSecs. Pointers so an explicit 0
@@ -522,6 +527,9 @@ func (r *Registry) validate() error {
 	}
 	if r.CacheMaxBytes != nil && *r.CacheMaxBytes < 0 {
 		errs = append(errs, fmt.Errorf("cache_max_bytes must be >= 0 (0 = unbounded), got %d", *r.CacheMaxBytes))
+	}
+	if r.MaxSprintPlanBytes != nil && *r.MaxSprintPlanBytes <= 0 {
+		errs = append(errs, fmt.Errorf("max_sprint_plan_bytes must be > 0, got %d", *r.MaxSprintPlanBytes))
 	}
 	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
 	// delay must be positive so the exponential schedule has a starting point.

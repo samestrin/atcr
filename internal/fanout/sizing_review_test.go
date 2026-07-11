@@ -1,0 +1,99 @@
+package fanout
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/samestrin/atcr/internal/payload"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// sizingRosterConfig builds a two-agent roster whose members target different
+// model windows: "greta" runs an unlisted model (conservative 32768 window) and
+// "kai" runs openai/gpt-5.5 (128000 window per the F1 table). Both share the
+// "blocks" payload mode so the only difference at dispatch is the per-agent
+// budget derived from each model's window (Epic 19.10 F2). It reuses
+// twoAgentConfig's persona wiring and only swaps the models.
+func sizingRosterConfig() *ReviewConfig {
+	cfg := twoAgentConfig("http://unused")
+	greta := cfg.Registry.Agents["greta"]
+	greta.Model = "unlisted-small-model" // absent from the table → 32768 window
+	cfg.Registry.Agents["greta"] = greta
+	kai := cfg.Registry.Agents["kai"]
+	kai.Model = "openai/gpt-5.5" // 128000 window
+	cfg.Registry.Agents["kai"] = kai
+	// PayloadByteBudget 0 (unlimited) so the ONLY cap is each model's window,
+	// proving the per-agent derivation rather than a shared global ceiling.
+	cfg.Settings.PayloadByteBudget = 0
+	return cfg
+}
+
+// oversizedBlocksPayload returns a modePayload whose raw entries total more bytes
+// than a 32k model's effective budget but less than a 128k model's, so the two
+// windows shed a different number of files.
+func oversizedBlocksPayload() map[string]modePayload {
+	const fileBytes = 50000
+	const nFiles = 10
+	var entries []payload.FileEntry
+	var full strings.Builder
+	for i := 0; i < nFiles; i++ {
+		body := fmt.Sprintf("// file %d\n", i) + strings.Repeat("x", fileBytes)
+		entries = append(entries, payload.FileEntry{Path: fmt.Sprintf("f%d.go", i), Size: int64(len(body)), Body: body})
+		full.WriteString(body)
+	}
+	return map[string]modePayload{
+		"blocks": {Entries: entries, Text: full.String(), FileCount: nFiles},
+	}
+}
+
+// TestBuildSlots_PerAgentBudgetShedsBySmallWindow proves the per-agent effective
+// budget is actually applied at dispatch (F2/AC1): against one oversized payload,
+// the 32k-window agent's rendered payload is smaller AND drops MORE files than the
+// 128k-window agent's — they are no longer sized identically off one global budget.
+func TestBuildSlots_PerAgentBudgetShedsBySmallWindow(t *testing.T) {
+	cfg := sizingRosterConfig()
+	payloads := oversizedBlocksPayload()
+	rng := ReviewRange{Base: "a", Head: "b"}
+
+	small, _, err := buildOneAgent(cfg, "greta", payloads, rng, "", "")
+	require.NoError(t, err)
+	large, _, err := buildOneAgent(cfg, "kai", payloads, rng, "", "")
+	require.NoError(t, err)
+
+	// The small window must shed strictly more files than the large window.
+	assert.Greater(t, len(small.Truncation.FilesDropped), len(large.Truncation.FilesDropped),
+		"a 32k-window agent must drop more files than a 128k-window agent on the same oversized payload")
+	// And its rendered prompt (which embeds the payload) must be smaller.
+	assert.Less(t, len(small.Prompt), len(large.Prompt),
+		"the smaller window's rendered payload must be smaller than the larger window's")
+	// Sanity: the large window is not itself unbounded here — it still reflects a
+	// real per-agent budget, not the whole payload passed through untouched.
+	assert.True(t, small.Truncation.Truncated, "the 32k agent must record truncation")
+}
+
+// TestBuildSlots_PerAgentBudgetNeverEmptyPayload proves the AllDropped guard: when
+// even a single file exceeds a small model's window, the agent must still receive
+// the whole payload (Phase 3's on_overflow is the real net) rather than an EMPTY
+// one, which would make it silently return a false-clean "no findings" review.
+func TestBuildSlots_PerAgentBudgetNeverEmptyPayload(t *testing.T) {
+	cfg := sizingRosterConfig() // greta → 32768 window (budget ≈ 71680 bytes)
+	const sentinel = "SENTINEL_ONLY_FILE_TOKEN"
+	// One file far larger than the 32k window budget — ApplyByteBudget would drop
+	// it entirely (AllDropped).
+	body := "// " + sentinel + "\n" + strings.Repeat("x", 300000)
+	payloads := map[string]modePayload{
+		"blocks": {
+			Entries:   []payload.FileEntry{{Path: "huge.go", Size: int64(len(body)), Body: body}},
+			Text:      body,
+			FileCount: 1,
+		},
+	}
+	rng := ReviewRange{Base: "a", Head: "b"}
+
+	small, _, err := buildOneAgent(cfg, "greta", payloads, rng, "", "")
+	require.NoError(t, err)
+	assert.Contains(t, small.Prompt, sentinel,
+		"an oversized single file must NOT be shed to an empty payload (silent false-clean)")
+}

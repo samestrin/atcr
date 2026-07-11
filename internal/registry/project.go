@@ -39,6 +39,14 @@ const (
 	// least-recently-used eviction kicks in. 0 is the documented unbounded
 	// escape hatch (parity with payload_byte_budget / max_parallel).
 	DefaultCacheMaxBytes int64 = 50 * 1024 * 1024
+	// DefaultMaxSprintPlanBytes is the embedded byte ceiling applied to a
+	// --sprint-plan file before it is wrapped in a SCOPE CONSTRAINT block and
+	// prepended to every reviewer's payload (Epic 12.2 / plan 19.10 F9). 64 KiB
+	// gives operators on larger-context models room for a fuller sprint/epic plan
+	// than the original fixed 16 KiB ceiling. Unlike payload_byte_budget /
+	// cache_max_bytes, 0 is NOT an "unbounded" sentinel here — there is no
+	// unbounded plan-injection use case, so <= 0 is rejected at load.
+	DefaultMaxSprintPlanBytes int64 = 65536
 )
 
 // ProjectConfig is the project-level configuration from .atcr/config.yaml:
@@ -68,6 +76,10 @@ type ProjectConfig struct {
 	// so an explicit 0 (unbounded) survives default application; unset inherits
 	// the registry tier or the embedded DefaultCacheMaxBytes.
 	CacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty"`
+	// MaxSprintPlanBytes overrides the sprint-plan byte ceiling (plan 19.10 F9). A
+	// pointer so an explicit value survives default application; unset inherits
+	// the registry tier or the embedded DefaultMaxSprintPlanBytes.
+	MaxSprintPlanBytes *int64 `yaml:"max_sprint_plan_bytes,omitempty"`
 	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
 	// nil means execution is unconfigured and `--exec` is refused.
 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
@@ -108,6 +120,10 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   Unchanged diffs are served from cache, skipping the LLM call. Default 50 MiB;\n")
 	b.WriteString("#   least-recently-used entries are evicted past the cap. Set to 0 for unbounded.\n")
 	fmt.Fprintf(&b, "cache_max_bytes: %d\n", DefaultCacheMaxBytes)
+	b.WriteString("# max_sprint_plan_bytes: byte ceiling for a --sprint-plan file's SCOPE\n")
+	b.WriteString("#   CONSTRAINT injection into every reviewer's payload. Default 64 KiB; raise it\n")
+	b.WriteString("#   to give larger-context models more sprint/epic plan detail. Must be > 0.\n")
+	fmt.Fprintf(&b, "max_sprint_plan_bytes: %d\n", DefaultMaxSprintPlanBytes)
 	b.WriteString("# on_overflow: degradation policy (plan 19.10 F4) when a per-agent payload\n")
 	b.WriteString("#   exceeds its per-model budget. One of: chunk (default — deliver the whole\n")
 	b.WriteString("#   diff across window-sized chunks, no content dropped), truncate (drop the\n")
@@ -171,6 +187,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	}
 	if cfg.CacheMaxBytes != nil && *cfg.CacheMaxBytes < 0 {
 		return nil, fmt.Errorf("%s: cache_max_bytes must be >= 0 (0 = unbounded)", base)
+	}
+	if cfg.MaxSprintPlanBytes != nil && *cfg.MaxSprintPlanBytes <= 0 {
+		return nil, fmt.Errorf("%s: max_sprint_plan_bytes must be > 0, got %d", base, *cfg.MaxSprintPlanBytes)
 	}
 	if !payloadModeValid(cfg.PayloadMode) {
 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))

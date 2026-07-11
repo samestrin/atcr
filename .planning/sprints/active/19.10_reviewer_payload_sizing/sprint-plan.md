@@ -218,7 +218,7 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
 
 *Directly closes the confirmed `dax` boundary-overflow arithmetic (AC1, AC2) and produces the first end-to-end degradation primitive (AC3). Task 11 is an independent parallel track that shares config files with Task 05 — coordinate merges.*
 
-### 2.1 [ ] **🏗️ Per-Agent Effective Input Budget (F2)**
+### 2.1 [x] **🏗️ Per-Agent Effective Input Budget (F2)**
    **Task:** Derive an output-reserved, model-derived byte budget so estimated input tokens ≤ `contextWindow − defaultMaxTokens − promptOverhead`, using the conservative ~3.5 B/token ratio. Wire into both `ApplyByteBudget` call sites in `internal/fanout/review.go` (`:464`, `:726`). Degenerate windows (smaller than `defaultMaxTokens + promptOverhead`) return 0, never negative/panicking.
    **Priority:** High | **Effort:** M | **Depends on:** 1.1
    1. Understand both `ApplyByteBudget` call sites and the byte→token ratio decision
@@ -230,7 +230,7 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
    **Files:** `internal/payload/sizing.go`, `sizing_test.go` | `internal/fanout/review.go` | **Duration:** ~1 day
    **Task File:** [task-02](plan/tasks/task-02-per-agent-effective-budget.md)
 
-### 2.2 [ ] **🏗️ Window-Aware Chunking (F3)**
+### 2.2 [x] **🏗️ Window-Aware Chunking (F3)**
    **Task:** Convert Task 02's effective token budget into a per-model chunk budget (`maxLines`) feeding the existing 14.3 `chunkDiff`. On overflow with `on_overflow: chunk`, the diff is delivered whole across N appropriately-sized chunks per model (more chunks for a 32k model than a 144k model); respect the existing 64-chunk/agent ceiling. Clamp `maxLines` to a small positive floor — never trigger `chunkDiff`'s "unlimited" branch unintentionally.
    **Priority:** High | **Effort:** M | **Depends on:** 1.1, 2.1
    1. Understand the existing `chunkDiff` (`internal/fanout/chunker.go`) and its 64-chunk cap
@@ -242,7 +242,7 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
    **Files:** `internal/fanout/chunker.go` | `internal/fanout/overflow_test.go` (chunk-plan) | **Duration:** ~1 day
    **Task File:** [task-03](plan/tasks/task-03-window-aware-chunking.md)
 
-### 2.3 [ ] **🏗️ Configurable Sprint-Plan Limit (F9)**
+### 2.3 [x] **🏗️ Configurable Sprint-Plan Limit (F9)**
    **Task:** Replace the hardcoded `MaxSprintPlanBytes` constant (16KB) with a configurable `max_sprint_plan_bytes` key in `.atcr/config.yaml` (default 65536 / 64KB), parsed through the `internal/registry` precedence chain and passed as a caller-supplied `maxBytes int64` parameter into `internal/payload/sprintplan.go` (no `internal/payload`→`internal/registry` import). `> 0` validation (0 is NOT a valid "unbounded" sentinel here). Place edits near the `CacheMaxBytes` precedent to minimize merge overlap with Task 05.
    **Priority:** Medium | **Effort:** S | **Depends on:** — (shares config files with 1.2 — coordinate merges)
    1. Understand `sprintplan.go`'s current constant and the `CacheMaxBytes` precedence precedent
@@ -254,43 +254,33 @@ Per-feature reference documentation lives under [plan/documentation/](plan/docum
    **Files:** `internal/registry/*.go`, `sprintplan_settings_test.go` | `internal/payload/sprintplan.go`, `sprintplan_test.go` | `.atcr/config.yaml` | **Duration:** ~0.5 day
    **Task File:** [task-11](plan/tasks/task-11-configurable-sprint-plan-limit.md)
 
-### 2.4 [ ] **Phase 2 — DoD Validation**
-   - [ ] `go test ./internal/payload/... ./internal/fanout/... ./internal/registry/...` passing
-   - [ ] dax-boundary regression test present and passing
-   - [ ] Lossless chunk-reassembly test passing (zero files dropped)
-   - [ ] Coverage ≥80% on new code
-   - [ ] `go vet ./...` clean; `go build ./...` succeeds
-   - [ ] DoD report emitted
+### 2.4 [x] **Phase 2 — DoD Validation**
+   - [x] `go test ./internal/payload/... ./internal/fanout/... ./internal/registry/...` passing (full `go test ./...` exit=0)
+   - [x] dax-boundary regression test present and passing (`TestEffectiveByteBudget_DaxBoundaryRegression`)
+   - [x] Lossless chunk-reassembly test passing (zero files dropped) (`TestChunkDiff_WindowDerivedMaxLines`)
+   - [x] Coverage ≥80% on new code (EffectiveByteBudget/ChunkMaxLines/ScopeConstraint 100%; ResolveSettings 98.4%; modules payload 90.3% / fanout 87.9% / registry 92.1%)
+   - [x] `go vet ./...` clean; `go build ./...` succeeds
+   - [x] DoD report emitted
 
-### 2.5 [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+   ```
+   Phase-2 DoD Complete
+   Auto: 5/5 | Task-Specific: dax-regression ✓, lossless-chunk ✓, per-agent-shed ✓, F9-config ✓
+   Manual Review: [ ] Code reviewed (→ Phase 2 gate subagent, next)
+   ```
+
+### 2.5 [x] **Phase 2 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2 (integration-level, not TDD cadence)
 
-   **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
+   Fresh-context subagent (`general-purpose`) reviewed all Phase 2 changes: `internal/payload/{sizing.go,sizing_test.go,sprintplan.go,sprintplan_test.go}`, `internal/fanout/{review.go,chunker_test.go,review_test.go,review_sprintplan_test.go,sizing_review_test.go}`, `internal/registry/{config.go,precedence.go,project.go,sprintplan_settings_test.go}`, `.atcr/config.yaml`.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Phase 2 gate review`
-   - prompt: Self-contained brief including:
-     - Files changed during Phase 2 (absolute paths): [LIST]
-     - Checklist (pass verbatim, hostile integrator perspective):
-       - CONTRACT EXIT: `EffectiveByteBudget` reserves output cap; degenerate windows return 0 not negative?
-       - CONFIG SURFACE: `max_sprint_plan_bytes` documented, defaulted (64KB), `>0`-validated, back-compat?
-       - INTEGRATION: Both `ApplyByteBudget` call sites wired; `internal/payload` still free of `internal/registry` import; 64-chunk ceiling respected?
-       - PHASE-EXIT CONTRACT: Can Phase 3 dispatch consume the chunk plan + budget without rework?
-       - REGRESSION: dax-boundary regression + lossless-reassembly intact?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (fresh-context integration review, 2026-07-10):**
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | review.go per-agent bulk shed | Per-agent re-shed could dispatch an EMPTY payload when a single file exceeds a small model's window (`AllDropped`), causing a silent false-clean "no findings" review | **FIXED inline** — added `AllDropped` guard: keep the whole global payload + warn (`warnOversized`) instead of shipping empty; regression test `TestBuildSlots_PerAgentBudgetNeverEmptyPayload`. Re-run gate: **clean**. This also made the chunked single-oversized-file fall-through lossless. |
+   | MEDIUM | review.go:951 | Degenerate window (`eff==0`) falls back to full global payload | Deferred → TD-002 (unreachable today; smallest window 32768 ≫ 12288 threshold; Phase 3 on_overflow is the net) |
+   | LOW | sprintplan.go:94 | Directly-constructed `Settings{MaxSprintPlanBytes:0}` silently blanks the plan | Deferred → TD-003 (unreachable via any production config path; all tiers reject `<=0`) |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   Verified clean: `internal/payload` free of `internal/registry` import; both `ApplyByteBudget` call sites wired per-agent; 64-chunk ceiling respected; chunked path lossless; dax-boundary + lossless-reassembly tests non-tautological; `max_sprint_plan_bytes` documented/defaulted (64KB)/`>0`-validated at all three tiers + post-resolution; explicit `max_context_lines` wins. **Phase gate passed** (1 HIGH fixed inline, 2 deferred to TD).
    **Duration:** 15-30 min
 
 ---

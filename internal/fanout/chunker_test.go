@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,6 +54,35 @@ func TestSplitDiffFiles(t *testing.T) {
 		require.Len(t, segs, 1)
 		assert.Equal(t, diff, segs[0])
 	})
+}
+
+// TestChunkDiff_WindowDerivedMaxLines proves F3/AC3: feeding chunkDiff a maxLines
+// derived from a 32k model's window opens MORE chunks than one derived from a 128k
+// model's window for the identical diff, and both plans reassemble the whole diff
+// with zero files dropped. chunkDiff itself is unchanged; only its maxLines source
+// (payload.ChunkMaxLines) differs per model.
+func TestChunkDiff_WindowDerivedMaxLines(t *testing.T) {
+	const outputTokens = 8192 // mirrors defaultMaxTokens
+	var b strings.Builder
+	for i := 0; i < 20; i++ {
+		b.WriteString(fileSeg("f"+itoa(i)+".go", 200))
+	}
+	diff := b.String()
+
+	smallML := payload.ChunkMaxLines("unlisted-small-model", outputTokens) // 32768 window
+	largeML := payload.ChunkMaxLines("openai/gpt-5.5", outputTokens)       // 128000 window
+	require.Less(t, smallML, largeML, "a 32k window must derive fewer lines-per-chunk than a 128k window")
+
+	smallChunks := chunkDiff(diff, smallML)
+	largeChunks := chunkDiff(diff, largeML)
+
+	assert.Greater(t, len(smallChunks), len(largeChunks),
+		"the 32k window must split the same diff into more chunks than the 128k window")
+	// Zero files dropped: both plans reproduce the original diff exactly.
+	assert.Equal(t, diff, strings.Join(smallChunks, ""), "32k chunk plan must be lossless")
+	assert.Equal(t, diff, strings.Join(largeChunks, ""), "128k chunk plan must be lossless")
+	// Respect the 64-chunk ceiling.
+	assert.LessOrEqual(t, len(smallChunks), maxChunksPerAgent)
 }
 
 func TestChunkDiff(t *testing.T) {
