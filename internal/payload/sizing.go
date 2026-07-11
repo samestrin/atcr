@@ -64,6 +64,9 @@ const (
 // outputTokens = 8192, the reserved input tokens are strictly below 32768 - 8192
 // = 24576, so the 24577 input + 8192 output > 32768 class cannot recur (F2/AC2).
 func EffectiveByteBudget(model string, outputTokens int) int64 {
+	if outputTokens < 0 {
+		outputTokens = 0
+	}
 	effectiveTokens := ContextWindowTokens(model) - outputTokens - promptOverheadTokens
 	if effectiveTokens <= 0 {
 		return 0
