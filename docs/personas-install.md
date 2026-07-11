@@ -37,7 +37,7 @@ atcr personas install security/owasp
 
 A persona at `<name>` is fetched from `<ATCR_PERSONAS_URL>/<name>.yaml`; the keyword index is fetched from `<ATCR_PERSONAS_URL>/index.json`. An empty or whitespace-only `ATCR_PERSONAS_URL` is treated as unset (the default URL is used).
 
-## The six subcommands
+## The seven subcommands
 
 ### `atcr personas install <namespace/name>`
 
@@ -135,6 +135,28 @@ The output contract:
 - All cases passing reports `PASS: <name> (N/N cases)` (exit 0).
 - Any case failing reports `FAIL: <name> (P/N cases)` to stdout and exits non-zero.
 - A persona with no committed fixture reports `No fixture defined for persona "<name>"` and exits 0.
+
+### `atcr personas submit <name>`
+
+Submits a locally-tuned persona back to the canonical `samestrin/atcr` repository as a pull request. The command first runs the **same fixture gate** as [`atcr personas test`](#atcr-personas-test-name); only if the fixture passes does it fork `samestrin/atcr` under your own GitHub identity, push a branch with the persona files, and open a PR. The submission lands as an unvetted **`submitted`** entry pending maintainer graduation — see [authoring §7](personas-authoring.md#7-from-submitted-to-graduated).
+
+`submit` pushes only the persona **unit** — its `.yaml` binding plus the optional co-located `.md` prompt where local tuning lives — never a fixture. The gate resolves the fixture that already ships with the persona, so `submit` targets a persona that **already has a committed fixture**: in practice a community-library persona you installed and re-tuned locally. A brand-new persona has no shipped fixture yet — commit its fixture to `personas/community/testdata/` in the repo first (see [authoring §3](personas-authoring.md#3-the-fixture)).
+
+**Precondition — `gh` installed and authenticated.** `submit` rides *your own* GitHub CLI session: the [GitHub CLI (`gh`)](https://cli.github.com) must be on your `PATH` and you must have run `gh auth login` first. No bot token and no separate credential are written into atcr's config. (On success `submit` does write one small local file — the `submitted` marker sidecar at `~/.config/atcr/submissions/<name>.yaml`; see [authoring §7](personas-authoring.md#7-from-submitted-to-graduated).) The precondition is checked before any fork or branch work.
+
+```bash
+atcr personas submit penny
+# https://github.com/samestrin/atcr/pull/123
+```
+
+On success the command prints **only** the new PR URL (`https://github.com/<owner>/<repo>/pull/<n>`) to stdout. A re-submission of the same persona reuses your existing fork and PR rather than opening a duplicate.
+
+**Errors** (each blocks submission with a non-zero exit and **no** fork/PR side effects):
+
+- **Invalid persona name** → `invalid persona name "<name>": only letters, digits, '_', '-', and '/' are allowed` — the same validation guard as `install`/`remove`.
+- **No fixture** → `cannot submit "<name>": no fixture defined — add a fixture before submitting`. Run [`atcr personas test <name>`](#atcr-personas-test-name) first to check fixture status. (This wording is deliberately distinct from `test`'s softer, non-blocking `No fixture defined` — an unvetted persona with no fixture cannot be submitted.)
+- **Fixture fails** → `cannot submit "<name>": fixture failed (<passed>/<total> cases passed)`; no fork or PR is attempted.
+- **`gh` missing or unauthenticated** → `gh CLI not found on PATH; install it from https://cli.github.com`, or `gh auth check failed: …`. Install `gh` and run `gh auth login`, then retry.
 
 ### `atcr personas upgrade [name]`
 
