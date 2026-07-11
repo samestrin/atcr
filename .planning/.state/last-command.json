@@ -1,9 +1,9 @@
 {
-  "skill": "sprint-complete",
-  "args": "@.planning/sprints/active/19.10_reviewer_payload_sizing",
-  "invocation": "/sprint-complete @.planning/sprints/active/19.10_reviewer_payload_sizing",
+  "skill": "create-documentation",
+  "args": "@.planning/plans/active/20.0_standalone_skill_release/ @https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview",
+  "invocation": "/create-documentation @.planning/plans/active/20.0_standalone_skill_release/ @https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "ce760273-3af4-44c6-874a-08d9f6cde0f1",
-  "timestamp": "2026-07-11T18:53:28.590Z"
+  "session_id": "39af45c2-5fc7-477c-b332-3714a2c19e1b",
+  "timestamp": "2026-07-11T20:20:43.265Z"
 }
