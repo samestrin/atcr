@@ -358,3 +358,19 @@ func TestSubmit_MarkerFailureIncludesPRURL(t *testing.T) {
 	assert.Contains(t, err.Error(), "https://github.com/samestrin/atcr/pull/42", "error surfaces the created PR URL")
 	assert.Contains(t, err.Error(), "symlink", "underlying marker-write cause preserved")
 }
+
+// TestPersonaUnitVersion_Fallbacks covers the three fallback returns of "-" for
+// personaUnitVersion: invalid name, missing file, and a unit with no version field.
+// It also verifies an explicit version is read (TD item submissions_test.go:324).
+func TestPersonaUnitVersion_Fallbacks(t *testing.T) {
+	dir := t.TempDir()
+
+	assert.Equal(t, "-", personaUnitVersion(dir, "does-not-exist"), "missing file returns '-'")
+	assert.Equal(t, "-", personaUnitVersion(dir, "../../etc/passwd"), "invalid name returns '-'")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "noversion.yaml"), []byte("provider: anthropic\nmodel: claude-sonnet-4-6\n"), 0o600))
+	assert.Equal(t, "-", personaUnitVersion(dir, "noversion"), "version-less unit returns '-'")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "versioned.yaml"), []byte(validPersonaYAML), 0o600))
+	assert.Equal(t, "1.0.0", personaUnitVersion(dir, "versioned"), "explicit version is returned")
+}

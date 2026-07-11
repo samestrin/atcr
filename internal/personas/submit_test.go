@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -55,7 +56,7 @@ func (s *stubSubmitter) CreatePR(_ context.Context, req PRRequest) (string, erro
 func TestSubmit_HappyPath(t *testing.T) {
 	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prURL: "https://github.com/samestrin/atcr/pull/42"}
 
-	url, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
+	url, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "sasha")
 	require.NoError(t, err)
 	assert.Equal(t, "https://github.com/samestrin/atcr/pull/42", url)
 	assert.Equal(t, []string{"precondition", "fork:samestrin/atcr", "push:persona-submit/sasha", "pr"}, s.calls)
@@ -67,7 +68,7 @@ func TestSubmit_HappyPath(t *testing.T) {
 // TestSubmit_ExactlyOnce asserts no step is invoked more than once on a clean run.
 func TestSubmit_ExactlyOnce(t *testing.T) {
 	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prURL: "https://x/pull/1"}
-	_, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
+	_, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "sasha")
 	require.NoError(t, err)
 
 	counts := map[string]int{}
@@ -86,7 +87,7 @@ func TestSubmit_ExactlyOnce(t *testing.T) {
 func TestSubmit_InvalidNameShortCircuits(t *testing.T) {
 	s := &stubSubmitter{}
 
-	_, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "../../etc/passwd")
+	_, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "../../etc/passwd")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid persona name")
 	assert.Empty(t, s.calls, "an invalid name reaches neither precondition nor fork")
@@ -98,7 +99,7 @@ func TestSubmit_InvalidNameShortCircuits(t *testing.T) {
 func TestSubmit_EmptyPRURLIsError(t *testing.T) {
 	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prURL: "   "}
 
-	url, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
+	url, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Empty(t, url)
 	assert.Contains(t, err.Error(), "no URL")
@@ -109,7 +110,7 @@ func TestSubmit_EmptyPRURLIsError(t *testing.T) {
 func TestSubmit_PreconditionShortCircuits(t *testing.T) {
 	s := &stubSubmitter{preconErr: errors.New("gh auth check failed: not logged in")}
 
-	_, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
+	_, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gh auth check failed")
 	assert.Equal(t, []string{"precondition"}, s.calls, "no fork/push/pr after a failed precondition")
@@ -121,7 +122,7 @@ func TestSubmit_PreconditionShortCircuits(t *testing.T) {
 func TestSubmit_ForkFailShortCircuits(t *testing.T) {
 	s := &stubSubmitter{forkErr: errors.New("HTTP 403: forbidden")}
 
-	_, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
+	_, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to fork samestrin/atcr")
 	assert.Contains(t, err.Error(), "HTTP 403: forbidden")
@@ -133,11 +134,11 @@ func TestSubmit_ForkFailShortCircuits(t *testing.T) {
 func TestSubmit_PushFailShortCircuits(t *testing.T) {
 	s := &stubSubmitter{pushErr: errors.New("permission denied")}
 
-	_, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
+	_, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to push branch to fork")
 	assert.Contains(t, err.Error(), "permission denied")
-	assert.NotContains(t, s.calls, "pr", "no PR is opened when the branch push failed")
+	assert.Equal(t, []string{"precondition", "fork:samestrin/atcr", "push:persona-submit/sasha"}, s.calls, "push failure short-circuits before pr-create")
 }
 
 // TestSubmit_PRFailIsRecoverable covers AC 02-02 Error Scenario 3: a pr-create
@@ -146,7 +147,7 @@ func TestSubmit_PushFailShortCircuits(t *testing.T) {
 func TestSubmit_PRFailIsRecoverable(t *testing.T) {
 	s := &stubSubmitter{pushHead: "octocat:persona-submit/sasha", prErr: errors.New("could not create pull request")}
 
-	_, err := Submit(context.Background(), s, "/tmp/personas", t.TempDir(), "sasha")
+	_, err := Submit(context.Background(), s, t.TempDir(), t.TempDir(), "sasha")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "PR creation failed")
 	assert.Contains(t, err.Error(), "retry with 'gh pr create'")
@@ -198,6 +199,15 @@ func TestCheckGHPrecondition_OK(t *testing.T) {
 func TestSubmissionBranch(t *testing.T) {
 	assert.Equal(t, "persona-submit/sasha", submissionBranch("sasha"))
 	assert.Equal(t, "persona-submit/security-owasp", submissionBranch("security/owasp"))
+}
+
+// TestSubmissionBranch_CollisionFree confirms that distinct persona names such as
+// "foo/bar" and "foo-bar" do not map to the same branch, which would cause the
+// second submission to clobber the first (TD item submit.go:122).
+func TestSubmissionBranch_CollisionFree(t *testing.T) {
+	assert.Equal(t, "persona-submit/foo-bar", submissionBranch("foo/bar"))
+	assert.Equal(t, "persona-submit/foo--bar", submissionBranch("foo-bar"))
+	assert.NotEqual(t, submissionBranch("foo/bar"), submissionBranch("foo-bar"))
 }
 
 // TestExistingPRURL covers AC 02-02 Edge Case 1: when gh reports a pull request
@@ -301,4 +311,51 @@ func swapPreconditionSeams(t *testing.T, path func() (string, error), auth func(
 		ghAuthStatus = auth
 	}
 	return func() { ghPath, ghAuthStatus = oldPath, oldAuth }
+}
+
+// TestGitHasStagedChanges exercises the empty-diff guard used by PushBranch.
+func TestGitHasStagedChanges(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	dir := t.TempDir()
+	run := func(args ...string) {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		require.NoError(t, c.Run())
+	}
+	run("init", "-q")
+
+	has, err := gitHasStagedChanges(context.Background(), dir)
+	require.NoError(t, err)
+	assert.False(t, has, "a fresh repo has no staged changes")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x"), 0o600))
+	has, err = gitHasStagedChanges(context.Background(), dir)
+	require.NoError(t, err)
+	assert.False(t, has, "unstaged file is not a staged change")
+
+	run("add", "a.txt")
+	has, err = gitHasStagedChanges(context.Background(), dir)
+	require.NoError(t, err)
+	assert.True(t, has, "staged change is detected")
+}
+
+// TestSubmit_WritesMarkerAfterPR_MalformedHead covers the malformed push-head
+// edge case: when the stub returns a head without an "owner:" prefix, Submit
+// records the whole head as the submitter rather than silently corrupting the
+// marker (TD item submit_test.go:310).
+func TestSubmit_WritesMarkerAfterPR_MalformedHead(t *testing.T) {
+	personasDir := t.TempDir()
+	subDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(personasDir, "sasha.yaml"), []byte(validPersonaYAML), 0o600))
+	s := &stubSubmitter{pushHead: "persona-submit/sasha", prURL: "https://github.com/samestrin/atcr/pull/42"}
+
+	_, err := Submit(context.Background(), s, personasDir, subDir, "sasha")
+	require.NoError(t, err)
+
+	got, ok, err := ReadSubmission(subDir, "sasha")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "persona-submit/sasha", got.Submitter, "submitter falls back to the whole head when owner is missing")
 }
