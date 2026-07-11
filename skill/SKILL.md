@@ -42,7 +42,7 @@ Run these in order. Each step is a single `atcr` CLI invocation; never reach int
 
 3. **Poll status** — `atcr status <id>` returns JSON `{review_id, status, agent_count, agents_done, agents_pending, partial}`. Poll every **10 seconds**, up to **60 times** (a 10-minute default timeout); both are configurable. Stop polling when `status` is `completed` or `failed`. On timeout, halt: `Review timed out after <N> seconds. Check 'atcr status' for details.` If the review completes on the first poll, proceed immediately.
 
-4. **Host review (your +1 pass)** — read the payload from `.atcr/reviews/<id>/payload/` and write your findings to `.atcr/reviews/<id>/sources/host/findings.txt` (see *Host Review Instructions*). The host-review step reads only files under the review directory and issues no atcr calls of its own.
+4. **Host review (your +1 pass)** — read the payload from `.atcr/reviews/<id>/payload/` and write your findings to `.atcr/reviews/<id>/sources/host/findings.txt` (load `host-review.md` on demand for the full instructions). The host-review step reads only files under the review directory and issues no atcr calls of its own.
 
 5. **Reconcile** — `atcr reconcile <id>`. This discovers all sources under `sources/` (pool agents + host), clusters and dedupes them, scores confidence, and writes the reconciled artifacts. If it reports no reconcile sources at all, halt: `no reconcile sources found under sources/`. Zero findings from sources that *did* produce a `findings.txt` is the success path, not an error.
 
