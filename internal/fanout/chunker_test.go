@@ -266,6 +266,24 @@ func TestMergeResultGroupFallbackFromDistinct(t *testing.T) {
 	assert.Contains(t, merged.FallbackFrom, "primary-b", "second fallback source should be recorded")
 }
 
+// TestMergeResultGroup_FallbackModelModal covers the F5 collapse-key contract:
+// FallbackModel is reconcile's signal that two personas were served by the same
+// net model. When a chunked persona's chunks fell back to DIFFERENT models,
+// joining them comma-separated ("model-a,model-b") produces a composite key that
+// never matches another persona's single-model key, so the persona escapes the
+// intended de-weighting. The merged result must report ONE representative model
+// (the modal/most-frequent fallback) instead.
+func TestMergeResultGroup_FallbackModelModal(t *testing.T) {
+	g := []Result{
+		{Agent: "reviewer", Status: StatusOK, FallbackUsed: true, FallbackModel: "model-a"},
+		{Agent: "reviewer", Status: StatusOK, FallbackUsed: true, FallbackModel: "model-b"},
+		{Agent: "reviewer", Status: StatusOK, FallbackUsed: true, FallbackModel: "model-a"},
+	}
+	merged := mergeResultGroup(g, nil)
+	assert.Equal(t, "model-a", merged.FallbackModel, "modal fallback model should be the F5 collapse key")
+	assert.NotContains(t, merged.FallbackModel, ",", "composite FallbackModel breaks F5 collapse")
+}
+
 func TestMergeResultGroup_AggregatesResponseTruncated(t *testing.T) {
 	t.Run("later chunk truncated is preserved", func(t *testing.T) {
 		g := []Result{
