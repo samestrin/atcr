@@ -55,15 +55,15 @@ This task supplies only the effective-budget *number* (bytes) per agent and the 
 - `internal/registry/precedence.go:97` (`Settings.PayloadByteBudget int64`, the resolved concrete value read by `review.go`)
 
 ## Success Criteria
-- [ ] `internal/payload/sizing.go` exposes an effective-byte-budget function keyed on model id and output-token reservation, using `ContextWindowTokens` from Task 01.
-- [ ] The byte→token ratio used is ~3.5 B/token (or more conservative), never the ~4.1 B/token implied by `internal/registry/project.go:89`.
-- [ ] Both `ApplyByteBudget` call sites in `internal/fanout/review.go` (the `buildPayloads` path and the `PrepareReviewFromDiff` path) derive their budget argument from the specific agent's model rather than one shared `cfg.Settings.PayloadByteBudget` value across the whole payload mode.
-- [ ] The configured `cfg.Settings.PayloadByteBudget` (when > 0) still acts as an upper ceiling on the per-agent budget, preserving existing operator-configured caps.
-- [ ] For a 32,768-token-window model with `defaultMaxTokens = 8192` reserved, the computed effective input budget in tokens is strictly less than `32768 - 8192 = 24576`, and the exact `dax` arithmetic (`24577 input tokens + 8192 output > 32768`) cannot recur.
-- [ ] `payload.ApplyByteBudget` itself is unmodified — this task only changes what budget value callers pass in.
+- [x] `internal/payload/sizing.go` exposes an effective-byte-budget function keyed on model id and output-token reservation, using `ContextWindowTokens` from Task 01.
+- [x] The byte→token ratio used is ~3.5 B/token (or more conservative), never the ~4.1 B/token implied by `internal/registry/project.go:89`.
+- [x] Both `ApplyByteBudget` call sites in `internal/fanout/review.go` (the `buildPayloads` path and the `PrepareReviewFromDiff` path) derive their budget argument from the specific agent's model rather than one shared `cfg.Settings.PayloadByteBudget` value across the whole payload mode.
+- [x] The configured `cfg.Settings.PayloadByteBudget` (when > 0) still acts as an upper ceiling on the per-agent budget, preserving existing operator-configured caps.
+- [x] For a 32,768-token-window model with `defaultMaxTokens = 8192` reserved, the computed effective input budget in tokens is strictly less than `32768 - 8192 = 24576`, and the exact `dax` arithmetic (`24577 input tokens + 8192 output > 32768`) cannot recur.
+- [x] `payload.ApplyByteBudget` itself is unmodified — this task only changes what budget value callers pass in.
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -90,8 +90,8 @@ This task supplies only the effective-budget *number* (bytes) per agent and the 
 - Task-01 (Context-Window Resolver) — supplies `internal/payload/contextwindow.go`'s `ContextWindowTokens(model string) int`, which this task's `EffectiveByteBudget` consumes directly.
 
 ## Definition of Done
-- [ ] `internal/payload/sizing.go` created with the effective-budget helper and documented constants (ratio, promptOverhead).
-- [ ] Both `internal/fanout/review.go` call sites (`buildPayloads`, `PrepareReviewFromDiff`) derive per-agent budgets via the new helper instead of the single global `cfg.Settings.PayloadByteBudget`.
-- [ ] Unit tests cover the 32k-window and 144k-window cases plus the `dax`-boundary regression (AC1, AC2).
-- [ ] `go test ./...` passes.
-- [ ] No changes to `payload.ApplyByteBudget`'s signature or behavior.
+- [x] `internal/payload/sizing.go` created with the effective-budget helper and documented constants (ratio, promptOverhead).
+- [x] Both `internal/fanout/review.go` call sites (`buildPayloads`, `PrepareReviewFromDiff`) derive per-agent budgets via the new helper instead of the single global `cfg.Settings.PayloadByteBudget`.
+- [x] Unit tests cover the 32k-window and 144k-window cases plus the `dax`-boundary regression (AC1, AC2).
+- [x] `go test ./...` passes.
+- [x] No changes to `payload.ApplyByteBudget`'s signature or behavior.

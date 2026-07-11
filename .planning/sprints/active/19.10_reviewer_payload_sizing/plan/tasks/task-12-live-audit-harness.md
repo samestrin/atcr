@@ -64,7 +64,7 @@ Add `examples/19.10-live-audit.sh`, modeled on the existing sibling `examples/ci
 - **To re-run the live audit:** `ATCR_BIN=./bin/atcr bash examples/19.10-live-audit.sh` — the default `ATCR_BIN=atcr` would use the stale on-PATH binary and always SKIP.
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**

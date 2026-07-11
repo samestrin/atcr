@@ -32,15 +32,15 @@ Reuse `chunkDiff` completely unchanged — it already does exactly what F3 needs
 - `internal/registry/config.go` — `EffectiveMaxContextLines`/`DefaultMaxContextLines` (lines 974-988, reference only, NOT modified per plan Constraints)
 
 ## Success Criteria
-- [ ] `internal/payload/sizing.go` exposes a chunk-plan helper that converts a per-model effective token budget into a `maxLines` value, consuming the Task 02 effective-budget output (no parallel budget type introduced)
-- [ ] `internal/fanout/review.go:865-876`'s chunked-strategy branch feeds `chunkDiff` a model-derived `maxLines` instead of the global `ac.EffectiveMaxContextLines()`, unless an explicit per-agent `max_context_lines` override is set (explicit config still wins)
-- [ ] A 32k-context-window model produces MORE chunks than a 144k-context-window model for the identical input diff — verified by test
-- [ ] Zero files dropped across the chunk plan for both the 32k and 144k cases — verified by `strings.Join(chunks, "") == diff` (or equivalent lossless-reassembly assertion) in the test
-- [ ] The existing `maxChunksPerAgent = 64` ceiling in `internal/fanout/chunker.go` is respected unchanged — no new ceiling logic introduced
-- [ ] `chunkDiff` itself (`internal/fanout/chunker.go:111`) is not modified — only its caller's `maxLines` argument source changes
+- [x] `internal/payload/sizing.go` exposes a chunk-plan helper that converts a per-model effective token budget into a `maxLines` value, consuming the Task 02 effective-budget output (no parallel budget type introduced)
+- [x] `internal/fanout/review.go:865-876`'s chunked-strategy branch feeds `chunkDiff` a model-derived `maxLines` instead of the global `ac.EffectiveMaxContextLines()`, unless an explicit per-agent `max_context_lines` override is set (explicit config still wins)
+- [x] A 32k-context-window model produces MORE chunks than a 144k-context-window model for the identical input diff — verified by test
+- [x] Zero files dropped across the chunk plan for both the 32k and 144k cases — verified by `strings.Join(chunks, "") == diff` (or equivalent lossless-reassembly assertion) in the test
+- [x] The existing `maxChunksPerAgent = 64` ceiling in `internal/fanout/chunker.go` is respected unchanged — no new ceiling logic introduced
+- [x] `chunkDiff` itself (`internal/fanout/chunker.go:111`) is not modified — only its caller's `maxLines` argument source changes
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -67,10 +67,10 @@ Reuse `chunkDiff` completely unchanged — it already does exactly what F3 needs
 - Task-02 (Per-Agent Effective Budget) — supplies the per-model effective input token/byte budget this task converts into `maxLines`
 
 ## Definition of Done
-- [ ] `internal/payload/sizing.go` chunk-plan helper implemented and exported for use by `internal/fanout`
-- [ ] `internal/fanout/review.go:865-876` wired to the new per-model `maxLines` source
-- [ ] AC3 verified: with `on_overflow: chunk`, an over-window payload is delivered whole across multiple appropriately-sized chunks — more chunks for a 32k model than a 144k model — with zero files dropped, confirmed by test
-- [ ] `chunkDiff` and `maxChunksPerAgent` in `internal/fanout/chunker.go` remain unmodified (wiring-only change per plan Constraints)
-- [ ] `go build ./...` succeeds
-- [ ] `go test ./...` passes
-- [ ] No changes to `internal/registry/config.go`'s `EffectiveMaxContextLines`/`DefaultMaxContextLines`/`MaxContextLines` resolvers
+- [x] `internal/payload/sizing.go` chunk-plan helper implemented and exported for use by `internal/fanout`
+- [x] `internal/fanout/review.go:865-876` wired to the new per-model `maxLines` source
+- [x] AC3 verified: with `on_overflow: chunk`, an over-window payload is delivered whole across multiple appropriately-sized chunks — more chunks for a 32k model than a 144k model — with zero files dropped, confirmed by test
+- [x] `chunkDiff` and `maxChunksPerAgent` in `internal/fanout/chunker.go` remain unmodified (wiring-only change per plan Constraints)
+- [x] `go build ./...` succeeds
+- [x] `go test ./...` passes
+- [x] No changes to `internal/registry/config.go`'s `EffectiveMaxContextLines`/`DefaultMaxContextLines`/`MaxContextLines` resolvers

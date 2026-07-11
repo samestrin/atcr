@@ -82,17 +82,17 @@ Add `max_sprint_plan_bytes` as a new numeric config key, following the existing 
 - `internal/registry/cache_settings_test.go` – existing pointer-field precedence test pattern this task mirrors exactly
 
 ## Success Criteria
-- [ ] `max_sprint_plan_bytes` is a recognized YAML key in `.atcr/config.yaml`, `~/.config/atcr/registry.yaml` (project overlay), and any project config — strict `KnownFields(true)` decoding accepts it without error
-- [ ] An unset `max_sprint_plan_bytes` at every tier resolves to `65536` via `ResolveSettings` (AC10)
-- [ ] An explicit `max_sprint_plan_bytes` at the project tier overrides the registry tier and the embedded default (AC10)
-- [ ] An explicit `max_sprint_plan_bytes` at the registry tier overrides the embedded default when the project tier is unset
-- [ ] A `<= 0` value is rejected at load time in both `LoadProjectConfig` and `LoadRegistry`/`Registry.validate()`, and by the post-resolution sanity check in `ResolveSettings` for a directly-constructed `proj`/`reg`
-- [ ] `ReadSprintPlan` and `ScopeConstraint` no longer reference any package-level constant — both take the byte ceiling as a parameter, verified by test with two different caller-supplied values producing different truncation points
-- [ ] `internal/fanout` threads `cfg.Settings.MaxSprintPlanBytes` end-to-end: a review configured with a custom `max_sprint_plan_bytes` embeds a plan truncated at that custom length, not the old hardcoded 16384 or the new default 65536
-- [ ] No behavior change to `on_overflow`/Task 05's schema additions — this task's diff to `internal/registry/config.go`, `precedence.go`, `project.go`, and `.atcr/config.yaml` is additive and merges cleanly alongside Task 05's additions to the same files
+- [x] `max_sprint_plan_bytes` is a recognized YAML key in `.atcr/config.yaml`, `~/.config/atcr/registry.yaml` (project overlay), and any project config — strict `KnownFields(true)` decoding accepts it without error
+- [x] An unset `max_sprint_plan_bytes` at every tier resolves to `65536` via `ResolveSettings` (AC10)
+- [x] An explicit `max_sprint_plan_bytes` at the project tier overrides the registry tier and the embedded default (AC10)
+- [x] An explicit `max_sprint_plan_bytes` at the registry tier overrides the embedded default when the project tier is unset
+- [x] A `<= 0` value is rejected at load time in both `LoadProjectConfig` and `LoadRegistry`/`Registry.validate()`, and by the post-resolution sanity check in `ResolveSettings` for a directly-constructed `proj`/`reg`
+- [x] `ReadSprintPlan` and `ScopeConstraint` no longer reference any package-level constant — both take the byte ceiling as a parameter, verified by test with two different caller-supplied values producing different truncation points
+- [x] `internal/fanout` threads `cfg.Settings.MaxSprintPlanBytes` end-to-end: a review configured with a custom `max_sprint_plan_bytes` embeds a plan truncated at that custom length, not the old hardcoded 16384 or the new default 65536
+- [x] No behavior change to `on_overflow`/Task 05's schema additions — this task's diff to `internal/registry/config.go`, `precedence.go`, `project.go`, and `.atcr/config.yaml` is additive and merges cleanly alongside Task 05's additions to the same files
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -124,14 +124,14 @@ Add `max_sprint_plan_bytes` as a new numeric config key, following the existing 
 - None hard — independent of F1-F8, can run in parallel with the rest of the sprint. Shares files with Task 05 (`on_overflow` config schema); coordinate merges per the Risk Mitigation above.
 
 ## Definition of Done
-- [ ] `internal/payload/sprintplan.go`'s `MaxSprintPlanBytes` constant is removed; `ReadSprintPlan`/`ScopeConstraint` both take `maxBytes int64`
-- [ ] `Registry.MaxSprintPlanBytes`, `ProjectConfig.MaxSprintPlanBytes`, and `Settings.MaxSprintPlanBytes` all added with correct `yaml:"max_sprint_plan_bytes,omitempty"` tags where applicable
-- [ ] `LoadProjectConfig` and `Registry.validate()` both reject `max_sprint_plan_bytes <= 0` with a clear error
-- [ ] `ResolveSettings` resolves `max_sprint_plan_bytes` through the registry → project precedence chain, defaulting to 65536, with a post-resolution sanity re-check
-- [ ] `internal/fanout/review.go` threads `cfg.Settings.MaxSprintPlanBytes` through `resolveScopeConstraint` and `buildSlots`, with no remaining reference to the old package constant anywhere in the repo (`grep -rn "payload.MaxSprintPlanBytes"` returns nothing)
-- [ ] `.atcr/config.yaml` documents and sets `max_sprint_plan_bytes: 65536`
-- [ ] `DefaultProjectConfigYAML` in `internal/registry/project.go` emits a documented `max_sprint_plan_bytes` line for `atcr init`-generated configs
-- [ ] All new and updated unit/integration tests pass, including the byte-truncation-at-custom-limit end-to-end test
-- [ ] `go build ./...` succeeds
-- [ ] `go test ./...` passes
-- [ ] AC10 verified: the sprint-plan byte limit is configurable via `max_sprint_plan_bytes` in `.atcr/config.yaml`, proven by test
+- [x] `internal/payload/sprintplan.go`'s `MaxSprintPlanBytes` constant is removed; `ReadSprintPlan`/`ScopeConstraint` both take `maxBytes int64`
+- [x] `Registry.MaxSprintPlanBytes`, `ProjectConfig.MaxSprintPlanBytes`, and `Settings.MaxSprintPlanBytes` all added with correct `yaml:"max_sprint_plan_bytes,omitempty"` tags where applicable
+- [x] `LoadProjectConfig` and `Registry.validate()` both reject `max_sprint_plan_bytes <= 0` with a clear error
+- [x] `ResolveSettings` resolves `max_sprint_plan_bytes` through the registry → project precedence chain, defaulting to 65536, with a post-resolution sanity re-check
+- [x] `internal/fanout/review.go` threads `cfg.Settings.MaxSprintPlanBytes` through `resolveScopeConstraint` and `buildSlots`, with no remaining reference to the old package constant anywhere in the repo (`grep -rn "payload.MaxSprintPlanBytes"` returns nothing)
+- [x] `.atcr/config.yaml` documents and sets `max_sprint_plan_bytes: 65536`
+- [x] `DefaultProjectConfigYAML` in `internal/registry/project.go` emits a documented `max_sprint_plan_bytes` line for `atcr init`-generated configs
+- [x] All new and updated unit/integration tests pass, including the byte-truncation-at-custom-limit end-to-end test
+- [x] `go build ./...` succeeds
+- [x] `go test ./...` passes
+- [x] AC10 verified: the sprint-plan byte limit is configurable via `max_sprint_plan_bytes` in `.atcr/config.yaml`, proven by test
