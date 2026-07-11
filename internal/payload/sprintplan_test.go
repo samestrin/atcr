@@ -163,6 +163,45 @@ func TestScopeConstraint(t *testing.T) {
 	}
 }
 
+// TD 19.10 (sprintplan.go:94): a bypassed-validation maxBytes <= 0 must NOT
+// silently blank the plan. capUTF8(plan, 0) previously returned an empty body with
+// truncated=true, injecting a SCOPE CONSTRAINT block whose plan was truncated to
+// nothing. maxBytes <= 0 now falls back to the defensive read ceiling so a real
+// (sub-ceiling) plan is delivered whole.
+func TestScopeConstraint_NonPositiveMaxBytesDoesNotBlankPlan(t *testing.T) {
+	const body = "## Active Tasks\n- keep this plan text\n"
+	for _, mb := range []int64{0, -1} {
+		block, trunc := ScopeConstraint(body, mb)
+		if trunc {
+			t.Fatalf("ScopeConstraint(body, %d) truncated=true, want false (must not blank a small plan)", mb)
+		}
+		if got := embeddedPlan(t, block); !strings.Contains(got, "keep this plan text") {
+			t.Fatalf("ScopeConstraint(body, %d) embedded %q, want the full plan body", mb, got)
+		}
+	}
+}
+
+// TD 19.10 (sprintplan.go:94): ReadSprintPlan with maxBytes <= 0 must not truncate
+// a real plan to a single byte (maxBytes+1). A bypassed 0 falls back to the
+// defensive read ceiling so the whole (sub-ceiling) file is buffered.
+func TestReadSprintPlan_NonPositiveMaxBytesDoesNotTruncate(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "plan.md")
+	const body = "# Sprint\nkeep planning body\n"
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, mb := range []int64{0, -1} {
+		got, err := ReadSprintPlan(p, mb)
+		if err != nil {
+			t.Fatalf("ReadSprintPlan(p, %d) error: %v", mb, err)
+		}
+		if !strings.Contains(got, body) {
+			t.Fatalf("ReadSprintPlan(p, %d) = %q, must contain full body %q (must not truncate to 1 byte)", mb, got, body)
+		}
+	}
+}
+
 // TestReadSprintPlan_RespectsCallerSuppliedLimit proves the byte ceiling is now a
 // caller-supplied parameter, not a fixed constant (plan 19.10 F9/AC10): two
 // different maxBytes values buffer to two different lengths from the same source.
