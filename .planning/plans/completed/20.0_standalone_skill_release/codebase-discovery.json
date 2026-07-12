@@ -1,0 +1,256 @@
+{
+  "generated": "2026-07-11",
+  "refined": "2026-07-11",
+  "discovery_method": "semantic",
+  "queries": [
+    "standalone skill dispatcher command router SKILL.md",
+    "output-dir reconcile contract test review directory tree",
+    "install script go install binary distribution",
+    "atcr doctor self test quickstart wizard",
+    "code review output directory structure per review id"
+  ],
+  "semantic_search": {
+    "enabled": true,
+    "generated_queries": [
+      "dispatcher router skill SKILL.md command namespace",
+      "output-dir reconcile contract test review directory tree",
+      "install script go install shell distribution",
+      "atcr doctor quickstart cobra subcommand test"
+    ],
+    "top_results_summary": "Semantic search confirmed the dispatcher surface (cmd/atcr/main.go command tree, skill/SKILL.md), the --output-dir contract (docs/code-review-backend.md, internal/fanout/reviewdir.go, cmd/atcr/review_test.go, cmd/atcr/reconcile_test.go), and the existing self-test/onboarding commands (cmd/atcr/doctor.go, cmd/atcr/quickstart.go, internal/quickstart/workflow.go). No install.sh exists anywhere; examples/ci-gate.sh remains the only shell style precedent."
+  },
+  "build_from": {
+    "primary_file": "skill/SKILL.md",
+    "reason": "This is the exact standalone skill Proposed Solution #2 requires converting into a 'single dispatcher skill' using a /atcr <command> UX pattern. It is currently authored as a full linear orchestration script (Prerequisites -> Input Format -> Orchestration Steps -> Host Review Instructions -> Ambiguity Adjudication -> Findings Format Reference), not a command router.",
+    "suggested_approach": "Restructure skill/SKILL.md into a lightweight dispatcher: a top-level /atcr <command> <flags> entry point that maps user intent to the underlying atcr CLI commands (review, reconcile, report, status, doctor, quickstart, version, range, etc.), moving the detailed per-flow instructions (host review, ambiguity adjudication, findings format) into secondary markdown files loaded on demand to keep the primary SKILL.md under the ~500-line budget noted in the 2026-07-05 addendum. Use the exact command names registered in cmd/atcr/main.go:185-208 so the router stays in sync with the binary."
+  },
+  "existing_patterns": [
+    {
+      "name": "Documented CLI contract pages",
+      "description": "Stable behavioral contracts (e.g. --output-dir tree shape) are documented as standalone docs/*.md pages separate from README.md, with an explicit 'Output tree' code block and a 'Behavioral notes for callers' section.",
+      "files": ["docs/code-review-backend.md", "docs/skill-usage.md"],
+      "follow_for": "Any new documentation this epic adds (install.sh usage, dispatcher command reference) should follow the same doc-per-concern structure and cross-link from README.md's Documentation section."
+    },
+    {
+      "name": "Cobra subcommand + _test.go pairing",
+      "description": "Each cmd/atcr/*.go subcommand has a co-located *_test.go exercising CLI behavior, including --output-dir cases.",
+      "files": ["cmd/atcr/review_test.go", "cmd/atcr/reconcile_test.go"],
+      "follow_for": "The new repo-local backward-compat contract test (AC3) should follow this pairing convention rather than inventing a new test harness."
+    },
+    {
+      "name": "Cobra root command registration",
+      "description": "Subcommands are registered centrally in newRootCmd (cmd/atcr/main.go:185-208) with exact Use strings and cobra.Command structs. This is the canonical command surface the dispatcher must mirror.",
+      "files": ["cmd/atcr/main.go"],
+      "follow_for": "The /atcr <command> dispatcher in skill/SKILL.md must route to the exact command names registered here (review, reconcile, report, status, doctor, quickstart, version, range, etc.) and must not invent aliases that drift from the CLI."
+    },
+    {
+      "name": "Versioned findings stream contract",
+      "description": "The per-source and reconciled findings streams are documented in docs/findings-format.md with the exact # atcr-findings/v1 header, 8-column per-source shape, 9-column reconciled shape, and escaping rules.",
+      "files": ["docs/findings-format.md"],
+      "follow_for": "Host-review and ambiguity-adjudication secondary skill files must reference this contract verbatim; the dispatcher should not re-specify column semantics."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "docs/skill-usage.md",
+      "relevance": "high",
+      "purpose": "Documents skill/SKILL.md install/usage and states artifacts land under .atcr/reviews/<id>/ — already satisfies AC2 per the epic's own Refinements (D4).",
+      "likely_modification": "reference-only, verify accuracy"
+    },
+    {
+      "path": "docs/code-review-backend.md",
+      "relevance": "high",
+      "purpose": "Documents the --output-dir + reconcile contract that private-skill consumers (execute-code-review/reconcile-code-review) depend on — this is the AC3 surface the new repo-local test must validate.",
+      "likely_modification": "reference-only, source of truth for the new test's assertions"
+    },
+    {
+      "path": "README.md",
+      "relevance": "high",
+      "purpose": "Already documents the `go install github.com/samestrin/atcr/cmd/atcr@latest` path (Quickstart section), atcr doctor, and atcr quickstart — covers AC1 and most of the T4 self-test/quick-start requirement.",
+      "likely_modification": "reference-only, cross-check install.sh gets linked from here"
+    },
+    {
+      "path": "cmd/atcr/main.go",
+      "relevance": "high",
+      "purpose": "Canonical command tree for the atcr binary. The dispatcher's /atcr <command> surface must map 1:1 to the commands registered here.",
+      "likely_modification": "reference-only",
+      "line": 185
+    },
+    {
+      "path": "cmd/atcr/doctor.go",
+      "relevance": "medium",
+      "purpose": "Already-shipped self-test command; the epic documents this instead of building a new atcr self-test command (decision D3).",
+      "likely_modification": "reference-only",
+      "line": 14
+    },
+    {
+      "path": "cmd/atcr/quickstart.go",
+      "relevance": "medium",
+      "purpose": "Already-shipped onboarding wizard command; the epic documents this instead of building new quick-start tooling (decision D3).",
+      "likely_modification": "reference-only",
+      "line": 41
+    },
+    {
+      "path": "internal/quickstart/workflow.go",
+      "relevance": "medium",
+      "purpose": "Renders the scaffolded .github/workflows/atcr.yml used by atcr quickstart; shows how the project already documents the go install path for consumers.",
+      "likely_modification": "reference-only",
+      "line": 15
+    },
+    {
+      "path": "docs/findings-format.md",
+      "relevance": "medium",
+      "purpose": "Versioned findings stream contract referenced by skill/SKILL.md and by the reconciler. Secondary dispatcher markdown files should cite this rather than duplicate it.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "docs/providers.md",
+      "relevance": "low",
+      "purpose": "Referenced by docs/skill-usage.md for configuring the reviewer pool; dispatcher docs may cross-link.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/fanout/reviewdir.go",
+      "relevance": "medium",
+      "purpose": "Implements ReviewsRoot and the output-directory resolution logic underlying the --output-dir contract.",
+      "likely_modification": "reference-only",
+      "line": 155
+    },
+    {
+      "path": "cmd/atcr/review_test.go",
+      "relevance": "medium",
+      "purpose": "Existing --output-dir test coverage pattern to follow when writing the new AC3 contract test.",
+      "likely_modification": "reference-only, pattern source"
+    },
+    {
+      "path": "cmd/atcr/reconcile_test.go",
+      "relevance": "medium",
+      "purpose": "Existing reconcile-against-output-dir test coverage pattern, including the TestReconcileCmd_InheritsExternalOutputDir contract case.",
+      "likely_modification": "reference-only, pattern source"
+    },
+    {
+      "path": "examples/ci-gate.sh",
+      "relevance": "medium",
+      "purpose": "Only existing example shell script shipped in the repo; the nearest style precedent for install.sh conventions (shebang, error handling, comments).",
+      "likely_modification": "reference-only, style precedent"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "skill/SKILL.md:frontmatter",
+      "type": "entry-point",
+      "description": "The dispatcher rewrite target — the `name`/`description` frontmatter and all body sections are the surface being restructured into a /atcr <command> router."
+    },
+    {
+      "location": "cmd/atcr/main.go:185-208",
+      "type": "entry-point",
+      "description": "The canonical atcr CLI command tree. The skill dispatcher's command namespace must stay aligned with these registrations."
+    },
+    {
+      "location": "docs/code-review-backend.md:Output tree",
+      "type": "hook",
+      "description": "The documented output tree is the exact contract the new repo-local backward-compat test must assert against by actually running `atcr review --output-dir` + `atcr reconcile`."
+    },
+    {
+      "location": "docs/findings-format.md",
+      "type": "hook",
+      "description": "The versioned findings stream contract that host-review and adjudication secondary skill files must reference."
+    },
+    {
+      "location": "docs/skill-usage.md:Usage",
+      "type": "hook",
+      "description": "End-user install/usage guide for the standalone skill; must remain accurate after the dispatcher rewrite."
+    },
+    {
+      "location": "external claude-prompts repository",
+      "type": "manual-follow-up",
+      "description": "The private skill migration (Proposed Solution #3) cannot be written from this workspace. The dispatcher rewrite in this repo should include a documented manual migration checklist, but the actual claude-prompts skill files are out of scope for automated file writes."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "examples/ci-gate.sh",
+      "path": "examples/ci-gate.sh",
+      "can_extend": false,
+      "usage_example": "Use as a style/structure reference (not a code dependency) when authoring install.sh, since it is the only shell script currently shipped in the repo."
+    },
+    {
+      "name": "atcr doctor / atcr quickstart",
+      "path": "cmd/atcr/doctor.go, cmd/atcr/quickstart.go",
+      "can_extend": false,
+      "usage_example": "Cite directly in documentation as already satisfying the self-test / quick-start requirement — do not wrap or extend these commands."
+    },
+    {
+      "name": "docs/findings-format.md",
+      "path": "docs/findings-format.md",
+      "can_extend": false,
+      "usage_example": "Cite from secondary skill markdown files instead of redefining the findings stream contract."
+    }
+  ],
+  "architecture_notes": [
+    "atcr is a single Go binary with three faces (CLI, MCP server via `atcr serve`, and an Agent Skill); skill/SKILL.md is the only existing skill artifact today, authored as a full linear orchestration script rather than a command dispatcher.",
+    "The --output-dir contract is already implemented and unit-tested (cmd/atcr/review_test.go, reconcile_test.go, internal/fanout/reviewdir_test.go); this epic's AC3 needs an end-to-end assertion that the documented tree in docs/code-review-backend.md stays stable, not new engine code.",
+    "No install.sh or release automation exists anywhere in the repo (confirmed via find); `go install` is the only documented install path today (README.md Quickstart, CHANGELOG 1.x entries).",
+    "The private claude-prompts skills (execute-code-review, reconcile-code-review) live in an external repository this workspace cannot write to — Proposed Solution #3's dispatcher migration for those skills is a manual operator action outside this plan's file-write scope.",
+    "To keep skill/SKILL.md under the ~500-line budget, the dispatcher should load detailed host-review, ambiguity-adjudication, and findings-format instructions from secondary markdown files (e.g., skill/host-review.md, skill/ambiguity-adjudication.md, skill/findings-format.md) rather than inlining them."
+  ],
+  "architecture_recommendations": [
+    "Keep the primary skill/SKILL.md under ~500 lines by moving detailed host-review, adjudication, and findings-format instructions into secondary markdown files loaded on demand.",
+    "Mirror the exact command names registered in cmd/atcr/main.go (review, reconcile, report, status, doctor, quickstart, version, range, etc.) in the /atcr dispatcher; avoid inventing aliases.",
+    "Make install.sh wrap `go install github.com/samestrin/atcr/cmd/atcr@latest` only, with no pinning logic, release checks, or packaging automation — Epic 21.0 owns that.",
+    "Write the AC3 backward-compat contract test as a standard *_test.go in cmd/atcr/ following the review_test.go/reconcile_test.go pattern; use build tag `//go:build integration` if it shells out to a real `go run ./cmd/atcr` binary.",
+    "Do not extend or wrap cmd/atcr/doctor.go or cmd/atcr/quickstart.go to satisfy the self-test/quick-start requirement; only update documentation citations."
+  ],
+  "files_to_modify": [
+    {
+      "path": "skill/SKILL.md",
+      "reason": "Convert from a linear orchestration script into a single dispatcher skill (/atcr <command> <flags> UX) per the 2026-07-05 addendum override.",
+      "scope": "major"
+    },
+    {
+      "path": "docs/skill-usage.md",
+      "reason": "Verify install/usage documentation stays accurate against the dispatcher rewrite; update any command examples that change shape.",
+      "scope": "minor"
+    },
+    {
+      "path": "README.md",
+      "reason": "Cross-check the install.sh addition is linked/documented alongside the existing go install path; no functional change expected.",
+      "scope": "trivial"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "install.sh",
+      "purpose": "Installation script for external developers — the one confirmed net-new gap (AC4); no install script exists anywhere in the repo today.",
+      "based_on": "examples/ci-gate.sh (style precedent only, not a functional base)"
+    },
+    {
+      "path": "cmd/atcr/backend_contract_test.go (exact name TBD in plan decomposition)",
+      "purpose": "Repo-local end-to-end test proving the --output-dir + reconcile contract documented in docs/code-review-backend.md remains stable (AC3) — runs `atcr review --output-dir` and `atcr reconcile` and asserts the documented output tree and file set.",
+      "based_on": "cmd/atcr/review_test.go and cmd/atcr/reconcile_test.go"
+    },
+    {
+      "path": "skill/host-review.md (optional secondary file)",
+      "purpose": "Preserves the current Host Review Instructions verbatim outside the primary dispatcher SKILL.md, keeping it under the ~500-line budget.",
+      "based_on": "skill/SKILL.md 'Host Review Instructions' section"
+    },
+    {
+      "path": "skill/ambiguity-adjudication.md (optional secondary file)",
+      "purpose": "Preserves the current Ambiguity Adjudication instructions verbatim outside the primary dispatcher SKILL.md.",
+      "based_on": "skill/SKILL.md 'Ambiguity Adjudication' section"
+    },
+    {
+      "path": "docs/external-migration.md (optional)",
+      "purpose": "Documents the private claude-prompts dispatcher migration as a manual operator follow-up action outside this workspace's write scope.",
+      "based_on": "original-requirements.md Out of Scope and 2026-07-05 addendum"
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test (standard library testing package)",
+    "test_location": "cmd/atcr/",
+    "naming_convention": "*_test.go",
+    "example_test": "cmd/atcr/review_test.go",
+    "integration_tag": "//go:build integration",
+    "assertion_libraries": ["github.com/stretchr/testify/assert", "github.com/stretchr/testify/require"]
+  }
+}
