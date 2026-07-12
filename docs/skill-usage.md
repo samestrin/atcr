@@ -2,7 +2,7 @@
 
 The atcr skill turns a host AI agent (e.g. Claude Code) into the **+1 reviewer** on an atcr review panel. It orchestrates the full flow — resolve range → fan out to the reviewer pool → host review → reconcile → report — and contributes its own adversarial review so reconciliation always has at least two independent sources.
 
-The skill itself is a single Markdown file, [`skill/SKILL.md`](../skill/SKILL.md). It contains no executable code; it is instructions the agent follows, invoking the `atcr` binary at each step.
+The skill is [`skill/SKILL.md`](../skill/SKILL.md) — a `/atcr <command>` dispatcher — plus three sibling files it loads on demand: [`host-review.md`](../skill/host-review.md), [`ambiguity-adjudication.md`](../skill/ambiguity-adjudication.md), and [`findings-format.md`](../skill/findings-format.md). None contain executable code; they are instructions the agent follows, invoking the `atcr` binary at each step. Install all four together so the on-demand references resolve.
 
 ## Prerequisites
 
@@ -12,14 +12,14 @@ The skill itself is a single Markdown file, [`skill/SKILL.md`](../skill/SKILL.md
 
 ## Installation
 
-The skill installs by file copy into your agent's skills directory. For Claude Code, the project-local location is `.claude/skills/atcr/`:
+The skill installs by file copy into your agent's skills directory. For Claude Code, the project-local location is `.claude/skills/atcr/`. Copy the whole `skill/` directory — `SKILL.md` plus its three on-demand secondary files — not `SKILL.md` alone, or the host-review, adjudication, and findings-format references will fail to resolve at runtime:
 
 ```sh
 mkdir -p .claude/skills/atcr
-cp skill/SKILL.md .claude/skills/atcr/SKILL.md
+cp skill/*.md .claude/skills/atcr/
 ```
 
-Standard skill resolution applies: a project-local copy wins over a globally installed one, and the copy shipped in this repo (`skill/SKILL.md`) is the canonical reference. To install globally for your user, copy into your agent's user-level skills directory instead.
+Standard skill resolution applies: a project-local copy wins over a globally installed one, and the copy shipped in this repo (`skill/`) is the canonical reference. To install globally for your user, copy the same files into your agent's user-level skills directory instead.
 
 ## Usage
 

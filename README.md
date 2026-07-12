@@ -38,7 +38,7 @@ The deterministic Go reconciler — cluster → dedupe → merge → confidence 
 **New to atcr? Run `atcr quickstart` first** — it is the one-command default. It scaffolds `.atcr/`, sets up the **Synthetic** flat-rate provider, walks you through the one API-key environment variable (the key is never written to atcr's config), shows the signup link, and scaffolds a `.github/workflows/atcr.yml` — so you reach your first review without hand-editing `registry.yaml`.
 
 ```bash
-# 1. Install (Go 1.24+)
+# 1. Install (Go 1.25+)
 go install github.com/samestrin/atcr/cmd/atcr@latest
 
 # 2. One-command onboarding: scaffold .atcr/ + set up the Synthetic provider
@@ -91,6 +91,13 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
 | `atcr debt` | Query, capture, and report on technical debt (`list` / `add` / `dashboard`); see [docs/technical-debt.md](docs/technical-debt.md) |
 | `atcr audit-report` | Render a one-page markdown compliance report for a PR's review runs from the append-only `.atcr/audit.log.jsonl` ledger (`--pr <n>`) |
+| `atcr github` | Post reconciled findings to a GitHub pull request as a check run |
+| `atcr scorecard` | Display the per-reviewer scorecard for a single reconcile run |
+| `atcr leaderboard` | Aggregate scorecard records across runs, ranked by corroboration rate |
+| `atcr benchmark` | Standard benchmark-suite tooling for the public leaderboard |
+| `atcr personas` | Manage community reviewer personas |
+| `atcr models` | Inspect model bindings, drift, and the catalog snapshot |
+| `atcr version` | Print the atcr version |
 
 Key flags:
 
@@ -180,7 +187,7 @@ jobs:
           fetch-depth: 0          # full history: atcr needs the merge-base
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
       - run: go install github.com/samestrin/atcr/cmd/atcr@latest
       - name: atcr gate
         env:
@@ -228,4 +235,4 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 | Lint | `golangci-lint run` |
 | Vet | `go vet ./...` |
 
-Go 1.24+. Three direct dependencies: `spf13/cobra`, `gopkg.in/yaml.v3`, `modelcontextprotocol/go-sdk`.
+Go 1.25+. Three direct dependencies: `spf13/cobra`, `gopkg.in/yaml.v3`, `modelcontextprotocol/go-sdk`.

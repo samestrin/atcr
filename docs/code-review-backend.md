@@ -108,9 +108,9 @@ than ingesting atcr's pre-collapsed blob.
   reconciler uses its own clustering/dedupe and confidence logic, so counts
   will not match a different reviewer backend run over the same range. This is
   expected; the pipeline must not assert count parity.
-- **Review scope (temporary).** Reviewers currently scope to diff-touched
-  lines and do not receive external planning context (e.g. a sprint plan).
-  Passing additional review context is **planned for an upcoming epic** that
-  will add a context-injection channel and the corresponding `atcr review`
-  flag; until then, callers should not assume sprint/plan context reaches the
-  reviewers.
+- **Review scope.** Reviewers scope to diff-touched lines. To constrain a
+  review to a specific plan's work items, pass `atcr review --sprint-plan
+  <path>`: the plan's markdown content is injected as a `SCOPE CONSTRAINT`
+  before the diff so reviewers suppress findings unrelated to those work
+  items. A missing or empty plan is ignored; an unreadable one warns and
+  proceeds.
