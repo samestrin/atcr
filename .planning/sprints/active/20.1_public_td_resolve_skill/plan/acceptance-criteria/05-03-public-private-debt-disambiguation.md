@@ -63,15 +63,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `docs/skill-usage.md` contains an explicit, visually distinct callout contrasting `/atcr debt resolve` (`.atcr/`-scoped, public/standalone) with `atcr debt list/add/dashboard` (`.planning/`-scoped, private pipeline)
-- [ ] The callout correctly describes the shared `atcr debt` CLI namespace with separate, non-overlapping data stores
-- [ ] A working cross-link to `docs/technical-debt.md` is present
-- [ ] Callout placement and prominence reviewed against the story's stated confusion risk (not just a passing inline mention)
+- [x] `docs/skill-usage.md` contains an explicit, visually distinct callout contrasting `/atcr debt resolve` (`.atcr/`-scoped, public/standalone) with `atcr debt list/add/dashboard` (`.planning/`-scoped, private pipeline)
+- [x] The callout correctly describes the shared `atcr debt` CLI namespace with separate, non-overlapping data stores
+- [x] A working cross-link to `docs/technical-debt.md` is present
+- [x] Callout placement and prominence reviewed against the story's stated confusion risk (not just a passing inline mention)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

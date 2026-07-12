@@ -63,15 +63,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `docs/skill-usage.md` contains a new section documenting `/atcr debt resolve`'s purpose, invocation, and behavior
-- [ ] The section's structure (prose + table/step-list) matches the existing Usage/Output section style
-- [ ] Selection-rule and empty-store edge-case behavior are described accurately
-- [ ] Content verified against Story 3's landed `skill/debt-resolve/SKILL.md` and CLI subcommand behavior (not just the story draft) before sign-off
+- [x] `docs/skill-usage.md` contains a new section documenting `/atcr debt resolve`'s purpose, invocation, and behavior
+- [x] The section's structure (prose + table/step-list) matches the existing Usage/Output section style
+- [x] Selection-rule and empty-store edge-case behavior are described accurately
+- [x] Content verified against Story 3's landed `skill/debt-resolve/SKILL.md` and CLI subcommand behavior (not just the story draft) before sign-off
 
 **Manual Review:**
 - [ ] Code reviewed and approved

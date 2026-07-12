@@ -63,15 +63,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `docs/skill-usage.md` documents the local store's path, population trigger, and permissions/rotation, styled after `docs/scorecard.md`'s Storage section
-- [ ] `--no-local-debt` flag name and single-run-suppression behavior are documented accurately
-- [ ] Cross-run accumulation/dedup behavior is described per Story 2's actual landed decision, not left ambiguous
-- [ ] Content verified against `documentation/local-td-store-schema.md` and the landed `cmd/atcr/reconcile.go` flag before sign-off
+- [x] `docs/skill-usage.md` documents the local store's path, population trigger, and permissions/rotation, styled after `docs/scorecard.md`'s Storage section
+- [x] `--no-local-debt` flag name and single-run-suppression behavior are documented accurately
+- [x] Cross-run accumulation/dedup behavior is described per Story 2's actual landed decision, not left ambiguous
+- [x] Content verified against `documentation/local-td-store-schema.md` and the landed `cmd/atcr/reconcile.go` flag before sign-off
 
 **Manual Review:**
 - [ ] Code reviewed and approved

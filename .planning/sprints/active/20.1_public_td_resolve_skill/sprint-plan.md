@@ -152,6 +152,22 @@ No blocking questions surfaced during the Phase 3 safety check — all decisions
 - New subcommand file `cmd/atcr/debt_resolve.go` (one-file-per-subcommand convention); registered in `newDebtCmd()`. `--severity` validated against `CRITICAL|HIGH|MEDIUM|LOW`; `--json` for machine output; `--list` default preview.
 - `skill/skill.go` gains `DebtResolveMD` via `//go:embed debt-resolve/SKILL.md`, added to `TestSkill_NoAbsoluteOrClaudePaths`' slice; `skill/SKILL.md`'s `atcr debt` row (line 77) extended — no new dispatcher row.
 
+### Phase 4 Clarifications (recorded 2026-07-12)
+
+No blocking questions surfaced during the Phase 4 safety check — Story 5 is documentation-only and all three ACs (05-01/05-02/05-03) are fully specified. Decisions recorded for traceability:
+
+**Key Decisions:**
+- Phase 4 edits `docs/skill-usage.md` additively (new `## Technical Debt Resolution` section after the existing `## Output`), mirroring `docs/scorecard.md`'s Storage/CLI-Usage/Privacy shape. No existing content removed.
+- The RED artifact is a doc-presence test mirroring `internal/scorecard/docs_test.go` (substring/section-presence assertions), NOT a behavioral test. `docs/` is not a Go package, so the test co-locates in `skill/docs_test.go` (skill/ owns skill-usage.md's subject; reuses a `repoRoot(t)` walk-up helper).
+- Documented facts are verified against landed source before sign-off, not story drafts: store path `.atcr/debt/`, shard `YYYY-MM.jsonl`, perms `0700`/`0600`, `--no-local-debt` flag + single-run suppression, selection rule (severity DESC, ts ASC, N=10), empty-store → exit 0 no-op, write-time dedup by `FindingID` over full-history `ReadAll`.
+
+**Scope Boundaries:**
+- IN scope: `docs/skill-usage.md` edits + one doc-presence test file + task 4.3 cross-cutting dispatcher/skill consistency check. TD-003 (sibling `debt` subcommands span two backlogs) surfaced here per the Phase 2 gate note.
+- NOT in scope: `docs/technical-debt.md` edits (read-only cross-link target); any product-code change; Phase 5 validation (gated stop before it).
+
+**Technical Approach:**
+- Disambiguation callout (AC 05-03) is a visually distinct block near the top of the new section, contrasting `.atcr/debt/` (public/standalone) vs `.planning/technical-debt/` (private pipeline), sharing the `atcr debt` verb but separate non-overlapping stores, cross-linked `[technical-debt.md](technical-debt.md)` via the doc's existing relative-link convention.
+
 ---
 
 ## Sprint Phases
@@ -509,19 +525,19 @@ No blocking questions surfaced during the Phase 3 safety check — all decisions
 **Goal:** Document the new capability in `docs/skill-usage.md` and run a cross-cutting dispatcher-table/consistency check now that Stories 1-4 have landed.
 **Story:** [Story 5 — Document Debt-Resolve in skill-usage.md](plan/user-stories/05-document-debt-resolve-in-skill-usage.md)
 
-### 4.1 [ ] **[Skill-Usage Docs — RED](plan/user-stories/05-document-debt-resolve-in-skill-usage.md)**
+### 4.1 [x] **[Skill-Usage Docs — RED](plan/user-stories/05-document-debt-resolve-in-skill-usage.md)**
    **Mode:** Moderate | **ACs:** [05-01](plan/acceptance-criteria/05-01-debt-resolve-route-documentation.md), [05-02](plan/acceptance-criteria/05-02-local-td-store-storage-section.md), [05-03](plan/acceptance-criteria/05-03-public-private-debt-disambiguation.md)
    1. Analyze ACs. Write failing doc-presence assertions (mirroring `internal/scorecard`'s doc test pattern where applicable): `docs/skill-usage.md` contains the `/atcr debt resolve` route section (purpose, invocation, behavior); a local `.atcr/`-scoped Storage section (location, population, `--no-local-debt`) mirroring `docs/scorecard.md`; and the explicit public/local-vs-private-`.planning/` disambiguation cross-linked to `docs/technical-debt.md`.
    2. Verify assertions fail correctly.
    **Files:** doc-presence test (co-located as appropriate) | **Duration:** ~0.25d
 
-### 4.2 [ ] **[Skill-Usage Docs — GREEN](plan/user-stories/05-document-debt-resolve-in-skill-usage.md)**
+### 4.2 [x] **[Skill-Usage Docs — GREEN](plan/user-stories/05-document-debt-resolve-in-skill-usage.md)**
    Minimal edits to pass (T1), verify (T2), COMMIT.
    - Extend `docs/skill-usage.md`: `/atcr debt resolve` route (purpose/invocation/behavior); Storage/CLI-Usage/Privacy-Model sections mirroring `docs/scorecard.md`; explicit public/local vs. private `.planning/`-scoped `atcr debt` disambiguation, cross-linked to `docs/technical-debt.md`.
    3. COMMIT: `git commit -m "docs(skill-usage): document atcr debt resolve + local TD store (green)"`
    **Files:** `docs/skill-usage.md` | **Duration:** ~0.25d
 
-### 4.2.A [ ] **[Skill-Usage Docs — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-document-debt-resolve-in-skill-usage.md)**
+### 4.2.A [x] **[Skill-Usage Docs — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-document-debt-resolve-in-skill-usage.md)**
    **Changed Files:** `docs/skill-usage.md`, doc-presence test file
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 4.2 — intentional. Do NOT review inline.
@@ -539,32 +555,33 @@ No blocking questions surfaced during the Phase 3 safety check — all decisions
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose hostile review; verified every doc claim against ground-truth code/skill files):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | docs/skill-usage.md (Storage) | Shard filename is derived from the record's `run_id` month prefix (`monthFromRunID` in `internal/localdebt/paths.go`, called by `Append` on `rec.RunID`), not from the `ts` field as the doc's "named from each record's timestamp" states. They coincide today (run_id prefix == ReconciledAt == ts) but the causal claim is imprecise. | Reword to "named from each record's `run_id` month prefix". |
+   | LOW | docs/skill-usage.md (route) | Doc quotes the empty-store output as `"no items to resolve"`; the actual CLI literal (`cmd/atcr/debt_resolve.go:177`) is `"No items to resolve (the local TD store has no open items)."` (capital N + qualifier). Behaviorally correct; only the quoted wording differs. | Drop the quotes (paraphrase) so it doesn't imply a verbatim string. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 4.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   No CRITICAL/HIGH/MEDIUM. Verified correct against source: `.atcr/debt/YYYY-MM.jsonl` path/shard, `0600`/`0700` perms + lazy dir creation, `--no-local-debt` opt-out (no exit-code/output effect), severity-DESC + oldest-first + cap-10 (`--max` override) selection, `FindingID` dedup (severity excluded), empty/absent store exits 0, `debt-resolve/<date>` branch safety, `.planning/` disambiguation + `(technical-debt.md)` cross-link, `#technical-debt-resolution` anchor. No `.planning/` conflation. All 11 doc-presence assertions map to landed required content (non-tautological).
 
-### 4.3 [ ] **[Skill-Usage Docs — REFACTOR + Consistency Check](plan/user-stories/05-document-debt-resolve-in-skill-usage.md)**
+   **Action taken:** No CRITICAL/HIGH → boundary not blocked. Both LOWs are trivial (<30 min) doc-precision corrections that directly improve the shipped doc → addressed inline in 4.3 REFACTOR (per the Phase 1 task 1.2.A / Phase 3 task 3.2.A precedent, since REFACTOR immediately follows and its purpose is exactly this cleanup), not deferred to `tech-debt-captured.md`.
+
+### 4.3 [x] **[Skill-Usage Docs — REFACTOR + Consistency Check](plan/user-stories/05-document-debt-resolve-in-skill-usage.md)**
    1. Fix CRITICAL/HIGH issues from 4.2.A (if any).
    2. Cross-cutting consistency check: verify `skill/SKILL.md`'s `atcr debt` row, `skill/skill_test.go`'s structural assertions, and the `CONVENTIONS.md` references across both skill files are internally consistent now that Stories 1-4 have landed. Reconcile any drift.
    3. Validate all tests pass (T3).
    4. COMMIT: `git commit -m "docs(skill-usage): address review + dispatcher consistency check"`
    **Duration:** ~0.5d
 
-### 4.4 [ ] **Phase 4 — Definition of Done**
+### 4.4 [x] **Phase 4 — Definition of Done**
    Run DoD verification checklist. Confirm ACs 05-01..05-03 satisfied and dispatcher/skill consistency verified.
-   - [ ] T3 tests passing
-   - [ ] Docs complete and cross-linked
-   - [ ] Lint/vet clean
-   - [ ] `skill/SKILL.md` ↔ `skill/debt-resolve/SKILL.md` ↔ `CONVENTIONS.md` consistent
+   - [x] T3 tests passing (`go test ./...` green, incl. new `skill/docs_test.go` doc-presence test — 11 assertions)
+   - [x] Docs complete and cross-linked (`## Technical Debt Resolution` section: route + Storage + disambiguation callout, `[technical-debt.md](technical-debt.md)` cross-link resolves)
+   - [x] Lint/vet clean (`golangci-lint` 0 issues, `go vet ./...` clean, `gofmt` clean, `go build ./...` ok)
+   - [x] `skill/SKILL.md` ↔ `skill/debt-resolve/SKILL.md` ↔ `CONVENTIONS.md` consistent (skill_test.go structural assertions green; consistency check reconciled a real install-doc drift — `cp skill/*.md` → `cp -R skill/.` so the nested `debt-resolve/` route is actually installed, and the stale "three sibling files / all four" intro updated to the current file set)
 
-### 4.5 [ ] **Phase 4 — GATE: Integration & Exit Review (subagent)**
+   **Story-5 DoD Complete** — Auto: 3/3 (tests/lint/build) | Story-Specific ACs 05-01/05-02/05-03: satisfied (`/atcr debt resolve` route documented — purpose/invocation/RED→GREEN→ADVERSARIAL→REFACTOR behavior/empty-store no-op; local `.atcr/debt/YYYY-MM.jsonl` Storage section mirroring `docs/scorecard.md` — path/rotation/`0700`-`0600` perms/`FindingID` dedup/`--no-local-debt` opt-out/"do not commit" callout; unmissable public-vs-private disambiguation blockquote near the section top with a working `technical-debt.md` cross-link; content verified against landed `cmd/atcr/debt_resolve.go`, `cmd/atcr/reconcile.go`, `skill/debt-resolve/SKILL.md` by the 4.2.A fresh-subagent review, not story drafts) | Manual Review: [ ] (deferred to /execute-code-review).
+
+### 4.5 [x] **Phase 4 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 4
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase — intentional. Do NOT review inline.
@@ -583,16 +600,16 @@ No blocking questions surfaced during the Phase 3 safety check — all decisions
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Gate findings (fresh-context hostile-integrator review; every doc claim verified against ground-truth code):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | docs/skill-usage.md (Installation) | The `cp -R skill/.` install (introduced in 4.3 to capture the nested `debt-resolve/` route) also copies the package's Go files (`skill.go`, `skill_test.go`, `docs_test.go`) into `.claude/skills/atcr/` — harmless (the `go` tool ignores dot-dirs; the agent loads only `.md`) but a mild tension with the doc's "None contain executable code." | Copy only markdown, including the subdir: `cp skill/*.md …` + `cp skill/debt-resolve/*.md …/debt-resolve/`. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   No CRITICAL/HIGH/MEDIUM. Verified stable/accurate for the phase exit: store path `.atcr/debt/YYYY-MM.jsonl`, `0700`/`0600` perms + lazy dir, `FindingID` dedup, `--no-local-debt` opt-out, selection rule (severity DESC / oldest-first / cap-10), empty-store exit 0 no-op, `debt-resolve/<date>` branch safety, `justification`/`source_report` untrusted framing, private `list`/`add`/`dashboard` → `.planning/technical-debt/`, and both cross-links (`technical-debt.md`, `scorecard.md`) exist with the correct relative-path convention. Nothing left for Phase 5 but validation.
+
+   **Action taken:** No CRITICAL/HIGH → boundary not blocked. The single LOW is a trivial (<5 min) doc-only correctness improvement to the artifact this very phase produced — fixed inline (copy only `.md`, keep the `debt-resolve/` subdir) rather than filing a TD note, keeping "None contain executable code" true for the installed dir. Doc-presence test re-verified green after the fix; committed as `b03bd8b3`.
+
+   **Phase gate passed.**
    **Duration:** 15-30 min
 
 **🚧 GATED STOP:** Phase 4 complete. Stop here. Await go-ahead before Phase 5.
