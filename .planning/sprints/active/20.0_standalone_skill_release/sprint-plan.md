@@ -323,8 +323,8 @@ From [plan/documentation/](plan/documentation/):
    4. COMMIT: `git add cmd/atcr/ && git commit -m "refactor(cmd): address review + share backend-contract fixtures"`
    **Duration:** ~0.25 day
 
-> **⏸️ PUNTED TO EPIC 33.2 (Public Launch) — do NOT resume tasks 2.4 onward here.**
-> Story 3 (install.sh + `go install`), plus the public-dependent remainder of Stories 4/5, are blocked on the `samestrin/atcr` repo going **public** (external `go install …@latest` is impossible for a private module — public proxy 404s it). This lands at launch, owned by `.planning/epics/active/33.2_public_launch.md`. Root cause + de-risked prototype notes: TD-002 in `tech-debt-captured.md`. Tasks 2.4–2.8 and Phase 3 below are left unchecked intentionally and are superseded by Epic 33.2.
+> **⏸️ STORY 3 ONLY (tasks 2.4–2.6) PUNTED TO EPIC 33.2 (Public Launch) — do NOT resume these here.**
+> Story 3 (install.sh + `go install`) is blocked on the `samestrin/atcr` repo going **public** (external `go install …@latest` is impossible for a private module — public proxy 404s it). Owned by `.planning/epics/active/33.2_public_launch.md`; root cause + de-risked prototype notes in TD-002 (`tech-debt-captured.md`). Tasks 2.4–2.6 and 2.5.A stay unchecked. **Stories 4 & 5 (Phase 3) ARE completed in this sprint** — only AC04-03's cross-link to `install.sh` carries to 33.2 (that file doesn't exist yet). The Phase 2 gate (2.7/2.8) is folded into the Phase 3 close since Story 3 is deferred.
 
 ### 2.4 [ ] **[Install Script - RED](plan/user-stories/03-install-script.md)**
    **Mode:** Moderate | **AC:** [03-01](plan/acceptance-criteria/03-01-install-script-core-install.md) · [03-02](plan/acceptance-criteria/03-02-install-script-prereq-and-path-checks.md)
@@ -419,7 +419,7 @@ From [plan/documentation/](plan/documentation/):
 
 **Goal:** Diff-style documentation accuracy pass (Story 4, depends on Stories 1 & 3) and the external-migration descope note (Story 5, depends on Story 1). All ACs are Manual/verification — only lines demonstrably wrong get touched; no doc restructuring. Stories 4 & 5 (Effort: S each). ACs 04-01…03, 05-01…03.
 
-### 3.1 [ ] **[Documentation Accuracy Pass - VERIFY & CORRECT](plan/user-stories/04-documentation-accuracy-pass.md)**
+### 3.1 [x] **[Documentation Accuracy Pass - VERIFY & CORRECT](plan/user-stories/04-documentation-accuracy-pass.md)**
    **Mode:** Moderate (verification-driven; no automated RED — all ACs Manual) | **AC:** [04-01](plan/acceptance-criteria/04-01-skill-usage-doc-accuracy.md) · [04-02](plan/acceptance-criteria/04-02-code-review-backend-doc-accuracy.md) · [04-03](plan/acceptance-criteria/04-03-readme-command-accuracy-and-install-link.md)
    1. Verify `docs/skill-usage.md` command examples/paths against the post-rewrite `skill/SKILL.md`; correct only confirmed inaccuracies (AC04-01).
    2. Verify `docs/code-review-backend.md` "Output tree" / "Behavioral notes for callers" against current `--output-dir` behavior AND Story 2's test assertions; correct only confirmed drift (AC04-02).
@@ -427,7 +427,7 @@ From [plan/documentation/](plan/documentation/):
    4. COMMIT: `git add docs/skill-usage.md docs/code-review-backend.md README.md && git commit -m "docs: accuracy pass for skill-usage, backend contract, README post-dispatcher"`
    **Files:** `docs/skill-usage.md`, `docs/code-review-backend.md`, `README.md` | **Duration:** ~0.5 day
 
-### 3.2 [ ] **[External Migration Descope Note - AUTHOR](plan/user-stories/05-external-migration-descope-note.md)**
+### 3.2 [x] **[External Migration Descope Note - AUTHOR](plan/user-stories/05-external-migration-descope-note.md)**
    **AC:** [05-01](plan/acceptance-criteria/05-01-external-migration-doc-existence-and-rationale.md) · [05-02](plan/acceptance-criteria/05-02-manual-migration-checklist-and-discoverability.md) · [05-03](plan/acceptance-criteria/05-03-scope-containment-no-external-repo-writes.md)
    1. Create `docs/external-migration.md`: state the workspace write-access boundary (agent operates only in the atcr repo), cite Epic 12.0 (AC05-01).
    2. Add a numbered checklist: replace fragmented private skills with the dispatcher, copy/adapt the `skill/SKILL.md` template, preserve `.planning/` hooks, validate against `docs/code-review-backend.md`; make it discoverable via a cross-link from README/docs (AC05-02).
@@ -435,7 +435,10 @@ From [plan/documentation/](plan/documentation/):
    4. COMMIT: `git add docs/external-migration.md README.md && git commit -m "docs: add external-migration descope note + cross-link"`
    **Files:** `docs/external-migration.md`, `README.md` (cross-link only) | **Duration:** ~0.25 day
 
-### 3.3 [ ] **[Documentation & Migration - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-documentation-accuracy-pass.md)**
+### 3.3 [x] **[Documentation & Migration - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-documentation-accuracy-pass.md)**
+
+   **Result (fresh general-purpose subagent, 2026-07-11):** Adversarial review PASSED — NONE. Verified: doc↔code fidelity (external-migration.md references skill/SKILL.md + its 3 siblings + the backend contract, all accurate; no stale refs); README `go install` Quickstart unchanged (no diff); scope containment (no writes/staged changes to `claude-prompts`); discoverability (single docs/README.md cross-link; Epic 12.0 citation + write-access boundary correct); no over-edit. Also independently confirmed Story 4's "no changes needed" conclusion for the existing docs (skill-usage.md reflects the dispatcher + four-file install; code-review-backend.md matches the contract test). Changed files: `docs/external-migration.md` (new), `docs/README.md` (one cross-link).
+
    **Changed Files:** `docs/skill-usage.md`, `docs/code-review-backend.md`, `docs/external-migration.md`, `README.md`
 
    **Spawn a fresh subagent** via the Agent tool (no memory of the doc edits). Do NOT review inline.
