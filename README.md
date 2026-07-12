@@ -91,6 +91,13 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
 | `atcr debt` | Query, capture, and report on technical debt (`list` / `add` / `dashboard`); see [docs/technical-debt.md](docs/technical-debt.md) |
 | `atcr audit-report` | Render a one-page markdown compliance report for a PR's review runs from the append-only `.atcr/audit.log.jsonl` ledger (`--pr <n>`) |
+| `atcr github` | Post reconciled findings to a GitHub pull request as a check run |
+| `atcr scorecard` | Display the per-reviewer scorecard for a single reconcile run |
+| `atcr leaderboard` | Aggregate scorecard records across runs, ranked by corroboration rate |
+| `atcr benchmark` | Standard benchmark-suite tooling for the public leaderboard |
+| `atcr personas` | Manage community reviewer personas |
+| `atcr models` | Inspect model bindings, drift, and the catalog snapshot |
+| `atcr version` | Print the atcr version |
 
 Key flags:
 
