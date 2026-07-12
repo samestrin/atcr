@@ -178,6 +178,16 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 	// timestamp (deterministic, no second clock read).
 	runID := res.Summary.ReconciledAt + "-" + filepath.Base(reviewDir)
 	for _, f := range findings {
+		// Apply the same exclusions the gate uses (internal/reconcile/gate.go
+		// IsFailing): out-of-scope findings and refuted verdicts never persist,
+		// so the local TD backlog matches what the gate considers real.
+		if strings.ToLower(strings.TrimSpace(f.Category)) == reconcile.CategoryOutOfScope {
+			continue
+		}
+		if f.Verification != nil && strings.ToLower(strings.TrimSpace(f.Verification.Verdict)) == reconcile.VerdictRefuted {
+			continue
+		}
+
 		rec := localdebt.Record{
 			SchemaVersion: localdebt.SchemaVersion,
 			RunID:         runID,
