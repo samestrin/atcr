@@ -40,6 +40,17 @@
 // five append-only ledgers (audit, debate, scorecard, tools, history); no
 // cross-process lock is introduced.
 //
+// Symlink following is an accepted won't-fix on the same footing. Append opens the
+// shard with O_CREATE|O_WRONLY|O_APPEND (no O_NOFOLLOW) and MkdirAll follows symlinked
+// path components, so a pre-planted symlink at .atcr/debt/YYYY-MM.jsonl or a parent
+// could redirect appends to a target outside the store. Exploiting it requires
+// pre-existing local write access to the store path (LOW severity), and the identical
+// exposure is systemic across the sibling ledgers (scorecard, history, audit, debate,
+// tools) — hardening only localdebt would be inconsistent and give false security. A
+// repo-wide GOOS-guarded O_NOFOLLOW pass (precedent: internal/tools/open_unix.go /
+// open_other.go) is the correct venue if it is ever pursued; localdebt deliberately
+// does not diverge from its siblings here.
+//
 // # Deduplication contract
 //
 // The store itself does not dedup on write — Append is unconditional. The settled
