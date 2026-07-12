@@ -57,4 +57,15 @@
 // re-open the item; the id is considered closed forever. This is the deliberate
 // v1 design (TD-004); a re-openable resolution mode that re-appends regressed
 // findings as fresh open records is deferred to a follow-up epic.
+//
+// # Call-site scope
+//
+// The reconcile persistence hook (persistLocalDebt) is currently invoked only
+// from the CLI `atcr reconcile` path (cmd/atcr/reconcile.go). The MCP
+// `atcr_reconcile` handler intentionally does NOT persist to this store today,
+// because the server operates on review artifact directories rather than a
+// checked-out repo root and lacks the resolved repo-root guard the hook needs.
+// This is a deliberate Story 2 scope boundary (TD-002), not an oversight; MCP
+// parity for local-debt persistence is deferred to a follow-up epic. Callers
+// should treat localdebt as a CLI-side ledger until that parity work lands.
 package localdebt
