@@ -17,10 +17,10 @@ suffix (e.g. `v21.0.0`, not `release/v21.0.0` or `atcr-v21.0.0`).
 Each tag maps one-to-one onto the matching [`CHANGELOG.md`](../CHANGELOG.md)
 entry: the tag is the changelog heading with a `v` prepended.
 
-| `CHANGELOG.md` heading | Git tag   |
-|------------------------|-----------|
-| `## [20.1.0]`          | `v20.1.0` |
-| `## [21.0.0]`          | `v21.0.0` |
+| `CHANGELOG.md` heading      | Git tag   |
+|-----------------------------|-----------|
+| `## [20.1.0]` (latest today) | `v20.1.0` |
+| `## [21.0.0]` (next, anticipated) | `v21.0.0` |
 
 This formalizes an **epic-number-as-semver** scheme the changelog has already
 followed, unbroken, from its first entry (`## [1.0.0]`) through the current
