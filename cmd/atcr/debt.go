@@ -29,11 +29,13 @@ func newDebtCmd() *cobra.Command {
 		Short: "Query and report on technical debt",
 		Long: "atcr debt reads the sharded technical-debt store under\n" +
 			".planning/technical-debt/items/ (Epic 12.1 format) and provides\n" +
-			"list/add/dashboard subcommands for querying, capturing, and reporting debt.",
+			"list/add/dashboard subcommands for querying, capturing, and reporting debt.\n" +
+			"The resolve subcommand instead operates on the public, .atcr/-scoped local\n" +
+			"TD store (.atcr/debt/) that atcr reconcile populates.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newDebtListCmd(), newDebtAddCmd(), newDebtDashboardCmd())
+	cmd.AddCommand(newDebtListCmd(), newDebtAddCmd(), newDebtDashboardCmd(), newDebtResolveCmd())
 	return cmd
 }
 
