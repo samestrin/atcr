@@ -58,6 +58,15 @@
 // v1 design (TD-004); a re-openable resolution mode that re-appends regressed
 // findings as fresh open records is deferred to a follow-up epic.
 //
+// The append side respects the same terminal design. persistLocalDebt seeds its
+// write-time dedup set from a full-history ReadAll that includes terminal resolution
+// records, so a resolved-then-regressed finding (same id) is not re-appended and does
+// not re-enter the open backlog. Re-opening on regression is therefore a single
+// coupled decision spanning both the selectOpenDebt read-side fold and the
+// persistLocalDebt dedup seeding — the read-side fold alone is unconditional and
+// irreversible, so changing only the append side would be a no-op in observable
+// behavior — and both are deferred together as a unit.
+//
 // # Call-site scope
 //
 // The reconcile persistence hook (persistLocalDebt) is currently invoked only
