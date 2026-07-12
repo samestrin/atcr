@@ -14,8 +14,11 @@
 #
 # Date stamp — intentionally OMITTED (no -X main.date). Supplying an explicit
 # ldflags list REPLACES goreleaser's defaults (which include
-# `-X main.date={{.Date}}`), so tag builds stay reproducible: two builds of the
-# same tag are byte-identical rather than differing by wall-clock build time.
+# `-X main.date={{.Date}}`), removing wall-clock build time from the binary.
+# NOTE: this alone does NOT make builds fully byte-reproducible — the binary
+# still embeds the absolute build path (no -trimpath) and archives are stamped
+# with package-time mtimes (no mod_timestamp). Full reproducibility is deferred:
+# see tech-debt-captured.md TD-003 (-trimpath) and TD-004 (mod_timestamp).
 version: 2
 
 builds:
