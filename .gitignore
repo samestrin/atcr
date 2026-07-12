@@ -2,6 +2,7 @@
 # Anchored to repo root so they match the built binaries, not the cmd/atcr
 # source directory (a bare `atcr` pattern also ignores cmd/atcr/*).
 bin/
+dist/
 /atcr
 /atcr-mcp
 /atcr-mcp-ssee
