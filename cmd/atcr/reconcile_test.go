@@ -58,6 +58,17 @@ func isolate(t *testing.T) {
 	t.Chdir(t.TempDir())
 }
 
+// touchFiles creates the given repo-root-relative source files so reconcile's
+// path-validation stage does not flag them as hallucinated in tests that intend
+// to exercise local-debt persistence.
+func touchFiles(t *testing.T, files ...string) {
+	t.Helper()
+	for _, f := range files {
+		require.NoError(t, os.MkdirAll(filepath.Dir(f), 0o755))
+		require.NoError(t, os.WriteFile(f, []byte("package x\n"), 0o644))
+	}
+}
+
 // execCmd runs the atcr command tree with args and returns the resolved exit
 // code (the same mapping main() applies).
 func execCmd(t *testing.T, args ...string) int {
@@ -349,6 +360,7 @@ func readLocalDebtRecords(t *testing.T) []localdebt.Record {
 // scorecard runID shape (…-<reviewID>), and the required v1 fields.
 func TestRunReconcile_PersistsFindingsToLocalDebt(t *testing.T) {
 	isolate(t)
+	touchFiles(t, "a.go")
 	fixtureReview(t, "r", map[string]string{
 		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
 	})
@@ -375,6 +387,7 @@ func TestRunReconcile_PersistsFindingsToLocalDebt(t *testing.T) {
 // the persisted record must carry them through (sourced, not re-derived).
 func TestRunReconcile_LocalDebtCarriesJustification(t *testing.T) {
 	isolate(t)
+	touchFiles(t, "a.go")
 	fixtureReview(t, "r", map[string]string{
 		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
 	})
@@ -399,6 +412,7 @@ func TestRunReconcile_LocalDebtCarriesJustification(t *testing.T) {
 // but omits the optional justification/source_report block.
 func TestRunReconcile_LocalDebtOmitsJustificationWhenAbsent(t *testing.T) {
 	isolate(t)
+	touchFiles(t, "a.go")
 	fixtureReview(t, "r", map[string]string{
 		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
 	})
@@ -433,6 +447,7 @@ func TestRunReconcile_ZeroFindingsNoLocalDebtWrite(t *testing.T) {
 // TestReconcileCmd_DefaultWritesScorecard.
 func TestRunReconcile_DefaultWritesLocalDebt(t *testing.T) {
 	isolate(t)
+	touchFiles(t, "a.go")
 	fixtureReview(t, "r", map[string]string{
 		"sources/host/findings.txt": "HIGH|a.go:1|boom|fix|security|10|ev|host\n",
 	})
@@ -479,6 +494,7 @@ func TestReconcileCmd_NoLocalDebtIndependentOfScorecard(t *testing.T) {
 // reconcile runs against different review dirs accumulate additively.
 func TestRunReconcile_LocalDebtAccumulatesAcrossRuns(t *testing.T) {
 	isolate(t)
+	touchFiles(t, "a.go", "b.go", "c.go", "d.go", "e.go")
 	fixtureReview(t, "ra", map[string]string{
 		"sources/host/findings.txt": "HIGH|a.go:10|prob a|fix|security|10|ev|host\n" +
 			"HIGH|b.go:20|prob b|fix|security|10|ev|host\n",
@@ -501,6 +517,7 @@ func TestRunReconcile_LocalDebtAccumulatesAcrossRuns(t *testing.T) {
 // duplicate records (write-time dedup by FindingID over full-history ReadAll).
 func TestRunReconcile_LocalDebtDedupsSameFinding(t *testing.T) {
 	isolate(t)
+	touchFiles(t, "a.go")
 	fixtureReview(t, "r", map[string]string{
 		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
 	})
@@ -536,6 +553,23 @@ func TestPersistLocalDebt_SkipsGateExcludedFindings(t *testing.T) {
 	recs := readLocalDebtRecords(t)
 	require.Len(t, recs, 1, "only the in-scope, non-refuted finding persists")
 	require.Equal(t, "a.go", recs[0].File)
+}
+
+// TestRunReconcile_PathWarnedFindingSkipped verifies that findings whose cited
+// file does not exist under the repo root are not persisted to the local TD
+// store, mirroring the Epic 5.0 hallucinated-path signal.
+func TestRunReconcile_PathWarnedFindingSkipped(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "real.go")
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|real.go:1|real problem|fix it|correctness|10|ev|host\n" +
+			"HIGH|missing.go:1|phantom problem|fix it|correctness|10|ev|host\n",
+	})
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1, "only the path-valid finding persists")
+	require.Equal(t, "real.go", recs[0].File)
 }
 
 // TestGateThresholdReaders_OneWhitespaceSemantic verifies the two --fail-on
