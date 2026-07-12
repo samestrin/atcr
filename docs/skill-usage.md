@@ -2,7 +2,7 @@
 
 The atcr skill turns a host AI agent (e.g. Claude Code) into the **+1 reviewer** on an atcr review panel. It orchestrates the full flow — resolve range → fan out to the reviewer pool → host review → reconcile → report — and contributes its own adversarial review so reconciliation always has at least two independent sources. Beyond one-off review, it can accumulate findings into a durable local backlog and autonomously work through it — see [Technical Debt Resolution](#technical-debt-resolution).
 
-The skill is [`skill/SKILL.md`](../skill/SKILL.md) — a `/atcr <command>` dispatcher — plus three sibling files it loads on demand: [`host-review.md`](../skill/host-review.md), [`ambiguity-adjudication.md`](../skill/ambiguity-adjudication.md), and [`findings-format.md`](../skill/findings-format.md). None contain executable code; they are instructions the agent follows, invoking the `atcr` binary at each step. Install all four together so the on-demand references resolve.
+The skill is [`skill/SKILL.md`](../skill/SKILL.md) — a `/atcr <command>` dispatcher — plus a set of sibling files it loads on demand: [`host-review.md`](../skill/host-review.md), [`ambiguity-adjudication.md`](../skill/ambiguity-adjudication.md), [`findings-format.md`](../skill/findings-format.md), the shared [`CONVENTIONS.md`](../skill/CONVENTIONS.md), and the [`debt-resolve/SKILL.md`](../skill/debt-resolve/SKILL.md) route. None contain executable code; they are instructions the agent follows, invoking the `atcr` binary at each step. Install the whole directory together so the on-demand references resolve.
 
 ## Prerequisites
 
@@ -12,11 +12,11 @@ The skill is [`skill/SKILL.md`](../skill/SKILL.md) — a `/atcr <command>` dispa
 
 ## Installation
 
-The skill installs by file copy into your agent's skills directory. For Claude Code, the project-local location is `.claude/skills/atcr/`. Copy the whole `skill/` directory — `SKILL.md` plus its three on-demand secondary files — not `SKILL.md` alone, or the host-review, adjudication, and findings-format references will fail to resolve at runtime:
+The skill installs by file copy into your agent's skills directory. For Claude Code, the project-local location is `.claude/skills/atcr/`. Copy the whole `skill/` directory — `SKILL.md` plus its on-demand secondary files, including the nested `debt-resolve/` route — not `SKILL.md` alone, or the host-review, adjudication, findings-format, conventions, and debt-resolve references will fail to resolve at runtime. Copy recursively so the `debt-resolve/` subdirectory comes along (a flat `cp skill/*.md` would miss it):
 
 ```sh
 mkdir -p .claude/skills/atcr
-cp skill/*.md .claude/skills/atcr/
+cp -R skill/. .claude/skills/atcr/
 ```
 
 Standard skill resolution applies: a project-local copy wins over a globally installed one, and the copy shipped in this repo (`skill/`) is the canonical reference. To install globally for your user, copy the same files into your agent's user-level skills directory instead.
@@ -82,7 +82,7 @@ atcr debt resolve --max 5                # cap the selection (default 10)
 atcr debt resolve --resolve <id>         # record an append-only resolution
 ```
 
-When the local store is **empty or absent**, `atcr debt resolve` prints a "no items to resolve" line and exits `0` — there is nothing to resolve and no store is created.
+When the local store is **empty or absent**, `atcr debt resolve` reports that there are no items to resolve and exits `0` — there is nothing to resolve and no store is created.
 
 ### Storage
 
@@ -92,7 +92,7 @@ The local TD store lives inside your repository, populated automatically as a by
 .atcr/debt/YYYY-MM.jsonl
 ```
 
-- **Monthly rotation.** One append-only file per calendar month (`YYYY-MM.jsonl`), named from each record's timestamp.
+- **Monthly rotation.** One append-only file per calendar month (`YYYY-MM.jsonl`), named from each record's `run_id` month prefix.
 - **Append-only with write-time dedup.** Each `atcr reconcile` run appends its findings; before appending, the store scans the full history and skips any finding whose identity (`FindingID`, derived from file + line + problem text) is already present, so re-running reconcile on an unchanged repo does not duplicate items. A finding whose `problem` text later changes is treated as a distinct record.
 - **Permissions.** The file is created `0600` (user read/write only) and the directory `0700`; the directory is created lazily on the first write, so a suppressed run creates nothing.
 - **Opt out per run.** Pass `--no-local-debt` to `atcr reconcile` to suppress persistence for a single run (mirroring `--no-scorecard`). It has no effect on reconcile's exit code or output; without it, reconcile persists by default.
