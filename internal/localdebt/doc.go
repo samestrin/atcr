@@ -48,4 +48,13 @@
 // before each append: the hook skips any finding whose id already exists across all
 // shards, and fails open toward append (at-least-once) if the dedup read fails. The
 // contract is documented here so downstream callers write against a settled rule.
+//
+// # Resolution contract
+//
+// Resolution is currently terminal. A `resolved` or `deferred` status record for
+// an id causes selectOpenDebt to fold that id out of the open backlog permanently,
+// regardless of recency. Re-detecting the same file/line/problem later will not
+// re-open the item; the id is considered closed forever. This is the deliberate
+// v1 design (TD-004); a re-openable resolution mode that re-appends regressed
+// findings as fresh open records is deferred to a follow-up epic.
 package localdebt
