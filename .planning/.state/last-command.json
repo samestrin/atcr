@@ -1,9 +1,9 @@
 {
-  "skill": "design-sprint",
-  "args": "@.planning/plans/active/20.0_standalone_skill_release/",
-  "invocation": "/design-sprint @.planning/plans/active/20.0_standalone_skill_release/",
+  "skill": "create-user-stories",
+  "args": "@.planning/plans/active/20.1_public_td_resolve_skill/",
+  "invocation": "/create-user-stories @.planning/plans/active/20.1_public_td_resolve_skill/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "ba017d50-bf7b-4b2f-ae4e-f500de6daf18",
-  "timestamp": "2026-07-11T21:50:25.954Z"
+  "session_id": "5b57f5c5-6969-4327-b08e-790c3c1e3a52",
+  "timestamp": "2026-07-12T04:12:23.805Z"
 }
