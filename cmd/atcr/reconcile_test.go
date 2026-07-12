@@ -513,6 +513,31 @@ func TestRunReconcile_LocalDebtDedupsSameFinding(t *testing.T) {
 		"re-running with unchanged findings must not duplicate the record")
 }
 
+// TestPersistLocalDebt_SkipsGateExcludedFindings verifies that the reconcile
+// persistence hook applies the same out-of-scope and refuted exclusions the
+// gate uses, so the local TD store's open backlog matches what the gate would
+// consider a real finding.
+func TestPersistLocalDebt_SkipsGateExcludedFindings(t *testing.T) {
+	isolate(t)
+
+	findings := []reconcile.Merged{
+		{Finding: reconcile.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "real bug", Fix: "fix it", Category: "correctness", EstMinutes: 10}},
+		{Finding: reconcile.Finding{Severity: "CRITICAL", File: "b.go", Line: 2, Problem: "out of scope", Fix: "n/a", Category: reconcile.CategoryOutOfScope, EstMinutes: 5}},
+		{Finding: reconcile.Finding{Severity: "HIGH", File: "c.go", Line: 3, Problem: "refuted", Fix: "n/a", Category: "security", EstMinutes: 10, Verification: &reconcile.Verification{Verdict: reconcile.VerdictRefuted, Skeptic: "skeptic"}}},
+	}
+	res := reconcile.Result{
+		Findings: findings,
+		Summary:  reconcile.Summary{ReconciledAt: "2026-07-12T00:00:00Z"},
+	}
+
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1, "only the in-scope, non-refuted finding persists")
+	require.Equal(t, "a.go", recs[0].File)
+}
+
 // TestGateThresholdReaders_OneWhitespaceSemantic verifies the two --fail-on
 // readers (failOnThreshold on the one-shot review path, resolveGateThreshold on
 // the reconcile path) share one semantic: a whitespace-only flag value is unset
