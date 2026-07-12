@@ -111,9 +111,11 @@ func TestSkill_AdjudicationDocumented(t *testing.T) {
 // references only the atcr binary and review-directory-relative paths — no
 // .claude-specific paths and no absolute filesystem paths.
 func TestSkill_NoAbsoluteOrClaudePaths(t *testing.T) {
-	assert.NotContains(t, SkillMD, ".claude", "no .claude-specific paths in the skill body")
-	for _, abs := range []string{"/Users/", "/home/", "/opt/", "C:\\"} {
-		assert.NotContains(t, SkillMD, abs, "no absolute filesystem path %q", abs)
+	for _, md := range []string{SkillMD, HostReviewMD, AmbiguityAdjudicationMD, FindingsFormatMD} {
+		assert.NotContains(t, md, ".claude", "no .claude-specific paths in any skill body")
+		for _, abs := range []string{"/Users/", "/home/", "/opt/", "C:\\"} {
+			assert.NotContains(t, md, abs, "no absolute filesystem path %q", abs)
+		}
 	}
 }
 
