@@ -144,7 +144,7 @@ func TestBackendContract_OutputDirTreeMatchesDocumentedShape(t *testing.T) {
 	require.DirExists(t, filepath.Join(out, "payload"),
 		"docs/code-review-backend.md output tree: payload/ missing")
 	for _, rel := range documentedFiles {
-		require.FileExists(t, filepath.Join(out, rel),
+		assert.FileExists(t, filepath.Join(out, rel),
 			"docs/code-review-backend.md output tree: %s missing", rel)
 	}
 
