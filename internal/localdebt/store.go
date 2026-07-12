@@ -22,6 +22,13 @@ const maxLineBytes = 1 << 20
 // Writer defaults to os.Stderr so a zero ReadOpts keeps prior behavior. Writer must
 // be safe for the caller's concurrency model; the package does not synchronize
 // writes to it.
+//
+// SECURITY: diagnostics and wrapped errors may embed the store path. Callers follow
+// the DefaultDir(".") relative-root convention, so paths are repo-relative today;
+// but if an absolute dir is ever passed, a leaked path could contain a username
+// (~/…). The read path reduces *os.PathError paths to their base name (basePathErr)
+// for this reason, matching the write path. Before routing Writer to any non-local
+// sink, scrub absolute paths and avoid echoing raw error strings.
 type ReadOpts struct {
 	Writer io.Writer
 }
@@ -181,7 +188,11 @@ func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("reading localdebt dir: %w", err)
+		// A non-ENOENT ReadDir failure (e.g. a permission error) can carry an
+		// absolute dir path; reduce it to its base name so a username-bearing path is
+		// never embedded (matching the write path). ReadRecords' os.Open error is
+		// deliberately left raw per AC 01-03, so os.IsNotExist stays usable there.
+		return nil, fmt.Errorf("reading localdebt dir: %w", basePathErr(err))
 	}
 	var all []Record
 	for _, e := range entries {
