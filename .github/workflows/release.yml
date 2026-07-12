@@ -1,0 +1,72 @@
+name: Release
+
+# Tag-triggered release pipeline for the atcr app binary. On a bare vX.Y.Z tag
+# push, goreleaser cross-compiles the binaries (per .goreleaser.yaml) and
+# publishes a GitHub Release. This is the atcr app's release gate; the nested
+# ./reconcile module has its own, on the disjoint reconcile/v* namespace
+# (.github/workflows/reconcile-module.yml).
+#
+# based_on: .github/workflows/ci.yml — reuses the [self-hosted, gauntlet] runner
+# and the Go 1.25 actions/setup-go setup verbatim; no new runners or Go versions
+# are provisioned. The one deliberate divergence is permissions: contents: write
+# (vs ci.yml's contents: read), because goreleaser publishes a GitHub Release.
+
+on:
+  push:
+    tags:
+      # Scoped to the app's bare vX.Y.Z release-tag convention. This is
+      # deliberately DISJOINT from reconcile-module.yml's 'reconcile/v*' filter:
+      # a 'v1.2.3' push fires only this workflow, a 'reconcile/v1.2.3' push fires
+      # only that one, so the two release gates never both run on the same tag.
+      - 'v*'
+
+permissions:
+  # The single deliberate divergence from based_on: ci.yml (contents: read).
+  # goreleaser's release step creates a GitHub Release, which is a write op.
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: GoReleaser Release
+    runs-on: [self-hosted, gauntlet]
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          # goreleaser needs full git history and tags to resolve the previous
+          # tag and generate the changelog; the default shallow clone is not
+          # enough (ci.yml/reconcile-module.yml don't need this, so it's an
+          # addition beyond their verbatim checkout).
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          # gauntlet runners are persistent dedicated hardware, not ephemeral
+          # GitHub-hosted VMs -- see the matching rationale comment in ci.yml.
+          # setup-go's cache:true round-trips a ~2GB tarball through GitHub's
+          # network Actions Cache on every run despite the files already being
+          # present on local disk.
+          cache: false
+
+      - name: Run GoReleaser
+        # First real tag push publishes a PUBLIC, hard-to-retract GitHub Release.
+        # Before the first `git push --tags`, run `goreleaser release --snapshot
+        # --clean` locally (Task 02's deliverable) and confirm with the maintainer
+        # -- see docs/release-process.md and plan.md's risk-mitigation table.
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          # Pin the goreleaser binary to the v2 line, matching .goreleaser.yaml's
+          # `version: 2` config schema.
+          version: '~> v2'
+          args: release --clean
+        env:
+          # Default workflow token -- no new secret introduced. Sufficient for
+          # publishing a Release to this same repository.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
