@@ -181,10 +181,15 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 		// Apply the same exclusions the gate uses (internal/reconcile/gate.go
 		// IsFailing): out-of-scope findings and refuted verdicts never persist,
 		// so the local TD backlog matches what the gate considers real.
+		// Path-warned findings are also skipped: a file that did not resolve under
+		// the repo root is treated as a hallucinated path (Epic 5.0).
 		if strings.ToLower(strings.TrimSpace(f.Category)) == reconcile.CategoryOutOfScope {
 			continue
 		}
 		if f.Verification != nil && strings.ToLower(strings.TrimSpace(f.Verification.Verdict)) == reconcile.VerdictRefuted {
+			continue
+		}
+		if f.PathWarning != "" {
 			continue
 		}
 
