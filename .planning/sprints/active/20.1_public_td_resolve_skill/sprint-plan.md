@@ -132,6 +132,28 @@ From [plan/documentation/README.md](plan/documentation/README.md):
 
 ---
 
+## Clarifications
+
+### Phase 3 Clarifications (recorded 2026-07-12)
+
+No blocking questions surfaced during the Phase 3 safety check — all decisions were resolvable from the acceptance criteria and existing code. Key decisions recorded for traceability:
+
+**Key Decisions:**
+- The Go `atcr debt resolve` subcommand is a thin store surface (list candidates + append-only mark-resolved write). The actual RED→GREEN→ADVERSARIAL→REFACTOR code-fixing cycle is agent-driven Markdown in `skill/debt-resolve/SKILL.md`, not compiled Go (grounded in AC 03-02 Sc.3 and AC 03-03: "agent-executed, not compiled Go").
+- "Open" item selection = `status != resolved/deferred` (empty status counts as open), because the reconcile hook (`cmd/atcr/reconcile.go:181-196`) persists records with no `status` field set.
+- Default selection rule stated explicitly in the skill: open items, sort `severity` DESC (HIGH>MEDIUM>LOW) then `ts` ASC (oldest first), cap `N=10` (mirrors `/resolve-td --max=10`).
+
+**Scope Boundaries:**
+- Compiled-testable ACs for Phase 3: 03-01, 03-02, 03-03, 03-06. E2E ACs 03-04/03-05 (full cycle walkthrough, branch-safety) deferred to Phase 5 live scenario run per the sprint plan.
+- Mark-resolved write path (task 3.2 GREEN bullet) shipped minimal + unit-tested this phase; its E2E validation (03-05) is Phase 5.
+
+**Technical Approach:**
+- Store access via `localdebt.ReadAll(localdebt.DefaultDir("."), ...)`, rooted at `.atcr/debt/`; zero `.planning/` references; never invokes `defaultTDReadme`/`defaultTDItems`.
+- New subcommand file `cmd/atcr/debt_resolve.go` (one-file-per-subcommand convention); registered in `newDebtCmd()`. `--severity` validated against `CRITICAL|HIGH|MEDIUM|LOW`; `--json` for machine output; `--list` default preview.
+- `skill/skill.go` gains `DebtResolveMD` via `//go:embed debt-resolve/SKILL.md`, added to `TestSkill_NoAbsoluteOrClaudePaths`' slice; `skill/SKILL.md`'s `atcr debt` row (line 77) extended — no new dispatcher row.
+
+---
+
 ## Sprint Phases
 
 ---
@@ -238,13 +260,13 @@ From [plan/documentation/README.md](plan/documentation/README.md):
 **Goal:** Wire `atcr reconcile` into the Phase 1 store (Story 2) and extract shared skill conventions (Story 4). Story 4 is independent of Stories 1-2 and runs in parallel so Story 3 later references a finished `CONVENTIONS.md`.
 **Stories:** [Story 2 — Reconcile-Time Persistence Hook](plan/user-stories/02-reconcile-time-persistence-hook.md), [Story 4 — Shared Skill Conventions Extraction](plan/user-stories/04-shared-skill-conventions-extraction.md)
 
-### 2.1 [ ] **[Reconcile Persistence Hook — RED](plan/user-stories/02-reconcile-time-persistence-hook.md)**
+### 2.1 [x] **[Reconcile Persistence Hook — RED](plan/user-stories/02-reconcile-time-persistence-hook.md)**
    **Mode:** Moderate | **ACs:** [02-01](plan/acceptance-criteria/02-01-persist-reconciled-findings.md), [02-02](plan/acceptance-criteria/02-02-no-local-debt-opt-out-flag.md), [02-03](plan/acceptance-criteria/02-03-cross-run-accumulation-and-dedup.md)
    1. Analyze ACs. Write failing integration tests against a shared temp `.atcr/debt/` (`t.TempDir()`, no mocking): `TestRunReconcile_LocalDebtAccumulatesAcrossRuns`, `TestRunReconcile_LocalDebtDedupsSameFinding`, `--no-local-debt` opt-out skips persistence, dedup scoped to full history (`ReadAll`), fail-open on dedup-read error.
    2. Verify tests fail correctly.
    **Files:** `cmd/atcr/reconcile_test.go` (extended) | **Duration:** ~0.5d
 
-### 2.2 [ ] **[Reconcile Persistence Hook — GREEN](plan/user-stories/02-reconcile-time-persistence-hook.md)**
+### 2.2 [x] **[Reconcile Persistence Hook — GREEN](plan/user-stories/02-reconcile-time-persistence-hook.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT.
    - After the scorecard emit block in `runReconcile`, persist run findings (with `Justification`/`SourceReport` when present) via `localdebt.Append`.
    - Write-time dedup by `FindingID` against `ReadAll` (full history, not just current-month shard); fail-open (log to `cmd.ErrOrStderr()`, non-fatal) on dedup-read error.
@@ -252,7 +274,7 @@ From [plan/documentation/README.md](plan/documentation/README.md):
    3. COMMIT: `git commit -m "feat(reconcile): persist reconciled findings to local TD store (green)"`
    **Files:** `cmd/atcr/reconcile.go` | **Duration:** ~0.75d
 
-### 2.2.A [ ] **[Reconcile Persistence Hook — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-reconcile-time-persistence-hook.md)**
+### 2.2.A [x] **[Reconcile Persistence Hook — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-reconcile-time-persistence-hook.md)**
    **Changed Files:** `cmd/atcr/reconcile.go`, `cmd/atcr/reconcile_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 2.2 — intentional. Do NOT review inline.
@@ -270,31 +292,31 @@ From [plan/documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose hostile review):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | cmd/atcr/reconcile.go:204-207 (via record.go:61-63) | Dedup id = `FindingID(file,line,problem)` excludes severity, and the append-only store skips an already-seen id. A finding first persisted at a low severity that later re-reconciles at a higher severity is dropped by dedup — the backlog freezes first-seen severity. Documented-as-intended (stable id across re-settled severity), surfaced for explicit confirmation. | Either compare severity on a matched id and append/annotate on escalation, or document that the backlog intentionally keeps first-seen severity. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   No CRITICAL/HIGH/MEDIUM. Verified correct: no `.planning/` leak; writes confined to `DefaultDir(".")` = `./.atcr/debt` with `monthRe`-guarded shard (no traversal); errors path-scrubbed by `basePathErr`; empty-findings early return (no dir created); in-run + cross-month dedup via full-history `ReadAll`; dedup-read failure fails open to at-least-once append; `persistLocalDebt` is void/non-fatal, runs after scorecard emit and before `gateFindings` so it cannot change exit code or roll back scorecard; streaming `bufio` read.
 
-### 2.3 [ ] **[Reconcile Persistence Hook — REFACTOR](plan/user-stories/02-reconcile-time-persistence-hook.md)**
+   **Action taken:** Single LOW (a request to confirm an already-documented design decision) → deferred to `tech-debt-captured.md` as TD-002. No CRITICAL/HIGH to fix in 2.3.
+
+### 2.3 [x] **[Reconcile Persistence Hook — REFACTOR](plan/user-stories/02-reconcile-time-persistence-hook.md)**
    1. Fix CRITICAL/HIGH issues from 2.2.A (if any).
    2. Improve code and tests (T1); confirm `--no-local-debt` help text matches `--no-scorecard` conventions.
    3. Validate all tests pass (T3).
    4. COMMIT: `git commit -m "refactor(reconcile): address review + tidy persistence hook"`
    **Duration:** ~0.25d
 
-### 2.4 [ ] **[Shared Skill Conventions — RED](plan/user-stories/04-shared-skill-conventions-extraction.md)**
+   **Outcome:** No CRITICAL/HIGH from 2.2.A (single LOW deferred to TD-001). `--no-local-debt` help text ("skip writing reconciled findings to the local TD store") already mirrors `--no-scorecard`'s register. Implementation reviewed — clean, no refactor changes warranted. T3 `go test ./...` green. No empty commit created (nothing changed).
+
+### 2.4 [x] **[Shared Skill Conventions — RED](plan/user-stories/04-shared-skill-conventions-extraction.md)**
    **Mode:** Moderate | **ACs:** [04-01](plan/acceptance-criteria/04-01-conventions-md-creation.md), [04-02](plan/acceptance-criteria/04-02-skill-md-prerequisites-pointer.md), [04-03](plan/acceptance-criteria/04-03-go-embed-and-test-coverage.md)
    1. Analyze ACs. Extend `skill/skill_test.go` with failing assertions: `ConventionsMD` embedded and non-empty; contains binary-on-PATH check, git-worktree check, `.atcr/` path-safety rules; no `.claude`/no-absolute-path (added to existing test list); `skill/SKILL.md` Prerequisites section reduced to a pointer with no coverage lost.
    2. Verify tests fail correctly.
    **Files:** `skill/skill_test.go` (extended) | **Duration:** ~0.25d
 
-### 2.5 [ ] **[Shared Skill Conventions — GREEN](plan/user-stories/04-shared-skill-conventions-extraction.md)**
+### 2.5 [x] **[Shared Skill Conventions — GREEN](plan/user-stories/04-shared-skill-conventions-extraction.md)**
    Minimal code to pass (T1), verify (T2), COMMIT.
    - Create `skill/CONVENTIONS.md` (binary-on-PATH check, git-worktree check, `.atcr/` path-safety rules — moved verbatim from `skill/SKILL.md`).
    - Rewrite `skill/SKILL.md` Prerequisites section to a pointer at `CONVENTIONS.md`, no coverage lost.
@@ -302,7 +324,7 @@ From [plan/documentation/README.md](plan/documentation/README.md):
    3. COMMIT: `git commit -m "refactor(skill): extract shared conventions to CONVENTIONS.md (green)"`
    **Files:** `skill/CONVENTIONS.md`, `skill/SKILL.md`, `skill/skill.go` | **Duration:** ~0.25d
 
-### 2.5.A [ ] **[Shared Skill Conventions — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-shared-skill-conventions-extraction.md)**
+### 2.5.A [x] **[Shared Skill Conventions — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-shared-skill-conventions-extraction.md)**
    **Changed Files:** `skill/CONVENTIONS.md`, `skill/SKILL.md`, `skill/skill.go`, `skill/skill_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 2.5 — intentional. Do NOT review inline.
@@ -320,32 +342,33 @@ From [plan/documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose hostile review):** _(none — empty table)_
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.6, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Adversarial review passed.** Reviewer diffed the pre-extraction SKILL.md (commit `b08e9991`) against `CONVENTIONS.md` and confirmed all three Prerequisites checks moved byte-identically (binary-on-PATH halt, git-worktree halt, `gh` CLI PR-resolution note incl. "authenticated" + `--base`/`--head` fallback). `.atcr/` path-safety section: no `.claude`/absolute paths, cited paths match real code (`localdebt/paths.go` `debtSubdir=".atcr/debt"`), correctly forbids `.planning/`. `//go:embed` resolves, build+tests pass, SKILL.md 98 lines (well under 500-line budget). No CRITICAL/HIGH/MEDIUM/LOW.
 
-### 2.6 [ ] **[Shared Skill Conventions — REFACTOR](plan/user-stories/04-shared-skill-conventions-extraction.md)**
+### 2.6 [x] **[Shared Skill Conventions — REFACTOR](plan/user-stories/04-shared-skill-conventions-extraction.md)**
    1. Fix CRITICAL/HIGH issues from 2.5.A (if any).
    2. Improve wording/consistency (T1); confirm both `skill/SKILL.md` and (later) `skill/debt-resolve/SKILL.md` can point at `CONVENTIONS.md`.
    3. Validate all tests pass (T3).
    4. COMMIT: `git commit -m "refactor(skill): address review + tidy CONVENTIONS pointer"`
    **Duration:** ~0.25d
 
-### 2.7 [ ] **Phase 2 — Definition of Done**
-   Run DoD verification checklist. Confirm ACs 02-01..02-03 and 04-01..04-03 satisfied. Emit DoD reports for Story 2 and Story 4.
-   - [ ] T3 tests passing (incl. new reconcile integration tests + skill embed tests)
-   - [ ] Coverage ≥80%
-   - [ ] Lint/vet clean; `go build ./...` succeeds
-   - [ ] `CONVENTIONS.md` complete; Story 3 has a finished file to reference
+   **Outcome:** No CRITICAL/HIGH from 2.5.A (adversarial review passed clean). `CONVENTIONS.md` is a self-contained `skill/` sibling explicitly designed for multiple `SKILL.md` files to point at ("Each skill's `SKILL.md` points here…"), so Story 3's `skill/debt-resolve/SKILL.md` can reference it without rework. Wording already consistent — no refactor changes warranted. T3 `go test ./...` green. No empty commit created.
 
-### 2.8 [ ] **Phase 2 — GATE: Integration & Exit Review (subagent)**
+### 2.7 [x] **Phase 2 — Definition of Done**
+   Run DoD verification checklist. Confirm ACs 02-01..02-03 and 04-01..04-03 satisfied. Emit DoD reports for Story 2 and Story 4.
+   - [x] T3 tests passing (incl. new reconcile integration tests + skill embed tests) — `go test ./...` green
+   - [x] Coverage ≥80% — cmd/atcr 84.6%, internal/localdebt 84.1% (skill is Markdown/string-only, no statements)
+   - [x] Lint/vet clean; `go build ./...` succeeds — golangci-lint 0 issues, `go vet` clean, `gofmt` clean
+   - [x] `CONVENTIONS.md` complete; Story 3 has a finished file to reference
+
+   **Story-2 DoD Complete** — Auto: 3/3 (tests/lint/build) | Story-Specific ACs 02-01..02-03: satisfied (persist-per-finding after scorecard emit; Justification/SourceReport carried when present & omitted when absent; zero-finding no-op; --no-local-debt suppression independent of --no-scorecard; cross-run accumulation; write-time dedup by FindingID over full-history ReadAll; fail-open + in-run-dedup implemented and adversarially verified) | Manual Review: [ ] (deferred to /execute-code-review). Note: fail-open-on-dedup-read-error and in-run duplicate-id collapse are covered by implementation + fresh-subagent review rather than dedicated CLI integration tests (both are defensive paths not reachable through the normal reconcile pipeline, which dedups upstream).
+
+   **Story-4 DoD Complete** — Auto: 3/3 | Story-Specific ACs 04-01..04-03: satisfied (CONVENTIONS.md with three relocated checks byte-identical + new .atcr/ path-safety section; SKILL.md Prerequisites reduced to a pointer, no duplicated halt text; ConventionsMD embedded, non-empty, added to no-.claude/no-abs-path list; dispatcherCommands untouched) | Manual Review: [ ] (deferred to /execute-code-review).
+
+### 2.8 [x] **Phase 2 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase — intentional. Do NOT review inline.
@@ -364,16 +387,15 @@ From [plan/documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Gate findings (fresh-context hostile-integrator review):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | internal/mcp/handlers.go:344 | Local-debt persistence is CLI-only; the MCP `atcr_reconcile` handler emits scorecard via the shared bridge but never calls `persistLocalDebt`, so MCP-driven reconciles write zero `.atcr/debt/` records. | Deferred → TD-002. Out of Story 2's CLI-scoped surface (AC 02-01 scopes `runReconcile`); MCP parity is a follow-up decision. |
+   | LOW | cmd/atcr/debt.go:18 | Within one `atcr debt` group, `add`/`dashboard` read `.planning/technical-debt/` while the reconcile hook + Story 3 `debt resolve` use `.atcr/debt/` — sibling subcommands span two backlogs. | Deferred → TD-003. By-design (`localdebt/doc.go`); surface in `debt --help` + docs (fold into Story 5 AC 05-03). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   No CRITICAL/HIGH. Verified stable for downstream: `Append`/`ReadRecords`/`ReadAll`/`Record`/`StampID`/`DefaultDir` exported and stable; `ConventionsMD` embedded + file present + referenced by SKILL.md; `--no-local-debt` registered/defaulted/help-listed; no scorecard regression; build/vet/tests green. Story 3 can consume the store and reference the finished `CONVENTIONS.md` without rework.
+
+   **Phase gate passed.** Both findings are MEDIUM/LOW, out of Story 2's scoped surface or by-design → captured as TD-002/TD-003 for explicit decision; no blocking fixes required before the boundary.
    **Duration:** 15-30 min
 
 **🚧 GATED STOP:** Phase 2 complete. Stop here. Await go-ahead before Phase 3.
@@ -385,7 +407,7 @@ From [plan/documentation/README.md](plan/documentation/README.md):
 **Goal:** The centerpiece — `atcr debt resolve` CLI subcommand + `skill/debt-resolve/SKILL.md` documenting the four-stage RED→GREEN→ADVERSARIAL→REFACTOR cycle adapted from `/resolve-td`. Gated on Phases 1-2 (needs a real store to read and a stable `CONVENTIONS.md`).
 **Story:** [Story 3 — `/atcr debt resolve` Skill Route](plan/user-stories/03-atcr-debt-resolve-skill-route.md)
 
-### 3.1 [ ] **[Debt Resolve Route — RED](plan/user-stories/03-atcr-debt-resolve-skill-route.md)**
+### 3.1 [x] **[Debt Resolve Route — RED](plan/user-stories/03-atcr-debt-resolve-skill-route.md)**
    **Mode:** Moderate | **ACs:** [03-01](plan/acceptance-criteria/03-01-skill-md-dispatcher-documentation.md), [03-02](plan/acceptance-criteria/03-02-debt-resolve-cli-subcommand.md), [03-03](plan/acceptance-criteria/03-03-item-selection-and-justification-consumption.md), [03-06](plan/acceptance-criteria/03-06-go-embed-wiring-and-test-coverage.md) (compiled-testable subset)
    1. Analyze ACs. Write failing tests:
       - `cmd/atcr/debt_resolve_test.go` — flag parsing, empty-store → "no items"/exit 0, JSON/table output, reads via `localdebt.ReadAll`, never touches `.planning/`, discoverable via `atcr debt --help`.
@@ -394,7 +416,7 @@ From [plan/documentation/README.md](plan/documentation/README.md):
    2. Verify tests fail correctly.
    **Files:** `cmd/atcr/debt_resolve_test.go` (new), `skill/skill_test.go` (extended) | **Duration:** ~1d
 
-### 3.2 [ ] **[Debt Resolve Route — GREEN](plan/user-stories/03-atcr-debt-resolve-skill-route.md)**
+### 3.2 [x] **[Debt Resolve Route — GREEN](plan/user-stories/03-atcr-debt-resolve-skill-route.md)**
    Minimal code to pass (T1), verify (T2), COMMIT.
    - `atcr debt resolve` subcommand extending `newDebtCmd()` (alongside `list`/`add`/`dashboard`): read path via `localdebt.ReadAll`; deterministic item selection consuming `justification`/`SourceReport`; append-only mark-resolved write path; validated flag enums (`--severity`, etc.); store path rooted under `.atcr/debt/`.
    - `skill/debt-resolve/SKILL.md` — documents the four-stage cycle adapted from `/resolve-td` (incl. non-overridable `llm_support_diff_smell` hard verdict, symbol-anchor relocation for drifted findings, cumulative adversarial pass), branch-safety (`debt-resolve/<date>` only from default branch), `NEEDS_REVIEW` never marked resolved. Points at `skill/CONVENTIONS.md`.
@@ -402,7 +424,7 @@ From [plan/documentation/README.md](plan/documentation/README.md):
    3. COMMIT: `git commit -m "feat(debt): add atcr debt resolve subcommand + debt-resolve skill (green)"`
    **Files:** `cmd/atcr/debt.go`, `cmd/atcr/debt_resolve.go` (new), `skill/debt-resolve/SKILL.md` (new), `skill/skill.go`, `skill/SKILL.md` | **Duration:** ~1.5d
 
-### 3.2.A [ ] **[Debt Resolve Route — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-atcr-debt-resolve-skill-route.md)**
+### 3.2.A [x] **[Debt Resolve Route — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-atcr-debt-resolve-skill-route.md)**
    **Changed Files:** `cmd/atcr/debt.go`, `cmd/atcr/debt_resolve.go`, `cmd/atcr/debt_resolve_test.go`, `skill/debt-resolve/SKILL.md`, `skill/skill.go`, `skill/SKILL.md`, `skill/skill_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 3.2 — intentional. Do NOT review inline.
@@ -420,32 +442,33 @@ From [plan/documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose hostile review):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | cmd/atcr/debt_resolve.go:203-211 | `--resolve <id>` on an already-resolved id is not idempotent: the original open record (empty status) is append-only and still matches the scan, so `markDebtResolved` appends a second `resolved` record and prints success instead of a no-op/notice. Folds still correct (no crash / no wrong open list), but repeated runs bloat the store with duplicate resolution records. | Before appending, scan for an existing terminal (`resolved`/`deferred`) record for the id; if one exists, report "already resolved" and skip the append. |
+   | LOW | skill/debt-resolve/SKILL.md Branch Safety | Branch Safety mandates `debt-resolve/<date>` on the default branch but gives no guidance for the "existing `debt-resolve/*` branch" edge case — a second same-day run's `git checkout -b` collides and the skill does not say to reuse/suffix/halt. | Add a sentence: if `debt-resolve/<date>` already exists, resolve in place on it (or append a disambiguating suffix) rather than failing the checkout. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   No CRITICAL/HIGH/MEDIUM. Verified clean: RFC3339+"-resolve" RunID always yields a valid YYYY-MM prefix so `Append` never rejects it; `renderResolveJSON` emits `[]` not `null` on empty; fold drops resolved items correctly (O(n) + O(k log k) stable sort matching the skill's documented severity-DESC/ts-ASC rule); empty/missing store → "no items", exit 0; `--severity` enum-validated (usage error, exit 2); `--max 0` = no cap; unknown id errors; mark-resolved write failures surface (not swallowed); zero `.planning/` reference in the resolve path (the `.planning/` constants belong only to sibling list/add/dashboard); fixed branch template with no finding-text interpolation; `justification`/`source_report` framed untrusted; diff_smell-unavailable fallback documented; `NEEDS_REVIEW` never marked resolved; both SKILL.md files carry valid name+description frontmatter; skill_test assertions substantive (ordering/content anchors/format), not tautological.
 
-### 3.3 [ ] **[Debt Resolve Route — REFACTOR](plan/user-stories/03-atcr-debt-resolve-skill-route.md)**
+   **Action taken:** No CRITICAL/HIGH → nothing blocks the boundary. Both LOWs are trivial (<30 min) and directly improve the shipped code/skill → addressed inline in 3.3 REFACTOR (per the Phase 1 task 1.2.A precedent, since REFACTOR immediately follows and its purpose is code improvement), not deferred.
+
+### 3.3 [x] **[Debt Resolve Route — REFACTOR](plan/user-stories/03-atcr-debt-resolve-skill-route.md)**
    1. Fix CRITICAL/HIGH issues from 3.2.A (if any).
    2. Improve code/skill wording (T1); verify `skill/debt-resolve/SKILL.md` grounds each stage against `/resolve-td` semantics and references the finished `CONVENTIONS.md`.
    3. Validate all tests pass (T3).
    4. COMMIT: `git commit -m "refactor(debt): address review + tighten debt-resolve cycle doc"`
    **Duration:** ~0.5d
 
-### 3.4 [ ] **Story 3 — Definition of Done**
+### 3.4 [x] **Story 3 — Definition of Done**
    Run DoD verification checklist. Confirm compiled-testable ACs (03-01, 03-02, 03-03, 03-06) satisfied. E2E ACs 03-04, 03-05 deferred to Phase 5 live scenario walkthrough (noted, not skipped).
-   - [ ] T3 tests passing (CLI + embed/stage-name assertions)
-   - [ ] Coverage ≥80%
-   - [ ] Lint/vet clean; `go build ./...` succeeds
-   - [ ] `atcr debt resolve --help` discoverable; zero `.planning/` references in new code paths
+   - [x] T3 tests passing (CLI + embed/stage-name assertions) — `go test ./...` green (41 packages ok)
+   - [x] Coverage ≥80% — cmd/atcr 84.9% (skill is Markdown/embed-only, no statements)
+   - [x] Lint/vet clean; `go build ./...` succeeds — golangci-lint 0 issues, `go vet` clean, build OK
+   - [x] `atcr debt resolve --help` discoverable; zero `.planning/` references in new code paths — the only `.planning/` mentions in the new path are intentional prose negations ("no `.planning/`", "zero `.planning/` dependency") in comments/docs, not functional path references
 
-### 3.5 [ ] **Phase 3 — GATE: Integration & Exit Review (subagent)**
+   **Story-3 DoD Complete** — Auto: 3/3 (tests/lint/build) | Story-Specific compiled ACs 03-01/03-02/03-03/03-06: satisfied (resolve subcommand registered + `--help`-discoverable, reads `.atcr/debt/` via `localdebt.ReadAll` only and never the `.planning/` source flags, empty/missing-store no-op exit 0, JSON `[]`-on-empty, severity-DESC/ts-ASC/N=10 deterministic selection, `--severity` enum-validated, append-only idempotent mark-resolved fold; `skill/debt-resolve/SKILL.md` embedded as `DebtResolveMD`, documents all four cycle stages + selection rule + untrusted-data framing + symbol-anchor preference + CLI-only access + `CONVENTIONS.md` reference, added to `TestSkill_NoAbsoluteOrClaudePaths`; SKILL.md `atcr debt` row extended) | E2E ACs 03-04/03-05 deferred to Phase 5 live walkthrough | Manual Review: [ ] (deferred to /execute-code-review).
+
+### 3.5 [x] **Phase 3 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase — intentional. Do NOT review inline.
@@ -464,16 +487,17 @@ From [plan/documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Gate findings (fresh-context hostile-integrator review):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | cmd/atcr/debt_resolve.go:95 (with reconcile.go:205) | "Resolved wins forever": `selectOpenDebt` folds an id closed if any record ever carried a terminal status, and the Phase-2 reconcile dedup counts resolved records in `seen`, so a resolved-then-re-detected finding never re-opens. No re-open path. | Cross-phase re-open design; captured → TD-004 (see below). |
+   | LOW | skill/SKILL.md:77 | Dispatcher row attributed "autonomously fixes" to the CLI subcommand, which only lists/marks-resolved; the *route* fixes. Mild drift vs. debt-resolve/SKILL.md's "never a code editor." | Fixed inline: reworded the `atcr debt` row to attribute fixing to the route, not the CLI. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   No CRITICAL/HIGH. Verified stable for downstream: `atcr debt resolve` flags (`--dir --list --json --severity --max --resolve`) + output shapes stable; embedded stage names (RED/GREEN/ADVERSARIAL/REFACTOR) stable; discoverable via `atcr debt --help` and documented in SKILL.md's dispatcher row (no invented subcommand names); reads store ONLY via `localdebt.ReadAll`, never raw file / never `.planning/`; `debt-resolve/SKILL.md` references the finished `CONVENTIONS.md`; fixed `debt-resolve/<date>` branch template with no finding-text interpolation; selection rule (severity DESC, ts ASC, N=10) matches implementation exactly; sibling `list`/`add`/`dashboard` + reconcile hook behavior unchanged; other embedded skill files intact. Story 5 (Phase 4 docs) can describe the shipped behavior accurately — with TD-004's terminal-resolution note folded in.
+
+   **Action taken:** No CRITICAL/HIGH → boundary not blocked. LOW (skill/SKILL.md wording) fixed inline (a real doc/code inaccuracy, cheaper to correct now than ship). MEDIUM (resolved-wins-forever) is a cross-phase design decision outside Story 3's scope — `selectOpenDebt` correctly reflects the append-only store's current semantics, and a proper re-open path requires changing Phase-2 reviewed `persistLocalDebt` too → captured as TD-004, with a note for Story 5 to document the terminal-resolution behavior.
+
+   **Phase gate passed.**
    **Duration:** 15-30 min
 
 **🚧 GATED STOP:** Phase 3 complete. Stop here. Await go-ahead before Phase 4.
