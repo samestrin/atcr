@@ -111,7 +111,7 @@ func TestSkill_AdjudicationDocumented(t *testing.T) {
 // references only the atcr binary and review-directory-relative paths — no
 // .claude-specific paths and no absolute filesystem paths.
 func TestSkill_NoAbsoluteOrClaudePaths(t *testing.T) {
-	for _, md := range []string{SkillMD, HostReviewMD, AmbiguityAdjudicationMD, FindingsFormatMD, ConventionsMD} {
+	for _, md := range []string{SkillMD, HostReviewMD, AmbiguityAdjudicationMD, FindingsFormatMD, ConventionsMD, DebtResolveMD} {
 		assert.NotContains(t, md, ".claude", "no .claude-specific paths in any skill body")
 		for _, abs := range []string{"/Users/", "/home/", "/opt/", "C:\\"} {
 			assert.NotContains(t, md, abs, "no absolute filesystem path %q", abs)
@@ -293,6 +293,77 @@ func TestSkill_PrerequisitesIsPointer(t *testing.T) {
 		"the git-worktree halt message must move to CONVENTIONS.md, not be duplicated in SKILL.md")
 	assert.NotContains(t, SkillMD, binaryHaltMsg,
 		"the binary-on-PATH halt message must move to CONVENTIONS.md, not be duplicated in SKILL.md")
+}
+
+// ---------------------------------------------------------------------------
+// Sprint 20.1 — /atcr debt resolve skill route (Story 3). RED until
+// skill/debt-resolve/SKILL.md is authored, embedded as DebtResolveMD, and
+// skill/SKILL.md's `atcr debt` row documents the resolve route.
+// ---------------------------------------------------------------------------
+
+// TestSkill_DebtResolveEmbedded (AC 03-06 Scenario 1) — debt-resolve/SKILL.md is
+// embedded as a non-empty constant, mirroring the other secondary files.
+func TestSkill_DebtResolveEmbedded(t *testing.T) {
+	require.NotEmpty(t, DebtResolveMD, "debt-resolve/SKILL.md must be embedded and non-empty")
+}
+
+// TestSkill_DebtResolveStages (AC 03-06 Scenario 2, AC 03-01) — the four cycle
+// stage markers must all be documented in the embedded route file.
+func TestSkill_DebtResolveStages(t *testing.T) {
+	for _, stage := range []string{"RED", "GREEN", "ADVERSARIAL", "REFACTOR"} {
+		assert.Contains(t, DebtResolveMD, stage,
+			"DebtResolveMD must document the %q cycle stage", stage)
+	}
+}
+
+// TestSkill_DebtResolveReferencesConventions (AC 03-06 Scenario 2, Error Scenario 1)
+// — the route file points at CONVENTIONS.md rather than restating the shared
+// Prerequisites checks verbatim.
+func TestSkill_DebtResolveReferencesConventions(t *testing.T) {
+	assert.Contains(t, DebtResolveMD, "CONVENTIONS.md",
+		"debt-resolve/SKILL.md must reference CONVENTIONS.md, not restate its checks")
+	assert.NotContains(t, DebtResolveMD, binaryHaltMsg,
+		"debt-resolve/SKILL.md must not duplicate the binary-on-PATH halt (it lives in CONVENTIONS.md)")
+	assert.NotContains(t, DebtResolveMD, gitWorktreeHaltMsg,
+		"debt-resolve/SKILL.md must not duplicate the git-worktree halt (it lives in CONVENTIONS.md)")
+}
+
+// TestSkill_DebtResolveSelectionRule (AC 03-03) — the deterministic selection
+// default (severity DESC, then ts ASC, capped at N=10) is stated explicitly.
+func TestSkill_DebtResolveSelectionRule(t *testing.T) {
+	assert.Regexp(t, regexp.MustCompile(`(?i)severity`), DebtResolveMD, "selection rule must name the severity sort key")
+	assert.Regexp(t, regexp.MustCompile(`(?i)\bts\b|oldest|age`), DebtResolveMD, "selection rule must name the ts/age tie-break")
+	assert.Contains(t, DebtResolveMD, "10", "selection cap N=10 must be stated explicitly")
+}
+
+// TestSkill_DebtResolveOptionalFields (AC 03-03 Scenario 2/3, Edge Cases) — the
+// route documents justification/source_report as optional, untrusted-data context
+// and the symbol-anchor location preference.
+func TestSkill_DebtResolveOptionalFields(t *testing.T) {
+	assert.Contains(t, DebtResolveMD, "justification", "route must document the optional justification field")
+	assert.Contains(t, DebtResolveMD, "source_report", "route must document the optional source_report field")
+	assert.Regexp(t, regexp.MustCompile(`(?i)untrusted`), DebtResolveMD,
+		"route must frame justification/review narrative as untrusted data, never instructions")
+	assert.Regexp(t, regexp.MustCompile(`(?i)symbol|anchor`), DebtResolveMD,
+		"route must document the symbol-anchor location preference for drifted findings")
+}
+
+// TestSkill_DebtResolveCLIInvocationOnly (AC 03-02 Scenario 3) — the route shells
+// out to `atcr debt resolve` and never reads the JSONL store directly.
+func TestSkill_DebtResolveCLIInvocationOnly(t *testing.T) {
+	assert.Contains(t, DebtResolveMD, "atcr debt resolve",
+		"route must drive resolution via the atcr debt resolve CLI subcommand")
+	assert.NotContains(t, DebtResolveMD, ".atcr/debt/2026",
+		"route must not instruct reading raw .atcr/debt/*.jsonl shards directly")
+}
+
+// TestSkill_DebtRowDocumentsResolve (AC 03-01) — SKILL.md's `atcr debt` row (or a
+// dedicated pointer) surfaces the resolve route and points at debt-resolve/SKILL.md.
+func TestSkill_DebtRowDocumentsResolve(t *testing.T) {
+	assert.Regexp(t, regexp.MustCompile(`(?i)resolve`), SkillMD,
+		"SKILL.md must document the atcr debt resolve route")
+	assert.Contains(t, SkillMD, "`debt-resolve/SKILL.md`",
+		"SKILL.md must point at the on-demand debt-resolve/SKILL.md secondary file")
 }
 
 // frontmatter returns the YAML frontmatter block between the first two --- lines.
