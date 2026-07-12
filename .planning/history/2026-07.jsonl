@@ -78,3 +78,11 @@
 {"ts":"2026-07-11T10:10:12.865266-07:00","package":"internal/fanout","severity":"MEDIUM","id":"5f63e9769a4d681d","file":"internal/fanout/chunker_test.go","category":"correctness"}
 {"ts":"2026-07-11T10:10:12.865266-07:00","package":"internal/fanout","severity":"LOW","id":"45222e44539185b8","file":"internal/fanout/artifacts_test.go","category":"correctness"}
 {"ts":"2026-07-11T10:10:12.865266-07:00","package":"internal/fanout","severity":"LOW","id":"2f67dba1e279fb52","file":"internal/fanout/artifacts_test.go","category":"style"}
+{"ts":"2026-07-12T11:08:04.349951-07:00","package":"internal/localdebt","severity":"MEDIUM","id":"7b847f23a7907f3d","file":"internal/localdebt/paths.go","category":"testing"}
+{"ts":"2026-07-12T11:08:04.349951-07:00","package":"internal/localdebt","severity":"MEDIUM","id":"359fdeee6727179e","file":"internal/localdebt/record_test.go","category":"testing"}
+{"ts":"2026-07-12T11:08:04.349951-07:00","package":"internal/localdebt","severity":"MEDIUM","id":"99716e18c98c9673","file":"internal/localdebt/paths.go","category":"performance"}
+{"ts":"2026-07-12T11:08:04.349951-07:00","package":"internal/localdebt","severity":"MEDIUM","id":"bf1afc90b2fe168d","file":"internal/localdebt/record.go","category":"performance"}
+{"ts":"2026-07-12T11:08:04.349951-07:00","package":"internal/localdebt","severity":"MEDIUM","id":"6977a0e6dbbb1a91","file":"internal/localdebt/paths.go","category":"exhaustion"}
+{"ts":"2026-07-12T11:08:04.349951-07:00","package":"internal/localdebt","severity":"MEDIUM","id":"8f09e70d911418ba","file":"internal/localdebt/record.go","category":"validation"}
+{"ts":"2026-07-12T11:08:04.349951-07:00","package":"internal/localdebt","severity":"HIGH","id":"c039a0516ccafaeb","file":"internal/localdebt/record.go","category":"exhaustion"}
+{"ts":"2026-07-12T11:08:04.349951-07:00","package":"internal/localdebt","severity":"HIGH","id":"2ceed5ae4fc80b4b","file":"internal/localdebt/paths.go","category":"correctness"}

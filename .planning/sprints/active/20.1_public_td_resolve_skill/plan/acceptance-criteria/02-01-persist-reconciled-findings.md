@@ -76,15 +76,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `runReconcile` calls the Story 1 store's append API once per finding in `res.JSONFindings()`, after the `scorecard.EmitForReconcile` call
-- [ ] Persisted records carry `Justification`/`SourceReport` when present and omit them when absent, per the v1 schema
-- [ ] A zero-finding reconcile performs no persistence I/O
-- [ ] A persistence failure is logged and never changes `runReconcile`'s return value or exit code
+- [x] `runReconcile` calls the Story 1 store's append API once per finding in `res.JSONFindings()`, after the `scorecard.EmitForReconcile` call
+- [x] Persisted records carry `Justification`/`SourceReport` when present and omit them when absent, per the v1 schema
+- [x] A zero-finding reconcile performs no persistence I/O
+- [x] A persistence failure is logged and never changes `runReconcile`'s return value or exit code
 
 **Manual Review:**
 - [ ] Code reviewed and approved

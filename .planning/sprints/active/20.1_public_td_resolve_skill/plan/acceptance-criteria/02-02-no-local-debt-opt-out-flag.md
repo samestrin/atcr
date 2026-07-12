@@ -62,15 +62,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `--no-local-debt` flag registered in `newReconcileCmd()`, defaulting to `false` (persistence-on)
-- [ ] Setting the flag suppresses local-debt persistence and writes zero new records
-- [ ] The flag is independent of `--no-scorecard` — either can be set without affecting the other
-- [ ] `--help` output lists `--no-local-debt` with descriptive help text
+- [x] `--no-local-debt` flag registered in `newReconcileCmd()`, defaulting to `false` (persistence-on)
+- [x] Setting the flag suppresses local-debt persistence and writes zero new records
+- [x] The flag is independent of `--no-scorecard` — either can be set without affecting the other
+- [x] `--help` output lists `--no-local-debt` with descriptive help text
 
 **Manual Review:**
 - [ ] Code reviewed and approved

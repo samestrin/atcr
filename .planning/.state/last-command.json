@@ -1,9 +1,9 @@
 {
-  "skill": "design-sprint",
-  "args": "@.planning/plans/active/20.1_public_td_resolve_skill/",
-  "invocation": "/design-sprint @.planning/plans/active/20.1_public_td_resolve_skill/",
+  "skill": "sprint-complete",
+  "args": "@.planning/sprints/active/20.1_public_td_resolve_skill/",
+  "invocation": "/sprint-complete @.planning/sprints/active/20.1_public_td_resolve_skill/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "9ada9a1a-db2c-4f8c-88da-130d79e0a179",
-  "timestamp": "2026-07-12T15:17:52.233Z"
+  "session_id": "31c7aa92-dd97-4d6a-9229-7e19c3ce9d78",
+  "timestamp": "2026-07-12T20:15:51.663Z"
 }

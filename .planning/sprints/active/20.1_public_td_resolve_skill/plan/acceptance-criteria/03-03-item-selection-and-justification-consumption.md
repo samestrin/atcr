@@ -22,7 +22,7 @@
 **Scenario 1: deterministic selection rule mirrors `/resolve-td`'s `llm_support_td_filter` pattern**
 - **Given** the local store has records spanning multiple severities and ages
 - **When** `/atcr debt resolve` runs with no filter flags
-- **Then** `skill/debt-resolve/SKILL.md` documents a selection default (e.g. open items sorted by severity then age, capped at a documented default count) that a reader can apply mechanically — not a vague "pick relevant items" instruction — analogous to `/resolve-td`'s `--quick-wins`/`--severity`/`--max` filter documented at `~/.claude/skills/resolve-td/instructions.md`'s Conventions table
+- **Then** `skill/debt-resolve/SKILL.md` documents the selection default explicitly: open items sorted by `severity` (`HIGH` > `MEDIUM` > `LOW`) then by ascending `ts` (oldest first), capped at the first `N=10` matching items (mirroring `/resolve-td`'s `--max=10` default and this plan's own AC 03-04 per-invocation cap) — not a vague "pick relevant items" instruction, and not merely an illustrative example — analogous to `/resolve-td`'s `--quick-wins`/`--severity`/`--max` filter documented at `~/.claude/skills/resolve-td/instructions.md`'s Conventions table
 
 **Scenario 2: `justification` narrative is consumed when present**
 - **Given** a selected record has a non-empty `justification` field (stamped by `stampJustifications` from `review.md` narrative context)
@@ -80,6 +80,7 @@
 
 **Story-Specific:**
 - [ ] `skill/debt-resolve/SKILL.md` documents a deterministic, mechanically-applicable selection rule
+- [ ] Default sort key (`severity` descending, then `ts` ascending), tie-break, and cap value (`N=10`) are stated explicitly in `skill/debt-resolve/SKILL.md`, not left as an illustrative example
 - [ ] `skill/debt-resolve/SKILL.md` documents optional-field handling for `justification`/`source_report`, including the untrusted-data framing and the symbol-anchor preference
 - [ ] Selection behavior is verified functionally correct with records missing both optional fields
 

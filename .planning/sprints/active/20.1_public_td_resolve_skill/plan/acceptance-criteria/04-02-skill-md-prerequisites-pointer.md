@@ -74,15 +74,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./skill/...`)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./skill/...`)
+- [x] All tests passing (`go test ./skill/...`)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./skill/...`)
 
 **Story-Specific:**
-- [ ] `skill/SKILL.md`'s `## Prerequisites` heading is unchanged; `TestSkill_RequiredSections` passes without modification
-- [ ] The Prerequisites body is a short pointer sentence referencing `` `CONVENTIONS.md` ``, not the original inline checks
-- [ ] `SkillMD` no longer contains the full duplicated original halt-message text (moved to `ConventionsMD`)
-- [ ] `dispatcherCommands` and `TestSkill_DispatcherRoutingTable` remain unmodified and passing
+- [x] `skill/SKILL.md`'s `## Prerequisites` heading is unchanged; `TestSkill_RequiredSections` passes without modification
+- [x] The Prerequisites body is a short pointer sentence referencing `` `CONVENTIONS.md` ``, not the original inline checks
+- [x] `SkillMD` no longer contains the full duplicated original halt-message text (moved to `ConventionsMD`)
+- [x] `dispatcherCommands` and `TestSkill_DispatcherRoutingTable` remain unmodified and passing
 
 **Manual Review:**
 - [ ] Code reviewed and approved

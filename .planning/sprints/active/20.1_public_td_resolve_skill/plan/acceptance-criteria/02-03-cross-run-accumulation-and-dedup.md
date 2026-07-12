@@ -72,16 +72,16 @@ Per the plan's explicit design instruction and `documentation/local-td-store-sch
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Re-running `atcr reconcile` on the same review directory with unchanged findings does not duplicate records (write-time dedup by `FindingID`, checked via full-history `ReadAll`)
-- [ ] Runs against different review directories accumulate additively in the same store
-- [ ] A finding whose `problem` text changes across runs is treated as a distinct record (documented, not a defect)
-- [ ] In-run duplicate `id`s (two findings in one `Result` collapsing to the same id) are written at most once
-- [ ] A dedup-read failure fails open (appends) rather than silently dropping the run's findings, and never fails `runReconcile`'s exit code
+- [x] Re-running `atcr reconcile` on the same review directory with unchanged findings does not duplicate records (write-time dedup by `FindingID`, checked via full-history `ReadAll`)
+- [x] Runs against different review directories accumulate additively in the same store
+- [x] A finding whose `problem` text changes across runs is treated as a distinct record (documented, not a defect)
+- [x] In-run duplicate `id`s (two findings in one `Result` collapsing to the same id) are written at most once
+- [x] A dedup-read failure fails open (appends) rather than silently dropping the run's findings, and never fails `runReconcile`'s exit code
 
 **Manual Review:**
 - [ ] Code reviewed and approved

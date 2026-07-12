@@ -85,16 +85,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./skill/...`)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./skill/...`)
+- [x] All tests passing (`go test ./skill/...`)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./skill/...`)
 
 **Story-Specific:**
-- [ ] `skill/skill.go` has `//go:embed CONVENTIONS.md` and `var ConventionsMD string`, matching the existing three-file pattern; package doc comment lists `CONVENTIONS.md`
-- [ ] `ConventionsMD` is asserted non-empty in `skill/skill_test.go`
-- [ ] `SkillMD` is asserted to reference `` `CONVENTIONS.md` `` and not contain the full duplicated original Prerequisites text
-- [ ] `TestSkill_NoAbsoluteOrClaudePaths`'s iteration list includes `ConventionsMD`
-- [ ] `dispatcherCommands` list and `TestSkill_DispatcherRoutingTable` are unmodified and still passing
+- [x] `skill/skill.go` has `//go:embed CONVENTIONS.md` and `var ConventionsMD string`, matching the existing three-file pattern; package doc comment lists `CONVENTIONS.md`
+- [x] `ConventionsMD` is asserted non-empty in `skill/skill_test.go`
+- [x] `SkillMD` is asserted to reference `` `CONVENTIONS.md` `` and not contain the full duplicated original Prerequisites text
+- [x] `TestSkill_NoAbsoluteOrClaudePaths`'s iteration list includes `ConventionsMD`
+- [x] `dispatcherCommands` list and `TestSkill_DispatcherRoutingTable` are unmodified and still passing
 
 **Manual Review:**
 - [ ] Code reviewed and approved

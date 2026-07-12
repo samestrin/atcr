@@ -75,15 +75,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./skill/...`)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./skill/...`)
+- [x] All tests passing (`go test ./skill/...`)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./skill/...`)
 
 **Story-Specific:**
-- [ ] `skill/CONVENTIONS.md` exists and contains the binary-on-PATH halt message, git-worktree halt message, and `gh` CLI note, each preserved without loss of coverage
-- [ ] `skill/CONVENTIONS.md` contains a new `.atcr/` path-safety rules section grounded in `cmd/atcr/reconcile.go`'s `Root: "."` convention
-- [ ] `skill/CONVENTIONS.md` contains no `.claude`-specific paths and no absolute filesystem paths
-- [ ] `skill/CONVENTIONS.md`'s path-safety rules are consistent with Story 1's `.atcr/debt/` scoping
+- [x] `skill/CONVENTIONS.md` exists and contains the binary-on-PATH halt message, git-worktree halt message, and `gh` CLI note, each preserved without loss of coverage
+- [x] `skill/CONVENTIONS.md` contains a new `.atcr/` path-safety rules section grounded in `cmd/atcr/reconcile.go`'s `Root: "."` convention
+- [x] `skill/CONVENTIONS.md` contains no `.claude`-specific paths and no absolute filesystem paths
+- [x] `skill/CONVENTIONS.md`'s path-safety rules are consistent with Story 1's `.atcr/debt/` scoping
 
 **Manual Review:**
 - [ ] Code reviewed and approved
