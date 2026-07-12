@@ -128,7 +128,10 @@ Autonomous fixes must never land unreviewed on a user's working branch:
 - If the current branch is the repository's **default branch** (e.g. `main`/`master`),
   create a dedicated `debt-resolve/<date>` branch (fixed template — never interpolate
   finding text into the branch name) before applying any fix, so the work rides a
-  reviewable branch.
+  reviewable branch. If a `debt-resolve/<date>` branch **already exists** (e.g. a second
+  same-day run), reuse it — check it out and resolve in place rather than failing the
+  `checkout -b`; append a short numeric suffix (`debt-resolve/<date>-2`) only if you
+  must keep the runs on separate branches.
 - If the current branch is **already a non-default** feature/working branch, resolve in
   place on that branch (the user has already chosen where the work lands).
 

@@ -196,6 +196,24 @@ func TestDebtResolve_MarkResolvedRemovesItemFromOpenList(t *testing.T) {
 	assert.Contains(t, list, "internal/y/b.go", "the other item stays open")
 }
 
+func TestDebtResolve_MarkResolvedIsIdempotent(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+
+	// A second resolve of the same id must no-op, not append a duplicate record.
+	before, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "already resolved")
+	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "re-resolving must not append another resolution record")
+}
+
 func TestDebtResolve_MarkResolvedUnknownIDErrors(t *testing.T) {
 	dir := writeDebtStore(t, openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "x"))
 	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", "deadbeef")

@@ -201,13 +201,25 @@ func markDebtResolved(cmd *cobra.Command, dir, id string) error {
 	}
 
 	var orig *localdebt.Record
+	var alreadyClosed bool
 	for i := range recs {
-		if recs[i].ID != id || isClosedStatus(recs[i].Status) || recs[i].File == "" {
+		if recs[i].ID != id {
 			continue
 		}
-		r := recs[i]
-		orig = &r
-		break
+		if isClosedStatus(recs[i].Status) {
+			alreadyClosed = true
+			continue
+		}
+		if orig == nil && recs[i].File != "" {
+			r := recs[i]
+			orig = &r
+		}
+	}
+	// Idempotent: a terminal record for this id already exists, so re-resolving would
+	// only append a duplicate resolution record. Report and no-op instead.
+	if alreadyClosed {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already resolved; nothing to do.\n", id)
+		return nil
 	}
 	if orig == nil {
 		return fmt.Errorf("no open technical-debt item with id %q in the local store", id)
