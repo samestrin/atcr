@@ -9,10 +9,13 @@
 | Test Framework | Go `testing` + `stretchr/testify` (`assert`/`require`) | `skill/skill_test.go` |
 | Key Dependencies | Go standard library `embed` package (already imported as `_ "embed"` in skill.go) | No new dependency |
 
-## Related Files
-- `skill/skill.go` - modify: add `//go:embed CONVENTIONS.md` directive and `var ConventionsMD string`, alongside the existing three embedded secondary files (skill/skill.go:20-36); update the package doc comment's list of secondary files (skill/skill.go:6-10)
-- `skill/skill_test.go` - modify: add `ConventionsMD` to the `TestSkill_NoAbsoluteOrClaudePaths` iteration list (skill/skill_test.go:114); add new assertions for non-empty content, pointer-not-duplication, and (optionally) a `TestSkill_SecondaryFilesVerbatim`-style anchor check for `ConventionsMD`
-- `skill/CONVENTIONS.md` - reference: the file being embedded (created in AC 04-01)
+### Related Files (from codebase-discovery.json)
+- `skill/skill.go` — modify: add `//go:embed CONVENTIONS.md` directive and `var ConventionsMD string`, alongside the existing three embedded secondary files (skill/skill.go:20-36); update the package doc comment's list of secondary files (skill/skill.go:6-10)
+- `skill/skill_test.go` — modify: add `ConventionsMD` to the `TestSkill_NoAbsoluteOrClaudePaths` iteration list (skill/skill_test.go:114); add new assertions for non-empty content, pointer-not-duplication, and (optionally) a `TestSkill_SecondaryFilesVerbatim`-style anchor check for `ConventionsMD`
+- `skill/CONVENTIONS.md` — reference: the file being embedded (created in AC 04-01)
+- `skill/SKILL.md` — reference (read-only): Prerequisites pointer source that must reference `CONVENTIONS.md`
+- `skill/host-review.md` — reference (read-only): existing secondary embed pattern to mirror
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/agent-skills-format.md` — reference: Go embed harness conventions for secondary skill files
 
 ## Happy Path Scenarios
 **Scenario 1: ConventionsMD embed constant added**

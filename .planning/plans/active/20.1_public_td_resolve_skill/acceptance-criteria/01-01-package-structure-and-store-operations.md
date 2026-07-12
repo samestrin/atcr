@@ -9,12 +9,16 @@
 | Test Framework | `go test` with `testify/require`/`assert` | Matches `internal/scorecard/store_test.go` precedent |
 | Key Dependencies | `encoding/json`, `os`, `path/filepath`, `bufio` (stdlib only) | No third-party JSONL/YAML libs |
 
-## Related Files
-- `internal/localdebt/store.go` - create: `Append(dir string, rec Record) error`, `ReadRecords(path string, opts ReadOpts) ([]Record, error)`, `ReadAll(dir string, opts ReadOpts) ([]Record, error)`, structurally copied from `internal/scorecard/store.go`
-- `internal/localdebt/record.go` - create: `Record` struct matching the v1 schema, plus `SchemaVersion` constant
-- `internal/localdebt/paths.go` - create: `.atcr/debt/` root resolution and `monthFromRunID`-equivalent shard derivation, adapted from `internal/scorecard/paths.go`
-- `internal/scorecard/store.go` - reference (read-only): structural precedent for Append/ReadRecords/ReadAll
-- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/local-td-store-schema.md` - reference: v1 record schema definition
+### Related Files (from codebase-discovery.json)
+- `internal/localdebt/store.go` — create: `Append(dir string, rec Record) error`, `ReadRecords(path string, opts ReadOpts) ([]Record, error)`, `ReadAll(dir string, opts ReadOpts) ([]Record, error)`, structurally copied from `internal/scorecard/store.go`
+- `internal/localdebt/record.go` — create: `Record` struct matching the v1 schema, plus `SchemaVersion` constant
+- `internal/localdebt/paths.go` — create: `.atcr/debt/` root resolution and `monthFromRunID`-equivalent shard derivation, adapted from `internal/scorecard/paths.go`
+- `internal/scorecard/store.go` — reference (read-only): structural precedent for Append/ReadRecords/ReadAll; atomic single-write-per-record append at line 89
+- `internal/scorecard/paths.go` — reference (read-only): `DefaultDir` and `monthFromRunID` path/shard resolution at line 23
+- `internal/scorecard/store_test.go` — reference (read-only): test patterns for append/read round-trip and concurrent-append safety
+- `docs/scorecard.md` — reference (read-only): documentation style precedent for the local JSONL store format
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/local-td-store-schema.md` — reference: v1 record schema definition
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/append-only-store-pattern.md` — reference: atomic-append and malformed-line-skip pattern requirements
 
 ## Happy Path Scenarios
 **Scenario 1: Append then read back a single record**

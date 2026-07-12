@@ -9,10 +9,11 @@
 | Test Framework | `go test` + `testify/require` | Mirrors the existing `--no-scorecard` flag tests (`cmd/atcr/reconcile_test.go:257-299`) |
 | Key Dependencies | `github.com/spf13/cobra` (already a dependency) | No new dependency |
 
-## Related Files
-- `cmd/atcr/reconcile.go` - modify: register `cmd.Flags().Bool("no-local-debt", false, "skip writing reconciled findings to the local TD store")` in `newReconcileCmd()` alongside the existing `--no-scorecard` registration (line 43); read it in `runReconcile` via `cmd.Flags().GetBool("no-local-debt")` in the same style as the existing `noScorecard` read (line 110)
-- `cmd/atcr/reconcile_test.go` - modify: add `TestRunReconcile_NoLocalDebtFlag` (writes zero records) and a `--help` listing assertion, mirroring `TestRunReconcile_NoScorecardFlag`-style tests at lines 257-299
-- `internal/scorecard/scorecard.go` - reference (no change): `EmitOpts.NoScorecard` is the precedent gate shape (`type EmitOpts struct { NoScorecard bool; ... }`) the local-debt equivalent should structurally mirror when threaded into the store call
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/reconcile.go` — modify: register `cmd.Flags().Bool("no-local-debt", false, "skip writing reconciled findings to the local TD store")` in `newReconcileCmd()` alongside the existing `--no-scorecard` registration (line 43); read it in `runReconcile` via `cmd.Flags().GetBool("no-local-debt")` in the same style as the existing `noScorecard` read (line 110)
+- `cmd/atcr/reconcile_test.go` — modify: add `TestRunReconcile_NoLocalDebtFlag` (writes zero records) and a `--help` listing assertion, mirroring `TestRunReconcile_NoScorecardFlag`-style tests at lines 257-299
+- `internal/scorecard/scorecard.go` — reference (no change): `EmitOpts.NoScorecard` is the precedent gate shape (`type EmitOpts struct { NoScorecard bool; ... }`) the local-debt equivalent should structurally mirror when threaded into the store call
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/cli-integration-points.md` — reference: `--no-scorecard` flag precedent and expected hook behavior
 
 ## Happy Path Scenarios
 **Scenario 1: Default behavior persists (flag unset)**

@@ -9,10 +9,14 @@
 | Test Framework | Scenario walkthroughs against a fixture repo (agent-executed cycle, not compiled Go); `skill/skill_test.go` for embedded-content structural assertions | |
 | Key Dependencies | `llm_support_diff_smell` (over-simplification adversarial gate, same binary `/resolve-td` uses), project test runner discovered per-repo (no fixed framework assumption) | |
 
-## Related Files
-- `skill/debt-resolve/SKILL.md` - create: documents the four-stage cycle adapted from the private pipeline's `/resolve-td` (`~/.claude/skills/resolve-td/instructions.md:1021-1156`), rewritten to be repo-agnostic and free of `.planning/`, sprint-branch, and TD-README assumptions
-- `skill/CONVENTIONS.md` - reference (Story 4 dependency): supplies the shared Prerequisites (binary-on-PATH, git-worktree check, `.atcr/` path-safety) this file points to instead of duplicating
-- `docs/technical-debt-format.md` - reference: symbol-anchor contract consumed when locating drifted findings (shared with AC 03-03)
+### Related Files (from codebase-discovery.json)
+- `skill/debt-resolve/SKILL.md` — create: documents the four-stage cycle adapted from the private pipeline's `/resolve-td` behavior, rewritten to be repo-agnostic and free of `.planning/`, sprint-branch, and TD-README assumptions
+- `skill/CONVENTIONS.md` — reference (Story 4 dependency): supplies the shared Prerequisites (binary-on-PATH, git-worktree check, `.atcr/` path-safety) this file points to instead of duplicating
+- `docs/technical-debt-format.md` — reference: symbol-anchor contract consumed when locating drifted findings (shared with AC 03-03)
+- `internal/reconcile/emit.go` — reference (read-only): `JSONFinding` shape carrying `file`, `line`, `problem`, `fix`, and optional `justification`/`SourceReport` consumed during the cycle
+- `skill/skill_test.go` — modify: add structural assertions that `DebtResolveMD` documents all four stage names (`RED`, `GREEN`, `ADVERSARIAL`, `REFACTOR`)
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/agent-skills-format.md` — reference: on-demand secondary skill file pattern for `skill/debt-resolve/SKILL.md`
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/skill-dispatcher-conventions.md` — reference: adaptation must be grounded against `/resolve-td`'s documented stage-by-stage behavior during design
 
 ## Happy Path Scenarios
 **Scenario 1: RED stage reproduces the issue with a failing test**

@@ -9,11 +9,12 @@
 | Test Framework | `go test` + `testify/require` | Multi-invocation integration tests against a shared temp `.atcr/debt/` |
 | Key Dependencies | `internal/localdebt` (Story 1 `Append`/`ReadRecords`), `internal/history.FindingID` | Dedup key reused verbatim, not reimplemented |
 
-## Related Files
-- `cmd/atcr/reconcile.go` - modify: the persistence call must check existing store records for a matching `id` (`history.FindingID(file, line, problem)`) before appending, per the write-time dedup decision below
-- `internal/localdebt/store.go` - consume (Story 1 dependency): `ReadRecords`/`ReadAll` used to check for an existing `id` before calling `Append`; this AC's dedup behavior depends on Story 1 exposing a read path, not just `Append`
-- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/local-td-store-schema.md` - reference (no change): documents this as an "open integration gap" (line 97) that this AC resolves and closes — decision recorded here is write-time dedup by `FindingID`
-- `cmd/atcr/reconcile_test.go` - modify: add `TestRunReconcile_LocalDebtAccumulatesAcrossRuns` and `TestRunReconcile_LocalDebtDedupsSameFinding`, running `runReconcile`/`execCmd` twice against the same repo CWD with a shared `.atcr/debt/` directory
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/reconcile.go` — modify: the persistence call must check existing store records for a matching `id` (`history.FindingID(file, line, problem)`) before appending, per the write-time dedup decision below
+- `internal/localdebt/store.go` — consume (Story 1 dependency): `ReadRecords`/`ReadAll` used to check for an existing `id` before calling `Append`; this AC's dedup behavior depends on Story 1 exposing a read path, not just `Append`
+- `internal/history/record.go` — reference (read-only): `FindingID` at line 48 is the dedup key reused verbatim, not reimplemented
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/local-td-store-schema.md` — reference (no change): documents this as an "open integration gap" (line 97) that this AC resolves and closes — decision recorded here is write-time dedup by `FindingID`
+- `cmd/atcr/reconcile_test.go` — modify: add `TestRunReconcile_LocalDebtAccumulatesAcrossRuns` and `TestRunReconcile_LocalDebtDedupsSameFinding`, running `runReconcile`/`execCmd` twice against the same repo CWD with a shared `.atcr/debt/` directory
 
 ## Decision: Write-Time Dedup by FindingID
 

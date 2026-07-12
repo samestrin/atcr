@@ -5,7 +5,7 @@ Standalone/public `atcr` users can review code but have no way to persist findin
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/20.1_public_td_resolve_skill/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/20.1_public_td_resolve_skill/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/20.1_public_td_resolve_skill/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/20.1_public_td_resolve_skill/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/20.1_public_td_resolve_skill/`
 
 ## Timeline & Milestones
@@ -37,5 +37,6 @@ See [documentation/README.md](documentation/README.md) for the full index.
 - [Plan](plan.md)
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)
+- [Sprint Design](sprint-design.md)

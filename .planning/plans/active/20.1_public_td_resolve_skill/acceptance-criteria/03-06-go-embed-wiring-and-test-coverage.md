@@ -9,11 +9,13 @@
 | Test Framework | go test | `skill/skill_test.go` |
 | Key Dependencies | Go stdlib `embed` package only — no new dependency | |
 
-## Related Files
-- `skill/skill.go` - modify: add `//go:embed debt-resolve/SKILL.md` and `var DebtResolveMD string`, alongside the existing `HostReviewMD`, `AmbiguityAdjudicationMD`, `FindingsFormatMD` constants, and update the package doc comment's list of secondary files
-- `skill/skill_test.go` - modify: extend `TestSkill_NoAbsoluteOrClaudePaths`'s iterated list (currently `SkillMD, HostReviewMD, AmbiguityAdjudicationMD, FindingsFormatMD`) to include `DebtResolveMD`; add new assertions that `DebtResolveMD` is non-empty and documents the RED/GREEN/ADVERSARIAL/REFACTOR stage names and a reference to `CONVENTIONS.md` (Story 4) rather than duplicating its Prerequisites text
-- `skill/debt-resolve/SKILL.md` - reference: the file being embedded and tested (created by AC 03-01/03-03/03-04)
-- `skill/CONVENTIONS.md` - reference (Story 4 dependency): the shared file `debt-resolve/SKILL.md` must point to, not duplicate
+### Related Files (from codebase-discovery.json)
+- `skill/skill.go` — modify: add `//go:embed debt-resolve/SKILL.md` and `var DebtResolveMD string`, alongside the existing `HostReviewMD`, `AmbiguityAdjudicationMD`, `FindingsFormatMD` constants, and update the package doc comment's list of secondary files
+- `skill/skill_test.go` — modify: extend `TestSkill_NoAbsoluteOrClaudePaths`'s iterated list (currently `SkillMD, HostReviewMD, AmbiguityAdjudicationMD, FindingsFormatMD`) to include `DebtResolveMD`; add new assertions that `DebtResolveMD` is non-empty and documents the RED/GREEN/ADVERSARIAL/REFACTOR stage names and a reference to `CONVENTIONS.md` (Story 4) rather than duplicating its Prerequisites text
+- `skill/debt-resolve/SKILL.md` — reference: the file being embedded and tested (created by AC 03-01/03-03/03-04)
+- `skill/CONVENTIONS.md` — reference (Story 4 dependency): the shared file `debt-resolve/SKILL.md` must point to, not duplicate
+- `skill/SKILL.md` — reference (read-only): dispatcher file that points to `debt-resolve/SKILL.md` on demand
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/agent-skills-format.md` — reference: Go embed harness and secondary-file conventions
 
 ## Happy Path Scenarios
 **Scenario 1: `DebtResolveMD` embeds and loads successfully**

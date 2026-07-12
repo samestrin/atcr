@@ -9,10 +9,12 @@
 | Test Framework | Go `testing` + `stretchr/testify` | `skill/skill_test.go`'s `TestSkill_RequiredSections`, `TestSkill_NoAbsoluteOrClaudePaths`, and a new pointer-presence assertion mirroring `TestSkill_SecondaryFilePointers` |
 | Key Dependencies | None | Depends on AC 04-01 (`skill/CONVENTIONS.md` must exist as the pointer target) |
 
-## Related Files
-- `skill/SKILL.md` - modify: "## Prerequisites" section (skill/SKILL.md:18-23) rewritten from inline checks to a short pointer sentence referencing `skill/CONVENTIONS.md`
-- `skill/CONVENTIONS.md` - reference: the pointer target created in AC 04-01
-- `skill/skill_test.go` - reference: `TestSkill_RequiredSections` (skill/skill_test.go:26) asserts the `## Prerequisites` heading still exists; `TestSkill_SecondaryFilePointers` (skill/skill_test.go:172) is the existing pattern for pointer-presence assertions this AC's new test mirrors
+### Related Files (from codebase-discovery.json)
+- `skill/SKILL.md` — modify: "## Prerequisites" section (skill/SKILL.md:18-23) rewritten from inline checks to a short pointer sentence referencing `skill/CONVENTIONS.md`
+- `skill/CONVENTIONS.md` — reference: the pointer target created in AC 04-01
+- `skill/skill_test.go` — reference: `TestSkill_RequiredSections` (skill/skill_test.go:26) asserts the `## Prerequisites` heading still exists; `TestSkill_SecondaryFilePointers` (skill/skill_test.go:172) is the existing pattern for pointer-presence assertions this AC's new test mirrors
+- `skill/host-review.md` — reference (read-only): on-demand pointer pattern already used in SKILL.md
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/agent-skills-format.md` — reference: progressive-disclosure and on-demand-reference conventions
 
 ## Happy Path Scenarios
 **Scenario 1: Prerequisites heading remains, body becomes a pointer**

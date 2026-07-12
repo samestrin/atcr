@@ -9,11 +9,13 @@
 | Test Framework | go test for the CLI write path; scenario walkthrough for the branch-creation behavior | |
 | Key Dependencies | `internal/localdebt` (Story 1's `Record.Status`/`ResolvedAt` fields, append-only store semantics) | |
 
-## Related Files
-- `cmd/atcr/debt_resolve.go` - modify (extends AC 03-02's file): add a mark-resolved write path that appends an updated record (`status: resolved`, `resolved_at: <RFC3339>`) for each item the cycle in AC 03-04 completes successfully
-- `skill/debt-resolve/SKILL.md` - modify (extends AC 03-03/03-04's file): documents the git branch/commit convention for autonomous fixes and the store-update contract
-- `internal/localdebt/store.go` - reference (Story 1 dependency): the store is append-only (no in-place row edit), so "marking resolved" means appending a new record sharing the same `id` with an updated `status`, not mutating the original line
-- `documentation/local-td-store-schema.md` - reference: defines `status` (`open`/`in_progress`/`resolved`/`wont_fix`) and `resolved_at` as the optional fields this AC populates
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/debt_resolve.go` — modify (extends AC 03-02's file): add a mark-resolved write path that appends an updated record (`status: resolved`, `resolved_at: <RFC3339>`) for each item the cycle in AC 03-04 completes successfully
+- `skill/debt-resolve/SKILL.md` — modify (extends AC 03-03/03-04's file): documents the git branch/commit convention for autonomous fixes and the store-update contract
+- `internal/localdebt/store.go` — reference (Story 1 dependency): the store is append-only (no in-place row edit), so "marking resolved" means appending a new record sharing the same `id` with an updated `status`, not mutating the original line
+- `documentation/local-td-store-schema.md` — reference: defines `status` (`open`/`in_progress`/`resolved`/`wont_fix`) and `resolved_at` as the optional fields this AC populates
+- `internal/scorecard/store.go` — reference (read-only): append-only ledger pattern to mirror for the mark-resolved write path
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/local-td-store-schema.md` — reference: "Identity and Deduplication" latest-status-wins semantics for resolved records
 
 ## Happy Path Scenarios
 **Scenario 1: successfully resolved item is marked in the store**

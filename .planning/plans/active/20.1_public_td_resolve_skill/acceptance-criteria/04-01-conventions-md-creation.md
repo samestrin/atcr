@@ -9,11 +9,14 @@
 | Test Framework | Go `testing` + `stretchr/testify` (`assert`/`require`) | Verified at build time via `skill/skill_test.go`, mirroring `TestSkill_SecondaryFilesVerbatim` |
 | Key Dependencies | None (pure Markdown; no new packages) | Content is relocated/authored text only |
 
-## Related Files
-- `skill/CONVENTIONS.md` - create: new shared-conventions file containing the binary-on-PATH check, git-worktree check, `gh` CLI note, and new `.atcr/` path-safety rules
-- `skill/SKILL.md` - reference: source text to relocate lives in the existing "## Prerequisites" section (skill/SKILL.md:19-22)
-- `skill/host-review.md` - reference: structural pattern to mirror (standalone H1-headed sibling file loaded on demand from SKILL.md)
-- `cmd/atcr/reconcile.go` - reference: `Root: "."` convention (cmd/atcr/reconcile.go:93) that grounds the new `.atcr/` path-safety rules (also present at `cmd/atcr/review.go:301` and `cmd/atcr/resume.go:106`)
+### Related Files (from codebase-discovery.json)
+- `skill/CONVENTIONS.md` — create: new shared-conventions file containing the binary-on-PATH check, git-worktree check, `gh` CLI note, and new `.atcr/` path-safety rules
+- `skill/SKILL.md` — reference: source text to relocate lives in the existing "## Prerequisites" section (skill/SKILL.md:19-22)
+- `skill/host-review.md` — reference: structural pattern to mirror (standalone H1-headed sibling file loaded on demand from SKILL.md)
+- `cmd/atcr/reconcile.go` — reference: `Root: "."` convention (cmd/atcr/reconcile.go:93) that grounds the new `.atcr/` path-safety rules
+- `skill/skill_test.go` — reference (read-only): `TestSkill_NoAbsoluteOrClaudePaths` (line 113) will include `ConventionsMD` once embedded in AC 04-03
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/agent-skills-format.md` — reference: Level 3 resource / on-demand sibling-file pattern
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/skill-dispatcher-conventions.md` — reference: shared Prerequisites extraction requirements per Epic 20.0 addendum
 
 ## Happy Path Scenarios
 **Scenario 1: File created with all three relocated checks**
@@ -40,7 +43,7 @@
 **Edge Case 2: `gh` CLI note is not dropped**
 - **Given** the original Prerequisites section's third bullet covers `gh` CLI requirements for PR resolution (skill/SKILL.md:22)
 - **When** the extraction happens
-- **Then** the `gh` CLI note is present verbatim (or with equivalent meaning) in `skill/CONVENTIONS.md` — it is easy to overlook during a two-bullet-focused relocation, and the risk table in the story (skill/../user-stories/04-shared-skill-conventions-extraction.md Potential Risks) explicitly calls this out
+- **Then** the `gh` CLI note is present verbatim (or with equivalent meaning) in `skill/CONVENTIONS.md` — the original Prerequisites section's third bullet covers this note, and the risk table in the story (skill/../user-stories/04-shared-skill-conventions-extraction.md Potential Risks) explicitly calls this out
 
 **Edge Case 3: Path-safety rules do not contradict `internal/localdebt`'s scoping**
 - **Given** Story 1 (01-local-td-store-persistence.md) scopes its local TD store at `.atcr/debt/` using the same `Root: "."` convention

@@ -9,12 +9,16 @@
 | Test Framework | `go test` + `testify/require` | Matches existing `cmd/atcr/reconcile_test.go` conventions |
 | Key Dependencies | `internal/localdebt` (Story 1), `internal/reconcile` (`Result.JSONFindings()`), stdlib only | No new external dependency |
 
-## Related Files
-- `cmd/atcr/reconcile.go` - modify: add the persistence call in `runReconcile`, immediately after the `scorecard.EmitForReconcile` call (~line 111), passing `res.JSONFindings()` (not `res.Findings`) plus `Root: "."`
-- `internal/reconcile/emit.go` - reference (no change): `Result.JSONFindings()` (line 197) and `JSONFinding` (line 62) are the source of `Justification`/`SourceReport` — `Result.Findings []Merged` does NOT carry these fields, only the cached, path-validated `jsonFindings` does
-- `internal/reconcile/justification.go` - reference (no change): `stampJustifications` (called from `internal/reconcile/gate.go:255`) is what populates `Justification`/`SourceReport` on `JSONFinding` before `runReconcile` ever sees the `Result`
-- `internal/localdebt/store.go` - consume (Story 1 dependency): calls `localdebt.Append(dir, rec)` once per finding
-- `cmd/atcr/reconcile_test.go` - modify: add coverage for the new persistence call, mirroring the existing `countScorecardLines`-style helper pattern (see `cmd/atcr/reconcile_test.go:23`)
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/reconcile.go` — modify: add the persistence call in `runReconcile`, immediately after the `scorecard.EmitForReconcile` call (~line 111), passing `res.JSONFindings()` (not `res.Findings`) plus `Root: "."`
+- `internal/reconcile/emit.go` — reference (no change): `Result.JSONFindings()` (line 197) and `JSONFinding` (line 62) are the source of `Justification`/`SourceReport` — `Result.Findings []Merged` does NOT carry these fields, only the cached, path-validated `jsonFindings` does
+- `internal/reconcile/justification.go` — reference (no change): `stampJustifications` (line 72) populates `Justification`/`SourceReport` on `JSONFinding`
+- `internal/reconcile/gate.go` — reference (no change): `stampJustifications` is invoked at line 255 during the reconcile gate pipeline, before `runReconcile` receives the `Result`
+- `internal/localdebt/store.go` — consume (Story 1 dependency): calls `localdebt.Append(dir, rec)` once per finding
+- `internal/scorecard/scorecard.go` — reference (no change): `EmitOpts` and `EmitForReconcile` pattern to mirror for best-effort, non-fatal side-effect behavior
+- `cmd/atcr/reconcile_test.go` — modify: add coverage for the new persistence call, mirroring the existing `countScorecardLines`-style helper pattern (see `cmd/atcr/reconcile_test.go:23`)
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/cli-integration-points.md` — reference: reconcile-time persistence hook placement and scorecard-flag precedent
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/local-td-store-schema.md` — reference: v1 record schema and required/optional fields
 
 ## Happy Path Scenarios
 **Scenario 1: A completed reconcile run persists every finding to the local store**

@@ -9,11 +9,14 @@
 | Test Framework | go test (`skill/skill_test.go`) for embedded-content assertions; manual/agent-driven scenario walkthroughs for the selection logic itself (the selection rule is agent-executed, not compiled Go) | |
 | Key Dependencies | `atcr debt resolve` CLI output (AC 03-02), `internal/reconcile/emit.go`'s `JSONFinding.Justification`/`SourceReport` shape, `docs/technical-debt-format.md`'s symbol-anchor contract | |
 
-## Related Files
-- `skill/debt-resolve/SKILL.md` - create: documents the item-selection rule and the `justification`/`source_report` consumption behavior, structured like `skill/host-review.md` (loaded on demand, not inlined into `SKILL.md`)
-- `documentation/local-td-store-schema.md` - reference: defines the `justification` (string, omitempty) and `source_report.{path,line,section}` optional fields this AC must consume when present
-- `internal/reconcile/justification.go` - reference: `stampJustifications` (line 72) is the upstream source of these fields; this AC does not modify it, only documents how the skill reads its output
-- `skill/skill_test.go` - modify: assert the embedded `DebtResolveMD` documents both the selection rule and optional-field handling
+### Related Files (from codebase-discovery.json)
+- `skill/debt-resolve/SKILL.md` — create: documents the item-selection rule and the `justification`/`source_report` consumption behavior, structured like `skill/host-review.md` (loaded on demand, not inlined into `SKILL.md`)
+- `documentation/local-td-store-schema.md` — reference: defines the `justification` (string, omitempty) and `source_report.{path,line,section}` optional fields this AC must consume when present
+- `internal/reconcile/justification.go` — reference: `stampJustifications` (line 72) is the upstream source of these fields; this AC does not modify it, only documents how the skill reads its output
+- `internal/reconcile/emit.go` — reference (read-only): `JSONFinding.Justification`/`SourceReport` shape at line 154
+- `docs/technical-debt-format.md` — reference (read-only): symbol-anchor contract the resolver consumes when `problem` begins with `(symbolName)`
+- `skill/skill_test.go` — modify: assert the embedded `DebtResolveMD` documents both the selection rule and optional-field handling
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/agent-skills-format.md` — reference: on-demand secondary skill file pattern and progressive-disclosure requirements
 
 ## Happy Path Scenarios
 **Scenario 1: deterministic selection rule mirrors `/resolve-td`'s `llm_support_td_filter` pattern**

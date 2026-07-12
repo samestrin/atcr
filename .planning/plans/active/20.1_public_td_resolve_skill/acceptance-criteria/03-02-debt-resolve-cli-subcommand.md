@@ -9,11 +9,14 @@
 | Test Framework | go test (`cmd/atcr/debt_test.go` pattern) | Table-driven Cobra command tests against fixture stores, per `debtSampleShards()` precedent |
 | Key Dependencies | `internal/localdebt` (Story 1's `ReadAll`), `spf13/cobra` | No new third-party dependency |
 
-## Related Files
-- `cmd/atcr/debt.go` - modify: add `newDebtResolveCmd()` and register it in `newDebtCmd()`'s `cmd.AddCommand(...)` alongside `newDebtListCmd()`, `newDebtAddCmd()`, `newDebtDashboardCmd()`
-- `cmd/atcr/debt_resolve.go` - create: the new subcommand's flag parsing and `internal/localdebt.ReadAll` invocation, kept in its own file per the existing one-file-per-subcommand convention (`debt_add.go`, `debt_dashboard.go`)
-- `cmd/atcr/debt_resolve_test.go` - create: unit tests covering flag parsing, empty-store behavior, and JSON/table output shape
-- `internal/localdebt/store.go` - reference (Story 1 dependency): `ReadAll(dir string, opts ReadOpts) ([]Record, error)` is the read API this subcommand calls; not modified by this AC
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/debt.go` — modify: add `newDebtResolveCmd()` and register it in `newDebtCmd()`'s `cmd.AddCommand(...)` alongside `newDebtListCmd()`, `newDebtAddCmd()`, `newDebtDashboardCmd()`
+- `cmd/atcr/debt_resolve.go` — create: the new subcommand's flag parsing and `internal/localdebt.ReadAll` invocation, kept in its own file per the existing one-file-per-subcommand convention (`debt_add.go`, `debt_dashboard.go`)
+- `cmd/atcr/debt_resolve_test.go` — create: unit tests covering flag parsing, empty-store behavior, and JSON/table output shape
+- `cmd/atcr/debt_test.go` — reference (read-only): existing table-driven Cobra command tests and `debtSampleShards()` fixture pattern to mirror
+- `internal/localdebt/store.go` — reference (Story 1 dependency): `ReadAll(dir string, opts ReadOpts) ([]Record, error)` is the read API this subcommand calls; not modified by this AC
+- `skill/SKILL.md` — reference (read-only): command table and subcommand-discovery convention that this CLI surface must satisfy
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/cli-integration-points.md` — reference: `atcr debt` family extension point and CLI-invocation-only dispatcher contract
 
 ## Happy Path Scenarios
 **Scenario 1: `atcr debt resolve` lists resolvable items from the local store**

@@ -9,11 +9,13 @@
 | Test Framework | Go `testing` (doc-presence/content assertions), mirroring `internal/scorecard/docs_test.go` | Structural checks only — cannot verify prose quality, only presence of required facts/sections |
 | Key Dependencies | Story 3's landed `skill/debt-resolve/SKILL.md` and `atcr debt resolve` CLI subcommand (source of truth for accuracy) | Content must be verified against landed behavior before this AC is considered done, per the story's stated risk |
 
-## Related Files
-- `docs/skill-usage.md` - modify: add a new section (e.g. `## Technical Debt Resolution`) documenting `/atcr debt resolve`'s purpose, invocation syntax, and step-by-step behavior, placed after the existing `## Output` section and following the doc's existing Usage/Output prose-plus-table style
-- `skill/debt-resolve/SKILL.md` - reference (read-only): the on-demand skill file this section describes; source of truth for the invocation syntax and behavior steps once Story 3 lands
-- `skill/SKILL.md` - reference (read-only): the `atcr debt` command-table row (line ~79) this section must stay consistent with — same command surface, no invented subcommands
-- `docs/skill-usage.md`'s opening summary paragraph - modify (conditional): update the skill's scope statement ("resolve range → fan out → host review → reconcile → report") if the debt-resolve capability should be mentioned there too
+### Related Files (from codebase-discovery.json)
+- `docs/skill-usage.md` — modify: add a new section (e.g. `## Technical Debt Resolution`) documenting `/atcr debt resolve`'s purpose, invocation syntax, and step-by-step behavior, placed after the existing `## Output` section and following the doc's existing Usage/Output prose-plus-table style
+- `skill/debt-resolve/SKILL.md` — reference (read-only): the on-demand skill file this section describes; source of truth for the invocation syntax and behavior steps once Story 3 lands
+- `skill/SKILL.md` — reference (read-only): the `atcr debt` command-table row (line ~79) this section must stay consistent with — same command surface, no invented subcommands
+- `docs/scorecard.md` — reference (read-only): structural/tone precedent for documenting a local store's format, CLI usage, and privacy model
+- `docs/skill-usage.md`'s opening summary paragraph — modify (conditional): update the skill's scope statement ("resolve range → fan out → host review → reconcile → report") if the debt-resolve capability should be mentioned there too
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/skill-dispatcher-conventions.md` — reference: public documentation requirements for the new `/atcr debt resolve` capability
 
 ## Happy Path Scenarios
 **Scenario 1: Reader learns what `/atcr debt resolve` does and how to invoke it**

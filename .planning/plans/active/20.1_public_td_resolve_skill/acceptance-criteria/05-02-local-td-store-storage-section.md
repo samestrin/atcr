@@ -9,11 +9,13 @@
 | Test Framework | Go `testing` (doc-presence/content assertions), mirroring `internal/scorecard/docs_test.go` | Verifies required facts (path, flag name, population trigger) are present as literal substrings |
 | Key Dependencies | Story 1's `documentation/local-td-store-schema.md` (schema source of truth) and Story 2's `--no-local-debt` flag (landed CLI behavior) | Content must match the landed store path, flag name, and population trigger exactly |
 
-## Related Files
-- `docs/skill-usage.md` - modify: add a Storage/CLI-usage-style subsection (within or adjacent to the Technical Debt Resolution section from AC 05-01) describing the local `.atcr/`-scoped TD store: location (`.atcr/debt/`), how it's populated (by `atcr reconcile`, appended per run), and the `--no-local-debt` opt-out flag
-- `docs/scorecard.md` - reference (read-only): the structural/tone precedent (its `## Storage` section: path, rotation, permissions, append-only note, "do not commit" callout) this subsection must mirror
-- `documentation/local-td-store-schema.md` - reference (read-only): source of truth for the store's path (`.atcr/debt/`), sharding (`YYYY-MM.jsonl`), and permissions (`0700`/`0600`) claims, to keep the doc accurate without restating the full schema
-- `cmd/atcr/reconcile.go` - reference (read-only): the landed `--no-local-debt` flag declaration (Story 2) that the doc's flag name and default-behavior description must match exactly
+### Related Files (from codebase-discovery.json)
+- `docs/skill-usage.md` — modify: add a Storage/CLI-usage-style subsection (within or adjacent to the Technical Debt Resolution section from AC 05-01) describing the local `.atcr/`-scoped TD store: location (`.atcr/debt/`), how it's populated (by `atcr reconcile`, appended per run), and the `--no-local-debt` opt-out flag
+- `docs/scorecard.md` — reference (read-only): the structural/tone precedent (its `## Storage` section: path, rotation, permissions, append-only note, "do not commit" callout) this subsection must mirror
+- `documentation/local-td-store-schema.md` — reference (read-only): source of truth for the store's path (`.atcr/debt/`), sharding (`YYYY-MM.jsonl`), and permissions (`0700`/`0600`) claims, to keep the doc accurate without restating the full schema
+- `cmd/atcr/reconcile.go` — reference (read-only): the landed `--no-local-debt` flag declaration (Story 2) that the doc's flag name and default-behavior description must match exactly
+- `internal/localdebt/store.go` — reference (read-only): append-only store implementation that populates `.atcr/debt/`
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/append-only-store-pattern.md` — reference: atomic-append and cross-run accumulation requirements
 
 ## Happy Path Scenarios
 **Scenario 1: Reader learns where the store lives and how it fills up**

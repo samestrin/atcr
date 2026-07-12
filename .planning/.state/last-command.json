@@ -1,9 +1,9 @@
 {
-  "skill": "create-acceptance-criteria",
+  "skill": "design-sprint",
   "args": "@.planning/plans/active/20.1_public_td_resolve_skill/",
-  "invocation": "/create-acceptance-criteria @.planning/plans/active/20.1_public_td_resolve_skill/",
+  "invocation": "/design-sprint @.planning/plans/active/20.1_public_td_resolve_skill/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "5b57f5c5-6969-4327-b08e-790c3c1e3a52",
-  "timestamp": "2026-07-12T04:28:07.573Z"
+  "session_id": "9ada9a1a-db2c-4f8c-88da-130d79e0a179",
+  "timestamp": "2026-07-12T15:17:52.233Z"
 }

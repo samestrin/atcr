@@ -9,11 +9,13 @@
 | Test Framework | `go test` with `testify/require`/`assert` | |
 | Key Dependencies | `internal/history` (`FindingID` function only) | Stdlib SHA-256 under the hood, no new dependency |
 
-## Related Files
-- `internal/localdebt/record.go` - modify: `Record.ID` field populated via `history.FindingID(file, line, problem)`, imported from `internal/history`
-- `internal/localdebt/store.go` - modify (or a small helper) - the write path that constructs a `Record` and stamps `ID` before `Append`
-- `internal/history/record.go` - reference (read-only): `FindingID` at line 48 — SHA-256 over NUL-separated `file\x00line\x00problem`, first 8 bytes hex-encoded
-- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/local-td-store-schema.md` - reference: "Identity and Deduplication" section documenting the ID construction and severity exclusion
+### Related Files (from codebase-discovery.json)
+- `internal/localdebt/record.go` — modify: `Record.ID` field populated via `history.FindingID(file, line, problem)`, imported from `internal/history`
+- `internal/localdebt/store.go` — modify (or a small helper): the write path that constructs a `Record` and stamps `ID` before `Append`
+- `internal/history/record.go` — reference (read-only): `FindingID` at line 48 — SHA-256 over NUL-separated `file\x00line\x00problem`, first 8 bytes hex-encoded
+- `internal/debate/debate.go` — reference (read-only): `itemID` uses the same SHA-256 construction as `history.FindingID`, confirming the codebase-wide finding-identity convention
+- `docs/technical-debt-format.md` — reference (read-only): symbol-anchor contract that makes `(symbolName)` part of the `problem` text and therefore part of the ID hash input
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/local-td-store-schema.md` — reference: "Identity and Deduplication" section documenting the ID construction and severity exclusion
 
 ## Happy Path Scenarios
 **Scenario 1: Two records with identical file/line/problem share the same ID**

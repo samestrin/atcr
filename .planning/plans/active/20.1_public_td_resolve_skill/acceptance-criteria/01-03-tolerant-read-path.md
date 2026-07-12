@@ -9,11 +9,13 @@
 | Test Framework | `go test` with `testify/require`/`assert` | |
 | Key Dependencies | `bufio`, `encoding/json`, `io` (stdlib only) | |
 
-## Related Files
-- `internal/localdebt/store.go` - modify: `ReadRecords` line-streaming loop with malformed-line and schema-version skip logic, copied structurally from `internal/scorecard/store.go:132-197` (`ReadRecords`/`decodeRecord`)
-- `internal/localdebt/record.go` - reference: `Record.SchemaVersion` field and package `SchemaVersion` constant used by the version-negotiation check
-- `internal/scorecard/store.go` - reference (read-only): `decodeRecord`, `drainLine`, and the `maxLineBytes` over-long-line guard to mirror
-- `internal/scorecard/store_test.go` - reference (read-only): `TestStore_ReadRecords_SkipsMalformedLines` and `TestStore_ReadRecords_SkipsFutureSchemaVersion` as the test pattern to replicate
+### Related Files (from codebase-discovery.json)
+- `internal/localdebt/store.go` — modify: `ReadRecords` line-streaming loop with malformed-line and schema-version skip logic, copied structurally from `internal/scorecard/store.go:132-197` (`ReadRecords`/`decodeRecord`)
+- `internal/localdebt/record.go` — reference: `Record.SchemaVersion` field and package `SchemaVersion` constant used by the version-negotiation check
+- `internal/scorecard/store.go` — reference (read-only): `decodeRecord`, `drainLine`, and the `maxLineBytes` over-long-line guard to mirror
+- `internal/scorecard/store_test.go` — reference (read-only): `TestStore_ReadRecords_SkipsMalformedLines` and `TestStore_ReadRecords_SkipsFutureSchemaVersion` as the test pattern to replicate
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/append-only-store-pattern.md` — reference: tolerant streaming read requirements and malformed-line/schema-version skip behavior
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/local-td-store-schema.md` — reference: v1 schema and forward-compatibility rules
 
 ## Happy Path Scenarios
 **Scenario 1: A clean multi-line file reads every record**

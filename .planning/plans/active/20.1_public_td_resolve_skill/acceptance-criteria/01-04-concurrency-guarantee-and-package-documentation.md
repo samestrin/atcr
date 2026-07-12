@@ -9,12 +9,15 @@
 | Test Framework | `go test` (concurrency regression test) + manual doc-comment review | Mirrors `internal/scorecard/store_test.go`'s `TestStore_ConcurrentAppend_SameMonthFile` |
 | Key Dependencies | None beyond stdlib `sync` for the test | |
 
-## Related Files
-- `internal/localdebt/store.go` - modify: package-level and `Append`-level doc comments stating the concurrency guarantee (one `Append` call = one `os.Write`, no cross-record batching) and referencing the accepted TD-004 won't-fix stance, mirroring `internal/scorecard/store.go:76-88`
-- `internal/localdebt/doc.go` (or package comment atop `record.go`/`store.go`) - create/modify: package-level doc explaining why `.atcr/` (not `.planning/`) is the correct root for this store, distinguishing it from `internal/history`'s Epic 19.4 migration
-- `internal/localdebt/store_test.go` - create: `TestStore_ConcurrentAppend_SameMonthFile`-equivalent test locking the no-tearing guarantee under concurrent goroutines
-- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/local-td-store-schema.md` - reference: "Concurrency and Persistence Guarantees" and "Relationship to Other Stores" sections that this AC's doc comments must reflect
-- `internal/scorecard/store.go` - reference (read-only): lines 76-88, the concurrency-guarantee comment style to mirror
+### Related Files (from codebase-discovery.json)
+- `internal/localdebt/store.go` — modify: package-level and `Append`-level doc comments stating the concurrency guarantee (one `Append` call = one `os.Write`, no cross-record batching) and referencing the accepted TD-004 won't-fix stance, mirroring `internal/scorecard/store.go:76-88`
+- `internal/localdebt/doc.go` (or package comment atop `record.go`/`store.go`) — create/modify: package-level doc explaining why `.atcr/` (not `.planning/`) is the correct root for this store, distinguishing it from `internal/history`'s Epic 19.4 migration
+- `internal/localdebt/store_test.go` — create: `TestStore_ConcurrentAppend_SameMonthFile`-equivalent test locking the no-tearing guarantee under concurrent goroutines
+- `internal/scorecard/store.go` — reference (read-only): lines 76-88, the concurrency-guarantee comment style to mirror
+- `internal/scorecard/store_test.go` — reference (read-only): `TestStore_ConcurrentAppend_SameMonthFile` as the concurrency regression test pattern to replicate
+- `internal/history/paths.go` — reference (read-only): `LegacyLedgerPath` (`.atcr/findings-history.jsonl`) and `ShardDir` (`.planning/history/`) documenting the Epic 19.4 migration that `internal/localdebt` must distinguish itself from
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/local-td-store-schema.md` — reference: "Concurrency and Persistence Guarantees" and "Relationship to Other Stores" sections that this AC's doc comments must reflect
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/append-only-store-pattern.md` — reference: explicit concurrency-guarantee and TD-004 won't-fix requirements
 
 ## Happy Path Scenarios
 **Scenario 1: Concurrent Append calls to the same month shard never tear or interleave**

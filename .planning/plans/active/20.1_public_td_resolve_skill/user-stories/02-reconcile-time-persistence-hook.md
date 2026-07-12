@@ -14,7 +14,7 @@
 - **Assumptions:**
   - Story 1 has produced a store package with an `Append`-style API (mirroring `internal/scorecard/store.go`'s atomic-append JSONL pattern) that this story calls directly — no HTTP/IPC boundary.
   - `internal/reconcile/gate.go:255`'s `stampJustifications` has already run by the time `runReconcile` in `cmd/atcr/reconcile.go` receives its `Result`, so `Justification`/`SourceReport` fields are present on findings without any change to the gate pipeline.
-  - Repo root for the store is CWD (`Root: "."`), matching the existing convention already used for finding-path validation in the same function (`cmd/atcr/reconcile.go:99`).
+  - Repo root for the store is CWD (`Root: "."`), matching the existing convention already set for finding-path validation in the same function (`cmd/atcr/reconcile.go:93`).
 - **Constraints:**
   - Must not change the exit-code/gate semantics of `atcr reconcile` — persistence is a side effect, not a gate input, exactly like scorecard emission (best-effort, logged on failure, never fails the command).
   - Must follow the `--no-scorecard` flag's naming and behavior convention (a new `--no-local-debt` flag, boolean, defaults to persistence-on).

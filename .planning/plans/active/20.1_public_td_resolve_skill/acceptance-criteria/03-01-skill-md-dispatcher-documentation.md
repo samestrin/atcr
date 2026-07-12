@@ -9,11 +9,14 @@
 | Test Framework | go test (`skill/skill_test.go`) | Assertions run against the embedded `SkillMD` string, not a live agent invocation |
 | Key Dependencies | `skill/skill.go` (`//go:embed`), existing `dispatcherCommands` test fixture | No new Go dependency |
 
-## Related Files
-- `skill/SKILL.md` - modify: extend the existing `atcr debt` command-table row (line 79) with a mention of the `resolve` subcommand, and add an on-demand load pointer to `skill/debt-resolve/SKILL.md`, mirroring how `## Host Review Instructions` points at `host-review.md`
-- `skill/skill_test.go` - modify: add an assertion that `SKILL.md` documents `debt resolve` and that the pointer to `skill/debt-resolve/SKILL.md` (or its embedded constant) is present
-- `skill/skill.go` - modify: embed the new `skill/debt-resolve/SKILL.md` file as a build-time constant (e.g. `DebtResolveMD`), following the exact pattern already used for `HostReviewMD`
-- `skill/debt-resolve/SKILL.md` - create (referenced target of the pointer added here; full content is AC 03-03/03-04's responsibility)
+### Related Files (from codebase-discovery.json)
+- `skill/SKILL.md` — modify: extend the existing `atcr debt` command-table row (line 79) with a mention of the `resolve` subcommand, and add an on-demand load pointer to `skill/debt-resolve/SKILL.md`, mirroring how `## Host Review Instructions` points at `host-review.md`
+- `skill/skill_test.go` — modify: add an assertion that `SKILL.md` documents `debt resolve` and that the pointer to `skill/debt-resolve/SKILL.md` (or its embedded constant) is present
+- `skill/skill.go` — modify: embed the new `skill/debt-resolve/SKILL.md` file as a build-time constant (e.g. `DebtResolveMD`), following the exact pattern already used for `HostReviewMD`
+- `skill/debt-resolve/SKILL.md` — create (referenced target of the pointer added here; full content is AC 03-03/03-04's responsibility)
+- `skill/host-review.md` — reference (read-only): on-demand sibling-file pattern to mirror for the new `debt-resolve/SKILL.md` pointer
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/skill-dispatcher-conventions.md` — reference: dispatcher extension and routing-table-drift conventions
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/agent-skills-format.md` — reference: Skill frontmatter and progressive-disclosure requirements
 
 ## Happy Path Scenarios
 **Scenario 1: `atcr debt` row documents the resolve subcommand without a new dispatcher row**

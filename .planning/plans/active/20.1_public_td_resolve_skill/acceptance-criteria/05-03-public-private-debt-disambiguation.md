@@ -9,10 +9,13 @@
 | Test Framework | Go `testing` (doc-presence/content assertions), mirroring `internal/scorecard/docs_test.go` | Verifies the callout and cross-link both exist as literal content |
 | Key Dependencies | `docs/technical-debt.md` (existing, unmodified — the private `atcr debt list/add/dashboard` reference this section links to) | Read-only reference; this AC does not modify `docs/technical-debt.md` |
 
-## Related Files
-- `docs/skill-usage.md` - modify: add an explicit disambiguation callout (e.g. a blockquote or a "Not to be confused with" subsection) contrasting the new public/local `/atcr debt resolve` + `.atcr/`-scoped store against the private `.planning/`-scoped `atcr debt list/add/dashboard` family, with a cross-link to `docs/technical-debt.md`
-- `docs/technical-debt.md` - reference (read-only): the existing doc for the private pipeline's `atcr debt list/add/dashboard` commands (`.planning/technical-debt/` scope) that this callout must accurately describe and link to, without duplicating its content
-- `cmd/atcr/debt.go` - reference (read-only): the actual CLI command surface — confirms whether `atcr debt resolve` is a subcommand under the same `atcr debt` command as `list`/`add`/`dashboard` (same binary verb, different scope), which the callout must state precisely rather than implying they are unrelated commands
+### Related Files (from codebase-discovery.json)
+- `docs/skill-usage.md` — modify: add an explicit disambiguation callout (e.g. a blockquote or a "Not to be confused with" subsection) contrasting the new public/local `/atcr debt resolve` + `.atcr/`-scoped store against the private `.planning/`-scoped `atcr debt list/add/dashboard` family, with a cross-link to `docs/technical-debt.md`
+- `docs/technical-debt.md` — reference (read-only): the existing doc for the private pipeline's `atcr debt list/add/dashboard` commands (`.planning/technical-debt/` scope) that this callout must accurately describe and link to, without duplicating its content
+- `cmd/atcr/debt.go` — reference (read-only): the actual CLI command surface — confirms whether `atcr debt resolve` is a subcommand under the same `atcr debt` command as `list`/`add`/`dashboard` (same binary verb, different scope), which the callout must state precisely rather than implying they are unrelated commands
+- `cmd/atcr/debt_add.go`, `cmd/atcr/debt_dashboard.go`, `cmd/atcr/debt_list.go` — reference (read-only): existing `.planning/`-scoped subcommand implementations to contrast with the new `.atcr/`-scoped `debt resolve` subcommand
+- `internal/debt/debt.go`, `internal/tdmigrate/item.go`, `internal/tdmigrate/parse.go` — reference (read-only): private-pipeline debt store parsing/aggregation backing `atcr debt list/add/dashboard`
+- `.planning/plans/active/20.1_public_td_resolve_skill/documentation/cli-integration-points.md` — reference: naming collision risk and namespace-sharing guidance between public and private debt command families
 
 ## Happy Path Scenarios
 **Scenario 1: Reader distinguishes the two `debt` command families before invoking either**
