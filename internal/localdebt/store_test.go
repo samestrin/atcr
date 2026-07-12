@@ -168,6 +168,29 @@ func TestStore_ReadAll_MissingDir(t *testing.T) {
 	assert.Nil(t, recs)
 }
 
+// TestStore_ReadAll_ShardErrorDoesNotLeakAbsolutePath locks the redaction posture on
+// the per-shard read-error path: a non-ENOENT shard open failure (EACCES) surfaced
+// through ReadAll must be reduced to its base name, matching the ReadDir branch
+// (store.go basePathErr) and the write path (Append). A genuinely missing shard is
+// still distinguishable via os.IsNotExist because ReadAll's own ENOENT check runs on
+// the raw error before any wrapping.
+func TestStore_ReadAll_ShardErrorDoesNotLeakAbsolutePath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a permission-denied open cannot be provoked as root")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "2026-06.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte("{}\n"), 0o600))
+	require.NoError(t, os.Chmod(path, 0o000)) // unreadable → os.Open fails with EACCES
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+	_, err := ReadAll(dir, ReadOpts{})
+	require.Error(t, err)
+	assert.False(t, os.IsNotExist(err), "EACCES is a real failure, not a missing-file signal")
+	assert.NotContains(t, err.Error(), dir,
+		"a non-ENOENT shard error must not embed the absolute (username-bearing) store path")
+}
+
 // TestStore_ReadRecords_SkipsMalformedLines locks AC 01-03 Edge Case 1.
 func TestStore_ReadRecords_SkipsMalformedLines(t *testing.T) {
 	dir := t.TempDir()
