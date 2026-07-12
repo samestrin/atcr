@@ -40,15 +40,22 @@
 - **Relevant:** Without this durable store, `atcr reconcile` (Story 2) has nowhere to persist findings across runs, and `/atcr debt resolve` (Story 3) has no backlog to read from — this is the plan's foundational data layer per the theme assignment.
 - **Time-bound:** Deliverable within this sprint's first implementation phase, ahead of the reconcile persistence hook and skill route stories that depend on it.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-package-structure-and-store-operations.md) | Package Structure and Store Operations | Unit |
+| [01-02](../acceptance-criteria/01-02-record-identity-via-findingid-reuse.md) | Record Identity via FindingID Reuse | Unit |
+| [01-03](../acceptance-criteria/01-03-tolerant-read-path.md) | Tolerant Read Path (Malformed Lines and Schema Versioning) | Unit |
+| [01-04](../acceptance-criteria/01-04-concurrency-guarantee-and-package-documentation.md) | Concurrency Guarantee and Package Documentation | Unit |
+
+## Original Criteria Overview
 
 1. `internal/localdebt` package exists with `Record`, `Append`, `ReadRecords`, and `ReadAll`, rooted at `.atcr/debt/` and following the v1 schema documented in `documentation/local-td-store-schema.md`.
 2. Record identity/dedup key is `history.FindingID(file, line, problem)`, reused (not reimplemented) from `internal/history/record.go`.
 3. The store's concurrency guarantee (single `os.Write` per `Append` call, no cross-process locking) is documented in package-level doc comments, explicitly referencing the accepted TD-004 won't-fix tradeoff already applied to the other five append-only ledgers (audit, debate, scorecard, tools, history).
 4. Malformed lines and forward-incompatible `schema_version` records are skipped with a warning on read, never aborting the whole read, matching the scorecard precedent.
 5. Package-level documentation explains why `.atcr/` is the correct root for this store despite `internal/history`'s Epic 19.4 migration away from `.atcr/` for the private pipeline.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/20.1_public_td_resolve_skill/`_
 
 ## Technical Considerations
 

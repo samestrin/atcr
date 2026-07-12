@@ -37,13 +37,19 @@
 - **Relevant:** Directly satisfies AC4; without this, the review-and-fix capability the rest of the plan builds is technically present but practically undiscoverable to the standalone users it targets.
 - **Time-bound:** Draft can start in parallel with Stories 1-3; final content is completed and verified against landed behavior by the end of the current sprint, as the last story to close.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-debt-resolve-route-documentation.md) | `/atcr debt resolve` Route Documentation | Unit |
+| [05-02](../acceptance-criteria/05-02-local-td-store-storage-section.md) | Local `.atcr/`-Scoped TD Store Documentation | Unit |
+| [05-03](../acceptance-criteria/05-03-public-private-debt-disambiguation.md) | Public/Local vs. Private `.planning/`-Scoped Debt Disambiguation | Unit |
+
+## Original Criteria Overview
 
 1. `docs/skill-usage.md` documents the `/atcr debt resolve` route's purpose, invocation, and behavior (what it reads, what it does, what it produces), consistent with the doc's existing Usage/Output section style.
 2. `docs/skill-usage.md` documents the local `.atcr/`-scoped TD store (location, how it's populated by `atcr reconcile`, the `--no-local-debt` opt-out flag), in a style consistent with `docs/scorecard.md`'s Storage section.
 3. `docs/skill-usage.md` includes an explicit contrast/disambiguation between the new public/local debt-resolve capability and the pre-existing private `.planning/`-scoped `atcr debt list/add/dashboard` family (cross-linking `docs/technical-debt.md`), so the two are not confused.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/20.1_public_td_resolve_skill/`_
 
 ## Technical Considerations
 

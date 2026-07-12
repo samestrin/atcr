@@ -1,9 +1,9 @@
 {
-  "skill": "create-user-stories",
+  "skill": "create-acceptance-criteria",
   "args": "@.planning/plans/active/20.1_public_td_resolve_skill/",
-  "invocation": "/create-user-stories @.planning/plans/active/20.1_public_td_resolve_skill/",
+  "invocation": "/create-acceptance-criteria @.planning/plans/active/20.1_public_td_resolve_skill/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
   "session_id": "5b57f5c5-6969-4327-b08e-790c3c1e3a52",
-  "timestamp": "2026-07-12T04:12:23.805Z"
+  "timestamp": "2026-07-12T04:28:07.573Z"
 }

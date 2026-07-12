@@ -37,13 +37,19 @@
 - **Relevant:** Directly satisfies AC2 — without this hook, Story 1's store is unreachable from any live command, and the plan's core promise (accumulating backlog across runs) is unmet.
 - **Time-bound:** Completed within the current sprint, sequenced immediately after Story 1 lands.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-persist-reconciled-findings.md) | Persist Reconciled Findings Into the Local TD Store | Integration |
+| [02-02](../acceptance-criteria/02-02-no-local-debt-opt-out-flag.md) | `--no-local-debt` Opt-Out Flag | Integration |
+| [02-03](../acceptance-criteria/02-03-cross-run-accumulation-and-dedup.md) | Cross-Run Accumulation With Write-Time Dedup | Integration |
+
+## Original Criteria Overview
 
 1. `atcr reconcile` persists the current run's reconciled findings into the local `.atcr/`-scoped store (from Story 1) after the reconcile `Result` is available, carrying `Justification`/`SourceReport` fields when present.
 2. A new `--no-local-debt` flag opts out of persistence for a single run, following the same flag shape, help text style, and best-effort/non-fatal failure behavior as the existing `--no-scorecard` flag.
 3. Re-running `atcr reconcile` against the same or a different review directory accumulates findings in the store rather than overwriting or losing prior runs' records, with an explicit, documented decision on duplicate handling (write-time dedup by `FindingID`, read-time dedup, or accepted at-least-once semantics) rather than leaving the question open.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/20.1_public_td_resolve_skill/`_
 
 ## Technical Considerations
 

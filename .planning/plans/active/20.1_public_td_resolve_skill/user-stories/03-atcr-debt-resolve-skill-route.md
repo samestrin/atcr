@@ -38,14 +38,23 @@
 - **Relevant:** Directly satisfies AC3, the centerpiece capability that converts standalone atcr from review-only to review-and-fix.
 - **Time-bound:** Completed within this plan's sprint, gated on Story 1 and Story 2 landing first so real store data exists to resolve against.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-skill-md-dispatcher-documentation.md) | SKILL.md Dispatcher Documentation for `/atcr debt resolve` | Unit |
+| [03-02](../acceptance-criteria/03-02-debt-resolve-cli-subcommand.md) | `atcr debt resolve` CLI Subcommand | Unit |
+| [03-03](../acceptance-criteria/03-03-item-selection-and-justification-consumption.md) | Local Store Item Selection and Justification/SourceReport Consumption | Integration |
+| [03-04](../acceptance-criteria/03-04-red-green-adversarial-refactor-cycle.md) | RED→GREEN→ADVERSARIAL→REFACTOR Resolution Cycle | E2E |
+| [03-05](../acceptance-criteria/03-05-resolution-outcome-persistence-and-branch-safety.md) | Resolution Outcome Persistence and Branch Safety | Integration |
+| [03-06](../acceptance-criteria/03-06-go-embed-wiring-and-test-coverage.md) | Go Embed Wiring and Test Coverage for `skill/debt-resolve/SKILL.md` | Unit |
+
+## Original Criteria Overview
 
 1. `skill/SKILL.md`'s `atcr debt` command-table row documents `/atcr debt resolve` (or a dedicated subsection) without inventing subcommand names beyond what is implemented, and `skill/debt-resolve/SKILL.md` is loaded on demand per that documentation.
 2. `/atcr debt resolve` reads items from the local `.atcr/`-scoped TD store (Story 1/2) — including `justification`/`SourceReport` fields when present on a record — and selects items to resolve using a deterministic, documented selection rule (e.g. severity/age or explicit filter), analogous to `/resolve-td`'s `llm_support_td_filter`-driven selection.
 3. Each selected item is resolved via a RED→GREEN→ADVERSARIAL→REFACTOR cycle adapted from `/resolve-td`, with zero `.planning/` dependency, and the local store is updated to reflect resolution outcome.
 4. `skill/skill.go` embeds the new skill file(s), and `skill/skill_test.go` gains assertions verifying the debt-resolve route is documented and non-duplicated against `skill/CONVENTIONS.md`.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/20.1_public_td_resolve_skill/`_
 
 ## Technical Considerations
 

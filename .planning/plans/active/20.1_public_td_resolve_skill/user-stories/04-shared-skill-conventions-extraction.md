@@ -38,13 +38,19 @@
 - **Relevant:** Directly satisfies Epic 20.0's addendum and this epic's Objective 5 (Extended Scope): prevents the two public skill files from duplicating and drifting on shared boilerplate as the public skill surface grows beyond one file.
 - **Time-bound:** Deliverable within this sprint, sequenced alongside or ahead of Story 3 so Story 3's new SKILL.md can reference the finished file on first write rather than needing a follow-up edit.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-conventions-md-creation.md) | skill/CONVENTIONS.md Creation | Unit |
+| [04-02](../acceptance-criteria/04-02-skill-md-prerequisites-pointer.md) | skill/SKILL.md Prerequisites Section Rewritten to Point to CONVENTIONS.md | Unit |
+| [04-03](../acceptance-criteria/04-03-go-embed-and-test-coverage.md) | skill/CONVENTIONS.md Embedded in skill.go as ConventionsMD with Test Coverage | Unit |
+
+## Original Criteria Overview
 
 1. `skill/CONVENTIONS.md` is created containing the binary-on-PATH check, git-worktree check, and `.atcr/` path-safety rules, written once as shared text.
 2. `skill/SKILL.md`'s "## Prerequisites" section is rewritten to point to `skill/CONVENTIONS.md` instead of duplicating the checks inline, with no loss of enforced coverage.
 3. `skill/CONVENTIONS.md` is embedded in `skill/skill.go` (as `ConventionsMD`, mirroring the existing `HostReviewMD`/`AmbiguityAdjudicationMD`/`FindingsFormatMD` pattern) and covered by new `skill/skill_test.go` assertions (non-empty, referenced-not-duplicated, included in the no-`.claude`/no-absolute-path check).
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/20.1_public_td_resolve_skill/`_
 
 ## Technical Considerations
 
