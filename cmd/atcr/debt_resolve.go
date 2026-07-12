@@ -215,8 +215,12 @@ func markDebtResolved(cmd *cobra.Command, dir, id string) error {
 			orig = &r
 		}
 	}
-	// Idempotent: a terminal record for this id already exists, so re-resolving would
-	// only append a duplicate resolution record. Report and no-op instead.
+	// Concurrency-tolerant, not lock-protected: a terminal record for this id already
+	// exists, so this invocation reports and no-ops instead of appending a duplicate
+	// resolution record. Two concurrent invocations can each pass this check before
+	// either appends (the accepted TD-004 no-lock stance); selectOpenDebt's append-only
+	// fold treats any extra resolution record for an already-closed id as redundant, so
+	// the result is harmless duplicate bloat, not corruption.
 	if alreadyClosed {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already resolved; nothing to do.\n", id)
 		return nil
