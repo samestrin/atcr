@@ -1,3 +1,21 @@
+## [20.0.0] - 2026-07-11
+
+Rewrite the standalone `skill/SKILL.md` into a single `/atcr <command>` dispatcher skill for public OSS distribution, and lock the private-skill `--output-dir` + `atcr reconcile` backend contract with a repo-local regression test.
+
+### Added
+
+- `/atcr <command>` dispatcher: `skill/SKILL.md` now routes to the full live `atcr` command surface instead of a single linear review-only flow, with detailed Host Review, Ambiguity Adjudication, and Findings Format instructions moved to on-demand secondary files (`skill/host-review.md`, `skill/ambiguity-adjudication.md`, `skill/findings-format.md`).
+- A repo-local `cmd/atcr/backend_contract_test.go` locking the documented `--output-dir` + `atcr reconcile` output tree (including id-or-path resolution) that private `.planning/` skill consumers depend on.
+- A bidirectional test asserting the dispatcher's routed commands and the live Cobra command registry never drift apart.
+- `docs/external-migration.md` documenting the private `claude-prompts` skill migration to the dispatcher pattern as a manual operator follow-up.
+
+### Changed
+
+- Completed the README `## Commands` table to list all 22 registered commands.
+- Aligned README's documented Go version to 1.25 to match `go.mod`.
+- `skill/findings-format.md` now inlines the minimal findings contract so it stays self-contained in a standalone skill install, rather than depending on a repo-relative `docs/` path.
+- Documented the shipped `--sprint-plan` scope-constraint flag in the backend-contract docs (previously described as unshipped).
+
 ## [19.10.0] - 2026-07-11
 
 Size each multi-agent reviewer's payload to its own model's token window and degrade gracefully via a configurable `on_overflow` policy instead of shipping every reviewer the same global byte budget — fixing the confirmed failure where an oversized diff returned findings from only 1 of 11 reviewers.
