@@ -1,4 +1,4 @@
-generated_at: July 10, 2026 10:43:02AM
+generated_at: July 12, 2026 02:00:57PM
 manifest_file: go.mod
 package_manager: go
 packages:
@@ -74,5 +74,14 @@ packages:
     status: complete
     tier: important
     version: v3.0.1
-packages_count: 8
+  goreleaser:
+    doc_file: goreleaser.md
+    docs_url: https://goreleaser.com/
+    last_updated: July 12, 2026 02:00:57PM
+    name: goreleaser
+    parent: <nil>
+    status: complete
+    tier: important
+    version: v2.17.0
+packages_count: 9
 version: 1.0
