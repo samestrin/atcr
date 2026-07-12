@@ -5,9 +5,10 @@
 //
 // SKILL.md is a /atcr <command> dispatcher: a routing table over the atcr CLI
 // plus on-demand secondary files (host-review.md, ambiguity-adjudication.md,
-// findings-format.md) that carry the detailed host-review, adjudication, and
-// findings-format instructions. Embedding the secondary files here lets tests
-// verify their relocated content at build time.
+// findings-format.md, CONVENTIONS.md) that carry the detailed host-review,
+// adjudication, findings-format, and shared-conventions instructions. Embedding
+// the secondary files here lets tests verify their relocated content at build
+// time.
 package skill
 
 import _ "embed"
@@ -34,3 +35,10 @@ var AmbiguityAdjudicationMD string
 //
 //go:embed findings-format.md
 var FindingsFormatMD string
+
+// ConventionsMD is the embedded shared-conventions reference: the Prerequisites
+// (atcr binary on PATH, git work tree, gh CLI) and the .atcr/ path-safety rules
+// that every public skill's SKILL.md points at instead of inlining.
+//
+//go:embed CONVENTIONS.md
+var ConventionsMD string

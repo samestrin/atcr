@@ -17,9 +17,7 @@ This skill is the `/atcr <command>` dispatcher: it routes a user request to a si
 
 ## Prerequisites
 
-- The `atcr` binary must be on `PATH`. If it is not, halt and report: `atcr binary not found. Install atcr or add it to PATH before using the skill.`
-- The working directory must be inside a git work tree. If not, halt: `Not a git repository. Run the skill from within a git working tree.`
-- Resolving a PR reference requires the `gh` CLI, authenticated. If `gh` is missing or unauthenticated, do not crash — report that PR resolution needs `gh` and ask for an explicit `--base`/`--head` range instead.
+Before running any command, satisfy the shared prerequisites — the `atcr` binary on `PATH`, a git work tree, and the `gh` CLI for PR resolution — and the `.atcr/` path-safety rules. These are defined once in `CONVENTIONS.md`; load it on demand.
 
 ## Input Format
 

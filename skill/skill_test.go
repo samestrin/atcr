@@ -111,7 +111,7 @@ func TestSkill_AdjudicationDocumented(t *testing.T) {
 // references only the atcr binary and review-directory-relative paths — no
 // .claude-specific paths and no absolute filesystem paths.
 func TestSkill_NoAbsoluteOrClaudePaths(t *testing.T) {
-	for _, md := range []string{SkillMD, HostReviewMD, AmbiguityAdjudicationMD, FindingsFormatMD} {
+	for _, md := range []string{SkillMD, HostReviewMD, AmbiguityAdjudicationMD, FindingsFormatMD, ConventionsMD} {
 		assert.NotContains(t, md, ".claude", "no .claude-specific paths in any skill body")
 		for _, abs := range []string{"/Users/", "/home/", "/opt/", "C:\\"} {
 			assert.NotContains(t, md, abs, "no absolute filesystem path %q", abs)
@@ -237,6 +237,62 @@ func TestSkill_BodyLineBudget(t *testing.T) {
 	lines := strings.Count(SkillMD, "\n") + 1
 	assert.LessOrEqual(t, lines, 500,
 		"SKILL.md body must stay under the ~500-line budget (got %d)", lines)
+}
+
+// ---------------------------------------------------------------------------
+// Sprint 20.1 — shared skill conventions extraction (Story 4). RED until
+// skill/CONVENTIONS.md is authored, embedded as ConventionsMD, and SKILL.md's
+// Prerequisites section is reduced to a pointer.
+// ---------------------------------------------------------------------------
+
+// binaryHaltMsg / gitWorktreeHaltMsg are the two Prerequisites halt messages
+// relocated verbatim from SKILL.md into CONVENTIONS.md (AC 04-01). They anchor
+// both the "moved into CONVENTIONS.md" and the "no longer duplicated in SKILL.md"
+// assertions so a reword updates one constant and both tests follow.
+const (
+	binaryHaltMsg      = "atcr binary not found. Install atcr or add it to PATH before using the skill."
+	gitWorktreeHaltMsg = "Not a git repository. Run the skill from within a git working tree."
+)
+
+// TestSkill_ConventionsEmbedded (AC 04-03) — CONVENTIONS.md is embedded as a
+// non-empty constant, mirroring the other secondary files.
+func TestSkill_ConventionsEmbedded(t *testing.T) {
+	require.NotEmpty(t, ConventionsMD, "CONVENTIONS.md must be embedded and non-empty")
+}
+
+// TestSkill_ConventionsRelocatedChecks (AC 04-01 Scenario 1, Edge Case 2) — the
+// binary-on-PATH halt, git-worktree halt, and gh CLI note are all present in
+// CONVENTIONS.md without loss of coverage.
+func TestSkill_ConventionsRelocatedChecks(t *testing.T) {
+	assert.Contains(t, ConventionsMD, binaryHaltMsg, "binary-on-PATH halt message must be relocated")
+	assert.Contains(t, ConventionsMD, gitWorktreeHaltMsg, "git-worktree halt message must be relocated")
+	assert.Regexp(t, regexp.MustCompile(`gh\b`), ConventionsMD, "gh CLI note must be relocated")
+	assert.Regexp(t, regexp.MustCompile(`(?i)pull request|PR reference|PR resolution`), ConventionsMD,
+		"gh CLI note must retain its PR-resolution context")
+}
+
+// TestSkill_ConventionsPathSafety (AC 04-01 Scenario 2, Edge Case 3) — a
+// .atcr/ path-safety section states public-skill file operations stay rooted at
+// .atcr/ and never write under .planning/.
+func TestSkill_ConventionsPathSafety(t *testing.T) {
+	assert.Regexp(t, regexp.MustCompile(`(?i)path-safety|path safety`), ConventionsMD,
+		"CONVENTIONS.md must include a .atcr/ path-safety section")
+	assert.Contains(t, ConventionsMD, ".atcr/", "path-safety rules must root operations at .atcr/")
+	assert.Contains(t, ConventionsMD, ".planning/",
+		"path-safety rules must explicitly forbid writing under .planning/")
+}
+
+// TestSkill_PrerequisitesIsPointer (AC 04-02 Scenario 1/3, Error Scenario 1) —
+// SKILL.md's Prerequisites heading survives, its body becomes a pointer at
+// CONVENTIONS.md, and the relocated halt messages are no longer duplicated in
+// SkillMD.
+func TestSkill_PrerequisitesIsPointer(t *testing.T) {
+	assert.Contains(t, SkillMD, "## Prerequisites", "Prerequisites heading must remain")
+	assert.Contains(t, SkillMD, "`CONVENTIONS.md`", "Prerequisites body must point at CONVENTIONS.md")
+	assert.NotContains(t, SkillMD, gitWorktreeHaltMsg,
+		"the git-worktree halt message must move to CONVENTIONS.md, not be duplicated in SKILL.md")
+	assert.NotContains(t, SkillMD, binaryHaltMsg,
+		"the binary-on-PATH halt message must move to CONVENTIONS.md, not be duplicated in SKILL.md")
 }
 
 // frontmatter returns the YAML frontmatter block between the first two --- lines.
