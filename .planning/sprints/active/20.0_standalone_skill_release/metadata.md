@@ -40,7 +40,7 @@
 **Sprint Reference:** .planning/sprints/active/20.0_standalone_skill_release/
 **Sprint Number:** 20.0
 **Sprint Created:** 2026-07-11
-**Sprint Status:** Executing (BLOCKED) — Phase 1 complete; Phase 2 Story 2 (backend-contract test) complete & committed; **Story 3 (install.sh) PAUSED** on a structural blocker (TD-002): `go install …/atcr@latest` fails for all users due to `go.mod:41` replace directive — prerequisite owned by Epic 8.0/21.0. Phase 3 (Stories 4 & 5) not started (Story 4 depends on Story 3). Resume Story 3 + Story 4 doc-accuracy once the replace directive is removed and remote install resolves.
+**Sprint Status:** Delivered-with-deferrals — Phase 1 (Story 1 dispatcher) complete; Phase 2 Story 2 (backend-contract test) complete & committed. **Stories 3/4/5 PUNTED to Epic 33.2 (Public Launch).** Root cause (TD-002): external `go install …/atcr@latest` is gated on the repo going PUBLIC (currently private → public proxy 404s the module; the `go.mod:41` replace directive is a second, non-binding cause). This can only land at launch. See `.planning/epics/active/33.2_public_launch.md`. Note: Epic 21.0 shares the same public-repo prerequisite.
 **Branch:** feature/20.0_standalone_skill_release
 
 _Note: This section is updated as the sprint progresses through refine → execute → review → complete → finalize._

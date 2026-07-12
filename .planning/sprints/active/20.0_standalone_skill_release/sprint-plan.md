@@ -323,6 +323,9 @@ From [plan/documentation/](plan/documentation/):
    4. COMMIT: `git add cmd/atcr/ && git commit -m "refactor(cmd): address review + share backend-contract fixtures"`
    **Duration:** ~0.25 day
 
+> **⏸️ PUNTED TO EPIC 33.2 (Public Launch) — do NOT resume tasks 2.4 onward here.**
+> Story 3 (install.sh + `go install`), plus the public-dependent remainder of Stories 4/5, are blocked on the `samestrin/atcr` repo going **public** (external `go install …@latest` is impossible for a private module — public proxy 404s it). This lands at launch, owned by `.planning/epics/active/33.2_public_launch.md`. Root cause + de-risked prototype notes: TD-002 in `tech-debt-captured.md`. Tasks 2.4–2.8 and Phase 3 below are left unchecked intentionally and are superseded by Epic 33.2.
+
 ### 2.4 [ ] **[Install Script - RED](plan/user-stories/03-install-script.md)**
    **Mode:** Moderate | **AC:** [03-01](plan/acceptance-criteria/03-01-install-script-core-install.md) · [03-02](plan/acceptance-criteria/03-02-install-script-prereq-and-path-checks.md)
    1. Create `cmd/atcr/install_script_test.go` (new, `//go:build integration`).
