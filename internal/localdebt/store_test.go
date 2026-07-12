@@ -225,6 +225,24 @@ func TestStore_ReadRecords_SkipsOverLongLine(t *testing.T) {
 	assert.Contains(t, buf.String(), "over-long line")
 }
 
+// TestStore_ReadRecords_SkipsStructurallyValidButEmptyRecords locks the malformed-
+// skip contract for inputs that json.Unmarshal accepts but lack the minimal
+// identity fields required by the v1 schema (RunID and ID). A literal null, an
+// empty object, or an unrelated object must not surface as a phantom record.
+func TestStore_ReadRecords_SkipsStructurallyValidButEmptyRecords(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "2026-06.jsonl")
+	good, _ := json.Marshal(sampleRecord("2026-06-14T10:00:00Z-abc123"))
+	content := string(good) + "\nnull\n{}\n{\"foo\":1}\n" + string(good) + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	var buf bytes.Buffer
+	recs, err := ReadRecords(path, ReadOpts{Writer: &buf})
+	require.NoError(t, err)
+	assert.Len(t, recs, 2, "only the two valid records are retained")
+	assert.Contains(t, buf.String(), MsgMalformedSkip, "empty/unrelated lines are reported as malformed")
+}
+
 // TestStore_ReadRecords_MissingFile locks AC 01-03 Error Scenario 1: a missing file
 // surfaces the raw os error so callers can use os.IsNotExist.
 func TestStore_ReadRecords_MissingFile(t *testing.T) {
