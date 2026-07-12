@@ -12,11 +12,12 @@ The skill is [`skill/SKILL.md`](../skill/SKILL.md) — a `/atcr <command>` dispa
 
 ## Installation
 
-The skill installs by file copy into your agent's skills directory. For Claude Code, the project-local location is `.claude/skills/atcr/`. Copy the whole `skill/` directory — `SKILL.md` plus its on-demand secondary files, including the nested `debt-resolve/` route — not `SKILL.md` alone, or the host-review, adjudication, findings-format, conventions, and debt-resolve references will fail to resolve at runtime. Copy recursively so the `debt-resolve/` subdirectory comes along (a flat `cp skill/*.md` would miss it):
+The skill installs by file copy into your agent's skills directory. For Claude Code, the project-local location is `.claude/skills/atcr/`. Copy the instruction files — `SKILL.md` plus its on-demand secondary `.md` files, including the nested `debt-resolve/` route — not `SKILL.md` alone, or the host-review, adjudication, findings-format, conventions, and debt-resolve references will fail to resolve at runtime. Copy the `debt-resolve/` subdirectory too (a flat `cp skill/*.md` would miss it):
 
 ```sh
-mkdir -p .claude/skills/atcr
-cp -R skill/. .claude/skills/atcr/
+mkdir -p .claude/skills/atcr/debt-resolve
+cp skill/*.md .claude/skills/atcr/
+cp skill/debt-resolve/*.md .claude/skills/atcr/debt-resolve/
 ```
 
 Standard skill resolution applies: a project-local copy wins over a globally installed one, and the copy shipped in this repo (`skill/`) is the canonical reference. To install globally for your user, copy the same files into your agent's user-level skills directory instead.
