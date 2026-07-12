@@ -71,15 +71,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Malformed-line skip test passes (valid records on both sides retained, no error)
-- [ ] Future-schema-version skip test passes (record not misread as current version)
-- [ ] Over-long-line skip test passes (read continues past the oversized line)
-- [ ] Diagnostics-routing test passes (warnings land on injected `ReadOpts.Writer`, default `os.Stderr` on nil)
+- [x] Malformed-line skip test passes (valid records on both sides retained, no error)
+- [x] Future-schema-version skip test passes (record not misread as current version)
+- [x] Over-long-line skip test passes (read continues past the oversized line)
+- [x] Diagnostics-routing test passes (warnings land on injected `ReadOpts.Writer`, default `os.Stderr` on nil)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

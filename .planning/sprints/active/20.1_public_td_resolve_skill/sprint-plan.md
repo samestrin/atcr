@@ -145,14 +145,14 @@ From [plan/documentation/README.md](plan/documentation/README.md):
 **Goal:** Build the append-only `internal/localdebt` package that every other story depends on. Lock the store contract (schema, dedup key, concurrency guarantee, tolerant read) before anything downstream starts.
 **Story:** [Story 1 — Local TD Store Persistence](plan/user-stories/01-local-td-store-persistence.md)
 
-### 1.1 [ ] **[Local TD Store — RED](plan/user-stories/01-local-td-store-persistence.md)**
+### 1.1 [x] **[Local TD Store — RED](plan/user-stories/01-local-td-store-persistence.md)**
    **Mode:** Moderate | **ACs:** [01-01](plan/acceptance-criteria/01-01-package-structure-and-store-operations.md), [01-02](plan/acceptance-criteria/01-02-record-identity-via-findingid-reuse.md), [01-03](plan/acceptance-criteria/01-03-tolerant-read-path.md), [01-04](plan/acceptance-criteria/01-04-concurrency-guarantee-and-package-documentation.md)
    1. Analyze ACs, identify testable units for `internal/localdebt`.
    2. Write failing tests: `Append` byte-identical round-trip; `Record` identity via `history.FindingID` reuse; tolerant read (malformed line skipped w/ warning, forward-incompatible `schema_version` skipped, missing dir → `(nil, nil)`); `ReadAll` across month shards.
    3. Verify tests fail correctly (package/functions not yet implemented).
    **Files:** `internal/localdebt/store_test.go`, `internal/localdebt/record_test.go` | **Duration:** ~0.5d
 
-### 1.2 [ ] **[Local TD Store — GREEN](plan/user-stories/01-local-td-store-persistence.md)**
+### 1.2 [x] **[Local TD Store — GREEN](plan/user-stories/01-local-td-store-persistence.md)**
    Minimal implementation to pass (T1 after each change), verify all pass (T2), COMMIT.
    - `Record` struct (required: `schema_version`, `id`, `run_id`, `ts`, `severity`, `file`, `line`, `problem`, `fix`, `category`, `est_minutes`, `evidence`, `reviewers`, `confidence`; optional: `justification`, `source_report.{path,line,section}`, `status`, `resolved_at`).
    - `Append(dir string, rec Record) error` — lazy `0700` dir / `0600` file, one `os.Write` per record, month-rotated `YYYY-MM.jsonl`.
@@ -161,7 +161,7 @@ From [plan/documentation/README.md](plan/documentation/README.md):
    3. COMMIT: `git commit -m "feat(localdebt): implement append-only local TD store (green)"`
    **Files:** `internal/localdebt/store.go`, `internal/localdebt/record.go` | **Duration:** ~0.75d
 
-### 1.2.A [ ] **[Local TD Store — ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-local-td-store-persistence.md)**
+### 1.2.A [x] **[Local TD Store — ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-local-td-store-persistence.md)**
    **Changed Files:** `internal/localdebt/store.go`, `internal/localdebt/record.go`, `internal/localdebt/store_test.go`, `internal/localdebt/record_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.2 — intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -179,32 +179,32 @@ From [plan/documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose review, ran under -race):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | store.go read-path returns (open/read/ReadDir) | Read-path error returns not passed through `basePathErr`, unlike the write path; an absolute `dir` could leak `/Users/<name>/…` in a `*os.PathError`. `ReadOpts` doc also dropped the scorecard `SECURITY:` caveat. | Wrap read-path errors with `basePathErr` (os.IsNotExist still works on the clone); restore the SECURITY note on `ReadOpts.Writer`. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 1.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   No CRITICAL/HIGH/MEDIUM. Verified correct: no path traversal (`monthRe` blocks `../`), no fd leaks, one-write-per-record (no hidden buffering), single-pass streaming read, `StampID` reuses `history.FindingID` verbatim, zero `.planning/` coupling.
 
-### 1.3 [ ] **[Local TD Store — REFACTOR](plan/user-stories/01-local-td-store-persistence.md)**
+   **Action taken:** LOW is a trivial precedent-mirroring security-hardening fix → addressed inline in 1.3 REFACTOR (not deferred), since REFACTOR immediately follows and its purpose is code improvement.
+
+### 1.3 [x] **[Local TD Store — REFACTOR](plan/user-stories/01-local-td-store-persistence.md)**
    1. Fix CRITICAL/HIGH issues from 1.2.A (if any).
    2. Improve code and tests (T1); ensure concurrency guarantee (one `Append` = one `os.Write`, TD-004 won't-fix referenced explicitly) is documented in package doc comments (AC 01-04).
    3. Validate all tests still pass (T3).
    4. COMMIT: `git commit -m "refactor(localdebt): address review + document concurrency guarantee"`
    **Duration:** ~0.25d
 
-### 1.4 [ ] **Story 1 — Definition of Done**
+### 1.4 [x] **Story 1 — Definition of Done**
    Run DoD verification checklist. Confirm ACs 01-01..01-04 satisfied. Emit DoD report.
-   - [ ] T3 tests passing
-   - [ ] Coverage ≥80% for `internal/localdebt`
-   - [ ] Lint/vet clean
-   - [ ] Package doc comments present (concurrency guarantee + differing-audience note vs. Epic 19.4's `.atcr/findings-history.jsonl`)
+   - [x] T3 tests passing (`go test ./...` green)
+   - [x] Coverage ≥80% for `internal/localdebt` (84.1%)
+   - [x] Lint/vet clean (`golangci-lint` 0 issues; `go vet` clean; `gofmt` clean)
+   - [x] Package doc comments present (concurrency guarantee + differing-audience note vs. Epic 19.4's `.atcr/findings-history.jsonl`)
 
-### 1.5 [ ] **Phase 1 — GATE: Integration & Exit Review (subagent)**
+   **Story-1 DoD Complete** — Auto: 5/5 | Story-Specific ACs 01-01..01-04: satisfied | Manual Review: [ ] (deferred to /execute-code-review)
+
+### 1.5 [x] **Phase 1 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. No memory of the phase's implementation — intentional. Do NOT review inline.
@@ -223,17 +223,11 @@ From [plan/documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Gate findings (fresh-context hostile-integrator review):** _(none — empty table)_
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md`
-   - None found -> Note "Phase gate passed" and proceed to phase stop
-   **Duration:** 15-30 min
+   **Phase gate passed.** Verified: `Append`/`ReadRecords`/`ReadAll` signatures + `Record` shape (incl. `SourceReport`, optional fields, `StampID`) stable and sufficient for Story 2 (Append + ReadAll dedup) and Story 3 (ReadAll backlog); `DefaultDir(root)` → `<root>/.atcr/debt` matches reconcile.go's `Root: "."`; permissions 0700/0600; `schema_version` forward-incompatible-skip in place; `history` imported for `FindingID` only (allowlist `"localdebt": {"history"}` minimal, no cycle); zero `internal/scorecard`/`internal/history` regression. Dedup helper intentionally deferred to the Story 2 hook per doc.go contract — `ReadAll` + `Status`/`ResolvedAt` fields already present, so no rework needed.
 
 **🚧 GATED STOP:** Phase 1 complete. Stop here. Await go-ahead before Phase 2.
 

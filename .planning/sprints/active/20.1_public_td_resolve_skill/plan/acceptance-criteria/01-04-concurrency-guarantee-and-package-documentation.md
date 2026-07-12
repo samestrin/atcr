@@ -63,15 +63,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Concurrent-append test (50 goroutines, same month shard) passes with zero torn/lost/duplicated lines under `go test -race`
-- [ ] `Append`'s doc comment explicitly states the one-Append-equals-one-os.Write guarantee and cites TD-004
-- [ ] Package-level doc comment explains why `.atcr/` (not `.planning/`) is correct for this store and distinguishes it from `internal/history`'s Epic 19.4 migration
-- [ ] The dedup strategy is documented as write-time dedup by `id` (`history.FindingID`) using a full-history `ReadAll` scan before each append, not left as an open question
+- [x] Concurrent-append test (50 goroutines, same month shard) passes with zero torn/lost/duplicated lines under `go test -race`
+- [x] `Append`'s doc comment explicitly states the one-Append-equals-one-os.Write guarantee and cites TD-004
+- [x] Package-level doc comment explains why `.atcr/` (not `.planning/`) is correct for this store and distinguishes it from `internal/history`'s Epic 19.4 migration
+- [x] The dedup strategy is documented as write-time dedup by `id` (`history.FindingID`) using a full-history `ReadAll` scan before each append, not left as an open question
 
 **Manual Review:**
 - [ ] Code reviewed and approved

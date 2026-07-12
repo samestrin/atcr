@@ -61,14 +61,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `internal/localdebt` imports `internal/history` for `FindingID` only (verified by code review / import audit — no `internal/history` read/write functions such as `Append`, `ShardDir`, or `LegacyLedgerPath` are called)
-- [ ] Test confirms `localdebt` record `ID` equals `history.FindingID(file, line, problem)` for the same inputs
-- [ ] Test confirms severity changes do not change `ID` for otherwise-identical `file`/`line`/`problem`
+- [x] `internal/localdebt` imports `internal/history` for `FindingID` only (verified by code review / import audit — no `internal/history` read/write functions such as `Append`, `ShardDir`, or `LegacyLedgerPath` are called)
+- [x] Test confirms `localdebt` record `ID` equals `history.FindingID(file, line, problem)` for the same inputs
+- [x] Test confirms severity changes do not change `ID` for otherwise-identical `file`/`line`/`problem`
 
 **Manual Review:**
 - [ ] Code reviewed and approved

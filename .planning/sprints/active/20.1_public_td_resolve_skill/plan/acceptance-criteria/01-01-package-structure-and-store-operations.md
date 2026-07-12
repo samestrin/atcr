@@ -80,15 +80,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `internal/localdebt` package exists with `Record`, `Append`, `ReadRecords`, `ReadAll` matching the signatures above
-- [ ] Append/read round-trip test passes with byte-for-byte field equivalence
-- [ ] `ReadAll` on a missing directory returns `(nil, nil)`
-- [ ] Month-boundary sharding test (two `run_id`s spanning a month boundary produce two separate shard files) passes
+- [x] `internal/localdebt` package exists with `Record`, `Append`, `ReadRecords`, `ReadAll` matching the signatures above
+- [x] Append/read round-trip test passes with byte-for-byte field equivalence
+- [x] `ReadAll` on a missing directory returns `(nil, nil)`
+- [x] Month-boundary sharding test (two `run_id`s spanning a month boundary produce two separate shard files) passes
 
 **Manual Review:**
 - [ ] Code reviewed and approved
