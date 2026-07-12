@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	reclib "github.com/samestrin/atcr/reconcile"
+	"io"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -41,6 +43,7 @@ falsy, unparseable, or unset value keeps AST grouping on.`,
 	cmd.Flags().Bool("require-verified", false, "with --fail-on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate")
 	cmd.Flags().StringSlice("sources", nil, "restrict reconcile to these source directories (default: all)")
 	cmd.Flags().Bool("no-scorecard", false, "skip writing scorecard records to the local store")
+	cmd.Flags().Bool("no-local-debt", false, "skip writing reconciled findings to the local TD store")
 	return cmd
 }
 
@@ -110,6 +113,15 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	noScorecard, _ := cmd.Flags().GetBool("no-scorecard")
 	scorecard.EmitForReconcile(reviewDir, res, scorecard.EmitOpts{NoScorecard: noScorecard, Diag: cmd.ErrOrStderr()})
 
+	// Persist the run's reconciled findings into the .atcr/-scoped local TD store
+	// (Epic 20.1 Story 2) so standalone/public users accumulate a durable backlog
+	// across runs, not just one review's directory. Best-effort and non-fatal —
+	// mirroring the scorecard emit above: a persistence failure is logged to the
+	// diagnostics channel and never changes runReconcile's return value or the
+	// reconcile gate's exit code. --no-local-debt suppresses this for the run.
+	noLocalDebt, _ := cmd.Flags().GetBool("no-local-debt")
+	persistLocalDebt(reviewDir, res, noLocalDebt, cmd.ErrOrStderr())
+
 	// TD-004: warn when verify never ran — the gate would trivially pass
 	// everything. Routed through the context logger so it honors LOG_LEVEL and is
 	// correlated; visible at the default info level.
@@ -120,6 +132,101 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	}
 
 	return gateFindings(res, threshold, requireVerified)
+}
+
+// persistLocalDebt appends the run's reconciled findings to the .atcr/-scoped
+// local TD store (Epic 20.1 Story 2). It is a best-effort, non-fatal side effect
+// modeled on scorecard.EmitForReconcile: every failure is logged to diag and the
+// function always returns cleanly, so the reconcile's own return value and the
+// gate's exit code are never affected by a persistence problem.
+//
+// It reads from res.JSONFindings() (NOT res.Findings) so the Epic 18.3
+// Justification/SourceReport enrichment is carried through — those fields live
+// only on the cached JSONFinding layer. A zero-finding run does no I/O (no store
+// directory is created).
+//
+// Dedup is write-time by finding id (history.FindingID(file,line,problem), via
+// Record.StampID): a single full-history ReadAll seeds the set of ids already in
+// the store, and each new record is appended only if its id is unseen — the same
+// set also collapses in-run duplicates (two findings that hash to one id write
+// once). A dedup-read failure fails OPEN toward append (log + treat store as
+// empty) rather than silently dropping the whole run's backlog.
+func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, diag io.Writer) {
+	if noLocalDebt {
+		return
+	}
+	findings := res.JSONFindings()
+	if len(findings) == 0 {
+		return // no-op on an empty result; never a zero-length write
+	}
+
+	dir := localdebt.DefaultDir(".")
+	seen := make(map[string]bool)
+	if existing, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: diag}); err != nil {
+		// Fail open: append anyway so a corrupt/unreadable store does not drop this
+		// run's findings from the backlog. The error is already path-scrubbed by
+		// ReadAll (basePathErr).
+		_, _ = fmt.Fprintf(diag, "localdebt: dedup read failed, appending without dedup: %v\n", err)
+	} else {
+		for _, r := range existing {
+			seen[r.ID] = true
+		}
+	}
+
+	// run_id mirrors scorecard.EmitForReconcile verbatim so a finding's shard and
+	// provenance line up across the two ledgers; the ts is the same reconcile
+	// timestamp (deterministic, no second clock read).
+	runID := res.Summary.ReconciledAt + "-" + filepath.Base(reviewDir)
+	for _, f := range findings {
+		// Apply the same exclusions the gate uses (internal/reconcile/gate.go
+		// IsFailing): out-of-scope findings and refuted verdicts never persist,
+		// so the local TD backlog matches what the gate considers real.
+		// Path-warned findings are also skipped: a file that did not resolve under
+		// the repo root is treated as a hallucinated path (Epic 5.0).
+		if strings.ToLower(strings.TrimSpace(f.Category)) == reconcile.CategoryOutOfScope {
+			continue
+		}
+		if f.Verification != nil && strings.ToLower(strings.TrimSpace(f.Verification.Verdict)) == reconcile.VerdictRefuted {
+			continue
+		}
+		if f.PathWarning != "" {
+			continue
+		}
+
+		rec := localdebt.Record{
+			SchemaVersion: localdebt.SchemaVersion,
+			RunID:         runID,
+			Timestamp:     res.Summary.ReconciledAt,
+			Severity:      f.Severity,
+			File:          f.File,
+			Line:          f.Line,
+			Problem:       f.Problem,
+			Fix:           f.Fix,
+			Category:      f.Category,
+			EstMinutes:    f.EstMinutes,
+			Evidence:      f.Evidence,
+			Reviewers:     f.Reviewers,
+			Confidence:    f.Confidence,
+			Justification: f.Justification,
+		}
+		if f.SourceReport != nil {
+			rec.SourceReport = &localdebt.SourceReport{
+				Path:    f.SourceReport.Path,
+				Line:    f.SourceReport.Line,
+				Section: f.SourceReport.Section,
+			}
+		}
+		rec.StampID()
+		if seen[rec.ID] {
+			continue // already persisted (cross-run) or an in-run duplicate id
+		}
+		seen[rec.ID] = true
+		if err := localdebt.Append(dir, rec); err != nil {
+			// Non-fatal: log (already path-scrubbed by Append) and continue with the
+			// remaining findings.
+			_, _ = fmt.Fprintf(diag, "localdebt: append failed: %v\n", err)
+		}
+	}
 }
 
 // gateFlagValue reads the --fail-on flag and trims it, so both threshold

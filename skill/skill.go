@@ -5,8 +5,9 @@
 //
 // SKILL.md is a /atcr <command> dispatcher: a routing table over the atcr CLI
 // plus on-demand secondary files (host-review.md, ambiguity-adjudication.md,
-// findings-format.md) that carry the detailed host-review, adjudication, and
-// findings-format instructions. Embedding the secondary files here lets tests
+// findings-format.md, CONVENTIONS.md, debt-resolve/SKILL.md) that carry the
+// detailed host-review, adjudication, findings-format, shared-conventions, and
+// debt-resolution instructions. Embedding the secondary files here lets tests
 // verify their relocated content at build time.
 package skill
 
@@ -34,3 +35,18 @@ var AmbiguityAdjudicationMD string
 //
 //go:embed findings-format.md
 var FindingsFormatMD string
+
+// ConventionsMD is the embedded shared-conventions reference: the Prerequisites
+// (atcr binary on PATH, git work tree, gh CLI) and the .atcr/ path-safety rules
+// that every public skill's SKILL.md points at instead of inlining.
+//
+//go:embed CONVENTIONS.md
+var ConventionsMD string
+
+// DebtResolveMD is the embedded /atcr debt resolve route: the on-demand skill file
+// documenting the RED→GREEN→ADVERSARIAL→REFACTOR resolution cycle over the public,
+// .atcr/-scoped local TD store. It points at CONVENTIONS.md for the shared
+// Prerequisites/path-safety rules rather than duplicating them.
+//
+//go:embed debt-resolve/SKILL.md
+var DebtResolveMD string

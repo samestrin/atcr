@@ -1,3 +1,21 @@
+## [20.1.0] - 2026-07-12
+
+Give standalone/public `atcr` users the review-and-fix loop the private `.planning/technical-debt/` + `/resolve-td` pipeline already provides, via a local `.atcr/`-scoped technical-debt store and an autonomous `atcr debt resolve` skill route.
+
+### Added
+
+- New `internal/localdebt` append-only JSONL store package (structurally modeled on `internal/scorecard`) with dedup by `FindingID` and tolerant reads.
+- `atcr reconcile` persistence hook that appends reconciled findings across runs, with a `--no-local-debt` opt-out.
+- `atcr debt resolve` CLI subcommand and `skill/debt-resolve/SKILL.md` documenting the four-stage RED→GREEN→ADVERSARIAL→REFACTOR resolution cycle.
+- Shared `skill/CONVENTIONS.md` extracted from `skill/SKILL.md` for reuse across public skills.
+- Documented the new `atcr debt resolve` capability in `docs/skill-usage.md`.
+
+### Fixed
+
+- Reconcile no longer persists gate-excluded or path-warned findings to the local debt store.
+- `localdebt` record decoding now rejects records missing required `run_id` or `id` fields.
+- `ReadAll` no longer leaks an absolute shard path in non-ENOENT open errors.
+
 ## [20.0.0] - 2026-07-11
 
 Rewrite the standalone `skill/SKILL.md` into a single `/atcr <command>` dispatcher skill for public OSS distribution, and lock the private-skill `--output-dir` + `atcr reconcile` backend contract with a repo-local regression test.

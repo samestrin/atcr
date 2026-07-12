@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/scorecard"
@@ -55,6 +56,17 @@ func isolate(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Chdir(t.TempDir())
+}
+
+// touchFiles creates the given repo-root-relative source files so reconcile's
+// path-validation stage does not flag them as hallucinated in tests that intend
+// to exercise local-debt persistence.
+func touchFiles(t *testing.T, files ...string) {
+	t.Helper()
+	for _, f := range files {
+		require.NoError(t, os.MkdirAll(filepath.Dir(f), 0o755))
+		require.NoError(t, os.WriteFile(f, []byte("package x\n"), 0o644))
+	}
 }
 
 // execCmd runs the atcr command tree with args and returns the resolved exit
@@ -327,6 +339,237 @@ func TestReconcileCmd_SourcesAllowlist(t *testing.T) {
 	// fails on pool's HIGH, but --fail-on CRITICAL passes (host filtered out).
 	require.Equal(t, 0, execCmd(t, "reconcile", "--sources", "pool", "--fail-on", "CRITICAL", "r"))
 	require.Equal(t, 1, execCmd(t, "reconcile", "--sources", "pool", "--fail-on", "HIGH", "r"))
+}
+
+// --- Local TD store persistence hook (sprint 20.1, Story 2) ---------------
+
+// readLocalDebtRecords reads every record from the CWD-rooted local TD store
+// (./.atcr/debt), the same store the reconcile persistence hook writes to under
+// the Root:"." convention. A missing store is zero records, not an error, so a
+// suppressed or zero-finding run reads back empty.
+func readLocalDebtRecords(t *testing.T) []localdebt.Record {
+	t.Helper()
+	recs, err := localdebt.ReadAll(localdebt.DefaultDir("."), localdebt.ReadOpts{})
+	require.NoError(t, err)
+	return recs
+}
+
+// TestRunReconcile_PersistsFindingsToLocalDebt covers AC 02-01 Scenario 1: a
+// completed reconcile persists one local-debt record per reconciled finding,
+// each carrying schema_version 1, a non-empty id, a run_id matching the
+// scorecard runID shape (…-<reviewID>), and the required v1 fields.
+func TestRunReconcile_PersistsFindingsToLocalDebt(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
+	})
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1, "one reconciled finding persists exactly one record")
+	rec := recs[0]
+	require.Equal(t, localdebt.SchemaVersion, rec.SchemaVersion)
+	require.NotEmpty(t, rec.ID, "record id is stamped via history.FindingID")
+	require.True(t, strings.HasSuffix(rec.RunID, "-r"),
+		"run_id must mirror scorecard: ReconciledAt-<reviewID basename>, got %q", rec.RunID)
+	require.Equal(t, "HIGH", rec.Severity)
+	require.Equal(t, "a.go", rec.File)
+	require.Equal(t, 1, rec.Line)
+	require.NotEmpty(t, rec.Problem)
+	require.NotEmpty(t, rec.Reviewers)
+	require.NotEmpty(t, rec.Confidence)
+}
+
+// TestRunReconcile_LocalDebtCarriesJustification covers AC 02-01 Scenario 2:
+// when a source review.md narrative matches a finding's file:line,
+// stampJustifications stamps Justification/SourceReport on the JSONFinding, and
+// the persisted record must carry them through (sourced, not re-derived).
+func TestRunReconcile_LocalDebtCarriesJustification(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
+	})
+	// A review.md whose heading anchors on a.go:1 gives stampJustifications a
+	// tier-3 exact match, so the finding gains a Justification + SourceReport.
+	reviewMD := "# Host Review\n\n## a.go:1 leaks a file handle\n\nThe handler opens the file but never closes it on the error path.\n"
+	require.NoError(t, os.WriteFile(
+		filepath.Join(".atcr", "reviews", "r", "sources", "host", "review.md"),
+		[]byte(reviewMD), 0o644))
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1)
+	require.NotEmpty(t, recs[0].Justification, "justification must carry through when present")
+	require.NotNil(t, recs[0].SourceReport, "source_report must carry through when present")
+	require.NotEmpty(t, recs[0].SourceReport.Path, "source_report.path is the review-dir-relative back-reference")
+}
+
+// TestRunReconcile_LocalDebtOmitsJustificationWhenAbsent covers AC 02-01
+// Scenario 3: a finding with no matching narrative persists all required fields
+// but omits the optional justification/source_report block.
+func TestRunReconcile_LocalDebtOmitsJustificationWhenAbsent(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
+	})
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1)
+	require.Empty(t, recs[0].Justification, "no matching narrative → empty justification")
+	require.Nil(t, recs[0].SourceReport, "no matching narrative → nil source_report")
+	require.NotEmpty(t, recs[0].Severity, "required fields still present")
+}
+
+// TestRunReconcile_ZeroFindingsNoLocalDebtWrite covers AC 02-01 Edge Case 1: a
+// reconcile that produces zero findings performs no persistence I/O — no
+// .atcr/debt/ directory is created.
+func TestRunReconcile_ZeroFindingsNoLocalDebtWrite(t *testing.T) {
+	isolate(t)
+	// A source that produced a findings.txt with a header but no finding rows:
+	// zero reconciled findings, the success path.
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "",
+	})
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	require.Empty(t, readLocalDebtRecords(t), "zero findings → no records")
+	_, err := os.Stat(localdebt.DefaultDir("."))
+	require.True(t, os.IsNotExist(err), "zero-finding reconcile must not create .atcr/debt/")
+}
+
+// TestRunReconcile_DefaultWritesLocalDebt is the regression guard that the
+// persistence hook is on by default (no flag), mirroring
+// TestReconcileCmd_DefaultWritesScorecard.
+func TestRunReconcile_DefaultWritesLocalDebt(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|boom|fix|security|10|ev|host\n",
+	})
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+	require.NotEmpty(t, readLocalDebtRecords(t),
+		"a default reconcile (no flag) writes local-debt records")
+}
+
+// TestReconcileCmd_NoLocalDebtFlagInHelp covers AC 02-02 Scenario 3: the
+// --no-local-debt flag is listed in reconcile --help.
+func TestReconcileCmd_NoLocalDebtFlagInHelp(t *testing.T) {
+	isolate(t)
+	code, out := execCmdCapture(t, "reconcile", "--help")
+	require.Equal(t, 0, code, out)
+	require.Contains(t, out, "--no-local-debt", "reconcile --help must list the suppression flag")
+}
+
+// TestReconcileCmd_NoLocalDebtSuppressesWrite covers AC 02-02 Scenario 2: the
+// flag suppresses local-debt persistence for a run while leaving the exit code
+// unaffected.
+func TestReconcileCmd_NoLocalDebtSuppressesWrite(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|boom|fix|security|10|ev|host\n",
+	})
+	require.Equal(t, 0, execCmd(t, "reconcile", "--no-local-debt", "r"))
+	require.Empty(t, readLocalDebtRecords(t), "--no-local-debt writes zero records")
+}
+
+// TestReconcileCmd_NoLocalDebtIndependentOfScorecard covers AC 02-02 Edge Case
+// 1: --no-scorecard and --no-local-debt suppress independently.
+func TestReconcileCmd_NoLocalDebtIndependentOfScorecard(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|boom|fix|security|10|ev|host\n",
+	})
+	// --no-local-debt alone: scorecard still writes, local-debt does not.
+	require.Equal(t, 0, execCmd(t, "reconcile", "--no-local-debt", "r"))
+	require.Greater(t, countScorecardLines(t), 0, "--no-local-debt must not suppress scorecard")
+	require.Empty(t, readLocalDebtRecords(t), "--no-local-debt suppresses local debt")
+}
+
+// TestRunReconcile_LocalDebtAccumulatesAcrossRuns covers AC 02-03 Scenario 1:
+// reconcile runs against different review dirs accumulate additively.
+func TestRunReconcile_LocalDebtAccumulatesAcrossRuns(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go", "b.go", "c.go", "d.go", "e.go")
+	fixtureReview(t, "ra", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:10|prob a|fix|security|10|ev|host\n" +
+			"HIGH|b.go:20|prob b|fix|security|10|ev|host\n",
+	})
+	fixtureReview(t, "rb", map[string]string{
+		"sources/host/findings.txt": "HIGH|c.go:30|prob c|fix|security|10|ev|host\n" +
+			"HIGH|d.go:40|prob d|fix|security|10|ev|host\n" +
+			"HIGH|e.go:50|prob e|fix|security|10|ev|host\n",
+	})
+	require.Equal(t, 0, execCmd(t, "reconcile", "ra"))
+	require.Len(t, readLocalDebtRecords(t), 2, "first run persists 2 findings")
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "rb"))
+	require.Len(t, readLocalDebtRecords(t), 5,
+		"second run accumulates additively (2 + 3), not overwrites")
+}
+
+// TestRunReconcile_LocalDebtDedupsSameFinding covers AC 02-03 Scenario 2:
+// re-running reconcile on the same review dir with unchanged findings does not
+// duplicate records (write-time dedup by FindingID over full-history ReadAll).
+func TestRunReconcile_LocalDebtDedupsSameFinding(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
+	})
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+	require.Len(t, readLocalDebtRecords(t), 1)
+
+	// Second run over the identical finding → same FindingID → no new record.
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+	require.Len(t, readLocalDebtRecords(t), 1,
+		"re-running with unchanged findings must not duplicate the record")
+}
+
+// TestPersistLocalDebt_SkipsGateExcludedFindings verifies that the reconcile
+// persistence hook applies the same out-of-scope and refuted exclusions the
+// gate uses, so the local TD store's open backlog matches what the gate would
+// consider a real finding.
+func TestPersistLocalDebt_SkipsGateExcludedFindings(t *testing.T) {
+	isolate(t)
+
+	findings := []reconcile.Merged{
+		{Finding: reconcile.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "real bug", Fix: "fix it", Category: "correctness", EstMinutes: 10}},
+		{Finding: reconcile.Finding{Severity: "CRITICAL", File: "b.go", Line: 2, Problem: "out of scope", Fix: "n/a", Category: reconcile.CategoryOutOfScope, EstMinutes: 5}},
+		{Finding: reconcile.Finding{Severity: "HIGH", File: "c.go", Line: 3, Problem: "refuted", Fix: "n/a", Category: "security", EstMinutes: 10, Verification: &reconcile.Verification{Verdict: reconcile.VerdictRefuted, Skeptic: "skeptic"}}},
+	}
+	res := reconcile.Result{
+		Findings: findings,
+		Summary:  reconcile.Summary{ReconciledAt: "2026-07-12T00:00:00Z"},
+	}
+
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1, "only the in-scope, non-refuted finding persists")
+	require.Equal(t, "a.go", recs[0].File)
+}
+
+// TestRunReconcile_PathWarnedFindingSkipped verifies that findings whose cited
+// file does not exist under the repo root are not persisted to the local TD
+// store, mirroring the Epic 5.0 hallucinated-path signal.
+func TestRunReconcile_PathWarnedFindingSkipped(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "real.go")
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|real.go:1|real problem|fix it|correctness|10|ev|host\n" +
+			"HIGH|missing.go:1|phantom problem|fix it|correctness|10|ev|host\n",
+	})
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1, "only the path-valid finding persists")
+	require.Equal(t, "real.go", recs[0].File)
 }
 
 // TestGateThresholdReaders_OneWhitespaceSemantic verifies the two --fail-on
