@@ -38,7 +38,7 @@ The deterministic Go reconciler — cluster → dedupe → merge → confidence 
 **New to atcr? Run `atcr quickstart` first** — it is the one-command default. It scaffolds `.atcr/`, sets up the **Synthetic** flat-rate provider, walks you through the one API-key environment variable (the key is never written to atcr's config), shows the signup link, and scaffolds a `.github/workflows/atcr.yml` — so you reach your first review without hand-editing `registry.yaml`.
 
 ```bash
-# 1. Install (Go 1.24+)
+# 1. Install (Go 1.25+)
 go install github.com/samestrin/atcr/cmd/atcr@latest
 
 # 2. One-command onboarding: scaffold .atcr/ + set up the Synthetic provider
@@ -187,7 +187,7 @@ jobs:
           fetch-depth: 0          # full history: atcr needs the merge-base
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
       - run: go install github.com/samestrin/atcr/cmd/atcr@latest
       - name: atcr gate
         env:
@@ -235,4 +235,4 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 | Lint | `golangci-lint run` |
 | Vet | `go vet ./...` |
 
-Go 1.24+. Three direct dependencies: `spf13/cobra`, `gopkg.in/yaml.v3`, `modelcontextprotocol/go-sdk`.
+Go 1.25+. Three direct dependencies: `spf13/cobra`, `gopkg.in/yaml.v3`, `modelcontextprotocol/go-sdk`.
