@@ -620,38 +620,50 @@ No blocking questions surfaced during the Phase 4 safety check — Story 5 is do
 
 **Goal:** Cumulative adversarial review across the full diff, full test + coverage run, quality gates, DoD per AC, and confirmation that zero `.planning/` references leaked into any new public-facing code path. Includes the Story 3 E2E scenario walkthrough deferred from Phase 3.
 
-### 5.1 [ ] **Cumulative Adversarial Review (subagent, full diff)**
+### 5.1 [x] **Cumulative Adversarial Review (subagent, full diff)**
    Per `/resolve-td`'s Phase 2 Step 6 precedent this plan grounds against. **Spawn a fresh subagent** to review the entire sprint diff (all phases) as a whole — catches cross-story integration issues single-story reviews miss.
    - subagent_type: `general-purpose`
    - description: `Cumulative adversarial review: sprint 20.1`
    - prompt: full-diff file list + the same SECURITY/EDGE/ERROR/PERFORMANCE checklist, plus: "Does any new public code path reference `.planning/`? Do the four resolution stages match `/resolve-td` semantics?"
    - CRITICAL/HIGH → fix now; MEDIUM/LOW → `tech-debt-captured.md`.
 
-### 5.2 [ ] **Story 3 E2E Scenario Walkthrough (live, not `go test`)**
+   **Cumulative review findings (fresh-context general-purpose, full sprint diff, ran end-to-end data-path trace reconcile→store→resolve):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | MEDIUM | cmd/atcr/reconcile.go:158 (`persistLocalDebt`) | Persists every `res.JSONFindings()` record unconditionally, but the reconcile gate (`IsFailing`, gate.go:97-106) in the same `runReconcile` excludes out-of-scope + REFUTED findings → non-actionable findings surface as open debt in `atcr debt resolve --list`. Verified real. | Filter through the shared exclusion before `Append`. Deferred → **TD-005**. |
+   | LOW | cmd/atcr/reconcile.go:181 (Record construction) | Drops JSONFinding `PathWarning`/`PathSuggestion` (Epic 5.0) + `Verification` verdict → a hallucinated-path finding is persisted with bogus `File`/no warning; a refuted finding loses its signal. Verified real. | Skip path-warned on persist, or add fields to a v2 Record. Deferred → **TD-006**. |
+
+   **No CRITICAL/HIGH.** Reviewer verified clean: 0700/0600 perms tested; `monthFromRunID`/`monthRe` block `run_id` path traversal; fixed `debt-resolve/<date>` branch template (no finding-text interpolation); `problem`/`justification`/`source_report` treated strictly as data (no shell/exec path); error messages path-scrubbed via `basePathErr`; `boundaries_test` allowlist (`localdebt: {history}`) minimal; skill selection rule (severity DESC, ts ASC, N=10) exactly matches `selectOpenDebt`; the four RED→GREEN→ADVERSARIAL→REFACTOR stages faithfully mirror `/resolve-td`'s per-item cycle (diff_smell non-overridable, not a fresh subagent — matches `/resolve-td`); no new public code path functionally references `.planning/`; streaming read with documented O(n) dedup.
+
+   **Action taken:** No CRITICAL/HIGH → boundary not blocked. Both findings MEDIUM/LOW per the sprint's adversarial policy → captured as TD-005 (MEDIUM) / TD-006 (LOW) in `tech-debt-captured.md`. TD-005 (persist vs gate-inclusion divergence) is surfaced in the completion report for an explicit promote/defer decision.
+
+### 5.2 [x] **Story 3 E2E Scenario Walkthrough (live, not `go test`)**
    Agent-driven walkthrough against a fixture repo with a seeded `.atcr/debt/` record and a deliberately reproducible bug (ACs 03-04, 03-05). Exercise the full RED→GREEN→ADVERSARIAL→REFACTOR cycle via `skill/debt-resolve/SKILL.md`:
-   - [ ] Item selected; `justification`/`SourceReport` consumed when present
-   - [ ] `debt-resolve/<date>` branch created only when starting from default branch; resolves in place on a non-default branch
-   - [ ] `llm_support_diff_smell` hard verdict non-overridable; symbol-anchor relocation on drifted finding; `NEEDS_REVIEW` never marked resolved
-   - [ ] Resolution outcome persisted via append-only mark-resolved record
+   - [x] Item selected; `justification`/`SourceReport` consumed when present
+   - [x] `debt-resolve/<date>` branch created only when starting from default branch; resolves in place on a non-default branch
+   - [x] `llm_support_diff_smell` hard verdict non-overridable; symbol-anchor relocation on drifted finding; `NEEDS_REVIEW` never marked resolved
+   - [x] Resolution outcome persisted via append-only mark-resolved record
 
-### 5.3 [ ] **Validation Checklist**
-   - [ ] All tests passing (T3): `go test ./...`
-   - [ ] Coverage meets threshold: `go test -coverprofile=coverage.out ./...` ≥80%
-   - [ ] Lint/format clean: `golangci-lint run`, `goimports`, `go vet ./...`
-   - [ ] Build succeeds: `go build ./...`
-   - [ ] Zero `.planning/` references in `internal/localdebt`, `cmd/atcr/debt_resolve.go`, `skill/debt-resolve/SKILL.md`
+   **Walkthrough result (live, `bin/atcr` against a fixture repo under scratchpad):** Seeded `.atcr/debt/2026-07.jsonl` with a HIGH finding (`(Add)` symbol anchor, drifted cited line 20) carrying Epic 18.3 `justification` + `source_report`, plus a LOW noise item. `atcr debt resolve --list` selected the HIGH item first (severity DESC); `--json` surfaced `justification`/`source_report` provenance. On default branch `main` → created `debt-resolve/2026-07-12`. Symbol-anchor relocation: cited line 20 was drifted; grep for `func Add` found the real line 15. RED: `TestAdd` failed (`Add(2,3)=-1, want 5`). GREEN: minimal operator fix → green. ADVERSARIAL: `llm_support_diff_smell` verdict `clean` (real impl+test, 0 smells) → proceed; a synthetic reward-hack (test-only, weakened assertion) diff returned verdict `hard` → flagged `NEEDS_REVIEW`, NOT resolved (non-overridable confirmed). REFACTOR: tests+vet green. `atcr debt resolve --resolve <id>` wrote an append-only `status:resolved` record; item folded OUT of the open list (LOW remained); re-resolving is a no-op ("already resolved"). Non-default branch `feature/existing-work` → resolves in place, no new `debt-resolve/` branch. ACs 03-04/03-05 verified live.
 
-### 5.4 [ ] **Optional: Targeted Mutation Testing**
-   MUTATION_TOOL = **UNAVAILABLE** (no Go mutation tool detected: no `stryker-mutator`, `mutmut`, or `cargo-mutants`). Skip — no mutation run available for this Go toolchain.
+### 5.3 [x] **Validation Checklist**
+   - [x] All tests passing (T3): `go test ./...` — all packages `ok` (41 pkgs)
+   - [x] Coverage meets threshold: total 88.9%; `internal/localdebt` 84.1%, `cmd/atcr` 84.9% (both ≥80%)
+   - [x] Lint/format clean: `golangci-lint run` 0 issues, `gofmt -l` clean, `go vet ./...` exit 0
+   - [x] Build succeeds: `go build ./...` exit 0
+   - [x] Zero `.planning/` references in `internal/localdebt`, `cmd/atcr/debt_resolve.go`, `skill/debt-resolve/SKILL.md` — only prose negations ("no `.planning/`"), no functional path references
+
+### 5.4 [x] **Optional: Targeted Mutation Testing**
+   MUTATION_TOOL = **UNAVAILABLE** (no Go mutation tool detected: no `stryker-mutator`, `mutmut`, or `cargo-mutants`). Skipped — no mutation run available for this Go toolchain (optional task, marked done as N/A).
    **WARNING:** Do NOT run full-codebase mutation even if a tool is later added — it can take hours. Target only changed high-risk files (`internal/localdebt/*`).
 
-### 5.5 [ ] **Drift Analysis**
+### 5.5 [x] **Drift Analysis**
    Compare the delivered sprint against [plan/original-requirements.md](plan/original-requirements.md):
-   - [ ] AC1 — local TD store format defined + documented (`.atcr/`-scoped, no `.planning/`)
-   - [ ] AC2 — reconciled findings persist across multiple runs with dedup
-   - [ ] AC3 — `skill/SKILL.md` extended; `atcr debt resolve` autonomously resolves, consuming `justification`/back-reference
-   - [ ] AC4 — capability documented in `docs/skill-usage.md`
-   - [ ] AC5 (refinement) — shared boilerplate extracted to `skill/CONVENTIONS.md`; both SKILL.md files point at it
-   - [ ] No scope added beyond the original request; Out-of-Scope items (private pipeline, packaging, multi-repo aggregation) untouched
+   - [x] AC1 — local TD store format defined + documented (`.atcr/`-scoped, no `.planning/`) — `internal/localdebt` v1 schema, `.atcr/debt/YYYY-MM.jsonl`, `local-td-store-schema.md` + `doc.go` + skill-usage Storage section
+   - [x] AC2 — reconciled findings persist across multiple runs with dedup — `persistLocalDebt` (reconcile.go), write-time `FindingID` dedup over full-history `ReadAll`
+   - [x] AC3 — `skill/SKILL.md` extended; `atcr debt resolve` autonomously resolves, consuming `justification`/back-reference — dispatcher row (SKILL.md:77) + `skill/debt-resolve/SKILL.md`; `justification`/`source_report` consumed (E2E-verified)
+   - [x] AC4 — capability documented in `docs/skill-usage.md` — `## Technical Debt Resolution` section + `technical-debt.md` cross-link
+   - [x] AC5 (refinement) — shared boilerplate extracted to `skill/CONVENTIONS.md`; both SKILL.md files point at it
+   - [x] No scope added beyond the original request; Out-of-Scope items (private pipeline, packaging, multi-repo aggregation) untouched — private `.planning/` store still used ONLY by `list`/`add`/`dashboard` (debt.go); no packaging/MCP-parity/multi-repo work added (TD-002 deferred, not implemented)
 
 **🚧 GATED STOP:** Sprint 20.1 complete. Await go-ahead before `/execute-code-review` / `/finalize-sprint`.
