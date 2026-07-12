@@ -211,9 +211,18 @@ func TestBackendContract_IdOrPathResolution(t *testing.T) {
 
 	t.Run("omitted argument resolves to .atcr/latest", func(t *testing.T) {
 		isolate(t)
-		fixtureReview(t, "r2", source) // fixtureReview points .atcr/latest at r2
+		fixtureReview(t, "r2", source)    // the intended .atcr/latest target
+		fixtureReview(t, "decoy", source) // written last → newest review dir AND repoints .atcr/latest at decoy
+		// Repoint .atcr/latest back at the non-newest r2 so the omitted-arg run can
+		// only reach r2 by following the pointer, not by globbing the newest review
+		// dir (now decoy). This isolates the latest-pointer branch — with a single
+		// review present the assertion would pass either way.
+		require.NoError(t, os.WriteFile(filepath.Join(".atcr", "latest"), []byte("r2\n"), 0o644))
 		require.Equal(t, 0, execCmd(t, "reconcile"))
-		require.FileExists(t, filepath.Join(".atcr", "reviews", "r2", "reconciled", "findings.txt"))
+		require.FileExists(t, filepath.Join(".atcr", "reviews", "r2", "reconciled", "findings.txt"),
+			"omitted arg must follow the .atcr/latest pointer to r2")
+		require.NoFileExists(t, filepath.Join(".atcr", "reviews", "decoy", "reconciled", "findings.txt"),
+			"omitted arg must not reconcile the newer decoy review")
 	})
 
 	t.Run("bare id takes precedence over .atcr/latest pointer", func(t *testing.T) {
