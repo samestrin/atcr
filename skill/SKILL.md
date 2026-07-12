@@ -74,7 +74,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr benchmark` | Standard benchmark-suite tooling for the public leaderboard |
 | `atcr personas` | Manage community reviewer personas |
 | `atcr models` | Inspect model bindings, drift, and the catalog snapshot |
-| `atcr debt` | Query and report on technical debt; `atcr debt resolve` autonomously fixes the public `.atcr/`-scoped local store — see `debt-resolve/SKILL.md` |
+| `atcr debt` | Query and report on technical debt; `atcr debt resolve` lists and marks-resolved the public `.atcr/`-scoped local store, and the debt-resolve route autonomously fixes its items — see `debt-resolve/SKILL.md` |
 | `atcr history` | Show finding history over time as a markdown table |
 | `atcr audit-report` | Render a one-page compliance report for a PR's review runs |
 | `atcr version` | Print the atcr version |
