@@ -53,21 +53,24 @@ _Note: This section is updated as the sprint progresses through refine → execu
 
 ## Execution Metrics
 
-_Populated by `/execute-sprint` upon completion_
-
-**Executed:** _Not yet executed_
-**Runtime:** _TBD_
-**Status:** _TBD_
+**Executed:** 2026-07-11
+**Status:** Delivered with deferrals — Stories 1, 2, 4, 5 complete; Story 3 (+ AC04-03 install.sh link) deferred to Epic 33.2 (repo must go public first).
 
 ### Progress
-- **Phases:** _TBD_
-- **Work Items:** _TBD_
+- **Stories:** 4/5 delivered (1 dispatcher, 2 backend-contract test, 4 doc-accuracy, 5 migration note); Story 3 (install.sh) → 33.2.
+- **Acceptance Criteria:** 14/17 closed (01-01…05, 02-01…03, 04-01/02, 05-01…03). Deferred to 33.2: 03-01…03 (install.sh) + 04-03 (README install.sh cross-link).
 
 ### Quality
-- **Tests:** _TBD_
-- **Coverage:** _TBD_
-- **Lint:** _TBD_
+- **Tests:** `go test ./...` green (40 packages, exit 0). Story 2 added `cmd/atcr/backend_contract_test.go` (locks the documented `--output-dir` + reconcile output tree).
+- **Lint/Vet/Build:** `golangci-lint` (pre-push), `go vet ./...`, `go build ./...` all clean.
+- **Command surface:** dispatcher routing table == `newRootCmd` (22 commands, zero drift).
+
+### Adversarial Review
+- Story 1: Phase 1 per-task + gate reviews (passed). Story 2: 2.2.A found 1 HIGH + 2 LOW, all fixed (full documented tree now asserted). Stories 4/5: 3.3 passed (NONE).
+
+### Deferred (Epic 33.2 — Public Launch)
+- Story 3 (install.sh + real `go install` integration test) and AC04-03's install.sh doc link — gated on the repo going public. Reconcile-publish + `go.mod` mechanics prototyped end-to-end (see TD-002). TD-003: README command-table completeness → Epic 33.0.
 
 ### Changes
-- **Files Changed:** _TBD_
-- **Commits:** _TBD_
+- **Files Changed (this sprint's work):** `cmd/atcr/backend_contract_test.go` (new), `docs/external-migration.md` (new), `docs/README.md`, plus Phase 1's `skill/*` (Story 1) and planning artifacts.
+- **Commits:** Story 2 (green + refactor), Stories 4/5 docs, planning (punt + 33.0/33.2 epics).
