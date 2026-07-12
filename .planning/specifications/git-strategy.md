@@ -33,4 +33,4 @@ We follow a **GitHub Flow** / **Trunk-Based Development** approach.
 
 ###### CI/CD
 - **Gating**: PRs cannot be merged if the GitHub Actions `Go CI` workflow fails (which checks formatting, vetting, linting, and runs unit tests).
-- **Deploy**: Merging to `main` builds production release binaries and packages the MCP server.
+- **Deploy**: Merging to `main` does **not** build a release. A maintainer-cut bare `vX.Y.Z` git tag push triggers [`.github/workflows/release.yml`](../../.github/workflows/release.yml), which runs goreleaser to build cross-platform binaries and publish a GitHub Release — see [`docs/release-process.md`](../../docs/release-process.md).

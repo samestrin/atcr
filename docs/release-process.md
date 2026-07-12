@@ -70,3 +70,62 @@ Both targets **agree on the numeric `X.Y.Z`** portion of the tag — the leading
 `v` prefix is the only permitted difference between them. A tag of `v21.0.0`
 therefore yields `main.version = v21.0.0` and `internal/version.Version =
 21.0.0`.
+
+## What Triggers a Release
+
+A release is triggered by **pushing a bare `vX.Y.Z` git tag** to the
+repository — nothing else. That tag push fires
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) (scoped to
+`push: tags: ['v*']`, disjoint from the module's `reconcile/v*` namespace as
+described above), which runs goreleaser against
+[`.goreleaser.yaml`](../.goreleaser.yaml) to cross-compile the binaries and
+publish a GitHub Release.
+
+**Merging a PR to `main` does _not_ produce a release.** The only CI on `main`
+is [`ci.yml`](../.github/workflows/ci.yml), which formats, vets, lints, and
+tests — it never builds or publishes a release. A release happens only when a
+maintainer explicitly pushes a `vX.Y.Z` tag.
+
+## Who Cuts a Release
+
+`atcr` currently has a single maintainer, Sam Estrin, and cutting a release is a
+solo maintainer decision — there is no formal release-manager rotation or
+multi-party approval step. Whoever holds the maintainer role inherits this
+responsibility as-is.
+
+## Cutting a Release
+
+1. **Confirm the `CHANGELOG.md` entry exists.** Per the convention above, the
+   tag value is the changelog heading with a `v` prepended — e.g. a
+   `## [21.0.0]` heading in [`CHANGELOG.md`](../CHANGELOG.md) is released as tag
+   `v21.0.0`. Do not cut a tag that has no matching changelog entry.
+
+2. **Dry-run locally first (non-optional for a first-time cut).** From an
+   up-to-date `main`, run:
+
+   ```sh
+   goreleaser release --snapshot --clean
+   ```
+
+   This builds the full cross-platform matrix into `dist/` **without** pushing a
+   tag or publishing anything. Confirm the build succeeds and that both `-X`
+   ldflags targets resolve and agree on the numeric `X.Y.Z` — `main.version`
+   (printed by `atcr --version`) and `internal/version.Version` (the leaderboard
+   submission envelope). The first real tag publishes a **public,
+   hard-to-retract** GitHub Release, so this dry run is a required step, not a
+   convenience.
+
+3. **Cut the real tag.** From an up-to-date `main`:
+
+   ```sh
+   git tag v21.0.0
+   git push origin v21.0.0
+   ```
+
+   Substitute the actual version being released (`git push --tags` also works).
+
+4. **Let the workflow publish.** The tag push fires
+   [`release.yml`](../.github/workflows/release.yml), which runs
+   `goreleaser release --clean` and publishes the GitHub Release automatically —
+   no further manual step is required. Watch the workflow run to confirm it
+   succeeds.
