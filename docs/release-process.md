@@ -100,7 +100,7 @@ responsibility as-is.
    `## [21.0.0]` heading in [`CHANGELOG.md`](../CHANGELOG.md) is released as tag
    `v21.0.0`. Do not cut a tag that has no matching changelog entry.
 
-2. **Dry-run locally first (non-optional for a first-time cut).** From an
+2. **Dry-run locally first (non-optional — run it for every cut).** From an
    up-to-date `main`, run:
 
    ```sh
@@ -122,7 +122,10 @@ responsibility as-is.
    git push origin v21.0.0
    ```
 
-   Substitute the actual version being released (`git push --tags` also works).
+   Substitute the actual version being released. Push **only** that single tag
+   by name — do _not_ use `git push --tags`, which pushes every local tag at
+   once and could fire an unintended release (or the disjoint `reconcile/v*`
+   module gate).
 
 4. **Let the workflow publish.** The tag push fires
    [`release.yml`](../.github/workflows/release.yml), which runs
