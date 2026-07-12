@@ -161,6 +161,10 @@ func decodeRecord(line []byte, path string, w io.Writer) (Record, bool) {
 		_, _ = fmt.Fprintf(w, "localdebt: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
 		return Record{}, false
 	}
+	if r.RunID == "" || r.ID == "" {
+		_, _ = fmt.Fprintf(w, "localdebt: "+MsgMalformedSkip+" in %s: missing required field (run_id or id)\n", path)
+		return Record{}, false
+	}
 	return r, true
 }
 
