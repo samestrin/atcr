@@ -25,7 +25,7 @@
 **Scenario 1: "Output tree" code block matches actual `--output-dir` output**
 - **Given** `docs/code-review-backend.md:44-64` documents the exact directory tree written under `${OUT_DIR}` (`manifest.json`, `payload/`, `sources/pool/{raw,findings.txt,summary.json}`, `reconciled/{findings.txt,findings.json,report.md,summary.json,ambiguous.json,disagreements.json}`)
 - **When** this tree is cross-checked against User Story 2's backward-compatibility test assertions and current `atcr review --output-dir`/`atcr reconcile` behavior
-- **Then** every listed path is confirmed present and named exactly as produced by `atcr review --output-dir` and `atcr reconcile` (no missing, renamed, or extra entries), and no edit is required if already accurate
+- **Then** every listed path is confirmed present and named exactly as produced by `atcr review --output-dir` and `atcr reconcile` (no missing, renamed, or extra entries), and no edit is required if already accurate — NOTE: Story 2's test (AC 02-01) asserts only the always-present core of the tree and, per its Edge Case 3, intentionally does NOT assert `sources/pool/raw/`, `reconciled/ambiguous.json`, or `reconciled/disagreements.json` (produced conditionally). These three are verified against current CLI behavior only, NOT treated as drift or removed from the doc merely because the contract test omits them
 
 **Scenario 2: "Behavioral notes for callers" section matches current CLI semantics**
 - **Given** `docs/code-review-backend.md:101-116` documents three behavioral notes: partial runs are normal, finding counts differ from other backends, and review scope is diff-touched-lines-only (temporary, pending a future context-injection epic)

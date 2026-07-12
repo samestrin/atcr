@@ -28,7 +28,7 @@
 **Scenario 1: Full output-dir + reconcile flow produces the documented tree**
 - **Given** a fixture git repo with two commits (base/head) and a `.atcr/config.yaml` roster of one agent whose provider `base_url` points at an `httptest.NewServer` mock returning a valid findings response
 - **When** the test runs `atcr review --output-dir "${OUT_DIR}" --base <base> --head <head>` in-process, then `atcr reconcile "${OUT_DIR}"` in-process
-- **Then** both commands exit 0, and `${OUT_DIR}` contains `manifest.json`, `payload/`, `sources/pool/findings.txt`, `sources/pool/summary.json`, `reconciled/findings.txt`, `reconciled/findings.json`, `reconciled/report.md`, and `reconciled/summary.json`, matching `docs/code-review-backend.md` exactly
+- **Then** both commands exit 0, and `${OUT_DIR}` contains `manifest.json`, `payload/`, `sources/pool/findings.txt`, `sources/pool/summary.json`, `reconciled/findings.txt`, `reconciled/findings.json`, `reconciled/report.md`, and `reconciled/summary.json` — the always-present core of the tree documented at `docs/code-review-backend.md:44-64` (see Edge Case 3 for the conditionally-produced entries this AC intentionally does not assert)
 
 **Scenario 2: sources/pool/findings.txt carries the documented 8-column shape**
 - **Given** the output tree produced in Scenario 1
@@ -50,6 +50,11 @@
 - **Given** the flow in Scenario 1 run inside an isolated CWD with no prior review
 - **When** the run completes
 - **Then** `.atcr/latest` does not exist (per `docs/code-review-backend.md:24-26`: `--output-dir` "does not update `.atcr/latest`"), distinguishing it from the managed-review default path already covered by `TestReconcileCmd_DefaultsToLatest` in `cmd/atcr/reconcile_test.go`
+
+**Edge Case 3: Conditionally-produced tree entries are intentionally NOT asserted**
+- **Given** the documented tree at `docs/code-review-backend.md:44-64` also lists `sources/pool/raw/agent/<agent>/`, `reconciled/ambiguous.json`, and `reconciled/disagreements.json`
+- **When** this AC's single-agent hermetic fixture runs (one reviewer, no gray-zone clusters, no cross-reviewer severity conflicts)
+- **Then** those three entries may be absent because they are produced conditionally (per-agent `raw/` subdir depends on roster shape; `ambiguous.json`/`disagreements.json` require gray-zone clusters / multi-reviewer severity conflicts the single-agent fixture cannot generate) — this AC asserts only the always-present core (Scenario 1) and does NOT assert these three, so their absence is not a contract regression. Their exclusion from the mandatory-assertion set is deliberate, not drift — AC 04-02's doc cross-check must therefore treat them as valid documented-but-unasserted entries and must NOT remove them from `docs/code-review-backend.md`
 
 ## Error Conditions
 **Error Scenario 1: a missing required output file fails the test with an actionable message**
