@@ -135,19 +135,19 @@ From [plan/documentation/README.md](plan/documentation/README.md):
 
 ## Phase 1: Foundation — Versioning & Tagging Convention (~1.5 days)
 
-### 1.1 [ ] **🏗️ Document the Versioning & Tagging Convention**
+### 1.1 [x] **🏗️ Document the Versioning & Tagging Convention**
    **Task:** [task-01-versioning-tagging-strategy.md](plan/tasks/task-01-versioning-tagging-strategy.md) (AC1)
    **Priority:** P1 | **Effort:** S | **Type:** Add
    1. Create `docs/release-process.md` with a `# Release Process` heading and a `## Versioning & Tagging Convention` section (author only this section; leave the file otherwise minimal so Task 04 can append cleanly).
    2. State the convention: bare `vX.Y.Z` git tags matching the corresponding `CHANGELOG.md` entry (e.g. `## [20.1.0]` → tag `v20.1.0`); cite the unbroken `[1.0.0]`→`[20.1.0]` epic-number-as-semver history and note zero tags exist against it (forward-only, no retroactive backfill).
    3. Document disjointness from Epic 8.0's `reconcile/vX.Y.Z` namespace, quoting/paraphrasing `.github/workflows/reconcile-module.yml:14-16` as the precedent that bare `vX.Y.Z` is free.
-   4. Note (do not implement) the dual `-ldflags` stamping contract Task 02 fulfills: the tag value stamps both `internal/version.Version` (internal/version/version.go:16) and `cmd/atcr`'s local `version` (cmd/atcr/version.go:14).
+   4. Note (do not implement) the dual `-ldflags` stamping contract Task 02 fulfills, with the **decided prefix convention**: the tag stamps `cmd/atcr`'s local `version` (cmd/atcr/version.go:14) v-prefixed (`vX.Y.Z`, so `atcr --version` matches a `go install ...@vX.Y.Z` build) and `internal/version.Version` (internal/version/version.go:16) v-stripped (`X.Y.Z`, the leaderboard envelope's bare form); both agree on the numeric `X.Y.Z`, the `v` prefix is the only difference.
    5. Do NOT touch `git-strategy.md:36` — that correction is Task 04's.
-   **Success Criteria:** section exists; bare `vX.Y.Z` tied to a `CHANGELOG.md` heading example; disjointness cited; forward-only noted; dual-ldflags contract referenced (not implemented); no code/workflow/config changed.
+   **Success Criteria:** section exists; bare `vX.Y.Z` tied to a `CHANGELOG.md` heading example; disjointness cited; forward-only noted; dual-ldflags contract + decided prefix convention referenced (not implemented); no code/workflow/config changed.
    **Files:** `docs/release-process.md` (create) | **Duration:** ~0.75 day
    6. COMMIT: `git add docs/release-process.md && git commit -m "docs(release): document vX.Y.Z tagging convention (task 01)"`
 
-### 1.1.A [ ] **Task 01 — ADVERSARIAL REVIEW (subagent)**
+### 1.1.A [x] **Task 01 — ADVERSARIAL REVIEW (subagent)**
    **Changed Files:** `docs/release-process.md`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.1 — intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -166,32 +166,35 @@ From [plan/documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-07-12):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | docs/release-process.md:23 | Mapping table under a header labeled "`CHANGELOG.md` heading" lists `## [21.0.0]` as if it were an existing entry; latest real heading is `## [20.1.0]`. | Mark the `## [21.0.0]` row as an anticipated/next example, or drop it. |
+
+   All other checked claims verified accurate: `main.version` @ cmd/atcr/version.go:14 (v-prefixed), `internal/version.Version` @ internal/version/version.go:16 (v-stripped), dual-ldflags contract precise, reconcile-module.yml:14-16 quote verbatim, `v*`/`reconcile/v*` disjoint, CHANGELOG `[1.0.0]`→`[20.1.0]` bounds correct, scope documentation-only (no git-strategy.md edit).
+
+   **Action Taken:** No CRITICAL/HIGH. The single LOW is a direct citation-accuracy fix within Task 01's own artifact → resolved in 1.1.R (per 1.1.R step 2 "fix any inaccurate citation") rather than deferred.
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 1.1.R, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 1.1.R [ ] **Task 01 — REFACTOR / Address Findings**
+### 1.1.R [x] **Task 01 — REFACTOR / Address Findings**
    1. Fix CRITICAL/HIGH issues from 1.1.A (if any)
    2. Improve doc clarity / fix any inaccurate citation (T1: re-read section)
    3. COMMIT (only if changes made): `git add docs/release-process.md && git commit -m "docs(release): address review findings (task 01)"`
    **Duration:** ~15-30 min
 
-### 1.2 [ ] **Phase 1 — DoD Verification**
-   - [ ] Task 01 Success Criteria all checked
-   - [ ] `docs/release-process.md` reads coherently; all citations accurate (T3 cross-check)
-   - [ ] Only `docs/release-process.md` changed this phase
-   - [ ] No real `vX.Y.Z` tag pushed
-   - [ ] Adversarial review passed / findings resolved
+### 1.2 [x] **Phase 1 — DoD Verification**
+   - [x] Task 01 Success Criteria all checked
+   - [x] `docs/release-process.md` reads coherently; all citations accurate (T3 cross-check)
+   - [x] Only `docs/release-process.md` changed this phase
+   - [x] No real `vX.Y.Z` tag pushed
+   - [x] Adversarial review passed / findings resolved
    **DoD Report:** emit Phase-1 DoD Report per template.
 
-### 1.3 [ ] **Phase 1 — GATE: Integration & Exit Review (subagent)**
+### 1.3 [x] **Phase 1 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 1 (`docs/release-process.md`)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. No memory of the phase's implementation — intentional. Do NOT review inline.
@@ -210,11 +213,15 @@ From [plan/documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent gate findings (2026-07-12):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | docs/release-process.md:67 | Contract table names `internal/version.Version` but goreleaser `-X` needs the fully-qualified `github.com/samestrin/atcr/internal/version.Version`; asymmetric with `main.version`; wrong path fails silently. | Spell out the full `-X` target in the table's Variable cell (captured as TD-001). |
+   | LOW | docs/release-process.md:66 | Contract table hard-codes source line numbers that may drift. | Anchor to symbol names `var version` / `var Version` (captured as TD-002). |
+
+   No CRITICAL/HIGH. Both findings deferred to `tech-debt-captured.md` (TD-001, TD-002) per gate action rule. MEDIUM is contained: Task 02's own spec (2.1 step 1) already carries the correct fully-qualified `-X` path, so Phase 2 is not misled.
+
+   **Phase gate passed.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
@@ -232,11 +239,11 @@ From [plan/documentation/README.md](plan/documentation/README.md):
 
 ## Phase 2: Core Implementation — GoReleaser Config + Dual Ldflags (~2.5 days)
 
-### 2.1 [ ] **🏗️ GoReleaser Configuration with Dual Version Stamping**
+### 2.1 [x] **🏗️ GoReleaser Configuration with Dual Version Stamping**
    **Task:** [task-02-goreleaser-configuration.md](plan/tasks/task-02-goreleaser-configuration.md) (AC2, AC3)
    **Priority:** P1 | **Effort:** S | **Type:** Add
-   1. Create `.goreleaser.yaml` at repo root with a `builds:` block: `main: ./cmd/atcr`, `binary: atcr`, `env: [CGO_ENABLED=0]`, and an `ldflags:` list carrying **both** `-X github.com/samestrin/atcr/internal/version.Version=...` and `-X main.version=...`.
-   2. **DELIBERATE DECISION (Risk/Unknowns driver):** resolve `{{.Version}}` (v-stripped) vs `{{.Tag}}` (v-prefixed) for each `-X` target so the CLI output matches Task 01's documented convention and the `go install` path; the two targets must agree on the numeric `X.Y.Z` portion (v-prefix is the only allowed difference). Record the choice in a config comment. If you diverge from documentation/goreleaser-configuration.md's Quick Reference (which shows `{{.Version}}` for both), note the follow-up doc update.
+   1. Create `.goreleaser.yaml` at repo root with a `builds:` block: `main: ./cmd/atcr`, `binary: atcr`, `env: [CGO_ENABLED=0]`, and an `ldflags:` list carrying **both** `-X github.com/samestrin/atcr/internal/version.Version={{.Version}}` and `-X main.version={{.Tag}}`.
+   2. **DECIDED MAPPING (do not re-litigate):** stamp `internal/version.Version` with `{{.Version}}` (v-stripped) and `main.version` with `{{.Tag}}` (v-prefixed), per Task 01's decided convention, so `atcr --version` reports `vX.Y.Z` (matching the `go install` path) and the leaderboard envelope reports `X.Y.Z`. The two targets must agree on the numeric `X.Y.Z` portion (v-prefix is the only allowed difference). Record the mapping in a config comment. documentation/goreleaser-configuration.md's Quick Reference is already aligned to this mapping.
    3. Consider `{{.CommitDate}}` (or omitting the date stamp) instead of default `{{.Date}}` for reproducible builds — document the choice inline either way.
    4. Add `archives:` and `checksum:` blocks using goreleaser defaults. Omit `goos`/`goarch` to accept the default matrix unless a build failure forces a documented exclusion.
    5. Ensure `dist/` is git-ignored (add to `.gitignore` if missing); do NOT commit `dist/`.
@@ -245,76 +252,55 @@ From [plan/documentation/README.md](plan/documentation/README.md):
    6. **T2 VERIFY:** run `goreleaser release --snapshot --clean` from repo root (install via `go install github.com/goreleaser/goreleaser/v2@latest` or `brew install goreleaser` if absent). Inspect `dist/`, confirm both ldflags targets agree on the numeric version.
    7. COMMIT: `git add .goreleaser.yaml .gitignore && git commit -m "build(release): add goreleaser config with dual ldflags stamping (task 02)"`
 
-### 2.1.A [ ] **Task 02 — ADVERSARIAL REVIEW (subagent)**
+### 2.1.A [x] **Task 02 — ADVERSARIAL REVIEW (subagent)**
    **Changed Files:** `.goreleaser.yaml`, `.gitignore`
 
-   **Spawn a fresh subagent** via the Agent tool. No memory of 2.1 — intentional. Do NOT review inline.
+   Fresh `general-purpose` subagent (no memory of 2.1). Verified LDFLAGS paths/var names against ground truth, v-prefix convention coherent with `atcrVersion()`, and the `386` exclusion correctly documented against `disagree.go:362`.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Adversarial review: 2.1`
-   - prompt: Self-contained brief including:
-     - Files to review (absolute paths): `/Users/samestrin/Documents/GitHub/atcr/.goreleaser.yaml`, `/Users/samestrin/Documents/GitHub/atcr/.gitignore`
-     - Ground-truth: `internal/version/version.go` (package path + var), `cmd/atcr/version.go` (`main.version`), `go.mod` (module path)
-     - Checklist (goreleaser-config adapted — pass verbatim):
-       - LDFLAGS CORRECTNESS: Are BOTH `-X` targets present with the exact package paths (`github.com/samestrin/atcr/internal/version.Version` and `main.version`)? Do they agree on the numeric `X.Y.Z` (only v-prefix may differ)?
-       - VERSION-PREFIX CONSISTENCY: Does the `{{.Version}}` vs `{{.Tag}}` choice actually match Task 01's documented convention and `atcrVersion()`'s `debug.ReadBuildInfo()` fallback behavior?
-       - REPRODUCIBILITY: Is the date-stamp decision (`{{.Date}}` vs `{{.CommitDate}}`/omit) made and documented, not left to a silent default?
-       - SUPPLY CHAIN / LEAKAGE: Is `dist/` git-ignored so build artifacts and any embedded paths are not committed? Any secrets or absolute-path leakage in the config?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-07-12):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | .goreleaser.yaml:29 | No `-trimpath`: Go embeds the absolute build path into the binary (leaks build-machine paths, breaks the comment's byte-identical reproducibility claim). | Add `flags: [-trimpath]`. (captured as TD-003) |
+   | LOW | .goreleaser.yaml:29 | No `mod_timestamp`: archives/checksums stamped with package-time mtimes, so same-tag archives differ. | Set `mod_timestamp: "{{ .CommitTimestamp }}"`. (captured as TD-004) |
+
+   No CRITICAL/HIGH. Both findings deferred to `tech-debt-captured.md` (TD-003, TD-004) per the MEDIUM/LOW action rule. The MEDIUM finding also exposed that the config comment overclaimed "byte-identical" reproducibility — corrected in-artifact (comment now states full reproducibility is deferred and points to TD-003/TD-004), mirroring the Phase 1 in-task citation-accuracy precedent. Snapshot re-run green after the comment fix.
+
+   **Adversarial review passed** (findings deferred).
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 2.1.R, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 2.1.R [ ] **Task 02 — REFACTOR / Address Findings**
-   1. Fix CRITICAL/HIGH issues from 2.1.A (if any)
-   2. Re-run `goreleaser release --snapshot --clean` to confirm the config still builds and both targets still stamp correctly (T2)
-   3. COMMIT (only if changes made): `git add .goreleaser.yaml .gitignore && git commit -m "build(release): address review findings (task 02)"`
+### 2.1.R [x] **Task 02 — REFACTOR / Address Findings**
+   1. No CRITICAL/HIGH from 2.1.A. Corrected the config comment's overclaimed "byte-identical" reproducibility (the MEDIUM finding's byproduct); TD-003/TD-004 deferred.
+   2. Re-ran `goreleaser release --snapshot --clean` — green, both ldflags targets still stamp correctly.
+   3. COMMITTED: `build(release): address review findings (task 02)`.
    **Duration:** ~30 min
 
-### 2.2 [ ] **Phase 2 — DoD Verification**
-   - [ ] Task 02 Success Criteria all checked
-   - [ ] `goreleaser release --snapshot --clean` passes; both version vars stamped to the same numeric value
-   - [ ] `{{.Version}}`/`{{.Tag}}` and date-stamp decisions documented in-config
-   - [ ] `dist/` git-ignored and not committed
-   - [ ] Only `.goreleaser.yaml` / `.gitignore` changed; no `.go` files modified
-   - [ ] No real `vX.Y.Z` tag pushed
-   - [ ] Adversarial review passed / findings resolved
+### 2.2 [x] **Phase 2 — DoD Verification**
+   - [x] Task 02 Success Criteria all checked
+   - [x] `goreleaser release --snapshot --clean` passes; both version vars stamped (snapshot synthesizes `.Version`, so numeric agreement is verified via the mapping mechanism — a real tag yields identical `X.Y.Z`)
+   - [x] Decided ldflags mapping (`internal/version.Version`=`{{.Version}}`, `main.version`=`{{.Tag}}`) and date-stamp decision documented in-config
+   - [x] `dist/` git-ignored and not committed (`git check-ignore dist/` → `dist/`)
+   - [x] Only `.goreleaser.yaml` / `.gitignore` changed; no `.go` files modified (`773a0f2c..HEAD` diff → 0 `.go` files)
+   - [x] No real `vX.Y.Z` tag pushed (`git tag -l 'v*'` minus reconcile → none)
+   - [x] Adversarial review passed / findings resolved (TD-003/TD-004 deferred)
    **DoD Report:** emit Phase-2 DoD Report per template.
 
-### 2.3 [ ] **Phase 2 — GATE: Integration & Exit Review (subagent)**
+### 2.3 [x] **Phase 2 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2 (`.goreleaser.yaml`, `.gitignore`)
 
-   **Spawn a fresh subagent** via the Agent tool. No memory of the phase — intentional. Do NOT review inline.
+   Fresh `general-purpose` hostile-integrator subagent (no memory of the phase). Verified all config claims against the repo: the tag→version contract is honored exactly (`internal/version.Version`={{.Version}} v-stripped, `main.version`={{.Tag}} v-prefixed, matching `docs/release-process.md`); 386 exclusion, TD-003/TD-004 refs, and no-tags forward-only state all check out; integration (Phase 3 `release --clean`) and regression (`go build`/`go install` unaffected) are clean.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Phase 2 gate review`
-   - prompt: Self-contained brief including:
-     - Files changed during Phase 2 (absolute paths): `/Users/samestrin/Documents/GitHub/atcr/.goreleaser.yaml`, `/Users/samestrin/Documents/GitHub/atcr/.gitignore`
-     - Checklist (pass verbatim, hostile integrator perspective):
-       - CONTRACT EXIT: Does `.goreleaser.yaml` honor Task 01's documented tag→version contract exactly?
-       - CONFIG SURFACE: Are all deliberate decisions (ldflags prefix, date stamp, matrix exclusions) documented inline and defaulted safely?
-       - INTEGRATION: Will Task 03's `goreleaser-action release --clean` consume this config without extra flags/config it doesn't provide?
-       - PHASE-EXIT CONTRACT: Can Task 03 wire a workflow around this config as-is, and Task 04 document its commands accurately?
-       - REGRESSION: Does the existing `go build`/`go install` path still work (no `.go` change, no `go.mod` dependency added)?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent gate findings (2026-07-12):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | .goreleaser.yaml:15 | Date-stamp comment says omitting ldflags "removes" `-X main.date` build time, but `cmd/atcr` has no `main.date` symbol so it was always a linker no-op — nothing was ever embedded. Config behavior correct; rationale overclaims. | Reword to note `main.date` is undefined, so the effect is just that no date is stamped. (captured as TD-005) |
+
+   No CRITICAL/HIGH. The single LOW is a comment-rationale imprecision with no functional or phase-exit impact — deferred to `tech-debt-captured.md` (TD-005) per the gate MEDIUM/LOW action rule.
+
+   **Phase gate passed.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
@@ -332,7 +318,7 @@ From [plan/documentation/README.md](plan/documentation/README.md):
 
 ## Phase 3: Integration — Tag-Triggered Release Workflow (~1.5 days)
 
-### 3.1 [ ] **🏗️ Tag-Triggered Release Workflow**
+### 3.1 [x] **🏗️ Tag-Triggered Release Workflow**
    **Task:** [task-03-tag-triggered-release-workflow.md](plan/tasks/task-03-tag-triggered-release-workflow.md) (AC4)
    **Priority:** P1 | **Effort:** S | **Type:** Add
    1. Create `.github/workflows/release.yml` with a header comment (mirroring `reconcile-module.yml:1-9`) and a `based_on: .github/workflows/ci.yml` line naming exactly what is reused verbatim (`[self-hosted, gauntlet]` runner, Go 1.25 setup).
@@ -346,7 +332,7 @@ From [plan/documentation/README.md](plan/documentation/README.md):
    7. **T2 VERIFY:** validate YAML — `python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/release.yml'))"` (or `yamllint`). Confirm `v1.2.3` matches `v*` but not `reconcile/v*`, and `reconcile/v1.2.3` matches only the latter. Do NOT push a real tag.
    8. COMMIT: `git add .github/workflows/release.yml && git commit -m "ci(release): add tag-triggered goreleaser release workflow (task 03)"`
 
-### 3.1.A [ ] **Task 03 — ADVERSARIAL REVIEW (subagent)**
+### 3.1.A [x] **Task 03 — ADVERSARIAL REVIEW (subagent)**
    **Changed Files:** `.github/workflows/release.yml`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 3.1 — intentional. Do NOT review inline. This workflow holds `contents: write` — review it as a security-sensitive artifact (per the design's Security-Sensitive Areas table).
@@ -366,33 +352,40 @@ From [plan/documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   Fresh `general-purpose` subagent (no memory of 3.1) reviewed `release.yml` hostilely against `ci.yml`, `reconcile-module.yml`, and `.goreleaser.yaml`. Verified: trigger scoped to `push: tags: 'v*'` only (no `pull_request`); `contents: write` is minimal and correctly scoped for goreleaser's Release publish; `v*` provably disjoint from `reconcile/v*`; `go-version: '1.25'`, `cache: false`, runner `[self-hosted, gauntlet]` match `ci.yml` verbatim.
+
+   **Subagent findings (2026-07-12):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | release.yml:53 | Actions pinned to mutable major tags (`checkout@v4`, `setup-go@v5`, `goreleaser-action@v6`) + floating `version: '~> v2'`; write-scoped workflow, so OpenSSF recommends SHA pins. Not a regression — matches ci.yml/reconcile-module.yml convention. | Pin `uses:` to commit SHAs repo-wide (captured as TD-006). |
+   | LOW | release.yml:29 | `cancel-in-progress: true` on a publishing job: same-tag re-push can interrupt mid-publish, leaving a partial Release. Blast radius limited to same-tag re-pushes. | Set `cancel-in-progress: false` (captured as TD-007). |
+   | LOW | release.yml:21 | `v*` glob broader than the documented bare-`vX.Y.Z` convention (matches `vtest`, `v2-beta`). Still disjoint from `reconcile/v*`; goreleaser rejects non-semver tags. | Narrow to `v[0-9]*.[0-9]*.[0-9]*` (captured as TD-008). |
+
+   No CRITICAL/HIGH. All three LOW findings deferred to `tech-debt-captured.md` (TD-006, TD-007, TD-008) per the MEDIUM/LOW action rule. Each is a hardening/consistency refinement with no functional or security-critical impact; the write-scoped trigger, permissions, and toolchain match the repo's established base-workflow conventions exactly.
+
+   **Adversarial review passed** (findings deferred).
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 3.1.R, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 3.1.R [ ] **Task 03 — REFACTOR / Address Findings**
-   1. Fix CRITICAL/HIGH issues from 3.1.A (if any) — especially any permissions/supply-chain finding
-   2. Re-validate YAML parses and tag-filter disjointness still holds (T2)
-   3. COMMIT (only if changes made): `git add .github/workflows/release.yml && git commit -m "ci(release): address review findings (task 03)"`
+### 3.1.R [x] **Task 03 — REFACTOR / Address Findings**
+   1. No CRITICAL/HIGH from 3.1.A — no inline fixes required. The three LOW findings (TD-006/007/008) are hardening/consistency refinements, deferred per the inline-fix bar.
+   2. Re-validated: `release.yml` unchanged, still parses as valid YAML; `v*` tag-filter remains disjoint from `reconcile/v*` (T2).
+   3. No commit — no changes made.
    **Duration:** ~30 min
 
-### 3.2 [ ] **Phase 3 — DoD Verification**
-   - [ ] Task 03 Success Criteria all checked
-   - [ ] `release.yml` valid YAML; triggers only on `v*`; disjoint from `reconcile/v*`
-   - [ ] `permissions: contents: write`; runner/checkout/setup-go reused verbatim; actions pinned
-   - [ ] Only `.github/workflows/release.yml` changed this phase
-   - [ ] No real `vX.Y.Z` tag pushed
-   - [ ] Adversarial review passed / findings resolved
+### 3.2 [x] **Phase 3 — DoD Verification**
+   - [x] Task 03 Success Criteria all checked
+   - [x] `release.yml` valid YAML; triggers only on `v*`; disjoint from `reconcile/v*`
+   - [x] `permissions: contents: write`; runner/checkout/setup-go reused verbatim; actions pinned
+   - [x] Only `.github/workflows/release.yml` changed this phase (commit 6c4ebace: 1 file, 0 `.go` files)
+   - [x] No real `vX.Y.Z` tag pushed (`git tag -l 'v*'` minus reconcile → none)
+   - [x] Adversarial review passed / findings resolved (TD-006/007/008 deferred)
    **DoD Report:** emit Phase-3 DoD Report per template.
 
-### 3.3 [ ] **Phase 3 — GATE: Integration & Exit Review (subagent)**
+### 3.3 [x] **Phase 3 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3 (`.github/workflows/release.yml`)
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase — intentional. Do NOT review inline.
@@ -411,11 +404,17 @@ From [plan/documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   Fresh `general-purpose` hostile-integrator subagent (no memory of the phase) verified all five checks against the repo: CONTRACT EXIT — `release --clean` invocation matches `.goreleaser.yaml`'s expectations; CONFIG SURFACE — `permissions: contents: write` is the sole divergence from `based_on: ci.yml` and is documented as deliberate; INTEGRATION — full workflow-inventory collision check clean (`v*` fires only `release.yml`; ci.yml=branches, reconcile=`reconcile/v*`, hermes=PR/check_suite, refresh=schedule/dispatch); PHASE-EXIT — filename/trigger/behavior stable for Task 04 to document; REGRESSION — no shared file edited, existing workflows unchanged.
+
+   **Subagent gate findings (2026-07-12):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | .github/workflows/release.yml:21 | `v*` filter comment says "bare vX.Y.Z convention" but glob matches any `v`-prefixed tag; goreleaser rejects non-semver so blast radius is a failed run, not a bad release. | Tighten to `v[0-9]*.[0-9]*.[0-9]*` — **already captured as TD-008**. |
+   | LOW | .github/workflows/release.yml:29 | `cancel-in-progress: true` on a publish pipeline: same-tag re-push mid-publish can cancel goreleaser mid-upload, risking a partial Release. | Set `cancel-in-progress: false` — **already captured as TD-007**. |
+
+   No CRITICAL/HIGH. Both LOW findings are re-discoveries of items already deferred in 3.1.A (TD-007, TD-008) — no new TD entries created (no duplication). Gate confirms integration, config surface, and regression are all clean.
+
+   **Phase gate passed.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
@@ -433,7 +432,7 @@ From [plan/documentation/README.md](plan/documentation/README.md):
 
 ## Phase 4: Documentation — Release-Process Docs + Spec Correction (~1.5 days)
 
-### 4.1 [ ] **🏗️ Complete Release-Process Documentation**
+### 4.1 [x] **🏗️ Complete Release-Process Documentation**
    **Task:** [task-04-release-process-documentation.md](plan/tasks/task-04-release-process-documentation.md) (AC5)
    **Priority:** P2 | **Effort:** S | **Type:** Add
    1. Read the existing `docs/release-process.md` (Phase 1) and APPEND after its `## Versioning & Tagging Convention` section — do not restructure it.
@@ -446,7 +445,7 @@ From [plan/documentation/README.md](plan/documentation/README.md):
    **Files:** `docs/release-process.md` (append), `.planning/specifications/git-strategy.md` (1-line correction) | **Duration:** ~0.75 day
    7. COMMIT: `git add docs/release-process.md .planning/specifications/git-strategy.md && git commit -m "docs(release): complete release-process doc + correct git-strategy (task 04)"`
 
-### 4.1.A [ ] **Task 04 — ADVERSARIAL REVIEW (subagent)**
+### 4.1.A [x] **Task 04 — ADVERSARIAL REVIEW (subagent)**
    **Changed Files:** `docs/release-process.md`, `.planning/specifications/git-strategy.md`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 4.1 — intentional. Do NOT review inline.
@@ -465,33 +464,41 @@ From [plan/documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   Fresh `general-purpose` subagent (no memory of 4.1) reviewed both files against the ACTUAL `.goreleaser.yaml`, `release.yml`, `ci.yml`, `reconcile-module.yml`, and the two version.go files. Verified: documented `git tag`/`goreleaser` commands and workflow filename match the real artifacts; `git-strategy.md:36` is a clean single-line change with correct `../../` relative links describing the tag-triggered mechanism; all four sections present; CHANGELOG heading→tag format correct; irreversibility warning present.
+
+   **Subagent findings (2026-07-12):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | docs/release-process.md:125 | "Cutting a Release" offered `git push --tags` as equivalent to `git push origin v21.0.0`, but `--tags` pushes *every* local tag — in a repo with two tag namespaces (`v*` app / `reconcile/v*` module) a stray local tag could fire an unintended, hard-to-retract release, undercutting the doc's own irreversibility warning. | Remove the `git push --tags` suggestion; document single-tag push only. |
+   | LOW | docs/release-process.md:103 | Dry-run scoped "(non-optional for a first-time cut)" reads as skippable on later cuts, but a `.goreleaser.yaml`/ldflags change between releases could break stamping undetected. | Drop the "first-time cut" qualifier so the dry run is required for every cut. |
+
+   No CRITICAL/HIGH. Both findings are direct accuracy/safety fixes within Task 04's own just-written artifact (`docs/release-process.md`), and the MEDIUM one is a safety fix that removes a self-contradiction with the doc's irreversibility warning. Per the Phase 1 in-task precedent (1.1.A LOW resolved in 1.1.R rather than deferred, being a self-artifact accuracy fix), both were fixed in 4.1.R rather than deferred to tech-debt.
+
+   **Action Taken:** Both fixed in 4.1.R (self-artifact safety/accuracy fixes). No items deferred to `tech-debt-captured.md`.
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 4.1.R, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 4.1.R [ ] **Task 04 — REFACTOR / Address Findings**
-   1. Fix CRITICAL/HIGH issues from 4.1.A (if any) — especially any doc-vs-implementation command mismatch
-   2. Re-read both files to confirm coherence (T1)
-   3. COMMIT (only if changes made): `git add docs/release-process.md .planning/specifications/git-strategy.md && git commit -m "docs(release): address review findings (task 04)"`
+### 4.1.R [x] **Task 04 — REFACTOR / Address Findings**
+   1. No CRITICAL/HIGH from 4.1.A. The MEDIUM (`git push --tags` safety) and LOW (dry-run "first-time" qualifier) findings were both direct fixes within Task 04's own artifact → fixed in-artifact per the 1.1.R self-artifact precedent, not deferred:
+      - Removed the `git push --tags` equivalence; documented single-named-tag push only with an explicit warning.
+      - Changed the dry-run qualifier to "non-optional — run it for every cut".
+   2. Re-read `docs/release-process.md` — appended sections read coherently after Phase 1's content (T1).
+   3. COMMIT: `git add docs/release-process.md && git commit -m "docs(release): address review findings (task 04)"`
    **Duration:** ~15-30 min
 
-### 4.2 [ ] **Phase 4 — DoD Verification**
-   - [ ] Task 04 Success Criteria all checked
-   - [ ] All four `docs/release-process.md` sections read coherently as one document
-   - [ ] Documented commands verified against the real `.goreleaser.yaml` / `release.yml`
-   - [ ] `git-strategy.md:36` corrected; no other line disturbed
-   - [ ] No real `vX.Y.Z` tag pushed
-   - [ ] Adversarial review passed / findings resolved
+### 4.2 [x] **Phase 4 — DoD Verification**
+   - [x] Task 04 Success Criteria all checked
+   - [x] All four `docs/release-process.md` sections read coherently as one document
+   - [x] Documented commands verified against the real `.goreleaser.yaml` / `release.yml` (adversarial COMMAND ACCURACY check passed)
+   - [x] `git-strategy.md:36` corrected; no other line disturbed (single-line diff confirmed)
+   - [x] No real `vX.Y.Z` tag pushed (`git tag -l 'v*'` minus reconcile → none)
+   - [x] Adversarial review passed / findings resolved (4.1.A MEDIUM+LOW fixed in 4.1.R)
    **DoD Report:** emit Phase-4 DoD Report per template.
 
-### 4.3 [ ] **Phase 4 — GATE: Integration & Exit Review (subagent)**
+### 4.3 [x] **Phase 4 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 4 (`docs/release-process.md`, `.planning/specifications/git-strategy.md`)
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase — intentional. Do NOT review inline.
@@ -510,11 +517,17 @@ From [plan/documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   Fresh `general-purpose` hostile-integrator subagent (no memory of the phase) verified all five checks against the real Phase 1-3 artifacts: CONTRACT EXIT — documented `git tag`/`goreleaser`/workflow commands match `.goreleaser.yaml` + `release.yml`; CONFIG SURFACE — "Cutting a Release" is runnable; INTEGRATION — `git-strategy.md:36` correction is consistent with its CI/CD subsection (no lingering merge=deploy implication); PHASE-EXIT — AC5 satisfied and the doc closes the loop on AC1-AC4; REGRESSION — Phase 1's "Versioning & Tagging Convention" section intact and unrestructured after the append.
+
+   **Subagent gate findings (2026-07-12):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | docs/release-process.md:110 | Dry-run step says to "confirm both -X targets agree on the numeric X.Y.Z", but snapshot mode (no tag) stamps a `git describe` pseudo-version, never the release number; read against the `v21.0.0`→`main.version=v21.0.0` contract example it could mislead a first-time maintainer at the irreversible gate. Mechanism is correct; wording imprecise. | Reword to say the snapshot verifies the stamping *mechanism* (both vars agree with each other), not the exact release number. (captured as TD-009) |
+   | LOW | docs/release-process.md:106 | "Cutting a Release" invokes the `goreleaser` CLI but never states goreleaser must be installed locally (CI uses `goreleaser-action`, so it's not otherwise on the machine). | Add a one-line local-install prerequisite pinned to v2. (captured as TD-010) |
+
+   No CRITICAL/HIGH. Both findings are doc-clarity refinements with no functional or phase-exit impact — the stamping mechanism is sound and the "Cutting a Release" procedure is accurate. Deferred to `tech-debt-captured.md` (TD-009, TD-010) per the gate MEDIUM/LOW action rule (same convention as 1.3→TD-001 / 2.3→TD-005).
+
+   **Phase gate passed.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
@@ -531,14 +544,14 @@ From [plan/documentation/README.md](plan/documentation/README.md):
 Cross-task Definition of Done verification — confirm the four artifacts cohere end-to-end. No new implementation.
 
 ### Validation Checklist
-- [ ] Re-run `goreleaser release --snapshot --clean`; snapshot build succeeds and both `-X` ldflags targets (`internal/version.Version`, `main.version`) stamp to the same numeric value.
-- [ ] `docs/release-process.md` reads coherently end-to-end across all four sections (Versioning & Tagging Convention, What Triggers, Who Cuts, Cutting a Release).
-- [ ] Documented commands match the actual `.goreleaser.yaml` and `.github/workflows/release.yml` produced (tag format, workflow filename, goreleaser invocation).
-- [ ] `.planning/specifications/git-strategy.md:36` correction is a single, self-contained line change and reads consistently in its CI/CD subsection.
-- [ ] `.github/workflows/release.yml` still parses as valid YAML and its `v*` trigger remains disjoint from `reconcile/v*`.
-- [ ] All 5 acceptance criteria (AC1–AC5) satisfied and traceable to the delivered artifacts.
-- [ ] **No real `vX.Y.Z` tag was pushed** as a side effect of implementation — verify `git tag` still returns zero `v*` app tags. The first real cut is a deliberate, out-of-sprint maintainer action gated on this DoD.
-- [ ] Regression: `go test ./...` still passes and coverage baseline is unchanged (no `.go` files modified).
+- [x] Re-run `goreleaser release --snapshot --clean`; snapshot build succeeds and both `-X` ldflags targets (`internal/version.Version`, `main.version`) stamp to the same numeric value. — snapshot green (6 targets); binary embeds `-X internal/version.Version=0.0.0-SNAPSHOT-… -X main.version=v0.0.0` (numeric agreement verified via the mapping mechanism; a real tag yields identical `X.Y.Z`).
+- [x] `docs/release-process.md` reads coherently end-to-end across all four sections (Versioning & Tagging Convention, What Triggers, Who Cuts, Cutting a Release).
+- [x] Documented commands match the actual `.goreleaser.yaml` and `.github/workflows/release.yml` produced (tag format, workflow filename, goreleaser invocation).
+- [x] `.planning/specifications/git-strategy.md:36` correction is a single, self-contained line change and reads consistently in its CI/CD subsection (single-line diff confirmed).
+- [x] `.github/workflows/release.yml` still parses as valid YAML and its `v*` trigger remains disjoint from `reconcile/v*` (proven: `v21.0.0`→release only, `reconcile/v1.2.3`→reconcile only).
+- [x] All 5 acceptance criteria (AC1–AC5) satisfied and traceable to the delivered artifacts.
+- [x] **No real `vX.Y.Z` tag was pushed** as a side effect of implementation — `git tag -l 'v*'` returns zero (repo has zero tags total). The first real cut is a deliberate, out-of-sprint maintainer action gated on this DoD.
+- [x] Regression: `go test ./...` still passes and coverage baseline is unchanged (no `.go` files modified). NOTE: the sprint's own `docs/release-process.md` addition tripped the pre-existing `TestDocsIndexCoversEveryDoc` (docs index must link every `docs/*.md`); fixed by adding the index link in `docs/README.md` (docs-only, no `.go` change) — full suite green after the fix.
 
 ### Optional: Targeted Mutation Testing
 MUTATION_TOOL = **UNAVAILABLE** (no stryker/mutmut/cargo-mutants detected) — and not applicable regardless: this sprint modifies no Go code, so there is no mutable code surface. Skip.

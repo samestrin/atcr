@@ -44,14 +44,14 @@ Append the remaining sections to the `docs/release-process.md` file Task 1 creat
 - `CHANGELOG.md` — the epic-number-as-semver history whose next entry the "Cutting a Release" procedure references as the tag-value source.
 
 ## Success Criteria
-- [ ] `docs/release-process.md` contains all four sections: `## Versioning & Tagging Convention` (Task 1, unchanged), `## What Triggers a Release`, `## Who Cuts a Release`, `## Cutting a Release`.
-- [ ] "What Triggers a Release" states plainly that a `vX.Y.Z` tag push (not a merge to `main`) triggers `release.yml` → goreleaser → GitHub Release.
-- [ ] "Who Cuts a Release" reflects Sam Estrin as sole maintainer, not a formal rotation.
-- [ ] "Cutting a Release" gives the exact `git tag vX.Y.Z && git push origin vX.Y.Z` (or `git push --tags`) procedure, including the recommended `goreleaser release --snapshot --clean` dry run before the first real tag.
-- [ ] `.planning/specifications/git-strategy.md:36` no longer claims merging to `main` builds release binaries; it accurately describes the tag-triggered mechanism and links to `docs/release-process.md`.
+- [x] `docs/release-process.md` contains all four sections: `## Versioning & Tagging Convention` (Task 1, unchanged), `## What Triggers a Release`, `## Who Cuts a Release`, `## Cutting a Release`.
+- [x] "What Triggers a Release" states plainly that a `vX.Y.Z` tag push (not a merge to `main`) triggers `release.yml` → goreleaser → GitHub Release.
+- [x] "Who Cuts a Release" reflects Sam Estrin as sole maintainer, not a formal rotation.
+- [x] "Cutting a Release" gives the exact `git tag vX.Y.Z && git push origin vX.Y.Z` procedure (single-tag push only — `git push --tags` deliberately not recommended, per 4.1.A finding), including the recommended `goreleaser release --snapshot --clean` dry run before every real tag.
+- [x] `.planning/specifications/git-strategy.md:36` no longer claims merging to `main` builds release binaries; it accurately describes the tag-triggered mechanism and links to `docs/release-process.md`.
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -74,7 +74,7 @@ Append the remaining sections to the `docs/release-process.md` file Task 1 creat
 - Task-03 (`.github/workflows/release.yml` must exist and be accurate for this task to document its usage correctly)
 
 ## Definition of Done
-- [ ] `docs/release-process.md` is complete with all four sections and reads as a single coherent document (Task 1's section plus this task's three sections).
-- [ ] `.planning/specifications/git-strategy.md:36` corrected to describe the real tag-triggered mechanism, with no other line in the file disturbed.
-- [ ] Documented commands (`goreleaser release --snapshot --clean`, `git tag vX.Y.Z && git push origin vX.Y.Z`) verified against the actual `.goreleaser.yaml` and `release.yml` produced by Tasks 2-3.
-- [ ] AC5 (documented process exists describing how to cut a release) satisfied.
+- [x] `docs/release-process.md` is complete with all four sections and reads as a single coherent document (Task 1's section plus this task's three sections).
+- [x] `.planning/specifications/git-strategy.md:36` corrected to describe the real tag-triggered mechanism, with no other line in the file disturbed (verified: single-line diff).
+- [x] Documented commands (`goreleaser release --snapshot --clean`, `git tag vX.Y.Z && git push origin vX.Y.Z`) verified against the actual `.goreleaser.yaml` and `release.yml` produced by Tasks 2-3 (adversarial subagent COMMAND ACCURACY check passed).
+- [x] AC5 (documented process exists describing how to cut a release) satisfied.

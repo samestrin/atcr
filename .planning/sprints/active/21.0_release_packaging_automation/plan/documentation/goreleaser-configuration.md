@@ -34,7 +34,7 @@ For this repo specifically, the `.goreleaser.yaml` `builds:` block must stamp ve
 
 > Source: cmd/atcr/version.go:10-40
 
-Because these are two separate variables in two separate packages, the `.goreleaser.yaml` `builds.ldflags` list must include **two** `-X` entries pointing at the same `{{.Version}}` template value — one targeting `github.com/samestrin/atcr/internal/version.Version`, one targeting `main.version` — not a single shared `-X`.
+Because these are two separate variables in two separate packages, the `.goreleaser.yaml` `builds.ldflags` list must include **two** `-X` entries stamped from the same tag — one targeting `github.com/samestrin/atcr/internal/version.Version` with `{{.Version}}` (v-stripped), one targeting `main.version` with `{{.Tag}}` (v-prefixed) — not a single shared `-X`. Both agree on the numeric `X.Y.Z`; only the `v` prefix differs, per the decided convention in task 01.
 
 **GOOS/GOARCH matrix defaults.** If `goos`/`goarch` are omitted from the `builds:` block, goreleaser defaults to `goos: [darwin, linux, windows]` and `goarch: [386, amd64, arm64]`.
 
@@ -119,8 +119,8 @@ func atcrVersion() string {
 
 | ldflags target | variable | purpose |
 |---|---|---|
-| `-X github.com/samestrin/atcr/internal/version.Version={{.Version}}` | `internal/version.Version` (`internal/version/version.go:16`) | Stamps the version embedded in the leaderboard submission envelope (`atcr_version`) |
-| `-X main.version={{.Version}}` | `main.version` in `cmd/atcr` (`cmd/atcr/version.go:14`) | Stamps the version returned by `atcrVersion()` and printed by `atcr --version` / `atcr version` |
+| `-X github.com/samestrin/atcr/internal/version.Version={{.Version}}` | `internal/version.Version` (`internal/version/version.go:16`) | Stamps the v-stripped version (`X.Y.Z`) embedded in the leaderboard submission envelope (`atcr_version`) |
+| `-X main.version={{.Tag}}` | `main.version` in `cmd/atcr` (`cmd/atcr/version.go:14`) | Stamps the v-prefixed version (`vX.Y.Z`) returned by `atcrVersion()` and printed by `atcr --version` / `atcr version`, matching a `go install ...@vX.Y.Z` build |
 
 > Source: internal/version/version.go:1-16; cmd/atcr/version.go:10-40; goreleaser.md#key-apis
 

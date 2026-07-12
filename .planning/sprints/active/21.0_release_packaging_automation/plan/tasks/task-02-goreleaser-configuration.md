@@ -12,7 +12,7 @@
 Without a config that stamps both from the same tag value in the same build, AC2 and AC3 cannot be satisfied.
 
 ## Solution Overview
-Author a `.goreleaser.yaml` at the repo root with a Go `builds:` block that: targets `./cmd/atcr` as the main package, includes **two** `-X` ldflags entries (one per version variable above, both templated from `{{.Version}}`), and relies on goreleaser's default `GOOS`/`GOARCH` matrix (`darwin, linux, windows` / `386, amd64, arm64`) since this repo has no stated need to deviate from it. Verify the config with a local, non-publishing `goreleaser release --snapshot --clean` dry run that confirms both ldflags targets land correctly in the resulting binaries before Task 3 wires the tag-triggered CI workflow around it.
+Author a `.goreleaser.yaml` at the repo root with a Go `builds:` block that: targets `./cmd/atcr` as the main package, includes **two** `-X` ldflags entries (one per version variable above): `internal/version.Version` templated from `{{.Version}}` (v-stripped) and `main.version` from `{{.Tag}}` (v-prefixed), per Task 1's decided prefix convention, and relies on goreleaser's default `GOOS`/`GOARCH` matrix (`darwin, linux, windows` / `386, amd64, arm64`) since this repo has no stated need to deviate from it. Verify the config with a local, non-publishing `goreleaser release --snapshot --clean` dry run that confirms both ldflags targets land correctly in the resulting binaries before Task 3 wires the tag-triggered CI workflow around it.
 
 ## Technical Implementation
 ### Steps
@@ -21,8 +21,8 @@ Author a `.goreleaser.yaml` at the repo root with a Go `builds:` block that: tar
    - `binary: atcr`
    - `env: [CGO_ENABLED=0]`
    - `ldflags:` list containing both:
-     - `-s -w -X github.com/samestrin/atcr/internal/version.Version={{.Version}} -X main.version={{.Version}}`
-   - **`{{.Version}}` vs `{{.Tag}}` — a decision to make deliberately, not by default.** goreleaser's `{{.Version}}` strips the leading `v` from the tag (tag `v1.2.3` → `.Version` = `1.2.3`); `{{.Tag}}` keeps it (`v1.2.3`). The two Go vars' own doc comments encode *different* expectations: `internal/version.Version`'s comment (internal/version/version.go:7) shows the stamp as `1.2.3` (v-stripped), while `cmd/atcr`'s comment (cmd/atcr/version.go:11) shows `main.version=v1.2.3` (with `v`). Separately, `atcrVersion()`'s `debug.ReadBuildInfo()` fallback (cmd/atcr/version.go:25-28) returns the module version *with* the `v` prefix as Go records it — so a `go install github.com/samestrin/atcr/cmd/atcr@v1.2.3` build reports `v1.2.3`. Stamping both `-X` entries with `{{.Version}}` (as [documentation/goreleaser-configuration.md](../documentation/goreleaser-configuration.md)'s Quick Reference suggests) makes `atcr --version` print `1.2.3`, which diverges in the `v` prefix from a `go install`-built binary and from `cmd/atcr/version.go:11`'s own example. Pick one deliberately: (a) stamp `internal/version.Version` with `{{.Version}}` and `main.version` with `{{.Tag}}` so each matches its own doc comment and the CLI matches the `go install` path; or (b) stamp both with `{{.Version}}` and accept `atcr --version` = `1.2.3`. Either satisfies AC2; the Step 4 snapshot dry run must confirm the actual `atcr --version` output matches what Task 1's documented convention implies, and the two stamped values must still agree on the numeric `X.Y.Z` portion (the `v` prefix is the only allowed difference). If (a) is chosen, update [documentation/goreleaser-configuration.md](../documentation/goreleaser-configuration.md)'s Quick Reference table (which currently shows `{{.Version}}` for both) in a follow-up so the doc and config stay aligned.
+     - `-s -w -X github.com/samestrin/atcr/internal/version.Version={{.Version}} -X main.version={{.Tag}}`
+   - **`{{.Version}}` vs `{{.Tag}}` — DECIDED (do not re-litigate).** goreleaser's `{{.Version}}` strips the leading `v` from the tag (tag `v1.2.3` → `.Version` = `1.2.3`); `{{.Tag}}` keeps it (`v1.2.3`). Per Task 1's decided prefix convention, stamp `internal/version.Version` with `{{.Version}}` (v-stripped `1.2.3` — matches version.go:7's doc comment and the leaderboard envelope's historical bare `0.0.0` form) and `main.version` with `{{.Tag}}` (v-prefixed `v1.2.3` — matches cmd/atcr/version.go:11's `main.version=v1.2.3` doc comment, and makes `atcr --version` print `v1.2.3`, consistent with a `go install github.com/samestrin/atcr/cmd/atcr@v1.2.3` build, whose module version `atcrVersion()`'s `debug.ReadBuildInfo()` fallback (cmd/atcr/version.go:25-28) reports v-prefixed). The two stamped values agree on the numeric `X.Y.Z`; the `v` prefix is the only difference. The Step 4 snapshot dry run **confirms** (does not decide) this: verify `atcr --version` prints `v<snapshot-version>` and `internal/version.Version` is stamped to the bare numeric form. This satisfies AC2. ([documentation/goreleaser-configuration.md](../documentation/goreleaser-configuration.md)'s Quick Reference has been aligned to this mapping — its `main.version` row shows `{{.Tag}}`.)
    - Omit `goos`/`goarch` to accept the documented defaults (`darwin, linux, windows` / `386, amd64, arm64`), unless a local dry run in Step 3 surfaces a build failure on a specific `GOOS`/`GOARCH` combination (e.g. a platform-incompatible dependency), in which case exclude only that combination and note why in a config comment.
    - Consider replacing goreleaser's default `-X main.date={{.Date}}` stamp with `{{.CommitDate}}` (or omitting the date stamp) for reproducible artifacts — not a hard requirement, but call out the decision in a config comment either way so the choice is traceable.
 2. Add an `archives:` block (name template, format) and a `checksum:` block using goreleaser's standard defaults — no repo-specific customization is required beyond what `builds:` needs.
@@ -46,15 +46,15 @@ Author a `.goreleaser.yaml` at the repo root with a Go `builds:` block that: tar
 - `.github/workflows/reconcile-module.yml` — precedent for this repo's only other release-shaped config; not directly reused here but confirms no conflicting `.goreleaser.yaml` or release tooling already exists.
 
 ## Success Criteria
-- [ ] `.goreleaser.yaml` exists at the repo root and is valid goreleaser YAML.
-- [ ] The `builds:` block's `ldflags` includes both `-X github.com/samestrin/atcr/internal/version.Version={{.Version}}` and `-X main.version={{.Version}}`.
-- [ ] `goreleaser release --snapshot --clean` completes successfully against the current `main` branch with no tag pushed.
-- [ ] A binary produced by the snapshot run reports the expected snapshot version via `atcr version` / `atcr --version`.
-- [ ] `internal/version.Version` is confirmed stamped to the same snapshot version value as `main.version`, in the same build.
-- [ ] Cross-platform matrix (`darwin, linux, windows` × `386, amd64, arm64`, minus any documented exclusion) builds without error.
+- [x] `.goreleaser.yaml` exists at the repo root and is valid goreleaser YAML.
+- [x] The `builds:` block's `ldflags` includes both `-X github.com/samestrin/atcr/internal/version.Version={{.Version}}` and `-X main.version={{.Tag}}` (per Task 1's decided prefix convention).
+- [x] `goreleaser release --snapshot --clean` completes successfully against the current branch with no tag pushed.
+- [x] A binary produced by the snapshot run reports the expected snapshot version via `atcr version` / `atcr --version` (`atcr version v0.0.0` — `main.version` stamped from `{{.Tag}}`, v-prefixed).
+- [x] `internal/version.Version` is confirmed stamped in the same build (`0.0.0-SNAPSHOT-773a0f2c` from `{{.Version}}`, v-stripped). In a real tag build both targets agree on the numeric `X.Y.Z`; snapshot mode synthesizes `.Version` so the numeric portions differ by design — the mapping mechanism is what is verified.
+- [x] Cross-platform matrix (`darwin, linux, windows` × `amd64, arm64`) builds without error. `386` documented-excluded: `internal/reconcile/disagree.go:362` uses `1<<31`, which overflows a 32-bit `int` (engine change, out of scope).
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
