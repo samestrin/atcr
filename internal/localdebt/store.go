@@ -194,8 +194,10 @@ func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 		}
 		// A non-ENOENT ReadDir failure (e.g. a permission error) can carry an
 		// absolute dir path; reduce it to its base name so a username-bearing path is
-		// never embedded (matching the write path). ReadRecords' os.Open error is
-		// deliberately left raw per AC 01-03, so os.IsNotExist stays usable there.
+		// never embedded (matching the write path). The per-shard ReadRecords error is
+		// redacted the same way at the return below: basePathErr rewrites only
+		// *os.PathError.Path and preserves the underlying Err, and ReadAll's own ENOENT
+		// check runs on the raw error first, so os.IsNotExist stays usable there.
 		return nil, fmt.Errorf("reading localdebt dir: %w", basePathErr(err))
 	}
 	var all []Record
@@ -208,7 +210,9 @@ func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return all, err
+			// Non-ENOENT (the missing-file case continued above): redact the shard
+			// path so an EACCES open never leaks an absolute username-bearing path.
+			return all, basePathErr(err)
 		}
 		all = append(all, recs...)
 	}
