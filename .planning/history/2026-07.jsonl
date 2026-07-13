@@ -113,3 +113,16 @@
 {"ts":"2026-07-12T21:58:02.199464-07:00","package":"cmd/atcr","severity":"LOW","id":"10b21ae7f73639c1","file":"cmd/atcr/reconcile.go","category":"error_paths"}
 {"ts":"2026-07-12T21:58:02.199464-07:00","package":"cmd/atcr","severity":"LOW","id":"51b85c879f996f73","file":"cmd/atcr/reconcile.go","category":"style"}
 {"ts":"2026-07-12T21:58:02.199464-07:00","package":"cmd/atcr","severity":"LOW","id":"d60dd84b57f87677","file":"cmd/atcr/verify.go","category":"style"}
+{"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/guestabi","severity":"HIGH","id":"b1625912b12c3a1b","file":"internal/astgroup/parsers/src/guestabi/guestabi.go","category":"correctness"}
+{"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/goparser","severity":"HIGH","id":"9affd4c490f5cf62","file":"internal/astgroup/parsers/src/goparser/main.go","category":"correctness"}
+{"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"HIGH","id":"3f5f41e720051479","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"correctness"}
+{"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/guestabi","severity":"MEDIUM","id":"3ef367e3149f8fcc","file":"internal/astgroup/parsers/src/guestabi/guestabi.go","category":"testing"}
+{"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/guestabi","severity":"MEDIUM","id":"04510fad85e390c8","file":"internal/astgroup/parsers/src/guestabi/guestabi.go","category":"testing"}
+{"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/goparser","severity":"MEDIUM","id":"92145df582985e8b","file":"internal/astgroup/parsers/src/goparser/main.go","category":"testing"}
+{"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"MEDIUM","id":"a2300ab0c92557fb","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"testing"}
+{"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/braceparser","severity":"MEDIUM","id":"78e8e4b00df967f4","file":"internal/astgroup/parsers/src/braceparser/main.go","category":"testing"}
+{"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/goparser","severity":"HIGH","id":"a07e455ceaa54870","file":"internal/astgroup/parsers/src/goparser/main.go","category":"out-of-scope"}
+{"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"HIGH","id":"87245e6916bcd0cb","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"out-of-scope"}
+{"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/guestabi","severity":"MEDIUM","id":"3301dce2efde7030","file":"internal/astgroup/parsers/src/guestabi/guestabi.go","category":"resource"}
+{"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/guestabi","severity":"MEDIUM","id":"cfe6e95833a7580d","file":"internal/astgroup/parsers/src/guestabi/guestabi.go","category":"resource"}
+{"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/braceparser","severity":"LOW","id":"edc1bdb75d7cba14","file":"internal/astgroup/parsers/src/braceparser/main.go","category":"style"}

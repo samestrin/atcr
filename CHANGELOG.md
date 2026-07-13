@@ -1,3 +1,20 @@
+## [22.2.0] - 2026-07-13
+
+Extract the duplicated Wasm guest ABI (alloc/free/emit/pins) shared by the `goparser`, `pyparser`, and `braceparser` AST plugins into one internal `guestabi` module, with the non-moving-GC pointer-packing assumption documented in a single canonical location.
+
+### Changed
+
+- `goparser`, `pyparser`, and `braceparser` now import a shared `guestabi` package instead of each defining its own alloc/free/emit/pins boilerplate.
+
+### Fixed
+
+- Guarded `goparser`/`pyparser`'s `parse()` against negative-length host inputs, matching `braceparser`'s existing bounds check.
+- Freed the result pin on the oversized-result reject path in the astgroup host, closing a pin leak on that error branch.
+- Added the missing `//go:build wasip1` tag to `pyparser/main.go` so host-GOOS tooling no longer breaks on the shared `guestabi` import.
+- Raised `build.sh`'s Go-version guard to 1.26 to match the parser modules' `go.mod` directive.
+
+*Shipped via /execute-sprint (sprint 22.2)*
+
 ## [22.1.0] - 2026-07-12
 
 Thread the reviewed-repo root through `atcr reconcile` and `atcr verify` via a new `--repo` flag, so validating findings against a repo other than the current directory (or running from a non-repo-root CWD) no longer falsely flags every finding as "file not found."

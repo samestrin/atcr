@@ -1,0 +1,233 @@
+{
+  "generated": "2026-07-13",
+  "discovery_method": "semantic",
+  "queries": [
+    "wasm guest alloc free emit pins boilerplate",
+    "goparser braceparser pyparser main.go",
+    "unsafe pointer packing non-moving GC",
+    "wasm build.sh go.mod replace directive"
+  ],
+  "match_count": 15,
+  "build_from": {
+    "primary_file": "internal/astgroup/parsers/src/goparser/main.go",
+    "reason": "Contains the canonical, most fully-commented alloc/free/parse/emit/pins implementation (lines 41-66, 189-197), including the non-moving-GC pointer-packing assumption comment (lines 41-51) that the epic requires be pinned once in the shared package. pyparser/main.go:31-51 and braceparser/main.go:14-42 each carry a shorter comment cross-referencing this file as the source of truth for the assumption, confirming it is already treated as canonical.",
+    "suggested_approach": "Create a new isolated Go module at internal/astgroup/parsers/src/guestabi (mirroring the existing per-parser isolated-module pattern documented in goparser/go.mod, pyparser/go.mod, braceparser/go.mod — each is wasip1-only and excluded from the parent module's `go build ./...`/`go test ./...`). Move `pins map[int32][]byte`, `alloc`, `free`, and a generic `Emit(v any) int64` (json.Marshal-based, not coupled to any parser's concrete `node` type — the three `node` structs are structurally identical but should stay locally defined per parser since they are each parser's own wire-contract type) into the new package, carrying the non-moving-GC doc comment. Each parser's main.go keeps its own `//go:wasmexport alloc`/`free` wrapper functions that delegate to the shared package (wasmexport must be declared in the `main` package per parser, per Go's wasip1 reactor ABI — it cannot live in the shared package directly). Wire the three parser go.mod files with a `require` + `replace => ../guestabi` directive, mirroring the root go.mod's existing `require github.com/samestrin/atcr/reconcile` + `replace github.com/samestrin/atcr/reconcile => ./reconcile` pattern (go.mod:37-41). build.sh's `build()` helper invokes `go build` from each parser's own directory, so no build.sh changes should be needed beyond a comment describing the new shared-module dependency, since `go build` resolves the local replace directive automatically — verify this holds during implementation."
+  },
+  "existing_patterns": [
+    {
+      "name": "Isolated wasip1-only Go module per parser",
+      "description": "Each of goparser, pyparser, and braceparser is its own Go module (own go.mod, own `module` path under github.com/samestrin/atcr/internal/astgroup/parsers/src/<name>) so the wasm-only `package main` + `//go:wasmexport` code is excluded from the parent module's `go build ./...` / `go test ./...`. Documented in each go.mod's leading comment.",
+      "files": [
+        "internal/astgroup/parsers/src/goparser/go.mod",
+        "internal/astgroup/parsers/src/pyparser/go.mod",
+        "internal/astgroup/parsers/src/braceparser/go.mod"
+      ],
+      "follow_for": "The new shared guest ABI package must be its own isolated module (same convention), not a subpackage of the parent module, so it can be imported by three separately-built wasip1 modules without pulling wasm-only code into `go build ./...`."
+    },
+    {
+      "name": "In-tree module extraction via go.mod replace directive",
+      "description": "Epic 8.0 (reconciler library) extracted `internal/reconcile` into its own nested module and wired it into the root module via `require github.com/samestrin/atcr/reconcile v0.0.0` + `replace github.com/samestrin/atcr/reconcile => ./reconcile`, developed in-tree pending future separate-repo publication.",
+      "files": [
+        "go.mod"
+      ],
+      "follow_for": "The exact require+replace mechanics to copy into each of the three parser go.mod files when wiring up the new shared guestabi module."
+    },
+    {
+      "name": "Guest ABI memory protocol (alloc/free/parse/emit + pins map)",
+      "description": "Every parser exposes //go:wasmexport alloc/free/parse. alloc(n) makes a []byte, takes its first-element address via unsafe.Pointer as the guest offset, and stores the slice in a package-level `pins map[int32][]byte` to keep it reachable across the host/guest boundary (preventing Go GC collection). free(p) deletes the pin. emit(node) marshals to JSON and re-uses alloc to hand the host a (ptr<<32|len) packed int64.",
+      "files": [
+        "internal/astgroup/parsers/src/goparser/main.go",
+        "internal/astgroup/parsers/src/pyparser/main.go",
+        "internal/astgroup/parsers/src/braceparser/main.go"
+      ],
+      "follow_for": "This is the exact boilerplate to extract; goparser/main.go:41-66 and :189-197, pyparser/main.go:37-51 and :307-315, braceparser/main.go:28-42 and :61-69 are byte-for-byte equivalent modulo the `node` type used by json.Marshal, which should become a generic `any` parameter in the shared Emit function."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/astgroup/parsers/src/goparser/main.go",
+      "relevance": "high",
+      "purpose": "Go-language AST parser wasm plugin; owns the canonical alloc/free/emit/pins block (lines 41-66) plus the non-moving-GC assumption comment to be relocated.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/astgroup/parsers/src/pyparser/main.go",
+      "relevance": "high",
+      "purpose": "Python structural parser wasm plugin; duplicates the same alloc/free/emit/pins block (lines 37-51, 307-315).",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/astgroup/parsers/src/braceparser/main.go",
+      "relevance": "high",
+      "purpose": "Shared brace-language scanner entrypoint (built once per language via build tags); duplicates the same block (lines 28-42, 61-69).",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/astgroup/parsers/src/goparser/go.mod",
+      "relevance": "high",
+      "purpose": "Isolated wasip1-only module definition for goparser.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/astgroup/parsers/src/pyparser/go.mod",
+      "relevance": "high",
+      "purpose": "Isolated wasip1-only module definition for pyparser.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/astgroup/parsers/src/braceparser/go.mod",
+      "relevance": "high",
+      "purpose": "Isolated wasip1-only module definition for braceparser.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/astgroup/parsers/build.sh",
+      "relevance": "medium",
+      "purpose": "Regenerates the vendored .wasm files by running `go build` per parser directory/tag combination; documents the isolated-module build convention.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "go.mod",
+      "relevance": "medium",
+      "purpose": "Root module; demonstrates the require+replace in-tree extraction pattern (lines 37-41) to mirror for the new shared guestabi module in each parser's go.mod.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/astgroup/parsers/src/braceparser/parse_core.go",
+      "relevance": "medium",
+      "purpose": "Defines braceparser's local `node` struct (lines 26-32), structurally identical to goparser's and pyparser's — confirms the shared package should not own the node type, only the ABI functions.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/astgroup/host.go",
+      "relevance": "low",
+      "purpose": "The wazero host that calls each parser's alloc/parse/free exports; unaffected by this extraction since the wasmexport surface (function names/signatures) is preserved.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/astgroup/embed_test.go",
+      "relevance": "medium",
+      "purpose": "Houses TestEmbeddedParsersMatchManifest (embed_test.go:15), which validates the 10 vendored .wasm binaries against the committed SHA256SUMS manifest and fails `go test ./...` on drift. This is the gate for the plan's rebuild step (build.sh regenerates .wasm + SHA256SUMS) and the most relevant anchor for the 'existing internal/astgroup tests pass unchanged' criterion; the .wasm filenames and manifest format are unchanged by the extraction, so the test itself is unchanged.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/astgroup/embed.go",
+      "relevance": "medium",
+      "purpose": "//go:embed directives (lines 5-8) that vendor the 10 .wasm files into the host binary plus the builtinParsers language->.wasm path map (lines 20-29). Unchanged by the extraction — the .wasm filenames are preserved — but it is the embed seam in the build.sh -> .wasm -> embed.go -> host-load chain that the rebuild step exercises.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/astgroup/parsers/SHA256SUMS",
+      "relevance": "medium",
+      "purpose": "Committed sha256 manifest of the 10 vendored .wasm files (go/python/ts/php/rust/bash/java/kotlin/cpp/csharp), regenerated by build.sh and validated by TestEmbeddedParsersMatchManifest. The plan's rebuild step refreshes it; the regenerated .wasm binaries and this manifest must be committed together or the embed test fails.",
+      "likely_modification": "regenerate"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "internal/astgroup/parsers/src/goparser/main.go:52-66",
+      "type": "hook",
+      "description": "pins var + alloc/free wasmexport wrappers — replace bodies with calls into the shared package's exported alloc/free."
+    },
+    {
+      "location": "internal/astgroup/parsers/src/goparser/main.go:189-197",
+      "type": "hook",
+      "description": "emit(node) helper — replace with a call to the shared package's generic Emit(v any) int64."
+    },
+    {
+      "location": "internal/astgroup/parsers/src/pyparser/main.go:37-51,307-315",
+      "type": "hook",
+      "description": "Same pins/alloc/free/emit block duplicated for pyparser."
+    },
+    {
+      "location": "internal/astgroup/parsers/src/braceparser/main.go:28-42,61-69",
+      "type": "hook",
+      "description": "Same pins/alloc/free/emit block duplicated for braceparser."
+    }
+  ],
+  "integration_gaps": [
+    {
+      "gap": "Local go.mod replace resolution under build.sh",
+      "description": "build.sh's build() helper runs `GOOS=wasip1 GOARCH=wasm go build` from each parser's own srcdir (build.sh:37-45), so each parser's go.mod require+replace for the new guestabi module must resolve locally with NO build.sh change (plan Risk #2). Wire and verify one parser at a time — `go build` that parser's wasm target after each wiring before moving to the next, since a misconfigured replace breaks the wasm build silently."
+    },
+    {
+      "gap": "wasmexport cannot live in the shared package",
+      "description": "Go's wasip1 reactor ABI ties `//go:wasmexport` to the compiled binary's `package main`, so alloc/free/parse cannot move wholesale into guestabi. Each parser keeps thin `//go:wasmexport` wrappers in its own main package that delegate to guestabi's exported Alloc/Free/Emit; only the implementation bodies (pins map + alloc/free/emit logic) move. (See architecture_notes[1].)"
+    },
+    {
+      "gap": "Rebuild to manifest to embed to test chain must stay green",
+      "description": "The rebuild step (build.sh) regenerates the 10 vendored .wasm binaries and refreshes SHA256SUMS; the regenerated .wasm + SHA256SUMS must be committed together. TestEmbeddedParsersMatchManifest (internal/astgroup/embed_test.go:15) fails `go test ./...` if the committed .wasm drifts from SHA256SUMS, catching a stale or missed rebuild. embed.go's //go:embed directives (lines 5-8) reference the .wasm by unchanged filename, so no embed.go edit is needed — but the .wasm byte content changes on rebuild, so the binaries themselves must be re-committed."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "Guest ABI boilerplate (pins/alloc/free/emit)",
+      "path": "internal/astgroup/parsers/src/goparser/main.go",
+      "lines": "41-66, 189-197",
+      "can_extend": true,
+      "usage_example": "Lines 41-66 (pins var + alloc/free wasmexport wrappers) and 189-197 (emit helper) are the canonical ~29-line guest ABI to extract verbatim into internal/astgroup/parsers/src/guestabi as the new isolated module's sole package; keep alloc/free's //go:wasmexport declarations in each parser's own main package as thin wrappers, since wasmexport requires package main. (path is the pure file path so discovery-validate can verify it; the line ranges live in the lines field.)"
+    }
+  ],
+  "architecture_notes": [
+    "The three parser Go modules are deliberately isolated from the parent module (own go.mod, wasip1-only) so `go build ./...`/`go test ./...` at the repo root never attempts to compile wasm-only `package main` + `//go:wasmexport` code. The new shared guest ABI package must follow the same isolation convention — it should NOT become a subpackage of the parent module, or it risks being pulled into the root build.",
+    "`//go:wasmexport` funcs must be declared in each parser's own `package main` (Go's wasip1 reactor ABI ties wasmexport to the compiled binary's main package), so `alloc`/`free`/`parse` cannot be fully moved to the shared package — only their bodies can delegate to shared, exported implementations.",
+    "The `node` struct (Kind/Name/StartLine/EndLine/Children with matching json tags) is structurally identical across all three parsers but is each parser's own wire-contract type; the shared package's Emit helper should accept `any` rather than importing/owning a canonical node type, to avoid a forced coupling not requested by the epic.",
+    "The non-moving-GC pointer-packing assumption is currently documented most completely in goparser/main.go (lines 41-51); pyparser and braceparser cross-reference it rather than restating it. Moving it to the shared package's doc comment satisfies AC2 (document once, not per-parser) without losing detail."
+  ],
+  "files_to_modify": [
+    {
+      "path": "internal/astgroup/parsers/src/goparser/main.go",
+      "reason": "Remove local pins/alloc/free/emit boilerplate; delegate wasmexport wrappers to the shared guestabi package.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/astgroup/parsers/src/pyparser/main.go",
+      "reason": "Same as goparser.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/astgroup/parsers/src/braceparser/main.go",
+      "reason": "Same as goparser.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/astgroup/parsers/src/goparser/go.mod",
+      "reason": "Add require + replace directive pointing at the new local guestabi module.",
+      "scope": "trivial"
+    },
+    {
+      "path": "internal/astgroup/parsers/src/pyparser/go.mod",
+      "reason": "Same as goparser/go.mod.",
+      "scope": "trivial"
+    },
+    {
+      "path": "internal/astgroup/parsers/src/braceparser/go.mod",
+      "reason": "Same as goparser/go.mod.",
+      "scope": "trivial"
+    },
+    {
+      "path": "internal/astgroup/parsers/build.sh",
+      "reason": "Add a documentation comment noting the new shared-module dependency, if the build proves to need any explicit step beyond go.mod replace resolution.",
+      "scope": "trivial"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "internal/astgroup/parsers/src/guestabi/go.mod",
+      "purpose": "New isolated Go module definition for the shared guest ABI package, following the goparser/pyparser/braceparser go.mod convention.",
+      "based_on": "internal/astgroup/parsers/src/goparser/go.mod"
+    },
+    {
+      "path": "internal/astgroup/parsers/src/guestabi/guestabi.go",
+      "purpose": "Shared alloc/free/emit/pins implementation plus the pinned non-moving-GC doc comment.",
+      "based_on": "internal/astgroup/parsers/src/goparser/main.go"
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test",
+    "test_location": "internal/astgroup",
+    "naming_convention": "*_test.go",
+    "example_test": "internal/astgroup/embed_test.go",
+    "example_test_rationale": "embed_test.go houses TestEmbeddedParsersMatchManifest (embed_test.go:15), the test that fails `go test ./...` if the committed .wasm binaries drift from SHA256SUMS; it directly gates this plan's rebuild step, making it the most relevant anchor for the 'existing internal/astgroup tests pass unchanged' acceptance criterion. host_test.go (host parser-calling tests) and crosscompile_test.go (zero-CGO cross-compile) are the other unchanged tests that must also pass; all live under internal/astgroup."
+  }
+}

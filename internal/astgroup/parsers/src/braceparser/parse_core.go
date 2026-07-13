@@ -41,7 +41,7 @@ type blockKeyword struct {
 }
 
 // langConfig is the per-language parameterization of the otherwise language-
-// agnostic brace scanner. The differences between the four target languages
+// agnostic brace scanner. The differences between the eight target languages
 // live entirely in this data, never in the scanner's control flow.
 type langConfig struct {
 	name                string

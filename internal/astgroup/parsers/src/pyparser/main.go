@@ -1,3 +1,5 @@
+//go:build wasip1
+
 // Command pyparser is the Python-language structural parser plugin, compiled to
 // a WebAssembly reactor (GOOS=wasip1 GOARCH=wasm, -buildmode=c-shared) and
 // loaded by the internal/astgroup wazero host.
@@ -15,9 +17,9 @@
 package main
 
 import (
-	"encoding/json"
 	"strings"
-	"unsafe"
+
+	"github.com/samestrin/atcr/internal/astgroup/parsers/src/guestabi"
 )
 
 type node struct {
@@ -28,33 +30,22 @@ type node struct {
 	Children  []node `json:"children,omitempty"`
 }
 
-// pins / alloc / free / emit form the guest ABI duplicated (~29 lines) in the
-// goparser plugin. Extracting it into a shared guest package is the correct remedy
-// ONCE the parser count grows beyond the two PoC plugins (Go + Python); at two
-// parsers the duplication is below the threshold that justifies a cross-module
-// shared package. See goparser/main.go for the non-moving-GC assumption it relies
-// on.
-var pins = map[int32][]byte{}
+// alloc/free/parse are the wasip1 reactor ABI entrypoints the astgroup host
+// calls. Go requires //go:wasmexport functions in each command's own package
+// main, so these thin wrappers just delegate to the shared guestabi bodies (see
+// the guestabi package doc for the pin map and its GC assumptions).
 
 //go:wasmexport alloc
-func alloc(n int32) int32 {
-	if n <= 0 {
-		n = 1
-	}
-	b := make([]byte, n)
-	p := int32(uintptr(unsafe.Pointer(&b[0])))
-	pins[p] = b
-	return p
-}
+func alloc(n int32) int32 { return guestabi.Alloc(n) }
 
 //go:wasmexport free
-func free(p int32) { delete(pins, p) }
+func free(p int32) { guestabi.Free(p) }
 
 //go:wasmexport parse
 func parse(ptr int32, n int32) int64 {
-	buf, ok := pins[ptr]
-	if !ok || int(n) > len(buf) {
-		return emit(node{Kind: "error", Name: "bad pointer"})
+	buf, ok := guestabi.Lookup(ptr)
+	if !ok || int(n) < 0 || int(n) > len(buf) {
+		return guestabi.Emit(node{Kind: "error", Name: "bad pointer"})
 	}
 	src := string(buf[:n])
 
@@ -65,7 +56,7 @@ func parse(ptr int32, n int32) int64 {
 		root.Children = kids
 		root.EndLine = lines[len(lines)-1].lineno
 	}
-	return emit(root)
+	return guestabi.Emit(root)
 }
 
 type pline struct {
@@ -302,16 +293,6 @@ func stripComment(text string) string {
 		return text[:i]
 	}
 	return text
-}
-
-func emit(n node) int64 {
-	b, err := json.Marshal(n)
-	if err != nil {
-		b = []byte(`{"kind":"error","name":"marshal"}`)
-	}
-	p := alloc(int32(len(b)))
-	copy(pins[p], b)
-	return (int64(p) << 32) | int64(len(b))
 }
 
 func main() {}

@@ -22,11 +22,11 @@
 package main
 
 import (
-	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"unsafe"
+
+	"github.com/samestrin/atcr/internal/astgroup/parsers/src/guestabi"
 )
 
 // node mirrors internal/astgroup.Node; the JSON tags are the wire contract.
@@ -38,48 +38,35 @@ type node struct {
 	Children  []node `json:"children,omitempty"`
 }
 
-// pins keeps alloc'd buffers reachable so the Go GC cannot reclaim memory the
-// host still references. The wasm linear memory IS this program's heap, so a
-// pinned slice's first-element pointer is a stable guest offset. This assumes
-// the wasm-targeting Go GC remains non-moving (true for Go 1.21+ wasip1/wasm);
-// review this assumption before upgrading the toolchain.
-//
-// This alloc/free/emit/pins ABI (~29 lines) is duplicated in the pyparser plugin.
-// Extracting it into a shared guest package is the correct remedy ONCE the parser
-// count grows beyond the two PoC plugins (Go + Python); at two parsers the
-// duplication is below the threshold that justifies a cross-module shared package
-// with build.sh replace-directive coordination.
-var pins = map[int32][]byte{}
+// alloc/free/parse are the wasip1 reactor ABI entrypoints the astgroup host
+// calls. Go requires //go:wasmexport functions in each command's own package
+// main, so these thin wrappers just delegate to the shared guestabi bodies (see
+// the guestabi package doc for the pin map and its GC assumptions).
 
 //go:wasmexport alloc
-func alloc(n int32) int32 {
-	if n <= 0 {
-		n = 1
-	}
-	b := make([]byte, n)
-	p := int32(uintptr(unsafe.Pointer(&b[0])))
-	pins[p] = b
-	return p
-}
+func alloc(n int32) int32 { return guestabi.Alloc(n) }
 
 //go:wasmexport free
-func free(p int32) { delete(pins, p) }
+func free(p int32) { guestabi.Free(p) }
 
 //go:wasmexport parse
 func parse(ptr int32, n int32) int64 {
-	buf, ok := pins[ptr]
-	if !ok || int(n) > len(buf) {
-		return emit(node{Kind: "error", Name: "bad pointer"})
+	buf, ok := guestabi.Lookup(ptr)
+	if !ok || int(n) < 0 || int(n) > len(buf) {
+		return guestabi.Emit(node{Kind: "error", Name: "bad pointer"})
 	}
 	src := buf[:n]
 
-	// Empty input has no declarations to parse. Emit a bare file node — matching
-	// the Python plugin's empty-module contract (and TestHost_ParseEmptySourceGo)
-	// — so the host treats empty source as an empty tree rather than a parse
-	// error. Non-empty but unparseable source still falls through to the error
-	// node below.
+	// Empty input has no declarations to parse. Emit a bare file node (Kind=file,
+	// zero start/end lines) so the host treats empty source as an empty tree
+	// rather than a parse error — pinned by TestHost_ParseEmptySourceGo. The
+	// other plugins' empty-source nodes are NOT byte-identical to this one
+	// (pyparser emits Kind=module 1/1; braceparser emits Kind=file 1/1): the
+	// shared contract is "empty source is an empty tree, not an error", not
+	// cross-plugin JSON parity. Non-empty but unparseable source still falls
+	// through to the error node below.
 	if len(src) == 0 {
-		return emit(node{Kind: "file"})
+		return guestabi.Emit(node{Kind: "file"})
 	}
 
 	fset := token.NewFileSet()
@@ -87,7 +74,7 @@ func parse(ptr int32, n int32) int64 {
 	if err != nil {
 		// Even on syntax error, emit a minimal file node so the host can fall
 		// back to line-proximity grouping rather than crashing.
-		return emit(node{Kind: "error", Name: err.Error()})
+		return guestabi.Emit(node{Kind: "error", Name: err.Error()})
 	}
 
 	line := func(p token.Pos) int {
@@ -117,7 +104,7 @@ func parse(ptr int32, n int32) int64 {
 	}
 
 	root := build(f)
-	return emit(root)
+	return guestabi.Emit(root)
 }
 
 // structural reports whether an ast.Node is a node kind we keep in the tree.
@@ -184,16 +171,6 @@ func typeName(n ast.Node) string {
 	default:
 		return "stmt"
 	}
-}
-
-func emit(n node) int64 {
-	b, err := json.Marshal(n)
-	if err != nil {
-		b = []byte(`{"kind":"error","name":"marshal"}`)
-	}
-	p := alloc(int32(len(b)))
-	copy(pins[p], b)
-	return (int64(p) << 32) | int64(len(b))
 }
 
 func main() {}
