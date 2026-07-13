@@ -1,9 +1,9 @@
 {
-  "skill": "sprint-complete",
+  "skill": "finalize-sprint",
   "args": "@.planning/sprints/active/22.2_astgroup_shared_guest_abi/",
-  "invocation": "/sprint-complete @.planning/sprints/active/22.2_astgroup_shared_guest_abi/",
+  "invocation": "/finalize-sprint @.planning/sprints/active/22.2_astgroup_shared_guest_abi/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
   "session_id": "b9f10ed0-f936-46df-a7c6-e1bdfe0903c0",
-  "timestamp": "2026-07-13T18:25:43.004Z"
+  "timestamp": "2026-07-13T18:49:00.083Z"
 }
