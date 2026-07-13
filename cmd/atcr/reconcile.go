@@ -49,6 +49,25 @@ falsy, unparseable, or unset value keeps AST grouping on.`,
 	return cmd
 }
 
+// normalizeRepoFlag reads the shared --repo flag for the commands that thread a
+// reviewed-repo root (`reconcile` and `verify`), defaults an empty or
+// whitespace-only value to "." (the CWD == repo-root operating assumption), and
+// verifies the result is an existing directory. A nonexistent or non-directory
+// --repo is a usage error (exit 2) so a bad root fails loudly instead of silently
+// degrading path validation (reconcile) or the skeptic snapshot/redaction base
+// (verify), where every finding degrades to unverifiable while the command still
+// exits 0. Shared by both handlers so their normalization cannot drift (Epic 22.1).
+func normalizeRepoFlag(cmd *cobra.Command) (string, error) {
+	repoRoot, _ := cmd.Flags().GetString("repo")
+	if strings.TrimSpace(repoRoot) == "" {
+		repoRoot = "."
+	}
+	if info, err := os.Stat(repoRoot); err != nil || !info.IsDir() {
+		return "", usageError(fmt.Errorf("--repo %q does not exist or is not a directory", repoRoot))
+	}
+	return repoRoot, nil
+}
+
 func runReconcile(cmd *cobra.Command, args []string) error {
 	// Diagnostics route through the shared context logger so they honor LOG_LEVEL,
 	// redaction, and correlation; the discard fallback keeps this nil-safe when no
@@ -95,17 +114,13 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// (Epic 22.1). Defaults to "." (the CWD == repo-root operating assumption),
 	// preserving pre-22.1 behavior; --repo <other-repo> lets reconcile validate
 	// findings against a repo other than the CWD, or from a non-repo-root CWD,
-	// instead of falsely flagging every path as "file not found".
-	repoRoot, _ := cmd.Flags().GetString("repo")
-	if strings.TrimSpace(repoRoot) == "" {
-		// An explicit empty --repo would set Root="", silently disabling path
-		// validation AND AST grouping — the opposite of the intended default.
-		// Normalize to "." so empty and unset behave identically, and stay
-		// consistent with `atcr verify --repo`.
-		repoRoot = "."
-	}
-	if info, err := os.Stat(repoRoot); err != nil || !info.IsDir() {
-		return usageError(fmt.Errorf("--repo %q does not exist or is not a directory", repoRoot))
+	// instead of falsely flagging every path as "file not found". An explicit
+	// empty --repo normalizes to "." (never Root="", which would silently disable
+	// path validation AND AST grouping); a nonexistent root fails loudly. Shared
+	// with `atcr verify` via normalizeRepoFlag so the two commands cannot diverge.
+	repoRoot, err := normalizeRepoFlag(cmd)
+	if err != nil {
+		return err
 	}
 
 	sources, _ := cmd.Flags().GetStringSlice("sources")
