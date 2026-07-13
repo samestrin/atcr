@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 4 | 0 |
 | MEDIUM | 0 | 20 | 0 |
-| LOW | 2 | 33 | 0 |
+| LOW | 0 | 33 | 0 |
 
 
-**Last Modified:** 2026-07-13 | **Open Items:** 2 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 59
+**Last Modified:** 2026-07-13 | **Open Items:** 0 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 57
 
 ## Directory Structure
 
@@ -63,13 +63,6 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table â†’ shards â
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
-
-### [2026-07-13] From Sprint: epic-22.4
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | LOW | internal/fanout/review.go:756 | The single reused RangeBuilder gitRunner retains every per-mode diff chunk cache (raw/fc/plain) plus zeroCtx and lineRanges simultaneously from buildPayloads through computeGroundingData, raising peak heap with mode count for large diffs vs the old per-mode throwaway runners. | Nil the gitRunner range-state caches after grounding is computed, or scope the reuse to only the zero-context + name-status caches grounding actually needs rather than retaining fc/plain/raw. | PERFORMANCE | 30 | execute-epic-independent |
-| U | [ ] | LOW | internal/payload/rangebuilder.go:22 | RangeBuilder is documented as not concurrency-safe but has no runtime guard, so a future caller that shares one across goroutines would silently corrupt the single-writer rangeState cache. | Add a cheap guard (sync.Mutex or a race-detected sentinel) so accidental concurrent use fails loudly rather than corrupting state. | EDGE_CASES | 30 | execute-epic-independent |
 
 ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
 

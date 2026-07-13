@@ -1,0 +1,1 @@
+We need to review changed files for API contract issues. The main change is adding RangeBuilder and modifications to payload builder, grounding, etc. Also changes to resume.go: buildPayloads now returns rb too, computeGroundingData now takes rb. Let's inspect computeGroundingData signature. Search.{"path":"internal/fanout","query":"computeGroundingData","max_results":20}

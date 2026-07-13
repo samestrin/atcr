@@ -1,3 +1,7 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
 # Epic Plan 22.4: Reuse Payload Builder's Diff in Grounding Data
 
 - **Estimated time**: 0.5 day
@@ -17,9 +21,9 @@ Stop `computeGroundingData` from re-running a fresh `git` diff that the payload 
 
 ## Acceptance Criteria
 
-- [x] `computeGroundingData` no longer spawns its own `git` subprocesses when a memoized diff for the same range is already available from the payload builder.
-- [x] Grounding behavior (which findings get dropped/exempted) is unchanged — this is a pure performance fix, verified by existing `internal/fanout` grounding tests passing unchanged.
-- [x] A benchmark or subprocess-count assertion confirms the reduction (e.g. asserting `git` is invoked once per range, not twice).
+- [ ] `computeGroundingData` no longer spawns its own `git` subprocesses when a memoized diff for the same range is already available from the payload builder.
+- [ ] Grounding behavior (which findings get dropped/exempted) is unchanged — this is a pure performance fix, verified by existing `internal/fanout` grounding tests passing unchanged.
+- [ ] A benchmark or subprocess-count assertion confirms the reduction (e.g. asserting `git` is invoked once per range, not twice).
 
 ## Components Touched
 
@@ -64,3 +68,5 @@ None.
 - HAS_CROSS_SYSTEM: false
 - Cited references checked: 1
 - Codebase search queries (spot-check): []
+----- END SPRINT PLAN -----
+

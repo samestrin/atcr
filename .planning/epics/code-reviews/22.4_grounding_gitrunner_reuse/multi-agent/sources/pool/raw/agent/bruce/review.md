@@ -1,0 +1,3 @@
+
+
+CRITICAL|internal/fanout/resume.go:289|buildPayloads called with 3-value assignment but returns only 2; rb will be nil and computeGroundingData gets nil RangeBuilder, bypassing memoization entirely|workaround: build RangeBuilder inline in PrepareResume via NewRangeBuilder then pass to computeGroundingData; or make buildPayloads return rb|correctness|15|payloads, rb, err := buildPayloads(...); buildPayloads signature unchanged in payload/builder.go returns only (payloads, error)

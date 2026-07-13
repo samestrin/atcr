@@ -1,0 +1,185 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "internal/payload/rangebuilder.go",
+      "line": 31,
+      "severity": "CRITICAL",
+      "problem": "(NewRangeBuilder) Undefined variable `b` used for struct field initialization; should be `base`",
+      "score": 4,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "archer"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/payload/rangebuilder.go",
+      "line": 31,
+      "severity": "CRITICAL",
+      "problem": "(NewRangeBuilder) Undefined variable `b` used for struct field initialization; should be `base`",
+      "score": 4,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "archer"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/payload/rangebuilder.go",
+      "line": 31,
+      "severity": "CRITICAL",
+      "problem": "(NewRangeBuilder) Undefined variable `b` used for struct field initialization; should be `base`",
+      "score": 4,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "archer"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/payload/rangebuilder.go",
+      "line": 31,
+      "severity": "CRITICAL",
+      "problem": "(NewRangeBuilder) Undefined variable `b` used for struct field initialization; should be `base`",
+      "score": 4,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "archer"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/resume.go",
+      "line": 260,
+      "severity": "HIGH",
+      "problem": "No test verifies that PrepareResume grounding step reuses the RangeBuilder and avoids extra git subprocesses (acceptance criteria)",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "severity_split",
+      "file": "internal/payload/rangebuilder_test.go",
+      "line": 1,
+      "severity": "HIGH",
+      "problem": "No test covers BuildEntries or BuildChangedLines error propagation from git failures (e.g., non-repo directory)",
+      "score": 2,
+      "spread": 1,
+      "independence": 2,
+      "reviewers": [
+        "archer",
+        "dax"
+      ],
+      "disagreement": "MEDIUM vs HIGH"
+    },
+    {
+      "kind": "severity_split",
+      "file": "internal/payload/rangebuilder_test.go",
+      "line": 1,
+      "severity": "HIGH",
+      "problem": "No test exercises BuildEntries with ModeDiff or ModeBlocks; only ModeFiles is tested",
+      "score": 2,
+      "spread": 1,
+      "independence": 2,
+      "reviewers": [
+        "archer",
+        "dax"
+      ],
+      "disagreement": "MEDIUM vs HIGH"
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/payload/builder.go",
+      "line": 102,
+      "severity": "MEDIUM",
+      "problem": "`buildEntriesValidated` is a \"leaky\" internal method",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "otto",
+          "severity": "MEDIUM",
+          "problem": "`buildEntriesValidated` is a \"leaky\" internal method"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/payload/diff.go",
+      "line": 474,
+      "severity": "LOW",
+      "problem": "Modified rangeChunks error path (via zeroCtxChunks) not tested",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "LOW",
+          "problem": "Modified rangeChunks error path (via zeroCtxChunks) not tested"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/payload/rangebuilder.go",
+      "line": 24,
+      "severity": "LOW",
+      "problem": "`RangeBuilder` is not safe for concurrent use but doesn't enforce it",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "otto",
+          "severity": "LOW",
+          "problem": "`RangeBuilder` is not safe for concurrent use but doesn't enforce it"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/payload/rangebuilder_test.go",
+      "line": 36,
+      "severity": "LOW",
+      "problem": "Test assertion relies on execCount field accuracy; test could pass vacuously if counter misses zero-context diff",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "LOW",
+          "problem": "Test assertion relies on execCount field accuracy; test could pass vacuously if counter misses zero-context diff"
+        }
+      ]
+    }
+  ]
+}
