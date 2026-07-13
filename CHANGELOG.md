@@ -1,3 +1,15 @@
+## [22.3.0] - 2026-07-13
+
+Make the `pyparser` structural parser quote- and escape-aware so adversarial Python source no longer corrupts the structural hash by silently dropping real code.
+
+### Fixed
+
+- `pyparser` no longer treats a triple-quote (`"""`/`'''`) appearing inside a `#` comment as the start of a multi-line string — previously this flipped the scanner into string mode and swallowed every following line (including real `def`/`class` blocks) out of structural hashing.
+- `pyparser` no longer treats a triple-quote embedded inside a single-line string literal as a multi-line-string delimiter.
+- `pyparser`'s comment stripping is now string- and escape-aware: a `#` inside a string literal is no longer mistaken for a comment start, which had broken block-header detection and body nesting.
+
+*Shipped via /execute-epic (epic 22.3)*
+
 ## [22.2.0] - 2026-07-13
 
 Extract the duplicated Wasm guest ABI (alloc/free/emit/pins) shared by the `goparser`, `pyparser`, and `braceparser` AST plugins into one internal `guestabi` module, with the non-moving-GC pointer-packing assumption documented in a single canonical location.

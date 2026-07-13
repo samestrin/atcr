@@ -1,0 +1,143 @@
+[
+  {
+    "severity": "MEDIUM",
+    "file": "internal/astgroup/parsers/src/pyparser/main.go",
+    "line": 193,
+    "problem": "(scanLine) Missing test for triple-quote inside single-line string of the same quote type",
+    "fix": "Add test with `\"text \"\"\"` or `'text '''` to ensure same-quote triple-quote does not flip state",
+    "category": "testing",
+    "est_minutes": 20,
+    "evidence": "`if q != 0` at line 193 guards against triple-quote detection; `TestHost_PyParseTripleQuoteInsideString` only tests `\"` with `'''`, not `\"` with `\"\"\"`",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/astgroup/parsers/src/pyparser/main.go:198|Escape handling inside single-line string (`case '\\\\': i += 2`) has no test coverage|Add test with escaped quote inside string containing `#` to exercise escape logic|testing|20|`case '\\\\': i += 2` at line 198 is never executed; `TestHost_PyParseHashInsideString` uses unescaped string\nMEDIUM|internal/astgroup/parsers/src/pyparser/main.go:228|No test for `#` inside a triple-quoted (multi-line) string|Add test with a triple-quoted string containing `#` to verify it is not treated as comment|testing|20|`func scanTripleQuotes` at line 228 calls `scanLine` which ignores `#` inside `delim != \"\"`; no test exercises this\nMEDIUM|internal/astgroup/parsers/src/pyparser/main.go:193|Missing test for triple-quote inside single-line string of the same quote type|Add test with `\"text \"\"\"` or `'text '''` to ensure same-quote triple-quote does not flip state|testing|20|`if q != 0` at line 193 guards against triple-quote detection; `TestHost_PyPar…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 3
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/astgroup/parsers/src/pyparser/main.go",
+    "line": 198,
+    "problem": "(scanLine) Escape handling inside single-line string (`case '\\\\': i += 2`) has no test coverage",
+    "fix": "Add test with escaped quote inside string containing `#` to exercise escape logic",
+    "category": "testing",
+    "est_minutes": 20,
+    "evidence": "`case '\\\\': i += 2` at line 198 is never executed; `TestHost_PyParseHashInsideString` uses unescaped string",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/astgroup/parsers/src/pyparser/main.go:198|Escape handling inside single-line string (`case '\\\\': i += 2`) has no test coverage|Add test with escaped quote inside string containing `#` to exercise escape logic|testing|20|`case '\\\\': i += 2` at line 198 is never executed; `TestHost_PyParseHashInsideString` uses unescaped string\nMEDIUM|internal/astgroup/parsers/src/pyparser/main.go:228|No test for `#` inside a triple-quoted (multi-line) string|Add test with a triple-quoted string containing `#` to verify it is not treated as comment|testing|20|`func scanTripleQuotes` at line 228 calls `scanLine` which ignores `#` inside `delim != \"\"`; no test exercises this\nMEDIUM|internal/astgroup/parsers/src/pyparser/main.go:193|Missing test for triple-quote inside single-line string of the same quote type|Add test with `\"text \"\"\"` or `'text '''` to ensure same-quote triple-quote does not flip state|testing|20|`if q != 0` at line 193 guards against triple-quote detection; `TestHost_PyPar…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 1
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/astgroup/parsers/src/pyparser/main.go",
+    "line": 228,
+    "problem": "(scanLine) No test for `#` inside a triple-quoted (multi-line) string",
+    "fix": "Add test with a triple-quoted string containing `#` to verify it is not treated as comment",
+    "category": "testing",
+    "est_minutes": 20,
+    "evidence": "`func scanTripleQuotes` at line 228 calls `scanLine` which ignores `#` inside `delim != \"\"`; no test exercises this",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/astgroup/parsers/src/pyparser/main.go:198|Escape handling inside single-line string (`case '\\\\': i += 2`) has no test coverage|Add test with escaped quote inside string containing `#` to exercise escape logic|testing|20|`case '\\\\': i += 2` at line 198 is never executed; `TestHost_PyParseHashInsideString` uses unescaped string\nMEDIUM|internal/astgroup/parsers/src/pyparser/main.go:228|No test for `#` inside a triple-quoted (multi-line) string|Add test with a triple-quoted string containing `#` to verify it is not treated as comment|testing|20|`func scanTripleQuotes` at line 228 calls `scanLine` which ignores `#` inside `delim != \"\"`; no test exercises this\nMEDIUM|internal/astgroup/parsers/src/pyparser/main.go:193|Missing test for triple-quote inside single-line string of the same quote type|Add test with `\"text \"\"\"` or `'text '''` to ensure same-quote triple-quote does not flip state|testing|20|`if q != 0` at line 193 guards against triple-quote detection; `TestHost_PyPar…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 2
+    }
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/astgroup/parsers/src/pyparser/main.go",
+    "line": 171,
+    "problem": "`stripComment` now uses `scanLine` but no test for comment after a closed string",
+    "fix": "Add test like `x = \"a\" # comment` to verify comment stripping still works",
+    "category": "style",
+    "est_minutes": 15,
+    "evidence": "[otto] `...is quote- and escape-aware (epic 22.3)` / [dax] `stripComment` at line 333 calls `scanLine`; no test verifies comment after closed string is stripped",
+    "reviewers": [
+      "dax",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "justification": "LOW|internal/astgroup/parsers/src/pyparser/main.go:171|Comment restates the a-priori objective of the epic|Remove \"(epic 22.3)\" from the comment|style|2|`...is quote- and escape-aware (epic 22.3)`",
+    "source_report": {
+      "path": "sources/pool/raw/agent/otto/review.md",
+      "line": 3
+    }
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/astgroup/parsers/src/pyparser/main.go",
+    "line": 199,
+    "problem": "(scanLine) Backslash escape `i += 2` may skip past end of line without bounds check; boundary untested",
+    "fix": "Add test with backslash at end of line inside string to verify safe handling",
+    "category": "testing",
+    "est_minutes": 15,
+    "evidence": "`i += 2` at line 199 after `case '\\\\':`; no test for line ending with backslash inside string",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "MEDIUM|internal/astgroup/parsers/src/pyparser/main.go:198|Escape handling inside single-line string (`case '\\\\': i += 2`) has no test coverage|Add test with escaped quote inside string containing `#` to exercise escape logic|testing|20|`case '\\\\': i += 2` at line 198 is never executed; `TestHost_PyParseHashInsideString` uses unescaped string\nMEDIUM|internal/astgroup/parsers/src/pyparser/main.go:228|No test for `#` inside a triple-quoted (multi-line) string|Add test with a triple-quoted string containing `#` to verify it is not treated as comment|testing|20|`func scanTripleQuotes` at line 228 calls `scanLine` which ignores `#` inside `delim != \"\"`; no test exercises this\nMEDIUM|internal/astgroup/parsers/src/pyparser/main.go:193|Missing test for triple-quote inside single-line string of the same quote type|Add test with `\"text \"\"\"` or `'text '''` to ensure same-quote triple-quote does not flip state|testing|20|`if q != 0` at line 193 guards against triple-quote detection; `TestHost_PyPar…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 4
+    }
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/astgroup/parsers/src/pyparser/main.go",
+    "line": 221,
+    "problem": "(scanLine) Comment restates the a-priori objective of the epic",
+    "fix": "Remove \"(epic 22.3)\" from the comment",
+    "category": "style",
+    "est_minutes": 2,
+    "evidence": "`...appearing inside a # comment (epic 22.3)`",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "LOW|internal/astgroup/parsers/src/pyparser/main.go:221|Comment restates the a-priori objective of the epic|Remove \"(epic 22.3)\" from the comment|style|2|`...appearing inside a # comment (epic 22.3)`",
+    "source_report": {
+      "path": "sources/pool/raw/agent/otto/review.md",
+      "line": 5
+    }
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/astgroup/parsers/src/pyparser/main.go",
+    "line": 234,
+    "problem": "Comment restates the a-priori objective of the epic",
+    "fix": "Remove \"(epic 22.3)\" from the comment",
+    "category": "style",
+    "est_minutes": 2,
+    "evidence": "`...string span on this line is treated as string content, not a comment start (epic 22.3)`",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "LOW|internal/astgroup/parsers/src/pyparser/main.go:234|Comment restates the a-priori objective of the epic|Remove \"(epic 22.3)\" from the comment|style|2|`...string span on this line is treated as string content, not a comment start (epic 22.3)`",
+    "source_report": {
+      "path": "sources/pool/raw/agent/otto/review.md",
+      "line": 7
+    }
+  }
+]

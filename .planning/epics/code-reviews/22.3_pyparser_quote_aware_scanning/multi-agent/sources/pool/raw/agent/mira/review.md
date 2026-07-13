@@ -1,0 +1,3 @@
+
+
+No findings. The `scanLine`/`scanTripleQuotes`/`stripComment` changes are scoped correctly to the epic 22.3 acceptance criteria, correctly skip scanning after unquoted `#` comments, and correctly treat triple-quote tokens inside single-line string literals as content. No timeouts, unbounded resources, connection leaks, or observability gaps in the changed regions. The pre-existing escape-handling limitation in the heuristic parser is unchanged and outside this epic's scope.
