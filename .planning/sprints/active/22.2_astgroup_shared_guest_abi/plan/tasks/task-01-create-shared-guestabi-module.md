@@ -39,19 +39,19 @@ Create a new isolated Go module at `internal/astgroup/parsers/src/guestabi/` tha
 - `go.mod`
 
 ## Success Criteria
-- [ ] `internal/astgroup/parsers/src/guestabi/go.mod` exists with its own module path, `go 1.26`, and an isolated-module explanatory comment
-- [ ] `internal/astgroup/parsers/src/guestabi/guestabi.go` exists with `//go:build wasip1`, `package guestabi`, unexported `pins`, and exported `Alloc`, `Free`, `Lookup(p int32) ([]byte, bool)`, `Emit(v any) int64`
-- [ ] `Lookup` is the only exported read-back path for a pinned buffer; `pins` stays unexported so parsers go through `guestabi.Lookup` in their `parse()` instead of touching the map directly
-- [ ] The non-moving-GC pointer-packing assumption is documented once, as a doc comment above `pins` in `guestabi.go`, matching the substance of `goparser/main.go` lines 41-51
-- [ ] `Emit` accepts `any` and is not coupled to any parser's concrete `node` type
-- [ ] `GOOS=wasip1 GOARCH=wasm go build ./...` and `GOOS=wasip1 GOARCH=wasm go vet ./...` succeed when run from inside `internal/astgroup/parsers/src/guestabi/` (the wasip1 env is required — see step 4; a default-GOOS build/vet skips the tagged file and verifies nothing)
-- [ ] `go build ./...` at the repository root still succeeds and does not attempt to compile the new nested module
-- [ ] `go test ./internal/astgroup/...` passes unchanged (no parser wiring changed in this task)
-- [ ] No `//go:wasmexport` directive appears anywhere in `guestabi.go`
-- [ ] No changes made to `goparser/main.go`, `pyparser/main.go`, `braceparser/main.go`, or any parser's `go.mod` in this task
+- [x] `internal/astgroup/parsers/src/guestabi/go.mod` exists with its own module path, `go 1.26`, and an isolated-module explanatory comment
+- [x] `internal/astgroup/parsers/src/guestabi/guestabi.go` exists with `//go:build wasip1`, `package guestabi`, unexported `pins`, and exported `Alloc`, `Free`, `Lookup(p int32) ([]byte, bool)`, `Emit(v any) int64`
+- [x] `Lookup` is the only exported read-back path for a pinned buffer; `pins` stays unexported so parsers go through `guestabi.Lookup` in their `parse()` instead of touching the map directly
+- [x] The non-moving-GC pointer-packing assumption is documented once, as a doc comment above `pins` in `guestabi.go`, matching the substance of `goparser/main.go` lines 41-51
+- [x] `Emit` accepts `any` and is not coupled to any parser's concrete `node` type
+- [x] `GOOS=wasip1 GOARCH=wasm go build ./...` and `GOOS=wasip1 GOARCH=wasm go vet ./...` succeed when run from inside `internal/astgroup/parsers/src/guestabi/` (the wasip1 env is required — see step 4; a default-GOOS build/vet skips the tagged file and verifies nothing)
+- [x] `go build ./...` at the repository root still succeeds and does not attempt to compile the new nested module
+- [x] `go test ./internal/astgroup/...` passes unchanged (no parser wiring changed in this task)
+- [x] No `//go:wasmexport` directive appears anywhere in `guestabi.go`
+- [x] No changes made to `goparser/main.go`, `pyparser/main.go`, `braceparser/main.go`, or any parser's `go.mod` in this task
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -72,10 +72,10 @@ Create a new isolated Go module at `internal/astgroup/parsers/src/guestabi/` tha
 - None (this is the foundation task; Tasks 02 and 03 depend on it)
 
 ## Definition of Done
-- [ ] `internal/astgroup/parsers/src/guestabi/go.mod` and `guestabi.go` created and committed
-- [ ] `GOOS=wasip1 GOARCH=wasm go build ./...` and `GOOS=wasip1 GOARCH=wasm go vet ./...` succeed inside `internal/astgroup/parsers/src/guestabi/` (the wasip1 env is required — see step 4; a default-GOOS build/vet skips the tagged file and verifies nothing)
-- [ ] `guestabi` exports `Alloc`, `Free`, `Lookup`, and `Emit`; `pins` is unexported
-- [ ] `go build ./...` succeeds at the repository root with the new module present but excluded
-- [ ] `go test ./internal/astgroup/...` passes unchanged
-- [ ] Non-moving-GC pointer-packing assumption documented exactly once, in `guestabi.go`
-- [ ] No parser `main.go` or `go.mod` files modified in this task
+- [x] `internal/astgroup/parsers/src/guestabi/go.mod` and `guestabi.go` created and committed
+- [x] `GOOS=wasip1 GOARCH=wasm go build ./...` and `GOOS=wasip1 GOARCH=wasm go vet ./...` succeed inside `internal/astgroup/parsers/src/guestabi/` (the wasip1 env is required — see step 4; a default-GOOS build/vet skips the tagged file and verifies nothing)
+- [x] `guestabi` exports `Alloc`, `Free`, `Lookup`, and `Emit`; `pins` is unexported
+- [x] `go build ./...` succeeds at the repository root with the new module present but excluded
+- [x] `go test ./internal/astgroup/...` passes unchanged
+- [x] Non-moving-GC pointer-packing assumption documented exactly once, in `guestabi.go`
+- [x] No parser `main.go` or `go.mod` files modified in this task

@@ -69,15 +69,15 @@ Build and test each parser individually right after wiring it, before moving to 
 - `go.mod`
 
 ## Success Criteria
-- [ ] `goparser/main.go` no longer defines its own `pins`/`alloc`/`free`/`emit` implementation; its `wasmexport` wrappers delegate to `guestabi`.
-- [ ] `pyparser/main.go` no longer defines its own `pins`/`alloc`/`free`/`emit` implementation; its `wasmexport` wrappers delegate to `guestabi`.
-- [ ] `goparser/go.mod` and `pyparser/go.mod` each carry a `require`+`replace` pair pointing at `../guestabi`, mirroring the root module's `reconcile` pattern.
-- [ ] `GOOS=wasip1 GOARCH=wasm go build ./...` succeeds independently in both `internal/astgroup/parsers/src/goparser` and `internal/astgroup/parsers/src/pyparser`.
-- [ ] `braceparser` is untouched by this task (reserved for Task 03).
-- [ ] Root `go build ./...` and `go test ./internal/astgroup/...` still pass unchanged.
+- [x] `goparser/main.go` no longer defines its own `pins`/`alloc`/`free`/`emit` implementation; its `wasmexport` wrappers delegate to `guestabi`.
+- [x] `pyparser/main.go` no longer defines its own `pins`/`alloc`/`free`/`emit` implementation; its `wasmexport` wrappers delegate to `guestabi`.
+- [x] `goparser/go.mod` and `pyparser/go.mod` each carry a `require`+`replace` pair pointing at `../guestabi`, mirroring the root module's `reconcile` pattern.
+- [x] `GOOS=wasip1 GOARCH=wasm go build ./...` succeeds independently in both `internal/astgroup/parsers/src/goparser` and `internal/astgroup/parsers/src/pyparser`.
+- [x] `braceparser` is untouched by this task (reserved for Task 03).
+- [x] Root `go build ./...` and `go test ./internal/astgroup/...` still pass unchanged.
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -99,7 +99,7 @@ Build and test each parser individually right after wiring it, before moving to 
 - Task 01 (Create Shared guestabi Module) must be complete first
 
 ## Definition of Done
-- [ ] `goparser` and `pyparser` both import and delegate to `guestabi`; no local ABI implementation remains in either.
-- [ ] Both parsers' `go.mod` files carry the `require`+`replace` wiring and build cleanly with `GOOS=wasip1 GOARCH=wasm go build ./...`.
-- [ ] Root `go build ./...` and `go test ./internal/astgroup/...` pass with no changes required outside the four modified files.
-- [ ] `braceparser` remains untouched, ready for Task 03.
+- [x] `goparser` and `pyparser` both import and delegate to `guestabi`; no local ABI implementation remains in either.
+- [x] Both parsers' `go.mod` files carry the `require`+`replace` wiring and build cleanly with `GOOS=wasip1 GOARCH=wasm go build ./...`.
+- [x] Root `go build ./...` and `go test ./internal/astgroup/...` pass with no changes required outside the four modified files.
+- [x] `braceparser` remains untouched, ready for Task 03.

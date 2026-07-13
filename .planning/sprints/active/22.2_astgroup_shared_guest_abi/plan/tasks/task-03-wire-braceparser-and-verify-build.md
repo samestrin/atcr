@@ -55,16 +55,16 @@ Apply the same require+replace + thin-wrapper pattern used for `goparser`/`pypar
 - `internal/astgroup/parsers/SHA256SUMS`
 
 ## Success Criteria
-- [ ] `braceparser/main.go` no longer defines `pins`, `alloc`, `free`, or `emit` locally — only thin `//go:wasmexport` wrappers delegating to `guestabi`.
-- [ ] `braceparser/main.go`'s `parse()` looks up the pinned buffer via `buf, ok := guestabi.Lookup(ptr)` instead of the removed local `pins` map.
-- [ ] `braceparser/go.mod` has a `require` + `replace => ../guestabi` directive matching the pattern used in `goparser`/`pyparser`.
-- [ ] `go build ./...` succeeds for all three parser Wasm modules (go, python, brace-tagged variants).
-- [ ] `build.sh` produces all ten `.wasm` binaries (go/python/ts/php/rust/bash/java/kotlin/cpp/csharp) and a refreshed `SHA256SUMS`.
-- [ ] `TestEmbeddedParsersMatchManifest` (internal/astgroup/embed_test.go:15) passes against the regenerated binaries.
-- [ ] The full `internal/astgroup` test suite (embed_test.go, host_test.go, crosscompile_test.go) passes unchanged — no test files modified.
+- [x] `braceparser/main.go` no longer defines `pins`, `alloc`, `free`, or `emit` locally — only thin `//go:wasmexport` wrappers delegating to `guestabi`.
+- [x] `braceparser/main.go`'s `parse()` looks up the pinned buffer via `buf, ok := guestabi.Lookup(ptr)` instead of the removed local `pins` map.
+- [x] `braceparser/go.mod` has a `require` + `replace => ../guestabi` directive matching the pattern used in `goparser`/`pyparser`.
+- [x] `go build ./...` succeeds for all three parser Wasm modules (go, python, brace-tagged variants).
+- [x] `build.sh` produces all ten `.wasm` binaries (go/python/ts/php/rust/bash/java/kotlin/cpp/csharp) and a refreshed `SHA256SUMS`.
+- [x] `TestEmbeddedParsersMatchManifest` (internal/astgroup/embed_test.go:15) passes against the regenerated binaries.
+- [x] The full `internal/astgroup` test suite (embed_test.go, host_test.go, crosscompile_test.go) passes unchanged — no test files modified.
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
