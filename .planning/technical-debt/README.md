@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 4 | 0 |
-| MEDIUM | 2 | 20 | 1 |
-| LOW | 3 | 33 | 3 |
+| MEDIUM | 0 | 20 | 0 |
+| LOW | 0 | 33 | 0 |
 
 
-**Last Modified:** 2026-07-12 | **Open Items:** 5 | **Deferred Items:** 57 | **Resolved Items:** 4 | **Total Items:** 66
+**Last Modified:** 2026-07-13 | **Open Items:** 0 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 57
 
 ## Directory Structure
 
@@ -63,25 +63,6 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards �
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
-
-### [2026-07-12] From Sprint: 22.1_reconcile_verify_repo_root_threading
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| 1 | [x] | MEDIUM | cmd/atcr/reconcile.go:98 | runReconcile reads --repo and passes it to reconcile.Options{Root: repoRoot} with no check that the path exists or is a directory. A typo'd or nonexistent --repo does not fail: validateFindingPaths degrades to existence-only checks, so every finding resolves as file-not-found, gets a PathWarning, and is then silently dropped from the local-TD store by the f.PathWarning != "" skip (reconcile.go:207). The run exits 0 while quietly corrupting path validation and discarding the whole backlog. | After normalizing repoRoot (reconcile.go:98-105), os.Stat it and return usageError (exit 2) when it does not exist or is not a directory, matching the fail-loud contract used for a broken project config. Add a test passing --repo /nonexistent asserting exit 2. | error-handling | 30 | code-review | claude | MEDIUM |
-| 1 | [x] | LOW | cmd/atcr/verify.go:90 | The comment at verify.go:90-93 says repoRoot is the root the exec validator resolves go.mod against, but resolveExec/verify.ResolveExecBackend is invoked at verify.go:83 (before repoRoot is read at line 94) and receives only cfg.Project/proj.Sandbox, never repoRoot. The --exec preflight has no knowledge of --repo; the comment implies a coupling that does not exist and could mislead a maintainer. | Correct the comment to describe what actually consumes repoRoot (the skeptic snapshot in buildDispatcher and the redactor base) and drop or relocate the exec-validator go.mod claim. No code change; verify against resolveExec signature at verify.go:46-59. | maintainability | 5 | code-review | claude | MEDIUM |
-| 1 | [ ] | MEDIUM | cmd/atcr/verify.go:94 | runVerify threads --repo into verify.Verify(ctx, repoRoot, ...) with no existence check. A nonexistent --repo flows into buildDispatcher -> NewSnapshotManager(repoRoot).SnapshotFor(head); the snapshot fails and the harness failure is swallowed (skeptics degrade to unverifiable), so every finding silently becomes unverifiable and the command still exits 0 — a bad --repo yields a full run of garbage verdicts with no signal to the user. | Extract a shared helper normalizeRepoFlag(cmd) (string, error) that reads --repo, trims, defaults to ".", and ideally stats it, and call it from both handlers. Confirm existing reconcile/verify --repo tests still pass against the shared helper. | error-handling | 30 | code-review | claude | MEDIUM |
-| 1 | [ ] | LOW | cmd/atcr/verify.go:94 | The empty --repo -> "." normalization block is copy-pasted in reconcile.go:98-105 and verify.go:94-100 with only comment wording differing; commit ee7254b7 already had to fix both places at once, evidencing the drift cost. Any future change (existence check, ~ expansion, symlink resolution) must be made twice or the two commands silently diverge. | Extract a shared helper normalizeRepoFlag(cmd) (string, error) that reads --repo, trims, defaults to ".", and ideally stats it, and call it from both handlers. Confirm existing reconcile/verify --repo tests still pass against the shared helper. | error-handling | 30 | code-review | claude | MEDIUM |
-| 1 | [ ] | LOW | cmd/atcr/verify.go:101 | absRoot, _ := filepath.Abs(repoRoot) discards the error. filepath.Abs fails only when os.Getwd fails (deleted/unreadable CWD), leaving absRoot == "". That empty base is handed to log.NewRedactor and relativizePaths short-circuits on root == "", so absolute reviewed-repo paths are no longer stripped from reproduced --exec evidence before it is persisted into findings.json. Secret scrubbing still runs but absolute filesystem paths leak into the artifact. | Capture the error: absRoot, err := filepath.Abs(repoRoot); if err != nil return usageError(err). With --repo validated upstream, a Getwd failure is a genuine environment fault worth reporting. Assert the redactor receives a non-empty absolute base. | security | 15 | code-review | claude | MEDIUM |
-| 1 | [ ] | MEDIUM | cmd/atcr/verify_test.go:220 | TestVerifyCmd_RepoFlagThreadsReviewedRoot does not exercise the verify-side threading: with the no-skeptic registry the snapshot/dispatcher is never built, so repoRoot -> NewSnapshotManager and absRoot -> NewRedactor never run. Swapping absRoot/repoRoot or dropping the redactor wiring would leave the test green. There is also no verify-side test for the empty --repo "" normalization (verify.go:95-100) that reconcile_test.go:646 covers for reconcile. | Add a test asserting verify r --repo "" exits cleanly (exercises the empty-normalize branch), and a unit-level assertion that filepath.Abs of the passed --repo is what reaches NewRedactor, so a swap or regression is caught without a live model. | testing | 60 | code-review | claude | MEDIUM |
-
-### [2026-07-12] From Sprint: epic-22.1
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [x] | LOW | docs/verification.md:73 | The verification-gate doc lists reconcile/verify flags but omits the new --repo reviewed-repo-root override (Epic 22.1) | Add a --repo bullet to docs/verification.md noting it validates finding paths against a repo other than the CWD | DOCS | 15 | execute-epic-cumulative |
-| U | [x] | LOW | cmd/atcr/reconcile.go:96 | A nonexistent --repo path is not validated up front; reconcile/verify silently degrade to flagging every finding file-not-found instead of a clear error | Stat the --repo path once and return a usageError (exit 2) when it does not exist or is not a directory so a mistyped --repo fails loudly | ERROR_PATHS | 30 | execute-epic-independent |
-| U | [ ] | LOW | cmd/atcr/verify.go:92 | verify --repo threading into buildDispatcher's snapshot root is unverified hermetically (needs a live model); a refactor could silently drop it | Add a runVerify-level seam (injectable harness) that captures the repoRoot passed to buildDispatcher and assert the flag value propagates | UNDER_ENGINEERING | 30 | execute-epic-independent |
 
 ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
 

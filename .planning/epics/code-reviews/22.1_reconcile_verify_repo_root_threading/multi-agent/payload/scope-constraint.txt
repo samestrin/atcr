@@ -1,3 +1,7 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
 # Epic Plan 22.1: Thread Reviewed-Repo Root Through Reconcile/Verify
 
 - **Estimated time**: 1 day
@@ -18,9 +22,9 @@ Add an explicit `--repo` flag (or equivalent threaded path) to `atcr reconcile` 
 
 ## Acceptance Criteria
 
-- [x] `atcr reconcile <path> --repo <other-repo>` validates finding file paths against `<other-repo>`, not the CWD.
-- [x] Running `atcr reconcile`/verify from a non-repo-root CWD (with `--repo` unset, defaulting to `.`) behaves exactly as it does today — no regression for the common case.
-- [x] `go test ./...` passes; a new test covers reconcile validating findings for a repo other than the CWD.
+- [ ] `atcr reconcile <path> --repo <other-repo>` validates finding file paths against `<other-repo>`, not the CWD.
+- [ ] Running `atcr reconcile`/verify from a non-repo-root CWD (with `--repo` unset, defaulting to `.`) behaves exactly as it does today — no regression for the common case.
+- [ ] `go test ./...` passes; a new test covers reconcile validating findings for a repo other than the CWD.
 
 ## Components Touched
 
@@ -66,3 +70,5 @@ None.
 - HAS_CROSS_SYSTEM: false
 - Cited references checked: 1
 - Codebase search queries (spot-check): []
+----- END SPRINT PLAN -----
+

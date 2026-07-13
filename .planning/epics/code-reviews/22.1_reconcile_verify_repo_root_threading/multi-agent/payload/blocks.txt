@@ -1,0 +1,478 @@
+diff --git a/.planning/epics/active/22.1_reconcile_verify_repo_root_threading.md b/.planning/epics/completed/22.1_reconcile_verify_repo_root_threading.md
+similarity index 100%
+rename from .planning/epics/active/22.1_reconcile_verify_repo_root_threading.md
+rename to .planning/epics/completed/22.1_reconcile_verify_repo_root_threading.md
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index c9712ea4..41fe9fc7 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,17 +3,17 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 4 | 0 |
+ | MEDIUM | 0 | 20 | 0 |
+-| LOW | 0 | 33 | 0 |
++| LOW | 3 | 33 | 0 |
+ 
+ 
+-**Last Modified:** 2026-07-12 | **Open Items:** 0 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 57
++**Last Modified:** 2026-07-12 | **Open Items:** 3 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 60
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -63,58 +63,66 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
+ 
++### [2026-07-12] From Sprint: epic-22.1
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| U | [ ] | LOW | docs/verification.md:73 | The verification-gate doc lists reconcile/verify flags but omits the new --repo reviewed-repo-root override (Epic 22.1) | Add a --repo bullet to docs/verification.md noting it validates finding paths against a repo other than the CWD | DOCS | 15 | execute-epic-cumulative |
++| U | [ ] | LOW | cmd/atcr/reconcile.go:96 | A nonexistent --repo path is not validated up front; reconcile/verify silently degrade to flagging every finding file-not-found instead of a clear error | Stat the --repo path once and return a usageError (exit 2) when it does not exist or is not a directory so a mistyped --repo fails loudly | ERROR_PATHS | 30 | execute-epic-independent |
++| U | [ ] | LOW | cmd/atcr/verify.go:92 | verify --repo threading into buildDispatcher's snapshot root is unverified hermetically (needs a live model); a refactor could silently drop it | Add a runVerify-level seam (injectable harness) that captures the repoRoot passed to buildDispatcher and assert the flag value propagates | UNDER_ENGINEERING | 30 | execute-epic-independent |
++
+ ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go | Systemic symlink exposure across all five append-only ledgers (localdebt, scorecard, history, audit, debate/tools): each opens its shard with O_CREATE/O_WRONLY/O_APPEND and no O_NOFOLLOW, and MkdirAll follows symlinked path components, so a pre-planted symlink at the ledger path or a parent redirects appends outside the store. LOW: exploiting requires pre-existing local write access to a 0700 per-user/per-repo dir (same-uid, no trust-boundary crossing). localdebt already documents this as an accepted won't-fix (internal/localdebt/doc.go); tracked here so the systemic posture is visible, not localdebt-only. (intent_note: surfaced during 20.1 resolve-td; bundle into a future FS-safety pass, do not fix localdebt in isolation) | Do NOT harden localdebt alone (inconsistent, false security). Bundle into a future filesystem-safety epic: a shared GOOS-guarded O_NOFOLLOW append helper (precedent: internal/tools/open_unix.go and open_other.go) swapped across all five ledgers, plus symlink-planted unix-only tests. Prioritize only if a ledger moves to a shared/multi-user dir or a pentest/supply-chain audit flags it. Final-component only; parent-symlink resistance (openat2/RESOLVE_NO_SYMLINKS) is out of scope. | security | 480 | resolve-td | claude | MEDIUM |
+ 
+ ### [2026-07-11] From Sprint: 20.0_standalone_skill_release
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | go.mod:41 | `go install github.com/samestrin/atcr/cmd/atcr@latest` cannot work for external users. Two layered causes: the root go.mod carries a `replace ... => ./reconcile` directive (Go refuses to install any module whose published go.mod has a replace), and the binding cause is that the samestrin/atcr repo is PRIVATE so the module is not on the public proxy. Makes AC1 (go install), install.sh (AC4), and the go-install lines in README/docs unsatisfiable until the repo is public. (Deferred: .planning/epics/active/33.2_public_launch.md) | Resolve in Epic 33.2 (Public Launch): external `go install` is gated on the repo going public, which happens at launch (Epic 33 cluster). 33.2 makes the repo public, publishes `reconcile` + drops the replace directive, and delivers install.sh + a real-install integration test. | security | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-09] From Sprint: 19.7_live_model_resolution
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/personas/drift.go | For a bound persona the `family` JSON field is the bare binding token (glm); for a bindingless persona it is the derived vendor/tier prefix (anthropic/claude-opus) — two shapes under one key that a 19.8 agent grouping on `family` would see inconsistently. (intent_note: deferred per sprint-plan §5.6 — shape documented as advisory; normalization deferred to 19.8 (TD-008)) | Phase 8/later: when wiring `models refresh` against the live catalog, confirm the `~…-latest` ids are present; else skip the `missing` check for a lock slug equal to an `aliasTable` value (or resolve alias locks through the passthrough before the catalog lookup) and add a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 2 | [/] | LOW | internal/personas/upgrade.go | `resolveNewestInPrefix` selects the newest-by-`created` catalog member, but the lock gate advances only when the extracted semver is a version-advance (`isNewer`), so a newer-created-but-lower-semver hotfix slug is selected by the resolver yet blocked by the gate and silently not adopted. | Deferred (Story 6/later, semver philosophy): keep the semver isNewer gate authoritative for the lock-advance decision (consistent with the major-bump re-validation gate and the explicit-upgrade/reproducibility posture), but emit a visible signal in the personas upgrade before→after report or a models check finding when resolveNewestInPrefix's created-order pick diverges from what the gate accepts, rather than silently leaving the lock stale; cover the divergent hotfix case with a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | LOW | docs/personas-authoring.md | AC 08-03 Scenario 3 links the shipped persona doc sections to `../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/*.md`; those links resolve now but `/finalize-sprint` moves the sprint active/→completed/, after which the active/ path 404s in the shipped docs. | Future docs-stabilization pass: update the two links to the completed/ path after archival, or promote the durable plan documentation into a stable home (docs/ or .planning/specifications/) and point the persona docs there; add a link-check that fails on a dangling docs→.planning link. | docs | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-08] From Sprint: 19.6_community_registry_hub
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/init.go:47 / cmd/atcr/quickstart.go:102 | `init`/`quickstart` fetch-and-pin the roster `builtins.Names()` (the 9 model-agnostic built-ins: bruce/greta/kai/mira/dax/otto/sasha/penny/ingrid), but the shipped `personas/community/index.json` publishes only the 10 model-indexed library personas (anthony…glenna) — a fully disjoint set. (intent_note: deferred per sprint-plan TD-011) (Deferred: Epic Plan .planning/epics/active/19.7_live_model_resolution.md — design-sprint decision; lean toward publishing built-ins into the community channel behind a model-agnostic tag/gate) | rebuild init/quickstart model enablement so online `init`/`quickstart` deliver a working, non-noisy persona set: either publish the built-in lenses into the community channel behind a model-agnostic gate carve-out (keeps C2), or align the roster with what the index publishes and drop the misleading skip-warning. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | u | [/] | LOW | cmd/atcr/init.go:142 | installCommunityPersonas records each candidate's preExisted flag then, on a later roster failure, rollback() removes any candidate path where !preExisted && fileExists. If another process creates <name>.yaml/.md between candidate recording (line 142) and the eventual rollback, the rollback deletes that not-ours file believing this run created it. The window is narrow and needs concurrency; the actual overwrite protection lives in InstallUnit. (Accepted LOW-severity risk — atcr is a single-user local CLI; if ever addressed, add an inode+mtime re-stat guard to the rollback rather than changing InstallUnit's return contract.) | Have rollback delete only files it observed itself successfully create (capture created paths from InstallUnit's result rather than re-deriving from candidates), or re-stat and skip if inode/mtime differs from what this run wrote. Verify with a concurrency test that plants a file mid-roster and asserts it survives rollback. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-06] From Sprint: 19.5_response_truncation_failover
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | LOW | internal/fanout/artifacts.go:214 | The TD-019 memo short-circuit only fires for parsedFindingCount==0, so a truncated-with-findings result (memo set to >=1 by the failover gate) re-runs stream.ParseModelOutput at line 217 — the redundant parse the refactor aimed to remove, though bounded to the rare truncated-with-findings path. | Cache the parsed []Finding slice on Result rather than only its length so findingsFor can reuse it, or accept the bounded cost. (Won't fix 2026-07-06: accepted the bounded re-parse cost — the parsedFindingCount memo already avoids the redundant parse on the common truncated+zero-finding path; caching the full slice risks aliasing via findingsFor's in-place Finding.Reviewer mutation and downstream grounding/constraint filtering.) | performance | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: 19.4_history_time_sharding
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | cmd/atcr/review.go:285 | Multiple concurrent atcr review processes will append to the same YYYY-MM.jsonl simultaneously without synchronization, causing interleaved JSON lines and ledger corruption (Accepted 2026-07-06: won't-fix — concurrent-append O_APPEND safety is a project-wide TD-004 tradeoff shared by all 5 append-only ledgers (audit, debate, scorecard, tools, history), outside epic 19.4's scope; matches the identical writer.go precedent accepted 2026-07-04 at README:112. Low probability (small per-batch writes are atomic on Linux/macOS O_APPEND) and low impact (a torn line is skipped by Load, no cross-data corruption); a cross-platform lock dependency is not justified for one ledger.) | Acquire a file lock (flock) on the shard or a dedicated lockfile before opening for append | concurrency | 40 | code-review | brad | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/history/shard.go:32 | LoadAll/LoadShards read and JSON-unmarshal every monthly shard on disk, then Filter discards records older than the --since cutoff. The justification for monthly sharding is the YYYY-MM filenames, but the read path throws that structure away: a repo with years of history running the common --since 30d (or the 90d default) still parses every archived month it will immediately drop. (Deferred 2026-07-06: not worth doing now — LOW-value perf optimization; the epic's 1-2yr history bound caps the scan at 12-24 small files. If revisited, add an additive LoadShardsSince(dir, cutoff) variant rather than changing LoadShards/LoadAll signatures, which would ripple into 7+ existing test call sites for no measured benefit.) | Prune glob results in LoadShards by comparing each shard's YYYY-MM stem against the cutoff month before calling Load; pass a lower-bound month into LoadShards/LoadAll (or add a windowed variant) so shards entirely before the window are never opened. Verify with a benchmark over 60 seeded shards and --since 30d reading at most 1-2 files. | performance | 60 | code-review | claude, dax, brad | HIGH |
+ | 3 | [/] | LOW | internal/history/writer.go:39 | Append does an unlocked O_APPEND write and documents that a large buffer split across multiple write() syscalls can be torn by a concurrent append. Epic 19.4 does not change the mechanism but changes exposure: history is now git-tracked and the project is run as multiple concurrent sessions appending to the same YYYY-MM.jsonl within a month. A torn line is silently dropped by Load's malformed-line skip, so lost findings are invisible; sharding by month did not reduce intra-month contention. (Accepted 2026-07-06: won't-fix — same history.Append write site and same decision as cmd/atcr/review.go:285 (resolved in lockstep); no cross-platform lock dependency added. Mirrors the 2026-07-04 accepted precedent for this exact O_APPEND pattern.) | If a hard guarantee is wanted wrap the shard write in an advisory file lock (flock) consistent with the mkdir-flock pattern used in the planning tooling; otherwise document that concurrent same-month runs can lose records. Verify with a stress test of N concurrent Appends and a line-count assertion. | error-handling | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: epic-19.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/history/shard.go:32 | LoadShards loads every shard into memory before Filter applies --since, so a narrow window still reads all shards (acceptable within the stated 1-2yr bound; no month-prefix pruning) (Deferred 2026-07-06: duplicate of the MEDIUM month-pruning item at this same line; same decision — defer, add LoadShardsSince additively if ever picked up.) | Skip shard files whose YYYY-MM stem is entirely older than now-since before loading, to keep long histories fast | UNDER_ENGINEERING | 30 | execute-epic-independent |
+ 
+ ### [2026-07-05] From Sprint: epic-19.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | cmd/atcr/review.go:384 | The audit hook re-reads sources/pool/findings.txt that the history hook read moments earlier in the same review, so the pool file is parsed twice per review run | Parse the pool findings once in the CLI layer and pass the finding set to both history.RecordReview and audit.RecordReview, or expose a shared parse result (Won't-fix: accepted — the duplicate parse mirrors internal/history's independent capture pattern per epic design; not worth a cross-package signature refactor for a sub-ms, once-per-run gain.) | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-07-05] From Review: pr-105-recovery
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 063d0027..461ba3b5 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,18 @@
++## [22.1.0] - 2026-07-12
++
++Thread the reviewed-repo root through `atcr reconcile` and `atcr verify` via a new `--repo` flag, so validating findings against a repo other than the current directory (or running from a non-repo-root CWD) no longer falsely flags every finding as "file not found."
++
++### Added
++
++- `atcr reconcile --repo <path>` — validates finding file paths against the given repo root instead of the current directory. Defaults to `.`, preserving prior behavior.
++- `atcr verify --repo <path>` — threads the same reviewed-repo root into the skeptics' code snapshot and the evidence redactor, kept consistent with `atcr reconcile --repo`. Defaults to `.`.
++
++### Fixed
++
++- An explicit empty `--repo` on either command now normalizes to the current directory rather than silently disabling path validation.
++
++*Shipped via /execute-epic (epic 22.1)*
++
+ ## [22.0.0] - 2026-07-12
+ 
+ Reap the entire process group when a local auto-fix validation command times out, so grandchild processes spawned by shells like `sh -c make ...` are killed instead of left running past the deadline.
+diff --git a/cmd/atcr/reconcile.go b/cmd/atcr/reconcile.go
+index a854ea6d..1d471cff 100644
+--- a/cmd/atcr/reconcile.go
++++ b/cmd/atcr/reconcile.go
+@@ -38,11 +38,12 @@ truthy value (1, true) to revert to legacy line-proximity-only clustering; a
+ falsy, unparseable, or unset value keeps AST grouping on.`,
+ 		Args: usageArgs(cobra.MaximumNArgs(1)),
+ 		RunE: runReconcile,
+ 	}
++	cmd.Flags().String("repo", ".", "repo root to validate finding file paths against (default: current directory)")
+ 	cmd.Flags().String("fail-on", "", "exit 1 if any finding at/above this severity survives (CRITICAL, HIGH, MEDIUM, LOW)")
+ 	cmd.Flags().Bool("require-verified", false, "with --fail-on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate")
+ 	cmd.Flags().StringSlice("sources", nil, "restrict reconcile to these source directories (default: all)")
+ 	cmd.Flags().Bool("no-scorecard", false, "skip writing scorecard records to the local store")
+ 	cmd.Flags().Bool("no-local-debt", false, "skip writing reconciled findings to the local TD store")
+ 	return cmd
+ }
+@@ -50,104 +51,118 @@ falsy, unparseable, or unset value keeps AST grouping on.`,
+ func runReconcile(cmd *cobra.Command, args []string) error {
+ 	// Diagnostics route through the shared context logger so they honor LOG_LEVEL,
+ 	// redaction, and correlation; the discard fallback keeps this nil-safe when no
+ 	// logger was wired (no reliance on slog.Default). User-facing summary output
+ 	// still goes to stdout (OutOrStdout) unchanged.
+ 	logger := log.FromContext(cmd.Context())
+ 
+ 	// Resolve the gate threshold (validated against the closed enum) BEFORE any
+ 	// I/O so a bad value fails fast as a usage error (exit 2). The --fail-on flag
+ 	// wins; absent it, the project config's fail_on is the default gate.
+ 	threshold, err := resolveGateThreshold(cmd)
+ 	if err != nil {
+ 		return err
+ 	}
+ 
+ 	// --require-verified is meaningless without a gate: a strict gate that never
+ 	// runs gives false confidence (the "gate that catches nothing" failure mode
+ 	// Epic 3.0 exists to eliminate). Fail fast as a usage error (AC 05-01 EC3).
+ 	requireVerified, _ := cmd.Flags().GetBool("require-verified")
+ 	if requireVerified && threshold == "" {
+ 		return usageError(errors.New("--require-verified requires --fail-on"))
+ 	}
+ 
+ 	arg := ""
+ 	if len(args) == 1 {
+ 		// Trim for parity with runScorecard (scorecard.go): a trailing-whitespace
+ 		// or quoted-blank arg becomes the empty default-anchor path rather than a
+ 		// raw value. anchorDir trims too, so this is belt-and-suspenders that keeps
+ 		// the two command handlers visibly consistent.
+ 		arg = strings.TrimSpace(args[0])
+ 	}
+ 	reviewDir, err := resolveReviewDir(arg)
+ 	if err != nil {
+ 		return usageError(err) // missing/incomplete review → exit 2
+ 	}
+ 
+ 	// A fan-out-managed review that has not written its completion signal is a
+ 	// usage error: reconciling mid-run would silently read a partial agent set.
+ 	if err := fanout.EnsureReviewComplete(reviewDir, filepath.Base(reviewDir)); err != nil {
+ 		return usageError(err)
+ 	}
+ 
++	// The reviewed-repo root that finding file-path validation resolves against
++	// (Epic 22.1). Defaults to "." (the CWD == repo-root operating assumption),
++	// preserving pre-22.1 behavior; --repo <other-repo> lets reconcile validate
++	// findings against a repo other than the CWD, or from a non-repo-root CWD,
++	// instead of falsely flagging every path as "file not found".
++	repoRoot, _ := cmd.Flags().GetString("repo")
++	if strings.TrimSpace(repoRoot) == "" {
++		// An explicit empty --repo would set Root="", silently disabling path
++		// validation AND AST grouping — the opposite of the intended default.
++		// Normalize to "." so empty and unset behave identically, and stay
++		// consistent with `atcr verify --repo`.
++		repoRoot = "."
++	}
++
+ 	sources, _ := cmd.Flags().GetStringSlice("sources")
+ 	res, err := reconcile.RunReconcile(cmd.Context(), reviewDir, sources, reclib.Options{
+ 		ReconciledAt: time.Now(),
+ 		Partial:      fanout.ReadManifestPartial(reviewDir),
+-		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
++		Root:         repoRoot, // validate finding file paths against --repo (Epic 22.1; default ".")
+ 	})
+ 	if err != nil {
+ 		// An I/O failure is an infrastructure/usage error (exit 2), never the
+ 		// gate's exit 1 — and consistent with the one-shot review path.
+ 		return usageError(err)
+ 	}
+ 
+ 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s) from %d source(s) -> %s\n",
+ 		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),
+ 		filepath.Join(reviewDir, "reconciled"))
+ 
+ 	// Emit the per-run scorecard (Epic 3.3) via the shared bridge both reconcile
+ 	// entry points call (CLI here, MCP atcr_reconcile handler), so the two never
+ 	// diverge. Best-effort: a scorecard failure is logged but never fails the
+ 	// reconcile (AC 01-01). --no-scorecard suppresses emission for this run
+ 	// (Story 5); Emit gates on it before any I/O.
+ 	noScorecard, _ := cmd.Flags().GetBool("no-scorecard")
+ 	scorecard.EmitForReconcile(reviewDir, res, scorecard.EmitOpts{NoScorecard: noScorecard, Diag: cmd.ErrOrStderr()})
+ 
+ 	// Persist the run's reconciled findings into the .atcr/-scoped local TD store
+ 	// (Epic 20.1 Story 2) so standalone/public users accumulate a durable backlog
+ 	// across runs, not just one review's directory. Best-effort and non-fatal —
+ 	// mirroring the scorecard emit above: a persistence failure is logged to the
+ 	// diagnostics channel and never changes runReconcile's return value or the
+ 	// reconcile gate's exit code. --no-local-debt suppresses this for the run.
+ 	noLocalDebt, _ := cmd.Flags().GetBool("no-local-debt")
+ 	persistLocalDebt(reviewDir, res, noLocalDebt, cmd.ErrOrStderr())
+ 
+ 	// TD-004: warn when verify never ran — the gate would trivially pass
+ 	// everything. Routed through the context logger so it honors LOG_LEVEL and is
+ 	// correlated; visible at the default info level.
+ 	if requireVerified {
+ 		if verr := reconcile.ValidateRequireVerified(reviewDir); verr != nil {
+ 			logger.Warn("--require-verified set but verify never ran", "detail", verr)
+ 		}
+ 	}
+ 
+ 	return gateFindings(res, threshold, requireVerified)
+ }
+ 
+ // persistLocalDebt appends the run's reconciled findings to the .atcr/-scoped
+ // local TD store (Epic 20.1 Story 2). It is a best-effort, non-fatal side effect
+ // modeled on scorecard.EmitForReconcile: every failure is logged to diag and the
+ // function always returns cleanly, so the reconcile's own return value and the
+ // gate's exit code are never affected by a persistence problem.
+ //
+ // It reads from res.JSONFindings() (NOT res.Findings) so the Epic 18.3
+ // Justification/SourceReport enrichment is carried through — those fields live
+ // only on the cached JSONFinding layer. A zero-finding run does no I/O (no store
+ // directory is created).
+ //
+ // Dedup is write-time by finding id (history.FindingID(file,line,problem), via
+ // Record.StampID): a single full-history ReadAll seeds the set of ids already in
+ // the store, and each new record is appended only if its id is unseen — the same
+ // set also collapses in-run duplicates (two findings that hash to one id write
+ // once). A dedup-read failure fails OPEN toward append (log + treat store as
+ // empty) rather than silently dropping the whole run's backlog.
+diff --git a/cmd/atcr/reconcile_test.go b/cmd/atcr/reconcile_test.go
+index f838233d..4ce8be80 100644
+--- a/cmd/atcr/reconcile_test.go
++++ b/cmd/atcr/reconcile_test.go
+@@ -3,22 +3,23 @@ package main
+ import (
+ 	"bytes"
+ 	"context"
++	"encoding/json"
+ 	"io"
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
+ 	"testing"
+ 
+ 	"github.com/spf13/cobra"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ 
+ 	"github.com/samestrin/atcr/internal/localdebt"
+ 	"github.com/samestrin/atcr/internal/log"
+ 	"github.com/samestrin/atcr/internal/reconcile"
+ 	"github.com/samestrin/atcr/internal/scorecard"
+ )
+ 
+ // countScorecardLines totals the JSONL record lines in the isolated per-user
+ // scorecard store, so a test can assert how many records a reconcile run wrote
+ // (or that --no-scorecard wrote none). A missing store directory counts as zero.
+@@ -600,3 +601,49 @@ func TestGateThresholdReaders_OneWhitespaceSemantic(t *testing.T) {
+ 		}
+ 	}
+ }
++
++// reconciledPathWarning reads the first reconciled finding's path_warning from a
++// review's reconciled/findings.json, so a test can assert whether path
++// validation flagged the finding as hallucinated (Epic 5.0 signal).
++func reconciledPathWarning(t *testing.T, id string) string {
++	t.Helper()
++	data, err := os.ReadFile(filepath.Join(".atcr", "reviews", id, "reconciled", "findings.json"))
++	require.NoError(t, err)
++	var findings []reconcile.JSONFinding
++	require.NoError(t, json.Unmarshal(data, &findings))
++	require.NotEmpty(t, findings, "expected at least one reconciled finding")
++	return findings[0].PathWarning
++}
++
++// TestReconcileCmd_RepoFlagValidatesAgainstOtherRepo proves the Epic 22.1 fix:
++// --repo threads the reviewed-repo root into path validation, so a finding whose
++// cited file exists in <other-repo> (but not the CWD) validates clean instead of
++// being falsely flagged "file not found". The control run (default --repo=.)
++// still flags the same finding, guarding the common case against regression.
++func TestReconcileCmd_RepoFlagValidatesAgainstOtherRepo(t *testing.T) {
++	isolate(t) // CWD is an empty temp dir — x.go does not exist here
++
++	// The "other repo" is a separate dir that DOES contain the cited file.
++	otherRepo := t.TempDir()
++	require.NoError(t, os.WriteFile(filepath.Join(otherRepo, "x.go"), []byte("package x\n"), 0o644))
++
++	fixtureReview(t, "r", map[string]string{
++		"sources/host/findings.txt": "HIGH|x.go:1|boom|fix|security|10|ev|host\n",
++	})
++
++	// With --repo pointing at the other repo, x.go resolves → no path warning.
++	require.Equal(t, 0, execCmd(t, "reconcile", "r", "--repo", otherRepo))
++	require.Empty(t, reconciledPathWarning(t, "r"),
++		"a finding validated against --repo <other-repo> must carry no path warning")
++
++	// Control: default --repo=. (the CWD, where x.go is absent) still flags it.
++	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
++	require.NotEmpty(t, reconciledPathWarning(t, "r"),
++		"the default validation root must still flag a hallucinated path (no regression)")
++
++	// An explicit empty --repo normalizes to "." rather than silently disabling
++	// validation (Epic 22.1 hardening): the hallucinated path is still flagged.
++	require.Equal(t, 0, execCmd(t, "reconcile", "r", "--repo", ""))
++	require.NotEmpty(t, reconciledPathWarning(t, "r"),
++		"an empty --repo must normalize to the CWD, not disable path validation")
++}
+diff --git a/cmd/atcr/verify.go b/cmd/atcr/verify.go
+index 2dc55977..af0d3d43 100644
+--- a/cmd/atcr/verify.go
++++ b/cmd/atcr/verify.go
+@@ -19,26 +19,27 @@ import (
+ // newVerifyCmd builds `atcr verify`: run skeptics over a review's reconciled,
+ // deduplicated findings and re-emit the artifacts with verdicts and confidence
+ // v2. It is the standalone counterpart to `atcr review --verify` and shares the
+ // same internal/verify.Verify orchestration as the atcr_verify MCP tool.
+ func newVerifyCmd() *cobra.Command {
+ 	cmd := &cobra.Command{
+ 		Use:   "verify [id-or-path]",
+ 		Short: "Run adversarial skeptics over reconciled findings",
+ 		Long: "Run adversarial verification over a review's reconciled findings: a skeptic " +
+ 			"(a different model than any reviewer credited on the finding) tries to refute " +
+ 			"each finding using the read-only tool loop, then verdicts are written back as " +
+ 			"confidence-v2 tiers. Runs after `atcr reconcile`; reads reconciled/findings.json.",
+ 		Args: usageArgs(cobra.MaximumNArgs(1)),
+ 		RunE: runVerify,
+ 	}
++	cmd.Flags().String("repo", ".", "repo root skeptics inspect and validate finding file paths against (default: current directory)")
+ 	cmd.Flags().Bool("fresh", false, "re-verify findings that already carry a verdict")
+ 	cmd.Flags().Bool("thorough", false, "use 3 skeptics per finding with majority rule (default 1)")
+ 	cmd.Flags().String("min-severity", "", "skip findings below this severity floor: CRITICAL, HIGH, MEDIUM, LOW (default MEDIUM)")
+ 	cmd.Flags().Bool("exec", false, "opt-in: let skeptics reproduce findings by running tests/scripts in a sandbox; refuses without a configured [sandbox] block in .atcr/config.yaml that passes a preflight check")
+ 	return cmd
+ }
+ 
+ // resolveExec implements the `--exec` opt-in gate (Epic 11.0) for both `verify`
+ // and `review --verify`. When --exec is absent it is a no-op (nil backend). When
+ // present it REQUIRES a configured sandbox backend that passes a preflight check;
+ // any failure is a usage error (exit 2) so the command refuses without executing.
+@@ -60,63 +61,74 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
+ func runVerify(cmd *cobra.Command, args []string) error {
+ 	// Validate --min-severity against the closed enum BEFORE any I/O so a bad
+ 	// value fails fast as a usage error (exit 2), per AC 04-01 Error Scenario 2.
+ 	minSev, err := verifyMinSeverity(cmd)
+ 	if err != nil {
+ 		return err
+ 	}
+ 
+ 	arg := ""
+ 	if len(args) == 1 {
+ 		arg = args[0]
+ 	}
+ 	reviewDir, err := resolveReviewDir(arg)
+ 	if err != nil {
+ 		return verifyFailureError(err) // missing/incomplete review → exit 2
+ 	}
+ 
+ 	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+ 	if err != nil {
+ 		return usageError(err) // missing/invalid registry → exit 2 (AC 04-01 Error Scenario 3)
+ 	}
+ 
+ 	execBackend, execTestCmd, execTimeout, err := resolveExec(cmd, cfg.Project)
+ 	if err != nil {
+ 		return err // refuse-without-backend / preflight failure (exit 2)
+ 	}
+ 
+ 	fresh, _ := cmd.Flags().GetBool("fresh")
+ 	thorough, _ := cmd.Flags().GetBool("thorough")
+-	absRoot, _ := filepath.Abs(".")
+-	res, err := verify.Verify(cmd.Context(), ".", reviewDir, cfg.Registry, verify.Options{
++	// The reviewed-repo root skeptics inspect and the exec validator resolves
++	// go.mod against (Epic 22.1). Defaults to "." (the CWD == repo-root operating
++	// assumption), preserving pre-22.1 behavior; --repo <other-repo> threads a
++	// repo other than the CWD — kept consistent with `atcr reconcile --repo`.
++	repoRoot, _ := cmd.Flags().GetString("repo")
++	if strings.TrimSpace(repoRoot) == "" {
++		// Normalize an explicit empty --repo to "." so empty and unset behave
++		// identically here and in `atcr reconcile --repo` (rather than passing ""
++		// as the snapshot root while the redactor silently uses the CWD).
++		repoRoot = "."
++	}
++	absRoot, _ := filepath.Abs(repoRoot)
++	res, err := verify.Verify(cmd.Context(), repoRoot, reviewDir, cfg.Registry, verify.Options{
+ 		Fresh:             fresh,
+ 		Thorough:          thorough,
+ 		MinSeverity:       minSev,
+ 		SharedTimeoutSecs: cfg.Settings.TimeoutSecs,
+ 		ExecBackend:       execBackend,
+ 		ExecTestCmd:       execTestCmd,
+ 		ExecTimeout:       execTimeout,
+ 		// Scrub configured registry secrets from reproduced exec evidence before it
+ 		// is persisted into findings.json (Epic 11.0). This path holds only the
+ 		// registry, so secrets resolve via RegistrySecretValues, not a PreparedReview.
+ 		Redactor: log.NewRedactor(absRoot, fanout.RegistrySecretValues(cfg.Registry)...),
+ 	})
+ 	if err != nil {
+ 		if errors.Is(err, verify.ErrNoReconciledFindings) {
+ 			// Plain error (exit 1) with the cross-entry-point guidance (AC 04-04
+ 			// Error Scenario 1): no stack trace, names the path, suggests reconcile.
+ 			return fmt.Errorf("no reconciled findings found in %s — run 'atcr reconcile' first", reviewDir)
+ 		}
+ 		return usageError(err)
+ 	}
+ 
+ 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+ 		"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable -> %s\n",
+ 		res.FindingsProcessed, res.VerdictCounts.Confirmed, res.VerdictCounts.Refuted,
+ 		res.VerdictCounts.Unverifiable, filepath.Join(reviewDir, "reconciled"))
+ 	return nil
+ }
+ 
+ // verifyMinSeverity reads and validates the --min-severity flag, returning the
+ // canonical threshold or "" when unset (the pipeline then applies the registry
+ // verify.min_severity, defaulting to MEDIUM). An invalid value is a usage error
+ // (exit 2). Whitespace-only is treated as unset, matching the --fail-on readers.
+diff --git a/cmd/atcr/verify_test.go b/cmd/atcr/verify_test.go
+index ffc0940a..521beb02 100644
+--- a/cmd/atcr/verify_test.go
++++ b/cmd/atcr/verify_test.go
+@@ -208,3 +208,31 @@ func TestVerifyCmd_FreshReverifies(t *testing.T) {
+ 	require.Equal(t, 0, code)
+ 	require.Equal(t, "unverifiable", readFindingVerdict(t, "r"), "--fresh re-attempts; no skeptic -> unverifiable")
+ }
++
++// TestVerifyCmd_RepoFlagThreadsReviewedRoot proves Epic 22.1 task 2: `atcr verify`
++// grows a --repo flag that threads the reviewed-repo root (default ".") into
++// verify.Verify's repoRoot — the root skeptics inspect and the exec validator
++// resolves go.mod against — replacing the hardcoded "." convention. Asserted
++// hermetically via flag acceptance plus no-regression of the no-skeptic pipeline:
++// repoRoot's deep effect only surfaces when a skeptic snapshot is built (which
++// needs a live model), so the reconcile behavioral test covers path validation
++// end to end while this guards the verify-side threading and the common case.
++func TestVerifyCmd_RepoFlagThreadsReviewedRoot(t *testing.T) {
++	isolate(t)
++	writeVerifyRegistry(t)
++	otherRepo := t.TempDir()
++	verifyFixture(t, "r", []reconcile.JSONFinding{{
++		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x",
++	}})
++	code, _ := execCmdCapture(t, "verify", "r", "--repo", otherRepo)
++	require.Equal(t, 0, code, "--repo must be accepted and must not regress the pipeline")
++	// The no-skeptic pipeline still ran to completion against the fixture.
++	require.Equal(t, "unverifiable", readFindingVerdict(t, "r"))
++}
++
++// TestVerifyCmd_RepoFlagInHelp documents the --repo flag surface (Epic 22.1).
++func TestVerifyCmd_RepoFlagInHelp(t *testing.T) {
++	isolate(t)
++	_, help := execCmdCapture(t, "verify", "--help")
++	require.Contains(t, help, "--repo")
++}

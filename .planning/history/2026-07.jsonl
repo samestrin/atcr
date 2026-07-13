@@ -106,3 +106,10 @@
 {"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"MEDIUM","id":"39a275ec16669ede","file":"internal/verify/localvalidate.go","category":"correctness"}
 {"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"LOW","id":"a7c4c358c6216412","file":"internal/verify/localvalidate_pgroup_unix_test.go","category":"testing"}
 {"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"LOW","id":"46392f2a84d89073","file":"internal/verify/localvalidate_pgroup_unix.go","category":"idiom"}
+{"ts":"2026-07-12T21:58:02.199464-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"dc568cd55dbcd63f","file":"cmd/atcr/reconcile.go","category":"correctness"}
+{"ts":"2026-07-12T21:58:02.199464-07:00","package":"cmd/atcr","severity":"LOW","id":"520a618ea455b0c8","file":"cmd/atcr/verify.go","category":"operational-hazard"}
+{"ts":"2026-07-12T21:58:02.199464-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"d13a31d4cd196363","file":"cmd/atcr/reconcile_test.go","category":"testing"}
+{"ts":"2026-07-12T21:58:02.199464-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"43e68d4631cb1d8c","file":"cmd/atcr/verify_test.go","category":"testing"}
+{"ts":"2026-07-12T21:58:02.199464-07:00","package":"cmd/atcr","severity":"LOW","id":"10b21ae7f73639c1","file":"cmd/atcr/reconcile.go","category":"error_paths"}
+{"ts":"2026-07-12T21:58:02.199464-07:00","package":"cmd/atcr","severity":"LOW","id":"51b85c879f996f73","file":"cmd/atcr/reconcile.go","category":"style"}
+{"ts":"2026-07-12T21:58:02.199464-07:00","package":"cmd/atcr","severity":"LOW","id":"d60dd84b57f87677","file":"cmd/atcr/verify.go","category":"style"}

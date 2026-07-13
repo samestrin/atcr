@@ -1,0 +1,22 @@
+{
+  "agent": "kai",
+  "status": "failed",
+  "findings_count": 0,
+  "duration_ms": 238315,
+  "payload_mode": "blocks",
+  "truncated": false,
+  "files_dropped": [],
+  "fallback_used": true,
+  "fallback_from": "kai",
+  "fallback_model": "kimi-k2.6",
+  "error": "response truncated (finish_reason=length) with zero parsed findings",
+  "response_truncated": true,
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0,
+  "model": "kimi-k2.6",
+  "tokens_in": 10583,
+  "tokens_out": 8192,
+  "effective_budget": 71680,
+  "resolved_window": 32768,
+  "reserved_output_tokens": 8192
+}

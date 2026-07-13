@@ -1,0 +1,50 @@
+[
+  {
+    "id": "amb-101ba611d081f5e860d287500f525291",
+    "file": "cmd/atcr/reconcile_test.go",
+    "line": 601,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "cmd/atcr/reconcile_test.go",
+        "Line": 601,
+        "Problem": "TestReconcileCmd_RepoFlagValidatesAgainstOtherRepo does not cover an invalid/nonexistent --repo path, leaving the silent-degradation path untested.",
+        "Fix": "Add a test case with --repo pointing to a nonexistent directory and assert that the command exits with a usage error or that path warnings are still produced, to ensure the error is surfaced.",
+        "Category": "testing",
+        "EstMinutes": 15,
+        "Evidence": "The test only covers a valid other repo and the default/empty normalization; no test for a path that does not exist.",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-6da119b9b4c20893b44b5817c198b9a3",
+    "file": "cmd/atcr/verify_test.go",
+    "line": 208,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "cmd/atcr/verify_test.go",
+        "Line": 208,
+        "Problem": "TestVerifyCmd_RepoFlagThreadsReviewedRoot does not verify that the --repo flag actually changes the repo root used by verify.Verify; the test passes even if the flag is ignored.",
+        "Fix": "Add a test that verifies the repoRoot is used for path validation or snapshot building, e.g., by providing a file in the other repo and asserting no path warning, or by injecting a spy on the snapshot builder.",
+        "Category": "testing",
+        "EstMinutes": 20,
+        "Evidence": "The test uses an empty otherRepo and expects unverifiable verdict because no skeptic; the flag's functional effect is not asserted.",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  }
+]

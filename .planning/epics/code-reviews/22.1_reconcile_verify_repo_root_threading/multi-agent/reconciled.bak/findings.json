@@ -1,0 +1,52 @@
+[
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/reconcile.go",
+    "line": 65,
+    "problem": "(runReconcile) runReconcile reads --repo and normalizes empty/whitespace to \".\" but does not call filepath.Abs before passing repoRoot to reconcile.RunReconcile — unlike verify.go:87 which explicitly computes absRoot via filepath.Abs(repoRoot). A relative --repo path (e.g., --repo ../other-repo) is passed as-is, creating inconsistent behavior between the two entry points that share the same Root contract. The pre-22.1 code hardcoded \".\" without Abs in both places, so this is not a new crash, but the verify side now diverges.",
+    "fix": "Call filepath.Abs(repoRoot) before the RunReconcile call, consistent with verify.go's pattern; add a test that passes a relative --repo path and asserts path validation still works",
+    "category": "correctness",
+    "est_minutes": 30,
+    "evidence": "[otto] `if strings.TrimSpace(repoRoot) == \"\" { repoRoot = \".\" }` / [bruce] repoRoot, _ := cmd.Flags().GetString(\"repo\") ... Root: repoRoot vs verify.go absRoot, _ := filepath.Abs(repoRoot) / [dax] The code only normalizes empty string; no existence check.",
+    "reviewers": [
+      "bruce",
+      "dax",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "LOW vs MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "bruce": "minimax-m2.7"
+    },
+    "justification": "LOW|cmd/atcr/reconcile.go:65|repoRoot normalization logic is repetitive|Move string trimming and empty-check to a helper or use a cobra default value that handles empty strings|style|5|`if strings.TrimSpace(repoRoot) == \"\" { repoRoot = \".\" }`",
+    "source_report": {
+      "path": "sources/pool/raw/agent/otto/review.md",
+      "line": 1
+    }
+  },
+  {
+    "severity": "LOW",
+    "file": "cmd/atcr/verify.go",
+    "line": 77,
+    "problem": "(runVerify) absRoot passed to NewRedactor is computed from repoRoot (possibly relative), while internal/redactor likely needs the absolute path for file I/O. If --repo is passed as a relative path, absRoot=filepath.Abs(repoRoot) resolves it relative to CWD; this works but is inconsistent with the original pattern (Abs(\".\") always resolves to the CWD's absolute path regardless of CWD). In practice identical for valid relative paths, but worth noting if redactor ever adds directory-existence guards.",
+    "fix": "Move string trimming and empty-check to a helper or use a cobra default value that handles empty strings",
+    "category": "operational-hazard",
+    "est_minutes": 5,
+    "evidence": "[otto] `if strings.TrimSpace(repoRoot) == \"\" { repoRoot = \".\" }` / [mira] absRoot, _ := filepath.Abs(repoRoot); Redactor: log.NewRedactor(absRoot, ...)",
+    "reviewers": [
+      "mira",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "mira": "minimax-m2.7"
+    },
+    "justification": "LOW|cmd/atcr/verify.go:77|repoRoot normalization logic is repetitive|Move string trimming and empty-check to a helper or use a cobra default value that handles empty strings|style|5|`if strings.TrimSpace(repoRoot) == \"\" { repoRoot = \".\" }`",
+    "source_report": {
+      "path": "sources/pool/raw/agent/otto/review.md",
+      "line": 3
+    }
+  }
+]

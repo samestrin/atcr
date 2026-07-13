@@ -1,0 +1,3 @@
+LOW|cmd/atcr/reconcile.go:65|repoRoot normalization logic is repetitive|Move string trimming and empty-check to a helper or use a cobra default value that handles empty strings|style|5|`if strings.TrimSpace(repoRoot) == "" { repoRoot = "." }`
+
+LOW|cmd/atcr/verify.go:77|repoRoot normalization logic is repetitive|Move string trimming and empty-check to a helper or use a cobra default value that handles empty strings|style|5|`if strings.TrimSpace(repoRoot) == "" { repoRoot = "." }`

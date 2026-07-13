@@ -1,0 +1,14 @@
+{
+  "sources": ["claude"],
+  "raw_count": 6,
+  "merged_count": 6,
+  "clusters_collapsed": "6 raw findings reduced into 5 clusters (1 cluster split during adjudication into 2 final findings)",
+  "severity_disagreements": 1,
+  "intent_annotations": 0,
+  "validated_count": 6,
+  "pruned_count": 0,
+  "corrected_count": 0,
+  "annotated_count": 0,
+  "claude_role": "intent_verifier",
+  "timestamp": "2026-07-13T05:11:24Z"
+}
