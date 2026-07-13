@@ -1,9 +1,9 @@
 {
-  "skill": "execute-code-review",
-  "args": "@.planning/epics/completed/22.0_process_group_reaping.md --multi-agent",
-  "invocation": "/execute-code-review @.planning/epics/completed/22.0_process_group_reaping.md --multi-agent",
+  "skill": "design-sprint",
+  "args": "@.planning/plans/active/22.2_astgroup_shared_guest_abi/",
+  "invocation": "/design-sprint @.planning/plans/active/22.2_astgroup_shared_guest_abi/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "e98d769a-9339-4c57-a452-b38029b2f5c8",
-  "timestamp": "2026-07-13T01:52:52.019Z"
+  "session_id": "fb25de35-9ef7-4c1d-a300-03b5e2d73eca",
+  "timestamp": "2026-07-13T15:05:16.288Z"
 }
