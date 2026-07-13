@@ -28,9 +28,31 @@ import (
 // explicitly reserved arena) would break the pointer-packing trick above and
 // must replace this package's internals only — the parsers' wasmexport surface
 // stays unchanged.
+//
+// pins is intentionally uncapped — no size limit, no eviction. Unbounded growth
+// is bounded in practice by the astgroup host, which for every call
+// unconditionally frees BOTH the input-buffer alloc and the Emit result-buffer
+// alloc (see host.go Parse: the deferred free of the input ptr and of the result
+// rptr) and discards the whole instance on any guest trap. So pins holds at most
+// the allocations in flight for the current call, not one per lifetime call. A
+// guest-side cap or LRU eviction is deliberately out of scope (the epic excludes
+// allocation-strategy changes) and would be unsafe to add here: eviction has no
+// signal for which pins the host still holds, and a rejecting cap would require
+// every caller — the parser wrappers and Emit — to check a sentinel none check
+// today. (One narrow host-side gap is tracked separately: an oversized result
+// >maxResultBytes returns before host.go registers its result-free defer.)
 var pins = map[int32][]byte{}
 
 // Alloc returns a guest pointer to n writable bytes, pinned against GC.
+//
+// Alloc does NOT cap n; an over-large n is left to fail as an ordinary Go
+// allocation. The astgroup host already bounds its own call pattern — it rejects
+// sources over defaultMaxSourceBytes (8 MiB) before calling alloc, and results
+// over maxResultBytes (64 MiB) after Emit — so no host-driven call reaches a
+// pathological n. A guest-internal cap is deliberately deferred: it would need a
+// coordinated audit of all four call sites (the three parser wrappers and Emit)
+// to handle a rejection sentinel none check today, and is out of this sprint's
+// allocation-strategy scope.
 func Alloc(n int32) int32 {
 	if n <= 0 {
 		n = 1
@@ -74,9 +96,19 @@ func Lookup(p int32) ([]byte, bool) {
 func Emit(v any) int64 {
 	b, err := json.Marshal(v)
 	if err != nil {
+		// Defensive only: every caller passes a node-shaped struct, and
+		// json.Marshal cannot fail on those (it fails on chan/func/complex/cyclic
+		// values, none of which the node tree contains). This branch is not
+		// expected to be exercised by any current parser, so it is left uncovered
+		// rather than restructured out of this wasip1-only package for testability.
 		b = []byte(`{"kind":"error","name":"marshal"}`)
 	}
 	p := Alloc(int32(len(b)))
 	copy(pins[p], b)
+	// int64(p) << 32 is safe even when p (int32) has its high bit set (a guest
+	// address >= 2 GiB): the left shift discards int64(p)'s upper 32 bits — where
+	// sign extension would live — before they reach the packed high half, so the
+	// host's uint32(packed >> 32) reconstructs p's exact bit pattern. Masking with
+	// int64(uint32(p)) would be a bit-for-bit no-op, so it is intentionally omitted.
 	return (int64(p) << 32) | int64(len(b))
 }
