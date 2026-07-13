@@ -58,6 +58,13 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
 	return backend, testCmd, timeout, nil
 }
 
+// newRedactor is the seam through which runVerify constructs the exec-evidence
+// redactor. A package var (not a direct log.NewRedactor call) so a test can
+// capture the absolute base actually threaded in — proving
+// --repo -> filepath.Abs -> NewRedactor hermetically, without a live skeptic
+// model. Catches an absRoot/repoRoot swap or dropped redactor wiring (Epic 22.1).
+var newRedactor = log.NewRedactor
+
 func runVerify(cmd *cobra.Command, args []string) error {
 	// Validate --min-severity against the closed enum BEFORE any I/O so a bad
 	// value fails fast as a usage error (exit 2), per AC 04-01 Error Scenario 2.
@@ -118,7 +125,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		// Scrub configured registry secrets from reproduced exec evidence before it
 		// is persisted into findings.json (Epic 11.0). This path holds only the
 		// registry, so secrets resolve via RegistrySecretValues, not a PreparedReview.
-		Redactor: log.NewRedactor(absRoot, fanout.RegistrySecretValues(cfg.Registry)...),
+		Redactor: newRedactor(absRoot, fanout.RegistrySecretValues(cfg.Registry)...),
 	})
 	if err != nil {
 		if errors.Is(err, verify.ErrNoReconciledFindings) {

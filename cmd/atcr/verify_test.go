@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/stretchr/testify/require"
 )
@@ -227,6 +228,56 @@ func TestVerifyCmd_RepoFlagThreadsReviewedRoot(t *testing.T) {
 	code, _ := execCmdCapture(t, "verify", "r", "--repo", otherRepo)
 	require.Equal(t, 0, code, "--repo must be accepted and must not regress the pipeline")
 	// The no-skeptic pipeline still ran to completion against the fixture.
+	require.Equal(t, "unverifiable", readFindingVerdict(t, "r"))
+}
+
+// TestVerifyCmd_RepoFlagThreadsAbsRootToRedactor proves the verify-side threading
+// that the no-skeptic pipeline test cannot: it captures the base actually handed
+// to NewRedactor via the newRedactor seam and asserts it equals filepath.Abs of
+// the passed --repo. An absRoot/repoRoot swap or a dropped redactor wiring — both
+// of which leave TestVerifyCmd_RepoFlagThreadsReviewedRoot green — fail here
+// (TD verify_test.go:220).
+func TestVerifyCmd_RepoFlagThreadsAbsRootToRedactor(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	// A RELATIVE --repo (a subdir of the isolated CWD) so filepath.Abs(repoRoot)
+	// differs from repoRoot: an absRoot/repoRoot swap would then thread the
+	// relative "otherrepo" instead of its absolute form and this assertion fails.
+	// An absolute --repo would make the two equal and mask the swap.
+	require.NoError(t, os.Mkdir("otherrepo", 0o755))
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x",
+	}})
+
+	var gotBase string
+	orig := newRedactor
+	newRedactor = func(reviewRoot string, secrets ...string) *log.Redactor {
+		gotBase = reviewRoot
+		return orig(reviewRoot, secrets...)
+	}
+	t.Cleanup(func() { newRedactor = orig })
+
+	code, _ := execCmdCapture(t, "verify", "r", "--repo", "otherrepo")
+	require.Equal(t, 0, code)
+
+	wantBase, err := filepath.Abs("otherrepo")
+	require.NoError(t, err)
+	require.NotEmpty(t, gotBase, "redactor base must never be empty (would disable path relativization)")
+	require.Equal(t, wantBase, gotBase,
+		"the absolute --repo must be the redactor base, so an absRoot/repoRoot swap or dropped wiring is caught")
+}
+
+// TestVerifyCmd_RepoFlagEmptyNormalizes covers the empty --repo "" branch on the
+// verify side (parity with reconcile_test.go's empty-repo assertion): it must
+// normalize to "." and run the pipeline cleanly, not fail or disable it.
+func TestVerifyCmd_RepoFlagEmptyNormalizes(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x",
+	}})
+	code, _ := execCmdCapture(t, "verify", "r", "--repo", "")
+	require.Equal(t, 0, code, "an empty --repo must normalize to \".\", not fail or disable the pipeline")
 	require.Equal(t, "unverifiable", readFindingVerdict(t, "r"))
 }
 
