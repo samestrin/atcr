@@ -647,3 +647,203 @@ func TestHost_OversizedResultRejectsWithoutTrapping(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "file", root.Kind)
 }
+
+// firstOfKind returns the first node of the given kind in a pre-order walk.
+func firstOfKind(n Node, kind string) (Node, bool) {
+	if n.Kind == kind {
+		return n, true
+	}
+	for _, c := range n.Children {
+		if m, ok := firstOfKind(c, kind); ok {
+			return m, true
+		}
+	}
+	return Node{}, false
+}
+
+// TestHost_PyParseTripleQuoteInComment is the epic-22.3 regression for a `#`
+// comment that contains a triple-quote token. The old scanTripleQuotes scanned
+// the whole physical line, saw the `"""` inside the comment, and flipped into
+// multi-line-string state — silently swallowing every following line (including
+// real defs) until a never-arriving closing delimiter. A comment-aware scan must
+// stop at the unquoted `#`, leaving the following `def b` intact for hashing.
+func TestHost_PyParseTripleQuoteInComment(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	src := "def a():\n" +
+		"    x = 1  # a fake \"\"\" opens here\n" +
+		"    return x\n" +
+		"\n" +
+		"def b():\n" +
+		"    return 2\n"
+	root, err := p.Parse([]byte(src))
+	require.NoError(t, err)
+
+	var names []string
+	collectFuncNames(root, &names)
+	require.Contains(t, names, "a")
+	require.Contains(t, names, "b", "a triple-quote inside a # comment must not swallow the def that follows")
+}
+
+// TestHost_PyParseTripleQuoteInsideString is the epic-22.3 regression for a
+// triple-quote token that appears INSIDE a single-line string literal. The old
+// scan saw the triple single-quote inside the "..." string and opened a multi-line-string span,
+// swallowing every following def until a never-arriving close. A quote-aware scan
+// must treat the triple single-quote as content of the double-quoted string and leave `def b`
+// intact.
+func TestHost_PyParseTripleQuoteInsideString(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	src := "def a():\n" +
+		"    s = \"text with ''' inside\"\n" +
+		"    return s\n" +
+		"\n" +
+		"def b():\n" +
+		"    return 2\n"
+	root, err := p.Parse([]byte(src))
+	require.NoError(t, err)
+
+	var names []string
+	collectFuncNames(root, &names)
+	require.Contains(t, names, "a")
+	require.Contains(t, names, "b", "a triple-quote inside a single-line string must not swallow the def that follows")
+}
+
+// TestHost_PyParseHashInsideString is the epic-22.3 regression for a `#` that
+// appears inside a single-line string literal on a block-header line. The old
+// stripComment cut the line at the first `#`, erasing the trailing `:` so the
+// header was not recognized and its body never nested (corrupting the structural
+// hash). A quote-aware stripComment keeps the `#` as string content, so the `if`
+// header keeps its `:` and nests its body.
+func TestHost_PyParseHashInsideString(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	src := "def a():\n" +
+		"    if tag == \"x#y\":\n" +
+		"        return 1\n" +
+		"    return 0\n"
+	root, err := p.Parse([]byte(src))
+	require.NoError(t, err)
+
+	ifNode, ok := firstOfKind(root, "if")
+	require.True(t, ok, "the if header must be recognized as an if node")
+	require.NotEmpty(t, ifNode.Children, "a # inside a string literal must not break header detection / body nesting")
+}
+
+// TestHost_PyParseMultiLineDocstringSkipsContent is the epic-22.3 regression for a
+// genuine multi-line triple-quoted docstring whose body contains code-shaped
+// content — a nested `def fake():` line and a `#` comment line. The existing
+// epic-22.3 tests (TripleQuoteInComment, TripleQuoteInsideString, HashInsideString)
+// are all single-physical-line edge cases; none feeds a real multi-line span. Here
+// the startInString path (main.go:84-88, driven by a delim persisted across lines
+// by scanLine's triple-quote opening at main.go:210-219) must skip every physical
+// line inside the span, so the docstring's `def fake():` content is not misparsed
+// as a real function. A regression that stops opening the triple-quote span would
+// expose the docstring body as real code and collect "fake" while every other test
+// still passes — this test pins that guard.
+func TestHost_PyParseMultiLineDocstringSkipsContent(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	// The docstring body holds a nested `def fake():` and a `#` comment line —
+	// both code-shaped, both string content that must be skipped line-by-line via
+	// the delim persisted from the opening `"""` line.
+	src := "def a():\n" +
+		"    \"\"\"Summary line.\n" +
+		"    def fake():\n" +
+		"        # not real\n" +
+		"    \"\"\"\n" +
+		"    return 1\n" +
+		"\n" +
+		"def b():\n" +
+		"    return 2\n"
+	root, err := p.Parse([]byte(src))
+	require.NoError(t, err)
+
+	var names []string
+	collectFuncNames(root, &names)
+	require.Contains(t, names, "a", "the outer def must be collected")
+	require.Contains(t, names, "b", "the def following the docstring must be collected")
+	require.NotContains(t, names, "fake", "a def inside a multi-line triple-quoted docstring must be skipped as string content")
+}
+
+// TestHost_PyParseEscapedQuoteInString is the epic-22.3 regression for scanLine's
+// backslash-escape branch (main.go:201-203, `case '\\': i += 2` inside the
+// single-line-string state). A backslash must escape the next byte inside a
+// single-line string, so an escaped quote does not prematurely close it. For a
+// header like `if s == "a\"#b":` the escaped quote keeps the string open past the
+// `#` (string content, not a comment), so the trailing `:` survives and the if
+// header nests its body. Removing the escape branch would let the second quote
+// close the string, stripComment would cut at the now-unquoted `#`, the if header
+// would lose its `:` and stop nesting, and no existing test would catch it.
+func TestHost_PyParseEscapedQuoteInString(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	// The string literal "a\"#b" holds an escaped quote then a `#`. The escape
+	// branch must skip the escaped quote so the string stays open across the `#`,
+	// keeping the trailing `:` so the if header nests its body.
+	src := "if s == \"a\\\"#b\":\n" +
+		"    body = 1\n"
+	root, err := p.Parse([]byte(src))
+	require.NoError(t, err)
+
+	ifNode, ok := firstOfKind(root, "if")
+	require.True(t, ok, "the if header must be recognized as an if node")
+	require.NotEmpty(t, ifNode.Children, "an escaped quote inside a string literal must not let a trailing # strip the header's colon")
+}
+
+// TestHost_PyParseInStringBracketOnContinuationLine is the epic-22.3 follow-up
+// (TD pyparser/main.go:115) pinning that significantLines' bracketDelta agrees
+// with the quote-aware stripComment on a bracket-continuation line whose string
+// embeds an unbalanced bracket after an in-string `#`. significantLines feeds
+// bracketDelta(stripComment(...)); the quote-aware stripComment keeps the bytes
+// after an in-string `#` that the old cut-at-first-`#` discarded, so a
+// not-string-aware bracketDelta would count the in-string `(` in "x # (", hold
+// depth > 0 past the real closing `]`, and swallow the following `def after():`
+// into the folded logical line — dropping it from the structure. A string-aware
+// bracketDelta ignores the in-string bracket, closes the continuation at `]`, and
+// collects `after`.
+func TestHost_PyParseInStringBracketOnContinuationLine(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	// The list literal spans physical lines; its first element string embeds
+	// `# (` — an in-string `#` followed by an unbalanced `(`. The real bracket
+	// balance closes at `]` on its own line, so `def after()` must remain a
+	// top-level sibling rather than being folded into the list's logical line.
+	src := "data = [\n" +
+		"    \"x # (\",\n" +
+		"    \"y\",\n" +
+		"]\n" +
+		"def after():\n" +
+		"    return 1\n"
+	root, err := p.Parse([]byte(src))
+	require.NoError(t, err)
+
+	var names []string
+	collectFuncNames(root, &names)
+	require.Contains(t, names, "after",
+		"a def after a bracket-continuation whose string embeds `# (` must not be swallowed by a not-string-aware bracketDelta over-folding past the closing `]`")
+}

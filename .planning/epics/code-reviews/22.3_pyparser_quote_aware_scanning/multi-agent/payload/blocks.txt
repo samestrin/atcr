@@ -1,0 +1,510 @@
+diff --git a/.planning/epics/active/24.0_false_positive_wontfix_dismissal.md b/.planning/epics/active/24.0_false_positive_wontfix_dismissal.md
+index fbefb335..718cd255 100644
+--- a/.planning/epics/active/24.0_false_positive_wontfix_dismissal.md
++++ b/.planning/epics/active/24.0_false_positive_wontfix_dismissal.md
+@@ -13,27 +13,76 @@ Provide a seamless mechanism for developers to permanently dismiss a specific te
+ ATCR successfully surfaces technical debt and automatically routes it to the `.planning/technical-debt/README.md` or `.atcr/reviews/` sharded backend. However, if an agent hallucinates or flags a legitimate but accepted pattern (a false positive), the developer currently has no "dismiss" button. The finding will repeatedly surface, causing alert fatigue. 
+ 
+ ## Proposed Solution
+ 
+-1. **Dismiss Command**: Implement `atcr dismiss <finding-id>` (or similar) to flag a finding in the local TD store as explicitly rejected.
+-2. **Reconciliation Ignore Logic**: Update the reconciler (`internal/reconcile`) and prompt payload builder so that dismissed finding signatures (by AST structural hash or explicit ID) are automatically filtered out of future review outputs.
+-3. **Audit Log**: Record the dismissal reason for transparency.
++1. **Dismiss Command**: Add an `atcr dismiss <finding-id> --reason <fp|wontfix>` subcommand to `cmd/atcr` that appends a `dismissed` status record to `internal/localdebt` (extending its existing terminal `resolved`/`deferred` status contract), so `selectOpenDebt` folds the id out of the open backlog.
++2. **Reconciliation Ignore Logic**: Update the reconciler (`internal/reconcile/gate.go`) and prompt payload builder (`internal/payload`) so that dismissed findings whose `internal/localdebt` id (`history.FindingID(file, line, problem)`) has a `dismissed` status record are automatically filtered out of future review outputs.
++3. **Audit Log**: Append a dismissal audit record (id, reason, timestamp) via `internal/audit` (capture.go/writer.go), OR carry the reason on the `internal/localdebt` `dismissed` status record — pick one so the audit surface is testable.
+ 
+ ## Acceptance Criteria
+ 
+ - [ ] A finding can be explicitly marked as dismissed/WontFix.
+ - [ ] A dismissed finding does not reappear in the reconciled output on subsequent runs against the same code structure.
+ - [ ] The dismissal state is preserved across runs.
+ 
+ ## Components Touched
+ 
+-- `internal/reconcile` (filtering logic)
+-- `internal/scorecard` or local TD store (persistence)
+-- `cmd/atcr` (CLI interface)
++- `cmd/atcr` (CLI interface — `atcr dismiss` subcommand)
++- `internal/localdebt` (persistence — `.atcr/debt/` backlog; extends existing resolved/deferred status)
++- `internal/reconcile` (filtering — extend gate.go)
++- `internal/payload` (prompt payload builder — T2)
++- `internal/audit` (audit log — T3)
+ 
+ ## Out of Scope
+ 
+ - Team-wide synchronization of dismissed findings (handled by Epic 19.x remote registry fetching / shared history if needed, but the core engine logic is local).
+ 
+ ## Dependencies
+ 
+ - None.
++
++## Refinements (2026-07-13)
++
++This section records findings from `/refine-epic` run on July 13, 2026 12:11:45PM. It is additive — original plan content above is preserved.
++
++### Auto-applied corrections (0)
++
++None.
++
++### Items needing user confirmation (5)
++
++> **Post-run update (2026-07-13):** Per user direction, the concrete corrections below (Components Touched, T1, T2, T3; finding 5 resolved by the Components edit + the T2 explicit-ID decision) were applied to the plan body after this run. The items below are preserved as the record of what was found.
++
++- ⏸️ **Components mismatch:** Plan lists `[internal/reconcile, internal/scorecard, cmd/atcr]` (3); derived `[cmd/atcr, internal/localdebt, internal/reconcile, internal/payload, internal/audit]` (5). Difference: missing=`[internal/localdebt, internal/payload, internal/audit]`, extra=`[internal/scorecard]`. T2 names a "prompt payload builder" (`internal/payload/builder.go`) and T3 implies an "audit log" (`internal/audit`), both omitted from Components Touched; persistence is labeled `internal/scorecard` but the actual local TD store is `internal/localdebt` (`internal/scorecard/store.go` is the per-run score ledger; `internal/localdebt/store.go` is the `.atcr/debt/` backlog). Proposed COMPONENTS_TOUCHED: `[cmd/atcr, internal/localdebt, internal/reconcile, internal/payload, internal/audit]` (+ `internal/astgroup` conditional — see signature-ambiguity finding). NOT auto-applied (intent-changing).
++
++- ⏸️ **Ambiguous T1:** "Implement `atcr dismiss <finding-id>` (or similar) to flag a finding in the local TD store as explicitly rejected." — "local TD store" is not a concrete target (codebase has `internal/localdebt` → `.atcr/debt/` and `internal/debt` → `.planning/technical-debt/README.md`), and "(or similar)" hedges the command name. Suggested rewrite: "Add an `atcr dismiss <finding-id> --reason <fp|wontfix>` subcommand to `cmd/atcr` that appends a `dismissed` status record to `internal/localdebt`, extending its existing terminal `resolved`/`deferred` status contract, so `selectOpenDebt` folds the id out of the open backlog."
++
++- ⏸️ **Ambiguous T3:** "Record the dismissal reason for transparency." — 6 words, no concrete file/symbol target. Suggested rewrite: "Append a dismissal audit record (id, reason, timestamp) via `internal/audit` (capture.go/writer.go), OR carry the reason on the `internal/localdebt` `dismissed` status record — pick one so the audit surface is testable."
++
++- ⏸️ **T2 signature ambiguity:** "...dismissed finding signatures (by AST structural hash or explicit ID)..." leaves the signature key undecided. `internal/localdebt`'s existing identity is `history.FindingID(file, line, problem)` (explicit ID); "AST structural hash" maps to `internal/astgroup` (grouper.go/merkle.go, already wired into reconcile via `internal/reconcile/astgrouping.go`) and would add `internal/astgroup` as a touched component. Pick one before TDD: explicit ID reuses localdebt's existing key (no new component); AST hash adds astgroup coupling plus a new signature pipeline.
++
++- ⏸️ **Missed components (codebase discovery):** Grep for OBJECTIVE-related terms surfaced `internal/localdebt` (store.go — the actual local TD backlog), `internal/astgroup` (grouper.go/merkle.go — the AST structural-hash engine), and `internal/debt` (debt.go — the `.planning/technical-debt/README.md` store for the private pipeline), none mentioned by name in the plan. Sample matches: `internal/localdebt/store.go`, `internal/astgroup/grouper.go`, `internal/debt/debt.go`. Suggested action: confirm each in/out of scope; adding the in-scope ones pushes COMPONENT_COUNT well past the ≤2 limit (see scope-guard advisory), reinforcing the `/init-plan` route.
++
++### Advisory observations (5)
++
++- ℹ️ **Scope-guard violation:** Derived TASK_COUNT=3, COMPONENT_COUNT=5 — exceeds `/execute-epic`'s ≤6 tasks / ≤2 components limit. The plan's own header already declares `Execution: init-plan`, which aligns: this plan should run through `/init-plan @.planning/epics/active/24.0_false_positive_wontfix_dismissal.md` for the full sprint pipeline. Refining alone does not unblock `/execute-epic`.
++
++- ℹ️ **Reusable mechanism — localdebt status contract:** `internal/localdebt/doc.go` already defines a terminal resolution contract: a `resolved` or `deferred` status record for an id causes `selectOpenDebt` to fold that id out of the open backlog permanently. A `dismissed`/`wontfix`/`false_positive` status is a natural extension of this enum, not new persistence. The plan should reference this existing mechanism rather than imply a fresh store.
++
++- ℹ️ **Reconcile gatekeeper precedent:** `internal/reconcile/gate.go` is the existing filter — Epic 14.2 made the reconciliation layer "a strict gatekeeper against hallucinated technical-debt items by filtering uncorroborated findings" (CHANGELOG [14.2.0]). T2's dismiss-filter should extend `gate.go`, not introduce a parallel filter. If filtering lives at the gate, `internal/payload` may need no change (the payload builder simply never sees dismissed findings) — which would drop COMPONENT_COUNT from 5 to 4.
++
++- ℹ️ **Two TD stores — disambiguate:** `internal/debt` writes the versioned `.planning/technical-debt/README.md` (private pipeline); `internal/localdebt` writes the uncommitted `.atcr/debt/YYYY-MM.jsonl` (public/standalone, Epic 20.1). The plan's Context references the README AND the `.atcr/reviews/` backend, and AC #2 says "does not reappear in the reconciled output" — but the reconciled output differs per store. Specify which store(s) hold dismiss state and which output the AC targets.
++
++- ℹ️ **Cross-epic dependency / downstream contract:** Epic 30.0 (`30.0_community_prompt_quality_signal.md`) and completed 19.9 both consume "the 24.0 dismissal signal" — `dismissed`/`confirmed` events aggregated per persona+model. So the dismiss-state shape (id key, reason enum, event record) is a contract downstream epics depend on; consider referencing it in the AC so 24.0's output is shaped for 30.0/19.9's consumption.
++
++### Verification context
++
++- Refinement depth: spot-check
++- Derived TASK_COUNT: 3 (limit: 6)
++- Derived COMPONENT_COUNT: 5 (limit: 2)
++- COMPONENTS_TOUCHED: [cmd/atcr, internal/localdebt, internal/reconcile, internal/payload, internal/audit] (+ internal/astgroup conditional)
++- VISUAL_SURFACE: false
++- HAS_GATED_WORK: false
++- HAS_CROSS_SYSTEM: false
++- Cited references checked: 8 (5 component paths + 3 symbols; all paths exist, `atcr dismiss` confirmed net-new)
++- Codebase search queries (spot-check): ["dismiss / wontfix / false-positive", "AST structural hash (astgroup)", "local TD store persistence (localdebt/scorecard/debt)"]
++- Semantic search: ran (index live, 3365 files / 37490 chunks); top non-plan hit was CHANGELOG [14.2.0] reconcile-gatekeeper (doc), corroborating the gate.go precedent — no high-score code file outside COMPONENTS_TOUCHED beyond grep findings.
+diff --git a/.planning/epics/active/26.0_atcrignore_token_protection.md b/.planning/epics/active/26.0_atcrignore_token_protection.md
+index c4adfa7f..01b1e72f 100644
+--- a/.planning/epics/active/26.0_atcrignore_token_protection.md
++++ b/.planning/epics/active/26.0_atcrignore_token_protection.md
+@@ -1,8 +1,8 @@
+ # Epic Plan 26.0: .atcrignore Token Waste Protection
+ 
+ - **Estimated time**: TBD
+-- **Tasks/Components**: TBD
+-- **Execution**: init-plan
++- **Tasks/Components**: 3 tasks / 2 components
++- **Execution**: execute-epic
+ 
+ ## Objective
+ 
+@@ -13,26 +13,71 @@ Prevent ATCR from wasting LLM tokens (and money) on auto-generated code, vendore
+ If a developer runs a codegen tool or bumps a massive `vendor/` dependency, the resulting git diff can be hundreds of thousands of lines. While Epic 19.5 handles truncation and dropping files to fit the token budget, it does so based on size/priority. It is far safer to explicitly never send these files to the payload builder in the first place.
+ 
+ ## Proposed Solution
+ 
+-1. **File Filtering Layer**: Update the diff ingestion logic (`internal/payload/builder.go` or `internal/gitrange`) to completely exclude files that match standard ignore patterns.
++1. **File Filtering Layer**: Update the diff ingestion logic in `internal/payload` (`diff.go`'s `changedFiles`/`changedFilesMemo`, ahead of `budget.go`'s `ApplyByteBudget` truncation pass) to completely exclude files that match standard ignore patterns.
+ 2. **.gitignore Support**: By default, parse and respect the repository's `.gitignore`.
+-3. **.atcrignore Support**: Support a dedicated `.atcrignore` for files that should be committed to git but ignored by the AI (e.g., `go.sum`, `package-lock.json`, `docs/`).
++3. **.atcrignore Support**: Support a dedicated `.atcrignore` for files that should be committed to git but ignored by the AI (e.g., `go.sum`, `package-lock.json`, `docs/`). Repo-root-only, one gitignore-syntax pattern per line, purely additive to `.gitignore`'s exclusions (no `!` negation support).
+ 
+ ## Acceptance Criteria
+ 
+ - [ ] Files matching `.gitignore` are excluded from the review payload.
+ - [ ] Files matching `.atcrignore` are excluded from the review payload.
+ - [ ] `atcr review` logs a trace/debug message noting which files were skipped due to ignore rules.
+ 
+ ## Components Touched
+ 
+-- `internal/gitrange` or `internal/payload`
+-- `cmd/atcr`
++- `internal/payload` (file-list filtering — `diff.go`/`builder.go`, ahead of the existing byte-budget pass)
++- `cmd/atcr` (CLI interface)
+ 
+ ## Out of Scope
+ 
+ - Complex globbing beyond standard `.gitignore` syntax.
+ 
+ ## Dependencies
+ 
+ - None.
++
++## Refinements (2026-07-13)
++
++This section records findings from `/refine-epic` run on July 13, 2026 01:13:32PM. It is additive — original plan content above is preserved.
++
++### Auto-applied corrections (0)
++
++None — no mechanical errors found. All cited paths (`internal/gitrange`, `internal/payload/builder.go`, `cmd/atcr`) exist and are valid.
++
++### Items needing user confirmation (2)
++
++⏸️ **Components mismatch — `internal/gitrange` is architecturally the wrong "or" alternative.** Plan lists `internal/payload/builder.go` or `internal/gitrange` as the filtering-layer location. Verified: `internal/gitrange` (`resolver.go`) only resolves the base/head SHAs via git plumbing (merge-base, default-branch detection, shallow-clone checks) — it never enumerates files or computes diffs, so it has no file-level data to filter. The actual file list comes from `git diff --name-status` in `internal/payload/diff.go`'s `changedFiles`/`changedFilesMemo`, called by `builder.go`'s `BuildEntries`/`BuildDiff`/`BuildBlocks`/`BuildFiles`, ahead of the existing `ApplyByteBudget` truncation pass (`internal/payload/budget.go`). Suggested action: drop `internal/gitrange` from Components Touched and Proposed Solution item 1 — the filter belongs entirely in `internal/payload`. Proposed COMPONENTS_TOUCHED: `internal/payload`, `cmd/atcr` (count unchanged at 2 — still fits the scope guard).
++
++⏸️ **`.atcrignore` location and precedence are undefined.** The plan doesn't say whether `.atcrignore` is repo-root-only or per-directory like `.gitignore`, nor its precedence relative to `.gitignore` (can an `.atcrignore` entry re-include a file `.gitignore` excludes? does it support `!` negation?). Given the plan's own Out-of-Scope bound on "complex globbing," suggested addition to Proposed Solution item 3: "`.atcrignore` is repo-root-only, one gitignore-syntax pattern per line, purely additive to `.gitignore`'s exclusions (no negation support)." This is the smallest testable surface and mirrors the stated simplicity boundary.
++
++Note that these were NOT applied automatically — see the copy-paste block emitted at end of skill run.
++
++### Advisory observations (3)
++
++ℹ️ **No existing gitignore-pattern-matching capability.** Verified via grep across `internal/` + `go.mod`/`go.sum` — no vendored `.gitignore`-glob library and no hand-rolled matcher exists today (the only `.gitignore` references found are test fixtures, `atcr init`'s own `.atcr/.gitignore` scaffold, and an unrelated dotfile-extension guard in `internal/verify/select.go`). Recommend a vetted third-party library (e.g. `github.com/sabhiram/go-gitignore`) over hand-rolling `.gitignore` syntax (negation, `**`, anchoring, and directory-only patterns are easy to get subtly wrong) — consistent with the plan's own "no complex globbing" scope bound.
++
++ℹ️ **Suggested architecture: pre-filter stage ahead of the byte-budget pass.** `internal/payload/budget.go`'s `ApplyByteBudget` already sheds oversized entries by size (it does not classify by filename pattern today — "generated files/lockfiles" in its doc comment describes an emergent effect of size-based shedding, not a name-based classifier). The ignore-filter reads naturally as an earlier stage over the same file list — right after `changedFilesMemo` in `diff.go`, before `ApplyByteBudget` runs — so it composes with existing truncation instead of duplicating file-list plumbing.
++
++ℹ️ **Logging convention already exists for AC #3.** `internal/payload/diff.go`'s `gitRunner` already exposes a `log() *slog.Logger`. Recommend AC #3 point at this concretely: "skipped files are logged at `slog` debug level via the existing `gitRunner` logger" — makes the AC testable rather than a vague "trace/debug message."
++
++### Verification context
++
++- Refinement depth: spot-check
++- Derived TASK_COUNT: 3 (limit: 6)
++- Derived COMPONENT_COUNT: 2 (limit: 2)
++- COMPONENTS_TOUCHED: internal/payload, cmd/atcr
++- VISUAL_SURFACE: false
++- HAS_GATED_WORK: false
++- HAS_CROSS_SYSTEM: false
++- Cited references checked: 3 (paths) + 3 codebase spot-check searches
++- Codebase search queries (spot-check): "gitignore|atcrignore|ignore pattern|IsIgnored" (internal/, cmd/), "vendor/|lockfile|go.sum|package-lock|token budget|truncat" (internal/payload), "gitignore|doublestar|glob" (go.mod/go.sum)
++
++### Resolution (2026-07-13)
++
++Both user-confirm items above were reviewed and applied directly to the plan body (Proposed Solution, Components Touched):
++
++1. ✅ `internal/gitrange` dropped — filtering logic scoped entirely to `internal/payload` (`diff.go`/`builder.go`, ahead of `ApplyByteBudget`).
++2. ✅ `.atcrignore` semantics made explicit: repo-root-only, one pattern per line, purely additive to `.gitignore` (no negation).
++
++Net effect: COMPONENT_COUNT stays at 2 (`internal/payload`, `cmd/atcr`), TASK_COUNT stays at 3 — plan already fit `/execute-epic`'s scope guard and still does. Execution field updated from `init-plan` to `execute-epic` accordingly.
+diff --git a/.planning/epics/active/22.3_pyparser_quote_aware_scanning.md b/.planning/epics/completed/22.3_pyparser_quote_aware_scanning.md
+similarity index 100%
+rename from .planning/epics/active/22.3_pyparser_quote_aware_scanning.md
+rename to .planning/epics/completed/22.3_pyparser_quote_aware_scanning.md
+diff --git a/.planning/epics/active/23.0_human_persona_renaming.md b/.planning/epics/superseded/23.0_human_persona_renaming.md
+similarity index 51%
+rename from .planning/epics/active/23.0_human_persona_renaming.md
+rename to .planning/epics/superseded/23.0_human_persona_renaming.md
+index c2314f99..c3e81394 100644
+--- a/.planning/epics/active/23.0_human_persona_renaming.md
++++ b/.planning/epics/superseded/23.0_human_persona_renaming.md
+@@ -43,3 +43,42 @@ This rename and generalization requires updating:
+ - Must maintain the underlying role/behaviors for the security and performance personas (only the names and fixtures change).
+ - The generalized idioms persona (`ingrid` / `ian`) must dynamically evaluate code patterns based on the file extension/language.
+ 
++## Refinements (2026-07-13)
++
++This section records findings from `/refine-epic --deep` run on July 13, 2026 12:11:34PM. It is additive — original plan content above is preserved.
++
++### Auto-applied corrections (0)
++
++None. No mechanical (SAFE_AUTOFIX) corrections were applicable — the plan's cited paths and structure are internally well-formed. The findings below are substantive, not typographical.
++
++### Items needing user confirmation (1)
++
++- ⏸️ **Epic 23.0 is obsolete — already shipped via Epic 19.6; do not run `/execute-epic`.** The reconciliation note at the top of this plan posed a decision (fold into 19.6 vs. run standalone). The codebase shows option (a) was taken and 19.6 has shipped (`.planning/epics/completed/19.6_community_registry_hub.md`; sprint in `.planning/sprints/completed/19.6_community_registry_hub/`). Every AC this epic defines is already satisfied:
++  - **AC1 (no retired slugs in the registry):** `personas/personas.go` `names` = `["bruce","greta","kai","mira","dax","sasha","penny","ingrid","otto"]` — no `sentinel`/`tracer`/`idiomatic`. `personas/retired_slugs_test.go` (`TestNoRetiredSlugs`, `TestRetiredSlugs_NewResolveOldFail`) enforces this in CI (19.6 AC 05-03).
++  - **AC2 (templates/fixtures/source updated):** `personas/sasha.md`, `penny.md`, `ingrid.md` and `personas/testdata/{sasha,penny,ingrid}_fixture.patch` exist; the old-name files do not.
++  - **AC3 (idiomatic generalized, language-aware):** `personas/ingrid.md` is language-agnostic ("the language under review"); `personas/testdata/ingrid_lang2_fixture.patch` exercises a second language (19.6 AC 05-02).
++  - **AC4 (`go test ./...` passes):** the renamed fixture tests `TestSashaFixture`/`TestPennyFixture`/`TestIngridFixture` exist in `personas/personas_test.go`; the retired-slug guard is green.
++  - **AC5 (docs convention):** `docs/personas-authoring.md` has a "Persona naming: human first names" section that explicitly states *"Epic 23.0 is absorbed by and superseded by Epic 19.6 … so 23.0 is not run as a standalone renamer."* (19.6 AC 06-02).
++  - The name ambiguity ("`ingrid` or `ian`") is resolved: the codebase uses `ingrid`.
++  Running `/execute-epic` here would perform no useful work (every task is already done) and would spin up a spurious branch/PR. **Recommended action:** close/archive 23.0 as absorbed (move `.planning/epics/active/23.0_human_persona_renaming.md` → `.planning/epics/completed/`, or mark it superseded-by-19.6), rather than executing it. This was NOT auto-applied — archiving the epic is the user's call.
++
++### Advisory observations (1)
++
++- ℹ️ **Test pattern already in place.** `personas/personas_test.go` uses per-persona fixture tests (`TestSashaFixture`, `TestPennyFixture`, `TestIngridFixture`) and `personas/retired_slugs_test.go` enforces the retired-slug invariant. Any future persona-rename work in this tree should extend these existing tests rather than introduce a new test shape.
++
++### Verification context
++
++- Refinement depth: deep
++- Derived TASK_COUNT: 5 (limit: 6)
++- Derived COMPONENT_COUNT: 2 (limit: 2)
++- COMPONENTS_TOUCHED: [personas/, docs/] (note: the already-shipped rename also touched `cmd/atcr/` and `internal/personas/` test files — all done under 19.6)
++- VISUAL_SURFACE: false
++- HAS_GATED_WORK: true (the reconciliation note's fold-vs-standalone decision — since resolved as folded)
++- HAS_CROSS_SYSTEM: false
++- Cited references checked: 11 file paths + 1 symbol (`names`); no file:line citations in the plan
++- Codebase search queries (spot-check): ["persona names slice registry", "sentinel tracer idiomatic rename", "sasha penny ingrid wiring"]
++- Deep discovery method: semantic
++- Deep discovery queries: ["built-in reviewer persona names registry slice", "rename sentinel tracer idiomatic personas to human names", "persona fixture patch testdata embedded bonus", "idiomatic language-aware persona prompt conventions reviewer"]
++- Deep discovery match count: 15 (semantic index 3365 files / 37490 chunks, last updated 2026-07-13)
++- Deep discovery snapshot: /Users/samestrin/Documents/GitHub/atcr/.planning/.temp/refine-epic/codebase-discovery.json (temp-only — not committed)
++
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 1f364eb7..5bf1853b 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,15 @@
++## [22.3.0] - 2026-07-13
++
++Make the `pyparser` structural parser quote- and escape-aware so adversarial Python source no longer corrupts the structural hash by silently dropping real code.
++
++### Fixed
++
++- `pyparser` no longer treats a triple-quote (`"""`/`'''`) appearing inside a `#` comment as the start of a multi-line string — previously this flipped the scanner into string mode and swallowed every following line (including real `def`/`class` blocks) out of structural hashing.
++- `pyparser` no longer treats a triple-quote embedded inside a single-line string literal as a multi-line-string delimiter.
++- `pyparser`'s comment stripping is now string- and escape-aware: a `#` inside a string literal is no longer mistaken for a comment start, which had broken block-header detection and body nesting.
++
++*Shipped via /execute-epic (epic 22.3)*
++
+ ## [22.2.0] - 2026-07-13
+ 
+ Extract the duplicated Wasm guest ABI (alloc/free/emit/pins) shared by the `goparser`, `pyparser`, and `braceparser` AST plugins into one internal `guestabi` module, with the non-moving-GC pointer-packing assumption documented in a single canonical location.
+diff --git a/internal/astgroup/host_test.go b/internal/astgroup/host_test.go
+index 6ee0d18f..a589e6bc 100644
+--- a/internal/astgroup/host_test.go
++++ b/internal/astgroup/host_test.go
+@@ -647,3 +647,97 @@ func TestHost_OversizedResultRejectsWithoutTrapping(t *testing.T) {
+ 	require.NoError(t, err)
+ 	require.Equal(t, "file", root.Kind)
+ }
++
++// firstOfKind returns the first node of the given kind in a pre-order walk.
++func firstOfKind(n Node, kind string) (Node, bool) {
++	if n.Kind == kind {
++		return n, true
++	}
++	for _, c := range n.Children {
++		if m, ok := firstOfKind(c, kind); ok {
++			return m, true
++		}
++	}
++	return Node{}, false
++}
++
++// TestHost_PyParseTripleQuoteInComment is the epic-22.3 regression for a `#`
++// comment that contains a triple-quote token. The old scanTripleQuotes scanned
++// the whole physical line, saw the `"""` inside the comment, and flipped into
++// multi-line-string state — silently swallowing every following line (including
++// real defs) until a never-arriving closing delimiter. A comment-aware scan must
++// stop at the unquoted `#`, leaving the following `def b` intact for hashing.
++func TestHost_PyParseTripleQuoteInComment(t *testing.T) {
++	h := NewHost()
++	defer func() { _ = h.Close() }()
++
++	p, err := h.Parser("python")
++	require.NoError(t, err)
++
++	src := "def a():\n" +
++		"    x = 1  # a fake \"\"\" opens here\n" +
++		"    return x\n" +
++		"\n" +
++		"def b():\n" +
++		"    return 2\n"
++	root, err := p.Parse([]byte(src))
++	require.NoError(t, err)
++
++	var names []string
++	collectFuncNames(root, &names)
++	require.Contains(t, names, "a")
++	require.Contains(t, names, "b", "a triple-quote inside a # comment must not swallow the def that follows")
++}
++
++// TestHost_PyParseTripleQuoteInsideString is the epic-22.3 regression for a
++// triple-quote token that appears INSIDE a single-line string literal. The old
++// scan saw the triple single-quote inside the "..." string and opened a multi-line-string span,
++// swallowing every following def until a never-arriving close. A quote-aware scan
++// must treat the triple single-quote as content of the double-quoted string and leave `def b`
++// intact.
++func TestHost_PyParseTripleQuoteInsideString(t *testing.T) {
++	h := NewHost()
++	defer func() { _ = h.Close() }()
++
++	p, err := h.Parser("python")
++	require.NoError(t, err)
++
++	src := "def a():\n" +
++		"    s = \"text with ''' inside\"\n" +
++		"    return s\n" +
++		"\n" +
++		"def b():\n" +
++		"    return 2\n"
++	root, err := p.Parse([]byte(src))
++	require.NoError(t, err)
++
++	var names []string
++	collectFuncNames(root, &names)
++	require.Contains(t, names, "a")
++	require.Contains(t, names, "b", "a triple-quote inside a single-line string must not swallow the def that follows")
++}
++
++// TestHost_PyParseHashInsideString is the epic-22.3 regression for a `#` that
++// appears inside a single-line string literal on a block-header line. The old
++// stripComment cut the line at the first `#`, erasing the trailing `:` so the
++// header was not recognized and its body never nested (corrupting the structural
++// hash). A quote-aware stripComment keeps the `#` as string content, so the `if`
++// header keeps its `:` and nests its body.
++func TestHost_PyParseHashInsideString(t *testing.T) {
++	h := NewHost()
++	defer func() { _ = h.Close() }()
++
++	p, err := h.Parser("python")
++	require.NoError(t, err)
++
++	src := "def a():\n" +
++		"    if tag == \"x#y\":\n" +
++		"        return 1\n" +
++		"    return 0\n"
++	root, err := p.Parse([]byte(src))
++	require.NoError(t, err)
++
++	ifNode, ok := firstOfKind(root, "if")
++	require.True(t, ok, "the if header must be recognized as an if node")
++	require.NotEmpty(t, ifNode.Children, "a # inside a string literal must not break header detection / body nesting")
++}
+diff --git a/internal/astgroup/parsers/SHA256SUMS b/internal/astgroup/parsers/SHA256SUMS
+index 78be4eeb..55d61154 100644
+--- a/internal/astgroup/parsers/SHA256SUMS
++++ b/internal/astgroup/parsers/SHA256SUMS
+@@ -1,5 +1,5 @@
+ 4520ddc9aa4ce707585e662226f95a449ec73d5cc7b9f6a5f163f48cdf7f2014  go.wasm
+-38f22aef4e0c1788a382095c1c43064c7a777166afccff56aa3f4ad1ec562bf2  python.wasm
++f056bd8b812d238344f132dd57e6589c634d62d59893b25b629ffccd087a32b6  python.wasm
+ 598a5ec38e551e2b76db5e348dfbc0ca99e744f44ffad9cf514127385bf0612e  ts.wasm
+ a4f35807d17bf1d10f4dccf0f46e88160f6eb97e905b9201ed8e5f5c5e347e63  php.wasm
+ 800353b4a6f35192ad63e7a173c08560350f3b29cf77510674006fd0537cfc87  rust.wasm
+[binary file changed: internal/astgroup/parsers/python.wasm]
+diff --git a/internal/astgroup/parsers/src/pyparser/main.go b/internal/astgroup/parsers/src/pyparser/main.go
+index 25430867..12322c06 100644
+--- a/internal/astgroup/parsers/src/pyparser/main.go
++++ b/internal/astgroup/parsers/src/pyparser/main.go
+@@ -62,17 +62,19 @@ func parse(ptr int32, n int32) int64 {
+ type pline struct {
+ 	indent int
+ 	lineno int
+ 	text   string // stripped of leading whitespace and trailing inline comment
+ }
+ 
+ // significantLines returns non-blank, non-comment-only lines with their
+ // indentation (tabs expanded to 8) and 1-based line number. Lines inside a
+ // triple-quoted string (docstrings, multi-line literals) are skipped on a
+-// best-effort basis so a def/class/# appearing as string CONTENT is less likely
+-// to be misparsed as real code. The skip relies on scanTripleQuotes, which is a
+-// heuristic: a """ embedded in a single/double-quoted string can still flip the
+-// state machine, so this reduces but does not eliminate the spurious-block /
+-// over-merged-finding risk on adversarial source (PoC-grade, not a tokenizer).
++// best-effort basis so a def/class/# appearing as string CONTENT is not misparsed
++// as real code. The skip relies on scanTripleQuotes, which is quote/escape-aware
++// (epic 22.3): a """ or a triple single-quote embedded in a single/double-quoted string, and a triple
++// quote inside a # comment, no longer flip the state machine. It remains a
++// heuristic — raw/byte/f-string prefixes are not modelled — so adversarial source
++// using those can still mis-slice, but ordinary code no longer does (PoC-grade,
++// not a tokenizer).
+ func significantLines(src string) []pline {
+ 	var out []pline
+ 	delim := ""     // active triple-quote delimiter spanning lines, "" when outside
+@@ -149,50 +151,90 @@ func leadingIndent(raw string) (indent, start int) {
+ // bracketDelta returns the net change in (), [], {} nesting contributed by s. It
+ // is a heuristic that does not exclude brackets inside string/char literals, so a
+ // line embedding an unbalanced bracket inside a string can mis-count; that is
+ // acceptable for a structural pre-pass whose only job is to fold a multi-line
+ // header or literal into one logical line.
+ func bracketDelta(s string) int {
+ 	d := 0
+ 	for i := 0; i < len(s); i++ {
+ 		switch s[i] {
+ 		case '(', '[', '{':
+ 			d++
+ 		case ')', ']', '}':
+ 			d--
+ 		}
+ 	}
+ 	return d
+ }
+ 
+-// scanTripleQuotes advances the triple-quoted-string state across one physical
+-// line. delim is the active delimiter at line start ("" if outside a string);
+-// the return value is the state at line end. It is a heuristic (it does not model
+-// escapes or single/double quotes), sufficient to keep docstring content from
+-// being parsed as code.
+-func scanTripleQuotes(line, delim string) string {
++// scanLine advances pyparser's line-scanning state across one physical line. It
++// carries the active triple-quoted-string delimiter (delim; "" when outside such
++// a string) and reports the byte offset where an unquoted `#` comment begins
++// (len(line) when the line has none). It is quote- and escape-aware (epic 22.3):
++//   - A `#` inside an open triple-quoted span, or inside a single-line '...'/"..."
++//     literal, is string content — not a comment — so the comment offset is only
++//     taken when the scan is outside every string at that position.
++//   - A """ or a triple single-quote token inside a single-line string literal is content too, so it
++//     does not open a spurious multi-line span that swallows the code that follows.
++//   - A backslash escapes the next byte inside a single-line string, so an escaped
++//     quote does not prematurely close it.
++//
++// It remains a heuristic (see the package doc): raw/byte/f-string prefixes are not
++// modelled, and single-line strings are not carried across physical lines (a
++// backslash line-continuation inside one is out of scope).
++func scanLine(line, delim string) (endDelim string, commentAt int) {
++	var q byte // active single-line string quote (' or "), 0 when outside one
+ 	for i := 0; i < len(line); {
+ 		if delim != "" {
+ 			if strings.HasPrefix(line[i:], delim) {
+ 				delim = ""
+ 				i += 3
+ 				continue
+ 			}
+ 			i++
+ 			continue
+ 		}
++		if q != 0 {
++			// Inside a single-line '...' or "..." literal: a backslash escapes the
++			// next byte, and only the matching quote closes the string. A `#` or a
++			// triple-quote token here is string content, not a comment or a new span.
++			switch line[i] {
++			case '\\':
++				i += 2
++				continue
++			case q:
++				q = 0
++			}
++			i++
++			continue
++		}
+ 		if strings.HasPrefix(line[i:], `"""`) {
+ 			delim = `"""`
+ 			i += 3
+ 			continue
+ 		}
+ 		if strings.HasPrefix(line[i:], `'''`) {
+ 			delim = `'''`
+ 			i += 3
+ 			continue
+ 		}
++		switch line[i] {
++		case '#':
++			return delim, i
++		case '"', '\'':
++			q = line[i]
++		}
+ 		i++
+ 	}
+-	return delim
++	return delim, len(line)
++}
++
++// scanTripleQuotes advances the triple-quoted-string state across one physical
++// line and returns the state at line end (delim is the active delimiter at line
++// start, "" if outside). It is comment-aware via scanLine: a triple-quote token
++// appearing inside a `#` comment (epic 22.3) does not flip the state machine.
++func scanTripleQuotes(line, delim string) string {
++	end, _ := scanLine(line, delim)
++	return end
+ }
+ 
+ // build consumes consecutive lines at exactly `indent` and returns their nodes.
+@@ -288,11 +330,12 @@ func identAfter(t, kw string) string {
+ 	return rest[:end]
+ }
+ 
++// stripComment returns text with any trailing `#` comment removed. It is
++// comment-aware via scanLine: a `#` inside a triple-quoted string span on this
++// line is treated as string content, not a comment start (epic 22.3).
+ func stripComment(text string) string {
+-	if i := strings.IndexByte(text, '#'); i >= 0 {
+-		return text[:i]
+-	}
+-	return text
++	_, at := scanLine(text, "")
++	return text[:at]
+ }
+ 
+ func main() {}
