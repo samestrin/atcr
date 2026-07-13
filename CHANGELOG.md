@@ -1,3 +1,18 @@
+## [22.1.0] - 2026-07-12
+
+Thread the reviewed-repo root through `atcr reconcile` and `atcr verify` via a new `--repo` flag, so validating findings against a repo other than the current directory (or running from a non-repo-root CWD) no longer falsely flags every finding as "file not found."
+
+### Added
+
+- `atcr reconcile --repo <path>` — validates finding file paths against the given repo root instead of the current directory. Defaults to `.`, preserving prior behavior.
+- `atcr verify --repo <path>` — threads the same reviewed-repo root into the skeptics' code snapshot and the evidence redactor, kept consistent with `atcr reconcile --repo`. Defaults to `.`.
+
+### Fixed
+
+- An explicit empty `--repo` on either command now normalizes to the current directory rather than silently disabling path validation.
+
+*Shipped via /execute-epic (epic 22.1)*
+
 ## [22.0.0] - 2026-07-12
 
 Reap the entire process group when a local auto-fix validation command times out, so grandchild processes spawned by shells like `sh -c make ...` are killed instead of left running past the deadline.
