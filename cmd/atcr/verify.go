@@ -31,6 +31,7 @@ func newVerifyCmd() *cobra.Command {
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: runVerify,
 	}
+	cmd.Flags().String("repo", ".", "repo root skeptics inspect and validate finding file paths against (default: current directory)")
 	cmd.Flags().Bool("fresh", false, "re-verify findings that already carry a verdict")
 	cmd.Flags().Bool("thorough", false, "use 3 skeptics per finding with majority rule (default 1)")
 	cmd.Flags().String("min-severity", "", "skip findings below this severity floor: CRITICAL, HIGH, MEDIUM, LOW (default MEDIUM)")
@@ -86,8 +87,13 @@ func runVerify(cmd *cobra.Command, args []string) error {
 
 	fresh, _ := cmd.Flags().GetBool("fresh")
 	thorough, _ := cmd.Flags().GetBool("thorough")
-	absRoot, _ := filepath.Abs(".")
-	res, err := verify.Verify(cmd.Context(), ".", reviewDir, cfg.Registry, verify.Options{
+	// The reviewed-repo root skeptics inspect and the exec validator resolves
+	// go.mod against (Epic 22.1). Defaults to "." (the CWD == repo-root operating
+	// assumption), preserving pre-22.1 behavior; --repo <other-repo> threads a
+	// repo other than the CWD — kept consistent with `atcr reconcile --repo`.
+	repoRoot, _ := cmd.Flags().GetString("repo")
+	absRoot, _ := filepath.Abs(repoRoot)
+	res, err := verify.Verify(cmd.Context(), repoRoot, reviewDir, cfg.Registry, verify.Options{
 		Fresh:             fresh,
 		Thorough:          thorough,
 		MinSeverity:       minSev,
