@@ -208,3 +208,31 @@ func TestVerifyCmd_FreshReverifies(t *testing.T) {
 	require.Equal(t, 0, code)
 	require.Equal(t, "unverifiable", readFindingVerdict(t, "r"), "--fresh re-attempts; no skeptic -> unverifiable")
 }
+
+// TestVerifyCmd_RepoFlagThreadsReviewedRoot proves Epic 22.1 task 2: `atcr verify`
+// grows a --repo flag that threads the reviewed-repo root (default ".") into
+// verify.Verify's repoRoot — the root skeptics inspect and the exec validator
+// resolves go.mod against — replacing the hardcoded "." convention. Asserted
+// hermetically via flag acceptance plus no-regression of the no-skeptic pipeline:
+// repoRoot's deep effect only surfaces when a skeptic snapshot is built (which
+// needs a live model), so the reconcile behavioral test covers path validation
+// end to end while this guards the verify-side threading and the common case.
+func TestVerifyCmd_RepoFlagThreadsReviewedRoot(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	otherRepo := t.TempDir()
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x",
+	}})
+	code, _ := execCmdCapture(t, "verify", "r", "--repo", otherRepo)
+	require.Equal(t, 0, code, "--repo must be accepted and must not regress the pipeline")
+	// The no-skeptic pipeline still ran to completion against the fixture.
+	require.Equal(t, "unverifiable", readFindingVerdict(t, "r"))
+}
+
+// TestVerifyCmd_RepoFlagInHelp documents the --repo flag surface (Epic 22.1).
+func TestVerifyCmd_RepoFlagInHelp(t *testing.T) {
+	isolate(t)
+	_, help := execCmdCapture(t, "verify", "--help")
+	require.Contains(t, help, "--repo")
+}
