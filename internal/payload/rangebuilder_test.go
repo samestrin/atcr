@@ -210,3 +210,32 @@ func TestRangeBuilder_ReleaseModeCaches(t *testing.T) {
 	assert.Equal(t, before, rb.g.execCount,
 		"grounding after ReleaseModeCaches must reuse the retained zero-context cache (no new git process)")
 }
+
+// TestRangeBuilder_ConcurrentUsePanics pins the runtime guard: RangeBuilder is
+// documented as not concurrency-safe (the gitRunner's range-state cache is
+// single-writer), and a future caller that shares one builder across goroutines
+// must fail loudly rather than silently corrupt the cache. The CAS sentinel
+// panics on a second concurrent entry; this test simulates an in-flight caller
+// (inUse=1) and asserts the next BuildEntries/BuildChangedLines panic, then
+// verifies sequential use after reset still works.
+func TestRangeBuilder_ConcurrentUsePanics(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	head := commitAll(t, dir, "v2")
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+
+	// Simulate another goroutine mid-build: the sentinel must reject a second
+	// entry with a panic rather than let it corrupt the single-writer cache.
+	rb.inUse.Store(1)
+	assert.Panics(t, func() { _, _ = rb.BuildEntries(ModeDiff) })
+	assert.Panics(t, func() { _, _ = rb.BuildChangedLines() })
+	rb.inUse.Store(0)
+
+	// Sequential use after the sentinel resets works unchanged.
+	_, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	_, err = rb.BuildChangedLines()
+	require.NoError(t, err)
+}

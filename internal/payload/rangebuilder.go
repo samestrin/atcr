@@ -2,6 +2,7 @@ package payload
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/samestrin/atcr/internal/log"
 )
@@ -17,11 +18,18 @@ import (
 // grounding (Epic 22.4).
 //
 // It is NOT safe for concurrent use: the gitRunner's range-state cache is
-// single-writer. Callers use it sequentially (payload modes, then grounding).
+// single-writer, so BuildEntries and BuildChangedLines CAS-guard against
+// concurrent use and panic (rather than silently corrupting the cache) if a
+// caller shares one builder across goroutines. Callers use it sequentially
+// (payload modes, then grounding).
 type RangeBuilder struct {
 	g          *gitRunner
 	base, head string
 	validated  bool
+	// inUse is a CAS sentinel: 0 idle, 1 mid-build. It makes accidental concurrent
+	// use fail loudly (panic) instead of corrupting the single-writer rangeState
+	// cache. Uncontended sequential use pays one CompareAndSwap per build.
+	inUse atomic.Int32
 }
 
 // NewRangeBuilder returns a RangeBuilder for repo's base..head range, sharing one
@@ -64,6 +72,10 @@ func (b *RangeBuilder) Range() (base, head string) {
 // BuildEntries returns the per-file payload contributions for mode, reusing the
 // builder's memoized range caches. Mirrors the package-level BuildEntries.
 func (b *RangeBuilder) BuildEntries(mode PayloadMode) ([]FileEntry, error) {
+	if !b.inUse.CompareAndSwap(0, 1) {
+		panic("payload.RangeBuilder used concurrently: it is not safe for concurrent use")
+	}
+	defer b.inUse.Store(0)
 	if err := validatePayloadMode(mode); err != nil {
 		return nil, err
 	}
@@ -83,6 +95,10 @@ func (b *RangeBuilder) BuildEntries(mode PayloadMode) ([]FileEntry, error) {
 // the package-level BuildChangedLines; the fail-open contract (a git error
 // disables the grounding gate) lives at the fan-out caller.
 func (b *RangeBuilder) BuildChangedLines() (ChangedLines, error) {
+	if !b.inUse.CompareAndSwap(0, 1) {
+		panic("payload.RangeBuilder used concurrently: it is not safe for concurrent use")
+	}
+	defer b.inUse.Store(0)
 	if err := b.validate(); err != nil {
 		return nil, err
 	}
