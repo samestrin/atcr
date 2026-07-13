@@ -1,0 +1,1857 @@
+diff --git a/.planning/epics/active/24.0_false_positive_wontfix_dismissal.md b/.planning/epics/active/24.0_false_positive_wontfix_dismissal.md
+index 718cd255..5f52310f 100644
+--- a/.planning/epics/active/24.0_false_positive_wontfix_dismissal.md
++++ b/.planning/epics/active/24.0_false_positive_wontfix_dismissal.md
+@@ -1,8 +1,8 @@
+ # Epic Plan 24.0: False Positive / WontFix Dismissal Loop
+ 
+ - **Estimated time**: TBD
+-- **Tasks/Components**: TBD
+-- **Execution**: init-plan
++- **Tasks/Components**: 3 tasks / 2 components
++- **Execution**: execute-epic
+ 
+ ## Objective
+ 
+@@ -13,76 +13,80 @@ Provide a seamless mechanism for developers to permanently dismiss a specific te
+ ATCR successfully surfaces technical debt and automatically routes it to the `.planning/technical-debt/README.md` or `.atcr/reviews/` sharded backend. However, if an agent hallucinates or flags a legitimate but accepted pattern (a false positive), the developer currently has no "dismiss" button. The finding will repeatedly surface, causing alert fatigue. 
+ 
+ ## Proposed Solution
+ 
+-1. **Dismiss Command**: Add an `atcr dismiss <finding-id> --reason <fp|wontfix>` subcommand to `cmd/atcr` that appends a `dismissed` status record to `internal/localdebt` (extending its existing terminal `resolved`/`deferred` status contract), so `selectOpenDebt` folds the id out of the open backlog.
+-2. **Reconciliation Ignore Logic**: Update the reconciler (`internal/reconcile/gate.go`) and prompt payload builder (`internal/payload`) so that dismissed findings whose `internal/localdebt` id (`history.FindingID(file, line, problem)`) has a `dismissed` status record are automatically filtered out of future review outputs.
+-3. **Audit Log**: Append a dismissal audit record (id, reason, timestamp) via `internal/audit` (capture.go/writer.go), OR carry the reason on the `internal/localdebt` `dismissed` status record — pick one so the audit surface is testable.
++1. **Dismiss status**: Extend `internal/localdebt.Record.Status` to recognize a new terminal value, `wontfix`, alongside the existing `resolved`/`deferred` (`isClosedStatus` in `cmd/atcr/debt_resolve.go:81-88`). A `wontfix` record folds the finding out of the open backlog exactly like a resolution does — no new fold logic needed, just a new recognized value.
++2. **CLI surface**: Extend `atcr debt resolve` (`cmd/atcr/debt_resolve.go`) with a `--status wontfix` option (or a `--dismiss <id>` alias) plus a new `--reason` flag that populates the finding's existing, currently-unset `Justification` field (`internal/localdebt/record.go:40`).
++3. **Suppression on future runs**: No reconciler or payload-builder change is required. `internal/localdebt`'s write-time dedup-by-id already skips re-appending a finding whose `FindingID` already exists in the store, regardless of status — so once a finding is marked `wontfix`, `atcr reconcile` will not re-persist it, and `atcr debt resolve --list`/`--json` already fold it out of the open view via the existing `isClosedStatus` check once that check recognizes `wontfix`.
+ 
+ ## Acceptance Criteria
+ 
+-- [ ] A finding can be explicitly marked as dismissed/WontFix.
+-- [ ] A dismissed finding does not reappear in the reconciled output on subsequent runs against the same code structure.
+-- [ ] The dismissal state is preserved across runs.
++- [ ] `atcr debt resolve --resolve <id> --status wontfix --reason "<text>"` marks a finding wontfix/false-positive and records the reason in `Justification`.
++- [ ] A `wontfix` finding does not appear in `atcr debt resolve --list` (or `--json`) on subsequent runs.
++- [ ] A `wontfix` finding is not re-appended to the local TD store when `atcr reconcile` re-detects the same finding (same `FindingID`).
++- [ ] The dismissal state (status + reason) is preserved across runs — durable in the append-only `.atcr/debt/` store.
+ 
+ ## Components Touched
+ 
+-- `cmd/atcr` (CLI interface — `atcr dismiss` subcommand)
+-- `internal/localdebt` (persistence — `.atcr/debt/` backlog; extends existing resolved/deferred status)
+-- `internal/reconcile` (filtering — extend gate.go)
+-- `internal/payload` (prompt payload builder — T2)
+-- `internal/audit` (audit log — T3)
++- `internal/localdebt` (Status enum + Justification wiring — persistence and open/closed fold)
++- `cmd/atcr` (CLI: `--status wontfix` / `--dismiss`, `--reason` flags on `atcr debt resolve`)
+ 
+ ## Out of Scope
+ 
+ - Team-wide synchronization of dismissed findings (handled by Epic 19.x remote registry fetching / shared history if needed, but the core engine logic is local).
++- AST-structural-hash-based dismissal matching (resilient to file/line drift) — v1 uses exact `FindingID` matching, consistent with the rest of the codebase's finding-identity convention (`internal/history.FindingID`). Deferred to a follow-up epic if line-drift resilience proves necessary in practice.
++- Parity with the `.planning/`-scoped store (`internal/debt` / `.planning/technical-debt/README.md`) — this epic covers the public `.atcr/`-scoped store only (`internal/localdebt`), which is what `atcr reconcile` populates on every CLI run. README/sprint-store parity is a candidate follow-up epic.
++- `internal/reconcile` and `internal/payload` changes — not needed; suppression happens entirely at the `internal/localdebt` persistence/read layer (see Proposed Solution item 3).
+ 
+ ## Dependencies
+ 
+ - None.
+ 
+ ## Refinements (2026-07-13)
+ 
+-This section records findings from `/refine-epic` run on July 13, 2026 12:11:45PM. It is additive — original plan content above is preserved.
++This section records findings from `/refine-epic` run on July 13, 2026 01:00:46PM. It is additive — original plan content above is preserved.
+ 
+ ### Auto-applied corrections (0)
+ 
+-None.
++None — no mechanical errors found. All cited paths (`.planning/technical-debt/README.md`, `internal/reconcile`, `internal/scorecard`, `cmd/atcr`) exist and are valid.
+ 
+ ### Items needing user confirmation (5)
+ 
+-> **Post-run update (2026-07-13):** Per user direction, the concrete corrections below (Components Touched, T1, T2, T3; finding 5 resolved by the Components edit + the T2 explicit-ID decision) were applied to the plan body after this run. The items below are preserved as the record of what was found.
++⏸️ **Reusable dismissal infrastructure already exists — plan proposes building it from scratch.** `atcr debt resolve --resolve <id>` (`cmd/atcr/debt_resolve.go`) already appends an append-only `Status` record (`resolved`/`deferred`) that `selectOpenDebt`/`isClosedStatus` (`cmd/atcr/debt_resolve.go:81-88`) folds out of the open backlog permanently — this is nearly the exact mechanism this epic asks for ("Reconciliation Ignore Logic"). The `.planning/-scoped` store (`internal/debt`) has the equivalent `Status` filter (`open|deferred|resolved`, `internal/debt/debt.go:54`). Neither store recognizes a `wontfix`/`false_positive` status distinct from `resolved` (which implies the code was actually fixed) — that is the actual gap. Suggested action: extend `isClosedStatus` and `internal/debt`'s status enum with a new terminal status (e.g. `wontfix`), and extend `atcr debt resolve` (or add a sibling flag) rather than building a new `atcr dismiss` subsystem and a separate audit log from zero.
+ 
+-- ⏸️ **Components mismatch:** Plan lists `[internal/reconcile, internal/scorecard, cmd/atcr]` (3); derived `[cmd/atcr, internal/localdebt, internal/reconcile, internal/payload, internal/audit]` (5). Difference: missing=`[internal/localdebt, internal/payload, internal/audit]`, extra=`[internal/scorecard]`. T2 names a "prompt payload builder" (`internal/payload/builder.go`) and T3 implies an "audit log" (`internal/audit`), both omitted from Components Touched; persistence is labeled `internal/scorecard` but the actual local TD store is `internal/localdebt` (`internal/scorecard/store.go` is the per-run score ledger; `internal/localdebt/store.go` is the `.atcr/debt/` backlog). Proposed COMPONENTS_TOUCHED: `[cmd/atcr, internal/localdebt, internal/reconcile, internal/payload, internal/audit]` (+ `internal/astgroup` conditional — see signature-ambiguity finding). NOT auto-applied (intent-changing).
++⏸️ **Components Touched is wrong/ambiguous for the local TD store.** The plan lists "`internal/scorecard` or local TD store (persistence)" — `internal/scorecard` is an unrelated ledger for run history and is NOT where TD records persist. The actual persistence package is `internal/localdebt` (the `.atcr/`-scoped public store `atcr reconcile` populates, with a `Record.Status`/`Justification`/`ResolvedAt` schema already in place — see `internal/localdebt/record.go`). There is also a second, distinct backend, `internal/debt` (the `.planning/`-scoped store backing `.planning/technical-debt/README.md`), which the plan doesn't mention at all. Suggested action: decide whether dismissal targets one or both backends, and correct COMPONENTS_TOUCHED to name the real packages: `internal/localdebt` and/or `internal/debt` (not `internal/scorecard`).
+ 
+-- ⏸️ **Ambiguous T1:** "Implement `atcr dismiss <finding-id>` (or similar) to flag a finding in the local TD store as explicitly rejected." — "local TD store" is not a concrete target (codebase has `internal/localdebt` → `.atcr/debt/` and `internal/debt` → `.planning/technical-debt/README.md`), and "(or similar)" hedges the command name. Suggested rewrite: "Add an `atcr dismiss <finding-id> --reason <fp|wontfix>` subcommand to `cmd/atcr` that appends a `dismissed` status record to `internal/localdebt`, extending its existing terminal `resolved`/`deferred` status contract, so `selectOpenDebt` folds the id out of the open backlog."
++⏸️ **Missed component: `internal/payload`.** The plan's Proposed Solution item 2 says to update "the reconciler (`internal/reconcile`) and prompt payload builder" — the prompt payload builder is `internal/payload` (`internal/payload/doc.go`: "Package payload builds per-agent reviewer input..."), which is not listed in Components Touched. Suggested action: add `internal/payload` to COMPONENTS_TOUCHED, or confirm dismissal filtering happens earlier (at the reconcile/persistence layer) so `internal/payload` never sees dismissed findings and doesn't need modification — if so, say so explicitly and drop it from the task list.
+ 
+-- ⏸️ **Ambiguous T3:** "Record the dismissal reason for transparency." — 6 words, no concrete file/symbol target. Suggested rewrite: "Append a dismissal audit record (id, reason, timestamp) via `internal/audit` (capture.go/writer.go), OR carry the reason on the `internal/localdebt` `dismissed` status record — pick one so the audit surface is testable."
++⏸️ **Ambiguous matching mechanism.** Proposed Solution item 2 says dismissed findings should be matched "by AST structural hash or explicit ID" without deciding between them. The codebase already has both primitives independently: `internal/astgroup.MerkleHash` (structural, line-number-independent) and `internal/history.FindingID`/`localdebt.Record.ID` (SHA-256 of file+line+problem, already what `atcr debt resolve` keys resolution off of). Wiring AST-hash-based matching into the local-debt dismissal flow is a materially larger change than reusing the existing `FindingID` convention (which is already exact-match, not resilient to file/line drift). Suggested action: scope this epic to ID-based matching only (reuse `FindingID`), and explicitly defer AST-hash fuzzy matching to a follow-up epic if line-drift resilience turns out to matter in practice.
+ 
+-- ⏸️ **T2 signature ambiguity:** "...dismissed finding signatures (by AST structural hash or explicit ID)..." leaves the signature key undecided. `internal/localdebt`'s existing identity is `history.FindingID(file, line, problem)` (explicit ID); "AST structural hash" maps to `internal/astgroup` (grouper.go/merkle.go, already wired into reconcile via `internal/reconcile/astgrouping.go`) and would add `internal/astgroup` as a touched component. Pick one before TDD: explicit ID reuses localdebt's existing key (no new component); AST hash adds astgroup coupling plus a new signature pipeline.
++⏸️ **Ambiguous T<N>: "Record the dismissal reason for transparency."** — too vague to derive a RED→GREEN test (6 words, no concrete file/symbol target). Suggested rewrite: "Add a `--reason` flag to `atcr debt resolve` (`markDebtResolved` in `cmd/atcr/debt_resolve.go`) that populates the existing but currently-unset `localdebt.Record.Justification` field (`internal/localdebt/record.go:40`) when marking a finding `wontfix`/`false-positive`."
+ 
+-- ⏸️ **Missed components (codebase discovery):** Grep for OBJECTIVE-related terms surfaced `internal/localdebt` (store.go — the actual local TD backlog), `internal/astgroup` (grouper.go/merkle.go — the AST structural-hash engine), and `internal/debt` (debt.go — the `.planning/technical-debt/README.md` store for the private pipeline), none mentioned by name in the plan. Sample matches: `internal/localdebt/store.go`, `internal/astgroup/grouper.go`, `internal/debt/debt.go`. Suggested action: confirm each in/out of scope; adding the in-scope ones pushes COMPONENT_COUNT well past the ≤2 limit (see scope-guard advisory), reinforcing the `/init-plan` route.
++Note that these were NOT applied automatically — see the copy-paste block emitted at end of skill run.
+ 
+-### Advisory observations (5)
++### Advisory observations (1)
+ 
+-- ℹ️ **Scope-guard violation:** Derived TASK_COUNT=3, COMPONENT_COUNT=5 — exceeds `/execute-epic`'s ≤6 tasks / ≤2 components limit. The plan's own header already declares `Execution: init-plan`, which aligns: this plan should run through `/init-plan @.planning/epics/active/24.0_false_positive_wontfix_dismissal.md` for the full sprint pipeline. Refining alone does not unblock `/execute-epic`.
+-
+-- ℹ️ **Reusable mechanism — localdebt status contract:** `internal/localdebt/doc.go` already defines a terminal resolution contract: a `resolved` or `deferred` status record for an id causes `selectOpenDebt` to fold that id out of the open backlog permanently. A `dismissed`/`wontfix`/`false_positive` status is a natural extension of this enum, not new persistence. The plan should reference this existing mechanism rather than imply a fresh store.
+-
+-- ℹ️ **Reconcile gatekeeper precedent:** `internal/reconcile/gate.go` is the existing filter — Epic 14.2 made the reconciliation layer "a strict gatekeeper against hallucinated technical-debt items by filtering uncorroborated findings" (CHANGELOG [14.2.0]). T2's dismiss-filter should extend `gate.go`, not introduce a parallel filter. If filtering lives at the gate, `internal/payload` may need no change (the payload builder simply never sees dismissed findings) — which would drop COMPONENT_COUNT from 5 to 4.
+-
+-- ℹ️ **Two TD stores — disambiguate:** `internal/debt` writes the versioned `.planning/technical-debt/README.md` (private pipeline); `internal/localdebt` writes the uncommitted `.atcr/debt/YYYY-MM.jsonl` (public/standalone, Epic 20.1). The plan's Context references the README AND the `.atcr/reviews/` backend, and AC #2 says "does not reappear in the reconciled output" — but the reconciled output differs per store. Specify which store(s) hold dismiss state and which output the AC targets.
+-
+-- ℹ️ **Cross-epic dependency / downstream contract:** Epic 30.0 (`30.0_community_prompt_quality_signal.md`) and completed 19.9 both consume "the 24.0 dismissal signal" — `dismissed`/`confirmed` events aggregated per persona+model. So the dismiss-state shape (id key, reason enum, event record) is a contract downstream epics depend on; consider referencing it in the AC so 24.0's output is shaped for 30.0/19.9's consumption.
++ℹ️ **Scope-guard violation:** Author-claimed COMPONENTS_TOUCHED already lists 3 items (`internal/reconcile`, `internal/scorecard or local TD store`, `cmd/atcr`), exceeding `/execute-epic`'s ≤2-component limit. Verified codebase mapping shows the real component set is larger still — `internal/reconcile`, `internal/localdebt`, `internal/debt`, `cmd/atcr`, and `internal/payload` (5 components, derived TASK_COUNT ≈5). This plan will be rejected by `/execute-epic`'s Phase 1 Step 4 scope guard as currently scoped and should run through `/init-plan @.planning/epics/active/24.0_false_positive_wontfix_dismissal.md` for the full sprint pipeline. Refining alone will not unblock `/execute-epic` unless the scope is deliberately narrowed to ≤2 components (e.g. local-store-only, deferring reconciler/payload filtering to a follow-up epic).
+ 
+ ### Verification context
+ 
+ - Refinement depth: spot-check
+-- Derived TASK_COUNT: 3 (limit: 6)
++- Derived TASK_COUNT: 5 (limit: 6)
+ - Derived COMPONENT_COUNT: 5 (limit: 2)
+-- COMPONENTS_TOUCHED: [cmd/atcr, internal/localdebt, internal/reconcile, internal/payload, internal/audit] (+ internal/astgroup conditional)
++- COMPONENTS_TOUCHED: internal/reconcile, internal/localdebt, internal/debt, cmd/atcr, internal/payload
+ - VISUAL_SURFACE: false
+ - HAS_GATED_WORK: false
+ - HAS_CROSS_SYSTEM: false
+-- Cited references checked: 8 (5 component paths + 3 symbols; all paths exist, `atcr dismiss` confirmed net-new)
+-- Codebase search queries (spot-check): ["dismiss / wontfix / false-positive", "AST structural hash (astgroup)", "local TD store persistence (localdebt/scorecard/debt)"]
+-- Semantic search: ran (index live, 3365 files / 37490 chunks); top non-plan hit was CHANGELOG [14.2.0] reconcile-gatekeeper (doc), corroborating the gate.go precedent — no high-score code file outside COMPONENTS_TOUCHED beyond grep findings.
++- Cited references checked: 5 (paths) + 3 codebase spot-check searches
++- Codebase search queries (spot-check): "dismiss|wontfix|false positive" (internal/, cmd/), "structural hash|finding id" (internal/), "prompt payload builder" (internal/)
++
++### Resolution (2026-07-13)
++
++All 5 user-confirm items above were reviewed and applied directly to the plan body (Proposed Solution, Acceptance Criteria, Components Touched, Out of Scope):
++
++1. ✅ Reuse `atcr debt resolve`/`isClosedStatus` instead of a new `atcr dismiss` subsystem.
++2. ✅ Target `internal/localdebt` only; `internal/debt`/README parity moved to Out of Scope as a follow-up candidate.
++3. ✅ `internal/payload` confirmed unnecessary — filtering happens at the `internal/localdebt` read layer before payload ever sees the findings; moved to Out of Scope.
++4. ✅ Matching scoped to exact `FindingID` only; AST-structural-hash matching moved to Out of Scope as a follow-up.
++5. ✅ Dismissal-reason task rewritten to name the concrete `--reason` flag and the existing `Justification` field.
++
++Net effect: derived COMPONENT_COUNT drops from 5 to 2 (`internal/localdebt`, `cmd/atcr`) and TASK_COUNT to 3 — the plan now fits `/execute-epic`'s ≤6 tasks / ≤2 components scope guard. Execution field updated from `init-plan` to `execute-epic` accordingly.
+diff --git a/.planning/epics/active/25.0_sarif_output_integration.md b/.planning/epics/active/25.0_sarif_output_integration.md
+index 1774b896..1649780e 100644
+--- a/.planning/epics/active/25.0_sarif_output_integration.md
++++ b/.planning/epics/active/25.0_sarif_output_integration.md
+@@ -6,35 +6,70 @@
+ 
+ ## Objective
+ 
+-Support exporting ATCR review findings in standard SARIF (Static Analysis Results Interchange Format) to natively integrate with GitHub Advanced Security, GitLab CI, and IDEs.
++Support exporting ATCR review findings in standard SARIF (Static Analysis Results Interchange Format) so they feed GitHub Advanced Security's Code Scanning ("Security" tab) and GitLab CI's native SAST report widget — the two centralized, cross-repo security surfaces ATCR's existing PR-check/inline-comment integration (`atcr github`) does not reach.
+ 
+ ## Context
+ 
+-Currently, ATCR writes rich markdown files locally. For enterprise adoption and CI/CD integration, developers expect AI review findings to appear as inline annotations on their Pull Requests ("Files Changed" tab), just like SonarQube or CodeQL. SARIF is the industry standard for this.
++Currently, ATCR writes rich markdown files locally, and the maintained composite GitHub Action (`atcr github` + `action.yml`, see `docs/github-action.md`) already posts a PR check and inline "Files Changed" comments directly via the GitHub API — that part of the enterprise-integration story is solved and is explicitly out of scope here. What ATCR does not yet do is feed the *centralized* security surfaces enterprises also expect: GitHub Advanced Security's org-wide Code Scanning "Security" tab (aggregated across repos/branches, with its own dedup/suppression/trend workflow) and GitLab CI's native SAST report widget in the MR view. Both ingest SARIF, not markdown/JSON, so SARIF export is the missing piece for those two surfaces specifically.
+ 
+ ## Proposed Solution
+ 
+-1. **SARIF Formatter**: Add a new render target in `internal/report` that maps ATCR's reconciled findings (file, line, message, severity) to the SARIF JSON schema.
+-2. **CLI Flag**: Add `--format=sarif` to `atcr review` and `atcr reconcile`.
+-3. **CI Example**: Document a GitHub Actions workflow step demonstrating how to pipe `atcr review --format=sarif` to GitHub's `codeql-action/upload-sarif`.
++1. **SARIF Formatter**: Add a new render target in `internal/report` that maps ATCR's reconciled findings (file, line, message, severity) to the SARIF JSON schema, following the existing `Format*` pattern in `internal/report/render.go` (`FormatMarkdown`/`FormatJSON`/`FormatChecklist`).
++2. **CLI Flag**: Add `--format=sarif` to `atcr report` (the existing render command — `atcr review`/`atcr reconcile` do not render output and should not gain a duplicate flag).
++3. **CI Example**: Document a GitHub Actions workflow step demonstrating how to pipe `atcr review && atcr reconcile && atcr report --format=sarif` to GitHub's `codeql-action/upload-sarif` (and the GitLab CI equivalent for its SAST widget).
+ 
+ ## Acceptance Criteria
+ 
+-- [ ] `atcr review --format=sarif` produces valid SARIF JSON.
++- [ ] `atcr report --format=sarif` produces valid SARIF JSON.
+ - [ ] The SARIF output correctly maps ATCR severities (CRITICAL, HIGH, etc.) to SARIF levels.
+ - [ ] File paths and line numbers correctly anchor to the git diff.
+-- [ ] A documentation example exists showing the CI integration.
++- [ ] A documentation example exists showing the CI integration (GitHub Code Scanning upload, and the GitLab CI SAST-widget equivalent).
+ 
+ ## Components Touched
+ 
+ - `internal/report`
+ - `cmd/atcr`
+ - `docs/`
+ 
+ ## Out of Scope
+ 
+-- Direct API calls to GitHub/GitLab to post comments (SARIF ingestion handles this automatically without ATCR needing auth tokens).
++- `atcr github`'s existing direct-API PR check and inline-comment flow — already shipped, unaffected by this epic.
++- Direct API calls to post SARIF results to GitHub/GitLab (`codeql-action/upload-sarif` and GitLab's native SARIF ingestion handle that; ATCR only needs to produce the file).
+ 
+ ## Dependencies
+ 
+ - None.
++
++## Refinements (2026-07-13)
++
++This section records findings from `/refine-epic` run on July 13, 2026 01:08:25PM. It is additive — original plan content above is preserved.
++
++### Auto-applied corrections (0)
++
++None.
++
++### Items needing user confirmation (2) — resolved 2026-07-13, applied to the plan body above
++
++✅ **1. CLI-target mismatch — `atcr review`/`atcr reconcile` have no `--format` flag; `atcr report` is the existing render command.** Verified against the live codebase: `cmd/atcr/review.go` and `cmd/atcr/reconcile.go` have no `--format` flag and never call `internal/report`. Only `cmd/atcr/report.go` wires `--format` (`cmd/atcr/report.go:25`) through `internal/report.Render()` (`internal/report/render.go:48`), which already switches on `FormatMarkdown`/`FormatJSON`/`FormatChecklist` (`internal/report/render.go:24-26`) — the exact extension point a `FormatSarif` case would slot into. Proposed Solution item 2 and AC1 (`atcr review --format=sarif produces valid SARIF JSON`) should instead target `atcr report --format=sarif`. The CI-example task/AC4 should follow suit: pipe `atcr report --format=sarif` (run after `atcr review && atcr reconcile`, consistent with the existing two-step pattern documented in `docs/ci-integration.md`), not `atcr review --format=sarif` directly.
++Suggested action: reword Proposed Solution item 2, AC1, and item 3/AC4 to target `atcr report`.
++
++✅ **2. Context/rationale overlaps with already-shipped `atcr github` PR-comment integration.** ATCR already ships a maintained composite GitHub Action (`atcr github` command, `action.yml`, documented in `docs/github-action.md`) that posts a PR check **and inline "Files Changed" comments** directly via the GitHub API — the exact "inline annotations on PRs" outcome this epic's Context cites as motivation for SARIF ("developers expect AI review findings to appear as inline annotations on their Pull Requests... just like SonarQube or CodeQL"). The Out-of-Scope line ("Direct API calls to GitHub/GitLab to post comments... SARIF ingestion handles this automatically without ATCR needing auth tokens") is already contradicted by ATCR's existing direct-API PR-comment flow (`cmd/atcr/github.go`). SARIF likely still has a genuine, non-overlapping niche — GitHub Advanced Security's **Code Scanning "Security" tab** and GitLab CI's native SAST report widget, neither of which `atcr github` covers today — but as written, a reader could reasonably conclude this epic duplicates the existing Action.
++Suggested action: narrow OBJECTIVE/Context to the Security-tab / GitLab-SAST gap specifically, and revise the Out-of-Scope line to acknowledge ATCR already does direct-API PR commenting via a separate command.
++
++### Advisory observations (2)
++
++ℹ️ **Scope-guard confirmation:** Derived COMPONENT_COUNT=3 (`internal/report`, `cmd/atcr`, `docs/`) exceeds `/execute-epic`'s ≤2-component limit — but the plan's own header already declares `Execution: init-plan`, so this confirms the author's existing choice rather than contradicting it. No action needed.
++
++ℹ️ **Quickstart scaffold not mentioned:** `internal/quickstart/workflow.go` generates a deliberately minimal, review-only `.github/workflows/atcr.yml` scaffold (no `reconcile`/`report`/`github` step at all). The plan's AC4 asks only for a standalone documentation example, so the scaffold is likely out of scope by design — worth a one-line confirmation in the plan so whoever picks this up at `/init-plan` doesn't have to re-derive that.
++
++### Verification context
++
++- Refinement depth: spot-check
++- Derived TASK_COUNT: 3 (limit: 6)
++- Derived COMPONENT_COUNT: 3 (limit: 2) — `internal/report`, `cmd/atcr`, `docs/`
++- COMPONENTS_TOUCHED: internal/report, cmd/atcr, docs/ (matches plan's own "Components Touched" section)
++- VISUAL_SURFACE: false
++- HAS_GATED_WORK: false
++- HAS_CROSS_SYSTEM: false
++- Cited references checked: internal/report, cmd/atcr, docs/, `atcr review`, `atcr reconcile`, `codeql-action/upload-sarif` (external, not verified against this repo)
++- Codebase search queries (spot-check): ["SARIF output format findings", "GitHub Actions CI upload sarif", "atcr report render format flag"]
+diff --git a/.planning/epics/active/22.4_grounding_gitrunner_reuse.md b/.planning/epics/completed/22.4_grounding_gitrunner_reuse.md
+similarity index 100%
+rename from .planning/epics/active/22.4_grounding_gitrunner_reuse.md
+rename to .planning/epics/completed/22.4_grounding_gitrunner_reuse.md
+diff --git a/.planning/epics/superseded/23.0_human_persona_renaming.md b/.planning/epics/superseded/23.0_human_persona_renaming.md
+index c3e81394..ab1c3eca 100644
+--- a/.planning/epics/superseded/23.0_human_persona_renaming.md
++++ b/.planning/epics/superseded/23.0_human_persona_renaming.md
+@@ -1,9 +1,11 @@
+ # Feature Request: Human Names for Built-in Reviewer Personas
+ 
+ - **Estimated time**: 1-2 days
+ - **Tasks/Components**: 5/2
+ - **Execution**: execute-epic
+ 
++> **STATUS: Absorbed by Epic 19.6 (2026-07-13).** Decision (a) from the reconciliation note below was taken: this epic's rename shipped as part of Epic 19.6 Phase 5, not as a standalone run. All 5 ACs verify against the current codebase (`personas/personas.go`'s `names` slice, `personas/{sasha,penny,ingrid}.md`, `personas/retired_slugs_test.go`, `docs/personas-authoring.md`'s human-first-name convention). Archived here rather than executed. See `.planning/epics/completed/19.6_community_registry_hub.md` (AC4, AC8) for the shipping record.
++
+ > **Reconciliation with Epic 19.6 (2026-07-07).** Epic 19.6 was rescoped to make community personas canonical (fetched, not embedded) and to ship a model-indexed, **human-named** persona library. Its AC4 requires the same straggler rename this epic performs (`sentinel`→`sasha`, `tracer`→`penny`, `idiomatic`→`ingrid`, generalize `ingrid`), and its AC8 shares this epic's AC5 (document the human-name convention in `docs/personas-authoring.md`). **The rename should happen once, as the personas migrate into 19.6's community layout — not twice.** Decision needed at 19.6's `/init-plan`: either (a) fold this rename into 19.6 and close 23.0 as absorbed, or (b) keep 23.0 as the standalone renamer and have 19.6 depend on it landing first. Until decided, treat the two as the same body of work to avoid a merge conflict on `personas/personas.go` + `personas/testdata/`.
+ 
+ ## Context
+@@ -45,6 +47,42 @@ This rename and generalization requires updating:
+ 
+ ## Refinements (2026-07-13)
+ 
++<<<<<<<< HEAD:.planning/epics/completed/23.0_human_persona_renaming.md
++This section records findings from `/refine-epic` run on July 13, 2026 01:00:48PM. It is additive — original plan content above is preserved.
++
++### Auto-applied corrections (0)
++
++None.
++
++### Items needing user confirmation (1)
++
++⏸️ **Epic fully absorbed by Epic 19.6 — recommend closing as absorbed, not executing.** Live-codebase verification confirms all 5 acceptance criteria are already satisfied:
++- `personas/personas.go:20` — the `names` slice already reads `sasha, penny, ingrid` (no `sentinel`/`tracer`/`idiomatic`).
++- `personas/sasha.md`, `personas/penny.md`, `personas/ingrid.md` exist; `personas/sentinel.md`, `personas/tracer.md`, `personas/idiomatic.md` do not.
++- `personas/testdata/sasha_fixture.patch`, `penny_fixture.patch`, `ingrid_fixture.patch`, `ingrid_lang2_fixture.patch` exist; no old-stem fixtures remain.
++- `personas/retired_slugs_test.go` (added as part of the same rename) enforces zero stale-slug references anywhere in the persona-identifier scope and asserts the new slugs resolve while the retired ones (`sentinel`/`tracer`/`idiomatic`) return errors.
++- `personas/ingrid.md:4-11` is already generalized to "the language under review" rather than Go-only (AC3 satisfied).
++- `docs/personas-authoring.md:65-69` documents the human-first-name convention and states explicitly: *"Epic 23.0 is absorbed by and superseded by Epic 19.6 ... so 23.0 is not run as a standalone renamer"* (AC5 satisfied).
++- The rename shipped via commits `15b938a4` (Sprint 19.6), `f6cdc3d4` (Sprint 19.7), `bf7463f0` (Sprint 19.9).
++
++Suggested action: move this file to `.planning/epics/completed/` (or your project's superseded/archive location) annotated as absorbed by Epic 19.6, rather than running `/execute-epic` against it — there is no remaining code work. See the copy-paste block below.
++
++### Advisory observations (1)
++
++ℹ️ The reconciliation note at the top of this file (originally line 7) still frames the fold-vs-standalone question as an open decision ("Decision needed at 19.6's `/init-plan`"). In practice the decision has already been made and executed (fold into 19.6) — `docs/personas-authoring.md` resolves it explicitly. The note is now stale and should be updated or removed once this epic is archived, so a future reader doesn't think the decision is still open.
++
++### Verification context
++
++- Refinement depth: spot-check
++- Derived TASK_COUNT: 5 (limit: 6)
++- Derived COMPONENT_COUNT: 2 (limit: 2) — `personas/` and `docs/`
++- COMPONENTS_TOUCHED: personas/, docs/
++- VISUAL_SURFACE: false
++- HAS_GATED_WORK: false
++- HAS_CROSS_SYSTEM: false
++- Cited references checked: personas/personas.go, personas/{sasha,penny,ingrid,sentinel,tracer,idiomatic}.md, personas/testdata/*_fixture.patch, personas/personas_test.go, personas/retired_slugs_test.go, docs/personas-authoring.md
++- Codebase search queries (spot-check): ["sentinel tracer idiomatic persona rename", "personas.go names slice sasha penny ingrid", "personas-authoring human first name convention"]
++========
+ This section records findings from `/refine-epic --deep` run on July 13, 2026 12:11:34PM. It is additive — original plan content above is preserved.
+ 
+ ### Auto-applied corrections (0)
+@@ -52,33 +90,34 @@ This section records findings from `/refine-epic --deep` run on July 13, 2026 12
+ None. No mechanical (SAFE_AUTOFIX) corrections were applicable — the plan's cited paths and structure are internally well-formed. The findings below are substantive, not typographical.
+ 
+ ### Items needing user confirmation (1)
+ 
+ - ⏸️ **Epic 23.0 is obsolete — already shipped via Epic 19.6; do not run `/execute-epic`.** The reconciliation note at the top of this plan posed a decision (fold into 19.6 vs. run standalone). The codebase shows option (a) was taken and 19.6 has shipped (`.planning/epics/completed/19.6_community_registry_hub.md`; sprint in `.planning/sprints/completed/19.6_community_registry_hub/`). Every AC this epic defines is already satisfied:
+   - **AC1 (no retired slugs in the registry):** `personas/personas.go` `names` = `["bruce","greta","kai","mira","dax","sasha","penny","ingrid","otto"]` — no `sentinel`/`tracer`/`idiomatic`. `personas/retired_slugs_test.go` (`TestNoRetiredSlugs`, `TestRetiredSlugs_NewResolveOldFail`) enforces this in CI (19.6 AC 05-03).
+   - **AC2 (templates/fixtures/source updated):** `personas/sasha.md`, `penny.md`, `ingrid.md` and `personas/testdata/{sasha,penny,ingrid}_fixture.patch` exist; the old-name files do not.
+   - **AC3 (idiomatic generalized, language-aware):** `personas/ingrid.md` is language-agnostic ("the language under review"); `personas/testdata/ingrid_lang2_fixture.patch` exercises a second language (19.6 AC 05-02).
+   - **AC4 (`go test ./...` passes):** the renamed fixture tests `TestSashaFixture`/`TestPennyFixture`/`TestIngridFixture` exist in `personas/personas_test.go`; the retired-slug guard is green.
+   - **AC5 (docs convention):** `docs/personas-authoring.md` has a "Persona naming: human first names" section that explicitly states *"Epic 23.0 is absorbed by and superseded by Epic 19.6 … so 23.0 is not run as a standalone renamer."* (19.6 AC 06-02).
+   - The name ambiguity ("`ingrid` or `ian`") is resolved: the codebase uses `ingrid`.
+   Running `/execute-epic` here would perform no useful work (every task is already done) and would spin up a spurious branch/PR. **Recommended action:** close/archive 23.0 as absorbed (move `.planning/epics/active/23.0_human_persona_renaming.md` → `.planning/epics/completed/`, or mark it superseded-by-19.6), rather than executing it. This was NOT auto-applied — archiving the epic is the user's call.
+ 
+ ### Advisory observations (1)
+ 
+ - ℹ️ **Test pattern already in place.** `personas/personas_test.go` uses per-persona fixture tests (`TestSashaFixture`, `TestPennyFixture`, `TestIngridFixture`) and `personas/retired_slugs_test.go` enforces the retired-slug invariant. Any future persona-rename work in this tree should extend these existing tests rather than introduce a new test shape.
+ 
+ ### Verification context
+ 
+ - Refinement depth: deep
+ - Derived TASK_COUNT: 5 (limit: 6)
+ - Derived COMPONENT_COUNT: 2 (limit: 2)
+ - COMPONENTS_TOUCHED: [personas/, docs/] (note: the already-shipped rename also touched `cmd/atcr/` and `internal/personas/` test files — all done under 19.6)
+ - VISUAL_SURFACE: false
+ - HAS_GATED_WORK: true (the reconciliation note's fold-vs-standalone decision — since resolved as folded)
+ - HAS_CROSS_SYSTEM: false
+ - Cited references checked: 11 file paths + 1 symbol (`names`); no file:line citations in the plan
+ - Codebase search queries (spot-check): ["persona names slice registry", "sentinel tracer idiomatic rename", "sasha penny ingrid wiring"]
+ - Deep discovery method: semantic
+ - Deep discovery queries: ["built-in reviewer persona names registry slice", "rename sentinel tracer idiomatic personas to human names", "persona fixture patch testdata embedded bonus", "idiomatic language-aware persona prompt conventions reviewer"]
+ - Deep discovery match count: 15 (semantic index 3365 files / 37490 chunks, last updated 2026-07-13)
+ - Deep discovery snapshot: /Users/samestrin/Documents/GitHub/atcr/.planning/.temp/refine-epic/codebase-discovery.json (temp-only — not committed)
++>>>>>>>> 292c5bb2bba9c9741d60b294da24c621ca87c8da:.planning/epics/superseded/23.0_human_persona_renaming.md
+ 
+diff --git a/.planning/product/presentation/index.html b/.planning/product/presentation/index.html
+new file mode 100644
+index 00000000..99235c05
+--- /dev/null
++++ b/.planning/product/presentation/index.html
+@@ -0,0 +1,292 @@
++<!doctype html>
++<html lang="en">
++<head>
++    <meta charset="utf-8">
++    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
++
++    <title>ATCR Pitch Deck</title>
++
++    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.0.4/reset.min.css">
++    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.0.4/reveal.min.css">
++    <!-- Load custom styles instead of a built-in theme -->
++    <link rel="stylesheet" href="style.css">
++    
++    <!-- IBM Plex Fonts (as used in atcr.dev) -->
++    <link rel="preconnect" href="https://fonts.googleapis.com">
++    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
++    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
++</head>
++<body>
++    <div class="reveal">
++        <div class="slides">
++            <!-- Slide 1: Title -->
++            <section class="title-slide">
++                <div class="brand-header">
++                    <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
++                        <rect width="100" height="100" rx="20" fill="#e8e9ec" />
++                        <path d="M10.2 82.5L36.2 17.5L52.2 17.5L65.8 51.5L61.8 61.5L34.6 61.5L26.2 82.5ZM44.2 37.5L38.6 51.5L49.8 51.5Z" fill="#0e1116" />
++                        <path d="M67.4 35.5L83.4 35.5L89.8 51.5L77.4 82.5L61.4 82.5L73.8 51.5Z" fill="#0e1116" />
++                    </svg>
++                    <span class="mono">atcr</span>
++                </div>
++                <h1>Agent Team Code Review</h1>
++                <p class="lede">A review panel, not a reviewer.</p>
++                <div class="cmd-pill fragment">
++                    <span class="prompt">$</span>
++                    <span class="code">atcr review && atcr reconcile</span>
++                </div>
++            </section>
++
++            <!-- Slide 2: The Problem -->
++            <section>
++                <span class="overline">The Problem</span>
++                <h2>Single-model review is flawed.</h2>
++                <div class="card">
++                    <p class="quote">"Smaller local models often missed planted bugs that frontier models caught."</p>
++                    <p class="attribution">— Creator of lgtmaybe (a single-model reviewer)</p>
++                </div>
++                <ul class="spaced-list mt-2">
++                    <li class="fragment">If one model misses it, no one catches it.</li>
++                    <li class="fragment">You're trusting one model's judgment blindly.</li>
++                    <li class="fragment">Conflicts and disagreements are flattened away.</li>
++                </ul>
++            </section>
++
++            <!-- Slide 3: The Core Idea -->
++            <section>
++                <span class="overline">The Core Idea</span>
++                <h2>Agreement is the confidence score.</h2>
++                <p class="lede">A finding two independent models both caught is worth more than either model's opinion alone.</p>
++                
++                <div class="card fragment mt-2">
++                    <div class="finding-mockup">
++                        <div class="loc mono">auth.go:42 · nil-pointer</div>
++                        <div class="consensus">
++                            <span class="dots-row">
++                                <span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot off"></span><span class="dot off"></span>
++                            </span>
++                            <span class="frac">3/5</span><span class="pct ok">94% confirmed</span>
++                        </div>
++                    </div>
++                    <div class="finding-mockup mt-1">
++                        <div class="loc mono">users.go:88 · SQL injection</div>
++                        <div class="consensus">
++                            <span class="dots-row">
++                                <span class="dot on"></span><span class="dot on"></span><span class="dot no"></span><span class="dot off"></span><span class="dot off"></span>
++                            </span>
++                            <span class="frac">2/5</span><span class="pct warn">71% disputed</span>
++                        </div>
++                    </div>
++                </div>
++            </section>
++
++            <!-- Slide 4: The Pipeline -->
++            <section>
++                <span class="overline">How it works</span>
++                <h2>Three commands. One artifact.</h2>
++                
++                <div class="grid-3-col mt-2">
++                    <div class="card fragment">
++                        <span class="step">01 · review</span>
++                        <h3>Fan out</h3>
++                        <p>Dispatch payload to a heterogeneous roster of personas in parallel.</p>
++                    </div>
++                    <div class="card fragment">
++                        <span class="step">02 · reconcile</span>
++                        <h3>Merge deterministically</h3>
++                        <p>Cluster, dedupe, score confidence, and preserve disagreements.</p>
++                    </div>
++                    <div class="card fragment">
++                        <span class="step">03 · report</span>
++                        <h3>Read verdict</h3>
++                        <p>Render high-confidence output to disk as markdown or JSON.</p>
++                    </div>
++                </div>
++            </section>
++
++            <!-- Slide 5: Enterprise Grade -->
++            <section>
++                <span class="overline">The New Reality</span>
++                <h2>Enterprise Grade Capabilities</h2>
++                <p class="lede">ATCR has grown far beyond a basic CLI. We are building the enterprise standard.</p>
++                
++                <div class="grid-2-col mt-2">
++                    <div class="feature-box fragment">
++                        <div class="sev crit">SECURITY</div>
++                        <h4>Sandbox Execution Environment</h4>
++                        <p>Safe adversarial verification isolated from the host system.</p>
++                    </div>
++                    <div class="feature-box fragment">
++                        <div class="sev high">COMPLIANCE</div>
++                        <h4>Cryptographic Certification Badge</h4>
++                        <p>Verifiable proof that code survived an adversarial skeptic panel.</p>
++                    </div>
++                    <div class="feature-box fragment">
++                        <div class="sev med">INTEGRATION</div>
++                        <h4>SARIF Output & Plugin Hooks</h4>
++                        <p>Seamlessly feed findings into standard enterprise CI/CD gates.</p>
++                    </div>
++                    <div class="feature-box fragment">
++                        <div class="sev low">GOVERNANCE</div>
++                        <h4>Audit Logging & Accountability Gates</h4>
++                        <p>Trace every model's rationale for highly regulated industries.</p>
++                    </div>
++                </div>
++            </section>
++
++            <!-- Slide 6: Market Position -->
++            <section>
++                <span class="overline">Competitive Landscape</span>
++                <h2>Strategic Differentiation</h2>
++                <table>
++                    <thead>
++                        <tr>
++                            <th>Concept</th>
++                            <th>Market Position</th>
++                            <th>ATCR Edge</th>
++                        </tr>
++                    </thead>
++                    <tbody>
++                        <tr class="fragment">
++                            <td class="highlight">Disagreement Radar</td>
++                            <td><span class="sev high">BLUE OCEAN</span></td>
++                            <td>Only tool that preserves disagreement structurally.</td>
++                        </tr>
++                        <tr class="fragment">
++                            <td class="highlight">Cryptographic Cert.</td>
++                            <td><span class="sev crit">BLUE OCEAN</span></td>
++                            <td>Creating a new market for AI-verified code compliance.</td>
++                        </tr>
++                        <tr class="fragment">
++                            <td class="highlight">Model-Eval Leaderboard</td>
++                            <td><span class="sev med">NICHE LEADER</span></td>
++                            <td>The definitive code-review specific evaluation.</td>
++                        </tr>
++                        <tr class="fragment">
++                            <td class="highlight">CI Integration</td>
++                            <td><span class="sev low">TABLE STAKES</span></td>
++                            <td>Necessary baseline, not the core moat.</td>
++                        </tr>
++                    </tbody>
++                </table>
++            </section>
++
++            <!-- Slide 7: Go-To-Market & Revenue -->
++            <section>
++                <span class="overline">Go-To-Market</span>
++                <h2>Revenue Opportunity</h2>
++                
++                <div class="revenue-grid mt-2">
++                    <div class="revenue-card conservative fragment">
++                        <h3>Conservative</h3>
++                        <h2>$160k</h2>
++                        <p>in 18 months</p>
++                    </div>
++                    <div class="revenue-card optimistic fragment">
++                        <h3>Optimistic</h3>
++                        <h2 class="tok-ok">$1.6M+</h2>
++                        <p>in 18 months</p>
++                    </div>
++                </div>
++                
++                <div class="revenue-streams fragment mt-2">
++                    <p><strong>Scaling the Business:</strong> Consulting Services &rarr; Review-as-a-Service API &rarr; Team Edition &rarr; Enterprise Platform (Auto-fix, Analytics, Certification).</p>
++                </div>
++            </section>
++
++            <!-- Slide 7b: Revenue Detail -->
++            <section>
++                <span class="overline">The Math</span>
++                <h2>Revenue Breakdown</h2>
++                <div class="grid-2-col mt-2">
++                    <div class="card fragment">
++                        <h3>Team / Pro Seats</h3>
++                        <p class="lede" style="font-size: 1.1rem; color: var(--text); margin-bottom: 0;"><span class="mono tok-ok">$15</span> / user / month</p>
++                        <ul class="spaced-list" style="font-size: 0.95rem; margin-top: 15px;">
++                            <li>Hosted reconciler, team rosters, and basic audit trails.</li>
++                            <li>Allows bottom-up "corporate card swipe" adoption.</li>
++                        </ul>
++                    </div>
++                    <div class="card fragment">
++                        <h3>Enterprise Licensing</h3>
++                        <p class="lede" style="font-size: 1.1rem; color: var(--text); margin-bottom: 0;"><span class="mono tok-ok">$10k - $50k</span> / year per org</p>
++                        <ul class="spaced-list" style="font-size: 0.95rem; margin-top: 15px;">
++                            <li>Self-hosted / air-gapped reconciler.</li>
++                            <li>SOC2/HIPAA compliance, SSO, and custom personas.</li>
++                        </ul>
++                    </div>
++                    <div class="card fragment">
++                        <h3>Platform & Certification</h3>
++                        <p class="lede" style="font-size: 1.1rem; color: var(--text); margin-bottom: 0;"><span class="mono tok-ok">$500 - $2000</span> / report</p>
++                        <ul class="spaced-list" style="font-size: 0.95rem; margin-top: 15px;">
++                            <li>"Survived-a-Skeptic" Cryptographic Certifications.</li>
++                            <li>Review Intelligence Analytics ($99-$499/mo).</li>
++                        </ul>
++                    </div>
++                    <div class="card fragment">
++                        <h3>Consulting & Referral</h3>
++                        <p class="lede" style="font-size: 1.1rem; color: var(--text); margin-bottom: 0;"><span class="mono tok-ok">$5k+</span> & <span class="mono tok-ok">$6</span>/mo</p>
++                        <ul class="spaced-list" style="font-size: 0.95rem; margin-top: 15px;">
++                            <li>Model selection strategy & custom persona development.</li>
++                            <li>Passive income via Synthetic.new default provider.</li>
++                        </ul>
++                    </div>
++                </div>
++            </section>
++
++            <!-- Slide 7c: Adoption Strategy -->
++            <section>
++                <span class="overline">Go-To-Market Motion</span>
++                <h2>Product-Led Growth</h2>
++                <div class="card">
++                    <p class="lede">We are building an open-source product with a license for enterprise features. The boundary is deliberate.</p>
++                </div>
++                <ul class="spaced-list mt-2">
++                    <li class="fragment"><strong>1. The Hook (Free):</strong> Individual developers adopt the CLI, MCP server, and local models for free.</li>
++                    <li class="fragment"><strong>2. The Wedge ($15/mo):</strong> Tech leads swipe a card for the Team Edition to get a hosted reconciler and shared rosters.</li>
++                    <li class="fragment"><strong>3. The Expansion ($50k/yr):</strong> Once multiple teams are hooked, we sell the Enterprise contract to unify compliance, SSO, and air-gapped hosting.</li>
++                </ul>
++            </section>
++
++            <!-- Slide 8: The Moat -->
++            <section>
++                <span class="overline">Standards Gravity</span>
++                <h2>The Moat</h2>
++                <blockquote>
++                    "If the leaderboard becomes the cited benchmark... ATCR becomes the reference. That's standards gravity."
++                </blockquote>
++                <ul class="spaced-list">
++                    <li class="fragment"><strong>The Reconciler:</strong> Deterministic, deduplicating, confidence-scoring.</li>
++                    <li class="fragment"><strong>The Leaderboard:</strong> The definitive evaluation for AI code review models.</li>
++                    <li class="fragment"><strong>The Certification:</strong> "Survived-a-Skeptic" cryptographic proof.</li>
++                </ul>
++            </section>
++            
++            <section class="title-slide">
++                <div class="brand-header">
++                    <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
++                        <rect width="100" height="100" rx="20" fill="#e8e9ec" />
++                        <path d="M10.2 82.5L36.2 17.5L52.2 17.5L65.8 51.5L61.8 61.5L34.6 61.5L26.2 82.5ZM44.2 37.5L38.6 51.5L49.8 51.5Z" fill="#0e1116" />
++                        <path d="M67.4 35.5L83.4 35.5L89.8 51.5L77.4 82.5L61.4 82.5L73.8 51.5Z" fill="#0e1116" />
++                    </svg>
++                    <span class="mono">atcr</span>
++                </div>
++                <h1>Thank You</h1>
++                <p class="lede">Building the standard for AI code review.</p>
++            </section>
++        </div>
++    </div>
++
++    <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.0.4/reveal.min.js"></script>
++    <script>
++        Reveal.initialize({
++            hash: true,
++            transition: 'slide',
++            backgroundTransition: 'fade',
++            controls: true,
++            controlsTutorial: true,
++            slideNumber: 'c/t',
++        });
++    </script>
++</body>
++</html>
+diff --git a/.planning/product/presentation/style.css b/.planning/product/presentation/style.css
+new file mode 100644
+index 00000000..d7f8942e
+--- /dev/null
++++ b/.planning/product/presentation/style.css
+@@ -0,0 +1,288 @@
++/* 
++   ATCR Pitch Deck Styles
++   Light Mode (Artifact Design System from atcr.dev)
++*/
++
++:root {
++  --bg: #fbfaf7;
++  --surface: #ffffff;
++  --sunken: #f4f2ec;
++  --border: #e4e1da;
++  --border-strong: #d2cec4;
++  --text: #1b1a17;
++  --text-dim: #6c6862;
++  --text-faint: #726d64;
++  --link: #1357c7;
++
++  --ok: #16834a;
++  --ok-bg: #e7f3ec;
++  --warn: #b45309;
++  --warn-bg: #faf0df;
++  --bad: #c5331f;
++  --bad-bg: #fbe9e5;
++  --persona: #6d5cc6;
++  --persona-bg: #eeebfa;
++
++  --code-bg: #0e1116; /* artifacts are always dark */
++  --code-fg: #e6e6e6;
++  --code-dim: #8a93a0;
++  --code-border: #222a34;
++  
++  --sans: 'IBM Plex Sans', system-ui, sans-serif;
++  --mono: 'IBM Plex Mono', ui-monospace, monospace;
++}
++
++/* Base Reveal Overrides */
++.reveal {
++  font-family: var(--sans);
++  color: var(--text);
++}
++
++.reveal-viewport {
++  background: var(--bg) !important;
++}
++
++.reveal .slides {
++  text-align: left;
++}
++
++/* Typography */
++h1, h2, h3, h4, h5, h6 {
++  font-family: var(--sans) !important;
++  color: var(--text) !important;
++  font-weight: 600 !important;
++  letter-spacing: -0.01em !important;
++  text-transform: none !important;
++}
++
++.reveal h1 { font-size: 3.1em; font-weight: 700 !important; }
++.reveal h2 { font-size: 2.1em; margin-bottom: 30px; margin-top: 10px; }
++.reveal p { color: var(--text-dim); line-height: 1.6; }
++
++.mono { font-family: var(--mono) !important; }
++
++.overline {
++  font-family: var(--mono);
++  font-weight: 500;
++  font-size: 0.75rem;
++  text-transform: uppercase;
++  letter-spacing: 0.08em;
++  color: var(--text-faint);
++  display: block;
++  margin-bottom: 10px;
++}
++
++.lede {
++  font-size: 1.18rem;
++  color: var(--text-dim);
++  max-width: 56ch;
++}
++
++.tok-ok { color: var(--ok); font-weight: 600; }
++.tok-warn { color: var(--warn); font-weight: 600; }
++.tok-bad { color: var(--bad); font-weight: 600; }
++
++/* Brand Mark (Logo) */
++.brand-header {
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  gap: 15px;
++  font-size: 1.5rem;
++  font-weight: 600;
++  margin-bottom: 20px;
++}
++.brand-header .mark {
++  width: 40px;
++  height: 40px;
++}
++
++.title-slide {
++  text-align: center !important;
++}
++.title-slide .lede {
++  margin: 0 auto;
++}
++
++/* Cards & UI Elements */
++.card {
++  background: var(--surface);
++  border: 1px solid var(--border);
++  border-radius: 10px;
++  padding: 30px;
++  box-shadow: 0 4px 6px rgba(0,0,0,0.02);
++}
++
++.quote {
++  font-style: italic;
++  font-size: 1.4rem;
++  color: var(--text);
++  border-left: 4px solid var(--border-strong);
++  padding-left: 20px;
++  margin: 20px 0;
++}
++
++.attribution {
++  font-size: 1rem;
++  color: var(--text-dim);
++  text-align: right;
++}
++
++/* Command Pill */
++.cmd-pill {
++  display: inline-flex;
++  align-items: center;
++  gap: 14px;
++  background: var(--code-bg);
++  color: var(--code-fg);
++  font-family: var(--mono);
++  font-size: 1.2rem;
++  padding: 15px 20px;
++  border-radius: 8px;
++  border: 1px solid var(--code-border);
++  margin-top: 40px;
++  box-shadow: 0 10px 20px rgba(0,0,0,0.1);
++}
++.cmd-pill .prompt { color: var(--code-dim); user-select: none; }
++
++/* Consensus Meter */
++.finding-mockup {
++  border-bottom: 1px solid var(--border);
++  padding-bottom: 15px;
++}
++.finding-mockup:last-child {
++  border-bottom: none;
++  padding-bottom: 0;
++}
++.loc { font-size: 0.9rem; color: var(--text); }
++.consensus {
++  display: inline-flex;
++  align-items: center;
++  gap: 12px;
++  font-family: var(--mono);
++  font-size: 0.9rem;
++  margin-top: 10px;
++}
++.dots-row { display: inline-flex; gap: 4px; }
++.dot {
++  width: 12px;
++  height: 12px;
++  border-radius: 50%;
++  box-sizing: border-box;
++}
++.dot.on { background: var(--ok); }
++.dot.off { background: transparent; border: 2px solid var(--border-strong); }
++.dot.no {
++  background: transparent;
++  border: 2px solid var(--bad);
++  position: relative;
++}
++.dot.no::after {
++  content: '';
++  position: absolute;
++  inset: 1px;
++  border-top: 2px solid var(--bad);
++  transform: rotate(45deg);
++  transform-origin: center;
++}
++.consensus .frac { color: var(--text-dim); }
++.consensus .pct.ok { color: var(--ok); font-weight: 600; }
++.consensus .pct.warn { color: var(--warn); font-weight: 600; }
++.consensus .pct.bad { color: var(--bad); font-weight: 600; }
++
++/* Severity Chips */
++.sev {
++  font-family: var(--mono);
++  font-size: 0.75rem;
++  font-weight: 600;
++  text-transform: uppercase;
++  letter-spacing: 0.04em;
++  padding: 4px 10px;
++  border-radius: 4px;
++  border-left: 3px solid;
++  display: inline-block;
++}
++.sev.crit { color: var(--bad); background: var(--bad-bg); border-color: var(--bad); }
++.sev.high { color: var(--warn); background: var(--warn-bg); border-color: var(--warn); }
++.sev.med { color: var(--link); background: rgba(19, 87, 199, 0.1); border-color: var(--link); }
++.sev.low { color: var(--text-faint); background: var(--sunken); border-color: var(--border-strong); }
++
++/* Grids */
++.grid-2-col { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
++.grid-3-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
++
++.grid-3-col .card h3 { font-size: 1.4rem; margin: 10px 0; }
++.step { font-family: var(--mono); font-size: 0.8rem; color: var(--text-faint); }
++
++.feature-box {
++  background: var(--surface);
++  border: 1px solid var(--border);
++  padding: 25px;
++  border-radius: 10px;
++  box-shadow: 0 4px 6px rgba(0,0,0,0.02);
++}
++.feature-box h4 { margin: 15px 0 10px 0; font-size: 1.3rem; }
++.feature-box p { font-size: 1.05rem; }
++
++/* Tables */
++.reveal table {
++  width: 100%;
++  border-collapse: collapse;
++  font-size: 1.1rem;
++}
++.reveal th, .reveal td {
++  padding: 15px;
++  border-bottom: 1px solid var(--border);
++}
++.reveal th {
++  font-weight: 600;
++  text-align: left;
++  color: var(--text-dim);
++}
++.reveal td.highlight {
++  font-weight: 600;
++  color: var(--text);
++}
++
++/* Revenue */
++.revenue-grid {
++  display: grid;
++  grid-template-columns: 1fr 1fr;
++  gap: 30px;
++  text-align: center;
++}
++.revenue-card {
++  background: var(--surface);
++  border: 1px solid var(--border);
++  border-radius: 10px;
++  padding: 40px 20px;
++  box-shadow: 0 4px 6px rgba(0,0,0,0.02);
++}
++.revenue-card h3 { font-size: 1.2rem; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.1em; }
++.revenue-card h2 { font-size: 4rem; margin: 15px 0; border: none; padding: 0; }
++.revenue-card p { font-size: 1.1rem; color: var(--text-dim); }
++
++.conservative h2 { color: var(--text-dim); }
++
++/* Utilities */
++.mt-1 { margin-top: 1rem !important; }
++.mt-2 { margin-top: 2rem !important; }
++
++ul.spaced-list li { margin-bottom: 15px; line-height: 1.5; color: var(--text-dim); }
++ul.spaced-list li strong { color: var(--text); }
++
++.reveal blockquote {
++  background: var(--surface);
++  border-left: 4px solid var(--link);
++  box-shadow: 0 4px 6px rgba(0,0,0,0.02);
++  padding: 20px 30px;
++  border-radius: 0 10px 10px 0;
++  font-style: normal;
++  color: var(--text);
++  font-size: 1.3rem;
++  margin: 0 0 30px 0;
++}
++
++/* Ensure Reveal.js controls (arrows) and progress bar are visible in light mode */
++.reveal .controls { color: var(--text) !important; }
++.reveal .progress { color: var(--link) !important; }
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index 27d17db2..4c70ec74 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,17 +3,17 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 4 | 0 |
+ | MEDIUM | 0 | 20 | 0 |
+-| LOW | 0 | 33 | 0 |
++| LOW | 2 | 33 | 0 |
+ 
+ 
+-**Last Modified:** 2026-07-13 | **Open Items:** 0 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 57
++**Last Modified:** 2026-07-13 | **Open Items:** 2 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 59
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -63,58 +63,65 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
+ 
++### [2026-07-13] From Sprint: epic-22.4
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| U | [ ] | LOW | internal/fanout/review.go:756 | The single reused RangeBuilder gitRunner retains every per-mode diff chunk cache (raw/fc/plain) plus zeroCtx and lineRanges simultaneously from buildPayloads through computeGroundingData, raising peak heap with mode count for large diffs vs the old per-mode throwaway runners. | Nil the gitRunner range-state caches after grounding is computed, or scope the reuse to only the zero-context + name-status caches grounding actually needs rather than retaining fc/plain/raw. | PERFORMANCE | 30 | execute-epic-independent |
++| U | [ ] | LOW | internal/payload/rangebuilder.go:22 | RangeBuilder is documented as not concurrency-safe but has no runtime guard, so a future caller that shares one across goroutines would silently corrupt the single-writer rangeState cache. | Add a cheap guard (sync.Mutex or a race-detected sentinel) so accidental concurrent use fails loudly rather than corrupting state. | EDGE_CASES | 30 | execute-epic-independent |
++
+ ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go | Systemic symlink exposure across all five append-only ledgers (localdebt, scorecard, history, audit, debate/tools): each opens its shard with O_CREATE/O_WRONLY/O_APPEND and no O_NOFOLLOW, and MkdirAll follows symlinked path components, so a pre-planted symlink at the ledger path or a parent redirects appends outside the store. LOW: exploiting requires pre-existing local write access to a 0700 per-user/per-repo dir (same-uid, no trust-boundary crossing). localdebt already documents this as an accepted won't-fix (internal/localdebt/doc.go); tracked here so the systemic posture is visible, not localdebt-only. (intent_note: surfaced during 20.1 resolve-td; bundle into a future FS-safety pass, do not fix localdebt in isolation) | Do NOT harden localdebt alone (inconsistent, false security). Bundle into a future filesystem-safety epic: a shared GOOS-guarded O_NOFOLLOW append helper (precedent: internal/tools/open_unix.go and open_other.go) swapped across all five ledgers, plus symlink-planted unix-only tests. Prioritize only if a ledger moves to a shared/multi-user dir or a pentest/supply-chain audit flags it. Final-component only; parent-symlink resistance (openat2/RESOLVE_NO_SYMLINKS) is out of scope. | security | 480 | resolve-td | claude | MEDIUM |
+ 
+ ### [2026-07-11] From Sprint: 20.0_standalone_skill_release
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | go.mod:41 | `go install github.com/samestrin/atcr/cmd/atcr@latest` cannot work for external users. Two layered causes: the root go.mod carries a `replace ... => ./reconcile` directive (Go refuses to install any module whose published go.mod has a replace), and the binding cause is that the samestrin/atcr repo is PRIVATE so the module is not on the public proxy. Makes AC1 (go install), install.sh (AC4), and the go-install lines in README/docs unsatisfiable until the repo is public. (Deferred: .planning/epics/active/33.2_public_launch.md) | Resolve in Epic 33.2 (Public Launch): external `go install` is gated on the repo going public, which happens at launch (Epic 33 cluster). 33.2 makes the repo public, publishes `reconcile` + drops the replace directive, and delivers install.sh + a real-install integration test. | security | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-09] From Sprint: 19.7_live_model_resolution
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/personas/drift.go | For a bound persona the `family` JSON field is the bare binding token (glm); for a bindingless persona it is the derived vendor/tier prefix (anthropic/claude-opus) — two shapes under one key that a 19.8 agent grouping on `family` would see inconsistently. (intent_note: deferred per sprint-plan §5.6 — shape documented as advisory; normalization deferred to 19.8 (TD-008)) | Phase 8/later: when wiring `models refresh` against the live catalog, confirm the `~…-latest` ids are present; else skip the `missing` check for a lock slug equal to an `aliasTable` value (or resolve alias locks through the passthrough before the catalog lookup) and add a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 2 | [/] | LOW | internal/personas/upgrade.go | `resolveNewestInPrefix` selects the newest-by-`created` catalog member, but the lock gate advances only when the extracted semver is a version-advance (`isNewer`), so a newer-created-but-lower-semver hotfix slug is selected by the resolver yet blocked by the gate and silently not adopted. | Deferred (Story 6/later, semver philosophy): keep the semver isNewer gate authoritative for the lock-advance decision (consistent with the major-bump re-validation gate and the explicit-upgrade/reproducibility posture), but emit a visible signal in the personas upgrade before→after report or a models check finding when resolveNewestInPrefix's created-order pick diverges from what the gate accepts, rather than silently leaving the lock stale; cover the divergent hotfix case with a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | LOW | docs/personas-authoring.md | AC 08-03 Scenario 3 links the shipped persona doc sections to `../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/*.md`; those links resolve now but `/finalize-sprint` moves the sprint active/→completed/, after which the active/ path 404s in the shipped docs. | Future docs-stabilization pass: update the two links to the completed/ path after archival, or promote the durable plan documentation into a stable home (docs/ or .planning/specifications/) and point the persona docs there; add a link-check that fails on a dangling docs→.planning link. | docs | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-08] From Sprint: 19.6_community_registry_hub
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/init.go:47 / cmd/atcr/quickstart.go:102 | `init`/`quickstart` fetch-and-pin the roster `builtins.Names()` (the 9 model-agnostic built-ins: bruce/greta/kai/mira/dax/otto/sasha/penny/ingrid), but the shipped `personas/community/index.json` publishes only the 10 model-indexed library personas (anthony…glenna) — a fully disjoint set. (intent_note: deferred per sprint-plan TD-011) (Deferred: Epic Plan .planning/epics/active/19.7_live_model_resolution.md — design-sprint decision; lean toward publishing built-ins into the community channel behind a model-agnostic tag/gate) | rebuild init/quickstart model enablement so online `init`/`quickstart` deliver a working, non-noisy persona set: either publish the built-in lenses into the community channel behind a model-agnostic gate carve-out (keeps C2), or align the roster with what the index publishes and drop the misleading skip-warning. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | u | [/] | LOW | cmd/atcr/init.go:142 | installCommunityPersonas records each candidate's preExisted flag then, on a later roster failure, rollback() removes any candidate path where !preExisted && fileExists. If another process creates <name>.yaml/.md between candidate recording (line 142) and the eventual rollback, the rollback deletes that not-ours file believing this run created it. The window is narrow and needs concurrency; the actual overwrite protection lives in InstallUnit. (Accepted LOW-severity risk — atcr is a single-user local CLI; if ever addressed, add an inode+mtime re-stat guard to the rollback rather than changing InstallUnit's return contract.) | Have rollback delete only files it observed itself successfully create (capture created paths from InstallUnit's result rather than re-deriving from candidates), or re-stat and skip if inode/mtime differs from what this run wrote. Verify with a concurrency test that plants a file mid-roster and asserts it survives rollback. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-06] From Sprint: 19.5_response_truncation_failover
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | LOW | internal/fanout/artifacts.go:214 | The TD-019 memo short-circuit only fires for parsedFindingCount==0, so a truncated-with-findings result (memo set to >=1 by the failover gate) re-runs stream.ParseModelOutput at line 217 — the redundant parse the refactor aimed to remove, though bounded to the rare truncated-with-findings path. | Cache the parsed []Finding slice on Result rather than only its length so findingsFor can reuse it, or accept the bounded cost. (Won't fix 2026-07-06: accepted the bounded re-parse cost — the parsedFindingCount memo already avoids the redundant parse on the common truncated+zero-finding path; caching the full slice risks aliasing via findingsFor's in-place Finding.Reviewer mutation and downstream grounding/constraint filtering.) | performance | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: 19.4_history_time_sharding
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | cmd/atcr/review.go:285 | Multiple concurrent atcr review processes will append to the same YYYY-MM.jsonl simultaneously without synchronization, causing interleaved JSON lines and ledger corruption (Accepted 2026-07-06: won't-fix — concurrent-append O_APPEND safety is a project-wide TD-004 tradeoff shared by all 5 append-only ledgers (audit, debate, scorecard, tools, history), outside epic 19.4's scope; matches the identical writer.go precedent accepted 2026-07-04 at README:112. Low probability (small per-batch writes are atomic on Linux/macOS O_APPEND) and low impact (a torn line is skipped by Load, no cross-data corruption); a cross-platform lock dependency is not justified for one ledger.) | Acquire a file lock (flock) on the shard or a dedicated lockfile before opening for append | concurrency | 40 | code-review | brad | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/history/shard.go:32 | LoadAll/LoadShards read and JSON-unmarshal every monthly shard on disk, then Filter discards records older than the --since cutoff. The justification for monthly sharding is the YYYY-MM filenames, but the read path throws that structure away: a repo with years of history running the common --since 30d (or the 90d default) still parses every archived month it will immediately drop. (Deferred 2026-07-06: not worth doing now — LOW-value perf optimization; the epic's 1-2yr history bound caps the scan at 12-24 small files. If revisited, add an additive LoadShardsSince(dir, cutoff) variant rather than changing LoadShards/LoadAll signatures, which would ripple into 7+ existing test call sites for no measured benefit.) | Prune glob results in LoadShards by comparing each shard's YYYY-MM stem against the cutoff month before calling Load; pass a lower-bound month into LoadShards/LoadAll (or add a windowed variant) so shards entirely before the window are never opened. Verify with a benchmark over 60 seeded shards and --since 30d reading at most 1-2 files. | performance | 60 | code-review | claude, dax, brad | HIGH |
+ | 3 | [/] | LOW | internal/history/writer.go:39 | Append does an unlocked O_APPEND write and documents that a large buffer split across multiple write() syscalls can be torn by a concurrent append. Epic 19.4 does not change the mechanism but changes exposure: history is now git-tracked and the project is run as multiple concurrent sessions appending to the same YYYY-MM.jsonl within a month. A torn line is silently dropped by Load's malformed-line skip, so lost findings are invisible; sharding by month did not reduce intra-month contention. (Accepted 2026-07-06: won't-fix — same history.Append write site and same decision as cmd/atcr/review.go:285 (resolved in lockstep); no cross-platform lock dependency added. Mirrors the 2026-07-04 accepted precedent for this exact O_APPEND pattern.) | If a hard guarantee is wanted wrap the shard write in an advisory file lock (flock) consistent with the mkdir-flock pattern used in the planning tooling; otherwise document that concurrent same-month runs can lose records. Verify with a stress test of N concurrent Appends and a line-count assertion. | error-handling | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: epic-19.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/history/shard.go:32 | LoadShards loads every shard into memory before Filter applies --since, so a narrow window still reads all shards (acceptable within the stated 1-2yr bound; no month-prefix pruning) (Deferred 2026-07-06: duplicate of the MEDIUM month-pruning item at this same line; same decision — defer, add LoadShardsSince additively if ever picked up.) | Skip shard files whose YYYY-MM stem is entirely older than now-since before loading, to keep long histories fast | UNDER_ENGINEERING | 30 | execute-epic-independent |
+ 
+ ### [2026-07-05] From Sprint: epic-19.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | cmd/atcr/review.go:384 | The audit hook re-reads sources/pool/findings.txt that the history hook read moments earlier in the same review, so the pool file is parsed twice per review run | Parse the pool findings once in the CLI layer and pass the finding set to both history.RecordReview and audit.RecordReview, or expose a shared parse result (Won't-fix: accepted — the duplicate parse mirrors internal/history's independent capture pattern per epic design; not worth a cross-package signature refactor for a sub-ms, once-per-run gain.) | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-07-05] From Review: pr-105-recovery
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 5bf1853b..ca98bd37 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,13 @@
++## [22.4.0] - 2026-07-13
++
++Reuse the payload builder's already-computed diff when building grounding data, eliminating the duplicate `git` subprocesses the grounding gate re-spawned for every review and every resume.
++
++### Changed
++
++- `computeGroundingData` now reuses the payload builder's memoized `gitRunner` for the same `base..head` range instead of constructing a throwaway runner, so grounding no longer re-runs `validateRange` + `--name-status` + `--unified=0` (~4 fewer git subprocess spawns per review and per resume). Grounding behavior is unchanged — same findings dropped/exempted.
++
++*Shipped via /execute-epic (epic 22.4)*
++
+ ## [22.3.0] - 2026-07-13
+ 
+ Make the `pyparser` structural parser quote- and escape-aware so adversarial Python source no longer corrupts the structural hash by silently dropping real code.
+diff --git a/internal/fanout/resume.go b/internal/fanout/resume.go
+index f326bd15..e937a7c2 100644
+--- a/internal/fanout/resume.go
++++ b/internal/fanout/resume.go
+@@ -260,86 +260,86 @@ func filterPendingSlots(slots []Slot, done map[string]bool) []Slot {
+ // PrepareResume validates an existing review directory against the current
+ // working tree and configured roster, then assembles a PreparedReview whose Dir
+ // is that existing directory and whose Slots are only the pending agents. The
+ // range and roster are locked: a changed git range (ErrRangeChanged) or a
+ // changed roster set (ErrRosterChanged) aborts before any agent runs, so a resume
+ // can never mix inconsistent contexts or silently run a different panel. Payloads
+ // are rebuilt from the (validated-identical) recorded range so pending agents see
+ // exactly what the completed agents reviewed. The returned ResumeInfo reports the
+ // completed/pending split; when AllComplete is true the Slots are empty and the
+ // caller reconciles without a fan-out.
+ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req ReviewRequest) (*PreparedReview, *ResumeInfo, error) {
+ 	m, err := ReadManifest(reviewDir)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 	if err := ValidateResumeRange(m, req.Range); err != nil {
+ 		return nil, nil, err
+ 	}
+ 	configured := rosterNames(cfg.Project)
+ 	if err := ValidateResumeRoster(m, configured); err != nil {
+ 		return nil, nil, err
+ 	}
+ 
+-	payloads, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
++	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 	// Recover the SCOPE CONSTRAINT from the review's persisted artifact rather than
+ 	// re-deriving it from req.SprintPlanPath: the resume entry point does not thread
+ 	// that flag, so the scope is locked to on-disk review state exactly as the range
+ 	// and roster are — guaranteeing pending agents review under the same constraint
+ 	// the completed agents did (Epic 12.2 AC4.3).
+ 	scopeConstraint, err := readScopeConstraintArtifact(reviewDir)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 	slots, _, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint, false)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 
+ 	done, err := CompletedAgents(reviewDir)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 
+ 	info := &ResumeInfo{}
+ 	for _, name := range configured {
+ 		if done[name] {
+ 			info.Completed = append(info.Completed, name)
+ 		} else {
+ 			info.Pending = append(info.Pending, name)
+ 		}
+ 	}
+ 
+-	changed, groundingDisabledReason := computeGroundingData(ctx, req)
++	changed, groundingDisabledReason := computeGroundingData(ctx, req, rb)
+ 	p := &PreparedReview{
+ 		ID:          filepath.Base(reviewDir),
+ 		Dir:         reviewDir,
+ 		Slots:       filterPendingSlots(slots, done),
+ 		TimeoutSec:  cfg.Settings.TimeoutSecs,
+ 		MaxParallel: cfg.Settings.MaxParallel,
+ 		Repo:        req.Repo,
+ 		Head:        req.Range.Head,
+ 		// Epic 14.1: ground a resumed agent's fresh output identically to a
+ 		// first-run agent's, so a re-run agent cannot reintroduce hallucinations a
+ 		// normal run would have dropped. Same fail-open contract as the fresh path.
+ 		Changed:                 changed,
+ 		GroundingDisabledReason: groundingDisabledReason,
+ 		manifest:                m,
+ 		// Wire the diff cache for resumed agents too (Epic 5.2): a resumed agent's
+ 		// fresh output is written back so a later full run benefits — matching the
+ 		// "fresh results are always written" contract — rather than being re-called.
+ 		cache:       cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes),
+ 		cacheNoRead: req.NoCache,
+ 	}
+ 	return p, info, nil
+ }
+ 
+ // readScopeConstraintArtifact recovers the SCOPE CONSTRAINT block a scoped review
+ // (Epic 12.2) persisted to payload/scope-constraint.txt, so a resumed run injects
+ // the same scope the completed agents reviewed under. A diff-wide review writes no
+ // artifact, so a missing file yields ("", nil): the resume proceeds diff-wide,
+ // matching the original run. Any other read error is surfaced so a resume fails
+ // closed (exit 2 at the caller) rather than silently dropping the scope the
+ // completed agents had — the exact regression this guards against.
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index 78505bb5..7f1ee01d 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -226,288 +226,302 @@ func validateReviewRequest(cfg *ReviewConfig, req ReviewRequest) error {
+ // PrepareReview runs phase one of a review: build per-mode payloads, assemble
+ // the roster into parallel/serial slots (with fallback chains), derive the
+ // review id, scaffold the review directory, and write the payload artifacts, an
+ // in-progress manifest, and the .atcr/latest pointer. No agent runs here, so it
+ // returns quickly; ExecuteReview performs the fan-out.
+ //
+ // An empty roster is rejected before scaffolding so a no-op run never creates a
+ // review directory or repoints .atcr/latest. (LoadReviewConfig also rejects
+ // this earlier; PrepareReview is defended for direct/MCP callers.)
+ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*PreparedReview, error) {
+ 	if err := validateReviewRequest(cfg, req); err != nil {
+ 		return nil, err
+ 	}
+-	payloads, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
++	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	// Only a roster that resolved to payload modes can be "empty": a roster of
+ 	// unknown agents builds zero modes and must keep its "not found in
+ 	// registry" diagnostic from buildSlots below.
+ 	empty := len(payloads) > 0
+ 	for _, mp := range payloads {
+ 		if mp.FileCount > 0 {
+ 			empty = false
+ 			break
+ 		}
+ 	}
+ 	if empty {
+ 		return nil, fmt.Errorf("%w: the range contains commits but no changed files (only merge or empty commits?); review a range that changes files", ErrNoReviewableContent)
+ 	}
+ 	// Sprint-plan scope (Epic 12.2): read the plan once here and prepend its
+ 	// SCOPE CONSTRAINT to every reviewer's payload via buildSlots. An unreadable
+ 	// or oversized plan warns but never aborts the review.
+ 	scopeConstraint, scopeWarn := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes)
+ 	if scopeWarn != "" {
+ 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
+ 	}
+ 	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint, true)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode)
++	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode, rb)
+ }
+ 
+ // finalizePreparedReview is the shared scaffold-and-assemble tail of the two
+ // review-preparation entry points (PrepareReview's git-range path and
+ // PrepareReviewFromDiff's ingestion path): it derives the review id, claims the
+ // review directory (honoring --output-dir/--id/--force), writes the payload
+ // artifacts, an in-progress manifest, and the .atcr/latest pointer, and wires the
+ // diff cache. payloadMode is recorded as the manifest's PayloadMode (the
+ // configured mode for the git path, "diff" for the ingestion path); the range
+ // provenance comes from req.Range, which the ingestion caller leaves empty.
+-func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, payloads map[string]modePayload, perAgentMode map[string]string, slots []Slot, payloadMode string) (*PreparedReview, error) {
++func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, payloads map[string]modePayload, perAgentMode map[string]string, slots []Slot, payloadMode string, rb *payload.RangeBuilder) (*PreparedReview, error) {
+ 	// Derive the id unconditionally: for --output-dir the id is provenance-only
+ 	// (written to the manifest and PreparedReview.ID but not used for the path),
+ 	// while for --id and the default derived case the id IS the path component.
+ 	id, err := ReviewID(req.IDOverride, req.Branch, req.Date, req.TimeSuffix, nil)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	var dir string
+ 	switch {
+ 	case req.OutputDir != "":
+ 		// --output-dir redirects the whole tree to an explicit path. The id is
+ 		// still derived above (for provenance/output) but never used for the
+ 		// path, and .atcr/latest is left untouched below.
+ 		if err = validateOutputDirRoot(req.OutputDir, req.Root); err != nil {
+ 			return nil, err
+ 		}
+ 		// Defense-in-depth: reject system-directory output paths (/etc, /proc, /sys)
+ 		// in the engine, not only the CLI flag parser. PrepareReview is public API
+ 		// reachable by the MCP handler and direct callers; enforcing here means a
+ 		// caller that sets OutputDir to a system path with Force=true is rejected
+ 		// before forceBackupOutputDir performs any destructive backup. The CLI keeps
+ 		// its own check too (exit 2), so this is additive, not a relocation.
+ 		if err = validation.FilePath(req.OutputDir); err != nil {
+ 			return nil, err
+ 		}
+ 		// --force backs up a non-empty target to <dir>.bak before scaffolding;
+ 		// without it, ScaffoldOutputDir rejects a non-empty dir (Epic 4.7 AC2).
+ 		if req.Force {
+ 			backupPath, err := forceBackupOutputDir(ctx, req.OutputDir)
+ 			if err != nil {
+ 				return nil, err
+ 			}
+ 			if backupPath != "" {
+ 				fmt.Fprintf(os.Stderr, "backed up prior review to %s\n", backupPath)
+ 			}
+ 		}
+ 		dir, err = ScaffoldOutputDir(req.OutputDir)
+ 	case req.IDOverride != "":
+ 		// Explicit overrides keep their exact id, but the scaffold is exclusive:
+ 		// a pre-existing directory (e.g. a client retrying atcr_review with the
+ 		// same id while the first run is in flight) is rejected rather than
+ 		// scaffolded into, so two fan-outs never share one review dir. --force
+ 		// instead backs up the existing tree to <dir>.bak and scaffolds fresh
+ 		// (Epic 4.7 AC2).
+ 		if req.Force {
+ 			backupPath, err := forceBackupReviewDir(ctx, req.Root, id)
+ 			if err != nil {
+ 				return nil, err
+ 			}
+ 			if backupPath != "" {
+ 				fmt.Fprintf(os.Stderr, "backed up prior review to %s\n", backupPath)
+ 			}
+ 		}
+ 		dir, err = ScaffoldReviewDir(req.Root, id)
+ 	default:
+ 		// Derived ids claim their directory atomically: creation is the
+ 		// collision check, so two reviews of the same branch in the same second
+ 		// get distinct dirs instead of interleaving writes in one.
+ 		if req.Force {
+ 			fmt.Fprintf(os.Stderr, "--force has no effect without --id or --output-dir; a new review directory was created\n")
+ 		}
+ 		id, dir, err = claimReviewDir(req.Root, id, req.TimeSuffix)
+ 	}
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	if err := writePayloadArtifacts(dir, payloads); err != nil {
+ 		return nil, err
+ 	}
+ 	// Epic 12.2 provenance: write the resolved scope constraint to
+ 	// payload/scope-constraint.txt so the on-disk artifact reflects what
+ 	// each reviewer received. resolveScopeConstraint is called again here
+ 	// (second read) rather than threading the result through the function
+ 	// signature of finalizePreparedReview.
+ 	if req.SprintPlanPath != "" {
+ 		if sc, _ := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes); sc != "" {
+ 			if err := atomicWriteFile(filepath.Join(dir, "payload", "scope-constraint.txt"), []byte(sc)); err != nil {
+ 				return nil, fmt.Errorf("writing scope constraint artifact: %w", err)
+ 			}
+ 		}
+ 	}
+ 
+ 	m := &payload.Manifest{
+ 		Base:            req.Range.Base,
+ 		Head:            req.Range.Head,
+ 		DetectionMode:   req.Range.DetectionMode,
+ 		DefaultBranch:   req.Range.DefaultBranch,
+ 		CommitCount:     req.Range.CommitCount,
+ 		PayloadMode:     payloadMode,
+ 		MaxParallel:     cfg.Settings.MaxParallel,
+ 		TimeoutSecs:     cfg.Settings.TimeoutSecs,
+ 		PerAgentPayload: perAgentMode,
+ 		Roster:          rosterNames(cfg.Project),
+ 		StartedAt:       req.StartedAt,
+ 		Partial:         false,              // finalized by ExecuteReview once outcomes are known
+ 		Stages:          []string{"review"}, // 1.x runs only the review stage (Epic 1.1 reserved field)
+ 	}
+ 	if err := WriteManifest(dir, m); err != nil {
+ 		return nil, err
+ 	}
+ 	// Point .atcr/latest at the review before fan-out so `atcr status` can find an
+ 	// in-progress run started by the non-blocking MCP handler. Skipped for
+ 	// --output-dir: the pointer tracks interactive runs under .atcr/reviews/, and
+ 	// an external orchestrator owns (and already knows) its output path.
+ 	if req.OutputDir == "" {
+ 		if err := WriteLatest(req.Root, id); err != nil {
+ 			return nil, err
+ 		}
+ 	}
+ 	// Wire the diff cache (Epic 5.2): reviewer outputs are content-addressed
+ 	// under <root>/.atcr/cache (sibling of reviews/, already excluded from git)
+ 	// and capped at the resolved cache_max_bytes. The store is shared across the
+ 	// run's agents; ExecuteReview hands it to the engine.
+ 	revCache := cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes)
+ 	// Epic 14.1 grounding data: compute the per-file changed line ranges for the
+ 	// range so WritePool can drop findings not anchored in the patch (see
+ 	// computeGroundingData for the fail-open contract). The reason string records
+ 	// WHY the gate is off (git failure vs. diff ingestion) in summary.json.
+-	changed, groundingDisabledReason := computeGroundingData(ctx, req)
++	changed, groundingDisabledReason := computeGroundingData(ctx, req, rb)
+ 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, GroundingDisabledReason: groundingDisabledReason, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+ }
+ 
+ // computeGroundingData builds the per-file patch grounding data for the request's
+ // range (Epic 14.1). Only the git-range path carries a base/head; a range-less
+ // request (the diff-ingestion path) returns nil, disabling the grounding gate. A
+ // git failure disables the gate (fail open, logged) rather than aborting the
+ // review — grounding is a filter, not a correctness gate. It is shared by the
+ // fresh-review (finalizePreparedReview) and resume (PrepareResume) paths so a
+ // resumed agent's fresh output is grounded identically to a first-run agent's.
+ //
+ // It also returns a human-readable reason the gate is off (empty when enabled),
+ // recorded in summary.json so a git-failure or diff-ingestion skip is auditable.
+-func computeGroundingData(ctx context.Context, req ReviewRequest) (payload.ChangedLines, string) {
++func computeGroundingData(ctx context.Context, req ReviewRequest, rb *payload.RangeBuilder) (payload.ChangedLines, string) {
+ 	if req.Range.Base == "" || req.Range.Head == "" {
+ 		return nil, "range-less request (diff ingestion): grounding not applicable"
+ 	}
+-	cl, err := payload.BuildChangedLines(ctx, req.Repo, req.Range.Base, req.Range.Head)
++	// Reuse the payload builder's gitRunner (memoized --name-status / --unified=0
++	// for this same range) when available (Epic 22.4); fall back to a standalone
++	// runner for any caller path that has no builder (defensive — the git-range
++	// paths always pass one).
++	var (
++		cl  payload.ChangedLines
++		err error
++	)
++	if rb != nil {
++		cl, err = rb.BuildChangedLines()
++	} else {
++		cl, err = payload.BuildChangedLines(ctx, req.Repo, req.Range.Base, req.Range.Head)
++	}
+ 	if err != nil {
+ 		log.FromContext(ctx).Warn("grounding disabled: could not compute changed lines", "err", err)
+ 		return nil, "changed-lines computation failed: " + err.Error()
+ 	}
+ 	if len(cl) == 0 {
+ 		log.FromContext(ctx).Warn("grounding disabled: empty changed lines map")
+ 		return nil, "empty changed-lines map (no reviewable changed lines)"
+ 	}
+ 	return cl, ""
+ }
+ 
+ // PrepareReviewFromDiff is the diff-file ingestion counterpart of PrepareReview:
+ // it builds the payload from a standalone unified diff (via the payload package's
+ // diff-file primitive) instead of from a git range, then scaffolds the review on
+ // the exact same path. Because a bare diff is the only available representation,
+ // every agent reviews it regardless of its configured payload mode — the payloads
+ // map is keyed solely to "diff" and buildSlots is forced to "diff", so a roster
+ // whose default mode is blocks/files still resolves cleanly. The resulting
+ // PreparedReview is accepted unchanged by ExecuteReview (same Slots/modePayload
+ // wiring); with no repo snapshot, Head is empty so any tool-enabled agent degrades
+ // to single-shot.
+ //
+ // req.Range is provenance-only here and may be left zero (a range-less diff has no
+ // base/head); req.OutputDir/IDOverride/Force are honored identically to
+ // PrepareReview, so callers (e.g. a benchmark run) can redirect output.
+ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, diffText string) (*PreparedReview, error) {
+ 	if err := validateReviewRequest(cfg, req); err != nil {
+ 		return nil, err
+ 	}
+ 	// Bound the in-memory diff, mirroring BuildEntriesFromDiffFile's cap: this
+ 	// exported entry is the production ingestion deliverable (Epic 10.2 feeds it
+ 	// externally-sourced diffs), so a hostile multi-GB diff must be rejected before
+ 	// BuildEntriesFromDiff allocates its per-line index — honoring the epic's
+ 	// MaxDiffBytes memory-exhaustion mitigation. payload.DefaultMaxDiffBytes mirrors
+ 	// benchmark.MaxDiffBytes (10 MiB).
+ 	if int64(len(diffText)) > payload.DefaultMaxDiffBytes {
+ 		return nil, fmt.Errorf("diff ingestion: diff size %d exceeds max %d bytes", len(diffText), payload.DefaultMaxDiffBytes)
+ 	}
+ 	entries, err := payload.BuildEntriesFromDiff(diffText)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	// An empty diff (no reviewable files) must refuse before scaffolding, mirroring
+ 	// PrepareReview's empty-payload guard so a no-op run never creates a directory
+ 	// or repoints .atcr/latest.
+ 	if len(entries) == 0 {
+ 		return nil, fmt.Errorf("%w: the diff contains no reviewable files", ErrNoReviewableContent)
+ 	}
+ 	kept, trunc := payload.ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget)
+ 	if trunc.AllDropped {
+ 		return nil, fmt.Errorf("%w (mode diff, dropped %d file(s))", ErrPayloadFullyDropped, len(trunc.FilesDropped))
+ 	}
+ 	// Surface PARTIAL truncation at the ingestion boundary: a subset review built
+ 	// from an oversized diff is otherwise silent here (the per-agent status records
+ 	// it downstream, but an operator gets no signal at the point the files were
+ 	// dropped). AllDropped already returned above, so this is the some-but-not-all
+ 	// case.
+ 	if trunc.Truncated {
+ 		log.FromContext(ctx).Warn("diff ingestion: byte budget truncated the review payload; reviewing a subset of the diff",
+ 			"kept", len(kept), "dropped", len(trunc.FilesDropped), "files_dropped", trunc.FilesDropped)
+ 	}
+ 	var totalLen int
+ 	for _, e := range kept {
+ 		totalLen += len(e.Body)
+ 	}
+ 	var b strings.Builder
+ 	b.Grow(totalLen)
+ 	for _, e := range kept {
+ 		b.WriteString(e.Body)
+ 	}
+ 	diffMode := string(payload.ModeDiff)
+ 	payloads := map[string]modePayload{
+ 		// Entries keeps the raw pre-budget diff files so buildSlots re-sheds them
+ 		// per agent against each model's window (Epic 19.10 F2).
+ 		diffMode: {Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc},
+ 	}
+ 	// Sprint-plan scope (Epic 12.2): the ingestion path honors --sprint-plan too,
+ 	// prepending the SCOPE CONSTRAINT to every reviewer's payload. An unreadable or
+ 	// oversized plan warns but never aborts the review.
+ 	scopeConstraint, scopeWarn := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes)
+ 	if scopeWarn != "" {
+ 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
+ 	}
+ 	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode, scopeConstraint, true)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, diffMode)
++	// Diff-ingestion has no git range, so no RangeBuilder: computeGroundingData's
++	// range-less early return handles it (grounding not applicable).
++	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, diffMode, nil)
+ }
+ 
+ // runEngine wires the optional read-only tool harness for p's tool-enabled slots
+ // (a head snapshot → path jail → dispatcher, shared across the run, plus a
+ // per-agent transcript writer under poolDir), runs the fan-out under p's timeout,
+ // and returns the per-agent results together with the manifest review-stage entry
+ // (snapshot provenance already stamped). Best-effort harness setup: a snapshot or
+ // jail failure logs and degrades tool agents to single-shot rather than failing
+ // the review. Extracted from ExecuteReview so ExecuteResume runs the identical
+ // engine setup; the two differ only in how they persist the results.
+@@ -735,28 +749,32 @@ type modePayload struct {
+ }
+ 
+ // buildPayloads builds each distinct payload mode the roster uses exactly once.
+-func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head string) (map[string]modePayload, error) {
++// It returns the shared payload.RangeBuilder so the caller can compute grounding
++// data (computeGroundingData) on the same gitRunner, reusing the memoized
++// --name-status / --unified=0 diffs instead of re-spawning them (Epic 22.4).
++func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head string) (map[string]modePayload, *payload.RangeBuilder, error) {
++	rb := payload.NewRangeBuilder(ctx, repo, base, head)
+ 	out := map[string]modePayload{}
+ 	for _, mode := range neededModes(cfg) {
+-		entries, err := payload.BuildEntries(ctx, payload.PayloadMode(mode), repo, base, head)
++		entries, err := rb.BuildEntries(payload.PayloadMode(mode))
+ 		if err != nil {
+-			return nil, fmt.Errorf("building %s payload: %w", mode, err)
++			return nil, nil, fmt.Errorf("building %s payload: %w", mode, err)
+ 		}
+ 		kept, trunc := payload.ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget)
+ 		if trunc.AllDropped {
+-			return nil, fmt.Errorf("%w (mode %s, dropped %d file(s))", ErrPayloadFullyDropped, mode, len(trunc.FilesDropped))
++			return nil, nil, fmt.Errorf("%w (mode %s, dropped %d file(s))", ErrPayloadFullyDropped, mode, len(trunc.FilesDropped))
+ 		}
+ 		var b strings.Builder
+ 		for _, e := range kept {
+ 			b.WriteString(e.Body)
+ 		}
+ 		// FileCount reflects what the reviewer actually saw (post-truncation), not
+ 		// the pre-budget total — the dropped files are recorded in trunc. Entries
+ 		// keeps the raw pre-budget files so buildSlots re-sheds them per agent
+ 		// against each model's window (Epic 19.10 F2).
+ 		out[mode] = modePayload{Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc}
+ 	}
+-	return out, nil
++	return out, rb, nil
+ }
+ 
+ // neededModes returns the distinct payload modes across the whole roster.
+diff --git a/internal/payload/builder.go b/internal/payload/builder.go
+index 5285c075..f685e328 100644
+--- a/internal/payload/builder.go
++++ b/internal/payload/builder.go
+@@ -93,27 +93,34 @@ func BuildEntries(ctx context.Context, mode PayloadMode, repo, base, head string
+ // buildEntries is the runner-bound core of BuildEntries, split out so white-box
+ // tests can observe g.execCount and assert the per-mode git-process count is
+ // independent of the changed-file count.
+ func (g *gitRunner) buildEntries(mode PayloadMode, base, head string) ([]FileEntry, error) {
+ 	if err := validateRange(g, base, head); err != nil {
+ 		return nil, err
+ 	}
++	return g.buildEntriesValidated(mode, base, head)
++}
++
++// buildEntriesValidated is buildEntries without the range validation, for callers
++// (RangeBuilder) that validate the range once and reuse the runner across
++// multiple builds so the two rev-parse processes are not re-spent per mode.
++func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) ([]FileEntry, error) {
+ 	files, err := g.changedFilesMemo(base, head)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	entries := make([]FileEntry, 0, len(files))
+ 	for _, f := range files {
+ 		body, err := g.fileBody(mode, base, head, f)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+ 		entries = append(entries, FileEntry{Path: f.path, Size: int64(len(body)), Body: body})
+ 	}
+ 	return entries, nil
+ }
+ 
+ // ChangedFileCount returns the number of files changed in base..head from a
+ // single `git diff --name-status` call — the cheap pre-flight counterpart to
+ // BuildEntries, which materializes every per-file diff body just to be counted.
+ // Rename detection (-M) matches changedFiles, so the count equals
+ // len(BuildEntries(ModeDiff, ...)) for added, deleted, and renamed files.
+diff --git a/internal/payload/diff.go b/internal/payload/diff.go
+index 7d3e4b04..bc2b8552 100644
+--- a/internal/payload/diff.go
++++ b/internal/payload/diff.go
+@@ -45,22 +45,23 @@ func (f changedFile) pathspec() []string {
+ // rangeState holds the whole-range cache fields for one base..head pair.
+ // All cache reads must go through gitRunner.forRange, which reconciles the
+ // key before returning a pointer — no accessor can read a cache field without
+ // first passing through that gate.
+ type rangeState struct {
+ 	key        string
+ 	files      []changedFile          // changed files (one --name-status -M)
+ 	binary     map[string]bool        // head path -> binary (one --numstat -M)
+ 	fc         map[string]string      // head path -> --function-context chunk
+ 	plain      map[string]string      // head path -> --unified=10 chunk
+ 	raw        map[string]string      // head path -> plain -M diff chunk
++	zeroCtx    map[string]string      // head path -> --unified=0 chunk (raw)
+ 	lineRanges map[string][]lineRange // head path -> head-side changed ranges
+ }
+ 
+ // gitRunner executes git argv against a fixed directory and context. The
+ // payload package wraps os/exec directly (there is no internal/git package).
+ //
+ // The whole-range caches batch the per-file fan-out: each diff variant for a
+ // base..head range is computed once (one git process), split per file on
+ // column-0 `diff --git` boundaries, and served to every file from the cache.
+ // This keeps the per-file helpers' signatures intact (so their direct unit
+ // tests are unaffected) while collapsing O(N) git processes to O(1) per mode.
+@@ -456,44 +457,62 @@ type lineRange struct{ start, end int }
+ // parseHeadRanges parses the head-side changed line ranges from a zero-context
+ // diff chunk so each range maps to real head line numbers.
+ func parseHeadRanges(chunk string) []lineRange {
+ 	var ranges []lineRange
+ 	for _, line := range strings.Split(chunk, "\n") {
+ 		m := hunkHeaderRe.FindStringSubmatch(line)
+ 		if m == nil {
+ 			continue
+ 		}
+ 		start, _ := strconv.Atoi(m[1])
+ 		length := 1
+ 		if m[2] != "" {
+ 			length, _ = strconv.Atoi(m[2])
+ 		}
+ 		if length == 0 {
+ 			continue // pure deletion: no head lines to mark
+ 		}
+ 		ranges = append(ranges, lineRange{start: start, end: start + length - 1})
+ 	}
+ 	return ranges
+ }
+ 
++// zeroCtxChunks memoizes the whole-range zero-context (--unified=0) diff split
++// per head path (raw chunks). Both rangeChunks (files-mode line-range parse) and
++// changedLines (grounding changed-text parse) consume this one process, so the
++// zero-context diff runs once per range across payload building and grounding.
++func (g *gitRunner) zeroCtxChunks(base, head string) (map[string]string, error) {
++	s := g.forRange(base, head)
++	if s.zeroCtx != nil {
++		return s.zeroCtx, nil
++	}
++	m, err := g.diffChunks(base, head, "--unified=0")
++	if err != nil {
++		return nil, err
++	}
++	s.zeroCtx = m
++	return m, nil
++}
++
+ // rangeChunks memoizes the whole-range zero-context diff, split per head path
+ // and parsed into changed line ranges, so the N per-file range queries collapse
+-// to a single git process.
++// to a single git process. It reuses the memoized raw zero-context chunks so the
++// grounding builder shares the same --unified=0 process.
+ func (g *gitRunner) rangeChunks(base, head string) (map[string][]lineRange, error) {
+ 	s := g.forRange(base, head)
+ 	if s.lineRanges != nil {
+ 		return s.lineRanges, nil
+ 	}
+-	chunks, err := g.diffChunks(base, head, "--unified=0")
++	chunks, err := g.zeroCtxChunks(base, head)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	m := make(map[string][]lineRange, len(chunks))
+ 	for path, chunk := range chunks {
+ 		m[path] = parseHeadRanges(chunk)
+ 	}
+ 	s.lineRanges = m
+ 	return m, nil
+ }
+ 
+ // changedHeadRanges returns the head-side changed line ranges for path, served
+ // from the memoized whole-range zero-context split.
+diff --git a/internal/payload/grounding.go b/internal/payload/grounding.go
+index 961e8b38..682a12e4 100644
+--- a/internal/payload/grounding.go
++++ b/internal/payload/grounding.go
+@@ -28,32 +28,43 @@ type ChangedLines map[string]FileChange
+ // BuildChangedLines returns the per-file grounding data for base..head: the
+ // head-side changed line ranges and the changed-line texts, parsed from a single
+ // zero-context git diff. It is the data source for the fan-out grounding gate
+ // (Epic 14.1), which drops findings whose FILE:LINE is not within the patch. A
+ // binary or pure-mode-change file yields an empty FileChange (no ranges, no
+ // text), which the gate treats as "changed but no lines to check" and keeps (fail
+ // open); a file absent from the map was not changed by the patch, so the gate
+ // drops findings that cite it (the fabricated-file hallucination class).
+ func BuildChangedLines(ctx context.Context, repo, base, head string) (ChangedLines, error) {
+ 	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
+ 	if err := validateRange(g, base, head); err != nil {
+ 		return nil, err
+ 	}
+-	chunks, err := g.diffChunks(base, head, "--unified=0")
++	return g.changedLines(base, head)
++}
++
++// changedLines builds the grounding data from the memoized whole-range
++// zero-context diff. It is the runner-bound core shared by the standalone
++// BuildChangedLines and RangeBuilder.BuildChangedLines: when the range's payload
++// was already built on the same gitRunner, the --unified=0 chunks (and the
++// --name-status underlying them) are served from cache, so grounding adds no git
++// subprocess. Callers must validate the range before the first cache-populating
++// call (BuildChangedLines and RangeBuilder both do).
++func (g *gitRunner) changedLines(base, head string) (ChangedLines, error) {
++	chunks, err := g.zeroCtxChunks(base, head)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	out := make(ChangedLines, len(chunks))
+ 	for path, chunk := range chunks {
+ 		out[path] = parseFileChange(chunk)
+ 	}
+ 	return out, nil
+ }
+ 
+ // parseFileChange parses one zero-context per-file diff chunk into its changed
+ // head ranges (from the @@ hunk headers, reusing parseHeadRanges) and the trimmed
+ // text of every added ('+') and removed ('-') line. Only lines AFTER the first @@
+ // hunk header are collected as content, so the per-file diff headers (diff --git,
+ // index, --- a/…, +++ b/…) are excluded structurally — not by a ---/+++ prefix
+ // test, which would wrongly discard genuine content whose text begins with "--"
+ // or "++" (a removed SQL/Lua "-- comment" renders as a "--- comment" diff line).
+ // Blank changed lines are skipped so they never match arbitrary evidence.
+diff --git a/internal/payload/rangebuilder.go b/internal/payload/rangebuilder.go
+new file mode 100644
+index 00000000..1084c652
+--- /dev/null
++++ b/internal/payload/rangebuilder.go
+@@ -0,0 +1,73 @@
++package payload
++
++import (
++	"context"
++	"fmt"
++
++	"github.com/samestrin/atcr/internal/log"
++)
++
++// RangeBuilder computes every whole-range artifact a fan-out review needs — the
++// per-mode payload entries and the grounding changed-lines map — from a single
++// gitRunner, so the whole-range git processes (ref validation, --name-status,
++// and the per-mode / zero-context diffs) run once for the range and are memoized
++// across both the payload build and the grounding build. Construct one per review
++// range via NewRangeBuilder and use it for both BuildEntries and
++// BuildChangedLines; the review layer previously built each with its own
++// throwaway gitRunner, re-spending validateRange + --name-status + --unified=0 in
++// grounding (Epic 22.4).
++//
++// It is NOT safe for concurrent use: the gitRunner's range-state cache is
++// single-writer. Callers use it sequentially (payload modes, then grounding).
++type RangeBuilder struct {
++	g          *gitRunner
++	base, head string
++	validated  bool
++}
++
++// NewRangeBuilder returns a RangeBuilder for repo's base..head range, sharing one
++// gitRunner (seeded with the context logger) across all its builds.
++func NewRangeBuilder(ctx context.Context, repo, base, head string) *RangeBuilder {
++	return &RangeBuilder{
++		g:    &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)},
++		base: base,
++		head: head,
++	}
++}
++
++// validate runs validateRange once; subsequent builds on the same RangeBuilder
++// skip the two rev-parse processes.
++func (b *RangeBuilder) validate() error {
++	if b.validated {
++		return nil
++	}
++	if err := validateRange(b.g, b.base, b.head); err != nil {
++		return err
++	}
++	b.validated = true
++	return nil
++}
++
++// BuildEntries returns the per-file payload contributions for mode, reusing the
++// builder's memoized range caches. Mirrors the package-level BuildEntries.
++func (b *RangeBuilder) BuildEntries(mode PayloadMode) ([]FileEntry, error) {
++	if mode != ModeDiff && mode != ModeBlocks && mode != ModeFiles {
++		return nil, fmt.Errorf("unknown payload mode '%s': must be one of diff, blocks, files", mode)
++	}
++	if err := b.validate(); err != nil {
++		return nil, err
++	}
++	return b.g.buildEntriesValidated(mode, b.base, b.head)
++}
++
++// BuildChangedLines returns the grounding changed-lines map for the range,
++// reusing the builder's memoized --name-status and zero-context diff. When a
++// payload build already ran for this range on the same builder, this adds no git
++// subprocess. Mirrors the package-level BuildChangedLines; the fail-open contract
++// (a git error disables the grounding gate) lives at the fan-out caller.
++func (b *RangeBuilder) BuildChangedLines() (ChangedLines, error) {
++	if err := b.validate(); err != nil {
++		return nil, err
++	}
++	return b.g.changedLines(b.base, b.head)
++}
+diff --git a/internal/payload/rangebuilder_test.go b/internal/payload/rangebuilder_test.go
+new file mode 100644
+index 00000000..3d111cfc
+--- /dev/null
++++ b/internal/payload/rangebuilder_test.go
+@@ -0,0 +1,135 @@
++package payload
++
++import (
++	"context"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// A RangeBuilder shares one gitRunner across the payload build and the grounding
++// build for the same range, so computing grounding after building the payload
++// spawns NO additional git subprocesses: everything grounding needs
++// (ref validation, --name-status, and the --unified=0 diff) is already memoized
++// by the files-mode payload build. Before this reuse, grounding ran its own
++// gitRunner and re-spent validateRange + --name-status + --unified=0.
++func TestRangeBuilder_GroundingReusesPayloadGitProcesses(t *testing.T) {
++	dir := initRepo(t)
++	write(t, dir, "a.go", goFileV1)
++	write(t, dir, "b.go", goFileV1)
++	base := commitAll(t, dir, "v1")
++	write(t, dir, "a.go", goFileV2)
++	write(t, dir, "b.go", goFileV2)
++	head := commitAll(t, dir, "v2")
++
++	rb := NewRangeBuilder(context.Background(), dir, base, head)
++
++	// Files mode exercises the --unified=0 range split (via changedHeadRanges),
++	// so after this build every whole-range diff grounding needs is memoized.
++	_, err := rb.BuildEntries(ModeFiles)
++	require.NoError(t, err)
++	afterPayload := rb.g.execCount
++
++	cl, err := rb.BuildChangedLines()
++	require.NoError(t, err)
++	require.Len(t, cl, 2, "both changed files present in grounding data")
++
++	assert.Equal(t, afterPayload, rb.g.execCount,
++		"grounding after a files-mode payload build must add zero git subprocesses (reused memoized range caches)")
++}
++
++// The RangeBuilder-scoped grounding data must be byte-for-byte identical to the
++// standalone package-level BuildChangedLines — this is a pure performance reuse,
++// not a semantics change.
++func TestRangeBuilder_ChangedLinesMatchesStandalone(t *testing.T) {
++	dir := initRepo(t)
++	write(t, dir, "mod.go", goFileV1)
++	write(t, dir, "old.go", goFileV1)
++	base := commitAll(t, dir, "v1")
++	write(t, dir, "mod.go", goFileV2)
++	gitCmd(t, dir, "mv", "old.go", "new.go")
++	write(t, dir, "new.go", goFileV2)
++	write(t, dir, "added.go", "package p\n\nfunc Added() string { return \"added\" }\n")
++	head := commitAll(t, dir, "v2")
++	ctx := context.Background()
++
++	standalone, err := BuildChangedLines(ctx, dir, base, head)
++	require.NoError(t, err)
++
++	rb := NewRangeBuilder(ctx, dir, base, head)
++	reused, err := rb.BuildChangedLines()
++	require.NoError(t, err)
++
++	assert.Equal(t, standalone, reused,
++		"RangeBuilder grounding must match standalone BuildChangedLines exactly")
++}
++
++// An unknown payload mode is rejected before any git work, mirroring the
++// package-level BuildEntries contract.
++func TestRangeBuilder_UnknownModeError(t *testing.T) {
++	dir := initRepo(t)
++	write(t, dir, "a.go", goFileV1)
++	base := commitAll(t, dir, "v1")
++	write(t, dir, "a.go", goFileV2)
++	head := commitAll(t, dir, "v2")
++
++	rb := NewRangeBuilder(context.Background(), dir, base, head)
++	_, err := rb.BuildEntries(PayloadMode("bogus"))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "unknown payload mode")
++}
++
++// An unresolvable ref surfaces the validation error from both build entry points,
++// and the range is not marked validated (so a later valid call would re-run it).
++func TestRangeBuilder_InvalidRefError(t *testing.T) {
++	dir := initRepo(t)
++	write(t, dir, "a.go", goFileV1)
++	head := commitAll(t, dir, "v1")
++
++	rb := NewRangeBuilder(context.Background(), dir, "deadbeefdeadbeef", head)
++	_, err := rb.BuildEntries(ModeDiff)
++	require.Error(t, err)
++	assert.False(t, rb.validated, "a failed validation must not latch as validated")
++
++	_, err = rb.BuildChangedLines()
++	require.Error(t, err)
++}
++
++// An empty range (identical base and head) yields empty grounding data via the
++// RangeBuilder, matching the standalone path's empty-map result.
++func TestRangeBuilder_EmptyRangeYieldsEmptyGrounding(t *testing.T) {
++	dir := initRepo(t)
++	write(t, dir, "a.go", goFileV1)
++	head := commitAll(t, dir, "v1")
++
++	rb := NewRangeBuilder(context.Background(), dir, head, head)
++	cl, err := rb.BuildChangedLines()
++	require.NoError(t, err)
++	assert.Empty(t, cl, "no changed files -> empty grounding map")
++}
++
++// The zero-context diff is computed once per range even when both the files-mode
++// range split and the grounding text parse consume it: rangeChunks and the
++// grounding builder share the memoized --unified=0 chunks.
++func TestRangeBuilder_ZeroContextDiffRunsOnce(t *testing.T) {
++	dir := initRepo(t)
++	write(t, dir, "a.go", goFileV1)
++	base := commitAll(t, dir, "v1")
++	write(t, dir, "a.go", goFileV2)
++	head := commitAll(t, dir, "v2")
++
++	g := &gitRunner{ctx: context.Background(), dir: dir}
++	// First consumer: the range-split parse (files-mode line ranges).
++	_, err := g.rangeChunks(base, head)
++	require.NoError(t, err)
++	afterRanges := g.execCount
++
++	// Second consumer: grounding changed-text parse. Must reuse the memoized
++	// zero-context chunks, adding no git process.
++	_, err = g.changedLines(base, head)
++	require.NoError(t, err)
++
++	assert.Equal(t, afterRanges, g.execCount,
++		"grounding changed-lines parse must reuse the memoized --unified=0 chunks (no extra git process)")
++}

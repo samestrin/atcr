@@ -1,0 +1,3 @@
+
+
+HIGH|internal/payload/diff.go:468|O(n) git subprocesses per payload mode due to repeated zero-context diff computation|Reuse memoized zero-context chunks via rangeState.zeroCtx|performance|15|rangeChunks calls diffChunks(--unified=0) per mode instead of reusing cached zeroCtx from prior mode builds, spawning redundant git processes for each payload mode (diff/blocks/files) when building entries for the same base..head range

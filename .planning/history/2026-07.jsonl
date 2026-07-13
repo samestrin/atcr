@@ -134,3 +134,14 @@
 {"ts":"2026-07-13T13:22:46.036296-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"LOW","id":"07e62afff81d5202","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"style"}
 {"ts":"2026-07-13T13:22:46.036296-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"LOW","id":"6b3a13a1dc8cce67","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"style"}
 {"ts":"2026-07-13T13:22:46.036296-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"LOW","id":"59b6daa6312786db","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"style"}
+{"ts":"2026-07-13T15:35:28.879854-07:00","package":"internal/fanout","severity":"HIGH","id":"51a80a1082d1f091","file":"internal/fanout/resume.go","category":"testing"}
+{"ts":"2026-07-13T15:35:28.879854-07:00","package":"internal/payload","severity":"MEDIUM","id":"efa4ce09c6007628","file":"internal/payload/rangebuilder_test.go","category":"testing"}
+{"ts":"2026-07-13T15:35:28.879854-07:00","package":"internal/payload","severity":"MEDIUM","id":"4b3e731f19afee18","file":"internal/payload/rangebuilder_test.go","category":"testing"}
+{"ts":"2026-07-13T15:35:28.879854-07:00","package":"internal/payload","severity":"LOW","id":"f7e956f7610a1dc7","file":"internal/payload/rangebuilder_test.go","category":"testing"}
+{"ts":"2026-07-13T15:35:28.879854-07:00","package":"internal/payload","severity":"LOW","id":"251258258951bfc2","file":"internal/payload/diff.go","category":"testing"}
+{"ts":"2026-07-13T15:35:28.879854-07:00","package":"internal/payload","severity":"CRITICAL","id":"b06746076bffbff1","file":"internal/payload/rangebuilder.go","category":"correctness"}
+{"ts":"2026-07-13T15:35:28.879854-07:00","package":".planning/epics/superseded","severity":"HIGH","id":"609b5b24e4c7e299","file":".planning/epics/superseded/23.0_human_persona_renaming.md","category":"out-of-scope"}
+{"ts":"2026-07-13T15:35:28.879854-07:00","package":"internal/payload","severity":"HIGH","id":"823584d1378da2da","file":"internal/payload/rangebuilder_test.go","category":"correctness"}
+{"ts":"2026-07-13T15:35:28.879854-07:00","package":".planning/epics/superseded","severity":"HIGH","id":"af568a7d90e52dd5","file":".planning/epics/superseded/23.0_human_persona_renaming.md","category":"out-of-scope"}
+{"ts":"2026-07-13T15:35:28.879854-07:00","package":"internal/payload","severity":"LOW","id":"3d6472214a037715","file":"internal/payload/rangebuilder.go","category":"style"}
+{"ts":"2026-07-13T15:35:28.879854-07:00","package":"internal/payload","severity":"MEDIUM","id":"79e4c9e8e949c4eb","file":"internal/payload/builder.go","category":"structure"}

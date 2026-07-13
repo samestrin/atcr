@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <title>ATCR Pitch Deck</title>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.0.4/reset.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.0.4/reveal.min.css">
+    <!-- Load custom styles instead of a built-in theme -->
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- IBM Plex Fonts (as used in atcr.dev) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="reveal">
+        <div class="slides">
+            <!-- Slide 1: Title -->
+            <section class="title-slide">
+                <div class="brand-header">
+                    <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
+                        <rect width="100" height="100" rx="20" fill="#e8e9ec" />
+                        <path d="M10.2 82.5L36.2 17.5L52.2 17.5L65.8 51.5L61.8 61.5L34.6 61.5L26.2 82.5ZM44.2 37.5L38.6 51.5L49.8 51.5Z" fill="#0e1116" />
+                        <path d="M67.4 35.5L83.4 35.5L89.8 51.5L77.4 82.5L61.4 82.5L73.8 51.5Z" fill="#0e1116" />
+                    </svg>
+                    <span class="mono">atcr</span>
+                </div>
+                <h1>Agent Team Code Review</h1>
+                <p class="lede">A review panel, not a reviewer.</p>
+                <div class="cmd-pill fragment">
+                    <span class="prompt">$</span>
+                    <span class="code">atcr review && atcr reconcile</span>
+                </div>
+            </section>
+
+            <!-- Slide 2: The Problem -->
+            <section>
+                <span class="overline">The Problem</span>
+                <h2>Single-model review is flawed.</h2>
+                <div class="card">
+                    <p class="quote">"Smaller local models often missed planted bugs that frontier models caught."</p>
+                    <p class="attribution">— Creator of lgtmaybe (a single-model reviewer)</p>
+                </div>
+                <ul class="spaced-list mt-2">
+                    <li class="fragment">If one model misses it, no one catches it.</li>
+                    <li class="fragment">You're trusting one model's judgment blindly.</li>
+                    <li class="fragment">Conflicts and disagreements are flattened away.</li>
+                </ul>
+            </section>
+
+            <!-- Slide 3: The Core Idea -->
+            <section>
+                <span class="overline">The Core Idea</span>
+                <h2>Agreement is the confidence score.</h2>
+                <p class="lede">A finding two independent models both caught is worth more than either model's opinion alone.</p>
+                
+                <div class="card fragment mt-2">
+                    <div class="finding-mockup">
+                        <div class="loc mono">auth.go:42 · nil-pointer</div>
+                        <div class="consensus">
+                            <span class="dots-row">
+                                <span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot off"></span><span class="dot off"></span>
+                            </span>
+                            <span class="frac">3/5</span><span class="pct ok">94% confirmed</span>
+                        </div>
+                    </div>
+                    <div class="finding-mockup mt-1">
+                        <div class="loc mono">users.go:88 · SQL injection</div>
+                        <div class="consensus">
+                            <span class="dots-row">
+                                <span class="dot on"></span><span class="dot on"></span><span class="dot no"></span><span class="dot off"></span><span class="dot off"></span>
+                            </span>
+                            <span class="frac">2/5</span><span class="pct warn">71% disputed</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 4: The Pipeline -->
+            <section>
+                <span class="overline">How it works</span>
+                <h2>Three commands. One artifact.</h2>
+                
+                <div class="grid-3-col mt-2">
+                    <div class="card fragment">
+                        <span class="step">01 · review</span>
+                        <h3>Fan out</h3>
+                        <p>Dispatch payload to a heterogeneous roster of personas in parallel.</p>
+                    </div>
+                    <div class="card fragment">
+                        <span class="step">02 · reconcile</span>
+                        <h3>Merge deterministically</h3>
+                        <p>Cluster, dedupe, score confidence, and preserve disagreements.</p>
+                    </div>
+                    <div class="card fragment">
+                        <span class="step">03 · report</span>
+                        <h3>Read verdict</h3>
+                        <p>Render high-confidence output to disk as markdown or JSON.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 5: Enterprise Grade -->
+            <section>
+                <span class="overline">The New Reality</span>
+                <h2>Enterprise Grade Capabilities</h2>
+                <p class="lede">ATCR has grown far beyond a basic CLI. We are building the enterprise standard.</p>
+                
+                <div class="grid-2-col mt-2">
+                    <div class="feature-box fragment">
+                        <div class="sev crit">SECURITY</div>
+                        <h4>Sandbox Execution Environment</h4>
+                        <p>Safe adversarial verification isolated from the host system.</p>
+                    </div>
+                    <div class="feature-box fragment">
+                        <div class="sev high">COMPLIANCE</div>
+                        <h4>Cryptographic Certification Badge</h4>
+                        <p>Verifiable proof that code survived an adversarial skeptic panel.</p>
+                    </div>
+                    <div class="feature-box fragment">
+                        <div class="sev med">INTEGRATION</div>
+                        <h4>SARIF Output & Plugin Hooks</h4>
+                        <p>Seamlessly feed findings into standard enterprise CI/CD gates.</p>
+                    </div>
+                    <div class="feature-box fragment">
+                        <div class="sev low">GOVERNANCE</div>
+                        <h4>Audit Logging & Accountability Gates</h4>
+                        <p>Trace every model's rationale for highly regulated industries.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 6: Market Position -->
+            <section>
+                <span class="overline">Competitive Landscape</span>
+                <h2>Strategic Differentiation</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Concept</th>
+                            <th>Market Position</th>
+                            <th>ATCR Edge</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="fragment">
+                            <td class="highlight">Disagreement Radar</td>
+                            <td><span class="sev high">BLUE OCEAN</span></td>
+                            <td>Only tool that preserves disagreement structurally.</td>
+                        </tr>
+                        <tr class="fragment">
+                            <td class="highlight">Cryptographic Cert.</td>
+                            <td><span class="sev crit">BLUE OCEAN</span></td>
+                            <td>Creating a new market for AI-verified code compliance.</td>
+                        </tr>
+                        <tr class="fragment">
+                            <td class="highlight">Model-Eval Leaderboard</td>
+                            <td><span class="sev med">NICHE LEADER</span></td>
+                            <td>The definitive code-review specific evaluation.</td>
+                        </tr>
+                        <tr class="fragment">
+                            <td class="highlight">CI Integration</td>
+                            <td><span class="sev low">TABLE STAKES</span></td>
+                            <td>Necessary baseline, not the core moat.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Slide 7: Go-To-Market & Revenue -->
+            <section>
+                <span class="overline">Go-To-Market</span>
+                <h2>Revenue Opportunity</h2>
+                
+                <div class="revenue-grid mt-2">
+                    <div class="revenue-card conservative fragment">
+                        <h3>Conservative</h3>
+                        <h2>$160k</h2>
+                        <p>in 18 months</p>
+                    </div>
+                    <div class="revenue-card optimistic fragment">
+                        <h3>Optimistic</h3>
+                        <h2 class="tok-ok">$1.6M+</h2>
+                        <p>in 18 months</p>
+                    </div>
+                </div>
+                
+                <div class="revenue-streams fragment mt-2">
+                    <p><strong>Scaling the Business:</strong> Consulting Services &rarr; Review-as-a-Service API &rarr; Team Edition &rarr; Enterprise Platform (Auto-fix, Analytics, Certification).</p>
+                </div>
+            </section>
+
+            <!-- Slide 7b: Revenue Detail -->
+            <section>
+                <span class="overline">The Math</span>
+                <h2>Revenue Breakdown</h2>
+                <div class="grid-2-col mt-2">
+                    <div class="card fragment">
+                        <h3>Team / Pro Seats</h3>
+                        <p class="lede" style="font-size: 1.1rem; color: var(--text); margin-bottom: 0;"><span class="mono tok-ok">$15</span> / user / month</p>
+                        <ul class="spaced-list" style="font-size: 0.95rem; margin-top: 15px;">
+                            <li>Hosted reconciler, team rosters, and basic audit trails.</li>
+                            <li>Allows bottom-up "corporate card swipe" adoption.</li>
+                        </ul>
+                    </div>
+                    <div class="card fragment">
+                        <h3>Enterprise Licensing</h3>
+                        <p class="lede" style="font-size: 1.1rem; color: var(--text); margin-bottom: 0;"><span class="mono tok-ok">$10k - $50k</span> / year per org</p>
+                        <ul class="spaced-list" style="font-size: 0.95rem; margin-top: 15px;">
+                            <li>Self-hosted / air-gapped reconciler.</li>
+                            <li>SOC2/HIPAA compliance, SSO, and custom personas.</li>
+                        </ul>
+                    </div>
+                    <div class="card fragment">
+                        <h3>Platform & Certification</h3>
+                        <p class="lede" style="font-size: 1.1rem; color: var(--text); margin-bottom: 0;"><span class="mono tok-ok">$500 - $2000</span> / report</p>
+                        <ul class="spaced-list" style="font-size: 0.95rem; margin-top: 15px;">
+                            <li>"Survived-a-Skeptic" Cryptographic Certifications.</li>
+                            <li>Review Intelligence Analytics ($99-$499/mo).</li>
+                        </ul>
+                    </div>
+                    <div class="card fragment">
+                        <h3>Consulting & Referral</h3>
+                        <p class="lede" style="font-size: 1.1rem; color: var(--text); margin-bottom: 0;"><span class="mono tok-ok">$5k+</span> & <span class="mono tok-ok">$6</span>/mo</p>
+                        <ul class="spaced-list" style="font-size: 0.95rem; margin-top: 15px;">
+                            <li>Model selection strategy & custom persona development.</li>
+                            <li>Passive income via Synthetic.new default provider.</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Slide 7c: Adoption Strategy -->
+            <section>
+                <span class="overline">Go-To-Market Motion</span>
+                <h2>Product-Led Growth</h2>
+                <div class="card">
+                    <p class="lede">We are building an open-source product with a license for enterprise features. The boundary is deliberate.</p>
+                </div>
+                <ul class="spaced-list mt-2">
+                    <li class="fragment"><strong>1. The Hook (Free):</strong> Individual developers adopt the CLI, MCP server, and local models for free.</li>
+                    <li class="fragment"><strong>2. The Wedge ($15/mo):</strong> Tech leads swipe a card for the Team Edition to get a hosted reconciler and shared rosters.</li>
+                    <li class="fragment"><strong>3. The Expansion ($50k/yr):</strong> Once multiple teams are hooked, we sell the Enterprise contract to unify compliance, SSO, and air-gapped hosting.</li>
+                </ul>
+            </section>
+
+            <!-- Slide 8: The Moat -->
+            <section>
+                <span class="overline">Standards Gravity</span>
+                <h2>The Moat</h2>
+                <blockquote>
+                    "If the leaderboard becomes the cited benchmark... ATCR becomes the reference. That's standards gravity."
+                </blockquote>
+                <ul class="spaced-list">
+                    <li class="fragment"><strong>The Reconciler:</strong> Deterministic, deduplicating, confidence-scoring.</li>
+                    <li class="fragment"><strong>The Leaderboard:</strong> The definitive evaluation for AI code review models.</li>
+                    <li class="fragment"><strong>The Certification:</strong> "Survived-a-Skeptic" cryptographic proof.</li>
+                </ul>
+            </section>
+            
+            <section class="title-slide">
+                <div class="brand-header">
+                    <svg class="mark" viewBox="0 0 100 100" aria-hidden="true">
+                        <rect width="100" height="100" rx="20" fill="#e8e9ec" />
+                        <path d="M10.2 82.5L36.2 17.5L52.2 17.5L65.8 51.5L61.8 61.5L34.6 61.5L26.2 82.5ZM44.2 37.5L38.6 51.5L49.8 51.5Z" fill="#0e1116" />
+                        <path d="M67.4 35.5L83.4 35.5L89.8 51.5L77.4 82.5L61.4 82.5L73.8 51.5Z" fill="#0e1116" />
+                    </svg>
+                    <span class="mono">atcr</span>
+                </div>
+                <h1>Thank You</h1>
+                <p class="lede">Building the standard for AI code review.</p>
+            </section>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.0.4/reveal.min.js"></script>
+    <script>
+        Reveal.initialize({
+            hash: true,
+            transition: 'slide',
+            backgroundTransition: 'fade',
+            controls: true,
+            controlsTutorial: true,
+            slideNumber: 'c/t',
+        });
+    </script>
+</body>
+</html>
