@@ -1,3 +1,21 @@
+## [21.0.0] - 2026-07-12
+
+Automate release packaging: a tag-triggered GoReleaser pipeline that builds reproducible, version-stamped binaries and publishes a GitHub Release on `vX.Y.Z` tag push, plus the release-process documentation and CI hardening around it.
+
+### Added
+
+- `.goreleaser.yaml` build configuration with dual ldflags version/commit/date stamping, `-trimpath`, and reproducible archive mtimes.
+- Tag-triggered release workflow (`.github/workflows/release.yml`) that runs GoReleaser and publishes a GitHub Release on `vX.Y.Z` tag push.
+- `docs/release-process.md` documenting the `vX.Y.Z` tagging convention, the local `goreleaser release --snapshot --clean` dry-run prerequisite, and the git release strategy.
+
+### Changed
+
+- Hardened the release workflow: scoped the tag trigger glob to real release tags and disabled cancel-in-progress so an in-flight publish is never aborted.
+
+### Security
+
+- Pinned every GitHub Actions `uses:` reference and the GoReleaser binary to exact commit SHAs across `release.yml`, `ci.yml`, and `reconcile-module.yml` (TD-006).
+
 ## [20.1.0] - 2026-07-12
 
 Give standalone/public `atcr` users the review-and-fix loop the private `.planning/technical-debt/` + `/resolve-td` pipeline already provides, via a local `.atcr/`-scoped technical-debt store and an autonomous `atcr debt resolve` skill route.
