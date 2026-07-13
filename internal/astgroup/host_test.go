@@ -518,3 +518,102 @@ func TestHost_PyParseBadPointer(t *testing.T) {
 	require.Equal(t, "error", n.Kind)
 	require.Equal(t, "bad pointer", n.Name)
 }
+
+// TestHost_GoParseNegativeN exercises goparser's parse() negative-n guard: a
+// valid pointer with a negative n (int32 -1, passed as 0xFFFFFFFF over the i64
+// arg) must yield the "bad pointer" error node rather than slicing buf[:n] and
+// trapping the guest with slice-out-of-range. This mirrors braceparser's
+// negative-n sub-case (TestHost_BraceParseBadPointerAndNegativeN) — goparser
+// previously lacked the `int(n) < 0` guard, so this pins the fix.
+func TestHost_GoParseNegativeN(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("go")
+	require.NoError(t, err)
+	wp := p.(*wasmParser)
+	ctx := wp.ctx
+
+	allocRes, err := wp.alloc.Call(ctx, 1)
+	require.NoError(t, err)
+	ptr := uint32(allocRes[0])
+	defer func() { _, _ = wp.free.Call(ctx, uint64(ptr)) }()
+
+	res, err := wp.parse.Call(ctx, uint64(ptr), 0xFFFFFFFF)
+	require.NoError(t, err, "negative n must return an error node, not trap")
+	require.Len(t, res, 1)
+	rptr := uint32(res[0] >> 32)
+	rlen := uint32(res[0])
+	out, ok := wp.memory.Read(rptr, rlen)
+	require.True(t, ok, "read error-node result from guest memory")
+	_, _ = wp.free.Call(ctx, uint64(rptr))
+	var n Node
+	require.NoError(t, json.Unmarshal(out, &n))
+	require.Equal(t, "error", n.Kind)
+	require.Equal(t, "bad pointer", n.Name)
+}
+
+// TestHost_PyParseNegativeN exercises pyparser's parse() negative-n guard: a
+// valid pointer with a negative n must yield the "bad pointer" error node rather
+// than slicing string(buf[:n]) and trapping. pyparser previously lacked the
+// `int(n) < 0` guard, so this pins the fix.
+func TestHost_PyParseNegativeN(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+	wp := p.(*wasmParser)
+	ctx := wp.ctx
+
+	allocRes, err := wp.alloc.Call(ctx, 1)
+	require.NoError(t, err)
+	ptr := uint32(allocRes[0])
+	defer func() { _, _ = wp.free.Call(ctx, uint64(ptr)) }()
+
+	res, err := wp.parse.Call(ctx, uint64(ptr), 0xFFFFFFFF)
+	require.NoError(t, err, "negative n must return an error node, not trap")
+	require.Len(t, res, 1)
+	rptr := uint32(res[0] >> 32)
+	rlen := uint32(res[0])
+	out, ok := wp.memory.Read(rptr, rlen)
+	require.True(t, ok, "read error-node result from guest memory")
+	_, _ = wp.free.Call(ctx, uint64(rptr))
+	var n Node
+	require.NoError(t, json.Unmarshal(out, &n))
+	require.Equal(t, "error", n.Kind)
+	require.Equal(t, "bad pointer", n.Name)
+}
+
+// TestHost_FreeInvalidatesPointer proves guestabi.Free actually invalidates a
+// pinned pointer: after alloc(n) then free(ptr), a parse(ptr, ...) can no longer
+// resolve the buffer (Lookup returns !ok) and returns the "bad pointer" error
+// node. This closes the coverage gap where Free was never verified to remove the
+// pin — a leak or a no-op Free would otherwise pass every existing test.
+func TestHost_FreeInvalidatesPointer(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("go")
+	require.NoError(t, err)
+	wp := p.(*wasmParser)
+	ctx := wp.ctx
+
+	allocRes, err := wp.alloc.Call(ctx, 8)
+	require.NoError(t, err)
+	ptr := uint32(allocRes[0])
+
+	// Free the pin, then parse the now-dangling pointer. Lookup must miss.
+	_, err = wp.free.Call(ctx, uint64(ptr))
+	require.NoError(t, err)
+
+	res, err := wp.parse.Call(ctx, uint64(ptr), 0)
+	require.NoError(t, err, "parse of freed pointer must return an error node, not trap")
+	require.Len(t, res, 1)
+	rptr := uint32(res[0] >> 32)
+	rlen := uint32(res[0])
+	out, ok := wp.memory.Read(rptr, rlen)
+	require.True(t, ok, "read error-node result from guest memory")
+	_, _ = wp.free.Call(ctx, uint64(rptr))
+	var n Node
+	require.NoError(t, json.Unmarshal(out, &n))
+	require.Equal(t, "error", n.Kind)
+	require.Equal(t, "bad pointer", n.Name)
+}
