@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/parsers/src/pyparser/main.go",
+      "line": 193,
+      "severity": "MEDIUM",
+      "problem": "(scanLine) Missing test for triple-quote inside single-line string of the same quote type",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/parsers/src/pyparser/main.go",
+      "line": 198,
+      "severity": "MEDIUM",
+      "problem": "(scanLine) Escape handling inside single-line string (`case '\\\\': i += 2`) has no test coverage",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/parsers/src/pyparser/main.go",
+      "line": 228,
+      "severity": "MEDIUM",
+      "problem": "(scanLine) No test for `#` inside a triple-quoted (multi-line) string",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/parsers/src/pyparser/main.go",
+      "line": 199,
+      "severity": "LOW",
+      "problem": "(scanLine) Backslash escape `i += 2` may skip past end of line without bounds check; boundary untested",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/parsers/src/pyparser/main.go",
+      "line": 221,
+      "severity": "LOW",
+      "problem": "(scanLine) Comment restates the a-priori objective of the epic",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/astgroup/parsers/src/pyparser/main.go",
+      "line": 234,
+      "severity": "LOW",
+      "problem": "Comment restates the a-priori objective of the epic",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ]
+    }
+  ]
+}

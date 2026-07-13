@@ -1,3 +1,7 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
 # Epic Plan 22.3: Quote/Escape-Aware Scanning in pyparser
 
 - **Estimated time**: 0.5 day
@@ -18,9 +22,9 @@ Make `pyparser`'s `scanTripleQuotes` and `stripComment` quote/escape-aware so a 
 
 ## Acceptance Criteria
 
-- [x] A regression fixture with a `#` containing a triple-quote inside a comment is classified correctly (comment, not string).
-- [x] A regression fixture with a string literal containing `#` is classified correctly (string, not comment).
-- [x] Existing `pyparser` structural-hash tests pass unchanged for well-formed input.
+- [ ] A regression fixture with a `#` containing a triple-quote inside a comment is classified correctly (comment, not string).
+- [ ] A regression fixture with a string literal containing `#` is classified correctly (string, not comment).
+- [ ] Existing `pyparser` structural-hash tests pass unchanged for well-formed input.
 
 ## Components Touched
 
@@ -66,3 +70,5 @@ None.
 - HAS_CROSS_SYSTEM: false
 - Cited references checked: 1
 - Codebase search queries (spot-check): []
+----- END SPRINT PLAN -----
+

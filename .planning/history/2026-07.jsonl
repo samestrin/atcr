@@ -126,3 +126,11 @@
 {"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/guestabi","severity":"MEDIUM","id":"3301dce2efde7030","file":"internal/astgroup/parsers/src/guestabi/guestabi.go","category":"resource"}
 {"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/guestabi","severity":"MEDIUM","id":"cfe6e95833a7580d","file":"internal/astgroup/parsers/src/guestabi/guestabi.go","category":"resource"}
 {"ts":"2026-07-13T08:52:36.198749-07:00","package":"internal/astgroup/parsers/src/braceparser","severity":"LOW","id":"edc1bdb75d7cba14","file":"internal/astgroup/parsers/src/braceparser/main.go","category":"style"}
+{"ts":"2026-07-13T13:22:46.036296-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"MEDIUM","id":"2f98cd7d60a11cf4","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"testing"}
+{"ts":"2026-07-13T13:22:46.036296-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"MEDIUM","id":"ed28e426d2709ae3","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"testing"}
+{"ts":"2026-07-13T13:22:46.036296-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"MEDIUM","id":"b417b337260ddf8e","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"testing"}
+{"ts":"2026-07-13T13:22:46.036296-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"LOW","id":"a4e3a4b1fc195528","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"testing"}
+{"ts":"2026-07-13T13:22:46.036296-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"LOW","id":"0338bdb05d4058e9","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"testing"}
+{"ts":"2026-07-13T13:22:46.036296-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"LOW","id":"07e62afff81d5202","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"style"}
+{"ts":"2026-07-13T13:22:46.036296-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"LOW","id":"6b3a13a1dc8cce67","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"style"}
+{"ts":"2026-07-13T13:22:46.036296-07:00","package":"internal/astgroup/parsers/src/pyparser","severity":"LOW","id":"59b6daa6312786db","file":"internal/astgroup/parsers/src/pyparser/main.go","category":"style"}
