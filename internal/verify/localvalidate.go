@@ -97,6 +97,10 @@ func RunConfiguredValidation(ctx context.Context, argv []string, dir string, tim
 	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.WaitDelay = validationWaitGrace
+	// On unix, place the command in its own process group and override the default
+	// cancel so a timeout SIGKILLs the whole group — reaping grandchildren spawned
+	// by shells like `sh -c ...` instead of leaving them orphaned. No-op elsewhere.
+	configureProcessGroup(cmd)
 	stdout := &cappedBuffer{cap: maxValidationOutputBytes}
 	stderr := &cappedBuffer{cap: maxValidationOutputBytes}
 	cmd.Stdout = stdout
