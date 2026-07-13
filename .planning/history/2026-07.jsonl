@@ -86,3 +86,11 @@
 {"ts":"2026-07-12T11:08:04.349951-07:00","package":"internal/localdebt","severity":"MEDIUM","id":"8f09e70d911418ba","file":"internal/localdebt/record.go","category":"validation"}
 {"ts":"2026-07-12T11:08:04.349951-07:00","package":"internal/localdebt","severity":"HIGH","id":"c039a0516ccafaeb","file":"internal/localdebt/record.go","category":"exhaustion"}
 {"ts":"2026-07-12T11:08:04.349951-07:00","package":"internal/localdebt","severity":"HIGH","id":"2ceed5ae4fc80b4b","file":"internal/localdebt/paths.go","category":"correctness"}
+{"ts":"2026-07-12T17:05:16.522963-07:00","package":".planning/product/strategy","severity":"MEDIUM","id":"9542ef1ca7246832","file":".planning/product/strategy/pricing-model.md","category":"out-of-scope"}
+{"ts":"2026-07-12T17:05:16.522963-07:00","package":".github/workflows","severity":"HIGH","id":"f37b72425efeab58","file":".github/workflows/release.yml","category":"operational"}
+{"ts":"2026-07-12T17:05:16.522963-07:00","package":".github/workflows","severity":"MEDIUM","id":"ed5c0a0a69800aa7","file":".github/workflows/release.yml","category":"supply-chain"}
+{"ts":"2026-07-12T17:05:16.522963-07:00","package":".github/workflows","severity":"HIGH","id":"62a41d7ce5ad09a4","file":".github/workflows/release.yml","category":"reliability"}
+{"ts":"2026-07-12T17:05:16.522963-07:00","package":".github/workflows","severity":"HIGH","id":"ffe0404b049339e1","file":".github/workflows/release.yml","category":"security"}
+{"ts":"2026-07-12T17:05:16.522963-07:00","package":".","severity":"MEDIUM","id":"50f3e192505e19d5","file":".goreleaser.yaml","category":"infoleak"}
+{"ts":"2026-07-12T17:05:16.522963-07:00","package":".github/workflows","severity":"MEDIUM","id":"0685feb0115dd241","file":".github/workflows/release.yml","category":"config"}
+{"ts":"2026-07-12T17:05:16.522963-07:00","package":".github/workflows","severity":"LOW","id":"dabf465c02825917","file":".github/workflows/release.yml","category":"style"}
