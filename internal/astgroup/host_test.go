@@ -741,3 +741,43 @@ func TestHost_PyParseHashInsideString(t *testing.T) {
 	require.True(t, ok, "the if header must be recognized as an if node")
 	require.NotEmpty(t, ifNode.Children, "a # inside a string literal must not break header detection / body nesting")
 }
+
+// TestHost_PyParseMultiLineDocstringSkipsContent is the epic-22.3 regression for a
+// genuine multi-line triple-quoted docstring whose body contains code-shaped
+// content — a nested `def fake():` line and a `#` comment line. The existing
+// epic-22.3 tests (TripleQuoteInComment, TripleQuoteInsideString, HashInsideString)
+// are all single-physical-line edge cases; none feeds a real multi-line span. Here
+// the startInString path (main.go:84-88, driven by a delim persisted across lines
+// by scanLine's triple-quote opening at main.go:210-219) must skip every physical
+// line inside the span, so the docstring's `def fake():` content is not misparsed
+// as a real function. A regression that stops opening the triple-quote span would
+// expose the docstring body as real code and collect "fake" while every other test
+// still passes — this test pins that guard.
+func TestHost_PyParseMultiLineDocstringSkipsContent(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	// The docstring body holds a nested `def fake():` and a `#` comment line —
+	// both code-shaped, both string content that must be skipped line-by-line via
+	// the delim persisted from the opening `"""` line.
+	src := "def a():\n" +
+		"    \"\"\"Summary line.\n" +
+		"    def fake():\n" +
+		"        # not real\n" +
+		"    \"\"\"\n" +
+		"    return 1\n" +
+		"\n" +
+		"def b():\n" +
+		"    return 2\n"
+	root, err := p.Parse([]byte(src))
+	require.NoError(t, err)
+
+	var names []string
+	collectFuncNames(root, &names)
+	require.Contains(t, names, "a", "the outer def must be collected")
+	require.Contains(t, names, "b", "the def following the docstring must be collected")
+	require.NotContains(t, names, "fake", "a def inside a multi-line triple-quoted docstring must be skipped as string content")
+}
