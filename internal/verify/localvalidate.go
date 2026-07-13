@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -27,13 +28,15 @@ import (
 const maxValidationOutputBytes = 1 << 20 // 1 MiB per stream
 
 // validationWaitGrace bounds how long Run may block AFTER the timeout fires
-// waiting for the command's I/O pipes to close. Killing the direct child does
-// not reap a grandchild it spawned (e.g. `sh -c "... sleep 60"`), and that
-// grandchild can hold the stdout pipe open, stalling Run long past the deadline.
-// cmd.WaitDelay force-closes the pipes after this grace so a hanging validation
-// command can never stall --auto-fix indefinitely. It only ever applies on the
-// cancel/timeout path; a normally-exiting command closes its pipes and returns
-// immediately, unaffected.
+// waiting for the command's I/O pipes to close. On unix, configureProcessGroup
+// makes the timeout SIGKILL the whole process group, so a grandchild spawned by a
+// shell (e.g. `sh -c "... sleep 60"`) is reaped directly rather than left holding
+// the stdout pipe open. cmd.WaitDelay remains a platform-independent backstop: if
+// any process still holds a pipe open past this grace (a non-unix target, or a
+// grandchild that escaped its group), the pipes are force-closed so a hanging
+// validation command can never stall --auto-fix indefinitely. It only ever applies
+// on the cancel/timeout path; a normally-exiting command closes its pipes and
+// returns immediately, unaffected.
 const validationWaitGrace = 2 * time.Second
 
 // defaultValidationTimeout is the bound applied when a caller passes a zero
@@ -97,6 +100,10 @@ func RunConfiguredValidation(ctx context.Context, argv []string, dir string, tim
 	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.WaitDelay = validationWaitGrace
+	// On unix, place the command in its own process group and override the default
+	// cancel so a timeout SIGKILLs the whole group — reaping grandchildren spawned
+	// by shells like `sh -c ...` instead of leaving them orphaned. No-op elsewhere.
+	configureProcessGroup(cmd)
 	stdout := &cappedBuffer{cap: maxValidationOutputBytes}
 	stderr := &cappedBuffer{cap: maxValidationOutputBytes}
 	cmd.Stdout = stdout
@@ -119,6 +126,13 @@ func RunConfiguredValidation(ctx context.Context, argv []string, dir string, tim
 	// Partial output captured before the kill is retained above.
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) || errors.Is(runCtx.Err(), context.Canceled) {
 		res.TimedOut = true
+		// A non-nil, non-ESRCH runErr on the timeout path means the group-kill
+		// Cancel failed (e.g. EPERM because a group member dropped privileges).
+		// Log it so a failed reap is observable instead of being masked by the
+		// TimedOut result.
+		if runErr != nil && !errors.Is(runErr, syscall.ESRCH) {
+			fmt.Fprintf(os.Stderr, "auto-fix validation: timeout kill returned unexpected error: %v\n", runErr)
+		}
 		return res, nil
 	}
 

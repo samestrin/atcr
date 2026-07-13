@@ -1,3 +1,13 @@
+## [22.0.0] - 2026-07-12
+
+Reap the entire process group when a local auto-fix validation command times out, so grandchild processes spawned by shells like `sh -c make ...` are killed instead of left running past the deadline.
+
+### Fixed
+
+- Validation-command timeouts now SIGKILL the whole process group on unix (via `Setpgid` + a group-targeted cancel) instead of only the direct child, reaping shell-spawned grandchildren that previously survived the deadline. `cmd.WaitDelay` is retained as a platform-independent pipe backstop; Windows keeps the existing direct-child behavior.
+
+*Shipped via /execute-epic (epic 22.0)*
+
 ## [21.0.0] - 2026-07-12
 
 Automate release packaging: a tag-triggered GoReleaser pipeline that builds reproducible, version-stamped binaries and publishes a GitHub Release on `vX.Y.Z` tag push, plus the release-process documentation and CI hardening around it.
