@@ -1,3 +1,5 @@
+//go:build wasip1
+
 // Command pyparser is the Python-language structural parser plugin, compiled to
 // a WebAssembly reactor (GOOS=wasip1 GOARCH=wasm, -buildmode=c-shared) and
 // loaded by the internal/astgroup wazero host.
