@@ -24,6 +24,12 @@ import (
 // processAlive reports whether pid names a live process. Signal 0 probes for
 // existence without delivering a signal: nil means the process exists, ESRCH
 // means it has been reaped.
+//
+// NOTE: This is a PID-only probe, so it is theoretically vulnerable to PID
+// reuse if the OS recycles pid to a new live process before we observe ESRCH.
+// The test windows below are kept short (2s) so that the exposure is minimal;
+// a fully robust identity check would require start-time/identity probing and
+// is considered over-engineering for this regression test.
 func processAlive(pid int) bool {
 	return syscall.Kill(pid, syscall.Signal(0)) != syscall.ESRCH
 }
@@ -46,7 +52,7 @@ func TestRunConfiguredValidation_TimeoutReapsGrandchild(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return !processAlive(pid)
-	}, 5*time.Second, 20*time.Millisecond,
+	}, 2*time.Second, 20*time.Millisecond,
 		"grandchild sleep (pid %d) must be reaped with the process group, not orphaned past the deadline", pid)
 }
 
@@ -69,7 +75,7 @@ func TestRunConfiguredValidation_TimeoutReapsWholeGroup(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return !processAlive(leaderPID) && !processAlive(grandchildPID)
-	}, 5*time.Second, 20*time.Millisecond,
+	}, 2*time.Second, 20*time.Millisecond,
 		"both group leader (pid %d) and grandchild (pid %d) must be reaped on the cancel/timeout path", leaderPID, grandchildPID)
 }
 
