@@ -97,6 +97,13 @@ func (g *gitRunner) buildEntries(mode PayloadMode, base, head string) ([]FileEnt
 	if err := validateRange(g, base, head); err != nil {
 		return nil, err
 	}
+	return g.buildEntriesValidated(mode, base, head)
+}
+
+// buildEntriesValidated is buildEntries without the range validation, for callers
+// (RangeBuilder) that validate the range once and reuse the runner across
+// multiple builds so the two rev-parse processes are not re-spent per mode.
+func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) ([]FileEntry, error) {
 	files, err := g.changedFilesMemo(base, head)
 	if err != nil {
 		return nil, err
