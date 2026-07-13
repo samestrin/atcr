@@ -615,3 +615,35 @@ func TestHost_FreeInvalidatesPointer(t *testing.T) {
 	require.Equal(t, "error", n.Kind)
 	require.Equal(t, "bad pointer", n.Name)
 }
+
+// TestHost_OversizedResultRejectsWithoutTrapping exercises Parse's
+// maxResultBytes reject path: shrinking the cap makes an ordinary small parse
+// trip the guard, without needing a >64 MiB result. It asserts the path returns
+// the "result too large" error and — crucially — that it returns CLEANLY (no
+// guest trap), so discardOnTrap does not fire and the SAME instance still parses
+// afterward. The reject path is where the result-pointer pin was leaked (the free
+// defer used to sit after the size-check return); the fix moves that defer ahead
+// of the return. The leaked pin itself is not host-observable (the guest pins map
+// is private), so this test guards the reject branch's reachability and its
+// non-trapping, instance-reusing contract that the pin-free now rides on.
+func TestHost_OversizedResultRejectsWithoutTrapping(t *testing.T) {
+	orig := maxResultBytes
+	maxResultBytes = 8 // any real parse result exceeds this
+	defer func() { maxResultBytes = orig }()
+
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("go")
+	require.NoError(t, err)
+
+	_, err = p.Parse([]byte("package p\nfunc F() {}\n"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "result too large")
+
+	// Restore the cap: a trapped/discarded instance would fail here; a clean
+	// reject leaves the reused instance fully usable.
+	maxResultBytes = orig
+	root, err := p.Parse([]byte("package p\nfunc G() {}\n"))
+	require.NoError(t, err)
+	require.Equal(t, "file", root.Kind)
+}
