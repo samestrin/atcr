@@ -48,6 +48,20 @@ func (b *RangeBuilder) validate() error {
 	return nil
 }
 
+// Range returns the base..head pair this builder was constructed for. A caller
+// that grounds against a request's range (computeGroundingData) can assert the
+// builder was built from that same range — a cheap in-memory check — so a future
+// edit that threads a RangeBuilder whose range differs from the request it is
+// grounding fails loudly instead of silently anchoring grounding to the wrong
+// range. The invariant ("build rb from the same req.Range you later ground") is
+// otherwise implicit: every current caller constructs rb and grounds in the same
+// function, so they agree today, but nothing enforced the pairing. Construct one
+// RangeBuilder per review range and use it for both BuildEntries and
+// BuildChangedLines.
+func (b *RangeBuilder) Range() (base, head string) {
+	return b.base, b.head
+}
+
 // BuildEntries returns the per-file payload contributions for mode, reusing the
 // builder's memoized range caches. Mirrors the package-level BuildEntries.
 func (b *RangeBuilder) BuildEntries(mode PayloadMode) ([]FileEntry, error) {

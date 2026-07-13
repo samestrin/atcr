@@ -412,6 +412,23 @@ func computeGroundingData(ctx context.Context, req ReviewRequest, rb *payload.Ra
 	if req.Range.Base == "" || req.Range.Head == "" {
 		return nil, "range-less request (diff ingestion): grounding not applicable"
 	}
+	// Guard the invariant that rb was constructed from the same req.Range it is
+	// grounding. When rb != nil the changed lines come from rb's OWN base/head
+	// (BuildChangedLines uses b.base/b.head), not req.Range, so a mismatched pair
+	// would silently anchor grounding to the rb's range with no error. Every
+	// current caller builds rb from the same req.Range in the same function, so
+	// they agree today — but the pairing was implicit. Fail loudly (disable the
+	// gate with an audible reason) rather than ground the wrong range. The
+	// standalone (rb == nil) path builds from req.Range directly, so it is always
+	// matched and skips this check.
+	if rb != nil {
+		rbb, rbh := rb.Range()
+		if rbb != req.Range.Base || rbh != req.Range.Head {
+			log.FromContext(ctx).Warn("grounding disabled: range builder range differs from request range",
+				"builder_range", rbb+".."+rbh, "request_range", req.Range.Base+".."+req.Range.Head)
+			return nil, "range builder range mismatch: builder " + rbb + ".." + rbh + " differs from request " + req.Range.Base + ".." + req.Range.Head
+		}
+	}
 	// Reuse the payload builder's gitRunner (memoized --name-status / --unified=0
 	// for this same range) when available (Epic 22.4); fall back to a standalone
 	// runner for any caller path that has no builder (defensive — the git-range
