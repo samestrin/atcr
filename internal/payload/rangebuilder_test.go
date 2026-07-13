@@ -65,6 +65,50 @@ func TestRangeBuilder_ChangedLinesMatchesStandalone(t *testing.T) {
 		"RangeBuilder grounding must match standalone BuildChangedLines exactly")
 }
 
+// An unknown payload mode is rejected before any git work, mirroring the
+// package-level BuildEntries contract.
+func TestRangeBuilder_UnknownModeError(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	head := commitAll(t, dir, "v2")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	_, err := rb.BuildEntries(PayloadMode("bogus"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown payload mode")
+}
+
+// An unresolvable ref surfaces the validation error from both build entry points,
+// and the range is not marked validated (so a later valid call would re-run it).
+func TestRangeBuilder_InvalidRefError(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	head := commitAll(t, dir, "v1")
+
+	rb := NewRangeBuilder(context.Background(), dir, "deadbeefdeadbeef", head)
+	_, err := rb.BuildEntries(ModeDiff)
+	require.Error(t, err)
+	assert.False(t, rb.validated, "a failed validation must not latch as validated")
+
+	_, err = rb.BuildChangedLines()
+	require.Error(t, err)
+}
+
+// An empty range (identical base and head) yields empty grounding data via the
+// RangeBuilder, matching the standalone path's empty-map result.
+func TestRangeBuilder_EmptyRangeYieldsEmptyGrounding(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	head := commitAll(t, dir, "v1")
+
+	rb := NewRangeBuilder(context.Background(), dir, head, head)
+	cl, err := rb.BuildChangedLines()
+	require.NoError(t, err)
+	assert.Empty(t, cl, "no changed files -> empty grounding map")
+}
+
 // The zero-context diff is computed once per range even when both the files-mode
 // range split and the grounding text parse consume it: rangeChunks and the
 // grounding builder share the memoized --unified=0 chunks.
