@@ -20,8 +20,12 @@ import (
 //
 // Cancel fires only when the run's context is done (timeout or parent
 // cancellation), never on a clean pass/fail exit, so normal validation runs are
-// unaffected. Unix only — Windows process-group semantics are out of scope (see
-// the epic plan).
+// unaffected. NOTE: a command that exits 0 while leaving a backgrounded
+// grandchild behind is not group-reaped on the clean-exit path; only the
+// timeout/cancel path (and the cmd.WaitDelay backstop) reaps orphans. This is
+// acceptable for the epic's timeout-only scope, but callers should not assume
+// group reaping on successful short-lived validations. Unix only — Windows
+// process-group semantics are out of scope (see the epic plan).
 func configureProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
