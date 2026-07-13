@@ -36,7 +36,7 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           # goreleaser needs full git history and tags to resolve the previous
           # tag and generate the changelog; the default shallow clone is not
@@ -45,7 +45,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25'
           # gauntlet runners are persistent dedicated hardware, not ephemeral
@@ -60,11 +60,11 @@ jobs:
         # Before the first `git push --tags`, run `goreleaser release --snapshot
         # --clean` locally (Task 02's deliverable) and confirm with the maintainer
         # -- see docs/release-process.md and plan.md's risk-mitigation table.
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           # Pin the goreleaser binary to the v2 line, matching .goreleaser.yaml's
           # `version: 2` config schema.
-          version: '~> v2'
+          version: 'v2.17.0'
           args: release --clean
         env:
           # Default workflow token -- no new secret introduced. Sufficient for
