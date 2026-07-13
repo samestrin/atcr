@@ -49,6 +49,8 @@ single source of truth the website build consumes, so it links every doc in
 - [Migrating private skills to the `/atcr` dispatcher](external-migration.md) —
   the manual operator step to move external `claude-prompts` skills onto the
   dispatcher pattern, and why it is out of this repo's automated scope.
+- [Release Process](release-process.md) — the bare `vX.Y.Z` tag convention and
+  the tag-triggered goreleaser workflow a maintainer uses to cut a release.
 - [Technical-Debt Tooling (`atcr debt`)](technical-debt.md) — query, capture, and
   report on technical debt; the `--check` dashboard gate for CI and pre-commit.
 - [Symbol-anchored Problem cells (`(symbolName)` prefix)](technical-debt-format.md)
