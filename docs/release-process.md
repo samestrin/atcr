@@ -64,7 +64,7 @@ via goreleaser `-ldflags`. This section only *declares* the contract; the
 | Variable | Location | Value stamped from the tag `vX.Y.Z` | Rationale |
 |----------|----------|--------------------------------------|-----------|
 | `main.version` | [`cmd/atcr/version.go:14`](../cmd/atcr/version.go) | **`vX.Y.Z`** (v-prefixed) | `atcr --version` / `atcr version` reports `vX.Y.Z`, matching a `go install github.com/samestrin/atcr/cmd/atcr@vX.Y.Z` build. |
-| `internal/version.Version` | [`internal/version/version.go:16`](../internal/version/version.go) | **`X.Y.Z`** (v-stripped) | The public leaderboard submission envelope (Epic 10.0) reports the bare `X.Y.Z` form; it currently defaults to the neutral `"0.0.0"` placeholder. |
+| `github.com/samestrin/atcr/internal/version.Version` | [`internal/version/version.go:16`](../internal/version/version.go) | **`X.Y.Z`** (v-stripped) | The public leaderboard submission envelope (Epic 10.0) reports the bare `X.Y.Z` form; it currently defaults to the neutral `"0.0.0"` placeholder. |
 
 Both targets **agree on the numeric `X.Y.Z`** portion of the tag — the leading
 `v` prefix is the only permitted difference between them. A tag of `v21.0.0`
