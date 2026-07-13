@@ -3,6 +3,7 @@
 package verify
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"syscall"
@@ -34,7 +35,7 @@ func configureProcessGroup(cmd *exec.Cmd) {
 		}
 		// Negative PID targets the whole group (pgid == leader PID, set above).
 		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		if err == syscall.ESRCH {
+		if errors.Is(err, syscall.ESRCH) {
 			// The group is already gone (normal already-exited race). Report it as
 			// ProcessDone so exec.Wait ignores it, matching the default cancel.
 			return os.ErrProcessDone
