@@ -68,11 +68,13 @@ type pline struct {
 // significantLines returns non-blank, non-comment-only lines with their
 // indentation (tabs expanded to 8) and 1-based line number. Lines inside a
 // triple-quoted string (docstrings, multi-line literals) are skipped on a
-// best-effort basis so a def/class/# appearing as string CONTENT is less likely
-// to be misparsed as real code. The skip relies on scanTripleQuotes, which is a
-// heuristic: a """ embedded in a single/double-quoted string can still flip the
-// state machine, so this reduces but does not eliminate the spurious-block /
-// over-merged-finding risk on adversarial source (PoC-grade, not a tokenizer).
+// best-effort basis so a def/class/# appearing as string CONTENT is not misparsed
+// as real code. The skip relies on scanTripleQuotes, which is quote/escape-aware
+// (epic 22.3): a """/”' embedded in a single/double-quoted string, and a triple
+// quote inside a # comment, no longer flip the state machine. It remains a
+// heuristic — raw/byte/f-string prefixes are not modelled — so adversarial source
+// using those can still mis-slice, but ordinary code no longer does (PoC-grade,
+// not a tokenizer).
 func significantLines(src string) []pline {
 	var out []pline
 	delim := ""     // active triple-quote delimiter spanning lines, "" when outside
@@ -167,22 +169,40 @@ func bracketDelta(s string) int {
 // scanLine advances pyparser's line-scanning state across one physical line. It
 // carries the active triple-quoted-string delimiter (delim; "" when outside such
 // a string) and reports the byte offset where an unquoted `#` comment begins
-// (len(line) when the line has none). A `#` inside an open triple-quoted string
-// span is string content, not a comment, so the comment offset is only taken when
-// delim is "" at that position. This is what makes scanTripleQuotes and
-// stripComment comment-aware (epic 22.3): a triple-quote token sitting inside a
-// `#` comment no longer flips the multi-line-string state machine and silently
-// swallows the code that follows.
+// (len(line) when the line has none). It is quote- and escape-aware (epic 22.3):
+//   - A `#` inside an open triple-quoted span, or inside a single-line '...'/"..."
+//     literal, is string content — not a comment — so the comment offset is only
+//     taken when the scan is outside every string at that position.
+//   - A `”'`/`"""` token inside a single-line string literal is content too, so it
+//     does not open a spurious multi-line span that swallows the code that follows.
+//   - A backslash escapes the next byte inside a single-line string, so an escaped
+//     quote does not prematurely close it.
 //
 // It remains a heuristic (see the package doc): raw/byte/f-string prefixes are not
-// modelled.
+// modelled, and single-line strings are not carried across physical lines (a
+// backslash line-continuation inside one is out of scope).
 func scanLine(line, delim string) (endDelim string, commentAt int) {
+	var q byte // active single-line string quote (' or "), 0 when outside one
 	for i := 0; i < len(line); {
 		if delim != "" {
 			if strings.HasPrefix(line[i:], delim) {
 				delim = ""
 				i += 3
 				continue
+			}
+			i++
+			continue
+		}
+		if q != 0 {
+			// Inside a single-line '...' or "..." literal: a backslash escapes the
+			// next byte, and only the matching quote closes the string. A `#` or a
+			// triple-quote token here is string content, not a comment or a new span.
+			switch line[i] {
+			case '\\':
+				i += 2
+				continue
+			case q:
+				q = 0
 			}
 			i++
 			continue
@@ -197,8 +217,11 @@ func scanLine(line, delim string) (endDelim string, commentAt int) {
 			i += 3
 			continue
 		}
-		if line[i] == '#' {
+		switch line[i] {
+		case '#':
 			return delim, i
+		case '"', '\'':
+			q = line[i]
 		}
 		i++
 	}
