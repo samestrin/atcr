@@ -72,6 +72,7 @@ The CI gate reads verdicts directly. Refuted findings never block a merge.
 
 - **`--fail-on <severity>`** — exit `1` if any finding at or above `<severity>` survives, where *survives* means its verdict is **not** `refuted`. Out-of-scope findings are excluded from the count (precedence over the verdict check). Resolved via the shared gate precedence: flag > project config > registry.
 - **`--require-verified`** — only meaningful with `--fail-on`. Counts only findings whose confidence is `VERIFIED` (i.e. `confirmed`) at or above the threshold — the strictest gate. Using it **without** `--fail-on` is a usage error (`error: --require-verified requires --fail-on`, exit 2). To guard against a silently permissive gate, `--require-verified` is refused unless the verify stage actually ran (the manifest `stages` must contain `"verify"`).
+- **`--repo <path>`** — reviewed repository root that skeptics inspect and the redactor relativizes absolute paths against. Defaults to the current working directory; use this to verify findings against a repo other than the CWD or when running `verify` from outside the repo root (Epic 22.1).
 
 | Finding | v1 confidence | verdict | `--fail-on high` | `--fail-on high --require-verified` |
 |---------|---------------|---------|------------------|-------------------------------------|

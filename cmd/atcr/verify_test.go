@@ -11,7 +11,10 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/verify"
 	"github.com/stretchr/testify/require"
 )
 
@@ -207,4 +210,125 @@ func TestVerifyCmd_FreshReverifies(t *testing.T) {
 	code, _ := execCmdCapture(t, "verify", "--fresh", "r")
 	require.Equal(t, 0, code)
 	require.Equal(t, "unverifiable", readFindingVerdict(t, "r"), "--fresh re-attempts; no skeptic -> unverifiable")
+}
+
+// TestVerifyCmd_RepoFlagThreadsReviewedRoot proves Epic 22.1 task 2: `atcr verify`
+// grows a --repo flag that threads the reviewed-repo root (default ".") into
+// verify.Verify's repoRoot — the root skeptics inspect and the exec validator
+// resolves go.mod against — replacing the hardcoded "." convention. Asserted
+// hermetically via flag acceptance plus no-regression of the no-skeptic pipeline:
+// repoRoot's deep effect only surfaces when a skeptic snapshot is built (which
+// needs a live model), so the reconcile behavioral test covers path validation
+// end to end while this guards the verify-side threading and the common case.
+func TestVerifyCmd_RepoFlagThreadsReviewedRoot(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	otherRepo := t.TempDir()
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x",
+	}})
+	code, _ := execCmdCapture(t, "verify", "r", "--repo", otherRepo)
+	require.Equal(t, 0, code, "--repo must be accepted and must not regress the pipeline")
+	// The no-skeptic pipeline still ran to completion against the fixture.
+	require.Equal(t, "unverifiable", readFindingVerdict(t, "r"))
+}
+
+// TestVerifyCmd_RepoFlagThreadsAbsRootToRedactor proves the verify-side threading
+// that the no-skeptic pipeline test cannot: it captures the base actually handed
+// to NewRedactor via the newRedactor seam and asserts it equals filepath.Abs of
+// the passed --repo. An absRoot/repoRoot swap or a dropped redactor wiring — both
+// of which leave TestVerifyCmd_RepoFlagThreadsReviewedRoot green — fail here
+// (TD verify_test.go:220).
+func TestVerifyCmd_RepoFlagThreadsAbsRootToRedactor(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	// A RELATIVE --repo (a subdir of the isolated CWD) so filepath.Abs(repoRoot)
+	// differs from repoRoot: an absRoot/repoRoot swap would then thread the
+	// relative "otherrepo" instead of its absolute form and this assertion fails.
+	// An absolute --repo would make the two equal and mask the swap.
+	require.NoError(t, os.Mkdir("otherrepo", 0o755))
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x",
+	}})
+
+	var gotBase string
+	orig := newRedactor
+	newRedactor = func(reviewRoot string, secrets ...string) *log.Redactor {
+		gotBase = reviewRoot
+		return orig(reviewRoot, secrets...)
+	}
+	t.Cleanup(func() { newRedactor = orig })
+
+	code, _ := execCmdCapture(t, "verify", "r", "--repo", "otherrepo")
+	require.Equal(t, 0, code)
+
+	wantBase, err := filepath.Abs("otherrepo")
+	require.NoError(t, err)
+	require.NotEmpty(t, gotBase, "redactor base must never be empty (would disable path relativization)")
+	require.Equal(t, wantBase, gotBase,
+		"the absolute --repo must be the redactor base, so an absRoot/repoRoot swap or dropped wiring is caught")
+}
+
+// TestVerifyCmd_RepoFlagThreadsRepoRootToDispatcher captures the repoRoot passed
+// into the verify orchestration (verify.Verify -> buildDispatcher's snapshot root,
+// the root skeptics inspect against) via the verifyRun seam and asserts it is the
+// --repo flag value verbatim. This is the snapshot-root sink, distinct from the
+// redactor base (absRoot) — a refactor that swaps or drops the --repo -> snapshot
+// wiring passes the no-skeptic pipeline test but fails here (TD verify.go:92).
+func TestVerifyCmd_RepoFlagThreadsRepoRootToDispatcher(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	require.NoError(t, os.Mkdir("snaprepo", 0o755))
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x",
+	}})
+
+	var gotRepoRoot string
+	orig := verifyRun
+	verifyRun = func(ctx context.Context, repoRoot, reviewDir string, reg *registry.Registry, opts verify.Options) (verify.Result, error) {
+		gotRepoRoot = repoRoot
+		return orig(ctx, repoRoot, reviewDir, reg, opts)
+	}
+	t.Cleanup(func() { verifyRun = orig })
+
+	code, _ := execCmdCapture(t, "verify", "r", "--repo", "snaprepo")
+	require.Equal(t, 0, code)
+	require.Equal(t, "snaprepo", gotRepoRoot,
+		"the --repo flag value must be the repoRoot threaded into verify.Verify -> buildDispatcher's snapshot root")
+}
+
+// TestVerifyCmd_RepoFlagEmptyNormalizes covers the empty --repo "" branch on the
+// verify side (parity with reconcile_test.go's empty-repo assertion): it must
+// normalize to "." and run the pipeline cleanly, not fail or disable it.
+func TestVerifyCmd_RepoFlagEmptyNormalizes(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x",
+	}})
+	code, _ := execCmdCapture(t, "verify", "r", "--repo", "")
+	require.Equal(t, 0, code, "an empty --repo must normalize to \".\", not fail or disable the pipeline")
+	require.Equal(t, "unverifiable", readFindingVerdict(t, "r"))
+}
+
+// TestVerifyCmd_RepoFlagNonexistentFails verifies that a nonexistent --repo path
+// is rejected with a usage error (exit 2) instead of silently threading a bad
+// root into the skeptic snapshot — where the snapshot fails, every finding
+// degrades to unverifiable, and the command still exits 0, hiding the
+// misconfiguration behind a full run of garbage verdicts (TD verify.go:94).
+func TestVerifyCmd_RepoFlagNonexistentFails(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x",
+	}})
+	code, _ := execCmdCapture(t, "verify", "r", "--repo", "/nonexistent/path")
+	require.Equal(t, 2, code, "a nonexistent --repo must fail loudly with exit 2")
+}
+
+// TestVerifyCmd_RepoFlagInHelp documents the --repo flag surface (Epic 22.1).
+func TestVerifyCmd_RepoFlagInHelp(t *testing.T) {
+	isolate(t)
+	_, help := execCmdCapture(t, "verify", "--help")
+	require.Contains(t, help, "--repo")
 }

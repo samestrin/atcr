@@ -5,6 +5,7 @@ import (
 	"fmt"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -39,12 +40,32 @@ falsy, unparseable, or unset value keeps AST grouping on.`,
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: runReconcile,
 	}
+	cmd.Flags().String("repo", ".", "repo root to validate finding file paths against (default: current directory)")
 	cmd.Flags().String("fail-on", "", "exit 1 if any finding at/above this severity survives (CRITICAL, HIGH, MEDIUM, LOW)")
 	cmd.Flags().Bool("require-verified", false, "with --fail-on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate")
 	cmd.Flags().StringSlice("sources", nil, "restrict reconcile to these source directories (default: all)")
 	cmd.Flags().Bool("no-scorecard", false, "skip writing scorecard records to the local store")
 	cmd.Flags().Bool("no-local-debt", false, "skip writing reconciled findings to the local TD store")
 	return cmd
+}
+
+// normalizeRepoFlag reads the shared --repo flag for the commands that thread a
+// reviewed-repo root (`reconcile` and `verify`), defaults an empty or
+// whitespace-only value to "." (the CWD == repo-root operating assumption), and
+// verifies the result is an existing directory. A nonexistent or non-directory
+// --repo is a usage error (exit 2) so a bad root fails loudly instead of silently
+// degrading path validation (reconcile) or the skeptic snapshot/redaction base
+// (verify), where every finding degrades to unverifiable while the command still
+// exits 0. Shared by both handlers so their normalization cannot drift (Epic 22.1).
+func normalizeRepoFlag(cmd *cobra.Command) (string, error) {
+	repoRoot, _ := cmd.Flags().GetString("repo")
+	if strings.TrimSpace(repoRoot) == "" {
+		repoRoot = "."
+	}
+	if info, err := os.Stat(repoRoot); err != nil || !info.IsDir() {
+		return "", usageError(fmt.Errorf("--repo %q does not exist or is not a directory", repoRoot))
+	}
+	return repoRoot, nil
 }
 
 func runReconcile(cmd *cobra.Command, args []string) error {
@@ -89,11 +110,24 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		return usageError(err)
 	}
 
+	// The reviewed-repo root that finding file-path validation resolves against
+	// (Epic 22.1). Defaults to "." (the CWD == repo-root operating assumption),
+	// preserving pre-22.1 behavior; --repo <other-repo> lets reconcile validate
+	// findings against a repo other than the CWD, or from a non-repo-root CWD,
+	// instead of falsely flagging every path as "file not found". An explicit
+	// empty --repo normalizes to "." (never Root="", which would silently disable
+	// path validation AND AST grouping); a nonexistent root fails loudly. Shared
+	// with `atcr verify` via normalizeRepoFlag so the two commands cannot diverge.
+	repoRoot, err := normalizeRepoFlag(cmd)
+	if err != nil {
+		return err
+	}
+
 	sources, _ := cmd.Flags().GetStringSlice("sources")
 	res, err := reconcile.RunReconcile(cmd.Context(), reviewDir, sources, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(reviewDir),
-		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
+		Root:         repoRoot, // validate finding file paths against --repo (Epic 22.1; default ".")
 	})
 	if err != nil {
 		// An I/O failure is an infrastructure/usage error (exit 2), never the

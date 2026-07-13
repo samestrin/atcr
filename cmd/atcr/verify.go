@@ -31,6 +31,7 @@ func newVerifyCmd() *cobra.Command {
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: runVerify,
 	}
+	cmd.Flags().String("repo", ".", "repo root skeptics inspect and validate finding file paths against (default: current directory)")
 	cmd.Flags().Bool("fresh", false, "re-verify findings that already carry a verdict")
 	cmd.Flags().Bool("thorough", false, "use 3 skeptics per finding with majority rule (default 1)")
 	cmd.Flags().String("min-severity", "", "skip findings below this severity floor: CRITICAL, HIGH, MEDIUM, LOW (default MEDIUM)")
@@ -56,6 +57,20 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
 	}
 	return backend, testCmd, timeout, nil
 }
+
+// newRedactor is the seam through which runVerify constructs the exec-evidence
+// redactor. A package var (not a direct log.NewRedactor call) so a test can
+// capture the absolute base actually threaded in — proving
+// --repo -> filepath.Abs -> NewRedactor hermetically, without a live skeptic
+// model. Catches an absRoot/repoRoot swap or dropped redactor wiring (Epic 22.1).
+var newRedactor = log.NewRedactor
+
+// verifyRun is the seam through which runVerify invokes the verify orchestration.
+// A package var (not a direct verify.Verify call) so a test can capture the
+// repoRoot threaded into buildDispatcher's snapshot root — the root skeptics
+// inspect against — hermetically, without a live model. Catches a refactor that
+// silently drops or swaps the --repo -> snapshot-root wiring (Epic 22.1).
+var verifyRun = verify.Verify
 
 func runVerify(cmd *cobra.Command, args []string) error {
 	// Validate --min-severity against the closed enum BEFORE any I/O so a bad
@@ -86,8 +101,27 @@ func runVerify(cmd *cobra.Command, args []string) error {
 
 	fresh, _ := cmd.Flags().GetBool("fresh")
 	thorough, _ := cmd.Flags().GetBool("thorough")
-	absRoot, _ := filepath.Abs(".")
-	res, err := verify.Verify(cmd.Context(), ".", reviewDir, cfg.Registry, verify.Options{
+	// The reviewed-repo root skeptics inspect and the redactor relativizes
+	// absolute paths against (Epic 22.1). Defaults to "." (the CWD == repo-root
+	// operating assumption), preserving pre-22.1 behavior; --repo <other-repo>
+	// threads a repo other than the CWD. Shared with `atcr reconcile` via
+	// normalizeRepoFlag so empty/unset normalization and the nonexistent-root
+	// guard stay identical across both commands (rather than passing a bad root
+	// into the snapshot, where every finding silently degrades to unverifiable).
+	repoRoot, err := normalizeRepoFlag(cmd)
+	if err != nil {
+		return err
+	}
+	// With --repo validated upstream (normalizeRepoFlag), a filepath.Abs failure
+	// means os.Getwd failed (deleted/unreadable CWD) — a genuine environment fault
+	// worth reporting, not swallowing. An empty absRoot would silently disable the
+	// redactor's path relativization, leaking absolute reviewed-repo paths into the
+	// persisted findings.json (Epic 22.1 security hardening).
+	absRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return usageError(err)
+	}
+	res, err := verifyRun(cmd.Context(), repoRoot, reviewDir, cfg.Registry, verify.Options{
 		Fresh:             fresh,
 		Thorough:          thorough,
 		MinSeverity:       minSev,
@@ -98,7 +132,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		// Scrub configured registry secrets from reproduced exec evidence before it
 		// is persisted into findings.json (Epic 11.0). This path holds only the
 		// registry, so secrets resolve via RegistrySecretValues, not a PreparedReview.
-		Redactor: log.NewRedactor(absRoot, fanout.RegistrySecretValues(cfg.Registry)...),
+		Redactor: newRedactor(absRoot, fanout.RegistrySecretValues(cfg.Registry)...),
 	})
 	if err != nil {
 		if errors.Is(err, verify.ErrNoReconciledFindings) {
