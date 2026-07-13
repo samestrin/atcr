@@ -92,6 +92,12 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	// assumption), preserving pre-22.1 behavior; --repo <other-repo> threads a
 	// repo other than the CWD — kept consistent with `atcr reconcile --repo`.
 	repoRoot, _ := cmd.Flags().GetString("repo")
+	if strings.TrimSpace(repoRoot) == "" {
+		// Normalize an explicit empty --repo to "." so empty and unset behave
+		// identically here and in `atcr reconcile --repo` (rather than passing ""
+		// as the snapshot root while the redactor silently uses the CWD).
+		repoRoot = "."
+	}
 	absRoot, _ := filepath.Abs(repoRoot)
 	res, err := verify.Verify(cmd.Context(), repoRoot, reviewDir, cfg.Registry, verify.Options{
 		Fresh:             fresh,

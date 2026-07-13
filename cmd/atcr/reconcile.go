@@ -96,6 +96,13 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// findings against a repo other than the CWD, or from a non-repo-root CWD,
 	// instead of falsely flagging every path as "file not found".
 	repoRoot, _ := cmd.Flags().GetString("repo")
+	if strings.TrimSpace(repoRoot) == "" {
+		// An explicit empty --repo would set Root="", silently disabling path
+		// validation AND AST grouping — the opposite of the intended default.
+		// Normalize to "." so empty and unset behave identically, and stay
+		// consistent with `atcr verify --repo`.
+		repoRoot = "."
+	}
 
 	sources, _ := cmd.Flags().GetStringSlice("sources")
 	res, err := reconcile.RunReconcile(cmd.Context(), reviewDir, sources, reclib.Options{

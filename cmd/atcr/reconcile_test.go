@@ -640,4 +640,10 @@ func TestReconcileCmd_RepoFlagValidatesAgainstOtherRepo(t *testing.T) {
 	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
 	require.NotEmpty(t, reconciledPathWarning(t, "r"),
 		"the default validation root must still flag a hallucinated path (no regression)")
+
+	// An explicit empty --repo normalizes to "." rather than silently disabling
+	// validation (Epic 22.1 hardening): the hallucinated path is still flagged.
+	require.Equal(t, 0, execCmd(t, "reconcile", "r", "--repo", ""))
+	require.NotEmpty(t, reconciledPathWarning(t, "r"),
+		"an empty --repo must normalize to the CWD, not disable path validation")
 }
