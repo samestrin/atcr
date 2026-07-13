@@ -1,0 +1,3 @@
+
+
+No performance findings were identified in the changed code that meet the criteria for emission. The changes involve adding process-group reaping logic for validation timeouts, which includes minimal per-run allocations (setting `SysProcAttr` and a cancel function) that are negligible compared to the cost of spawning the validation command itself. No hot-path allocations, repeated work, or algorithmic inefficiencies were introduced. Test files were examined but contain no performance issues that dominate the suite. All changes are within scope of the epic plan and relate solely to the process-group reaping functionality.

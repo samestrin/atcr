@@ -1,0 +1,42 @@
+{
+  "base": "789c27a13df7b0564e90d505718432800c813bd7",
+  "head": "4d1c637d7f4db1e29c1900be7a0559f44d26fb79",
+  "detection_mode": "auto",
+  "default_branch": "origin/main",
+  "commit_count": 7,
+  "payload_mode": "blocks",
+  "per_agent_payload": {
+    "archer": "blocks",
+    "brad": "blocks",
+    "bruce": "blocks",
+    "dax": "blocks",
+    "greta": "blocks",
+    "kai": "blocks",
+    "mira": "blocks",
+    "otto": "blocks",
+    "pace": "blocks",
+    "ronin": "blocks",
+    "vera": "blocks"
+  },
+  "roster": [
+    "bruce",
+    "greta",
+    "kai",
+    "mira",
+    "dax",
+    "pace",
+    "vera",
+    "brad",
+    "archer",
+    "ronin",
+    "otto"
+  ],
+  "started_at": "2026-07-12T18:53:33.033492-07:00",
+  "completed_at": "2026-07-13T02:02:58.50231Z",
+  "partial": true,
+  "stages": [
+    "review"
+  ],
+  "max_parallel": 6,
+  "timeout_secs": 1800
+}

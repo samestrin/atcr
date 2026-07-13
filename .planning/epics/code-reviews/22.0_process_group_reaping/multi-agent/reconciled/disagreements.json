@@ -1,0 +1,173 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "internal/verify/localvalidate_pgroup_unix.go",
+      "line": 26,
+      "severity": "HIGH",
+      "problem": "(configureProcessGroup) Cancel returns non-ESRCH kill errors directly to exec.CommandContext, which ignores cancel errors and proceeds to Wait; the kill error is discarded and never reaches the caller, so a failed group kill (e.g. EPERM from a privilege-dropped child) is silent and indistinguishable from a clean kill",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/verify/localvalidate.go",
+      "line": 108,
+      "severity": "MEDIUM",
+      "problem": "Timeout path returns res, nil unconditionally when context is done, silently discarding runErr — if the process-group Cancel fails (e.g. EPERM from setuid grandchildren or LSM restrictions), the kill is incomplete and orphans survive without any signal",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "brad"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "brad",
+          "severity": "MEDIUM",
+          "problem": "Timeout path returns res, nil unconditionally when context is done, silently discarding runErr — if the process-group Cancel fails (e.g. EPERM from setuid grandchildren or LSM restrictions), the kill is incomplete and orphans survive without any signal"
+        }
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/verify/localvalidate_pgroup_unix.go",
+      "line": 26,
+      "severity": "MEDIUM",
+      "problem": "(configureProcessGroup) The group SIGKILL fires only when runCtx.Done() triggers Cancel; if the command exits 0 or non-zero before the timeout, Cancel never fires and any orphaned grandchildren survive indefinitely",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/verify/localvalidate_pgroup_unix.go",
+      "line": 27,
+      "severity": "MEDIUM",
+      "problem": "ESRCH is matched with == rather than errors.Is - correct today because syscall.Kill returns a bare Errno, but a future wrapped return would misreport the already-exited race as a hard kill error instead of ProcessDone",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "greta"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "greta",
+          "severity": "MEDIUM",
+          "problem": "ESRCH is matched with == rather than errors.Is - correct today because syscall.Kill returns a bare Errno, but a future wrapped return would misreport the already-exited race as a hard kill error instead of ProcessDone"
+        }
+      ]
+    },
+    {
+      "kind": "severity_split",
+      "file": "internal/verify/localvalidate_pgroup_unix_test.go",
+      "line": 47,
+      "severity": "MEDIUM",
+      "problem": "(TestRunConfiguredValidation_TimeoutReapsGrandchild) processAlive uses bare PID without any uniqueness guarantee across the 5s Eventually window — OS PID recycling can flip the assertion to a false-negative failure or, if a new process happens to appear at that PID, a false-positive pass",
+      "score": 2,
+      "spread": 1,
+      "independence": 2,
+      "reviewers": [
+        "dax",
+        "mira"
+      ],
+      "disagreement": "LOW vs MEDIUM"
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/verify/localvalidate_pgroup_unix_test.go",
+      "line": 68,
+      "severity": "MEDIUM",
+      "problem": "The happy-path test only covers exit-0; AC2 requires pass/fail runs to be unaffected, but no test verifies that a clean non-zero exit preserves ExitCode and sets Passed()=false under the new cancel override",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "MEDIUM",
+          "problem": "The happy-path test only covers exit-0; AC2 requires pass/fail runs to be unaffected, but no test verifies that a clean non-zero exit preserves ExitCode and sets Passed()=false under the new cancel override"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/verify/localvalidate_pgroup_unix.go",
+      "line": 22,
+      "severity": "LOW",
+      "problem": "If the context is cancelled before cmd.Start() finishes, cmd.Process is nil. The override returns nil, but this race condition is untested and could mask start errors or interact unpredictably with future Go versions that call Cancel differently",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "LOW",
+          "problem": "If the context is cancelled before cmd.Start() finishes, cmd.Process is nil. The override returns nil, but this race condition is untested and could mask start errors or interact unpredictably with future Go versions that call Cancel differently"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/verify/localvalidate_pgroup_unix.go",
+      "line": 29,
+      "severity": "LOW",
+      "problem": "Non-ESRCH errors from syscall.Kill (e.g., EPERM if a group member drops privileges) propagate up through cmd.Run() and bypass the TimedOut branch in RunConfiguredValidation, masking a failed reap as a clean timeout",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "LOW",
+          "problem": "Non-ESRCH errors from syscall.Kill (e.g., EPERM if a group member drops privileges) propagate up through cmd.Run() and bypass the TimedOut branch in RunConfiguredValidation, masking a failed reap as a clean timeout"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/verify/localvalidate_pgroup_unix_test.go",
+      "line": 53,
+      "severity": "LOW",
+      "problem": "250ms timeout races with shell scheduling under CI load: sh may be preempted before echo $! executes, leaving res.Stdout empty and causing require.NotEmpty to fail before the Eventually reaping assertion can run",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "brad"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "brad",
+          "severity": "LOW",
+          "problem": "250ms timeout races with shell scheduling under CI load: sh may be preempted before echo $! executes, leaving res.Stdout empty and causing require.NotEmpty to fail before the Eventually reaping assertion can run"
+        }
+      ]
+    }
+  ]
+}

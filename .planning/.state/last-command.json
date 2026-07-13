@@ -1,9 +1,9 @@
 {
-  "skill": "design-sprint",
-  "args": "@.planning/plans/active/21.0_release_packaging_automation/",
-  "invocation": "/design-sprint @.planning/plans/active/21.0_release_packaging_automation/",
+  "skill": "execute-code-review",
+  "args": "@.planning/epics/completed/22.0_process_group_reaping.md --multi-agent",
+  "invocation": "/execute-code-review @.planning/epics/completed/22.0_process_group_reaping.md --multi-agent",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "8ab3644e-372b-4b13-9743-42a7a0a67f4f",
-  "timestamp": "2026-07-12T21:42:52.957Z"
+  "session_id": "e98d769a-9339-4c57-a452-b38029b2f5c8",
+  "timestamp": "2026-07-13T01:52:52.019Z"
 }

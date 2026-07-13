@@ -1,0 +1,98 @@
+[
+  {
+    "severity": "HIGH",
+    "file": "internal/verify/localvalidate_pgroup_unix.go",
+    "line": 26,
+    "problem": "(configureProcessGroup) Cancel returns non-ESRCH kill errors directly to exec.CommandContext, which ignores cancel errors and proceeds to Wait; the kill error is discarded and never reaches the caller, so a failed group kill (e.g. EPERM from a privilege-dropped child) is silent and indistinguishable from a clean kill",
+    "fix": "Return nil on non-ESRCH errors so the cancel is acknowledged but don't surface the kill failure; surface the failure separately via a result field (e.g. ReapError) or log it at minimum",
+    "category": "error-handling",
+    "est_minutes": 20,
+    "evidence": "Cancel returns err directly; exec.CommandContext.cancel does not propagate cancel errors",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "mira": "minimax-m2.7"
+    },
+    "justification": "HIGH|internal/verify/localvalidate_pgroup_unix.go:26|Cancel returns non-ESRCH kill errors directly to exec.CommandContext, which ignores cancel errors and proceeds to Wait; the kill error is discarded and never reaches the caller, so a failed group kill (e.g. EPERM from a privilege-dropped child) is silent and indistinguishable from a clean kill|Return nil on non-ESRCH errors so the cancel is acknowledged but don't surface the kill failure; surface the failure separately via a result field (e.g. ReapError) or log it at minimum|error-handling|20|Cancel returns err directly; exec.CommandContext.cancel does not propagate cancel errors",
+    "source_report": {
+      "path": "sources/pool/raw/agent/mira/review.md",
+      "line": 13
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/verify/localvalidate_pgroup_unix.go",
+    "line": 26,
+    "problem": "(configureProcessGroup) The group SIGKILL fires only when runCtx.Done() triggers Cancel; if the command exits 0 or non-zero before the timeout, Cancel never fires and any orphaned grandchildren survive indefinitely",
+    "fix": "Acceptable within the timeout-only epic scope but leaves a leak path if a validation command backgrounds children and exits; document the limitation explicitly",
+    "category": "under-engineering",
+    "est_minutes": 15,
+    "evidence": "No mechanism for the clean-exit case",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "mira": "minimax-m2.7"
+    },
+    "justification": "HIGH|internal/verify/localvalidate_pgroup_unix.go:26|Cancel returns non-ESRCH kill errors directly to exec.CommandContext, which ignores cancel errors and proceeds to Wait; the kill error is discarded and never reaches the caller, so a failed group kill (e.g. EPERM from a privilege-dropped child) is silent and indistinguishable from a clean kill|Return nil on non-ESRCH errors so the cancel is acknowledged but don't surface the kill failure; surface the failure separately via a result field (e.g. ReapError) or log it at minimum|error-handling|20|Cancel returns err directly; exec.CommandContext.cancel does not propagate cancel errors",
+    "source_report": {
+      "path": "sources/pool/raw/agent/mira/review.md",
+      "line": 13
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/verify/localvalidate_pgroup_unix_test.go",
+    "line": 47,
+    "problem": "(TestRunConfiguredValidation_TimeoutReapsGrandchild) processAlive uses bare PID without any uniqueness guarantee across the 5s Eventually window — OS PID recycling can flip the assertion to a false-negative failure or, if a new process happens to appear at that PID, a false-positive pass",
+    "fix": "Use kill(-pid, 0) to probe the whole group rather than a single recycled PID, or capture the child start-time via os.FindProcess and compare to confirm it's the original process",
+    "category": "edge-cases",
+    "est_minutes": 15,
+    "evidence": "[dax] return syscall.Kill(pid, syscall.Signal(0)) != syscall.ESRCH / [mira] processAlive probes a single PID that may be recycled",
+    "reviewers": [
+      "dax",
+      "mira"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "LOW vs MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "dax": "llm-large",
+      "mira": "minimax-m2.7"
+    },
+    "justification": "LOW|internal/verify/localvalidate_pgroup_unix.go:29|Non-ESRCH errors from syscall.Kill (e.g., EPERM if a group member drops privileges) propagate up through cmd.Run() and bypass the TimedOut branch in RunConfiguredValidation, masking a failed reap as a clean timeout|Log or record the error when it is neither nil nor ESRCH so RunConfiguredValidation can surface reap failures instead of masking them|OBSERVABILITY|15|err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) ... if err == syscall.ESRCH { return os.ErrProcessDone } return err\nLOW|internal/verify/localvalidate_pgroup_unix_test.go:47|processAlive relies on the reaped grandchild PID not being recycled by the OS within the 5s Eventually window; PID reuse flips the assertion to a false-negative failure|Accept the low probability as documented, or additionally probe the whole group (kill(-pid, 0)) or capture the child start time to detect reuse|EDGE_CASES|15|return syscall.Kill(pid, syscall.Signal(0)) != syscall.ESRCH\nMEDIUM|interna…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 4
+    }
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/verify/localvalidate_pgroup_unix.go",
+    "line": 33,
+    "problem": "(configureProcessGroup) errors.Is not used — bare `err == syscall.ESRCH` works today but breaks if Kill wraps the error in a wrapped sentinel (e.g. os.(*PathError) wrapping syscall.Errno)",
+    "fix": "Use errors.Is(err, syscall.ESRCH) and add a comment that this must track any future wrapping",
+    "category": "error-paths",
+    "est_minutes": 5,
+    "evidence": "[mira] bare == comparison on line 33 / [otto] if err == syscall.ESRCH",
+    "reviewers": [
+      "mira",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "mira": "minimax-m2.7"
+    },
+    "justification": "LOW|internal/verify/localvalidate_pgroup_unix.go:33|errors.Is not used — bare `err == syscall.ESRCH` works today but breaks if Kill wraps the error in a wrapped sentinel (e.g. os.(*PathError) wrapping syscall.Errno)|Use errors.Is(err, syscall.ESRCH) and add a comment that this must track any future wrapping|error-paths|5|bare == comparison on line 33",
+    "source_report": {
+      "path": "sources/pool/raw/agent/mira/review.md",
+      "line": 17
+    }
+  }
+]

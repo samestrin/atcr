@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 4 | 0 |
 | MEDIUM | 0 | 20 | 0 |
-| LOW | 4 | 33 | 0 |
+| LOW | 0 | 33 | 0 |
 
 
-**Last Modified:** 2026-07-12 | **Open Items:** 4 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 61
+**Last Modified:** 2026-07-12 | **Open Items:** 0 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 57
 
 ## Directory Structure
 
@@ -63,15 +63,6 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table â†’ shards â
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
-
-### [2026-07-12] From Sprint: epic-22.0
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | LOW | internal/verify/localvalidate.go:126 | On the timeout path the DeadlineExceeded branch returns TimedOut before runErr is inspected, so a non-ESRCH failure from the group-kill Cancel (e.g. EPERM if a group member dropped privileges) is silently masked and a surviving orphan produces no signal | Log or record the Cancel error when it is neither nil nor ESRCH so a failed reap is observable rather than indistinguishable from a clean timeout kill | OBSERVABILITY | 15 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/verify/localvalidate_pgroup_unix.go:26 | The group SIGKILL is wired only to Cancel (fires on ctx.Done), so a validation command that exits 0 while leaving a backgrounded grandchild is never group-reaped and the orphan survives - only WaitDelay/ErrWaitDelay marks the run failed | Acceptable per the epic timeout-only scope, but document that clean-exit orphans are not reaped, or optionally group-kill after Wait returns ErrWaitDelay | UNDER_ENGINEERING | 15 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/verify/localvalidate_pgroup_unix.go:33 | ESRCH is matched with == rather than errors.Is - correct today because syscall.Kill returns a bare Errno, but a future wrapped return would misreport the already-exited race as a hard kill error instead of ProcessDone | Use errors.Is(err, syscall.ESRCH) to stay robust to wrapping and match the errors.Is convention used elsewhere in localvalidate.go | ERROR_PATHS | 5 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/verify/localvalidate_pgroup_unix_test.go:47 | processAlive relies on the reaped grandchild PID not being reused - if the OS recycles that PID to another live process within the 5s Eventually window the assertion flips to a false-negative failure | Accept the low probability, or additionally probe the whole group (kill(-pid,0)) or capture the child start time to detect reuse | EDGE_CASES | 15 | execute-epic-independent |
 
 ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
 
