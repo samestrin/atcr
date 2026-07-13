@@ -57,11 +57,14 @@ func parse(ptr int32, n int32) int64 {
 	}
 	src := buf[:n]
 
-	// Empty input has no declarations to parse. Emit a bare file node — matching
-	// the Python plugin's empty-module contract (and TestHost_ParseEmptySourceGo)
-	// — so the host treats empty source as an empty tree rather than a parse
-	// error. Non-empty but unparseable source still falls through to the error
-	// node below.
+	// Empty input has no declarations to parse. Emit a bare file node (Kind=file,
+	// zero start/end lines) so the host treats empty source as an empty tree
+	// rather than a parse error — pinned by TestHost_ParseEmptySourceGo. The
+	// other plugins' empty-source nodes are NOT byte-identical to this one
+	// (pyparser emits Kind=module 1/1; braceparser emits Kind=file 1/1): the
+	// shared contract is "empty source is an empty tree, not an error", not
+	// cross-plugin JSON parity. Non-empty but unparseable source still falls
+	// through to the error node below.
 	if len(src) == 0 {
 		return guestabi.Emit(node{Kind: "file"})
 	}
