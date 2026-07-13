@@ -43,11 +43,17 @@ func BuildChangedLines(ctx context.Context, repo, base, head string) (ChangedLin
 
 // changedLines builds the grounding data from the memoized whole-range
 // zero-context diff. It is the runner-bound core shared by the standalone
-// BuildChangedLines and RangeBuilder.BuildChangedLines: when the range's payload
-// was already built on the same gitRunner, the --unified=0 chunks (and the
-// --name-status underlying them) are served from cache, so grounding adds no git
-// subprocess. Callers must validate the range before the first cache-populating
-// call (BuildChangedLines and RangeBuilder both do).
+// BuildChangedLines and RangeBuilder.BuildChangedLines. Reusing a gitRunner that
+// already built the range's payload always elides validateRange and the
+// --name-status process (both are memoized across every payload mode). The
+// --unified=0 zero-context diff grounding reads is memoized too, but only a
+// zeroCtx-consuming payload mode populates that cache: files mode (via
+// rangeChunks) does, so grounding adds no git subprocess after a files-mode
+// build; the default blocks mode builds via fcChunks/plainChunks and never
+// touches zeroCtx, so grounding after a blocks-mode build still spawns one
+// --unified=0 subprocess (validateRange + --name-status remain elided). Callers
+// must validate the range before the first cache-populating call
+// (BuildChangedLines and RangeBuilder both do).
 func (g *gitRunner) changedLines(base, head string) (ChangedLines, error) {
 	chunks, err := g.zeroCtxChunks(base, head)
 	if err != nil {

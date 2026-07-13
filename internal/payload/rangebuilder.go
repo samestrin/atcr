@@ -75,10 +75,14 @@ func (b *RangeBuilder) BuildEntries(mode PayloadMode) ([]FileEntry, error) {
 }
 
 // BuildChangedLines returns the grounding changed-lines map for the range,
-// reusing the builder's memoized --name-status and zero-context diff. When a
-// payload build already ran for this range on the same builder, this adds no git
-// subprocess. Mirrors the package-level BuildChangedLines; the fail-open contract
-// (a git error disables the grounding gate) lives at the fan-out caller.
+// reusing the builder's memoized --name-status and zero-context diff. Reuse
+// always elides validateRange and the --name-status process; the --unified=0
+// zero-context diff is elided only when a zeroCtx-consuming payload mode (files)
+// already ran on this builder — the default blocks mode does not populate the
+// zero-context cache, so grounding after a blocks-mode build spawns one
+// --unified=0 subprocess (validateRange + --name-status stay elided). Mirrors
+// the package-level BuildChangedLines; the fail-open contract (a git error
+// disables the grounding gate) lives at the fan-out caller.
 func (b *RangeBuilder) BuildChangedLines() (ChangedLines, error) {
 	if err := b.validate(); err != nil {
 		return nil, err
