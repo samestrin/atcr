@@ -1,3 +1,13 @@
+## [22.4.0] - 2026-07-13
+
+Reuse the payload builder's already-computed diff when building grounding data, eliminating the duplicate `git` subprocesses the grounding gate re-spawned for every review and every resume.
+
+### Changed
+
+- `computeGroundingData` now reuses the payload builder's memoized `gitRunner` for the same `base..head` range instead of constructing a throwaway runner, so grounding no longer re-runs `validateRange` + `--name-status` + `--unified=0` (~4 fewer git subprocess spawns per review and per resume). Grounding behavior is unchanged — same findings dropped/exempted.
+
+*Shipped via /execute-epic (epic 22.4)*
+
 ## [22.3.0] - 2026-07-13
 
 Make the `pyparser` structural parser quote- and escape-aware so adversarial Python source no longer corrupts the structural hash by silently dropping real code.

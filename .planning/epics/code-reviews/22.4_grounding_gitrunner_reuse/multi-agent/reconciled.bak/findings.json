@@ -1,0 +1,233 @@
+[
+  {
+    "severity": "CRITICAL",
+    "file": "internal/payload/rangebuilder.go",
+    "line": 31,
+    "problem": "(NewRangeBuilder) Undefined variable `b` used for struct field initialization; should be `base`",
+    "fix": "Change `b.base` to `base`",
+    "category": "correctness",
+    "est_minutes": 2,
+    "evidence": "base: b.base,",
+    "reviewers": [
+      "archer"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "archer": "qwen3.6-35b-apex"
+    },
+    "justification": "Let's verify line numbers for `rangebuilder.go`. The prompt shows:\n```go\n+func NewRangeBuilder(ctx context.Context, repo, base, head string) *RangeBuilder {\n+\treturn \u0026RangeBuilder{\n+\t\tg:    \u0026gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)},\n+\t\tbase: b.base,\n+\t\thead: head,\n+\t}\n+}\n```\nLine 28 is `func NewRangeBuilder...`\nLine 29 is `\treturn \u0026RangeBuilder{`\nLine 30 is `\t\tg:    \u0026gitRunner{...}`\nLine 31 is `\t\tbase: b.base,`\nSo `internal/payload/rangebuilder.go:31`.",
+    "source_report": {
+      "path": "sources/pool/raw/agent/archer/review.md",
+      "line": 327
+    }
+  },
+  {
+    "severity": "CRITICAL",
+    "file": "internal/payload/rangebuilder.go",
+    "line": 31,
+    "problem": "(NewRangeBuilder) Undefined variable `b` used for struct field initialization; should be `base`",
+    "fix": "Change `b.base` to `base`",
+    "category": "correctness",
+    "est_minutes": 2,
+    "evidence": "base: b.base,",
+    "reviewers": [
+      "archer"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "archer": "qwen3.6-35b-apex"
+    },
+    "justification": "Let's verify line numbers for `rangebuilder.go`. The prompt shows:\n```go\n+func NewRangeBuilder(ctx context.Context, repo, base, head string) *RangeBuilder {\n+\treturn \u0026RangeBuilder{\n+\t\tg:    \u0026gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)},\n+\t\tbase: b.base,\n+\t\thead: head,\n+\t}\n+}\n```\nLine 28 is `func NewRangeBuilder...`\nLine 29 is `\treturn \u0026RangeBuilder{`\nLine 30 is `\t\tg:    \u0026gitRunner{...}`\nLine 31 is `\t\tbase: b.base,`\nSo `internal/payload/rangebuilder.go:31`.",
+    "source_report": {
+      "path": "sources/pool/raw/agent/archer/review.md",
+      "line": 327
+    }
+  },
+  {
+    "severity": "CRITICAL",
+    "file": "internal/payload/rangebuilder.go",
+    "line": 31,
+    "problem": "(NewRangeBuilder) Undefined variable `b` used for struct field initialization; should be `base`",
+    "fix": "Change `b.base` to `base`",
+    "category": "correctness",
+    "est_minutes": 2,
+    "evidence": "base: b.base,",
+    "reviewers": [
+      "archer"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "archer": "qwen3.6-35b-apex"
+    },
+    "justification": "Let's verify line numbers for `rangebuilder.go`. The prompt shows:\n```go\n+func NewRangeBuilder(ctx context.Context, repo, base, head string) *RangeBuilder {\n+\treturn \u0026RangeBuilder{\n+\t\tg:    \u0026gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)},\n+\t\tbase: b.base,\n+\t\thead: head,\n+\t}\n+}\n```\nLine 28 is `func NewRangeBuilder...`\nLine 29 is `\treturn \u0026RangeBuilder{`\nLine 30 is `\t\tg:    \u0026gitRunner{...}`\nLine 31 is `\t\tbase: b.base,`\nSo `internal/payload/rangebuilder.go:31`.",
+    "source_report": {
+      "path": "sources/pool/raw/agent/archer/review.md",
+      "line": 327
+    }
+  },
+  {
+    "severity": "CRITICAL",
+    "file": "internal/payload/rangebuilder.go",
+    "line": 31,
+    "problem": "(NewRangeBuilder) Undefined variable `b` used for struct field initialization; should be `base`",
+    "fix": "Change `b.base` to `base`",
+    "category": "correctness",
+    "est_minutes": 2,
+    "evidence": "base: b.base,",
+    "reviewers": [
+      "archer"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "archer": "qwen3.6-35b-apex"
+    },
+    "justification": "Let's verify line numbers for `rangebuilder.go`. The prompt shows:\n```go\n+func NewRangeBuilder(ctx context.Context, repo, base, head string) *RangeBuilder {\n+\treturn \u0026RangeBuilder{\n+\t\tg:    \u0026gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)},\n+\t\tbase: b.base,\n+\t\thead: head,\n+\t}\n+}\n```\nLine 28 is `func NewRangeBuilder...`\nLine 29 is `\treturn \u0026RangeBuilder{`\nLine 30 is `\t\tg:    \u0026gitRunner{...}`\nLine 31 is `\t\tbase: b.base,`\nSo `internal/payload/rangebuilder.go:31`.",
+    "source_report": {
+      "path": "sources/pool/raw/agent/archer/review.md",
+      "line": 327
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": ".planning/epics/superseded/23.0_human_persona_renaming.md",
+    "line": 51,
+    "problem": "Unresolved git merge conflict markers present in committed file",
+    "fix": "Remove `\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD`, `========`, and `\u003e\u003e\u003e\u003e\u003e\u003e\u003e` blocks",
+    "category": "out-of-scope",
+    "est_minutes": 2,
+    "evidence": "\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD:.planning/epics/completed/23.0_human_persona_renaming.md...",
+    "reviewers": [
+      "archer"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "archer": "qwen3.6-35b-apex"
+    },
+    "justification": "And for the merge conflict marker:\nHIGH|.planning/epics/superseded/23.0_human_persona_renaming.md:51|Unresolved git merge conflict markers present in committed file|Remove `\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD`, `========`, and `\u003e\u003e\u003e\u003e\u003e\u003e\u003e` blocks|out-of-scope|2|\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD:.planning/epics/completed/23.0_human_persona_renaming.md...",
+    "source_report": {
+      "path": "sources/pool/raw/agent/archer/review.md",
+      "line": 333
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": ".planning/epics/superseded/23.0_human_persona_renaming.md",
+    "line": 51,
+    "problem": "Unresolved git merge conflict markers present in committed file",
+    "fix": "Remove `\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD`, `========`, and `\u003e\u003e\u003e\u003e\u003e\u003e\u003e` blocks",
+    "category": "out-of-scope",
+    "est_minutes": 2,
+    "evidence": "\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD:.planning/epics/completed/23.0_human_persona_renaming.md...",
+    "reviewers": [
+      "archer"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "archer": "qwen3.6-35b-apex"
+    },
+    "justification": "And for the merge conflict marker:\nHIGH|.planning/epics/superseded/23.0_human_persona_renaming.md:51|Unresolved git merge conflict markers present in committed file|Remove `\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD`, `========`, and `\u003e\u003e\u003e\u003e\u003e\u003e\u003e` blocks|out-of-scope|2|\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD:.planning/epics/completed/23.0_human_persona_renaming.md...",
+    "source_report": {
+      "path": "sources/pool/raw/agent/archer/review.md",
+      "line": 333
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": ".planning/epics/superseded/23.0_human_persona_renaming.md",
+    "line": 51,
+    "problem": "Unresolved git merge conflict markers remain in the file",
+    "fix": "Remove `\u003c\u003c\u003c\u003c\u003c\u003c\u003c`, `========`, and `\u003e\u003e\u003e\u003e\u003e\u003e\u003e` blocks",
+    "category": "out-of-scope",
+    "est_minutes": 1,
+    "evidence": "\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD:.planning/epics/completed/23.0_human_persona_renaming.md...",
+    "reviewers": [
+      "archer"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "archer": "qwen3.6-35b-apex"
+    },
+    "justification": "And for the merge conflict marker:\nHIGH|.planning/epics/superseded/23.0_human_persona_renaming.md:51|Unresolved git merge conflict markers present in committed file|Remove `\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD`, `========`, and `\u003e\u003e\u003e\u003e\u003e\u003e\u003e` blocks|out-of-scope|2|\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD:.planning/epics/completed/23.0_human_persona_renaming.md...",
+    "source_report": {
+      "path": "sources/pool/raw/agent/archer/review.md",
+      "line": 333
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "internal/fanout/resume.go",
+    "line": 260,
+    "problem": "No test verifies that PrepareResume grounding step reuses the RangeBuilder and avoids extra git subprocesses (acceptance criteria)",
+    "fix": "Add a subprocess-count assertion in the resume integration test to confirm the reduction",
+    "category": "testing",
+    "est_minutes": 30,
+    "evidence": "changed, groundingDisabledReason := computeGroundingData(ctx, req, rb) at line 260; no corresponding assertion in the diff",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "HIGH|internal/fanout/resume.go:260|No test verifies that PrepareResume grounding step reuses the RangeBuilder and avoids extra git subprocesses (acceptance criteria)|Add a subprocess-count assertion in the resume integration test to confirm the reduction|testing|30|changed, groundingDisabledReason := computeGroundingData(ctx, req, rb) at line 260; no corresponding assertion in the diff\nMEDIUM|internal/payload/rangebuilder_test.go:1|No test exercises BuildEntries with ModeDiff or ModeBlocks; only ModeFiles is tested|Add test cases for ModeDiff and ModeBlocks to ensure RangeBuilder wiring works for all valid modes|testing|15|TestRangeBuilder_GroundingReusesPayloadGitProcesses uses ModeFiles exclusively; other modes not covered\nMEDIUM|internal/payload/rangebuilder_test.go:1|No test covers BuildEntries or BuildChangedLines error propagation from git failures (e.g., non-repo directory)|Add a test with a non-git directory to verify errors surface from underlying git operations|testing|15|Tes…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 1
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "internal/payload/rangebuilder_test.go",
+    "line": 1,
+    "problem": "No test covers BuildEntries or BuildChangedLines error propagation from git failures (e.g., non-repo directory)",
+    "fix": "Add a test with a non-git directory to verify errors surface from underlying git operations",
+    "category": "correctness",
+    "est_minutes": 15,
+    "evidence": "[dax] TestRangeBuilder_InvalidRefError only tests validation errors; post-validation git errors untested / [archer] rb := NewRangeBuilder(context.Background(), \"deadbeefdeadbeef\", head)",
+    "reviewers": [
+      "archer",
+      "dax"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "MEDIUM vs HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "archer": "qwen3.6-35b-apex"
+    },
+    "justification": "HIGH|internal/fanout/resume.go:260|No test verifies that PrepareResume grounding step reuses the RangeBuilder and avoids extra git subprocesses (acceptance criteria)|Add a subprocess-count assertion in the resume integration test to confirm the reduction|testing|30|changed, groundingDisabledReason := computeGroundingData(ctx, req, rb) at line 260; no corresponding assertion in the diff\nMEDIUM|internal/payload/rangebuilder_test.go:1|No test exercises BuildEntries with ModeDiff or ModeBlocks; only ModeFiles is tested|Add test cases for ModeDiff and ModeBlocks to ensure RangeBuilder wiring works for all valid modes|testing|15|TestRangeBuilder_GroundingReusesPayloadGitProcesses uses ModeFiles exclusively; other modes not covered\nMEDIUM|internal/payload/rangebuilder_test.go:1|No test covers BuildEntries or BuildChangedLines error propagation from git failures (e.g., non-repo directory)|Add a test with a non-git directory to verify errors surface from underlying git operations|testing|15|Tes…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 2
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "internal/payload/rangebuilder_test.go",
+    "line": 1,
+    "problem": "No test exercises BuildEntries with ModeDiff or ModeBlocks; only ModeFiles is tested",
+    "fix": "Add test cases for ModeDiff and ModeBlocks to ensure RangeBuilder wiring works for all valid modes",
+    "category": "correctness",
+    "est_minutes": 15,
+    "evidence": "[dax] TestRangeBuilder_GroundingReusesPayloadGitProcesses uses ModeFiles exclusively; other modes not covered",
+    "reviewers": [
+      "archer",
+      "dax"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "MEDIUM vs HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "archer": "qwen3.6-35b-apex"
+    },
+    "justification": "HIGH|internal/fanout/resume.go:260|No test verifies that PrepareResume grounding step reuses the RangeBuilder and avoids extra git subprocesses (acceptance criteria)|Add a subprocess-count assertion in the resume integration test to confirm the reduction|testing|30|changed, groundingDisabledReason := computeGroundingData(ctx, req, rb) at line 260; no corresponding assertion in the diff\nMEDIUM|internal/payload/rangebuilder_test.go:1|No test exercises BuildEntries with ModeDiff or ModeBlocks; only ModeFiles is tested|Add test cases for ModeDiff and ModeBlocks to ensure RangeBuilder wiring works for all valid modes|testing|15|TestRangeBuilder_GroundingReusesPayloadGitProcesses uses ModeFiles exclusively; other modes not covered\nMEDIUM|internal/payload/rangebuilder_test.go:1|No test covers BuildEntries or BuildChangedLines error propagation from git failures (e.g., non-repo directory)|Add a test with a non-git directory to verify errors surface from underlying git operations|testing|15|Tes…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 2
+    }
+  }
+]

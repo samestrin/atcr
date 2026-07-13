@@ -1,0 +1,10 @@
+# atcr-findings/v1
+CRITICAL|internal/payload/rangebuilder.go:31|Undefined variable `b` used for struct field initialization; should be `base`|Change `b.base` to `base`|correctness|2|base: b.base,|archer
+HIGH|.planning/epics/superseded/23.0_human_persona_renaming.md:51|Unresolved git merge conflict markers present in committed file|Remove `<<<<<<< HEAD`, `========`, and `>>>>>>>` blocks|out-of-scope|2|<<<<<<< HEAD:.planning/epics/completed/23.0_human_persona_renaming.md...|archer
+CRITICAL|internal/payload/rangebuilder.go:31|Undefined variable `b` used for struct field initialization; should be `base`|Change `b.base` to `base`|correctness|2|base: b.base,|archer
+HIGH|.planning/epics/superseded/23.0_human_persona_renaming.md:51|Unresolved git merge conflict markers present in committed file|Remove `<<<<<<< HEAD`, `========`, and `>>>>>>>` blocks|out-of-scope|2|<<<<<<< HEAD:.planning/epics/completed/23.0_human_persona_renaming.md...|archer
+CRITICAL|internal/payload/rangebuilder.go:31|Undefined variable `b` used for struct field initialization; should be `base`|Change `b.base` to `base`|correctness|2|base: b.base,|archer
+HIGH|internal/payload/rangebuilder_test.go:98|Call to `NewRangeBuilder` passes 3 arguments but function expects 4 (missing `repo`)|Add the repository path as the second argument|correctness|0||archer
+CRITICAL|internal/payload/rangebuilder.go:31|Undefined variable `b` used for struct field initialization; should be `base`|Change `b.base` to `base`|correctness|2|base: b.base,|archer
+HIGH|internal/payload/rangebuilder_test.go:98|Call to `NewRangeBuilder` passes 3 arguments but function expects 4 (missing `repo`)|Add the repository path as the second argument|correctness|2|rb := NewRangeBuilder(context.Background(), "deadbeefdeadbeef", head)|archer
+HIGH|.planning/epics/superseded/23.0_human_persona_renaming.md:51|Unresolved git merge conflict markers remain in the file|Remove `<<<<<<<`, `========`, and `>>>>>>>` blocks|out-of-scope|1|<<<<<<< HEAD:.planning/epics/completed/23.0_human_persona_renaming.md...|archer

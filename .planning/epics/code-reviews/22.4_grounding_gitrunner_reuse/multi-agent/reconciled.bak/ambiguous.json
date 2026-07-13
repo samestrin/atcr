@@ -1,0 +1,178 @@
+[
+  {
+    "id": "amb-b827668b19c338fad9ebfee93f2aa07f",
+    "file": ".planning/epics/superseded/23.0_human_persona_renaming.md",
+    "line": 51,
+    "similarity": 0.6363636363636364,
+    "findings": [
+      {
+        "Severity": "HIGH",
+        "File": ".planning/epics/superseded/23.0_human_persona_renaming.md",
+        "Line": 51,
+        "Problem": "Unresolved git merge conflict markers present in committed file",
+        "Fix": "Remove `\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD`, `========`, and `\u003e\u003e\u003e\u003e\u003e\u003e\u003e` blocks",
+        "Category": "out-of-scope",
+        "EstMinutes": 2,
+        "Evidence": "\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD:.planning/epics/completed/23.0_human_persona_renaming.md...",
+        "Reviewer": "archer",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      },
+      {
+        "Severity": "HIGH",
+        "File": ".planning/epics/superseded/23.0_human_persona_renaming.md",
+        "Line": 51,
+        "Problem": "Unresolved git merge conflict markers remain in the file",
+        "Fix": "Remove `\u003c\u003c\u003c\u003c\u003c\u003c\u003c`, `========`, and `\u003e\u003e\u003e\u003e\u003e\u003e\u003e` blocks",
+        "Category": "out-of-scope",
+        "EstMinutes": 1,
+        "Evidence": "\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD:.planning/epics/completed/23.0_human_persona_renaming.md...",
+        "Reviewer": "archer",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-b827668b19c338fad9ebfee93f2aa07f",
+    "file": ".planning/epics/superseded/23.0_human_persona_renaming.md",
+    "line": 51,
+    "similarity": 0.6363636363636364,
+    "findings": [
+      {
+        "Severity": "HIGH",
+        "File": ".planning/epics/superseded/23.0_human_persona_renaming.md",
+        "Line": 51,
+        "Problem": "Unresolved git merge conflict markers present in committed file",
+        "Fix": "Remove `\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD`, `========`, and `\u003e\u003e\u003e\u003e\u003e\u003e\u003e` blocks",
+        "Category": "out-of-scope",
+        "EstMinutes": 2,
+        "Evidence": "\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD:.planning/epics/completed/23.0_human_persona_renaming.md...",
+        "Reviewer": "archer",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      },
+      {
+        "Severity": "HIGH",
+        "File": ".planning/epics/superseded/23.0_human_persona_renaming.md",
+        "Line": 51,
+        "Problem": "Unresolved git merge conflict markers remain in the file",
+        "Fix": "Remove `\u003c\u003c\u003c\u003c\u003c\u003c\u003c`, `========`, and `\u003e\u003e\u003e\u003e\u003e\u003e\u003e` blocks",
+        "Category": "out-of-scope",
+        "EstMinutes": 1,
+        "Evidence": "\u003c\u003c\u003c\u003c\u003c\u003c\u003c HEAD:.planning/epics/completed/23.0_human_persona_renaming.md...",
+        "Reviewer": "archer",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-9d92e6b1675ee5db0874f5e3bd49a485",
+    "file": "internal/payload/builder.go",
+    "line": 102,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "internal/payload/builder.go",
+        "Line": 102,
+        "Problem": "`buildEntriesValidated` is a \"leaky\" internal method",
+        "Fix": "The method is exported (starts with uppercase) but is intended for `RangeBuilder` which is in the same package. If it's meant to be internal to `payload`, it should be `buildEntriesValidated` (lowercase) to prevent external callers from bypassing range validation",
+        "Category": "structure",
+        "EstMinutes": 10,
+        "Evidence": "`func (g *gitRunner) buildEntriesValidated` is public but used for internal optimization",
+        "Reviewer": "otto",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-aa1c839efc112065ce390408a29047e6",
+    "file": "internal/payload/diff.go",
+    "line": 474,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "internal/payload/diff.go",
+        "Line": 474,
+        "Problem": "Modified rangeChunks error path (via zeroCtxChunks) not tested",
+        "Fix": "Add a test that induces a git diff failure and asserts error propagation",
+        "Category": "testing",
+        "EstMinutes": 15,
+        "Evidence": "chunks, err := g.zeroCtxChunks(base, head) in rangeChunks",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-856e571e233fa0e4e26505f1a86cbfdc",
+    "file": "internal/payload/rangebuilder.go",
+    "line": 24,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "internal/payload/rangebuilder.go",
+        "Line": 24,
+        "Problem": "`RangeBuilder` is not safe for concurrent use but doesn't enforce it",
+        "Fix": "Consider adding a `sync.Mutex` or documenting the requirement more prominently in the type name (e.g., `SequentialRangeBuilder`) if this is a common pitfall",
+        "Category": "style",
+        "EstMinutes": 5,
+        "Evidence": "`It is NOT safe for concurrent use` comment in docstring",
+        "Reviewer": "otto",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-cc4f0c5e7029095e032cc1a987166fe0",
+    "file": "internal/payload/rangebuilder_test.go",
+    "line": 36,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "internal/payload/rangebuilder_test.go",
+        "Line": 36,
+        "Problem": "Test assertion relies on execCount field accuracy; test could pass vacuously if counter misses zero-context diff",
+        "Fix": "Validate execCount tracking in a separate unit test or use a more direct check",
+        "Category": "testing",
+        "EstMinutes": 15,
+        "Evidence": "assert.Equal(t, afterPayload, rb.g.execCount, ...)",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  }
+]
