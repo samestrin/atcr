@@ -1,6 +1,7 @@
 package astgroup
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -407,4 +408,55 @@ func TestHost_ParserAfterClose(t *testing.T) {
 	_, err = h.Parser("go")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "closed")
+}
+
+// TestHost_BraceParseBadPointerAndNegativeN exercises braceparser's parse() error
+// path directly: a never-allocated pointer (Lookup returns false) and a
+// negative n must both yield the "bad pointer" error node rather than trapping
+// the guest. The host's public Parse always allocates a valid pointer and passes
+// len(src) >= 0, so these ABI-level guards are only reachable by calling the
+// exported parse function with a bogus pointer / negative length directly
+// (same internal-access pattern as TestHost_ParserDiscardedAfterParseTrap).
+func TestHost_BraceParseBadPointerAndNegativeN(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("ts")
+	require.NoError(t, err)
+	wp := p.(*wasmParser)
+	ctx := wp.ctx
+
+	decode := func(packed uint64) Node {
+		rptr := uint32(packed >> 32)
+		rlen := uint32(packed)
+		out, ok := wp.memory.Read(rptr, rlen)
+		require.True(t, ok, "read error-node result from guest memory")
+		// Free the result buffer the guest pinned for this error node so the
+		// test does not leak guest pins across the two sub-cases.
+		_, _ = wp.free.Call(ctx, uint64(rptr))
+		var n Node
+		require.NoError(t, json.Unmarshal(out, &n))
+		return n
+	}
+
+	// 1. Bogus pointer: never alloc'd, so Lookup returns false -> error node.
+	res, err := wp.parse.Call(ctx, 99999, 0)
+	require.NoError(t, err, "bad pointer must return an error node, not trap")
+	require.Len(t, res, 1)
+	n := decode(res[0])
+	require.Equal(t, "error", n.Kind)
+	require.Equal(t, "bad pointer", n.Name)
+
+	// 2. Valid pointer but negative n: the n < 0 guard must reject it. 0xFFFFFFFF
+	// is the int32 bit pattern for -1 (wazero takes the low 32 bits of the i64
+	// arg for the i32 parameter).
+	allocRes, err := wp.alloc.Call(ctx, 1)
+	require.NoError(t, err)
+	ptr := uint32(allocRes[0])
+	defer func() { _, _ = wp.free.Call(ctx, uint64(ptr)) }()
+	res, err = wp.parse.Call(ctx, uint64(ptr), 0xFFFFFFFF)
+	require.NoError(t, err, "negative n must return an error node, not trap")
+	require.Len(t, res, 1)
+	n = decode(res[0])
+	require.Equal(t, "error", n.Kind)
+	require.Equal(t, "bad pointer", n.Name)
 }
