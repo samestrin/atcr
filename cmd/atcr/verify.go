@@ -65,6 +65,13 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
 // model. Catches an absRoot/repoRoot swap or dropped redactor wiring (Epic 22.1).
 var newRedactor = log.NewRedactor
 
+// verifyRun is the seam through which runVerify invokes the verify orchestration.
+// A package var (not a direct verify.Verify call) so a test can capture the
+// repoRoot threaded into buildDispatcher's snapshot root — the root skeptics
+// inspect against — hermetically, without a live model. Catches a refactor that
+// silently drops or swaps the --repo -> snapshot-root wiring (Epic 22.1).
+var verifyRun = verify.Verify
+
 func runVerify(cmd *cobra.Command, args []string) error {
 	// Validate --min-severity against the closed enum BEFORE any I/O so a bad
 	// value fails fast as a usage error (exit 2), per AC 04-01 Error Scenario 2.
@@ -114,7 +121,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return usageError(err)
 	}
-	res, err := verify.Verify(cmd.Context(), repoRoot, reviewDir, cfg.Registry, verify.Options{
+	res, err := verifyRun(cmd.Context(), repoRoot, reviewDir, cfg.Registry, verify.Options{
 		Fresh:             fresh,
 		Thorough:          thorough,
 		MinSeverity:       minSev,

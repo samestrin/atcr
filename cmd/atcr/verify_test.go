@@ -13,6 +13,8 @@ import (
 
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/verify"
 	"github.com/stretchr/testify/require"
 )
 
@@ -265,6 +267,34 @@ func TestVerifyCmd_RepoFlagThreadsAbsRootToRedactor(t *testing.T) {
 	require.NotEmpty(t, gotBase, "redactor base must never be empty (would disable path relativization)")
 	require.Equal(t, wantBase, gotBase,
 		"the absolute --repo must be the redactor base, so an absRoot/repoRoot swap or dropped wiring is caught")
+}
+
+// TestVerifyCmd_RepoFlagThreadsRepoRootToDispatcher captures the repoRoot passed
+// into the verify orchestration (verify.Verify -> buildDispatcher's snapshot root,
+// the root skeptics inspect against) via the verifyRun seam and asserts it is the
+// --repo flag value verbatim. This is the snapshot-root sink, distinct from the
+// redactor base (absRoot) — a refactor that swaps or drops the --repo -> snapshot
+// wiring passes the no-skeptic pipeline test but fails here (TD verify.go:92).
+func TestVerifyCmd_RepoFlagThreadsRepoRootToDispatcher(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	require.NoError(t, os.Mkdir("snaprepo", 0o755))
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x",
+	}})
+
+	var gotRepoRoot string
+	orig := verifyRun
+	verifyRun = func(ctx context.Context, repoRoot, reviewDir string, reg *registry.Registry, opts verify.Options) (verify.Result, error) {
+		gotRepoRoot = repoRoot
+		return orig(ctx, repoRoot, reviewDir, reg, opts)
+	}
+	t.Cleanup(func() { verifyRun = orig })
+
+	code, _ := execCmdCapture(t, "verify", "r", "--repo", "snaprepo")
+	require.Equal(t, 0, code)
+	require.Equal(t, "snaprepo", gotRepoRoot,
+		"the --repo flag value must be the repoRoot threaded into verify.Verify -> buildDispatcher's snapshot root")
 }
 
 // TestVerifyCmd_RepoFlagEmptyNormalizes covers the empty --repo "" branch on the
