@@ -1,5 +1,5 @@
 // Isolated module: built only for GOOS=wasip1 via build.sh, once per target
-// language (-tags ts|php|rust|bash). A nested go.mod keeps `go build ./...` /
+// language (-tags ts|php|rust|bash|java|kotlin|cpp|csharp). A nested go.mod keeps `go build ./...` /
 // `go test ./...` in the parent reconcile module from compiling this wasm-only
 // command (it uses //go:wasmexport + package main). The language-agnostic
 // scanner (parse_core.go / configs.go) carries no build tag, so it is unit-
@@ -7,3 +7,7 @@
 module github.com/samestrin/atcr/internal/astgroup/parsers/src/braceparser
 
 go 1.26
+
+require github.com/samestrin/atcr/internal/astgroup/parsers/src/guestabi v0.0.0
+
+replace github.com/samestrin/atcr/internal/astgroup/parsers/src/guestabi => ../guestabi

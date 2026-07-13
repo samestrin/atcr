@@ -1,6 +1,6 @@
 package main
 
-// This file holds the four per-language tables that parameterize the shared
+// This file holds the eight per-language tables that parameterize the shared
 // scanner in parse_core.go. All language differences live here as DATA — comment
 // and string syntax, heredoc/raw-string/char-literal rules, and the block-
 // introducing keyword/naming table — so the scanner control flow stays language-
