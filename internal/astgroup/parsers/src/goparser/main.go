@@ -53,7 +53,7 @@ func free(p int32) { guestabi.Free(p) }
 func parse(ptr int32, n int32) int64 {
 	buf, ok := guestabi.Lookup(ptr)
 	if !ok || int(n) > len(buf) {
-		return emit(node{Kind: "error", Name: "bad pointer"})
+		return guestabi.Emit(node{Kind: "error", Name: "bad pointer"})
 	}
 	src := buf[:n]
 
@@ -63,7 +63,7 @@ func parse(ptr int32, n int32) int64 {
 	// error. Non-empty but unparseable source still falls through to the error
 	// node below.
 	if len(src) == 0 {
-		return emit(node{Kind: "file"})
+		return guestabi.Emit(node{Kind: "file"})
 	}
 
 	fset := token.NewFileSet()
@@ -71,7 +71,7 @@ func parse(ptr int32, n int32) int64 {
 	if err != nil {
 		// Even on syntax error, emit a minimal file node so the host can fall
 		// back to line-proximity grouping rather than crashing.
-		return emit(node{Kind: "error", Name: err.Error()})
+		return guestabi.Emit(node{Kind: "error", Name: err.Error()})
 	}
 
 	line := func(p token.Pos) int {
@@ -101,7 +101,7 @@ func parse(ptr int32, n int32) int64 {
 	}
 
 	root := build(f)
-	return emit(root)
+	return guestabi.Emit(root)
 }
 
 // structural reports whether an ast.Node is a node kind we keep in the tree.
@@ -169,7 +169,5 @@ func typeName(n ast.Node) string {
 		return "stmt"
 	}
 }
-
-func emit(n node) int64 { return guestabi.Emit(n) }
 
 func main() {}

@@ -43,7 +43,7 @@ func free(p int32) { guestabi.Free(p) }
 func parse(ptr int32, n int32) int64 {
 	buf, ok := guestabi.Lookup(ptr)
 	if !ok || int(n) > len(buf) {
-		return emit(node{Kind: "error", Name: "bad pointer"})
+		return guestabi.Emit(node{Kind: "error", Name: "bad pointer"})
 	}
 	src := string(buf[:n])
 
@@ -54,7 +54,7 @@ func parse(ptr int32, n int32) int64 {
 		root.Children = kids
 		root.EndLine = lines[len(lines)-1].lineno
 	}
-	return emit(root)
+	return guestabi.Emit(root)
 }
 
 type pline struct {
@@ -292,7 +292,5 @@ func stripComment(text string) string {
 	}
 	return text
 }
-
-func emit(n node) int64 { return guestabi.Emit(n) }
 
 func main() {}
