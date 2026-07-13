@@ -466,8 +466,7 @@ func TestHost_BraceParseBadPointerAndNegativeN(t *testing.T) {
 // "bad pointer" error node rather than trapping the guest. The host's public
 // Parse always allocates a valid pointer, so this ABI guard is only reachable
 // by calling the exported parse function with a bogus pointer directly. (The
-// negative-n path is tracked separately — it is a real bug in goparser, not a
-// coverage gap.)
+// negative-n path is covered by TestHost_GoParseNegativeN.)
 func TestHost_GoParseBadPointer(t *testing.T) {
 	h := NewHost()
 	defer func() { _ = h.Close() }()
@@ -495,8 +494,7 @@ func TestHost_GoParseBadPointer(t *testing.T) {
 // "bad pointer" error node rather than trapping the guest. The host's public
 // Parse always allocates a valid pointer, so this ABI guard is only reachable
 // by calling the exported parse function with a bogus pointer directly. (The
-// negative-n path is tracked separately — it is a real bug in pyparser, not a
-// coverage gap.)
+// negative-n path is covered by TestHost_PyParseNegativeN.)
 func TestHost_PyParseBadPointer(t *testing.T) {
 	h := NewHost()
 	defer func() { _ = h.Close() }()

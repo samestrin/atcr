@@ -20,10 +20,10 @@ import (
 	"github.com/samestrin/atcr/internal/astgroup/parsers/src/guestabi"
 )
 
-// alloc/free are the wasip1 reactor ABI entrypoints the astgroup host calls. Go
-// requires //go:wasmexport functions to live in the compiled command's package
-// main, so these thin wrappers stay here while their bodies — plus the pins map
-// and the non-moving-GC pointer-packing assumption — live once in guestabi.
+// alloc/free/parse are the wasip1 reactor ABI entrypoints the astgroup host
+// calls. Go requires //go:wasmexport functions in each command's own package
+// main, so these thin wrappers just delegate to the shared guestabi bodies (see
+// the guestabi package doc for the pin map and its GC assumptions).
 
 //go:wasmexport alloc
 func alloc(n int32) int32 { return guestabi.Alloc(n) }
