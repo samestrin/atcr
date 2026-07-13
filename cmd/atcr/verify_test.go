@@ -230,6 +230,21 @@ func TestVerifyCmd_RepoFlagThreadsReviewedRoot(t *testing.T) {
 	require.Equal(t, "unverifiable", readFindingVerdict(t, "r"))
 }
 
+// TestVerifyCmd_RepoFlagNonexistentFails verifies that a nonexistent --repo path
+// is rejected with a usage error (exit 2) instead of silently threading a bad
+// root into the skeptic snapshot — where the snapshot fails, every finding
+// degrades to unverifiable, and the command still exits 0, hiding the
+// misconfiguration behind a full run of garbage verdicts (TD verify.go:94).
+func TestVerifyCmd_RepoFlagNonexistentFails(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x",
+	}})
+	code, _ := execCmdCapture(t, "verify", "r", "--repo", "/nonexistent/path")
+	require.Equal(t, 2, code, "a nonexistent --repo must fail loudly with exit 2")
+}
+
 // TestVerifyCmd_RepoFlagInHelp documents the --repo flag surface (Epic 22.1).
 func TestVerifyCmd_RepoFlagInHelp(t *testing.T) {
 	isolate(t)
