@@ -16,10 +16,9 @@
 # ldflags list simply means no build date is stamped: cmd/atcr declares no
 # main.date var, so goreleaser's default `-X main.date={{.Date}}` would be a
 # silent linker no-op anyway.
-# NOTE: this alone does NOT make builds fully byte-reproducible — the binary
-# still embeds the absolute build path (no -trimpath) and archives are stamped
-# with package-time mtimes (no mod_timestamp). Full reproducibility is deferred:
-# see tech-debt-captured.md TD-003 (-trimpath) and TD-004 (mod_timestamp).
+# NOTE: this alone does NOT make builds fully byte-reproducible — archives are
+# still stamped with package-time mtimes (no mod_timestamp). Full reproducibility
+# is deferred: see tech-debt-captured.md TD-004 (mod_timestamp).
 version: 2
 
 builds:
@@ -27,6 +26,8 @@ builds:
     binary: atcr
     env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath
     ldflags:
       - -s -w -X github.com/samestrin/atcr/internal/version.Version={{.Version}} -X main.version={{.Tag}}
     # goos omitted -> goreleaser default: [darwin, linux, windows].
