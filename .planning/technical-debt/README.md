@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 4 | 0 |
 | MEDIUM | 0 | 20 | 0 |
-| LOW | 0 | 33 | 0 |
+| LOW | 3 | 33 | 0 |
 
 
-**Last Modified:** 2026-07-12 | **Open Items:** 0 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 57
+**Last Modified:** 2026-07-12 | **Open Items:** 3 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 60
 
 ## Directory Structure
 
@@ -63,6 +63,14 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table â†’ shards â
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-12] From Sprint: epic-22.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | docs/verification.md:73 | The verification-gate doc lists reconcile/verify flags but omits the new --repo reviewed-repo-root override (Epic 22.1) | Add a --repo bullet to docs/verification.md noting it validates finding paths against a repo other than the CWD | DOCS | 15 | execute-epic-cumulative |
+| U | [ ] | LOW | cmd/atcr/reconcile.go:96 | A nonexistent --repo path is not validated up front; reconcile/verify silently degrade to flagging every finding file-not-found instead of a clear error | Stat the --repo path once and return a usageError (exit 2) when it does not exist or is not a directory so a mistyped --repo fails loudly | ERROR_PATHS | 30 | execute-epic-independent |
+| U | [ ] | LOW | cmd/atcr/verify.go:92 | verify --repo threading into buildDispatcher's snapshot root is unverified hermetically (needs a live model); a refactor could silently drop it | Add a runVerify-level seam (injectable harness) that captures the repoRoot passed to buildDispatcher and assert the flag value propagates | UNDER_ENGINEERING | 30 | execute-epic-independent |
 
 ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
 
