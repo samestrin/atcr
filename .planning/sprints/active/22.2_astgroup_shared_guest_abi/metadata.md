@@ -45,21 +45,21 @@
 
 ## Execution Metrics
 
-_Populated by `/execute-sprint` upon completion_
-
-**Executed:** _Not yet executed_
-**Runtime:** _TBD_
-**Status:** _TBD_
+**Status:** Ready for Review
+**Executed:** 2026-07-13
 
 ### Progress
-- **Phases:** _TBD_
-- **Work Items:** _TBD_
+- **Phases:** 3/3
+- **Tasks:** 3/3
 
 ### Quality
-- **Tests:** _TBD_
-- **Coverage:** _TBD_
-- **Lint:** _TBD_
+- **Tests:** `go test ./...` all passing (internal/astgroup suite incl. `TestEmbeddedParsersMatchManifest` green against regenerated `.wasm`)
+- **Coverage:** 88.9% (≥80% baseline; wasip1-only parser modules excluded from root instrumentation)
+- **Lint:** Clean (`golangci-lint run` → 0 issues; `go vet ./...` clean; `gofmt -l` clean)
 
 ### Changes
-- **Files Changed:** _TBD_
-- **Commits:** _TBD_
+- **Files Changed:** 20 (2 guestabi + 4 goparser/pyparser + 2 braceparser + build.sh + 10 `.wasm` + SHA256SUMS)
+- **Commits:** 3
+
+### Deferred Tech Debt
+6 non-blocking findings from adversarial review captured in `tech-debt-captured.md` (TD-001..006): all MEDIUM/LOW, inherited or by-design, below the CRITICAL/HIGH inline-fix bar. Pre-seeded for `/execute-code-review`.

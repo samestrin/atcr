@@ -128,7 +128,7 @@ None — no specifications in `.planning/specifications/` matched this plan (sem
 
 ## Phase 1: Foundation — Create Shared guestabi Module (~0.3 day)
 
-### 1.1 [ ] **🔧 Create Shared guestabi Module**
+### 1.1 [x] **🔧 Create Shared guestabi Module**
    **Task:** [task-01-create-shared-guestabi-module.md](plan/tasks/task-01-create-shared-guestabi-module.md) (AC1 foundation, AC2)
    **Priority:** P2 | **Effort:** S | **Type:** Refactor
    1. Create the module directory `internal/astgroup/parsers/src/guestabi/` and write `go.mod` (module path `github.com/samestrin/atcr/internal/astgroup/parsers/src/guestabi`, `go 1.26`, isolated-module explanatory header comment mirroring `goparser/go.mod`).
@@ -140,7 +140,7 @@ None — no specifications in `.planning/specifications/` matched this plan (sem
    **Files:** `internal/astgroup/parsers/src/guestabi/go.mod` (create), `internal/astgroup/parsers/src/guestabi/guestabi.go` (create) | **Duration:** ~0.3 day
    6. COMMIT: `git add internal/astgroup/parsers/src/guestabi/go.mod internal/astgroup/parsers/src/guestabi/guestabi.go && git commit -m "refactor(astgroup): create shared guestabi module (task 01)"`
 
-### 1.1.A [ ] **Task 01 — ADVERSARIAL REVIEW (subagent)**
+### 1.1.A [x] **Task 01 — ADVERSARIAL REVIEW (subagent)**
    **Changed Files:** `internal/astgroup/parsers/src/guestabi/go.mod`, `internal/astgroup/parsers/src/guestabi/guestabi.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.1 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -161,29 +161,29 @@ None — no specifications in `.planning/specifications/` matched this plan (sem
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
+   | MEDIUM | guestabi.go:47 | `Lookup` returns raw pinned buffer without the `int(n) > len(buf)` guard; future callers not re-validating n could trap. All 3 current parse() call sites retain the guard, so no live defect. | Doc note or `Lookup(p, n)` variant. Captured as TD-001. |
+   | LOW | guestabi.go:65 | `(int64(p) << 32)` sign-extends for high-bit guest pointers (>= 2GB). Inherited byte-for-byte from original emit; not a regression. | Mask via `int64(uint32(p))`. Captured as TD-002. |
+   | LOW | guestabi.go:63 | `Emit` pins a result buffer per call, relies on host to free resPtr; pins can grow unbounded. Inherited from original. | Document host free obligation. Captured as TD-003. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 1.1.R, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH. All findings inherited from the original per-parser ABI or by-design (Lookup mirrors the comma-ok index per task-01 spec). MEDIUM/LOW deferred to `tech-debt-captured.md` (TD-001/002/003) per the CRITICAL/HIGH inline-fix bar. Contract fidelity (Emit vs emit), isolation (nested go.mod excludes from parent), and security verified with no findings. Proceeding.
 
-### 1.1.R [ ] **Task 01 — REFACTOR / Address Findings**
+### 1.1.R [x] **Task 01 — REFACTOR / Address Findings** (no CRITICAL/HIGH; no code change)
    1. Fix CRITICAL/HIGH issues from 1.1.A (if any)
    2. Improve code quality (T1); re-run `GOOS=wasip1 GOARCH=wasm go build`/`go vet` inside the module
    3. Validate `go test ./internal/astgroup/...` still passes (T3)
    4. COMMIT (only if changes made): `git add internal/astgroup/parsers/src/guestabi/ && git commit -m "refactor(astgroup): address review findings (task 01)"`
    **Duration:** ~15-30 min
 
-### 1.2 [ ] **Phase 1 — DoD Verification**
-   - [ ] Task 01 Success Criteria all checked
-   - [ ] `GOOS=wasip1 GOARCH=wasm go build ./...` and `go vet ./...` succeed inside `internal/astgroup/parsers/src/guestabi/`
-   - [ ] `go build ./...` succeeds at repo root with the new module present but excluded
-   - [ ] `go test ./internal/astgroup/...` passes unchanged
-   - [ ] No parser `main.go` or `go.mod` files modified this phase
-   - [ ] Adversarial review passed / findings resolved
+### 1.2 [x] **Phase 1 — DoD Verification**
+   - [x] Task 01 Success Criteria all checked
+   - [x] `GOOS=wasip1 GOARCH=wasm go build ./...` and `go vet ./...` succeed inside `internal/astgroup/parsers/src/guestabi/`
+   - [x] `go build ./...` succeeds at repo root with the new module present but excluded
+   - [x] `go test ./internal/astgroup/...` passes unchanged
+   - [x] No parser `main.go` or `go.mod` files modified this phase
+   - [x] Adversarial review passed / findings resolved (MEDIUM/LOW deferred to TD)
    **DoD Report:** emit Phase-1 DoD Report per template.
 
 ---
@@ -194,7 +194,7 @@ None — no specifications in `.planning/specifications/` matched this plan (sem
 
 ## Phase 2: Integration — Wire goparser & pyparser to guestabi (~0.4 day)
 
-### 2.1 [ ] **🔧 Wire goparser and pyparser to guestabi**
+### 2.1 [x] **🔧 Wire goparser and pyparser to guestabi**
    **Task:** [task-02-wire-goparser-pyparser-to-guestabi.md](plan/tasks/task-02-wire-goparser-pyparser-to-guestabi.md) (AC1)
    **Priority:** P2 | **Effort:** M | **Type:** Refactor
    1. Add `require`+`replace => ../guestabi` to `goparser/go.mod`, mirroring root `go.mod:37-41`. Confirm `guestabi`'s actual exported API/module path against Task 01's output before writing wrapper code.
@@ -207,7 +207,7 @@ None — no specifications in `.planning/specifications/` matched this plan (sem
    **Files:** `internal/astgroup/parsers/src/goparser/go.mod`, `internal/astgroup/parsers/src/goparser/main.go`, `internal/astgroup/parsers/src/pyparser/go.mod`, `internal/astgroup/parsers/src/pyparser/main.go` | **Duration:** ~0.4 day
    7. COMMIT: `git add internal/astgroup/parsers/src/goparser/go.mod internal/astgroup/parsers/src/goparser/main.go internal/astgroup/parsers/src/pyparser/go.mod internal/astgroup/parsers/src/pyparser/main.go && git commit -m "refactor(astgroup): wire goparser and pyparser to guestabi (task 02)"`
 
-### 2.1.A [ ] **Task 02 — ADVERSARIAL REVIEW (subagent)**
+### 2.1.A [x] **Task 02 — ADVERSARIAL REVIEW (subagent)**
    **Changed Files:** `internal/astgroup/parsers/src/goparser/go.mod`, `internal/astgroup/parsers/src/goparser/main.go`, `internal/astgroup/parsers/src/pyparser/go.mod`, `internal/astgroup/parsers/src/pyparser/main.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.1 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -228,28 +228,27 @@ None — no specifications in `.planning/specifications/` matched this plan (sem
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
+   | MEDIUM | pyparser/main.go:1 | No `//go:build wasip1` tag; importing wasip1-tagged guestabi makes the module uncompilable under host GOOS (asymmetric with goparser/braceparser). build.sh/CI (always wasip1) + parent `./...` exclusion unaffected. | Add `//go:build wasip1` first line. Captured as TD-004. |
+   | LOW | goparser/main.go:52, pyparser/main.go:44 | Negative n bypasses `int(n) > len(buf)` guard → `buf[:n]` panics. Pre-existing; braceparser already guards `n < 0`. | Add `int(n) < 0` to guard. Captured as TD-005. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.1.R, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH. WASMEXPORT placement, import hygiene (unsafe/encoding/json removed, strings retained), require+replace precedent, and emit/lookup behavior parity all verified correct. MEDIUM (newly-introduced but no supported build path or success criterion affected) + LOW (pre-existing) deferred to `tech-debt-captured.md` (TD-004/005) per the CRITICAL/HIGH inline-fix bar. Proceeding.
 
-### 2.1.R [ ] **Task 02 — REFACTOR / Address Findings**
+### 2.1.R [x] **Task 02 — REFACTOR / Address Findings** (no CRITICAL/HIGH; no code change)
    1. Fix CRITICAL/HIGH issues from 2.1.A (if any)
    2. Improve code quality (T1); re-run `GOOS=wasip1 GOARCH=wasm go build`/`go vet` for both parsers
    3. Validate `go test ./internal/astgroup/...` still passes (T3)
    4. COMMIT (only if changes made): `git add internal/astgroup/parsers/src/goparser/ internal/astgroup/parsers/src/pyparser/ && git commit -m "refactor(astgroup): address review findings (task 02)"`
    **Duration:** ~15-30 min
 
-### 2.2 [ ] **Phase 2 — DoD Verification**
-   - [ ] Task 02 Success Criteria all checked
-   - [ ] `GOOS=wasip1 GOARCH=wasm go build ./...` succeeds independently in both `goparser` and `pyparser`
-   - [ ] `braceparser` untouched
-   - [ ] Root `go build ./...` and `go test ./internal/astgroup/...` pass unchanged
-   - [ ] Adversarial review passed / findings resolved
+### 2.2 [x] **Phase 2 — DoD Verification**
+   - [x] Task 02 Success Criteria all checked
+   - [x] `GOOS=wasip1 GOARCH=wasm go build ./...` succeeds independently in both `goparser` and `pyparser`
+   - [x] `braceparser` untouched
+   - [x] Root `go build ./...` and `go test ./internal/astgroup/...` pass unchanged
+   - [x] Adversarial review passed / findings resolved (MEDIUM/LOW deferred to TD)
    **DoD Report:** emit Phase-2 DoD Report per template.
 
 ---
@@ -260,7 +259,7 @@ None — no specifications in `.planning/specifications/` matched this plan (sem
 
 ## Phase 3: Completion & Validation — Wire braceparser, Rebuild, Full Verify (~0.3 day)
 
-### 3.1 [ ] **🔧 Wire braceparser to guestabi and verify full build**
+### 3.1 [x] **🔧 Wire braceparser to guestabi and verify full build**
    **Task:** [task-03-wire-braceparser-and-verify-build.md](plan/tasks/task-03-wire-braceparser-and-verify-build.md) (AC1, AC2, AC3)
    **Priority:** P2 | **Effort:** S | **Type:** Refactor
    1. Add `require`+`replace => ../guestabi` to `braceparser/go.mod`, mirroring Task 02's pattern.
@@ -274,7 +273,7 @@ None — no specifications in `.planning/specifications/` matched this plan (sem
    **Files:** `internal/astgroup/parsers/src/braceparser/main.go`, `internal/astgroup/parsers/src/braceparser/go.mod`, `internal/astgroup/parsers/build.sh` (optional doc comment), `internal/astgroup/parsers/*.wasm`, `internal/astgroup/parsers/SHA256SUMS` | **Duration:** ~0.3 day
    8. COMMIT: `git add internal/astgroup/parsers/src/braceparser/ internal/astgroup/parsers/*.wasm internal/astgroup/parsers/SHA256SUMS internal/astgroup/parsers/build.sh && git commit -m "refactor(astgroup): wire braceparser to guestabi and rebuild wasm binaries (task 03)"`
 
-### 3.1.A [ ] **Task 03 — ADVERSARIAL REVIEW (subagent)**
+### 3.1.A [x] **Task 03 — ADVERSARIAL REVIEW (subagent)**
    **Changed Files:** `internal/astgroup/parsers/src/braceparser/main.go`, `internal/astgroup/parsers/src/braceparser/go.mod`, regenerated `.wasm` binaries, `SHA256SUMS`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.1 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -295,28 +294,26 @@ None — no specifications in `.planning/specifications/` matched this plan (sem
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
+   | LOW | braceparser/main.go:38,46,48 | braceparser inlines `guestabi.Emit(...)` at call sites; goparser/pyparser keep a local `emit` delegate. Functionally identical; each parser followed its own task spec. | Converge on one style. Captured as TD-006. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.1.R, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH. DRIFT verified — all ten `.wasm` present in `SHA256SUMS`, checksums match committed binaries (reviewer recomputed), no stale entries. CONSISTENCY of import/wrapper/Lookup/Emit-delegation verified; the one LOW divergence is the plan-prescribed emit style difference, deferred to `tech-debt-captured.md` (TD-006) per the CRITICAL/HIGH inline-fix bar. Import hygiene clean; sibling files compile. Proceeding.
 
-### 3.1.R [ ] **Task 03 — REFACTOR / Address Findings**
+### 3.1.R [x] **Task 03 — REFACTOR / Address Findings** (no CRITICAL/HIGH; no code change)
    1. Fix CRITICAL/HIGH issues from 3.1.A (if any)
    2. Improve code quality (T1); if any fix touches source, re-run `build.sh` and the full `internal/astgroup` suite (T3)
    3. COMMIT (only if changes made): `git add internal/astgroup/parsers/src/braceparser/ internal/astgroup/parsers/*.wasm internal/astgroup/parsers/SHA256SUMS && git commit -m "refactor(astgroup): address review findings (task 03)"`
    **Duration:** ~15-30 min
 
-### 3.2 [ ] **Phase 3 — DoD Verification**
-   - [ ] Task 03 Success Criteria all checked
-   - [ ] `go build ./...` succeeds for all three parser Wasm modules
-   - [ ] `build.sh` produced all ten `.wasm` binaries + refreshed `SHA256SUMS`
-   - [ ] `TestEmbeddedParsersMatchManifest` and the full `internal/astgroup` suite pass unchanged
-   - [ ] `git status` shows only expected files changed (no test files touched)
-   - [ ] Adversarial review passed / findings resolved
+### 3.2 [x] **Phase 3 — DoD Verification**
+   - [x] Task 03 Success Criteria all checked
+   - [x] `go build ./...` succeeds for all three parser Wasm modules
+   - [x] `build.sh` produced all ten `.wasm` binaries + refreshed `SHA256SUMS`
+   - [x] `TestEmbeddedParsersMatchManifest` and the full `internal/astgroup` suite pass unchanged
+   - [x] `git status` shows only expected files changed (no test files touched)
+   - [x] Adversarial review passed / findings resolved (LOW deferred to TD)
    **DoD Report:** emit Phase-3 DoD Report per template.
 
 ---
@@ -324,10 +321,10 @@ None — no specifications in `.planning/specifications/` matched this plan (sem
 ## Final Phase: Validation
 
 ### Validation Checklist
-- [ ] All tests passing (T3): `go test ./internal/astgroup/...`
-- [ ] Coverage meets threshold (unaffected — wasip1-only modules excluded from root coverage instrumentation)
-- [ ] Lint/format clean: `golangci-lint run`, `gofmt`/`goimports`
-- [ ] Build succeeds: `go build ./...`, `go vet ./...`
+- [x] All tests passing (T3): `go test ./internal/astgroup/...` (full `go test ./...` also green)
+- [x] Coverage meets threshold (88.9% total ≥ 80%; wasip1-only modules excluded from root coverage instrumentation as expected)
+- [x] Lint/format clean: `golangci-lint run` (0 issues), `gofmt -l` (clean)
+- [x] Build succeeds: `go build ./...`, `go vet ./...` (both clean)
 
 ### Optional: Targeted Mutation Testing
 Mutation testing tooling is UNAVAILABLE in this environment (no `stryker-mutator` in package.json, no `mutmut`/`cargo-mutants` on PATH — this is a Go project). Skip.
