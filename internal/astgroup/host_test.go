@@ -781,3 +781,32 @@ func TestHost_PyParseMultiLineDocstringSkipsContent(t *testing.T) {
 	require.Contains(t, names, "b", "the def following the docstring must be collected")
 	require.NotContains(t, names, "fake", "a def inside a multi-line triple-quoted docstring must be skipped as string content")
 }
+
+// TestHost_PyParseEscapedQuoteInString is the epic-22.3 regression for scanLine's
+// backslash-escape branch (main.go:201-203, `case '\\': i += 2` inside the
+// single-line-string state). A backslash must escape the next byte inside a
+// single-line string, so an escaped quote does not prematurely close it. For a
+// header like `if s == "a\"#b":` the escaped quote keeps the string open past the
+// `#` (string content, not a comment), so the trailing `:` survives and the if
+// header nests its body. Removing the escape branch would let the second quote
+// close the string, stripComment would cut at the now-unquoted `#`, the if header
+// would lose its `:` and stop nesting, and no existing test would catch it.
+func TestHost_PyParseEscapedQuoteInString(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	// The string literal "a\"#b" holds an escaped quote then a `#`. The escape
+	// branch must skip the escaped quote so the string stays open across the `#`,
+	// keeping the trailing `:` so the if header nests its body.
+	src := "if s == \"a\\\"#b\":\n" +
+		"    body = 1\n"
+	root, err := p.Parse([]byte(src))
+	require.NoError(t, err)
+
+	ifNode, ok := firstOfKind(root, "if")
+	require.True(t, ok, "the if header must be recognized as an if node")
+	require.NotEmpty(t, ifNode.Children, "an escaped quote inside a string literal must not let a trailing # strip the header's colon")
+}
