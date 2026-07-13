@@ -47,6 +47,13 @@ func Free(p int32) { delete(pins, p) }
 // Lookup returns the buffer pinned at guest pointer p and whether it exists. It
 // is the only exported read-back path into the unexported pins map, so a parser's
 // parse() can recover its input buffer without touching the map directly.
+//
+// Lookup does NOT bounds-check the length a caller intends to slice from the
+// returned buffer: it returns the raw pinned slice as-is. Callers MUST validate
+// any n they index buf[:n] against len(buf) (e.g. int(n) < 0 || int(n) > len(buf))
+// before slicing — the parsers' parse() keep this guard at the call site, since
+// folding it into Lookup would require Lookup to take the length and decide an
+// error sentinel, which the wasmexport parse ABI has no room to surface.
 func Lookup(p int32) ([]byte, bool) {
 	b, ok := pins[p]
 	return b, ok
