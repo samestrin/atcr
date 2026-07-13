@@ -95,6 +95,8 @@ responsibility as-is.
 
 ## Cutting a Release
 
+Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v2@latest` or `brew install goreleaser`) — the project uses the v2 configuration line, matching [`.goreleaser.yaml`](../.goreleaser.yaml) and [`.github/workflows/release.yml`](../.github/workflows/release.yml).
+
 1. **Confirm the `CHANGELOG.md` entry exists.** Per the convention above, the
    tag value is the changelog heading with a `v` prepended — e.g. a
    `## [21.0.0]` heading in [`CHANGELOG.md`](../CHANGELOG.md) is released as tag
