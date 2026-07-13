@@ -15,12 +15,16 @@ set -euo pipefail
 
 # Pin the toolchain and assert a minimum Go version so the regenerated .wasm is
 # reproducible and an older `go` on PATH fails fast instead of emitting a
-# silently-incompatible binary. The wasip1 //go:wasmexport ABI needs Go >= 1.24;
-# GOTOOLCHAIN=local also forbids an implicit toolchain download, so a committed
-# go.mod `go` directive cannot silently swap compilers mid-build. Source/binary
-# drift is caught separately by TestEmbeddedParsersMatchManifest (go test ./...).
+# silently-incompatible binary. The wasip1 //go:wasmexport ABI needs Go >= 1.24,
+# but the guard enforces the parser modules' committed go.mod `go` directive
+# (1.26) so a 1.24/1.25 host fails HERE with a clear message instead of passing
+# the guard and hard-failing inside `go build` with an opaque "go.mod requires
+# go >= 1.26" error. GOTOOLCHAIN=local also forbids an implicit toolchain
+# download, so a committed go.mod `go` directive cannot silently swap compilers
+# mid-build. Source/binary drift is caught separately by
+# TestEmbeddedParsersMatchManifest (go test ./...).
 export GOTOOLCHAIN="${GOTOOLCHAIN:-local}"
-min_go="1.24"
+min_go="1.26"
 have_go="$(go env GOVERSION 2>/dev/null)"; have_go="${have_go#go}"
 if [ -z "${have_go}" ] || \
    [ "$(printf '%s\n%s\n' "${min_go}" "${have_go}" | sort -t. -k1,1n -k2,2n | head -n1)" != "${min_go}" ]; then
