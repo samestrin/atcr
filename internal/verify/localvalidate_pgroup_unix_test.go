@@ -41,7 +41,7 @@ func processAlive(pid int) bool {
 // forcing a real grandchild rather than letting sh exec-optimize into the sleep.
 func TestRunConfiguredValidation_TimeoutReapsGrandchild(t *testing.T) {
 	res, err := RunConfiguredValidation(context.Background(),
-		[]string{"sh", "-c", "sleep 100 & echo $! ; wait"}, t.TempDir(), 250*time.Millisecond)
+		[]string{"sh", "-c", "sleep 100 & echo $! ; wait"}, t.TempDir(), 1*time.Second)
 	require.NoError(t, err)
 	require.True(t, res.TimedOut, "run must have timed out")
 
@@ -62,7 +62,7 @@ func TestRunConfiguredValidation_TimeoutReapsGrandchild(t *testing.T) {
 // the first stdout line and the grandchild PID on the second before waiting.
 func TestRunConfiguredValidation_TimeoutReapsWholeGroup(t *testing.T) {
 	res, err := RunConfiguredValidation(context.Background(),
-		[]string{"sh", "-c", "echo $$ ; sleep 100 & echo $! ; wait"}, t.TempDir(), 250*time.Millisecond)
+		[]string{"sh", "-c", "echo $$ ; sleep 100 & echo $! ; wait"}, t.TempDir(), 1*time.Second)
 	require.NoError(t, err)
 	require.True(t, res.TimedOut, "run must have timed out")
 
