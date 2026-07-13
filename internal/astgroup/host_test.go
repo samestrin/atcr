@@ -489,3 +489,32 @@ func TestHost_GoParseBadPointer(t *testing.T) {
 	require.Equal(t, "error", n.Kind)
 	require.Equal(t, "bad pointer", n.Name)
 }
+
+// TestHost_PyParseBadPointer exercises pyparser's parse() bad-pointer path
+// directly: a never-allocated pointer (Lookup returns false) must yield the
+// "bad pointer" error node rather than trapping the guest. The host's public
+// Parse always allocates a valid pointer, so this ABI guard is only reachable
+// by calling the exported parse function with a bogus pointer directly. (The
+// negative-n path is tracked separately — it is a real bug in pyparser, not a
+// coverage gap.)
+func TestHost_PyParseBadPointer(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+	wp := p.(*wasmParser)
+	ctx := wp.ctx
+
+	res, err := wp.parse.Call(ctx, 99999, 0)
+	require.NoError(t, err, "bad pointer must return an error node, not trap")
+	require.Len(t, res, 1)
+	rptr := uint32(res[0] >> 32)
+	rlen := uint32(res[0])
+	out, ok := wp.memory.Read(rptr, rlen)
+	require.True(t, ok, "read error-node result from guest memory")
+	_, _ = wp.free.Call(ctx, uint64(rptr))
+	var n Node
+	require.NoError(t, json.Unmarshal(out, &n))
+	require.Equal(t, "error", n.Kind)
+	require.Equal(t, "bad pointer", n.Name)
+}
