@@ -41,7 +41,7 @@ func Build(ctx context.Context, mode PayloadMode, repo, base, head string) (stri
 	case ModeFiles:
 		return BuildFiles(ctx, repo, base, head)
 	default:
-		return "", fmt.Errorf("unknown payload mode '%s': must be one of diff, blocks, files", mode)
+		return "", validatePayloadMode(mode)
 	}
 }
 
@@ -51,6 +51,17 @@ func validateRange(g *gitRunner, base, head string) error {
 		return err
 	}
 	return g.verifyRef(head, "head")
+}
+
+// validatePayloadMode rejects an unknown payload mode before any git work,
+// returning the shared "unknown payload mode" error so the four validation sites
+// (Build, package-level BuildEntries, fileBody, and RangeBuilder.BuildEntries)
+// cannot drift apart if a mode is added or the message is reworded.
+func validatePayloadMode(mode PayloadMode) error {
+	if mode != ModeDiff && mode != ModeBlocks && mode != ModeFiles {
+		return fmt.Errorf("unknown payload mode '%s': must be one of diff, blocks, files", mode)
+	}
+	return nil
 }
 
 // BuildDiff returns the per-file unified diffs of base..head joined in
@@ -83,8 +94,8 @@ func BuildFiles(ctx context.Context, repo, base, head string) (string, error) {
 // and record per-file truncation in status.json. The flat Build* entry points
 // all join these entries, so both forms are byte-identical by construction.
 func BuildEntries(ctx context.Context, mode PayloadMode, repo, base, head string) ([]FileEntry, error) {
-	if mode != ModeDiff && mode != ModeBlocks && mode != ModeFiles {
-		return nil, fmt.Errorf("unknown payload mode '%s': must be one of diff, blocks, files", mode)
+	if err := validatePayloadMode(mode); err != nil {
+		return nil, err
 	}
 	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
 	return g.buildEntries(mode, base, head)
@@ -206,7 +217,7 @@ func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile)
 		return b.String(), nil
 
 	default:
-		return "", fmt.Errorf("unknown payload mode '%s': must be one of diff, blocks, files", mode)
+		return "", validatePayloadMode(mode)
 	}
 }
 

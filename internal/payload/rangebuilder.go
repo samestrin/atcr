@@ -2,7 +2,6 @@ package payload
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/samestrin/atcr/internal/log"
 )
@@ -65,8 +64,8 @@ func (b *RangeBuilder) Range() (base, head string) {
 // BuildEntries returns the per-file payload contributions for mode, reusing the
 // builder's memoized range caches. Mirrors the package-level BuildEntries.
 func (b *RangeBuilder) BuildEntries(mode PayloadMode) ([]FileEntry, error) {
-	if mode != ModeDiff && mode != ModeBlocks && mode != ModeFiles {
-		return nil, fmt.Errorf("unknown payload mode '%s': must be one of diff, blocks, files", mode)
+	if err := validatePayloadMode(mode); err != nil {
+		return nil, err
 	}
 	if err := b.validate(); err != nil {
 		return nil, err
