@@ -1,0 +1,74 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
+# Epic Plan 22.1: Thread Reviewed-Repo Root Through Reconcile/Verify
+
+- **Estimated time**: 1 day
+- **Tasks/Components**: 2/2
+
+## Objective
+
+Add an explicit `--repo` flag (or equivalent threaded path) to `atcr reconcile` and the verify stage so validating findings against a repo other than the current working directory — or running from a non-repo-root CWD — does not falsely flag every finding as "file not found."
+
+## Context
+
+`internal/reconcile/reconcile.go:26` hardcodes the validation root to `"."` at every call site. A narrower fix (`Root: os.Getwd()`) was already ruled out as a no-op, since `filepath.Abs(".")` already equals the CWD and would not fix the non-repo-root / other-repo case. The real fix is to plumb the reviewed-repo path explicitly, applied consistently with the verify stage, which uses the same `"."` convention.
+
+## Task Breakdown
+
+1. Add an explicit reviewed-repo path parameter to `internal/reconcile`'s validation entry point (e.g. a `--repo` flag on `atcr reconcile <path>`, or threading the already-resolved repo root from the review pipeline), replacing the hardcoded `"."`.
+2. Apply the same threading to the verify stage's file-path validation, which shares the `"."` convention today.
+
+## Acceptance Criteria
+
+- [ ] `atcr reconcile <path> --repo <other-repo>` validates finding file paths against `<other-repo>`, not the CWD.
+- [ ] Running `atcr reconcile`/verify from a non-repo-root CWD (with `--repo` unset, defaulting to `.`) behaves exactly as it does today — no regression for the common case.
+- [ ] `go test ./...` passes; a new test covers reconcile validating findings for a repo other than the CWD.
+
+## Components Touched
+
+- `internal/reconcile`
+- `internal/verify`
+
+## Out of Scope
+
+- Changing how `atcr review`/`atcr resume` resolve their own CWD-relative config load and git-range resolution — that broader CWD-independence question is out of scope here (see the epic 19.1 Clarifications discussion of TD-019, which explicitly deferred the full-command migration and instead documented the CWD==repo-root operating assumption).
+
+## Dependencies
+
+- None.
+
+## Source TD Item
+
+`.planning/technical-debt/README.md` — `internal/reconcile/reconcile.go:26`.
+
+## Refinements (2026-07-05)
+
+This section records findings from `/refine-epic` run on July 05, 2026. It is additive — original plan content above is preserved.
+
+### Auto-applied corrections (0)
+
+None.
+
+### Items needing user confirmation (0)
+
+None.
+
+### Advisory observations (0)
+
+None.
+
+### Verification context
+
+- Refinement depth: spot-check
+- Derived TASK_COUNT: 2 (limit: 6)
+- Derived COMPONENT_COUNT: 2 (limit: 2)
+- COMPONENTS_TOUCHED: `reconcile`, `internal/verify`
+- VISUAL_SURFACE: false
+- HAS_GATED_WORK: false
+- HAS_CROSS_SYSTEM: false
+- Cited references checked: 1
+- Codebase search queries (spot-check): []
+----- END SPRINT PLAN -----
+

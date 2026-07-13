@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "severity_split",
+      "file": "cmd/atcr/reconcile.go",
+      "line": 65,
+      "severity": "MEDIUM",
+      "problem": "(runReconcile) runReconcile reads --repo and normalizes empty/whitespace to \".\" but does not call filepath.Abs before passing repoRoot to reconcile.RunReconcile — unlike verify.go:87 which explicitly computes absRoot via filepath.Abs(repoRoot). A relative --repo path (e.g., --repo ../other-repo) is passed as-is, creating inconsistent behavior between the two entry points that share the same Root contract. The pre-22.1 code hardcoded \".\" without Abs in both places, so this is not a new crash, but the verify side now diverges.",
+      "score": 3,
+      "spread": 1,
+      "independence": 3,
+      "reviewers": [
+        "bruce",
+        "dax",
+        "otto"
+      ],
+      "disagreement": "LOW vs MEDIUM"
+    },
+    {
+      "kind": "gray_zone",
+      "file": "cmd/atcr/reconcile_test.go",
+      "line": 601,
+      "severity": "MEDIUM",
+      "problem": "TestReconcileCmd_RepoFlagValidatesAgainstOtherRepo does not cover an invalid/nonexistent --repo path, leaving the silent-degradation path untested.",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "MEDIUM",
+          "problem": "TestReconcileCmd_RepoFlagValidatesAgainstOtherRepo does not cover an invalid/nonexistent --repo path, leaving the silent-degradation path untested."
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "cmd/atcr/verify_test.go",
+      "line": 208,
+      "severity": "MEDIUM",
+      "problem": "TestVerifyCmd_RepoFlagThreadsReviewedRoot does not verify that the --repo flag actually changes the repo root used by verify.Verify; the test passes even if the flag is ignored.",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "MEDIUM",
+          "problem": "TestVerifyCmd_RepoFlagThreadsReviewedRoot does not verify that the --repo flag actually changes the repo root used by verify.Verify; the test passes even if the flag is ignored."
+        }
+      ]
+    }
+  ]
+}
