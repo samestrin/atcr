@@ -81,7 +81,7 @@ Build and test each parser individually right after wiring it, before moving to 
 
 ## Test Strategy
 **Unit Tests:**
-- No new unit tests required — this is a mechanical extraction with no behavioral change. `guestabi`'s own unit tests (added in Task 01) cover the ABI implementation directly.
+- No new unit tests required — this is a mechanical extraction with no behavioral change. `guestabi` is a wasip1-only package with no test-harness pattern (Task 01 adds no `*_test.go`); correctness is verified by successful `GOOS=wasip1 GOARCH=wasm go build`/`go vet` per parser plus the unchanged `internal/astgroup` regression suite.
 
 **Integration Tests:**
 - `GOOS=wasip1 GOARCH=wasm go build ./...` run individually in `goparser/` and `pyparser/` after each is wired, confirming the `replace` directive resolves and the wrapper functions compile against `guestabi`'s exported API.
