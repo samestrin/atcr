@@ -1,0 +1,401 @@
+diff --git a/.planning/epics/active/22.0_process_group_reaping.md b/.planning/epics/completed/22.0_process_group_reaping.md
+similarity index 100%
+rename from .planning/epics/active/22.0_process_group_reaping.md
+rename to .planning/epics/completed/22.0_process_group_reaping.md
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index c9712ea4..45aec83c 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,17 +3,17 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 4 | 0 |
+ | MEDIUM | 0 | 20 | 0 |
+-| LOW | 0 | 33 | 0 |
++| LOW | 4 | 33 | 0 |
+ 
+ 
+-**Last Modified:** 2026-07-12 | **Open Items:** 0 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 57
++**Last Modified:** 2026-07-12 | **Open Items:** 4 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 61
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -63,58 +63,67 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
+ 
++### [2026-07-12] From Sprint: epic-22.0
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| 1 | [ ] | LOW | internal/verify/localvalidate.go:126 | On the timeout path the DeadlineExceeded branch returns TimedOut before runErr is inspected, so a non-ESRCH failure from the group-kill Cancel (e.g. EPERM if a group member dropped privileges) is silently masked and a surviving orphan produces no signal | Log or record the Cancel error when it is neither nil nor ESRCH so a failed reap is observable rather than indistinguishable from a clean timeout kill | OBSERVABILITY | 15 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/verify/localvalidate_pgroup_unix.go:26 | The group SIGKILL is wired only to Cancel (fires on ctx.Done), so a validation command that exits 0 while leaving a backgrounded grandchild is never group-reaped and the orphan survives - only WaitDelay/ErrWaitDelay marks the run failed | Acceptable per the epic timeout-only scope, but document that clean-exit orphans are not reaped, or optionally group-kill after Wait returns ErrWaitDelay | UNDER_ENGINEERING | 15 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/verify/localvalidate_pgroup_unix.go:33 | ESRCH is matched with == rather than errors.Is - correct today because syscall.Kill returns a bare Errno, but a future wrapped return would misreport the already-exited race as a hard kill error instead of ProcessDone | Use errors.Is(err, syscall.ESRCH) to stay robust to wrapping and match the errors.Is convention used elsewhere in localvalidate.go | ERROR_PATHS | 5 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/verify/localvalidate_pgroup_unix_test.go:47 | processAlive relies on the reaped grandchild PID not being reused - if the OS recycles that PID to another live process within the 5s Eventually window the assertion flips to a false-negative failure | Accept the low probability, or additionally probe the whole group (kill(-pid,0)) or capture the child start time to detect reuse | EDGE_CASES | 15 | execute-epic-independent |
++
+ ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go | Systemic symlink exposure across all five append-only ledgers (localdebt, scorecard, history, audit, debate/tools): each opens its shard with O_CREATE/O_WRONLY/O_APPEND and no O_NOFOLLOW, and MkdirAll follows symlinked path components, so a pre-planted symlink at the ledger path or a parent redirects appends outside the store. LOW: exploiting requires pre-existing local write access to a 0700 per-user/per-repo dir (same-uid, no trust-boundary crossing). localdebt already documents this as an accepted won't-fix (internal/localdebt/doc.go); tracked here so the systemic posture is visible, not localdebt-only. (intent_note: surfaced during 20.1 resolve-td; bundle into a future FS-safety pass, do not fix localdebt in isolation) | Do NOT harden localdebt alone (inconsistent, false security). Bundle into a future filesystem-safety epic: a shared GOOS-guarded O_NOFOLLOW append helper (precedent: internal/tools/open_unix.go and open_other.go) swapped across all five ledgers, plus symlink-planted unix-only tests. Prioritize only if a ledger moves to a shared/multi-user dir or a pentest/supply-chain audit flags it. Final-component only; parent-symlink resistance (openat2/RESOLVE_NO_SYMLINKS) is out of scope. | security | 480 | resolve-td | claude | MEDIUM |
+ 
+ ### [2026-07-11] From Sprint: 20.0_standalone_skill_release
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | go.mod:41 | `go install github.com/samestrin/atcr/cmd/atcr@latest` cannot work for external users. Two layered causes: the root go.mod carries a `replace ... => ./reconcile` directive (Go refuses to install any module whose published go.mod has a replace), and the binding cause is that the samestrin/atcr repo is PRIVATE so the module is not on the public proxy. Makes AC1 (go install), install.sh (AC4), and the go-install lines in README/docs unsatisfiable until the repo is public. (Deferred: .planning/epics/active/33.2_public_launch.md) | Resolve in Epic 33.2 (Public Launch): external `go install` is gated on the repo going public, which happens at launch (Epic 33 cluster). 33.2 makes the repo public, publishes `reconcile` + drops the replace directive, and delivers install.sh + a real-install integration test. | security | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-09] From Sprint: 19.7_live_model_resolution
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/personas/drift.go | For a bound persona the `family` JSON field is the bare binding token (glm); for a bindingless persona it is the derived vendor/tier prefix (anthropic/claude-opus) — two shapes under one key that a 19.8 agent grouping on `family` would see inconsistently. (intent_note: deferred per sprint-plan §5.6 — shape documented as advisory; normalization deferred to 19.8 (TD-008)) | Phase 8/later: when wiring `models refresh` against the live catalog, confirm the `~…-latest` ids are present; else skip the `missing` check for a lock slug equal to an `aliasTable` value (or resolve alias locks through the passthrough before the catalog lookup) and add a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 2 | [/] | LOW | internal/personas/upgrade.go | `resolveNewestInPrefix` selects the newest-by-`created` catalog member, but the lock gate advances only when the extracted semver is a version-advance (`isNewer`), so a newer-created-but-lower-semver hotfix slug is selected by the resolver yet blocked by the gate and silently not adopted. | Deferred (Story 6/later, semver philosophy): keep the semver isNewer gate authoritative for the lock-advance decision (consistent with the major-bump re-validation gate and the explicit-upgrade/reproducibility posture), but emit a visible signal in the personas upgrade before→after report or a models check finding when resolveNewestInPrefix's created-order pick diverges from what the gate accepts, rather than silently leaving the lock stale; cover the divergent hotfix case with a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | LOW | docs/personas-authoring.md | AC 08-03 Scenario 3 links the shipped persona doc sections to `../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/*.md`; those links resolve now but `/finalize-sprint` moves the sprint active/→completed/, after which the active/ path 404s in the shipped docs. | Future docs-stabilization pass: update the two links to the completed/ path after archival, or promote the durable plan documentation into a stable home (docs/ or .planning/specifications/) and point the persona docs there; add a link-check that fails on a dangling docs→.planning link. | docs | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-08] From Sprint: 19.6_community_registry_hub
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/init.go:47 / cmd/atcr/quickstart.go:102 | `init`/`quickstart` fetch-and-pin the roster `builtins.Names()` (the 9 model-agnostic built-ins: bruce/greta/kai/mira/dax/otto/sasha/penny/ingrid), but the shipped `personas/community/index.json` publishes only the 10 model-indexed library personas (anthony…glenna) — a fully disjoint set. (intent_note: deferred per sprint-plan TD-011) (Deferred: Epic Plan .planning/epics/active/19.7_live_model_resolution.md — design-sprint decision; lean toward publishing built-ins into the community channel behind a model-agnostic tag/gate) | rebuild init/quickstart model enablement so online `init`/`quickstart` deliver a working, non-noisy persona set: either publish the built-in lenses into the community channel behind a model-agnostic gate carve-out (keeps C2), or align the roster with what the index publishes and drop the misleading skip-warning. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | u | [/] | LOW | cmd/atcr/init.go:142 | installCommunityPersonas records each candidate's preExisted flag then, on a later roster failure, rollback() removes any candidate path where !preExisted && fileExists. If another process creates <name>.yaml/.md between candidate recording (line 142) and the eventual rollback, the rollback deletes that not-ours file believing this run created it. The window is narrow and needs concurrency; the actual overwrite protection lives in InstallUnit. (Accepted LOW-severity risk — atcr is a single-user local CLI; if ever addressed, add an inode+mtime re-stat guard to the rollback rather than changing InstallUnit's return contract.) | Have rollback delete only files it observed itself successfully create (capture created paths from InstallUnit's result rather than re-deriving from candidates), or re-stat and skip if inode/mtime differs from what this run wrote. Verify with a concurrency test that plants a file mid-roster and asserts it survives rollback. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-06] From Sprint: 19.5_response_truncation_failover
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | LOW | internal/fanout/artifacts.go:214 | The TD-019 memo short-circuit only fires for parsedFindingCount==0, so a truncated-with-findings result (memo set to >=1 by the failover gate) re-runs stream.ParseModelOutput at line 217 — the redundant parse the refactor aimed to remove, though bounded to the rare truncated-with-findings path. | Cache the parsed []Finding slice on Result rather than only its length so findingsFor can reuse it, or accept the bounded cost. (Won't fix 2026-07-06: accepted the bounded re-parse cost — the parsedFindingCount memo already avoids the redundant parse on the common truncated+zero-finding path; caching the full slice risks aliasing via findingsFor's in-place Finding.Reviewer mutation and downstream grounding/constraint filtering.) | performance | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: 19.4_history_time_sharding
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | cmd/atcr/review.go:285 | Multiple concurrent atcr review processes will append to the same YYYY-MM.jsonl simultaneously without synchronization, causing interleaved JSON lines and ledger corruption (Accepted 2026-07-06: won't-fix — concurrent-append O_APPEND safety is a project-wide TD-004 tradeoff shared by all 5 append-only ledgers (audit, debate, scorecard, tools, history), outside epic 19.4's scope; matches the identical writer.go precedent accepted 2026-07-04 at README:112. Low probability (small per-batch writes are atomic on Linux/macOS O_APPEND) and low impact (a torn line is skipped by Load, no cross-data corruption); a cross-platform lock dependency is not justified for one ledger.) | Acquire a file lock (flock) on the shard or a dedicated lockfile before opening for append | concurrency | 40 | code-review | brad | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/history/shard.go:32 | LoadAll/LoadShards read and JSON-unmarshal every monthly shard on disk, then Filter discards records older than the --since cutoff. The justification for monthly sharding is the YYYY-MM filenames, but the read path throws that structure away: a repo with years of history running the common --since 30d (or the 90d default) still parses every archived month it will immediately drop. (Deferred 2026-07-06: not worth doing now — LOW-value perf optimization; the epic's 1-2yr history bound caps the scan at 12-24 small files. If revisited, add an additive LoadShardsSince(dir, cutoff) variant rather than changing LoadShards/LoadAll signatures, which would ripple into 7+ existing test call sites for no measured benefit.) | Prune glob results in LoadShards by comparing each shard's YYYY-MM stem against the cutoff month before calling Load; pass a lower-bound month into LoadShards/LoadAll (or add a windowed variant) so shards entirely before the window are never opened. Verify with a benchmark over 60 seeded shards and --since 30d reading at most 1-2 files. | performance | 60 | code-review | claude, dax, brad | HIGH |
+ | 3 | [/] | LOW | internal/history/writer.go:39 | Append does an unlocked O_APPEND write and documents that a large buffer split across multiple write() syscalls can be torn by a concurrent append. Epic 19.4 does not change the mechanism but changes exposure: history is now git-tracked and the project is run as multiple concurrent sessions appending to the same YYYY-MM.jsonl within a month. A torn line is silently dropped by Load's malformed-line skip, so lost findings are invisible; sharding by month did not reduce intra-month contention. (Accepted 2026-07-06: won't-fix — same history.Append write site and same decision as cmd/atcr/review.go:285 (resolved in lockstep); no cross-platform lock dependency added. Mirrors the 2026-07-04 accepted precedent for this exact O_APPEND pattern.) | If a hard guarantee is wanted wrap the shard write in an advisory file lock (flock) consistent with the mkdir-flock pattern used in the planning tooling; otherwise document that concurrent same-month runs can lose records. Verify with a stress test of N concurrent Appends and a line-count assertion. | error-handling | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: epic-19.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/history/shard.go:32 | LoadShards loads every shard into memory before Filter applies --since, so a narrow window still reads all shards (acceptable within the stated 1-2yr bound; no month-prefix pruning) (Deferred 2026-07-06: duplicate of the MEDIUM month-pruning item at this same line; same decision — defer, add LoadShardsSince additively if ever picked up.) | Skip shard files whose YYYY-MM stem is entirely older than now-since before loading, to keep long histories fast | UNDER_ENGINEERING | 30 | execute-epic-independent |
+ 
+ ### [2026-07-05] From Sprint: epic-19.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | cmd/atcr/review.go:384 | The audit hook re-reads sources/pool/findings.txt that the history hook read moments earlier in the same review, so the pool file is parsed twice per review run | Parse the pool findings once in the CLI layer and pass the finding set to both history.RecordReview and audit.RecordReview, or expose a shared parse result (Won't-fix: accepted — the duplicate parse mirrors internal/history's independent capture pattern per epic design; not worth a cross-package signature refactor for a sub-ms, once-per-run gain.) | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-07-05] From Review: pr-105-recovery
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 137adee7..063d0027 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,13 @@
++## [22.0.0] - 2026-07-12
++
++Reap the entire process group when a local auto-fix validation command times out, so grandchild processes spawned by shells like `sh -c make ...` are killed instead of left running past the deadline.
++
++### Fixed
++
++- Validation-command timeouts now SIGKILL the whole process group on unix (via `Setpgid` + a group-targeted cancel) instead of only the direct child, reaping shell-spawned grandchildren that previously survived the deadline. `cmd.WaitDelay` is retained as a platform-independent pipe backstop; Windows keeps the existing direct-child behavior.
++
++*Shipped via /execute-epic (epic 22.0)*
++
+ ## [21.0.0] - 2026-07-12
+ 
+ Automate release packaging: a tag-triggered GoReleaser pipeline that builds reproducible, version-stamped binaries and publishes a GitHub Release on `vX.Y.Z` tag push, plus the release-process documentation and CI hardening around it.
+diff --git a/internal/verify/localvalidate.go b/internal/verify/localvalidate.go
+index a3efdcbd..445d2775 100644
+--- a/internal/verify/localvalidate.go
++++ b/internal/verify/localvalidate.go
+@@ -23,17 +23,19 @@ import (
+ // maxValidationOutputBytes bounds how much stdout/stderr is retained per stream,
+ // so a pathological validation command cannot exhaust memory. Output past the cap
+ // is discarded and flagged via the result's *Truncated field; the child process
+ // is never blocked, since the capturing writer always reports a full consume.
+ const maxValidationOutputBytes = 1 << 20 // 1 MiB per stream
+ 
+ // validationWaitGrace bounds how long Run may block AFTER the timeout fires
+-// waiting for the command's I/O pipes to close. Killing the direct child does
+-// not reap a grandchild it spawned (e.g. `sh -c "... sleep 60"`), and that
+-// grandchild can hold the stdout pipe open, stalling Run long past the deadline.
+-// cmd.WaitDelay force-closes the pipes after this grace so a hanging validation
+-// command can never stall --auto-fix indefinitely. It only ever applies on the
+-// cancel/timeout path; a normally-exiting command closes its pipes and returns
+-// immediately, unaffected.
++// waiting for the command's I/O pipes to close. On unix, configureProcessGroup
++// makes the timeout SIGKILL the whole process group, so a grandchild spawned by a
++// shell (e.g. `sh -c "... sleep 60"`) is reaped directly rather than left holding
++// the stdout pipe open. cmd.WaitDelay remains a platform-independent backstop: if
++// any process still holds a pipe open past this grace (a non-unix target, or a
++// grandchild that escaped its group), the pipes are force-closed so a hanging
++// validation command can never stall --auto-fix indefinitely. It only ever applies
++// on the cancel/timeout path; a normally-exiting command closes its pipes and
++// returns immediately, unaffected.
+ const validationWaitGrace = 2 * time.Second
+ 
+ // defaultValidationTimeout is the bound applied when a caller passes a zero
+@@ -69,95 +71,99 @@ func (r ValidationResult) Passed() bool {
+ // RunConfiguredValidation runs argv (an explicit argument list, never a shell
+ // string) in dir with a bounded timeout, capturing exit code, stdout, stderr, and
+ // wall-clock duration into a ValidationResult. It returns a non-nil error ONLY
+ // when the command could not start (or argv is empty) — the StartError case; a
+ // command that runs and exits non-zero, or that times out, is a completed result
+ // with a nil error and Passed()==false, so the caller distinguishes "cannot even
+ // validate" from "validation failed". The command is sourced entirely from argv;
+ // no shell interprets it, so no configured or injected value is expanded.
+ func RunConfiguredValidation(ctx context.Context, argv []string, dir string, timeout time.Duration) (ValidationResult, error) {
+ 	if timeout <= 0 {
+ 		timeout = defaultValidationTimeout
+ 	}
+ 
+ 	if len(argv) == 0 {
+ 		err := errors.New("auto-fix validation command not found or not executable: no command configured")
+ 		return ValidationResult{StartError: err}, err
+ 	}
+ 
+ 	runCtx, cancel := context.WithTimeout(ctx, timeout)
+ 	defer cancel()
+ 
+ 	if dir != "" {
+ 		if _, err := os.Stat(dir); err != nil {
+ 			startErr := fmt.Errorf("validation working directory does not exist: %s: %w", dir, err)
+ 			return ValidationResult{StartError: startErr}, startErr
+ 		}
+ 	}
+ 
+ 	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
+ 	cmd.Dir = dir
+ 	cmd.WaitDelay = validationWaitGrace
++	// On unix, place the command in its own process group and override the default
++	// cancel so a timeout SIGKILLs the whole group — reaping grandchildren spawned
++	// by shells like `sh -c ...` instead of leaving them orphaned. No-op elsewhere.
++	configureProcessGroup(cmd)
+ 	stdout := &cappedBuffer{cap: maxValidationOutputBytes}
+ 	stderr := &cappedBuffer{cap: maxValidationOutputBytes}
+ 	cmd.Stdout = stdout
+ 	cmd.Stderr = stderr
+ 
+ 	start := time.Now()
+ 	runErr := cmd.Run()
+ 	res := ValidationResult{
+ 		Stdout:          stdout.String(),
+ 		Stderr:          stderr.String(),
+ 		Duration:        time.Since(start),
+ 		StdoutTruncated: stdout.truncated,
+ 		StderrTruncated: stderr.truncated,
+ 	}
+ 
+ 	// A deadline hit OR a parent-context cancellation ends the run before it could
+ 	// complete cleanly: a hard failure regardless of what exit the killed process
+ 	// reported. Both are folded into TimedOut (the only cancellation-class signal
+ 	// on the result) so Passed()==false without a spurious command-not-found label.
+ 	// Partial output captured before the kill is retained above.
+ 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) || errors.Is(runCtx.Err(), context.Canceled) {
+ 		res.TimedOut = true
+ 		return res, nil
+ 	}
+ 
+ 	if runErr != nil {
+ 		var exitErr *exec.ExitError
+ 		switch {
+ 		case errors.As(runErr, &exitErr):
+ 			// Ran to completion but exited non-zero: a validation failure, not a
+ 			// Go error. Passed()==false via the non-zero ExitCode.
+ 			res.ExitCode = exitErr.ExitCode()
+ 			return res, nil
+ 		case errors.Is(runErr, exec.ErrWaitDelay):
+ 			// The command exited but a lingering child held its I/O pipes open
+ 			// past cmd.WaitDelay, so the run completed uncleanly. That is a hard
+ 			// failure, not a start failure: mark TimedOut (the wait grace elapsed)
+ 			// so it fails closed without being mislabeled command-not-found.
+ 			res.TimedOut = true
+ 			return res, nil
+ 		case errors.Is(runErr, exec.ErrNotFound) || errors.Is(runErr, os.ErrPermission):
+ 			// Genuinely could not start (binary missing / not executable): the
+ 			// only case that is a true StartError.
+ 			res.StartError = fmt.Errorf("auto-fix validation command not found or not executable: %s: %w", argv[0], runErr)
+ 			return res, res.StartError
+ 		default:
+ 			// Any other failure to run (e.g. an I/O setup error): fail closed as a
+ 			// start error rather than silently passing.
+ 			res.StartError = fmt.Errorf("auto-fix validation could not run: %s: %w", argv[0], runErr)
+ 			return res, res.StartError
+ 		}
+ 	}
+ 
+ 	res.ExitCode = 0
+ 	return res, nil
+ }
+ 
+ // ResolveValidateCommand picks the effective validation argv: an operator-
+ // configured command always wins; otherwise the single built-in convenience
+ // default ["go", "build", "./..."] applies ONLY when a go.mod exists at repoRoot
+ // (the sole project-type signal — there is no multi-language default table).
+ // Any other project with no configured command is a hard refusal, so --auto-fix
+ // never skips validation silently. The returned argv is derived solely from
+ // configured or the Go default; no PR/diff/model-derived value can reach it.
+diff --git a/internal/verify/localvalidate_pgroup_other.go b/internal/verify/localvalidate_pgroup_other.go
+new file mode 100644
+index 00000000..ff776549
+--- /dev/null
++++ b/internal/verify/localvalidate_pgroup_other.go
+@@ -0,0 +1,12 @@
++//go:build !unix
++
++package verify
++
++import "os/exec"
++
++// configureProcessGroup is a no-op on non-unix platforms: process-group reaping
++// via a negative-PID SIGKILL is a POSIX construct with no portable equivalent.
++// Windows and other targets fall back to exec.CommandContext's default
++// direct-child kill plus cmd.WaitDelay. Windows process-group semantics are out of
++// scope (see the epic plan).
++func configureProcessGroup(cmd *exec.Cmd) {}
+diff --git a/internal/verify/localvalidate_pgroup_unix.go b/internal/verify/localvalidate_pgroup_unix.go
+new file mode 100644
+index 00000000..fb053d6b
+--- /dev/null
++++ b/internal/verify/localvalidate_pgroup_unix.go
+@@ -0,0 +1,40 @@
++//go:build unix
++
++package verify
++
++import (
++	"os"
++	"os/exec"
++	"syscall"
++)
++
++// configureProcessGroup places the validation command in its own process group
++// (Setpgid) and replaces exec.CommandContext's default cancel — which SIGKILLs
++// only the DIRECT child — with one that SIGKILLs the entire group. A validation
++// command like `sh -c "... sleep 60"` spawns grandchildren; killing only the shell
++// leaves them orphaned and still running past the deadline (and able to hold the
++// stdout pipe open past cmd.WaitDelay). Because Setpgid makes the child the group
++// leader, its pgid equals its PID, so syscall.Kill(-pid, SIGKILL) reaps the shell
++// and every process it spawned. cmd.WaitDelay is retained as a backstop for the
++// I/O pipes; the group kill is now the primary reaper rather than WaitDelay alone.
++//
++// Cancel fires only when the run's context is done (timeout or parent
++// cancellation), never on a clean pass/fail exit, so normal validation runs are
++// unaffected. Unix only — Windows process-group semantics are out of scope (see
++// the epic plan).
++func configureProcessGroup(cmd *exec.Cmd) {
++	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
++	cmd.Cancel = func() error {
++		if cmd.Process == nil {
++			return nil
++		}
++		// Negative PID targets the whole group (pgid == leader PID, set above).
++		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
++		if err == syscall.ESRCH {
++			// The group is already gone (normal already-exited race). Report it as
++			// ProcessDone so exec.Wait ignores it, matching the default cancel.
++			return os.ErrProcessDone
++		}
++		return err
++	}
++}
+diff --git a/internal/verify/localvalidate_pgroup_unix_test.go b/internal/verify/localvalidate_pgroup_unix_test.go
+new file mode 100644
+index 00000000..7f7a3932
+--- /dev/null
++++ b/internal/verify/localvalidate_pgroup_unix_test.go
+@@ -0,0 +1,86 @@
++//go:build unix
++
++package verify
++
++// Unix-only regression tests for process-group reaping on validation timeout
++// (epic 22.0). exec.CommandContext SIGKILLs only the DIRECT child on timeout, so
++// a validation command such as `sh -c "... sleep 100"` leaves the grandchild
++// sleep orphaned and still running past the deadline. These tests assert that the
++// entire process group is reaped. Fixtures use real POSIX shell/sleep, matching
++// localvalidate_test.go conventions (no exec mocking). The //go:build unix tag
++// keeps them off Windows, where process-group semantics are out of scope.
++
++import (
++	"context"
++	"strconv"
++	"strings"
++	"syscall"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/require"
++)
++
++// processAlive reports whether pid names a live process. Signal 0 probes for
++// existence without delivering a signal: nil means the process exists, ESRCH
++// means it has been reaped.
++func processAlive(pid int) bool {
++	return syscall.Kill(pid, syscall.Signal(0)) != syscall.ESRCH
++}
++
++// TestRunConfiguredValidation_TimeoutReapsGrandchild is the epic's core guarantee:
++// when a timed-out validation command has spawned a grandchild, the group SIGKILL
++// reaps the grandchild too — it is not left orphaned. The fixture backgrounds a
++// long sleep, prints its PID to stdout (captured before the deadline), then waits,
++// forcing a real grandchild rather than letting sh exec-optimize into the sleep.
++func TestRunConfiguredValidation_TimeoutReapsGrandchild(t *testing.T) {
++	res, err := RunConfiguredValidation(context.Background(),
++		[]string{"sh", "-c", "sleep 100 & echo $! ; wait"}, t.TempDir(), 250*time.Millisecond)
++	require.NoError(t, err)
++	require.True(t, res.TimedOut, "run must have timed out")
++
++	pidStr := strings.TrimSpace(res.Stdout)
++	require.NotEmpty(t, pidStr, "fixture must have printed the grandchild PID before the deadline")
++	pid, convErr := strconv.Atoi(pidStr)
++	require.NoError(t, convErr, "stdout must be a numeric PID, got %q", pidStr)
++
++	require.Eventually(t, func() bool {
++		return !processAlive(pid)
++	}, 5*time.Second, 20*time.Millisecond,
++		"grandchild sleep (pid %d) must be reaped with the process group, not orphaned past the deadline", pid)
++}
++
++// TestRunConfiguredValidation_TimeoutReapsWholeGroup asserts the cancel/timeout
++// path SIGKILLs the entire group — both the leader (the shell, $$) and the
++// grandchild ($!) — not just one of them. The fixture prints the leader PID on
++// the first stdout line and the grandchild PID on the second before waiting.
++func TestRunConfiguredValidation_TimeoutReapsWholeGroup(t *testing.T) {
++	res, err := RunConfiguredValidation(context.Background(),
++		[]string{"sh", "-c", "echo $$ ; sleep 100 & echo $! ; wait"}, t.TempDir(), 250*time.Millisecond)
++	require.NoError(t, err)
++	require.True(t, res.TimedOut, "run must have timed out")
++
++	lines := strings.Fields(strings.TrimSpace(res.Stdout))
++	require.Len(t, lines, 2, "fixture must print leader PID and grandchild PID, got %q", res.Stdout)
++	leaderPID, convErr := strconv.Atoi(lines[0])
++	require.NoError(t, convErr)
++	grandchildPID, convErr := strconv.Atoi(lines[1])
++	require.NoError(t, convErr)
++
++	require.Eventually(t, func() bool {
++		return !processAlive(leaderPID) && !processAlive(grandchildPID)
++	}, 5*time.Second, 20*time.Millisecond,
++		"both group leader (pid %d) and grandchild (pid %d) must be reaped on the cancel/timeout path", leaderPID, grandchildPID)
++}
++
++// TestRunConfiguredValidation_SpawningCommandPassesUnaffected guards AC2: placing
++// the command in its own group and overriding cancel must NOT affect a run that
++// spawns a subprocess but exits cleanly within the timeout. Cancel fires only on
++// a done context, so this happy-path run still passes.
++func TestRunConfiguredValidation_SpawningCommandPassesUnaffected(t *testing.T) {
++	res, err := RunConfiguredValidation(context.Background(),
++		[]string{"sh", "-c", "sleep 0.1 & wait"}, t.TempDir(), 5*time.Second)
++	require.NoError(t, err)
++	require.False(t, res.TimedOut, "a command that exits within the timeout must not be marked timed out")
++	require.True(t, res.Passed(), "a clean exit-0 run that spawned a subprocess must still pass the gate")
++}

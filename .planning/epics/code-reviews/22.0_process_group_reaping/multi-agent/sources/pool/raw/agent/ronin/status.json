@@ -1,0 +1,16 @@
+{
+  "agent": "ronin",
+  "status": "failed",
+  "findings_count": 0,
+  "duration_ms": 854,
+  "payload_mode": "blocks",
+  "truncated": false,
+  "files_dropped": [],
+  "error": "provider returned an empty completion (no content or reasoning_content)",
+  "response_truncated": true,
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0,
+  "effective_budget": 71680,
+  "resolved_window": 32768,
+  "reserved_output_tokens": 8192
+}

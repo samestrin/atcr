@@ -1,0 +1,3 @@
+
+
+MEDIUM|internal/verify/localvalidate.go:116|The DeadlineExceeded branch returns TimedOut before runErr is inspected, so if cmd.Cancel returned a non-nil, non-ProcessDone error (e.g. EPERM from a failed group-kill) it is silently discarded and the caller gets no signal that the reap may have failed|Inspect cmd.Cancel's error when runCtx.Err is set; if CancelErr is neither nil nor os.ErrProcessDone, record it on res or log it so a failed group-kill is observable rather than indistinguishable from a clean timeout|correctness|20|cancel returns err from syscall.Kill but runCtx.Err check returns before examining runErr

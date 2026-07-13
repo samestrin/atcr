@@ -1,0 +1,1 @@
+LOW|internal/verify/localvalidate_pgroup_unix.go:33|ESRCH matched with == instead of errors.Is|Use errors.Is(err, syscall.ESRCH)|idiom|5|if err == syscall.ESRCH

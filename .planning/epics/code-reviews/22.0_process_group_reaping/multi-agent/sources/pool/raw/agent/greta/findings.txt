@@ -1,0 +1,2 @@
+# atcr-findings/v1
+MEDIUM|internal/verify/localvalidate_pgroup_unix.go:27|ESRCH is matched with == rather than errors.Is - correct today because syscall.Kill returns a bare Errno, but a future wrapped return would misreport the already-exited race as a hard kill error instead of ProcessDone|Use errors.Is(err, syscall.ESRCH) to stay robust to wrapping and match the errors.Is convention used elsewhere in localvalidate.go|error_paths|5|err == syscall.ESRCH|greta

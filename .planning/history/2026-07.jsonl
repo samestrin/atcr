@@ -94,3 +94,15 @@
 {"ts":"2026-07-12T17:05:16.522963-07:00","package":".","severity":"MEDIUM","id":"50f3e192505e19d5","file":".goreleaser.yaml","category":"infoleak"}
 {"ts":"2026-07-12T17:05:16.522963-07:00","package":".github/workflows","severity":"MEDIUM","id":"0685feb0115dd241","file":".github/workflows/release.yml","category":"config"}
 {"ts":"2026-07-12T17:05:16.522963-07:00","package":".github/workflows","severity":"LOW","id":"dabf465c02825917","file":".github/workflows/release.yml","category":"style"}
+{"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"MEDIUM","id":"d86952a22eec9bb8","file":"internal/verify/localvalidate_pgroup_unix.go","category":"error_paths"}
+{"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"HIGH","id":"0cc2f4cb4a328352","file":"internal/verify/localvalidate_pgroup_unix.go","category":"error-handling"}
+{"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"MEDIUM","id":"51e693a875ec12a2","file":"internal/verify/localvalidate_pgroup_unix.go","category":"under-engineering"}
+{"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"LOW","id":"0f0632ddd630574d","file":"internal/verify/localvalidate_pgroup_unix.go","category":"error-paths"}
+{"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"MEDIUM","id":"2f031ae8aac8b38a","file":"internal/verify/localvalidate_pgroup_unix_test.go","category":"edge-cases"}
+{"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"LOW","id":"538c4302e7485dd5","file":"internal/verify/localvalidate_pgroup_unix.go","category":"OBSERVABILITY"}
+{"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"LOW","id":"681d05fcc0caf1f6","file":"internal/verify/localvalidate_pgroup_unix_test.go","category":"EDGE_CASES"}
+{"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"MEDIUM","id":"8cceea86ec42820d","file":"internal/verify/localvalidate_pgroup_unix_test.go","category":"testing"}
+{"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"LOW","id":"f0c33762ee0c6be3","file":"internal/verify/localvalidate_pgroup_unix.go","category":"testing"}
+{"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"MEDIUM","id":"39a275ec16669ede","file":"internal/verify/localvalidate.go","category":"correctness"}
+{"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"LOW","id":"a7c4c358c6216412","file":"internal/verify/localvalidate_pgroup_unix_test.go","category":"testing"}
+{"ts":"2026-07-12T18:53:33.033492-07:00","package":"internal/verify","severity":"LOW","id":"46392f2a84d89073","file":"internal/verify/localvalidate_pgroup_unix.go","category":"idiom"}

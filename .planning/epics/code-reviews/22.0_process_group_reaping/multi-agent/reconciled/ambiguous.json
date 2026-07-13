@@ -1,0 +1,146 @@
+[
+  {
+    "id": "amb-eb940a19809e0c3bf952d282b2f09a89",
+    "file": "internal/verify/localvalidate.go",
+    "line": 108,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "internal/verify/localvalidate.go",
+        "Line": 108,
+        "Problem": "Timeout path returns res, nil unconditionally when context is done, silently discarding runErr — if the process-group Cancel fails (e.g. EPERM from setuid grandchildren or LSM restrictions), the kill is incomplete and orphans survive without any signal",
+        "Fix": "Inspect runErr on the timeout branch or log non-nil/non-ESRCH cancel errors so incomplete reaps are observable and can fail-closed",
+        "Category": "correctness",
+        "EstMinutes": 20,
+        "Evidence": "if errors.Is(runCtx.Err(), context.DeadlineExceeded) // errors.Is(runCtx.Err(), context.Canceled) { res.TimedOut = true; return res, nil } masks the error returned by cmd.Run() which includes Cancel failures",
+        "Reviewer": "brad",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-0baea7ae3136cef4e462776e0a8f679d",
+    "file": "internal/verify/localvalidate_pgroup_unix.go",
+    "line": 27,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "internal/verify/localvalidate_pgroup_unix.go",
+        "Line": 27,
+        "Problem": "ESRCH is matched with == rather than errors.Is - correct today because syscall.Kill returns a bare Errno, but a future wrapped return would misreport the already-exited race as a hard kill error instead of ProcessDone",
+        "Fix": "Use errors.Is(err, syscall.ESRCH) to stay robust to wrapping and match the errors.Is convention used elsewhere in localvalidate.go",
+        "Category": "error_paths",
+        "EstMinutes": 5,
+        "Evidence": "err == syscall.ESRCH",
+        "Reviewer": "greta",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-b46780af54de2b6fee59fd0ff0ff21a7",
+    "file": "internal/verify/localvalidate_pgroup_unix_test.go",
+    "line": 68,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "internal/verify/localvalidate_pgroup_unix_test.go",
+        "Line": 68,
+        "Problem": "The happy-path test only covers exit-0; AC2 requires pass/fail runs to be unaffected, but no test verifies that a clean non-zero exit preserves ExitCode and sets Passed()=false under the new cancel override",
+        "Fix": "Add a case running a command that exits non-zero (e.g., sh -c \"exit 1\") and assert ExitCode matches and Passed() is false",
+        "Category": "testing",
+        "EstMinutes": 10,
+        "Evidence": "require.False(t, res.TimedOut, \"a command that exits within the timeout must not be marked timed out\")",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-5baea70641d13bc0285bb9cabae06ed3",
+    "file": "internal/verify/localvalidate_pgroup_unix.go",
+    "line": 22,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "internal/verify/localvalidate_pgroup_unix.go",
+        "Line": 22,
+        "Problem": "If the context is cancelled before cmd.Start() finishes, cmd.Process is nil. The override returns nil, but this race condition is untested and could mask start errors or interact unpredictably with future Go versions that call Cancel differently",
+        "Fix": "Add a test that cancels the context immediately after invoking RunConfiguredValidation to verify no panic and correct handling of pre-start cancellation",
+        "Category": "testing",
+        "EstMinutes": 10,
+        "Evidence": "if cmd.Process == nil { return nil }",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-a8ed2281f868a4ee175d03e505fdce9e",
+    "file": "internal/verify/localvalidate_pgroup_unix.go",
+    "line": 29,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "internal/verify/localvalidate_pgroup_unix.go",
+        "Line": 29,
+        "Problem": "Non-ESRCH errors from syscall.Kill (e.g., EPERM if a group member drops privileges) propagate up through cmd.Run() and bypass the TimedOut branch in RunConfiguredValidation, masking a failed reap as a clean timeout",
+        "Fix": "Log or record the error when it is neither nil nor ESRCH so RunConfiguredValidation can surface reap failures instead of masking them",
+        "Category": "observability",
+        "EstMinutes": 15,
+        "Evidence": "err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) ... if err == syscall.ESRCH { return os.ErrProcessDone } return err",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-11b888579c0dc373478924d33795f494",
+    "file": "internal/verify/localvalidate_pgroup_unix_test.go",
+    "line": 53,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "internal/verify/localvalidate_pgroup_unix_test.go",
+        "Line": 53,
+        "Problem": "250ms timeout races with shell scheduling under CI load: sh may be preempted before echo $! executes, leaving res.Stdout empty and causing require.NotEmpty to fail before the Eventually reaping assertion can run",
+        "Fix": "Increase the fixture timeout to 1s or add a synchronous barrier before wait to guarantee PID emission within the deadline",
+        "Category": "testing",
+        "EstMinutes": 10,
+        "Evidence": "sh -c \"sleep 100 \u0026 echo $! ; wait\" with 250ms deadline can be interrupted before the background job is registered and PID printed",
+        "Reviewer": "brad",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  }
+]
