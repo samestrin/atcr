@@ -62,6 +62,15 @@ func Lookup(p int32) ([]byte, bool) {
 // Emit marshals v to JSON, pins the result, and returns (resPtr<<32 | resLen).
 // On marshal failure it falls back to a minimal error sentinel. It accepts any
 // value so every parser can reuse it regardless of its concrete node type.
+//
+// Emit pins a FRESH result buffer on every call (via Alloc) and does NOT free it:
+// the returned resPtr stays pinned until somebody calls Free(resPtr). The astgroup
+// wazero host owns that free — it defers free(rptr) after reading the result bytes
+// (see host.go Parse) — because the guest cannot observe when the host has
+// finished copying the result out of linear memory. A guest-side reuse/arena
+// strategy that avoided per-call pinning is deferred to a future guestabi
+// hardening pass; for now the contract is: the caller of Emit does not free, the
+// host that decodes the packed return does.
 func Emit(v any) int64 {
 	b, err := json.Marshal(v)
 	if err != nil {
