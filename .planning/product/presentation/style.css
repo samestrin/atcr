@@ -1,0 +1,288 @@
+/* 
+   ATCR Pitch Deck Styles
+   Light Mode (Artifact Design System from atcr.dev)
+*/
+
+:root {
+  --bg: #fbfaf7;
+  --surface: #ffffff;
+  --sunken: #f4f2ec;
+  --border: #e4e1da;
+  --border-strong: #d2cec4;
+  --text: #1b1a17;
+  --text-dim: #6c6862;
+  --text-faint: #726d64;
+  --link: #1357c7;
+
+  --ok: #16834a;
+  --ok-bg: #e7f3ec;
+  --warn: #b45309;
+  --warn-bg: #faf0df;
+  --bad: #c5331f;
+  --bad-bg: #fbe9e5;
+  --persona: #6d5cc6;
+  --persona-bg: #eeebfa;
+
+  --code-bg: #0e1116; /* artifacts are always dark */
+  --code-fg: #e6e6e6;
+  --code-dim: #8a93a0;
+  --code-border: #222a34;
+  
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+/* Base Reveal Overrides */
+.reveal {
+  font-family: var(--sans);
+  color: var(--text);
+}
+
+.reveal-viewport {
+  background: var(--bg) !important;
+}
+
+.reveal .slides {
+  text-align: left;
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--sans) !important;
+  color: var(--text) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  text-transform: none !important;
+}
+
+.reveal h1 { font-size: 3.1em; font-weight: 700 !important; }
+.reveal h2 { font-size: 2.1em; margin-bottom: 30px; margin-top: 10px; }
+.reveal p { color: var(--text-dim); line-height: 1.6; }
+
+.mono { font-family: var(--mono) !important; }
+
+.overline {
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  display: block;
+  margin-bottom: 10px;
+}
+
+.lede {
+  font-size: 1.18rem;
+  color: var(--text-dim);
+  max-width: 56ch;
+}
+
+.tok-ok { color: var(--ok); font-weight: 600; }
+.tok-warn { color: var(--warn); font-weight: 600; }
+.tok-bad { color: var(--bad); font-weight: 600; }
+
+/* Brand Mark (Logo) */
+.brand-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 20px;
+}
+.brand-header .mark {
+  width: 40px;
+  height: 40px;
+}
+
+.title-slide {
+  text-align: center !important;
+}
+.title-slide .lede {
+  margin: 0 auto;
+}
+
+/* Cards & UI Elements */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 30px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+}
+
+.quote {
+  font-style: italic;
+  font-size: 1.4rem;
+  color: var(--text);
+  border-left: 4px solid var(--border-strong);
+  padding-left: 20px;
+  margin: 20px 0;
+}
+
+.attribution {
+  font-size: 1rem;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+/* Command Pill */
+.cmd-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  font-family: var(--mono);
+  font-size: 1.2rem;
+  padding: 15px 20px;
+  border-radius: 8px;
+  border: 1px solid var(--code-border);
+  margin-top: 40px;
+  box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+}
+.cmd-pill .prompt { color: var(--code-dim); user-select: none; }
+
+/* Consensus Meter */
+.finding-mockup {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 15px;
+}
+.finding-mockup:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.loc { font-size: 0.9rem; color: var(--text); }
+.consensus {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  margin-top: 10px;
+}
+.dots-row { display: inline-flex; gap: 4px; }
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+.dot.on { background: var(--ok); }
+.dot.off { background: transparent; border: 2px solid var(--border-strong); }
+.dot.no {
+  background: transparent;
+  border: 2px solid var(--bad);
+  position: relative;
+}
+.dot.no::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border-top: 2px solid var(--bad);
+  transform: rotate(45deg);
+  transform-origin: center;
+}
+.consensus .frac { color: var(--text-dim); }
+.consensus .pct.ok { color: var(--ok); font-weight: 600; }
+.consensus .pct.warn { color: var(--warn); font-weight: 600; }
+.consensus .pct.bad { color: var(--bad); font-weight: 600; }
+
+/* Severity Chips */
+.sev {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border-left: 3px solid;
+  display: inline-block;
+}
+.sev.crit { color: var(--bad); background: var(--bad-bg); border-color: var(--bad); }
+.sev.high { color: var(--warn); background: var(--warn-bg); border-color: var(--warn); }
+.sev.med { color: var(--link); background: rgba(19, 87, 199, 0.1); border-color: var(--link); }
+.sev.low { color: var(--text-faint); background: var(--sunken); border-color: var(--border-strong); }
+
+/* Grids */
+.grid-2-col { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+.grid-3-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+
+.grid-3-col .card h3 { font-size: 1.4rem; margin: 10px 0; }
+.step { font-family: var(--mono); font-size: 0.8rem; color: var(--text-faint); }
+
+.feature-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 25px;
+  border-radius: 10px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+}
+.feature-box h4 { margin: 15px 0 10px 0; font-size: 1.3rem; }
+.feature-box p { font-size: 1.05rem; }
+
+/* Tables */
+.reveal table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 1.1rem;
+}
+.reveal th, .reveal td {
+  padding: 15px;
+  border-bottom: 1px solid var(--border);
+}
+.reveal th {
+  font-weight: 600;
+  text-align: left;
+  color: var(--text-dim);
+}
+.reveal td.highlight {
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Revenue */
+.revenue-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 30px;
+  text-align: center;
+}
+.revenue-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 40px 20px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+}
+.revenue-card h3 { font-size: 1.2rem; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.1em; }
+.revenue-card h2 { font-size: 4rem; margin: 15px 0; border: none; padding: 0; }
+.revenue-card p { font-size: 1.1rem; color: var(--text-dim); }
+
+.conservative h2 { color: var(--text-dim); }
+
+/* Utilities */
+.mt-1 { margin-top: 1rem !important; }
+.mt-2 { margin-top: 2rem !important; }
+
+ul.spaced-list li { margin-bottom: 15px; line-height: 1.5; color: var(--text-dim); }
+ul.spaced-list li strong { color: var(--text); }
+
+.reveal blockquote {
+  background: var(--surface);
+  border-left: 4px solid var(--link);
+  box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+  padding: 20px 30px;
+  border-radius: 0 10px 10px 0;
+  font-style: normal;
+  color: var(--text);
+  font-size: 1.3rem;
+  margin: 0 0 30px 0;
+}
+
+/* Ensure Reveal.js controls (arrows) and progress bar are visible in light mode */
+.reveal .controls { color: var(--text) !important; }
+.reveal .progress { color: var(--link) !important; }
