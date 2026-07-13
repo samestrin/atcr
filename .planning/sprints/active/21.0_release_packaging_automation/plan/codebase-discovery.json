@@ -1,0 +1,180 @@
+{
+  "generated": "2026-07-12",
+  "discovery_method": "semantic",
+  "queries": [
+    "version stamping build time ldflags",
+    "tag triggered github actions release workflow",
+    "internal version package default placeholder",
+    "CI workflow self-hosted gauntlet runner golangci-lint",
+    "cross-platform binary release automation goreleaser"
+  ],
+  "match_count": 12,
+  "build_from": {
+    "primary_file": ".github/workflows/reconcile-module.yml",
+    "reason": "The only existing tag-triggered workflow in the repo. It is explicitly `based_on: .github/workflows/ci.yml` and already solves the exact problem the new release workflow needs solved: scoping a tag-push trigger so it does not collide with a different tag namespace, reusing the [self-hosted, gauntlet] runner, Go 1.25 via actions/setup-go, and the pinned repo-root .golangci.yml.",
+    "suggested_approach": "Create a new `.github/workflows/release.yml` on: push: tags: 'v*' (bare vX.Y.Z, deliberately disjoint from reconcile-module.yml's 'reconcile/v*' filter so the two workflows never both fire on the same tag). Reuse the checkout/setup-go steps verbatim, then add a goreleaser-action step gated on the tag push."
+  },
+  "existing_patterns": [
+    {
+      "name": "Tag-namespaced release-gate workflow",
+      "description": ".github/workflows/reconcile-module.yml triggers only on `reconcile/v*` tags specifically so it never fires on an ATCR app tag (`v1.2.3`). This is a deliberate, tested design from Epic 8.0, not incidental.",
+      "files": [".github/workflows/reconcile-module.yml"],
+      "follow_for": "The new release workflow's tag filter must use the disjoint 'v*' namespace and should call out in a comment (mirroring reconcile-module.yml's own header comment) why the two filters never collide. The tested precedent is recorded in .planning/sprints/completed/8.0_reconciler_library/plan/acceptance-criteria/06-01-tag-push-release-gate-workflow.md (Edge Case 1: 'Tag filter scopes to module releases, not ATCR app tags')."
+    },
+    {
+      "name": "based_on CI reuse convention",
+      "description": "New tag-triggered workflows in this repo declare `based_on: .github/workflows/ci.yml` in a header comment and copy the runner label, checkout, and Go setup steps verbatim rather than inventing new tooling.",
+      "files": [".github/workflows/ci.yml", ".github/workflows/reconcile-module.yml"],
+      "follow_for": "The new release.yml should follow the same reuse pattern: [self-hosted, gauntlet] runner, actions/checkout@v4, actions/setup-go@v5 with go-version '1.25', cache: false."
+    },
+    {
+      "name": "ldflags version stamping (already scaffolded, currently split across two variables)",
+      "description": "Two separate, currently unconnected version variables exist: (1) internal/version.Version (var Version = \"0.0.0\", internal/version/version.go:16) used only in the leaderboard submission envelope per Epic 10.0's clarification decision, stamped via -X github.com/samestrin/atcr/internal/version.Version=..., and (2) cmd/atcr's own package-local `var version = \"\"` (cmd/atcr/version.go:14) which is what atcrVersion()/root.Version actually use for `atcr version` / `atcr --version` output, stamped via -X main.version=..., falling back to debug.ReadBuildInfo()'s module version, then VCS revision, then \"dev\".",
+      "files": ["internal/version/version.go", "cmd/atcr/version.go", "cmd/atcr/main.go"],
+      "follow_for": "AC2 needs the goreleaser ldflags config to stamp BOTH `-X main.version=` (drives `atcr version`/`--version`) and `-X github.com/samestrin/atcr/internal/version.Version=` (drives the leaderboard submission envelope) from the same tag, or the two will silently diverge (e.g. a `go install` build reporting a stale/derived version in the CLI while the leaderboard envelope reports something else). This corrects the epic's own Refinements advisory #2, which claimed both already read a single internal/version.Version — cmd/atcr/version.go does not read that package at all."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/version/version.go",
+      "relevance": "high",
+      "purpose": "Defines Version var (default \"0.0.0\") used by the leaderboard submission envelope (Epic 10.0). Comment already documents the -ldflags stamping convention.",
+      "likely_modification": "reference-only (no code change needed — AC2 is a build-time wiring gap, not a code gap) but MUST be included in the goreleaser ldflags list"
+    },
+    {
+      "path": "cmd/atcr/version.go",
+      "relevance": "high",
+      "purpose": "Defines the package-main-local `version` var and atcrVersion() resolution logic actually used by `atcr version` / `atcr --version`.",
+      "likely_modification": "reference-only — MUST also be included in the goreleaser ldflags list (-X main.version=...) alongside internal/version.Version"
+    },
+    {
+      "path": "cmd/atcr/main.go",
+      "relevance": "medium",
+      "purpose": "newRootCmd() sets `Version: atcrVersion()` (line 136) so cobra auto-registers --version; the atcr version subcommand mirrors the same string.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": ".github/workflows/reconcile-module.yml",
+      "relevance": "high",
+      "purpose": "The only existing tag-triggered GitHub Actions workflow in the repo; establishes the tag-namespace-scoping and CI-reuse conventions the new release workflow must follow.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "relevance": "medium",
+      "purpose": "The base CI workflow (`based_on` target) — runner label, Go setup, golangci-lint version pin (v2.12.2 as of reconcile-module.yml; ci.yml action pin drifted to v8 with an inline version arg) all originate here.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": ".github/workflows/hermes-auto-merge.yml",
+      "relevance": "low",
+      "purpose": "A pull_request-triggered auto-merge workflow (added 2026-07-06, after the 2026-07-03 epic refinement that the plan's original-requirements based its workflow inventory on). NOT tag-triggered, so it cannot collide with release.yml's bare 'v*' tag filter — listed here for inventory completeness so a reviewer sees the full .github/workflows/ set when checking for tag-trigger collisions.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": ".github/workflows/refresh-synthetic-manifest.yml",
+      "relevance": "low",
+      "purpose": "A schedule + workflow_dispatch triggered workflow (NOT tag-triggered; no collision with release.yml's 'v*' filter). Pinned to mutable major-version action tags (actions/checkout@v4, actions/setup-go@v5) — same pinning style the new release workflow will inherit via the based_on ci.yml convention. Listed for workflow-inventory completeness.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "relevance": "high",
+      "purpose": "Tracks the full de facto epic-number-as-semver convention unbroken from [1.0.0] (line 2082) through [20.1.0] (line 1) — 2095 lines, 20+ entries, zero matching git tags today. This single file is AC1's sole evidence for the convention; there is no separate archive file (docs/CHANGELOG_archive.md is deprecated — never tracked, ghost index hit).",
+      "likely_modification": "reference-only — this epic formalizes the convention with real tags but does not need to retroactively tag past entries"
+    },
+    {
+      "path": "docs/CHANGELOG_archive.md",
+      "relevance": "low",
+      "purpose": "Originally added from a semantic-search ghost hit as the archive of pre-v4.0.0 changelog entries evidencing AC1's epic-number-as-semver convention is unbroken since the first entry.",
+      "likely_modification": "reference-only — AC1's versioning decision formalizes an existing convention that spans the full history",
+      "status": "deprecated",
+      "deprecated_reason": "Path not found and never tracked in git (git log --follow empty; not in HEAD). The semantic index returned a ghost entry mirroring CHANGELOG.md content (identical score and snippet), and original-requirements.md:66 (2026-07-03) cited this path, but no such file exists. The full epic-number-as-semver history — [1.0.0] (CHANGELOG.md:2082) through [20.1.0] (CHANGELOG.md:1) — lives in the single CHANGELOG.md (2095 lines); no separate archive file exists. Use CHANGELOG.md as AC1's sole evidence."
+    },
+    {
+      "path": "docs/",
+      "relevance": "medium",
+      "purpose": "docs/ directory has no release-process document yet (README.md, ci-integration.md, github-action.md, etc. exist but nothing named release*.md).",
+      "likely_modification": "create — AC5's release-process document (e.g. docs/release-process.md) is new"
+    },
+    {
+      "path": ".planning/sprints/completed/8.0_reconciler_library/plan/acceptance-criteria/06-01-tag-push-release-gate-workflow.md",
+      "relevance": "medium",
+      "purpose": "The tested acceptance-criteria precedent for a tag-scoped release-gate workflow. Its 'Edge Case 1: Tag filter scopes to module releases, not ATCR app tags' is the design decision the new release.yml's disjoint bare 'v*' filter must honor; also defines the permissions: contents: read posture the module gate uses.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": ".planning/.knowledge/clarifications-10.0_model_eval_leaderboard-Q3.md",
+      "relevance": "medium",
+      "purpose": "The original decision record creating internal/version.Version specifically so a release build could stamp it via -ldflags (-X github.com/samestrin/atcr/internal/version.Version=...), and the rationale for the neutral \"0.0.0\" default. Source of truth for WHY integration_points[0] is an ldflags target.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "go.mod",
+      "relevance": "low",
+      "purpose": "Module path github.com/samestrin/atcr, go 1.25.0 — confirms the Go toolchain version the release workflow and goreleaser config must target.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": ".planning/epics/active/33.2_public_launch.md",
+      "relevance": "low",
+      "purpose": "A separate, still-active epic whose AC1 also references `go install github.com/samestrin/atcr/cmd/atcr@latest` succeeding externally — potentially dependent on or overlapping with this epic's release process once cut.",
+      "likely_modification": "reference-only (out of scope for this plan; flagged for awareness only)"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "internal/version/version.go:Version",
+      "type": "ldflags-target",
+      "description": "Release build must set -X github.com/samestrin/atcr/internal/version.Version=<tag-without-v-prefix-or-with, TBD by AC1 decision>"
+    },
+    {
+      "location": "cmd/atcr/version.go:version",
+      "type": "ldflags-target",
+      "description": "Release build must ALSO set -X main.version=<same value> so `atcr version`/`--version` and the leaderboard envelope never diverge"
+    },
+    {
+      "location": ".github/workflows/ (new file, e.g. release.yml)",
+      "type": "entry-point",
+      "description": "New tag-push trigger scoped to bare 'v*', running goreleaser to build cross-platform binaries and publish a GitHub Release"
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "[self-hosted, gauntlet] CI runner + Go 1.25 setup + golangci-lint pin",
+      "path": ".github/workflows/ci.yml",
+      "can_extend": true,
+      "usage_example": "Copy the checkout/setup-go steps verbatim into the new release workflow before invoking goreleaser, per the based_on convention already used by reconcile-module.yml"
+    }
+  ],
+  "architecture_notes": [
+    "The tag-namespace decision is already effectively made and battle-tested: bare vX.Y.Z for ATCR app releases, reconcile/vX.Y.Z reserved and already live for the nested ./reconcile module. The two workflows' tag filters must remain disjoint.",
+    "Version stamping is a two-target problem, not a one-target problem: internal/version.Version (leaderboard envelope) and cmd/atcr's local version var (CLI output) are currently independent variables with no shared source of truth. A release build's ldflags must set both from the same tag value or the CLI and the envelope can silently disagree.",
+    "CHANGELOG.md already carries an unbroken epic-number-as-semver convention — 20+ entries from [1.0.0] (line 2082) through [20.1.0] (line 1), 2095 lines total, with zero git tags cut against any of them — this epic's versioning decision is about formalizing an existing, already-numbered history, not inventing a fresh counter. (No separate archive file exists; docs/CHANGELOG_archive.md is a deprecated ghost reference.)",
+    "No goreleaser config, no release-focused doc, and no tag-triggered ATCR-app workflow exist anywhere in the repo today. .github/workflows/ holds four workflows — ci.yml (push/PR), reconcile-module.yml (push, tag-scoped to reconcile/v*), hermes-auto-merge.yml (pull_request), refresh-synthetic-manifest.yml (schedule + workflow_dispatch) — none of them an ATCR-app release, and only reconcile-module.yml is tag-triggered at all, so bare 'v*' is free. This is greenfield packaging infrastructure layered onto an established CI-reuse convention."
+  ],
+  "files_to_modify": [],
+  "files_to_create": [
+    {
+      "path": ".goreleaser.yaml",
+      "purpose": "Cross-platform build + archive + GitHub Release config, with ldflags stamping both internal/version.Version and cmd/atcr's local version var",
+      "based_on": null
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "purpose": "Tag-triggered (bare v*) workflow that runs goreleaser on tag push, based_on ci.yml per the established convention",
+      "based_on": ".github/workflows/reconcile-module.yml"
+    },
+    {
+      "path": "docs/release-process.md",
+      "purpose": "Documents what triggers a release, who cuts one, and how (AC5)",
+      "based_on": "docs/ci-integration.md (structural precedent for a process doc under docs/)"
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test",
+    "test_location": "co-located _test.go files",
+    "naming_convention": "*_test.go",
+    "example_test": "cmd/atcr/backend_contract_test.go"
+  }
+}
