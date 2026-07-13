@@ -133,3 +133,35 @@ func TestRangeBuilder_ZeroContextDiffRunsOnce(t *testing.T) {
 	assert.Equal(t, afterRanges, g.execCount,
 		"grounding changed-lines parse must reuse the memoized --unified=0 chunks (no extra git process)")
 }
+
+// Under the DEFAULT roster mode (blocks), the payload build populates the
+// function-context and plain-context caches (fcChunks/plainChunks) but never the
+// zero-context cache (zeroCtxChunks), because only files mode consumes it (via
+// rangeChunks). So grounding after a blocks-mode build still spawns one
+// --unified=0 subprocess — the reuse elides validateRange + --name-status but NOT
+// the zero-context diff. This test documents that residual process so the
+// "adds no git subprocess" docstring claim is not read to cover blocks mode. It
+// is the blocks-mode counterpart of TestRangeBuilder_GroundingReusesPayloadGitProcesses
+// (files mode, +0): same builder, different payload mode, +1.
+func TestRangeBuilder_BlocksModeGroundingSpawnsOneDiff(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	write(t, dir, "b.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	write(t, dir, "b.go", goFileV2)
+	head := commitAll(t, dir, "v2")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	// Blocks mode builds via fcChunks/plainChunks and never touches zeroCtx.
+	_, err := rb.BuildEntries(ModeBlocks)
+	require.NoError(t, err)
+	afterPayload := rb.g.execCount
+
+	cl, err := rb.BuildChangedLines()
+	require.NoError(t, err)
+	require.Len(t, cl, 2, "both changed files present in grounding data")
+
+	assert.Equal(t, afterPayload+1, rb.g.execCount,
+		"grounding after a blocks-mode payload build must spawn exactly one --unified=0 subprocess (the zero-context cache is populated only by files mode)")
+}
