@@ -53,6 +53,7 @@ type rangeState struct {
 	fc         map[string]string      // head path -> --function-context chunk
 	plain      map[string]string      // head path -> --unified=10 chunk
 	raw        map[string]string      // head path -> plain -M diff chunk
+	zeroCtx    map[string]string      // head path -> --unified=0 chunk (raw)
 	lineRanges map[string][]lineRange // head path -> head-side changed ranges
 }
 
@@ -475,15 +476,33 @@ func parseHeadRanges(chunk string) []lineRange {
 	return ranges
 }
 
+// zeroCtxChunks memoizes the whole-range zero-context (--unified=0) diff split
+// per head path (raw chunks). Both rangeChunks (files-mode line-range parse) and
+// changedLines (grounding changed-text parse) consume this one process, so the
+// zero-context diff runs once per range across payload building and grounding.
+func (g *gitRunner) zeroCtxChunks(base, head string) (map[string]string, error) {
+	s := g.forRange(base, head)
+	if s.zeroCtx != nil {
+		return s.zeroCtx, nil
+	}
+	m, err := g.diffChunks(base, head, "--unified=0")
+	if err != nil {
+		return nil, err
+	}
+	s.zeroCtx = m
+	return m, nil
+}
+
 // rangeChunks memoizes the whole-range zero-context diff, split per head path
 // and parsed into changed line ranges, so the N per-file range queries collapse
-// to a single git process.
+// to a single git process. It reuses the memoized raw zero-context chunks so the
+// grounding builder shares the same --unified=0 process.
 func (g *gitRunner) rangeChunks(base, head string) (map[string][]lineRange, error) {
 	s := g.forRange(base, head)
 	if s.lineRanges != nil {
 		return s.lineRanges, nil
 	}
-	chunks, err := g.diffChunks(base, head, "--unified=0")
+	chunks, err := g.zeroCtxChunks(base, head)
 	if err != nil {
 		return nil, err
 	}

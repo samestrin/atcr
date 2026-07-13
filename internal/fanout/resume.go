@@ -280,7 +280,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		return nil, nil, err
 	}
 
-	payloads, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
+	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -312,7 +312,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		}
 	}
 
-	changed, groundingDisabledReason := computeGroundingData(ctx, req)
+	changed, groundingDisabledReason := computeGroundingData(ctx, req, rb)
 	p := &PreparedReview{
 		ID:          filepath.Base(reviewDir),
 		Dir:         reviewDir,

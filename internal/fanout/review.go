@@ -236,7 +236,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if err := validateReviewRequest(cfg, req); err != nil {
 		return nil, err
 	}
-	payloads, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
+	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode)
+	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode, rb)
 }
 
 // finalizePreparedReview is the shared scaffold-and-assemble tail of the two
@@ -275,7 +275,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 // diff cache. payloadMode is recorded as the manifest's PayloadMode (the
 // configured mode for the git path, "diff" for the ingestion path); the range
 // provenance comes from req.Range, which the ingestion caller leaves empty.
-func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, payloads map[string]modePayload, perAgentMode map[string]string, slots []Slot, payloadMode string) (*PreparedReview, error) {
+func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, payloads map[string]modePayload, perAgentMode map[string]string, slots []Slot, payloadMode string, rb *payload.RangeBuilder) (*PreparedReview, error) {
 	// Derive the id unconditionally: for --output-dir the id is provenance-only
 	// (written to the manifest and PreparedReview.ID but not used for the path),
 	// while for --id and the default derived case the id IS the path component.
@@ -394,7 +394,7 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// range so WritePool can drop findings not anchored in the patch (see
 	// computeGroundingData for the fail-open contract). The reason string records
 	// WHY the gate is off (git failure vs. diff ingestion) in summary.json.
-	changed, groundingDisabledReason := computeGroundingData(ctx, req)
+	changed, groundingDisabledReason := computeGroundingData(ctx, req, rb)
 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, GroundingDisabledReason: groundingDisabledReason, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
 }
 
@@ -408,11 +408,40 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 //
 // It also returns a human-readable reason the gate is off (empty when enabled),
 // recorded in summary.json so a git-failure or diff-ingestion skip is auditable.
-func computeGroundingData(ctx context.Context, req ReviewRequest) (payload.ChangedLines, string) {
+func computeGroundingData(ctx context.Context, req ReviewRequest, rb *payload.RangeBuilder) (payload.ChangedLines, string) {
 	if req.Range.Base == "" || req.Range.Head == "" {
 		return nil, "range-less request (diff ingestion): grounding not applicable"
 	}
-	cl, err := payload.BuildChangedLines(ctx, req.Repo, req.Range.Base, req.Range.Head)
+	// Guard the invariant that rb was constructed from the same req.Range it is
+	// grounding. When rb != nil the changed lines come from rb's OWN base/head
+	// (BuildChangedLines uses b.base/b.head), not req.Range, so a mismatched pair
+	// would silently anchor grounding to the rb's range with no error. Every
+	// current caller builds rb from the same req.Range in the same function, so
+	// they agree today — but the pairing was implicit. Fail loudly (disable the
+	// gate with an audible reason) rather than ground the wrong range. The
+	// standalone (rb == nil) path builds from req.Range directly, so it is always
+	// matched and skips this check.
+	if rb != nil {
+		rbb, rbh := rb.Range()
+		if rbb != req.Range.Base || rbh != req.Range.Head {
+			log.FromContext(ctx).Warn("grounding disabled: range builder range differs from request range",
+				"builder_range", rbb+".."+rbh, "request_range", req.Range.Base+".."+req.Range.Head)
+			return nil, "range builder range mismatch: builder " + rbb + ".." + rbh + " differs from request " + req.Range.Base + ".." + req.Range.Head
+		}
+	}
+	// Reuse the payload builder's gitRunner (memoized --name-status / --unified=0
+	// for this same range) when available (Epic 22.4); fall back to a standalone
+	// runner for any caller path that has no builder (defensive — the git-range
+	// paths always pass one).
+	var (
+		cl  payload.ChangedLines
+		err error
+	)
+	if rb != nil {
+		cl, err = rb.BuildChangedLines()
+	} else {
+		cl, err = payload.BuildChangedLines(ctx, req.Repo, req.Range.Base, req.Range.Head)
+	}
 	if err != nil {
 		log.FromContext(ctx).Warn("grounding disabled: could not compute changed lines", "err", err)
 		return nil, "changed-lines computation failed: " + err.Error()
@@ -500,7 +529,9 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if err != nil {
 		return nil, err
 	}
-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, diffMode)
+	// Diff-ingestion has no git range, so no RangeBuilder: computeGroundingData's
+	// range-less early return handles it (grounding not applicable).
+	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, diffMode, nil)
 }
 
 // runEngine wires the optional read-only tool harness for p's tool-enabled slots
@@ -735,16 +766,20 @@ type modePayload struct {
 }
 
 // buildPayloads builds each distinct payload mode the roster uses exactly once.
-func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head string) (map[string]modePayload, error) {
+// It returns the shared payload.RangeBuilder so the caller can compute grounding
+// data (computeGroundingData) on the same gitRunner, reusing the memoized
+// --name-status / --unified=0 diffs instead of re-spawning them (Epic 22.4).
+func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head string) (map[string]modePayload, *payload.RangeBuilder, error) {
+	rb := payload.NewRangeBuilder(ctx, repo, base, head)
 	out := map[string]modePayload{}
 	for _, mode := range neededModes(cfg) {
-		entries, err := payload.BuildEntries(ctx, payload.PayloadMode(mode), repo, base, head)
+		entries, err := rb.BuildEntries(payload.PayloadMode(mode))
 		if err != nil {
-			return nil, fmt.Errorf("building %s payload: %w", mode, err)
+			return nil, nil, fmt.Errorf("building %s payload: %w", mode, err)
 		}
 		kept, trunc := payload.ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget)
 		if trunc.AllDropped {
-			return nil, fmt.Errorf("%w (mode %s, dropped %d file(s))", ErrPayloadFullyDropped, mode, len(trunc.FilesDropped))
+			return nil, nil, fmt.Errorf("%w (mode %s, dropped %d file(s))", ErrPayloadFullyDropped, mode, len(trunc.FilesDropped))
 		}
 		var b strings.Builder
 		for _, e := range kept {
@@ -756,7 +791,14 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		// against each model's window (Epic 19.10 F2).
 		out[mode] = modePayload{Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc}
 	}
-	return out, nil
+	// Every payload mode's entries are now materialized into out, so the
+	// per-mode diff chunk caches (fc/plain/raw) and the line-range cache on the
+	// shared gitRunner are dead weight. Grounding (computeGroundingData) reads
+	// only the zero-context diff and the --name-status list, both retained, so
+	// releasing the per-mode caches here lowers peak heap during grounding for
+	// large multi-mode diffs without re-spawning any git process (Epic 22.4).
+	rb.ReleaseModeCaches()
+	return out, rb, nil
 }
 
 // neededModes returns the distinct payload modes across the whole roster.
