@@ -111,9 +111,10 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
 
    This builds the full cross-platform matrix into `dist/` **without** pushing a
    tag or publishing anything. Confirm the build succeeds and that both `-X`
-   ldflags targets resolve and agree on the numeric `X.Y.Z` — `main.version`
-   (printed by `atcr --version`) and `internal/version.Version` (the leaderboard
-   submission envelope). The first real tag publishes a **public,
+   ldflags targets resolve and agree with each other — `main.version` reports
+   the v-prefixed form and `internal/version.Version` reports the v-stripped
+   form. Only a real tag build stamps the exact `vX.Y.Z`; the snapshot verifies
+   the mechanism, not the final release number. The first real tag publishes a **public,
    hard-to-retract** GitHub Release, so this dry run is a required step, not a
    convenience.
 
