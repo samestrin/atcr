@@ -88,3 +88,21 @@ func (b *RangeBuilder) BuildChangedLines() (ChangedLines, error) {
 	}
 	return b.g.changedLines(b.base, b.head)
 }
+
+// ReleaseModeCaches drops the per-mode diff chunk caches (function-context,
+// plain -U10, and raw) and the parsed line-range cache, retaining only the
+// zero-context diff and the --name-status list that grounding needs. Call it
+// once every payload mode's entries are materialized (e.g. after buildPayloads):
+// the per-mode caches are dead weight once the entries are copied out, and
+// releasing them lowers peak heap during the subsequent grounding build for
+// large multi-mode diffs without re-spawning any git process — grounding reads
+// the retained zero-context cache and the retained --name-status list. A later
+// BuildEntries call re-populates the per-mode caches from the retained
+// range-level state if needed, so a RangeBuilder stays reusable after release.
+func (b *RangeBuilder) ReleaseModeCaches() {
+	s := b.g.forRange(b.base, b.head)
+	s.fc = nil
+	s.plain = nil
+	s.raw = nil
+	s.lineRanges = nil
+}

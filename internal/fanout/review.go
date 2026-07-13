@@ -791,6 +791,13 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		// against each model's window (Epic 19.10 F2).
 		out[mode] = modePayload{Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc}
 	}
+	// Every payload mode's entries are now materialized into out, so the
+	// per-mode diff chunk caches (fc/plain/raw) and the line-range cache on the
+	// shared gitRunner are dead weight. Grounding (computeGroundingData) reads
+	// only the zero-context diff and the --name-status list, both retained, so
+	// releasing the per-mode caches here lowers peak heap during grounding for
+	// large multi-mode diffs without re-spawning any git process (Epic 22.4).
+	rb.ReleaseModeCaches()
 	return out, rb, nil
 }
 

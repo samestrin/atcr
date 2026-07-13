@@ -165,3 +165,48 @@ func TestRangeBuilder_BlocksModeGroundingSpawnsOneDiff(t *testing.T) {
 	assert.Equal(t, afterPayload+1, rb.g.execCount,
 		"grounding after a blocks-mode payload build must spawn exactly one --unified=0 subprocess (the zero-context cache is populated only by files mode)")
 }
+
+// Once every payload mode's entries are materialized, the per-mode diff chunk
+// caches (function-context, plain -U10, raw) and the parsed line-range cache are
+// dead weight: grounding reads only the zero-context diff and the --name-status
+// list. ReleaseModeCaches drops the per-mode caches and keeps the range-level
+// ones grounding needs, so a multi-mode review holds the per-mode diff bodies
+// only during buildPayloads — not through computeGroundingData — lowering peak
+// heap for large diffs without re-spawning any git process. This test builds all
+// three modes (populating fc/plain/raw and zeroCtx/lineRanges), releases, and
+// verifies grounding still reuses the retained zero-context cache (no new git
+// process).
+func TestRangeBuilder_ReleaseModeCaches(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	write(t, dir, "b.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	write(t, dir, "b.go", goFileV2)
+	head := commitAll(t, dir, "v2")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	// Build all three modes so fc/plain (blocks), raw (diff), and zeroCtx +
+	// lineRanges (files) are all populated.
+	for _, mode := range []PayloadMode{ModeBlocks, ModeDiff, ModeFiles} {
+		_, err := rb.BuildEntries(mode)
+		require.NoError(t, err)
+	}
+
+	rb.ReleaseModeCaches()
+	s := rb.g.state
+	assert.Nil(t, s.fc, "function-context cache released")
+	assert.Nil(t, s.plain, "plain-context cache released")
+	assert.Nil(t, s.raw, "raw diff cache released")
+	assert.Nil(t, s.lineRanges, "line-range cache released")
+	assert.NotNil(t, s.files, "name-status cache retained for grounding")
+	assert.NotNil(t, s.zeroCtx, "zero-context cache retained for grounding (populated by files mode)")
+
+	// Grounding reuses the retained zero-context cache: no new git process.
+	before := rb.g.execCount
+	cl, err := rb.BuildChangedLines()
+	require.NoError(t, err)
+	require.Len(t, cl, 2, "both changed files present in grounding data after release")
+	assert.Equal(t, before, rb.g.execCount,
+		"grounding after ReleaseModeCaches must reuse the retained zero-context cache (no new git process)")
+}
