@@ -647,3 +647,44 @@ func TestHost_OversizedResultRejectsWithoutTrapping(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "file", root.Kind)
 }
+
+// firstOfKind returns the first node of the given kind in a pre-order walk.
+func firstOfKind(n Node, kind string) (Node, bool) {
+	if n.Kind == kind {
+		return n, true
+	}
+	for _, c := range n.Children {
+		if m, ok := firstOfKind(c, kind); ok {
+			return m, true
+		}
+	}
+	return Node{}, false
+}
+
+// TestHost_PyParseTripleQuoteInComment is the epic-22.3 regression for a `#`
+// comment that contains a triple-quote token. The old scanTripleQuotes scanned
+// the whole physical line, saw the `"""` inside the comment, and flipped into
+// multi-line-string state — silently swallowing every following line (including
+// real defs) until a never-arriving closing delimiter. A comment-aware scan must
+// stop at the unquoted `#`, leaving the following `def b` intact for hashing.
+func TestHost_PyParseTripleQuoteInComment(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	src := "def a():\n" +
+		"    x = 1  # a fake \"\"\" opens here\n" +
+		"    return x\n" +
+		"\n" +
+		"def b():\n" +
+		"    return 2\n"
+	root, err := p.Parse([]byte(src))
+	require.NoError(t, err)
+
+	var names []string
+	collectFuncNames(root, &names)
+	require.Contains(t, names, "a")
+	require.Contains(t, names, "b", "a triple-quote inside a # comment must not swallow the def that follows")
+}
