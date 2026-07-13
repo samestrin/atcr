@@ -688,3 +688,56 @@ func TestHost_PyParseTripleQuoteInComment(t *testing.T) {
 	require.Contains(t, names, "a")
 	require.Contains(t, names, "b", "a triple-quote inside a # comment must not swallow the def that follows")
 }
+
+// TestHost_PyParseTripleQuoteInsideString is the epic-22.3 regression for a
+// triple-quote token that appears INSIDE a single-line string literal. The old
+// scan saw the `”'` inside the "..." string and opened a multi-line-string span,
+// swallowing every following def until a never-arriving close. A quote-aware scan
+// must treat the `”'` as content of the double-quoted string and leave `def b`
+// intact.
+func TestHost_PyParseTripleQuoteInsideString(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	src := "def a():\n" +
+		"    s = \"text with ''' inside\"\n" +
+		"    return s\n" +
+		"\n" +
+		"def b():\n" +
+		"    return 2\n"
+	root, err := p.Parse([]byte(src))
+	require.NoError(t, err)
+
+	var names []string
+	collectFuncNames(root, &names)
+	require.Contains(t, names, "a")
+	require.Contains(t, names, "b", "a triple-quote inside a single-line string must not swallow the def that follows")
+}
+
+// TestHost_PyParseHashInsideString is the epic-22.3 regression for a `#` that
+// appears inside a single-line string literal on a block-header line. The old
+// stripComment cut the line at the first `#`, erasing the trailing `:` so the
+// header was not recognized and its body never nested (corrupting the structural
+// hash). A quote-aware stripComment keeps the `#` as string content, so the `if`
+// header keeps its `:` and nests its body.
+func TestHost_PyParseHashInsideString(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	src := "def a():\n" +
+		"    if tag == \"x#y\":\n" +
+		"        return 1\n" +
+		"    return 0\n"
+	root, err := p.Parse([]byte(src))
+	require.NoError(t, err)
+
+	ifNode, ok := firstOfKind(root, "if")
+	require.True(t, ok, "the if header must be recognized as an if node")
+	require.NotEmpty(t, ifNode.Children, "a # inside a string literal must not break header detection / body nesting")
+}
