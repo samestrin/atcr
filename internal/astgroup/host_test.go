@@ -810,3 +810,40 @@ func TestHost_PyParseEscapedQuoteInString(t *testing.T) {
 	require.True(t, ok, "the if header must be recognized as an if node")
 	require.NotEmpty(t, ifNode.Children, "an escaped quote inside a string literal must not let a trailing # strip the header's colon")
 }
+
+// TestHost_PyParseInStringBracketOnContinuationLine is the epic-22.3 follow-up
+// (TD pyparser/main.go:115) pinning that significantLines' bracketDelta agrees
+// with the quote-aware stripComment on a bracket-continuation line whose string
+// embeds an unbalanced bracket after an in-string `#`. significantLines feeds
+// bracketDelta(stripComment(...)); the quote-aware stripComment keeps the bytes
+// after an in-string `#` that the old cut-at-first-`#` discarded, so a
+// not-string-aware bracketDelta would count the in-string `(` in "x # (", hold
+// depth > 0 past the real closing `]`, and swallow the following `def after():`
+// into the folded logical line — dropping it from the structure. A string-aware
+// bracketDelta ignores the in-string bracket, closes the continuation at `]`, and
+// collects `after`.
+func TestHost_PyParseInStringBracketOnContinuationLine(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	// The list literal spans physical lines; its first element string embeds
+	// `# (` — an in-string `#` followed by an unbalanced `(`. The real bracket
+	// balance closes at `]` on its own line, so `def after()` must remain a
+	// top-level sibling rather than being folded into the list's logical line.
+	src := "data = [\n" +
+		"    \"x # (\",\n" +
+		"    \"y\",\n" +
+		"]\n" +
+		"def after():\n" +
+		"    return 1\n"
+	root, err := p.Parse([]byte(src))
+	require.NoError(t, err)
+
+	var names []string
+	collectFuncNames(root, &names)
+	require.Contains(t, names, "after",
+		"a def after a bracket-continuation whose string embeds `# (` must not be swallowed by a not-string-aware bracketDelta over-folding past the closing `]`")
+}
