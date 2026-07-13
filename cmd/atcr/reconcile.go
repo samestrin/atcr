@@ -5,6 +5,7 @@ import (
 	"fmt"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -102,6 +103,9 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		// Normalize to "." so empty and unset behave identically, and stay
 		// consistent with `atcr verify --repo`.
 		repoRoot = "."
+	}
+	if info, err := os.Stat(repoRoot); err != nil || !info.IsDir() {
+		return usageError(fmt.Errorf("--repo %q does not exist or is not a directory", repoRoot))
 	}
 
 	sources, _ := cmd.Flags().GetStringSlice("sources")
