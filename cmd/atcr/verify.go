@@ -87,10 +87,11 @@ func runVerify(cmd *cobra.Command, args []string) error {
 
 	fresh, _ := cmd.Flags().GetBool("fresh")
 	thorough, _ := cmd.Flags().GetBool("thorough")
-	// The reviewed-repo root skeptics inspect and the exec validator resolves
-	// go.mod against (Epic 22.1). Defaults to "." (the CWD == repo-root operating
-	// assumption), preserving pre-22.1 behavior; --repo <other-repo> threads a
-	// repo other than the CWD — kept consistent with `atcr reconcile --repo`.
+	// The reviewed-repo root skeptics inspect and the redactor relativizes
+	// absolute paths against (Epic 22.1). Defaults to "." (the CWD == repo-root
+	// operating assumption), preserving pre-22.1 behavior; --repo <other-repo>
+	// threads a repo other than the CWD — kept consistent with `atcr reconcile
+	// --repo`.
 	repoRoot, _ := cmd.Flags().GetString("repo")
 	if strings.TrimSpace(repoRoot) == "" {
 		// Normalize an explicit empty --repo to "." so empty and unset behave
