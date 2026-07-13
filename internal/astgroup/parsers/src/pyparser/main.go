@@ -70,7 +70,7 @@ type pline struct {
 // triple-quoted string (docstrings, multi-line literals) are skipped on a
 // best-effort basis so a def/class/# appearing as string CONTENT is not misparsed
 // as real code. The skip relies on scanTripleQuotes, which is quote/escape-aware
-// (epic 22.3): a """/”' embedded in a single/double-quoted string, and a triple
+// (epic 22.3): a """ or a triple single-quote embedded in a single/double-quoted string, and a triple
 // quote inside a # comment, no longer flip the state machine. It remains a
 // heuristic — raw/byte/f-string prefixes are not modelled — so adversarial source
 // using those can still mis-slice, but ordinary code no longer does (PoC-grade,
@@ -173,7 +173,7 @@ func bracketDelta(s string) int {
 //   - A `#` inside an open triple-quoted span, or inside a single-line '...'/"..."
 //     literal, is string content — not a comment — so the comment offset is only
 //     taken when the scan is outside every string at that position.
-//   - A `”'`/`"""` token inside a single-line string literal is content too, so it
+//   - A """ or a triple single-quote token inside a single-line string literal is content too, so it
 //     does not open a spurious multi-line span that swallows the code that follows.
 //   - A backslash escapes the next byte inside a single-line string, so an escaped
 //     quote does not prematurely close it.

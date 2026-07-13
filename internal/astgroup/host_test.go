@@ -691,9 +691,9 @@ func TestHost_PyParseTripleQuoteInComment(t *testing.T) {
 
 // TestHost_PyParseTripleQuoteInsideString is the epic-22.3 regression for a
 // triple-quote token that appears INSIDE a single-line string literal. The old
-// scan saw the `”'` inside the "..." string and opened a multi-line-string span,
+// scan saw the triple single-quote inside the "..." string and opened a multi-line-string span,
 // swallowing every following def until a never-arriving close. A quote-aware scan
-// must treat the `”'` as content of the double-quoted string and leave `def b`
+// must treat the triple single-quote as content of the double-quoted string and leave `def b`
 // intact.
 func TestHost_PyParseTripleQuoteInsideString(t *testing.T) {
 	h := NewHost()
