@@ -116,6 +116,10 @@ func (b *RangeBuilder) BuildChangedLines() (ChangedLines, error) {
 // BuildEntries call re-populates the per-mode caches from the retained
 // range-level state if needed, so a RangeBuilder stays reusable after release.
 func (b *RangeBuilder) ReleaseModeCaches() {
+	if !b.inUse.CompareAndSwap(0, 1) {
+		panic("payload.RangeBuilder used concurrently: it is not safe for concurrent use")
+	}
+	defer b.inUse.Store(0)
 	s := b.g.forRange(b.base, b.head)
 	s.fc = nil
 	s.plain = nil

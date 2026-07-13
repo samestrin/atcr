@@ -231,6 +231,7 @@ func TestRangeBuilder_ConcurrentUsePanics(t *testing.T) {
 	rb.inUse.Store(1)
 	assert.Panics(t, func() { _, _ = rb.BuildEntries(ModeDiff) })
 	assert.Panics(t, func() { _, _ = rb.BuildChangedLines() })
+	assert.Panics(t, func() { rb.ReleaseModeCaches() })
 	rb.inUse.Store(0)
 
 	// Sequential use after the sentinel resets works unchanged.
