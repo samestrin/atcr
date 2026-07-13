@@ -148,20 +148,64 @@ func leadingIndent(raw string) (indent, start int) {
 	return indent, start
 }
 
-// bracketDelta returns the net change in (), [], {} nesting contributed by s. It
-// is a heuristic that does not exclude brackets inside string/char literals, so a
-// line embedding an unbalanced bracket inside a string can mis-count; that is
-// acceptable for a structural pre-pass whose only job is to fold a multi-line
-// header or literal into one logical line.
+// bracketDelta returns the net change in (), [], {} nesting contributed by the
+// code in s, ignoring brackets inside string literals and after an unquoted `#`
+// comment. It shares scanLine's quote/escape/triple-quote discipline (epic 22.3)
+// so it agrees with the quote-aware stripComment about which bytes are code:
+// significantLines feeds it stripComment(...) output, and a not-string-aware count
+// would disagree on a continuation line whose string embeds a bracket after an
+// in-string `#` (which the quote-aware stripComment now preserves), holding depth
+// open past the real closing bracket and mis-folding the logical line. It remains
+// a heuristic — raw/byte/f-string prefixes are not modelled — but no longer counts
+// brackets that are plainly string content.
 func bracketDelta(s string) int {
 	d := 0
-	for i := 0; i < len(s); i++ {
+	var q byte  // active single-line string quote (' or "), 0 when outside one
+	delim := "" // active triple-quoted delimiter, "" when outside
+	for i := 0; i < len(s); {
+		if delim != "" {
+			if strings.HasPrefix(s[i:], delim) {
+				delim = ""
+				i += 3
+				continue
+			}
+			i++
+			continue
+		}
+		if q != 0 {
+			// Inside a single-line '...'/"..." literal: a backslash escapes the next
+			// byte, only the matching quote closes it, and brackets here are content.
+			switch s[i] {
+			case '\\':
+				i += 2
+				continue
+			case q:
+				q = 0
+			}
+			i++
+			continue
+		}
+		if strings.HasPrefix(s[i:], `"""`) {
+			delim = `"""`
+			i += 3
+			continue
+		}
+		if strings.HasPrefix(s[i:], `'''`) {
+			delim = `'''`
+			i += 3
+			continue
+		}
 		switch s[i] {
+		case '#':
+			return d // unquoted comment: the rest of the line is not code
+		case '"', '\'':
+			q = s[i]
 		case '(', '[', '{':
 			d++
 		case ')', ']', '}':
 			d--
 		}
+		i++
 	}
 	return d
 }
