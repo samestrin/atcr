@@ -164,12 +164,19 @@ func bracketDelta(s string) int {
 	return d
 }
 
-// scanTripleQuotes advances the triple-quoted-string state across one physical
-// line. delim is the active delimiter at line start ("" if outside a string);
-// the return value is the state at line end. It is a heuristic (it does not model
-// escapes or single/double quotes), sufficient to keep docstring content from
-// being parsed as code.
-func scanTripleQuotes(line, delim string) string {
+// scanLine advances pyparser's line-scanning state across one physical line. It
+// carries the active triple-quoted-string delimiter (delim; "" when outside such
+// a string) and reports the byte offset where an unquoted `#` comment begins
+// (len(line) when the line has none). A `#` inside an open triple-quoted string
+// span is string content, not a comment, so the comment offset is only taken when
+// delim is "" at that position. This is what makes scanTripleQuotes and
+// stripComment comment-aware (epic 22.3): a triple-quote token sitting inside a
+// `#` comment no longer flips the multi-line-string state machine and silently
+// swallows the code that follows.
+//
+// It remains a heuristic (see the package doc): raw/byte/f-string prefixes are not
+// modelled.
+func scanLine(line, delim string) (endDelim string, commentAt int) {
 	for i := 0; i < len(line); {
 		if delim != "" {
 			if strings.HasPrefix(line[i:], delim) {
@@ -190,9 +197,21 @@ func scanTripleQuotes(line, delim string) string {
 			i += 3
 			continue
 		}
+		if line[i] == '#' {
+			return delim, i
+		}
 		i++
 	}
-	return delim
+	return delim, len(line)
+}
+
+// scanTripleQuotes advances the triple-quoted-string state across one physical
+// line and returns the state at line end (delim is the active delimiter at line
+// start, "" if outside). It is comment-aware via scanLine: a triple-quote token
+// appearing inside a `#` comment (epic 22.3) does not flip the state machine.
+func scanTripleQuotes(line, delim string) string {
+	end, _ := scanLine(line, delim)
+	return end
 }
 
 // build consumes consecutive lines at exactly `indent` and returns their nodes.
@@ -288,11 +307,12 @@ func identAfter(t, kw string) string {
 	return rest[:end]
 }
 
+// stripComment returns text with any trailing `#` comment removed. It is
+// comment-aware via scanLine: a `#` inside a triple-quoted string span on this
+// line is treated as string content, not a comment start (epic 22.3).
 func stripComment(text string) string {
-	if i := strings.IndexByte(text, '#'); i >= 0 {
-		return text[:i]
-	}
-	return text
+	_, at := scanLine(text, "")
+	return text[:at]
 }
 
 func main() {}
