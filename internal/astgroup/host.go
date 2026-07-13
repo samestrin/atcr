@@ -279,8 +279,10 @@ var parseTimeout = 5 * time.Second
 
 // maxResultBytes caps the JSON a guest parser may return. This prevents a
 // hostile or buggy plugin from claiming a multi-gigabyte result length and
-// driving the host out of memory while reading wasm memory.
-const maxResultBytes = 1 << 26 // 64 MiB
+// driving the host out of memory while reading wasm memory. It is a var, not a
+// const, only so a test can shrink it to exercise the oversized-result reject
+// path (mirroring parseTimeout above); production code never reassigns it.
+var maxResultBytes uint32 = 1 << 26 // 64 MiB
 
 // discardOnTrap closes the parser's module after a guest-call trap so Host.Parser
 // re-instantiates a clean instance on the next call instead of reusing one whose
@@ -356,10 +358,15 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 	packed := pr[0]
 	rptr := uint32(packed >> 32)
 	rlen := uint32(packed)
+	// Free the result buffer's pin on EVERY return path below, including the
+	// oversized-result rejection: the guest pinned rptr in Emit and only the host
+	// can release it, and this reject path returns cleanly (no trap), so
+	// discardOnTrap does not run to reset the reused instance's pins. Registering
+	// the defer before the size check stops the oversized path from leaking the pin.
+	defer func() { _, _ = p.free.Call(ctx, uint64(rptr)) }()
 	if rlen > maxResultBytes {
 		return Node{}, fmt.Errorf("astgroup: parser result too large (%d bytes > %d)", rlen, maxResultBytes)
 	}
-	defer func() { _, _ = p.free.Call(ctx, uint64(rptr)) }()
 
 	out, ok := p.memory.Read(rptr, rlen)
 	if !ok {
