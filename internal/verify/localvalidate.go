@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -125,6 +126,13 @@ func RunConfiguredValidation(ctx context.Context, argv []string, dir string, tim
 	// Partial output captured before the kill is retained above.
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) || errors.Is(runCtx.Err(), context.Canceled) {
 		res.TimedOut = true
+		// A non-nil, non-ESRCH runErr on the timeout path means the group-kill
+		// Cancel failed (e.g. EPERM because a group member dropped privileges).
+		// Log it so a failed reap is observable instead of being masked by the
+		// TimedOut result.
+		if runErr != nil && !errors.Is(runErr, syscall.ESRCH) {
+			fmt.Fprintf(os.Stderr, "auto-fix validation: timeout kill returned unexpected error: %v\n", runErr)
+		}
 		return res, nil
 	}
 
