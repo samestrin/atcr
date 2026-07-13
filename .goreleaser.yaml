@@ -13,8 +13,9 @@
 # Both agree on the numeric X.Y.Z; the leading `v` is the only difference.
 #
 # Date stamp — intentionally OMITTED (no -X main.date). Supplying an explicit
-# ldflags list REPLACES goreleaser's defaults (which include
-# `-X main.date={{.Date}}`), removing wall-clock build time from the binary.
+# ldflags list simply means no build date is stamped: cmd/atcr declares no
+# main.date var, so goreleaser's default `-X main.date={{.Date}}` would be a
+# silent linker no-op anyway.
 # NOTE: this alone does NOT make builds fully byte-reproducible — the binary
 # still embeds the absolute build path (no -trimpath) and archives are stamped
 # with package-time mtimes (no mod_timestamp). Full reproducibility is deferred:
