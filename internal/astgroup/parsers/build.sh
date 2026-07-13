@@ -47,7 +47,7 @@ build go goparser
 build python pyparser
 
 # The brace parser is ONE Go source (src/braceparser) compiled once per language
-# with the language's keyword/naming table baked in via build tag. Four binaries
+# with the language's keyword/naming table baked in via build tag. Eight binaries
 # (not one shared binary) is the deliberate design: the host already holds the
 # language string from the file extension and uses the .wasm as the discriminator,
 # exactly like go/python — see the epic's recorded clarifications.
