@@ -6,6 +6,11 @@
 # beyond the standard Go compiler is required).
 #
 # Usage: internal/astgroup/parsers/build.sh
+#
+# The parser sources (goparser, pyparser, braceparser) share the alloc/free/emit
+# guest ABI via the sibling src/guestabi module, wired through a `go.mod`
+# `replace => ../guestabi` directive in each. `go build` resolves the local
+# replace automatically, so no change is needed here beyond this note.
 set -euo pipefail
 
 # Pin the toolchain and assert a minimum Go version so the regenerated .wasm is
