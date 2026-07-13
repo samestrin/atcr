@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -599,4 +600,44 @@ func TestGateThresholdReaders_OneWhitespaceSemantic(t *testing.T) {
 			require.Equal(t, tc.want, got, "%s(%q)", name, tc.flag)
 		}
 	}
+}
+
+// reconciledPathWarning reads the first reconciled finding's path_warning from a
+// review's reconciled/findings.json, so a test can assert whether path
+// validation flagged the finding as hallucinated (Epic 5.0 signal).
+func reconciledPathWarning(t *testing.T, id string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(".atcr", "reviews", id, "reconciled", "findings.json"))
+	require.NoError(t, err)
+	var findings []reconcile.JSONFinding
+	require.NoError(t, json.Unmarshal(data, &findings))
+	require.NotEmpty(t, findings, "expected at least one reconciled finding")
+	return findings[0].PathWarning
+}
+
+// TestReconcileCmd_RepoFlagValidatesAgainstOtherRepo proves the Epic 22.1 fix:
+// --repo threads the reviewed-repo root into path validation, so a finding whose
+// cited file exists in <other-repo> (but not the CWD) validates clean instead of
+// being falsely flagged "file not found". The control run (default --repo=.)
+// still flags the same finding, guarding the common case against regression.
+func TestReconcileCmd_RepoFlagValidatesAgainstOtherRepo(t *testing.T) {
+	isolate(t) // CWD is an empty temp dir — x.go does not exist here
+
+	// The "other repo" is a separate dir that DOES contain the cited file.
+	otherRepo := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(otherRepo, "x.go"), []byte("package x\n"), 0o644))
+
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|x.go:1|boom|fix|security|10|ev|host\n",
+	})
+
+	// With --repo pointing at the other repo, x.go resolves → no path warning.
+	require.Equal(t, 0, execCmd(t, "reconcile", "r", "--repo", otherRepo))
+	require.Empty(t, reconciledPathWarning(t, "r"),
+		"a finding validated against --repo <other-repo> must carry no path warning")
+
+	// Control: default --repo=. (the CWD, where x.go is absent) still flags it.
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+	require.NotEmpty(t, reconciledPathWarning(t, "r"),
+		"the default validation root must still flag a hallucinated path (no regression)")
 }
