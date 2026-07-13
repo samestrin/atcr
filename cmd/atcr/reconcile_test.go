@@ -647,3 +647,16 @@ func TestReconcileCmd_RepoFlagValidatesAgainstOtherRepo(t *testing.T) {
 	require.NotEmpty(t, reconciledPathWarning(t, "r"),
 		"an empty --repo must normalize to the CWD, not disable path validation")
 }
+
+// TestReconcileCmd_RepoFlagNonexistentFails verifies that a nonexistent --repo
+// path is rejected with a usage error (exit 2) instead of silently degrading
+// path validation and dropping every finding.
+func TestReconcileCmd_RepoFlagNonexistentFails(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|x.go:1|boom|fix|security|10|ev|host\n",
+	})
+
+	require.Equal(t, 2, execCmd(t, "reconcile", "r", "--repo", "/nonexistent/path"),
+		"a nonexistent --repo must fail loudly with exit 2")
+}
