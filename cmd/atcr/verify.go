@@ -98,7 +98,15 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	absRoot, _ := filepath.Abs(repoRoot)
+	// With --repo validated upstream (normalizeRepoFlag), a filepath.Abs failure
+	// means os.Getwd failed (deleted/unreadable CWD) — a genuine environment fault
+	// worth reporting, not swallowing. An empty absRoot would silently disable the
+	// redactor's path relativization, leaking absolute reviewed-repo paths into the
+	// persisted findings.json (Epic 22.1 security hardening).
+	absRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return usageError(err)
+	}
 	res, err := verify.Verify(cmd.Context(), repoRoot, reviewDir, cfg.Registry, verify.Options{
 		Fresh:             fresh,
 		Thorough:          thorough,
