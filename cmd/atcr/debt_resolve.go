@@ -74,7 +74,10 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 		if cmd.Flags().Changed("reason") {
 			provided = append(provided, "--reason")
 		}
-		if len(provided) > 0 {
+		if len(provided) == 1 {
+			return usageError(fmt.Errorf("%s requires --resolve <id>", provided[0]))
+		}
+		if len(provided) > 1 {
 			return usageError(fmt.Errorf("%s require --resolve <id>", strings.Join(provided, ", ")))
 		}
 	}
