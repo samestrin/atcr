@@ -268,6 +268,36 @@ func TestDebtResolve_MarkResolvedIsIdempotentAgainstWontfix(t *testing.T) {
 	assert.Len(t, after, len(before), "resolved after wontfix must not append another terminal record")
 }
 
+func TestDebtResolve_AlreadyClosedPrefersWontfixOverReadOrder(t *testing.T) {
+	// The no-lock TD-004 stance lets two concurrent invocations each pass the
+	// alreadyClosed check before either appends, so the store can carry divergent
+	// terminal records for one id — e.g. one resolved and one wontfix. A later
+	// invocation must report the effective status deterministically (wontfix, a
+	// permanent dismissal, outranks resolved) rather than by shard read order.
+	open := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+
+	wontfix := open
+	wontfix.RunID = "2026-07-01T11:00:00Z-a-wontfix"
+	wontfix.Timestamp = wontfix.RunID
+	wontfix.Status = "wontfix"
+
+	resolved := open
+	resolved.RunID = "2026-07-01T12:00:00Z-a-resolved"
+	resolved.Timestamp = resolved.RunID
+	resolved.Status = "resolved"
+
+	// wontfix is written (and thus read) BEFORE resolved, so a last-wins read-order
+	// reader would report "resolved"; only a precedence reader reports "wontfix".
+	dir := writeDebtStore(t, open, wontfix, resolved)
+
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", open.ID)
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "already closed as wontfix",
+		"divergent terminal records must report wontfix by precedence, not resolved by read order")
+	assert.NotContains(t, strings.ToLower(out), "already closed as resolved",
+		"read order must not decide the effective terminal status")
+}
+
 func TestDebtResolve_MarkResolvedUnknownIDErrors(t *testing.T) {
 	dir := writeDebtStore(t, openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "x"))
 	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", "deadbeef")
