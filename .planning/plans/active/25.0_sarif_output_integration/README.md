@@ -7,7 +7,7 @@ Adds SARIF 2.1.0 JSON as a fourth `atcr report --format` render target (alongsid
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/25.0_sarif_output_integration/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/25.0_sarif_output_integration/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/25.0_sarif_output_integration/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/25.0_sarif_output_integration/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/25.0_sarif_output_integration/`
 

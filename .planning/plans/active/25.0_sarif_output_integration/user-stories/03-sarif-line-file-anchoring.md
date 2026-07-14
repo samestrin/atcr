@@ -30,13 +30,19 @@
 - **Relevant:** Directly resolves the single most important design divergence the plan's documentation review flagged — GitHub Code Scanning's `region`-required-for-display constraint — which is the plan's own stated highest-priority technical risk (flagged `[CRITICAL]` in `documentation/sarif-schema-reference.md`) and a named item in Acceptance Criteria ("File paths and line numbers correctly anchor to the git diff").
 - **Time-bound:** Deliverable in the same implementation phase as Story 2 (both extend `sarif.go` after Story 1 lands), ahead of Story 4's CI documentation which assumes correctly-anchored output already exists.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-line-level-anchoring.md) | Line-Level Anchoring (URI Pass-Through + Line>0 Region) | Unit |
+| [03-02](../acceptance-criteria/03-02-file-level-fallback-anchoring.md) | File-Level Fallback Anchoring (Line<=0 Synthesized Region) | Unit |
+
+## Original Criteria Overview
 
 1. A `sarifLocation` (or equivalently named) helper in `internal/report/sarif.go` builds `physicalLocation.artifactLocation.uri` from `reconcile.JSONFinding.File` unmodified (no absolute-path leakage, no `./` prefix stripping bugs) for every finding, regardless of `Line` value.
 2. For findings with `Line>0`, `region.startLine` and `region.endLine` are both set to `f.Line`, and `region.startColumn`/`endColumn` are populated with a defined, non-zero value (e.g. `1`/`1` or a wider default), satisfying GitHub's all-four-fields-required constraint.
 3. For findings with `Line<=0` (covering both `Line==0` and negative `Line`), the helper synthesizes `region.startLine=1, region.startColumn=1, region.endLine=1, region.endColumn=1` rather than omitting `region` or leaving any of the four fields zero-valued/absent, and this fallback path is covered by an explicit table-driven test case distinct from the normal-line case.
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/25.0_sarif_output_integration/`_
 
 ## Technical Considerations
 

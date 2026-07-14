@@ -30,13 +30,18 @@
 - **Relevant:** Directly satisfies Acceptance Criterion 2 of the plan ("The SARIF output correctly maps ATCR severities... to SARIF levels") and the plan's explicit risk mitigation against TD-0052-style rubric duplication.
 - **Time-bound:** Completes within the same sprint as Story 1, before Story 3 (line/region anchoring) begins integration testing against a full sample findings set.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-severity-level-mapping.md) | Severity-to-SARIF-Level Mapping Function | Unit |
+
+## Original Criteria Overview
 
 1. `sarifLevel(severity string)` returns `"error"` for CRITICAL and HIGH, `"warning"` for MEDIUM, and `"note"` for LOW, using `reconcile.NormalizeSeverity`/`reconcile.SeverityRank` as the sole comparison source (verified by code inspection: no second severity constant map exists in `internal/report/sarif.go`).
 2. `renderSarif` calls `sarifLevel` for every finding's `result.level` field — no direct string comparison against `Severity` anywhere else in `sarif.go`.
 3. Table-driven tests in `internal/report/sarif_test.go`, following the `internal/report/render_test.go` `t.Run` convention, cover all four canonical severities plus an unrecognized/edge-case severity string, and pass in CI.
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/25.0_sarif_output_integration/`_
 
 ## Technical Considerations
 

@@ -30,13 +30,21 @@
 - **Relevant:** Directly satisfies Plan Objective 1/2 ("Add SARIF 2.1.0 JSON as a new render target... Enable `atcr report --format=sarif` to produce schema-valid SARIF output") and is the load-bearing dependency every other story in this plan builds on.
 - **Time-bound:** Deliverable within this sprint's first implementation phase, ahead of Stories 2-4 which extend this same `sarif.go` file.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-format-registration.md) | SARIF Format Constant Registration | Unit |
+| [01-02](../acceptance-criteria/01-02-sarif-document-structure.md) | SARIF Base Document Structure | Unit/Integration |
+| [01-03](../acceptance-criteria/01-03-rules-array-category-linkage.md) | SARIF Rules Array (Category Linkage, Structural) | Unit |
+| [01-04](../acceptance-criteria/01-04-cli-flag-and-mcp-parity.md) | CLI Flag Help Text and MCP Parity | Integration/Unit |
+
+## Original Criteria Overview
 
 1. `internal/report/render.go` gains a `FormatSarif = "sarif"` constant, and `ValidFormat()`, `Formats()`, and `Render()`'s switch all recognize it (routing to a new `renderSarif` call) — `atcr report --format=sarif` no longer errors as an unknown format, and `atcr report --format=bogus` still lists `sarif` in its supported-formats error message.
 2. A new `internal/report/sarif.go` implements `renderSarif(w io.Writer, findings []reconcile.JSONFinding) error`, producing a top-level SARIF 2.1.0 document (`$schema`, `version`, `runs[]`, `tool.driver.name="atcr"`) with a `results[]` array (empty-but-present, never `null`, when `findings` is nil/empty) and a `rules[]` array containing one entry per distinct `reconcile.JSONFinding.Category` seen across the input, each with an `id`, `shortDescription.text`, and `fullDescription.text` (content sourced from the category value itself at this structural stage — full linkage semantics land in later stories).
 3. `cmd/atcr/report.go`'s `--format` flag help text is updated to mention `sarif`, and `atcr report --format=sarif` is exercised by an automated test (unit and/or golden-file) confirming the CLI path produces the same output as calling `report.Render` directly — with a note that `internal/mcp/handlers.go`'s `handleReport` gains SARIF support automatically via the shared `report.Render()` call (no MCP-specific code change required, but worth a regression test or comment confirming parity).
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/25.0_sarif_output_integration/`_
 
 ## Technical Considerations
 

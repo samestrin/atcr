@@ -30,13 +30,19 @@
 - **Relevant:** Directly satisfies the plan's Acceptance Criterion "A documentation example exists showing the CI integration (GitHub Code Scanning upload, and the GitLab CI SAST-widget equivalent)" and Theme 4 ("CI integration documentation"), making the SARIF format Stories 1-3 built actually discoverable and usable by the target audience.
 - **Time-bound:** Deliverable in a single documentation-only pass once Story 1's `--format=sarif` flag exists; no sprint-phase dependency beyond that.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-github-code-scanning-upload-example.md) | GitHub Code Scanning Upload Example | E2E |
+| [04-02](../acceptance-criteria/04-02-gitlab-sast-widget-example.md) | GitLab CI SAST Widget Example | E2E |
+
+## Original Criteria Overview
 
 1. `docs/ci-integration.md` contains a new subsection with a fenced GitHub Actions YAML snippet demonstrating `atcr review && atcr reconcile && atcr report --format=sarif > results.sarif` piped into `github/codeql-action/upload-sarif@v3`.
 2. The same subsection (or an adjacent one) contains a fenced GitLab CI YAML snippet showing a `.gitlab-ci.yml` job that produces `results.sarif` and publishes it via GitLab's native SAST report artifact mechanism.
 3. The new content explicitly states that this SARIF-upload path is distinct from, and does not replace, `atcr github`'s already-shipped direct-API PR check + inline comment flow, with a link to `docs/github-action.md` for that separate flow.
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/25.0_sarif_output_integration/`_
 
 ## Technical Considerations
 
@@ -55,4 +61,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/25.0_sarif_ou
 ---
 
 **Created:** July 14, 2026 04:11:53PM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Defined
