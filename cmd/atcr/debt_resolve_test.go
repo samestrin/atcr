@@ -300,6 +300,20 @@ func TestDebtResolve_InvalidStatusIsUsageError(t *testing.T) {
 	assert.NotContains(t, out, `invalid --status "BOGUS"`, "error must not echo user's uppercase input")
 }
 
+func TestDebtResolve_WontfixRequiresReasonOrJustification(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	// wontfix with no --reason and no pre-existing justification must be rejected.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix")
+	require.Error(t, err, "wontfix without a reason or existing justification must be a usage error")
+	assert.Equal(t, exitUsage, exitCode(err))
+
+	// wontfix with a --reason is allowed.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	require.NoError(t, err)
+}
+
 func TestDebtResolve_ReasonPopulatesJustification(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	dir := writeDebtStore(t, rec)
