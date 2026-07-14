@@ -537,6 +537,31 @@ func TestRunReconcile_LocalDebtDedupsSameFinding(t *testing.T) {
 // that includes the terminal wontfix record, so the re-detected finding's id is
 // already `seen` and is skipped — suppression is by id-presence, independent of the
 // terminal status value. This is a regression lock on existing behavior.
+func TestPersistLocalDebt_DedupReadFailureWarnsAboutDismissals(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	// A shard file that cannot be opened makes ReadAll fail with a permission error,
+	// exercising the fail-open branch.
+	path := filepath.Join(dir, "2026-07.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte("{}\n"), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "flagged false positive", Fix: "n/a", Category: "correctness", EstMinutes: 10}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-07-13T01:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+
+	out := diag.String()
+	assert.Contains(t, strings.ToLower(out), "dismissed", "dedup-read failure warning must mention dismissed findings")
+	assert.Contains(t, strings.ToLower(out), "wontfix", "dedup-read failure warning must mention wontfix findings")
+	assert.Contains(t, strings.ToLower(out), "re-surfaced", "dedup-read failure warning must mention re-surfacing risk")
+}
+
 func TestPersistLocalDebt_WontfixSuppressesReappend(t *testing.T) {
 	isolate(t)
 	dir := localdebt.DefaultDir(".")
