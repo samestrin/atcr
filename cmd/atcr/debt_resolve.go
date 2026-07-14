@@ -251,11 +251,24 @@ func renderResolveList(w io.Writer, recs []localdebt.Record) error {
 	return tw.Flush()
 }
 
+// maxReasonBytes bounds a --reason justification. It sits well under the store's 1 MiB
+// per-line read cap (internal/localdebt maxLineBytes) so a justification can never push
+// a record over the limit and be silently dropped on read.
+const maxReasonBytes = 4 << 10 // 4 KiB
+
 // markDebtResolved records an append-only resolution for id: it copies the item's
 // open record, stamps a terminal status/timestamp, and appends it so the fold in
 // selectOpenDebt drops the item from the open list. The stable id is preserved
 // (never re-stamped) so the resolution lines up with the original finding.
 func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error {
+	// A --reason is stored verbatim as the record's Justification. The store bounds a
+	// single JSONL line at maxLineBytes (1 MiB) on read and silently drops any line
+	// over that limit, so an unbounded reason could make a finding unreadable. Reject
+	// oversized justifications up front, well under the read cap, before touching the
+	// store.
+	if len(reason) > maxReasonBytes {
+		return usageError(fmt.Errorf("--reason too long: %d bytes exceeds the %d-byte limit", len(reason), maxReasonBytes))
+	}
 	// ReadAll loads the full append-only store into memory and then scans for id.
 	// The linear-scan pattern is intentional and shared with selectOpenDebt and
 	// persistLocalDebt; indexed or streaming ID lookup is tracked separately by
