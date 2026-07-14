@@ -351,6 +351,28 @@ func TestDebtResolve_ReasonPopulatesJustification(t *testing.T) {
 		"--reason must populate the record's Justification field")
 }
 
+func TestDebtResolve_WhitespaceReasonPreservesExistingJustification(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	rec.Justification = "original enrichment note"
+	dir := writeDebtStore(t, rec)
+
+	// A whitespace-only --reason is treated as empty and must preserve the existing
+	// justification, just like omitting --reason entirely.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "   ")
+	require.NoError(t, err)
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var terminal *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == "wontfix" {
+			terminal = &recs[i]
+		}
+	}
+	require.NotNil(t, terminal)
+	assert.Equal(t, "original enrichment note", terminal.Justification,
+		"whitespace-only --reason must preserve the item's existing justification")
+}
+
 func TestDebtResolve_NoReasonPreservesExistingJustification(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	rec.Justification = "original enrichment note"
