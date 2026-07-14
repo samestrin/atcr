@@ -243,6 +243,57 @@ func TestDebtResolve_WontfixStatusFoldsItemOutOfOpenList(t *testing.T) {
 	assert.NotContains(t, js, "internal/x/a.go", "a wontfix item must not appear in --json")
 }
 
+func TestDebtResolve_MarkWontfixSetsStatusAndFoldsOut(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec,
+		openRec("2026-07-02T10:00:00Z-b", "LOW", "internal/y/b.go", 34, "leak"),
+	)
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "wontfix")
+
+	// AC #4: the dismissal state is durable — a wontfix status record is appended
+	// for the finding's stable id.
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var wontfixRec *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == "wontfix" {
+			wontfixRec = &recs[i]
+		}
+	}
+	require.NotNil(t, wontfixRec, "a wontfix status record must be appended for the id")
+
+	// AC #2: the wontfix item folds out of the open list; the other stays.
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.NotContains(t, list, "internal/x/a.go", "a wontfix item must not appear as open")
+	assert.Contains(t, list, "internal/y/b.go", "the other item stays open")
+}
+
+func TestDebtResolve_DefaultStatusStaysResolved(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var found bool
+	for _, r := range recs {
+		if r.ID == rec.ID && r.Status == "resolved" {
+			found = true
+		}
+	}
+	assert.True(t, found, "omitting --status must default to a resolved record, unchanged")
+}
+
+func TestDebtResolve_InvalidStatusIsUsageError(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "bogus")
+	require.Error(t, err, "an unrecognized --status must be a usage error, not a silently non-folding record")
+}
+
 func TestDebtResolve_SelectionWorksWithoutOptionalFields(t *testing.T) {
 	// A record missing justification and source_report must still be selectable.
 	rec := openRec("2026-07-01T10:00:00Z-a", "MEDIUM", "internal/x/a.go", 12, "boom")
