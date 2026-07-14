@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 4 | 0 |
-| MEDIUM | 0 | 20 | 0 |
-| LOW | 0 | 33 | 0 |
+| MEDIUM | 1 | 20 | 0 |
+| LOW | 2 | 33 | 0 |
 
 
-**Last Modified:** 2026-07-13 | **Open Items:** 0 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 57
+**Last Modified:** 2026-07-13 | **Open Items:** 3 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 60
 
 ## Directory Structure
 
@@ -63,6 +63,14 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table â†’ shards â
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-13] From Sprint: epic-24.0
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | cmd/atcr/debt_resolve.go:225 | already-closed message hardcodes "already resolved" so re-marking a wontfix item prints an inaccurate "already resolved" line | Make the message reflect the existing terminal status (e.g. "already closed") and update TestDebtResolve_MarkResolvedIsIdempotent to match | CORRECTNESS | 15 | execute-epic-stage3 |
+| U | [ ] | MEDIUM | skill/debt-resolve/SKILL.md:36 | the --status wontfix / --reason dismissal path is not documented in the debt-resolve skill (the epic's documented consumer) so agents only see --resolve and cannot discover the dismissal verb | Add a --status wontfix + --reason section to skill/debt-resolve/SKILL.md instructing agents to dismiss false positives that way instead of marking them resolved | INTEGRATION | 30 | execute-epic-independent |
+| U | [ ] | LOW | cmd/atcr/reconcile.go:203 | AC #3 suppression relies on the dedup ReadAll seeding seen; the pre-existing fail-open branch means a corrupt/unreadable store re-appends a previously wontfixed finding as a new open item, silently resurrecting a dismissal | Log a louder warning that dismissals may be re-surfaced when the dedup read fails, or fail-closed for records that would duplicate a known id | REGRESSION_RISK | 30 | execute-epic-independent |
 
 ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
 
