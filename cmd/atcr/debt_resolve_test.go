@@ -248,7 +248,7 @@ func TestDebtResolve_MarkWontfixSetsStatusAndFoldsOut(t *testing.T) {
 	dir := writeDebtStore(t, rec,
 		openRec("2026-07-02T10:00:00Z-b", "LOW", "internal/y/b.go", 34, "leak"),
 	)
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix")
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(out), "wontfix")
 

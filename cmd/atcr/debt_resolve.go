@@ -262,6 +262,9 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	if orig == nil {
 		return fmt.Errorf("no open technical-debt item with id %q in the local store", id)
 	}
+	if status == "wontfix" && strings.TrimSpace(reason) == "" && orig.Justification == "" {
+		return usageError(fmt.Errorf("--status wontfix requires --reason <justification>"))
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	rec := *orig
