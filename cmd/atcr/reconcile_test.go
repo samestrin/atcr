@@ -568,6 +568,14 @@ func TestPersistLocalDebt_WontfixSuppressesReappend(t *testing.T) {
 	recs := readLocalDebtRecords(t)
 	require.Len(t, recs, 1, "a wontfix-marked finding must not be re-appended on re-detection")
 	require.Equal(t, "wontfix", recs[0].Status, "only the terminal wontfix record remains")
+
+	// The suppression must actually flow through isClosedStatus: a live `debt resolve
+	// --list` must not show the wontfix'd finding. This assertion locks the wontfix
+	// semantics; removing wontfix from isClosedStatus would make the finding re-appear.
+	out, err := runDebt(t, "resolve", "--list")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "no items",
+		"a wontfix-suppressed finding must not appear in the open list")
 }
 
 // TestPersistLocalDebt_SkipsGateExcludedFindings verifies that the reconcile
