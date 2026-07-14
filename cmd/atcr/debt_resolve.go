@@ -24,6 +24,13 @@ var defaultDebtResolveDir = localdebt.DefaultDir(".")
 // elsewhere in cmd/atcr/debt.go.
 var resolveSeverities = map[string]bool{"CRITICAL": true, "HIGH": true, "MEDIUM": true, "LOW": true}
 
+// resolveStatuses is the validated --status enum for a mark action. Both values are
+// terminal (isClosedStatus folds them out): "resolved" means the code was actually
+// fixed; "wontfix" (Epic 24.0) dismisses a false-positive/accepted pattern so agents
+// stop re-surfacing it. "deferred" is intentionally excluded — it is written by other
+// paths, not by an explicit resolve.
+var resolveStatuses = map[string]bool{"resolved": true, "wontfix": true}
+
 // newDebtResolveCmd builds `atcr debt resolve`: the .atcr/-scoped resolver surface
 // the debt-resolve skill route shells out to. It lists open items from the local TD
 // store (deterministically sorted for the skill's selection rule) and records
@@ -47,6 +54,7 @@ func newDebtResolveCmd() *cobra.Command {
 	cmd.Flags().String("severity", "", "filter by severity (CRITICAL|HIGH|MEDIUM|LOW)")
 	cmd.Flags().Int("max", 10, "cap the number of selected items (0 = no cap)")
 	cmd.Flags().String("resolve", "", "mark the item with this id resolved (append-only)")
+	cmd.Flags().String("status", "resolved", "terminal status to record for --resolve (resolved|wontfix)")
 	return cmd
 }
 
@@ -54,7 +62,11 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 	dir := mustFlag(cmd, "dir")
 
 	if id := mustFlag(cmd, "resolve"); id != "" {
-		return markDebtResolved(cmd, dir, id)
+		status := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "status")))
+		if !resolveStatuses[status] {
+			return usageError(fmt.Errorf("invalid --status %q: expected resolved|wontfix", mustFlag(cmd, "status")))
+		}
+		return markDebtResolved(cmd, dir, id, status)
 	}
 
 	sev := strings.ToUpper(mustFlag(cmd, "severity"))
@@ -196,7 +208,7 @@ func renderResolveList(w io.Writer, recs []localdebt.Record) error {
 // open record, stamps a terminal status/timestamp, and appends it so the fold in
 // selectOpenDebt drops the item from the open list. The stable id is preserved
 // (never re-stamped) so the resolution lines up with the original finding.
-func markDebtResolved(cmd *cobra.Command, dir, id string) error {
+func markDebtResolved(cmd *cobra.Command, dir, id, status string) error {
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to read local debt store: %w", err)
@@ -233,13 +245,13 @@ func markDebtResolved(cmd *cobra.Command, dir, id string) error {
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	rec := *orig
-	rec.RunID = now + "-resolve"
+	rec.RunID = now + "-" + status
 	rec.Timestamp = now
-	rec.Status = "resolved"
+	rec.Status = status
 	rec.ResolvedAt = now
 	if err := localdebt.Append(dir, rec); err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to record resolution: %w", err)
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Marked %s resolved.\n", id)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Marked %s %s.\n", id, status)
 	return nil
 }
