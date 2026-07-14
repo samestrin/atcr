@@ -1,0 +1,94 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
+# Epic Plan 22.5: Test Seam for backupExisting's Non-ErrNotExist Lstat Failure
+
+- **Estimated time**: 0.5 day
+- **Tasks/Components**: 1/1
+
+## Objective
+
+Close the last residual test gap from the `4.7.1_backup-swap-hardening` epic: the non-`ErrNotExist` `Lstat(backup)` error branch in `backupExisting` (`internal/fanout/reviewdir.go:333-335`) is untested because the staging siblings share a parent directory, so filesystem permissions cannot isolate it.
+
+## Context
+
+`4.7.1_backup-swap-hardening` covered most of the failed-swap/cleanup test gaps, but this one specific branch was left deferred — it needs an injectable `lstatFn` production seam (rather than a permissions-based test) since the staging siblings (`.bak`, `.bak.old`, `.bak.new`) share a parent directory and perms cannot isolate just one of them.
+
+## Task Breakdown
+
+1. Add an injectable `lstatFn` seam to `backupExisting` (mirroring the existing `renameFn`/`removeAllFn` seam pattern already used elsewhere in `reviewdir.go` for fault injection), defaulting to `os.Lstat`.
+2. Add a test that forces `lstatFn(backup)` to return a non-`ErrNotExist` error and asserts the typed "clearing stale staging backup" error path is taken correctly.
+
+## Acceptance Criteria
+
+- [ ] `backupExisting`'s non-`ErrNotExist` `Lstat(backup)` branch is covered by a test using the new seam.
+- [ ] No behavior change to the production path — the seam defaults to `os.Lstat` when not overridden.
+- [ ] `go test ./internal/fanout/...` passes with the new test green.
+
+## Components Touched
+
+- `internal/fanout` (`reviewdir.go`, `reviewdir_test.go`)
+
+## Out of Scope
+
+- Any other backup/swap behavior change — `4.7.1_backup-swap-hardening` already covers the atomic-swap design; this is a test-coverage-only follow-up.
+
+## Dependencies
+
+- `4.7.1_backup-swap-hardening` (completed) — this epic closes its one remaining residual test gap.
+
+## Source TD Item
+
+`.planning/technical-debt/README.md` — `internal/fanout/reviewdir_test.go:458`.
+
+## Refinements (2026-07-05)
+
+This section records findings from `/refine-epic` run on July 05, 2026. It is additive — original plan content above is preserved.
+
+### Auto-applied corrections (0)
+
+None.
+
+### Items needing user confirmation (0)
+
+None.
+
+### Advisory observations (0)
+
+None.
+
+### Verification context
+
+- Refinement depth: spot-check
+- Derived TASK_COUNT: 2 (limit: 6)
+- Derived COMPONENT_COUNT: 1 (limit: 2)
+- COMPONENTS_TOUCHED: `internal/fanout`
+- VISUAL_SURFACE: false
+- HAS_GATED_WORK: false
+- HAS_CROSS_SYSTEM: false
+- Cited references checked: 2
+- Codebase search queries (spot-check): []
+
+## Clarifications
+
+### Recorded 2026-07-13 (rubber duck — /execute-epic)
+
+**Key Decisions:**
+- The `lstatFn` seam belongs on the `os.Lstat(backup)` **probe** at `reviewdir.go:341`. Its non-`ErrNotExist` arm at `reviewdir.go:346-347` returns the wrapped error `"checking prior backup %q: %w"` — that is the branch the test must exercise.
+- Task 2's phrase "clearing stale staging backup" is a stale/incorrect copy-paste from the `os.RemoveAll` error strings at lines 322-323/325-326. That is a different code path already covered by `TestBackupExisting_StaleBakOldRemovalFailureSurfaces` (`reviewdir_test.go:489`). The new test must assert `"checking prior backup"`, NOT `"clearing stale staging backup"`.
+- Task 1's phrase "mirroring the existing `renameFn`/`removeAllFn` seam pattern" is imprecise: only `renameFn` (`reviewdir.go:387`) currently exists as a seam; `removeAllFn` does not. The new seam mirrors the `renameFn` package-var pattern.
+
+**Scope Boundaries:**
+- IN scope: add `var lstatFn = os.Lstat` (mirroring `renameFn`) used ONLY at line 341; add a `withLstatStub` test helper (mirroring `withRenameStub`); add one test that stubs `lstatFn(backup)` to return a non-`ErrNotExist` error and asserts the returned error contains `"checking prior backup"`.
+- OUT of scope: any backup/swap behavior change; the belt-and-suspenders `os.Lstat` at `reviewdir.go:362` (no `ErrNotExist` branch, out of AC scope); the already-tested `os.RemoveAll` "clearing stale staging backup" legs.
+
+**Technical Approach:**
+- Route only the line-341 probe through `lstatFn`; production default remains `os.Lstat`, so no behavior change.
+- Test mirrors the existing `t.TempDir()` + `withRenameStub` fault-injection pattern in `reviewdir_test.go`.
+
+**Original Questions and Answers:**
+1. Q: Confirm the intended target — add the `lstatFn` seam at line 341 and assert the test hits the "checking prior backup" branch (i.e., Task 2's "clearing stale staging backup" error-string label is a typo)?
+   A: Confirmed. The seam belongs on the `os.Lstat(backup)` probe at `reviewdir.go:341`, and the new test must assert the wrapped error text `"checking prior backup %q: %w"` (`reviewdir.go:346-347`). "clearing stale staging backup" is a stale copy-paste from the RemoveAll legs (lines 322-323/325-326), already covered by `TestBackupExisting_StaleBakOldRemovalFailureSurfaces`. Incidental: only `renameFn` exists as a seam; `removeAllFn` does not — mirror `renameFn`.
+----- END SPRINT PLAN -----
+

@@ -1,0 +1,2 @@
+# atcr-findings/v1
+MEDIUM|internal/fanout/reviewdir_test.go:456|Package-level lstatFn mutation in withLstatStub lacks synchronization; concurrent test execution (t.Parallel) will race on the global variable, causing flaky failures or data races|Guard seam mutations with a sync.Mutex or switch to a per-test config struct to avoid global state|concurrency|15|lstatFn = stub and t.Cleanup(...) modify a package var without locking; unsafe for parallel test runs|brad

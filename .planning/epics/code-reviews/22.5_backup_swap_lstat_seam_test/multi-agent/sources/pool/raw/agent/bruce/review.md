@@ -1,0 +1,3 @@
+
+
+MEDIUM|internal/fanout/reviewdir_test.go:509|lstatFn stub returns os.Lstat for non-backup paths; RemoveAll does not call Lstat, so RemoveAll(backupOld) and RemoveAll(backupNew) skip lstatFn entirely and the stub's os.Lstat fallback for those paths is dead code that cannot be tested|Cancel the Cleanup registration in withLstatStub and return the original value to the caller so the stub is only active during the single relevant backupExisting call, not for any future test body code that might accidentally call lstatFn|correctness|15|withLstatStub sets lstatFn globally and restores in Cleanup; any test body code between withLstatStub and backupExisting (or after it) that calls lstatFn gets the stub

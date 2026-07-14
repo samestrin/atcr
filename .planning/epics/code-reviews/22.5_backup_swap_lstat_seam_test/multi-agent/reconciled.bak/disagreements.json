@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "severity_split",
+      "file": "internal/fanout/reviewdir_test.go",
+      "line": 454,
+      "severity": "HIGH",
+      "problem": "Package-level lstatFn mutation in withLstatStub lacks synchronization; concurrent test execution (t.Parallel) will race on the global variable, causing flaky failures or data races",
+      "score": 2,
+      "spread": 1,
+      "independence": 2,
+      "reviewers": [
+        "archer",
+        "brad"
+      ],
+      "disagreement": "MEDIUM vs HIGH"
+    },
+    {
+      "kind": "severity_split",
+      "file": "internal/fanout/reviewdir_test.go",
+      "line": 458,
+      "severity": "MEDIUM",
+      "problem": "(withLstatStub) Comment claims permissions cannot isolate the branch, but the test uses a stub; the phrasing is a bit redundant given the task",
+      "score": 2,
+      "spread": 1,
+      "independence": 2,
+      "reviewers": [
+        "mira",
+        "otto"
+      ],
+      "disagreement": "LOW vs MEDIUM"
+    }
+  ]
+}

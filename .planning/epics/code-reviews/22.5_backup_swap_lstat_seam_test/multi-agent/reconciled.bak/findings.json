@@ -1,0 +1,52 @@
+[
+  {
+    "severity": "HIGH",
+    "file": "internal/fanout/reviewdir_test.go",
+    "line": 454,
+    "problem": "Package-level lstatFn mutation in withLstatStub lacks synchronization; concurrent test execution (t.Parallel) will race on the global variable, causing flaky failures or data races",
+    "fix": "Guard seam mutations with a sync.Mutex or switch to a per-test config struct to avoid global state",
+    "category": "concurrency",
+    "est_minutes": 15,
+    "evidence": "[archer] t.Cleanup(func() { removePathFn = orig }) / [brad] lstatFn = stub and t.Cleanup(...) modify a package var without locking; unsafe for parallel test runs",
+    "reviewers": [
+      "archer",
+      "brad"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "MEDIUM vs HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "archer": "qwen3.6-35b-apex"
+    },
+    "justification": "HIGH|internal/fanout/reviewdir_test.go:454|Copy-paste error restores removePathFn instead of lstatFn in cleanup leaking the stub to subsequent tests|Change removePathFn = orig to lstatFn = orig in withLstatStub's t.Cleanup callback|copy-paste|3|t.Cleanup(func() { removePathFn = orig })",
+    "source_report": {
+      "path": "sources/pool/raw/agent/archer/review.md",
+      "line": 1
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/fanout/reviewdir_test.go",
+    "line": 458,
+    "problem": "(withLstatStub) Comment claims permissions cannot isolate the branch, but the test uses a stub; the phrasing is a bit redundant given the task",
+    "fix": "Simplify comment to focus on the necessity of the seam for deterministic failure injection",
+    "category": "performance",
+    "est_minutes": 15,
+    "evidence": "[mira] http.Client zero value has no Timeout / [otto] `Permissions cannot isolate this branch...`",
+    "reviewers": [
+      "mira",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "LOW vs MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "mira": "minimax-m2.7"
+    },
+    "justification": "MEDIUM|internal/fanout/reviewdir_test.go:458|No timeout on provider call|Derive per-call context with deadline from config|performance|15|http.Client zero value has no Timeout",
+    "source_report": {
+      "path": "sources/pool/raw/agent/mira/review.md",
+      "line": 3
+    }
+  }
+]
