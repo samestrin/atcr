@@ -433,6 +433,30 @@ func TestDebtResolve_ReasonReplacesExistingJustification(t *testing.T) {
 		"a supplied --reason must replace the item's existing justification")
 }
 
+func TestDebtResolve_NoReasonWithEmptyJustificationStaysEmpty(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	rec.Justification = ""
+	dir := writeDebtStore(t, rec)
+
+	// Omitting --reason when the original record has no justification must leave
+	// the terminal record's Justification as the empty string (zero value), not
+	// unset/missing. Use resolved status so the item-6 wontfix-reason guard does
+	// not interfere with this empty-justification edge case.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var terminal *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == "resolved" {
+			terminal = &recs[i]
+		}
+	}
+	require.NotNil(t, terminal)
+	assert.Equal(t, "", terminal.Justification,
+		"omitting --reason on a record with empty justification must leave it empty")
+}
+
 func TestDebtResolve_NoReasonPreservesExistingJustification(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	rec.Justification = "original enrichment note"
