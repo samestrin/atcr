@@ -298,6 +298,31 @@ func TestDebtResolve_AlreadyClosedPrefersWontfixOverReadOrder(t *testing.T) {
 		"read order must not decide the effective terminal status")
 }
 
+func TestDebtResolve_ReasonLengthCapRejectsOversized(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	before, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+
+	// A multi-KiB --reason pushes the stored JSONL record toward the store's 1 MiB
+	// per-line read cap (internal/localdebt/store.go maxLineBytes), where an over-long
+	// line is silently dropped on read. Reject oversized justifications up front so a
+	// finding never becomes silently unreadable.
+	huge := strings.Repeat("x", 5000)
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", huge)
+	require.Error(t, err, "an over-long --reason must be rejected, not stored")
+	assert.NotContains(t, strings.ToLower(out), "marked", "must not report success for a rejected oversized reason")
+
+	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "a rejected oversized --reason must not append a record")
+
+	// A reasonable justification still succeeds.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	require.NoError(t, err, "a normal-length --reason must still be accepted")
+}
+
 func TestDebtResolve_MarkResolvedUnknownIDErrors(t *testing.T) {
 	dir := writeDebtStore(t, openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "x"))
 	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", "deadbeef")
