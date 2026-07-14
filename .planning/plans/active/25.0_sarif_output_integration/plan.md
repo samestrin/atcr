@@ -22,7 +22,7 @@
 ## Planning Deliverables
 ### User Stories
 - **Location:** [`user-stories/`](user-stories/)
-- **Status:** Pending - generate with `/create-user-stories @.planning/plans/active/25.0_sarif_output_integration/`
+- **Status:** Generated
 - **Estimated Count:** 4 stories
 
 ### Acceptance Criteria
@@ -83,7 +83,8 @@ No high-ROI package is required — see [package-recommendations.md](package-rec
 
 ## Risk Mitigation
 
-- **Risk:** Hand-rolled SARIF schema drifts from the SARIF 2.1.0 spec (wrong `level` enum, missing required fields), causing GitHub/GitLab to silently reject or misrender the upload. **Mitigation:** schema-validate `renderSarif`'s output in tests using the already-vendored `google/jsonschema-go`, and manually verify a real upload to a scratch repo's Code Scanning tab before marking AC1 done.
+- **Risk:** Hand-rolled SARIF schema drifts from the SARIF 2.1.0 spec (wrong `level` enum, missing required fields), causing GitHub/GitLab to silently reject or misrender the upload. 
+- **Mitigation:** schema-validate `renderSarif`'s output in tests using the already-vendored `google/jsonschema-go`, and manually verify a real upload to a scratch repo's Code Scanning tab before marking AC1 done.
 - **Risk:** Severity-rubric duplication (already flagged as TD-0052 elsewhere in the codebase). **Mitigation:** the SARIF formatter imports `reconcile.NormalizeSeverity`/`SeverityRank` directly rather than reimplementing the CRITICAL/HIGH/MEDIUM/LOW mapping.
 
 ## Next Steps
