@@ -335,6 +335,24 @@ func TestDebtResolve_NoReasonPreservesExistingJustification(t *testing.T) {
 		"omitting --reason must preserve the item's existing justification")
 }
 
+func TestDebtResolve_StatusOrReasonWithoutResolveIsUsageError(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	// --status without --resolve must not silently fall through to the list view:
+	// it would drop the user's dismissal intent (and skip status validation).
+	_, err := runDebt(t, "resolve", "--dir", dir, "--status", "wontfix")
+	require.Error(t, err, "--status without --resolve must be a usage error, not a silent list")
+
+	// --reason without --resolve is the same footgun.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--reason", "some note")
+	require.Error(t, err, "--reason without --resolve must be a usage error")
+
+	// Plain --list (no --status/--reason) still works untouched.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err, "a plain list must not be affected by the new guard")
+}
+
 func TestDebtResolve_SelectionWorksWithoutOptionalFields(t *testing.T) {
 	// A record missing justification and source_report must still be selectable.
 	rec := openRec("2026-07-01T10:00:00Z-a", "MEDIUM", "internal/x/a.go", 12, "boom")
