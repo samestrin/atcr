@@ -531,6 +531,45 @@ func TestRunReconcile_LocalDebtDedupsSameFinding(t *testing.T) {
 		"re-running with unchanged findings must not duplicate the record")
 }
 
+// TestPersistLocalDebt_WontfixSuppressesReappend covers Epic 24.0 AC #3: once a
+// finding is marked wontfix, re-detecting the same finding (same FindingID) must not
+// re-persist it. persistLocalDebt seeds its dedup set from a full-history ReadAll
+// that includes the terminal wontfix record, so the re-detected finding's id is
+// already `seen` and is skipped — suppression is by id-presence, independent of the
+// terminal status value. This is a regression lock on existing behavior.
+func TestPersistLocalDebt_WontfixSuppressesReappend(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	seed := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion,
+		RunID:         "2026-07-13T00:00:00Z-wontfix",
+		Timestamp:     "2026-07-13T00:00:00Z",
+		Severity:      "HIGH",
+		File:          "a.go",
+		Line:          1,
+		Problem:       "flagged false positive",
+		Status:        "wontfix",
+		Justification: "accepted pattern",
+	}
+	seed.StampID()
+	require.NoError(t, localdebt.Append(dir, seed))
+
+	// Reconcile re-detects the identical finding (same file/line/problem → same id).
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "flagged false positive", Fix: "n/a", Category: "correctness", EstMinutes: 10}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-07-13T01:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1, "a wontfix-marked finding must not be re-appended on re-detection")
+	require.Equal(t, "wontfix", recs[0].Status, "only the terminal wontfix record remains")
+}
+
 // TestPersistLocalDebt_SkipsGateExcludedFindings verifies that the reconcile
 // persistence hook applies the same out-of-scope and refuted exclusions the
 // gate uses, so the local TD store's open backlog matches what the gate would
