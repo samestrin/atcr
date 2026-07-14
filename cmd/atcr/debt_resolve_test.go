@@ -294,6 +294,47 @@ func TestDebtResolve_InvalidStatusIsUsageError(t *testing.T) {
 	require.Error(t, err, "an unrecognized --status must be a usage error, not a silently non-folding record")
 }
 
+func TestDebtResolve_ReasonPopulatesJustification(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID,
+		"--status", "wontfix", "--reason", "accepted pattern, reviewer hallucination")
+	require.NoError(t, err)
+
+	// AC #1 + #4: the reason is recorded in Justification on the durable terminal record.
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var terminal *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == "wontfix" {
+			terminal = &recs[i]
+		}
+	}
+	require.NotNil(t, terminal, "a wontfix record must be appended")
+	assert.Equal(t, "accepted pattern, reviewer hallucination", terminal.Justification,
+		"--reason must populate the record's Justification field")
+}
+
+func TestDebtResolve_NoReasonPreservesExistingJustification(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	rec.Justification = "original enrichment note"
+	dir := writeDebtStore(t, rec)
+	// Omitting --reason must not blank an existing justification carried on the item.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix")
+	require.NoError(t, err)
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var terminal *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == "wontfix" {
+			terminal = &recs[i]
+		}
+	}
+	require.NotNil(t, terminal)
+	assert.Equal(t, "original enrichment note", terminal.Justification,
+		"omitting --reason must preserve the item's existing justification")
+}
+
 func TestDebtResolve_SelectionWorksWithoutOptionalFields(t *testing.T) {
 	// A record missing justification and source_report must still be selectable.
 	rec := openRec("2026-07-01T10:00:00Z-a", "MEDIUM", "internal/x/a.go", 12, "boom")
