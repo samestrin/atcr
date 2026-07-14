@@ -55,6 +55,7 @@ func newDebtResolveCmd() *cobra.Command {
 	cmd.Flags().Int("max", 10, "cap the number of selected items (0 = no cap)")
 	cmd.Flags().String("resolve", "", "mark the item with this id resolved (append-only)")
 	cmd.Flags().String("status", "resolved", "terminal status to record for --resolve (resolved|wontfix)")
+	cmd.Flags().String("reason", "", "justification recorded on the --resolve record (e.g. why a finding is wontfix)")
 	return cmd
 }
 
@@ -66,7 +67,7 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 		if !resolveStatuses[status] {
 			return usageError(fmt.Errorf("invalid --status %q: expected resolved|wontfix", mustFlag(cmd, "status")))
 		}
-		return markDebtResolved(cmd, dir, id, status)
+		return markDebtResolved(cmd, dir, id, status, mustFlag(cmd, "reason"))
 	}
 
 	sev := strings.ToUpper(mustFlag(cmd, "severity"))
@@ -208,7 +209,7 @@ func renderResolveList(w io.Writer, recs []localdebt.Record) error {
 // open record, stamps a terminal status/timestamp, and appends it so the fold in
 // selectOpenDebt drops the item from the open list. The stable id is preserved
 // (never re-stamped) so the resolution lines up with the original finding.
-func markDebtResolved(cmd *cobra.Command, dir, id, status string) error {
+func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error {
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to read local debt store: %w", err)
@@ -249,6 +250,12 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status string) error {
 	rec.Timestamp = now
 	rec.Status = status
 	rec.ResolvedAt = now
+	// A supplied --reason records why the finding was dismissed/resolved; an empty
+	// reason preserves any justification the item already carried (e.g. reconcile
+	// enrichment), never blanking it.
+	if r := strings.TrimSpace(reason); r != "" {
+		rec.Justification = r
+	}
 	if err := localdebt.Append(dir, rec); err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to record resolution: %w", err)
 	}
