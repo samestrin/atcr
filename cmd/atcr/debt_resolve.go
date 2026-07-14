@@ -121,6 +121,33 @@ func isClosedStatus(status string) bool {
 	}
 }
 
+// closedStatusRank orders terminal statuses so a deterministic effective status can
+// be chosen when divergent terminal records exist for one id (the no-lock TD-004
+// concurrency window in markDebtResolved). A permanent dismissal (wontfix) outranks a
+// resolved or deferred record, so the audit trail reports the strongest terminal
+// claim regardless of shard read order. An unknown/empty status ranks lowest.
+func closedStatusRank(status string) int {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "wontfix":
+		return 3
+	case "resolved":
+		return 2
+	case "deferred":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// higherClosedStatus returns whichever of the two terminal statuses ranks higher (see
+// closedStatusRank). An empty incumbent is always replaced by any real status.
+func higherClosedStatus(current, candidate string) string {
+	if closedStatusRank(candidate) > closedStatusRank(current) {
+		return candidate
+	}
+	return current
+}
+
 // selectOpenDebt folds the append-only record stream by id into the open backlog.
 // An id is open unless any record for it carries a terminal status; the displayed
 // record is the first open (non-terminal) occurrence, so a later resolution record
@@ -229,6 +256,10 @@ func renderResolveList(w io.Writer, recs []localdebt.Record) error {
 // selectOpenDebt drops the item from the open list. The stable id is preserved
 // (never re-stamped) so the resolution lines up with the original finding.
 func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error {
+	// ReadAll loads the full append-only store into memory and then scans for id.
+	// The linear-scan pattern is intentional and shared with selectOpenDebt and
+	// persistLocalDebt; indexed or streaming ID lookup is tracked separately by
+	// the compaction/GC TD item at internal/localdebt/store.go:67.
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to read local debt store: %w", err)
@@ -243,7 +274,11 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		}
 		if isClosedStatus(recs[i].Status) {
 			alreadyClosed = true
-			closedStatus = recs[i].Status
+			// Divergent terminal records can coexist for one id (the no-lock TD-004
+			// window below): pick the reported status by precedence, not shard read
+			// order, so the effective status is deterministic — wontfix outranks
+			// resolved/deferred.
+			closedStatus = higherClosedStatus(closedStatus, recs[i].Status)
 			continue
 		}
 		if orig == nil && recs[i].File != "" {
@@ -252,11 +287,15 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		}
 	}
 	// Concurrency-tolerant, not lock-protected: a terminal record for this id already
-	// exists, so this invocation reports and no-ops instead of appending a duplicate
-	// resolution record. Two concurrent invocations can each pass this check before
-	// either appends (the accepted TD-004 no-lock stance); selectOpenDebt's append-only
-	// fold treats any extra resolution record for an already-closed id as redundant, so
-	// the result is harmless duplicate bloat, not corruption.
+	// exists, so this invocation reports and no-ops instead of appending another
+	// terminal record. Two concurrent invocations can each pass this check before
+	// either appends (the accepted TD-004 no-lock stance). Since epic 24.0 those two
+	// records need not be identical duplicates: one may be --status resolved and the
+	// other --status wontfix, so the durable trail can carry divergent terminal claims
+	// for one id. selectOpenDebt folds the item out either way (any terminal status
+	// closes it), and closedStatus above is chosen deterministically by precedence
+	// (higherClosedStatus: wontfix outranks resolved) rather than by shard read order —
+	// so the effective terminal status is well-defined, not order-dependent.
 	if alreadyClosed {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already closed as %s; nothing to do.\n", id, closedStatus)
 		return nil
