@@ -208,7 +208,7 @@ func TestDebtResolve_MarkResolvedIsIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
 	require.NoError(t, err)
-	assert.Contains(t, strings.ToLower(out), "already resolved")
+	assert.Contains(t, strings.ToLower(out), "already closed")
 	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
 	require.NoError(t, err)
 	assert.Len(t, after, len(before), "re-resolving must not append another resolution record")

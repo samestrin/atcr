@@ -236,12 +236,14 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 
 	var orig *localdebt.Record
 	var alreadyClosed bool
+	var closedStatus string
 	for i := range recs {
 		if recs[i].ID != id {
 			continue
 		}
 		if isClosedStatus(recs[i].Status) {
 			alreadyClosed = true
+			closedStatus = recs[i].Status
 			continue
 		}
 		if orig == nil && recs[i].File != "" {
@@ -256,7 +258,7 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// fold treats any extra resolution record for an already-closed id as redundant, so
 	// the result is harmless duplicate bloat, not corruption.
 	if alreadyClosed {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already resolved; nothing to do.\n", id)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already closed as %s; nothing to do.\n", id, closedStatus)
 		return nil
 	}
 	if orig == nil {
