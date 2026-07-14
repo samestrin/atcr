@@ -84,7 +84,7 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 	if id != "" {
 		status := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "status")))
 		if !resolveStatuses[status] {
-			return usageError(fmt.Errorf("invalid --status %q: expected resolved|wontfix", mustFlag(cmd, "status")))
+			return usageError(fmt.Errorf("invalid --status %q: expected resolved|wontfix", status))
 		}
 		return markDebtResolved(cmd, dir, id, status, mustFlag(cmd, "reason"))
 	}
