@@ -1,0 +1,98 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
+# Epic Plan 24.0: False Positive / WontFix Dismissal Loop
+
+- **Estimated time**: TBD
+- **Tasks/Components**: 3 tasks / 2 components
+- **Execution**: execute-epic
+
+## Objective
+
+Provide a seamless mechanism for developers to permanently dismiss a specific technical debt finding (e.g., mark as False Positive or WontFix) so that ATCR's agents learn to ignore it in subsequent review loops.
+
+## Context
+
+ATCR successfully surfaces technical debt and automatically routes it to the `.planning/technical-debt/README.md` or `.atcr/reviews/` sharded backend. However, if an agent hallucinates or flags a legitimate but accepted pattern (a false positive), the developer currently has no "dismiss" button. The finding will repeatedly surface, causing alert fatigue. 
+
+## Proposed Solution
+
+1. **Dismiss status**: Extend `internal/localdebt.Record.Status` to recognize a new terminal value, `wontfix`, alongside the existing `resolved`/`deferred` (`isClosedStatus` in `cmd/atcr/debt_resolve.go:81-88`). A `wontfix` record folds the finding out of the open backlog exactly like a resolution does — no new fold logic needed, just a new recognized value.
+2. **CLI surface**: Extend `atcr debt resolve` (`cmd/atcr/debt_resolve.go`) with a `--status wontfix` option (or a `--dismiss <id>` alias) plus a new `--reason` flag that populates the finding's existing, currently-unset `Justification` field (`internal/localdebt/record.go:40`).
+3. **Suppression on future runs**: No reconciler or payload-builder change is required. `internal/localdebt`'s write-time dedup-by-id already skips re-appending a finding whose `FindingID` already exists in the store, regardless of status — so once a finding is marked `wontfix`, `atcr reconcile` will not re-persist it, and `atcr debt resolve --list`/`--json` already fold it out of the open view via the existing `isClosedStatus` check once that check recognizes `wontfix`.
+
+## Acceptance Criteria
+
+- [x] `atcr debt resolve --resolve <id> --status wontfix --reason "<text>"` marks a finding wontfix/false-positive and records the reason in `Justification`.
+- [x] A `wontfix` finding does not appear in `atcr debt resolve --list` (or `--json`) on subsequent runs.
+- [x] A `wontfix` finding is not re-appended to the local TD store when `atcr reconcile` re-detects the same finding (same `FindingID`).
+- [x] The dismissal state (status + reason) is preserved across runs — durable in the append-only `.atcr/debt/` store.
+
+## Components Touched
+
+- `internal/localdebt` (Status enum + Justification wiring — persistence and open/closed fold)
+- `cmd/atcr` (CLI: `--status wontfix` / `--dismiss`, `--reason` flags on `atcr debt resolve`)
+
+## Out of Scope
+
+- Team-wide synchronization of dismissed findings (handled by Epic 19.x remote registry fetching / shared history if needed, but the core engine logic is local).
+- AST-structural-hash-based dismissal matching (resilient to file/line drift) — v1 uses exact `FindingID` matching, consistent with the rest of the codebase's finding-identity convention (`internal/history.FindingID`). Deferred to a follow-up epic if line-drift resilience proves necessary in practice.
+- Parity with the `.planning/`-scoped store (`internal/debt` / `.planning/technical-debt/README.md`) — this epic covers the public `.atcr/`-scoped store only (`internal/localdebt`), which is what `atcr reconcile` populates on every CLI run. README/sprint-store parity is a candidate follow-up epic.
+- `internal/reconcile` and `internal/payload` changes — not needed; suppression happens entirely at the `internal/localdebt` persistence/read layer (see Proposed Solution item 3).
+
+## Dependencies
+
+- None.
+
+## Refinements (2026-07-13)
+
+This section records findings from `/refine-epic` run on July 13, 2026 01:00:46PM. It is additive — original plan content above is preserved.
+
+### Auto-applied corrections (0)
+
+None — no mechanical errors found. All cited paths (`.planning/technical-debt/README.md`, `internal/reconcile`, `internal/scorecard`, `cmd/atcr`) exist and are valid.
+
+### Items needing user confirmation (5)
+
+⏸️ **Reusable dismissal infrastructure already exists — plan proposes building it from scratch.** `atcr debt resolve --resolve <id>` (`cmd/atcr/debt_resolve.go`) already appends an append-only `Status` record (`resolved`/`deferred`) that `selectOpenDebt`/`isClosedStatus` (`cmd/atcr/debt_resolve.go:81-88`) folds out of the open backlog permanently — this is nearly the exact mechanism this epic asks for ("Reconciliation Ignore Logic"). The `.planning/-scoped` store (`internal/debt`) has the equivalent `Status` filter (`open|deferred|resolved`, `internal/debt/debt.go:54`). Neither store recognizes a `wontfix`/`false_positive` status distinct from `resolved` (which implies the code was actually fixed) — that is the actual gap. Suggested action: extend `isClosedStatus` and `internal/debt`'s status enum with a new terminal status (e.g. `wontfix`), and extend `atcr debt resolve` (or add a sibling flag) rather than building a new `atcr dismiss` subsystem and a separate audit log from zero.
+
+⏸️ **Components Touched is wrong/ambiguous for the local TD store.** The plan lists "`internal/scorecard` or local TD store (persistence)" — `internal/scorecard` is an unrelated ledger for run history and is NOT where TD records persist. The actual persistence package is `internal/localdebt` (the `.atcr/`-scoped public store `atcr reconcile` populates, with a `Record.Status`/`Justification`/`ResolvedAt` schema already in place — see `internal/localdebt/record.go`). There is also a second, distinct backend, `internal/debt` (the `.planning/`-scoped store backing `.planning/technical-debt/README.md`), which the plan doesn't mention at all. Suggested action: decide whether dismissal targets one or both backends, and correct COMPONENTS_TOUCHED to name the real packages: `internal/localdebt` and/or `internal/debt` (not `internal/scorecard`).
+
+⏸️ **Missed component: `internal/payload`.** The plan's Proposed Solution item 2 says to update "the reconciler (`internal/reconcile`) and prompt payload builder" — the prompt payload builder is `internal/payload` (`internal/payload/doc.go`: "Package payload builds per-agent reviewer input..."), which is not listed in Components Touched. Suggested action: add `internal/payload` to COMPONENTS_TOUCHED, or confirm dismissal filtering happens earlier (at the reconcile/persistence layer) so `internal/payload` never sees dismissed findings and doesn't need modification — if so, say so explicitly and drop it from the task list.
+
+⏸️ **Ambiguous matching mechanism.** Proposed Solution item 2 says dismissed findings should be matched "by AST structural hash or explicit ID" without deciding between them. The codebase already has both primitives independently: `internal/astgroup.MerkleHash` (structural, line-number-independent) and `internal/history.FindingID`/`localdebt.Record.ID` (SHA-256 of file+line+problem, already what `atcr debt resolve` keys resolution off of). Wiring AST-hash-based matching into the local-debt dismissal flow is a materially larger change than reusing the existing `FindingID` convention (which is already exact-match, not resilient to file/line drift). Suggested action: scope this epic to ID-based matching only (reuse `FindingID`), and explicitly defer AST-hash fuzzy matching to a follow-up epic if line-drift resilience turns out to matter in practice.
+
+⏸️ **Ambiguous T<N>: "Record the dismissal reason for transparency."** — too vague to derive a RED→GREEN test (6 words, no concrete file/symbol target). Suggested rewrite: "Add a `--reason` flag to `atcr debt resolve` (`markDebtResolved` in `cmd/atcr/debt_resolve.go`) that populates the existing but currently-unset `localdebt.Record.Justification` field (`internal/localdebt/record.go:40`) when marking a finding `wontfix`/`false-positive`."
+
+Note that these were NOT applied automatically — see the copy-paste block emitted at end of skill run.
+
+### Advisory observations (1)
+
+ℹ️ **Scope-guard violation:** Author-claimed COMPONENTS_TOUCHED already lists 3 items (`internal/reconcile`, `internal/scorecard or local TD store`, `cmd/atcr`), exceeding `/execute-epic`'s ≤2-component limit. Verified codebase mapping shows the real component set is larger still — `internal/reconcile`, `internal/localdebt`, `internal/debt`, `cmd/atcr`, and `internal/payload` (5 components, derived TASK_COUNT ≈5). This plan will be rejected by `/execute-epic`'s Phase 1 Step 4 scope guard as currently scoped and should run through `/init-plan @.planning/epics/active/24.0_false_positive_wontfix_dismissal.md` for the full sprint pipeline. Refining alone will not unblock `/execute-epic` unless the scope is deliberately narrowed to ≤2 components (e.g. local-store-only, deferring reconciler/payload filtering to a follow-up epic).
+
+### Verification context
+
+- Refinement depth: spot-check
+- Derived TASK_COUNT: 5 (limit: 6)
+- Derived COMPONENT_COUNT: 5 (limit: 2)
+- COMPONENTS_TOUCHED: internal/reconcile, internal/localdebt, internal/debt, cmd/atcr, internal/payload
+- VISUAL_SURFACE: false
+- HAS_GATED_WORK: false
+- HAS_CROSS_SYSTEM: false
+- Cited references checked: 5 (paths) + 3 codebase spot-check searches
+- Codebase search queries (spot-check): "dismiss|wontfix|false positive" (internal/, cmd/), "structural hash|finding id" (internal/), "prompt payload builder" (internal/)
+
+### Resolution (2026-07-13)
+
+All 5 user-confirm items above were reviewed and applied directly to the plan body (Proposed Solution, Acceptance Criteria, Components Touched, Out of Scope):
+
+1. ✅ Reuse `atcr debt resolve`/`isClosedStatus` instead of a new `atcr dismiss` subsystem.
+2. ✅ Target `internal/localdebt` only; `internal/debt`/README parity moved to Out of Scope as a follow-up candidate.
+3. ✅ `internal/payload` confirmed unnecessary — filtering happens at the `internal/localdebt` read layer before payload ever sees the findings; moved to Out of Scope.
+4. ✅ Matching scoped to exact `FindingID` only; AST-structural-hash matching moved to Out of Scope as a follow-up.
+5. ✅ Dismissal-reason task rewritten to name the concrete `--reason` flag and the existing `Justification` field.
+
+Net effect: derived COMPONENT_COUNT drops from 5 to 2 (`internal/localdebt`, `cmd/atcr`) and TASK_COUNT to 3 — the plan now fits `/execute-epic`'s ≤6 tasks / ≤2 components scope guard. Execution field updated from `init-plan` to `execute-epic` accordingly.
+----- END SPRINT PLAN -----
+

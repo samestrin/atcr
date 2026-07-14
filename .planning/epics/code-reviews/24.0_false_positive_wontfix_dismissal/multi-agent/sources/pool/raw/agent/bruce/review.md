@@ -1,0 +1,4 @@
+
+
+
+MEDIUM|cmd/atcr/debt_resolve.go:54|Reason-only guard skips validation and silently falls through: `cmd.Flags().Changed("status")` does not guard --reason, so `--reason "text" --resolve` is required but `--reason "text"` alone bypasses the guard and proceeds to markDebtResolved which then errors on missing id (user gets an unhelpful "no open item" error instead of a clear usage hint). The --status case correctly uses `Changed("status")`. Align --reason guard with the --status pattern: `cmd.Flags().Changed("status") || cmd.Flags().Changed("reason")` | correctness | 10|strings.TrimSpace(mustFlag(cmd, "reason")) != "" should be cmd.Flags().Changed("reason")

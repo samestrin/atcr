@@ -1,3 +1,18 @@
+## [24.0.0] - 2026-07-13
+
+Give developers a way to permanently dismiss a technical-debt finding as won't-fix / false-positive so ATCR's agents stop re-surfacing it in later review loops.
+
+### Added
+
+- `atcr debt resolve --resolve <id> --status wontfix` dismisses a finding as won't-fix / false-positive: a `wontfix` record is a terminal status that folds the item out of the open backlog (`--list`/`--json`) exactly like `resolved`, and the existing `atcr reconcile` dedup-by-id suppresses re-persisting it when the same finding is re-detected.
+- `--reason "<text>"` flag on `atcr debt resolve` records why a finding was dismissed or resolved, populating the record's `Justification` field (an empty `--reason` preserves any existing justification).
+
+### Changed
+
+- `atcr debt resolve` now rejects `--status`/`--reason` supplied without `--resolve <id>` with a usage error, instead of silently ignoring them and printing the open list.
+
+*Shipped via /execute-epic (epic 24.0)*
+
 ## [22.5.0] - 2026-07-13
 
 Close the last residual test gap from the backup-swap hardening work: cover `backupExisting`'s non-`ErrNotExist` `Lstat(backup)` probe-failure branch, which filesystem permissions could not isolate because the staging siblings share a parent directory.

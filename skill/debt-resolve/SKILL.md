@@ -35,6 +35,12 @@ file read and never a direct engine call, consistent with the dispatcher contrac
 - `atcr debt resolve --max <N>` — cap the selection (default 10).
 - `atcr debt resolve --resolve <id>` — record an append-only resolution once an item is
   actually fixed and verified.
+- `atcr debt resolve --resolve <id> --status wontfix --reason "<why this is a false positive/accepted pattern>"` —
+  dismiss a finding as a false positive or accepted pattern (Epic 24.0). A `wontfix`
+  record folds the item out of the open backlog exactly like `resolved`, but records
+  the dismissal reason for auditability. `--status wontfix` requires `--reason` (or an
+  existing justification on the open record); a reasonless permanent dismissal is
+  rejected as a usage error.
 
 If the store is empty or missing, the command prints a "no items" line and exits 0 —
 report "no items to resolve" and halt cleanly; do **not** enter any resolution stage.

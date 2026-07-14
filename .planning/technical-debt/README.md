@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 4 | 0 |
 | MEDIUM | 0 | 20 | 0 |
-| LOW | 0 | 33 | 0 |
+| LOW | 0 | 34 | 0 |
 
 
-**Last Modified:** 2026-07-13 | **Open Items:** 0 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 57
+**Last Modified:** 2026-07-14 | **Open Items:** 0 | **Deferred Items:** 58 | **Resolved Items:** 0 | **Total Items:** 58
 
 ## Directory Structure
 
@@ -63,6 +63,12 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table â†’ shards â
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-14] From Sprint: 24.0_false_positive_wontfix_dismissal
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| U | [/] | LOW | internal/localdebt/store.go:67 | The store is append-only with no compaction; every resolve/wontfix appends a full record copy, and every ReadAll/selectOpenDebt/persistLocalDebt re-reads and folds the entire history on each invocation. Combined with the line-sensitive id (record.go StampID), a churny false positive accumulates: each line drift appends a fresh open record plus a fresh wontfix record, growing shards unbounded while every command pays the full O(total-records) scan. There is no cap or GC path. (Deferred: Epic Plan 43.0) | Add a compaction/GC command (or periodic fold-and-rewrite that drops superseded closed records) so shard size tracks live findings, not total history. Verify by simulating many resolve cycles and asserting bounded on-disk size after compaction. | performance | 240 | code-review | claude | MEDIUM |
 
 ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
 

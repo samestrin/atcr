@@ -1,0 +1,1 @@
+LOW|cmd/atcr/debt_resolve.go:236|Hardcoded "already resolved" message prints for wontfix/dismissed items, misrepresenting the actual terminal status|Interpolate the actual status or use a generic "already closed" phrase|correctness|5|fmt.Fprintf(cmd.OutOrStdout(), "%s is already resolved; nothing to do.\n", id)

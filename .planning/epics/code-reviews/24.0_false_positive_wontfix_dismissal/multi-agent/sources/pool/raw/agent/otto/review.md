@@ -1,0 +1,1 @@
+LOW|cmd/atcr/debt_resolve.go:225|already-closed message hardcodes "already resolved" for all terminal statuses|Update message to use a generic term like "already closed" or reflect the actual status|style|5|`_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already resolved; nothing to do.\n", id)`
