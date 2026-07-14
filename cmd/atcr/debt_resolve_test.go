@@ -348,6 +348,11 @@ func TestDebtResolve_StatusOrReasonWithoutResolveIsUsageError(t *testing.T) {
 	_, err = runDebt(t, "resolve", "--dir", dir, "--reason", "some note")
 	require.Error(t, err, "--reason without --resolve must be a usage error")
 
+	// An explicitly empty --reason without --resolve must also be rejected; it
+	// should be governed by Changed("reason"), not by the trimmed value.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--reason", "")
+	require.Error(t, err, "explicit --reason=\"\" without --resolve must be a usage error")
+
 	// Plain --list (no --status/--reason) still works untouched.
 	_, err = runDebt(t, "resolve", "--dir", dir, "--list")
 	require.NoError(t, err, "a plain list must not be affected by the new guard")
