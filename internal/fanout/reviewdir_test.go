@@ -526,9 +526,9 @@ func TestBackupExisting_StaleBakOldRemovalFailureSurfaces(t *testing.T) {
 
 // TestBackupExisting_LstatProbeFailureSurfaces verifies that when the os.Lstat
 // probe of the prior <dir>.bak fails with a non-ErrNotExist error, backupExisting
-// surfaces the typed "checking prior backup" error rather than proceeding as if no
-// prior backup existed (reviewdir.go:341 probe, its non-ErrNotExist arm at
-// reviewdir.go:346-347). This branch needs the lstatFn seam because the staging
+// surfaces the typed "checking prior backup" error (the probe's non-ErrNotExist
+// arm, wrapping the underlying failure) rather than proceeding as if no prior
+// backup existed. This branch needs the lstatFn seam because the staging
 // siblings share a parent directory, so filesystem permissions cannot isolate the
 // probe from the earlier stale-straggler RemoveAll legs.
 func TestBackupExisting_LstatProbeFailureSurfaces(t *testing.T) {
