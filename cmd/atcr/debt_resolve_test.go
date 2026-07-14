@@ -220,6 +220,29 @@ func TestDebtResolve_MarkResolvedUnknownIDErrors(t *testing.T) {
 	require.Error(t, err, "resolving an unknown id must error, not silently no-op")
 }
 
+func TestDebtResolve_WontfixStatusFoldsItemOutOfOpenList(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	// A terminal wontfix record for the same id must fold the finding out of the
+	// open backlog exactly like a resolved record (Epic 24.0 AC #2).
+	wontfix := rec
+	wontfix.RunID = "2026-07-01T11:00:00Z-a-wontfix"
+	wontfix.Timestamp = wontfix.RunID
+	wontfix.Status = "wontfix"
+	dir := writeDebtStore(t, rec, wontfix,
+		openRec("2026-07-02T10:00:00Z-b", "LOW", "internal/y/b.go", 34, "leak"),
+	)
+
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.NotContains(t, list, "internal/x/a.go", "a wontfix item must not appear as open")
+	assert.Contains(t, list, "internal/y/b.go", "the unrelated open item stays open")
+
+	// The JSON view folds the wontfix item out too.
+	js, err := runDebt(t, "resolve", "--dir", dir, "--json")
+	require.NoError(t, err)
+	assert.NotContains(t, js, "internal/x/a.go", "a wontfix item must not appear in --json")
+}
+
 func TestDebtResolve_SelectionWorksWithoutOptionalFields(t *testing.T) {
 	// A record missing justification and source_report must still be selectable.
 	rec := openRec("2026-07-01T10:00:00Z-a", "MEDIUM", "internal/x/a.go", 12, "boom")
