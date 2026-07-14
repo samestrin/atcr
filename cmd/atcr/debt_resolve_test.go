@@ -339,32 +339,41 @@ func TestDebtResolve_StatusOrReasonWithoutResolveIsUsageError(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	dir := writeDebtStore(t, rec)
 
+	errorLine := func(out string) string {
+		parts := strings.SplitN(out, "\n", 2)
+		return strings.ToLower(strings.TrimSpace(parts[0]))
+	}
+
 	// --status without --resolve must not silently fall through to the list view:
 	// it would drop the user's dismissal intent (and skip status validation).
 	out, err := runDebt(t, "resolve", "--dir", dir, "--status", "wontfix")
 	require.Error(t, err, "--status without --resolve must be a usage error, not a silent list")
-	assert.Contains(t, strings.ToLower(out), "--status", "error must mention only the supplied flag")
-	assert.NotContains(t, strings.ToLower(out), "--reason", "error must not mention --reason when only --status was supplied")
+	el := errorLine(out)
+	assert.Contains(t, el, "--status", "error must mention only the supplied flag")
+	assert.NotContains(t, el, "--reason", "error must not mention --reason when only --status was supplied")
 
 	// The explicit default value must also be rejected without --resolve; this
 	// path is distinct from a non-default status and locks the guard behavior.
 	out, err = runDebt(t, "resolve", "--dir", dir, "--status", "resolved")
 	require.Error(t, err, "--status resolved without --resolve must be a usage error")
-	assert.Contains(t, strings.ToLower(out), "--status")
-	assert.NotContains(t, strings.ToLower(out), "--reason")
+	el = errorLine(out)
+	assert.Contains(t, el, "--status")
+	assert.NotContains(t, el, "--reason")
 
 	// --reason without --resolve is the same footgun.
 	out, err = runDebt(t, "resolve", "--dir", dir, "--reason", "some note")
 	require.Error(t, err, "--reason without --resolve must be a usage error")
-	assert.Contains(t, strings.ToLower(out), "--reason", "error must mention only the supplied flag")
-	assert.NotContains(t, strings.ToLower(out), "--status", "error must not mention --status when only --reason was supplied")
+	el = errorLine(out)
+	assert.Contains(t, el, "--reason", "error must mention only the supplied flag")
+	assert.NotContains(t, el, "--status", "error must not mention --status when only --reason was supplied")
 
 	// An explicitly empty --reason without --resolve must also be rejected; it
 	// should be governed by Changed("reason"), not by the trimmed value.
 	out, err = runDebt(t, "resolve", "--dir", dir, "--reason", "")
 	require.Error(t, err, "explicit --reason=\"\" without --resolve must be a usage error")
-	assert.Contains(t, strings.ToLower(out), "--reason")
-	assert.NotContains(t, strings.ToLower(out), "--status")
+	el = errorLine(out)
+	assert.Contains(t, el, "--reason")
+	assert.NotContains(t, el, "--status")
 
 	// Plain --list (no --status/--reason) still works untouched.
 	_, err = runDebt(t, "resolve", "--dir", dir, "--list")

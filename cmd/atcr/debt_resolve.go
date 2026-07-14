@@ -66,8 +66,17 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 	// --status/--reason only mean something for a mark action; without --resolve they
 	// would be silently ignored (dropping the user's dismissal intent and skipping
 	// --status validation). Reject that combination rather than fall through to list.
-	if id == "" && (cmd.Flags().Changed("status") || cmd.Flags().Changed("reason")) {
-		return usageError(fmt.Errorf("--status/--reason require --resolve <id>"))
+	if id == "" {
+		var provided []string
+		if cmd.Flags().Changed("status") {
+			provided = append(provided, "--status")
+		}
+		if cmd.Flags().Changed("reason") {
+			provided = append(provided, "--reason")
+		}
+		if len(provided) > 0 {
+			return usageError(fmt.Errorf("%s require --resolve <id>", strings.Join(provided, ", ")))
+		}
 	}
 	if id != "" {
 		status := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "status")))
