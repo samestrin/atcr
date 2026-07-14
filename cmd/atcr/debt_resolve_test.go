@@ -341,22 +341,30 @@ func TestDebtResolve_StatusOrReasonWithoutResolveIsUsageError(t *testing.T) {
 
 	// --status without --resolve must not silently fall through to the list view:
 	// it would drop the user's dismissal intent (and skip status validation).
-	_, err := runDebt(t, "resolve", "--dir", dir, "--status", "wontfix")
+	out, err := runDebt(t, "resolve", "--dir", dir, "--status", "wontfix")
 	require.Error(t, err, "--status without --resolve must be a usage error, not a silent list")
+	assert.Contains(t, strings.ToLower(out), "--status", "error must mention only the supplied flag")
+	assert.NotContains(t, strings.ToLower(out), "--reason", "error must not mention --reason when only --status was supplied")
 
 	// The explicit default value must also be rejected without --resolve; this
 	// path is distinct from a non-default status and locks the guard behavior.
-	_, err = runDebt(t, "resolve", "--dir", dir, "--status", "resolved")
+	out, err = runDebt(t, "resolve", "--dir", dir, "--status", "resolved")
 	require.Error(t, err, "--status resolved without --resolve must be a usage error")
+	assert.Contains(t, strings.ToLower(out), "--status")
+	assert.NotContains(t, strings.ToLower(out), "--reason")
 
 	// --reason without --resolve is the same footgun.
-	_, err = runDebt(t, "resolve", "--dir", dir, "--reason", "some note")
+	out, err = runDebt(t, "resolve", "--dir", dir, "--reason", "some note")
 	require.Error(t, err, "--reason without --resolve must be a usage error")
+	assert.Contains(t, strings.ToLower(out), "--reason", "error must mention only the supplied flag")
+	assert.NotContains(t, strings.ToLower(out), "--status", "error must not mention --status when only --reason was supplied")
 
 	// An explicitly empty --reason without --resolve must also be rejected; it
 	// should be governed by Changed("reason"), not by the trimmed value.
-	_, err = runDebt(t, "resolve", "--dir", dir, "--reason", "")
+	out, err = runDebt(t, "resolve", "--dir", dir, "--reason", "")
 	require.Error(t, err, "explicit --reason=\"\" without --resolve must be a usage error")
+	assert.Contains(t, strings.ToLower(out), "--reason")
+	assert.NotContains(t, strings.ToLower(out), "--status")
 
 	// Plain --list (no --status/--reason) still works untouched.
 	_, err = runDebt(t, "resolve", "--dir", dir, "--list")
