@@ -344,6 +344,11 @@ func TestDebtResolve_StatusOrReasonWithoutResolveIsUsageError(t *testing.T) {
 	_, err := runDebt(t, "resolve", "--dir", dir, "--status", "wontfix")
 	require.Error(t, err, "--status without --resolve must be a usage error, not a silent list")
 
+	// The explicit default value must also be rejected without --resolve; this
+	// path is distinct from a non-default status and locks the guard behavior.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--status", "resolved")
+	require.Error(t, err, "--status resolved without --resolve must be a usage error")
+
 	// --reason without --resolve is the same footgun.
 	_, err = runDebt(t, "resolve", "--dir", dir, "--reason", "some note")
 	require.Error(t, err, "--reason without --resolve must be a usage error")
