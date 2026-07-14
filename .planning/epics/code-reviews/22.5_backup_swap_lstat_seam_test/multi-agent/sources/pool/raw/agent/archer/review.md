@@ -1,0 +1,1 @@
+HIGH|internal/fanout/reviewdir_test.go:454|Copy-paste error restores removePathFn instead of lstatFn in cleanup leaking the stub to subsequent tests|Change removePathFn = orig to lstatFn = orig in withLstatStub's t.Cleanup callback|copy-paste|3|t.Cleanup(func() { removePathFn = orig })

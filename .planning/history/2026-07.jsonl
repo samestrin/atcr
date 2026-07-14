@@ -145,3 +145,7 @@
 {"ts":"2026-07-13T15:35:28.879854-07:00","package":".planning/epics/superseded","severity":"HIGH","id":"af568a7d90e52dd5","file":".planning/epics/superseded/23.0_human_persona_renaming.md","category":"out-of-scope"}
 {"ts":"2026-07-13T15:35:28.879854-07:00","package":"internal/payload","severity":"LOW","id":"3d6472214a037715","file":"internal/payload/rangebuilder.go","category":"style"}
 {"ts":"2026-07-13T15:35:28.879854-07:00","package":"internal/payload","severity":"MEDIUM","id":"79e4c9e8e949c4eb","file":"internal/payload/builder.go","category":"structure"}
+{"ts":"2026-07-13T19:18:44.621699-07:00","package":"internal/fanout","severity":"MEDIUM","id":"20ef8fed2f177e98","file":"internal/fanout/reviewdir_test.go","category":"performance"}
+{"ts":"2026-07-13T19:18:44.621699-07:00","package":"internal/fanout","severity":"MEDIUM","id":"26ffe929c07a76d2","file":"internal/fanout/reviewdir_test.go","category":"concurrency"}
+{"ts":"2026-07-13T19:18:44.621699-07:00","package":"internal/fanout","severity":"HIGH","id":"3c4b62f96701aff8","file":"internal/fanout/reviewdir_test.go","category":"copy-paste"}
+{"ts":"2026-07-13T19:18:44.621699-07:00","package":"internal/fanout","severity":"LOW","id":"2676e85a1347f37f","file":"internal/fanout/reviewdir_test.go","category":"style"}

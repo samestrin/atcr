@@ -1,0 +1,3 @@
+ CRITICAL|internal/fanout/reviewdir.go:341|lstatFn seam is a fourth package-level mutable var added to an already non-threadsafe seam cluster/ no behavior change now but the pattern hardens a design that prevents future parallel review processing|Encapsulate renameFn/copyPathFn/removePathFn/lstatFn into a backupSwapper struct with dependencies injected at construction/ not per-call globals|coupling|60|var lstatFn = os.Lstat adds to existing package var seam cluster (renameFn/copyPathFn/removePathFn) that serializes tests and production implicitly
+
+MEDIUM|internal/fanout/reviewdir_test.go:513|TestBackupExisting_LstatProbeFailureSurfaces stub fallthrough to os.L

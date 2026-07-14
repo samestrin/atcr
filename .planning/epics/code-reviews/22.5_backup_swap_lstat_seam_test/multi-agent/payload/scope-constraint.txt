@@ -1,3 +1,7 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
 # Epic Plan 22.5: Test Seam for backupExisting's Non-ErrNotExist Lstat Failure
 
 - **Estimated time**: 0.5 day
@@ -18,9 +22,9 @@ Close the last residual test gap from the `4.7.1_backup-swap-hardening` epic: th
 
 ## Acceptance Criteria
 
-- [x] `backupExisting`'s non-`ErrNotExist` `Lstat(backup)` branch is covered by a test using the new seam.
-- [x] No behavior change to the production path — the seam defaults to `os.Lstat` when not overridden.
-- [x] `go test ./internal/fanout/...` passes with the new test green.
+- [ ] `backupExisting`'s non-`ErrNotExist` `Lstat(backup)` branch is covered by a test using the new seam.
+- [ ] No behavior change to the production path — the seam defaults to `os.Lstat` when not overridden.
+- [ ] `go test ./internal/fanout/...` passes with the new test green.
 
 ## Components Touched
 
@@ -86,3 +90,5 @@ None.
 **Original Questions and Answers:**
 1. Q: Confirm the intended target — add the `lstatFn` seam at line 341 and assert the test hits the "checking prior backup" branch (i.e., Task 2's "clearing stale staging backup" error-string label is a typo)?
    A: Confirmed. The seam belongs on the `os.Lstat(backup)` probe at `reviewdir.go:341`, and the new test must assert the wrapped error text `"checking prior backup %q: %w"` (`reviewdir.go:346-347`). "clearing stale staging backup" is a stale copy-paste from the RemoveAll legs (lines 322-323/325-326), already covered by `TestBackupExisting_StaleBakOldRemovalFailureSurfaces`. Incidental: only `renameFn` exists as a seam; `removeAllFn` does not — mirror `renameFn`.
+----- END SPRINT PLAN -----
+

@@ -1,0 +1,2 @@
+# atcr-findings/v1
+LOW|internal/fanout/reviewdir_test.go:458|Comment claims permissions cannot isolate the branch, but the test uses a stub; the phrasing is a bit redundant given the task|Simplify comment to focus on the necessity of the seam for deterministic failure injection|style|2|`Permissions cannot isolate this branch...`|otto

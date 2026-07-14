@@ -1,0 +1,3 @@
+
+
+No performance findings were identified in the changed code. The modifications introduce an injectable `lstatFn` seam for testability, which in production defaults to `os.Lstat` and adds no measurable runtime overhead. The test changes are confined to test files and do not introduce performance issues in the test suite (e.g., no expensive fixture builds or repeated work in hot paths). All changes align with the sprint plan's focus on test coverage for a specific error branch, with no impact on production performance characteristics.

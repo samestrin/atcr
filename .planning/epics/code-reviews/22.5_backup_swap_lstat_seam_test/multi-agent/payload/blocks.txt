@@ -1,0 +1,364 @@
+diff --git a/.planning/epics/active/22.5_backup_swap_lstat_seam_test.md b/.planning/epics/completed/22.5_backup_swap_lstat_seam_test.md
+similarity index 51%
+rename from .planning/epics/active/22.5_backup_swap_lstat_seam_test.md
+rename to .planning/epics/completed/22.5_backup_swap_lstat_seam_test.md
+index 49ad896a..0013eac3 100644
+--- a/.planning/epics/active/22.5_backup_swap_lstat_seam_test.md
++++ b/.planning/epics/completed/22.5_backup_swap_lstat_seam_test.md
+@@ -55,13 +55,34 @@ None.
+ None.
+ 
+ ### Verification context
+ 
+ - Refinement depth: spot-check
+ - Derived TASK_COUNT: 2 (limit: 6)
+ - Derived COMPONENT_COUNT: 1 (limit: 2)
+ - COMPONENTS_TOUCHED: `internal/fanout`
+ - VISUAL_SURFACE: false
+ - HAS_GATED_WORK: false
+ - HAS_CROSS_SYSTEM: false
+ - Cited references checked: 2
+ - Codebase search queries (spot-check): []
++
++## Clarifications
++
++### Recorded 2026-07-13 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- The `lstatFn` seam belongs on the `os.Lstat(backup)` **probe** at `reviewdir.go:341`. Its non-`ErrNotExist` arm at `reviewdir.go:346-347` returns the wrapped error `"checking prior backup %q: %w"` — that is the branch the test must exercise.
++- Task 2's phrase "clearing stale staging backup" is a stale/incorrect copy-paste from the `os.RemoveAll` error strings at lines 322-323/325-326. That is a different code path already covered by `TestBackupExisting_StaleBakOldRemovalFailureSurfaces` (`reviewdir_test.go:489`). The new test must assert `"checking prior backup"`, NOT `"clearing stale staging backup"`.
++- Task 1's phrase "mirroring the existing `renameFn`/`removeAllFn` seam pattern" is imprecise: only `renameFn` (`reviewdir.go:387`) currently exists as a seam; `removeAllFn` does not. The new seam mirrors the `renameFn` package-var pattern.
++
++**Scope Boundaries:**
++- IN scope: add `var lstatFn = os.Lstat` (mirroring `renameFn`) used ONLY at line 341; add a `withLstatStub` test helper (mirroring `withRenameStub`); add one test that stubs `lstatFn(backup)` to return a non-`ErrNotExist` error and asserts the returned error contains `"checking prior backup"`.
++- OUT of scope: any backup/swap behavior change; the belt-and-suspenders `os.Lstat` at `reviewdir.go:362` (no `ErrNotExist` branch, out of AC scope); the already-tested `os.RemoveAll` "clearing stale staging backup" legs.
++
++**Technical Approach:**
++- Route only the line-341 probe through `lstatFn`; production default remains `os.Lstat`, so no behavior change.
++- Test mirrors the existing `t.TempDir()` + `withRenameStub` fault-injection pattern in `reviewdir_test.go`.
++
++**Original Questions and Answers:**
++1. Q: Confirm the intended target — add the `lstatFn` seam at line 341 and assert the test hits the "checking prior backup" branch (i.e., Task 2's "clearing stale staging backup" error-string label is a typo)?
++   A: Confirmed. The seam belongs on the `os.Lstat(backup)` probe at `reviewdir.go:341`, and the new test must assert the wrapped error text `"checking prior backup %q: %w"` (`reviewdir.go:346-347`). "clearing stale staging backup" is a stale copy-paste from the RemoveAll legs (lines 322-323/325-326), already covered by `TestBackupExisting_StaleBakOldRemovalFailureSurfaces`. Incidental: only `renameFn` exists as a seam; `removeAllFn` does not — mirror `renameFn`.
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index 27d17db2..4b53ec51 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,17 +3,17 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 4 | 0 |
+ | MEDIUM | 0 | 20 | 0 |
+-| LOW | 0 | 33 | 0 |
++| LOW | 1 | 33 | 0 |
+ 
+ 
+-**Last Modified:** 2026-07-13 | **Open Items:** 0 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 57
++**Last Modified:** 2026-07-13 | **Open Items:** 1 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 58
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -63,58 +63,64 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
+ 
++### [2026-07-13] From Sprint: epic-22.5
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| U | [ ] | LOW | internal/fanout/reviewdir_test.go:102 | withLstatStub comment implies the .bak.old/.bak.new RemoveAll legs are left on real os.Lstat, but those legs use os.RemoveAll not lstat so the delegate fallthrough is never exercised in backupExisting/s flow | Reword the comment to say only the single line-341 probe routes through lstatFn (the RemoveAll legs never touch lstat) | UNDER_ENGINEERING | 5 | execute-epic-independent |
++
+ ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go | Systemic symlink exposure across all five append-only ledgers (localdebt, scorecard, history, audit, debate/tools): each opens its shard with O_CREATE/O_WRONLY/O_APPEND and no O_NOFOLLOW, and MkdirAll follows symlinked path components, so a pre-planted symlink at the ledger path or a parent redirects appends outside the store. LOW: exploiting requires pre-existing local write access to a 0700 per-user/per-repo dir (same-uid, no trust-boundary crossing). localdebt already documents this as an accepted won't-fix (internal/localdebt/doc.go); tracked here so the systemic posture is visible, not localdebt-only. (intent_note: surfaced during 20.1 resolve-td; bundle into a future FS-safety pass, do not fix localdebt in isolation) | Do NOT harden localdebt alone (inconsistent, false security). Bundle into a future filesystem-safety epic: a shared GOOS-guarded O_NOFOLLOW append helper (precedent: internal/tools/open_unix.go and open_other.go) swapped across all five ledgers, plus symlink-planted unix-only tests. Prioritize only if a ledger moves to a shared/multi-user dir or a pentest/supply-chain audit flags it. Final-component only; parent-symlink resistance (openat2/RESOLVE_NO_SYMLINKS) is out of scope. | security | 480 | resolve-td | claude | MEDIUM |
+ 
+ ### [2026-07-11] From Sprint: 20.0_standalone_skill_release
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | go.mod:41 | `go install github.com/samestrin/atcr/cmd/atcr@latest` cannot work for external users. Two layered causes: the root go.mod carries a `replace ... => ./reconcile` directive (Go refuses to install any module whose published go.mod has a replace), and the binding cause is that the samestrin/atcr repo is PRIVATE so the module is not on the public proxy. Makes AC1 (go install), install.sh (AC4), and the go-install lines in README/docs unsatisfiable until the repo is public. (Deferred: .planning/epics/active/33.2_public_launch.md) | Resolve in Epic 33.2 (Public Launch): external `go install` is gated on the repo going public, which happens at launch (Epic 33 cluster). 33.2 makes the repo public, publishes `reconcile` + drops the replace directive, and delivers install.sh + a real-install integration test. | security | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-09] From Sprint: 19.7_live_model_resolution
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/personas/drift.go | For a bound persona the `family` JSON field is the bare binding token (glm); for a bindingless persona it is the derived vendor/tier prefix (anthropic/claude-opus) — two shapes under one key that a 19.8 agent grouping on `family` would see inconsistently. (intent_note: deferred per sprint-plan §5.6 — shape documented as advisory; normalization deferred to 19.8 (TD-008)) | Phase 8/later: when wiring `models refresh` against the live catalog, confirm the `~…-latest` ids are present; else skip the `missing` check for a lock slug equal to an `aliasTable` value (or resolve alias locks through the passthrough before the catalog lookup) and add a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 2 | [/] | LOW | internal/personas/upgrade.go | `resolveNewestInPrefix` selects the newest-by-`created` catalog member, but the lock gate advances only when the extracted semver is a version-advance (`isNewer`), so a newer-created-but-lower-semver hotfix slug is selected by the resolver yet blocked by the gate and silently not adopted. | Deferred (Story 6/later, semver philosophy): keep the semver isNewer gate authoritative for the lock-advance decision (consistent with the major-bump re-validation gate and the explicit-upgrade/reproducibility posture), but emit a visible signal in the personas upgrade before→after report or a models check finding when resolveNewestInPrefix's created-order pick diverges from what the gate accepts, rather than silently leaving the lock stale; cover the divergent hotfix case with a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | LOW | docs/personas-authoring.md | AC 08-03 Scenario 3 links the shipped persona doc sections to `../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/*.md`; those links resolve now but `/finalize-sprint` moves the sprint active/→completed/, after which the active/ path 404s in the shipped docs. | Future docs-stabilization pass: update the two links to the completed/ path after archival, or promote the durable plan documentation into a stable home (docs/ or .planning/specifications/) and point the persona docs there; add a link-check that fails on a dangling docs→.planning link. | docs | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-08] From Sprint: 19.6_community_registry_hub
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/init.go:47 / cmd/atcr/quickstart.go:102 | `init`/`quickstart` fetch-and-pin the roster `builtins.Names()` (the 9 model-agnostic built-ins: bruce/greta/kai/mira/dax/otto/sasha/penny/ingrid), but the shipped `personas/community/index.json` publishes only the 10 model-indexed library personas (anthony…glenna) — a fully disjoint set. (intent_note: deferred per sprint-plan TD-011) (Deferred: Epic Plan .planning/epics/active/19.7_live_model_resolution.md — design-sprint decision; lean toward publishing built-ins into the community channel behind a model-agnostic tag/gate) | rebuild init/quickstart model enablement so online `init`/`quickstart` deliver a working, non-noisy persona set: either publish the built-in lenses into the community channel behind a model-agnostic gate carve-out (keeps C2), or align the roster with what the index publishes and drop the misleading skip-warning. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | u | [/] | LOW | cmd/atcr/init.go:142 | installCommunityPersonas records each candidate's preExisted flag then, on a later roster failure, rollback() removes any candidate path where !preExisted && fileExists. If another process creates <name>.yaml/.md between candidate recording (line 142) and the eventual rollback, the rollback deletes that not-ours file believing this run created it. The window is narrow and needs concurrency; the actual overwrite protection lives in InstallUnit. (Accepted LOW-severity risk — atcr is a single-user local CLI; if ever addressed, add an inode+mtime re-stat guard to the rollback rather than changing InstallUnit's return contract.) | Have rollback delete only files it observed itself successfully create (capture created paths from InstallUnit's result rather than re-deriving from candidates), or re-stat and skip if inode/mtime differs from what this run wrote. Verify with a concurrency test that plants a file mid-roster and asserts it survives rollback. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-06] From Sprint: 19.5_response_truncation_failover
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | LOW | internal/fanout/artifacts.go:214 | The TD-019 memo short-circuit only fires for parsedFindingCount==0, so a truncated-with-findings result (memo set to >=1 by the failover gate) re-runs stream.ParseModelOutput at line 217 — the redundant parse the refactor aimed to remove, though bounded to the rare truncated-with-findings path. | Cache the parsed []Finding slice on Result rather than only its length so findingsFor can reuse it, or accept the bounded cost. (Won't fix 2026-07-06: accepted the bounded re-parse cost — the parsedFindingCount memo already avoids the redundant parse on the common truncated+zero-finding path; caching the full slice risks aliasing via findingsFor's in-place Finding.Reviewer mutation and downstream grounding/constraint filtering.) | performance | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: 19.4_history_time_sharding
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | cmd/atcr/review.go:285 | Multiple concurrent atcr review processes will append to the same YYYY-MM.jsonl simultaneously without synchronization, causing interleaved JSON lines and ledger corruption (Accepted 2026-07-06: won't-fix — concurrent-append O_APPEND safety is a project-wide TD-004 tradeoff shared by all 5 append-only ledgers (audit, debate, scorecard, tools, history), outside epic 19.4's scope; matches the identical writer.go precedent accepted 2026-07-04 at README:112. Low probability (small per-batch writes are atomic on Linux/macOS O_APPEND) and low impact (a torn line is skipped by Load, no cross-data corruption); a cross-platform lock dependency is not justified for one ledger.) | Acquire a file lock (flock) on the shard or a dedicated lockfile before opening for append | concurrency | 40 | code-review | brad | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/history/shard.go:32 | LoadAll/LoadShards read and JSON-unmarshal every monthly shard on disk, then Filter discards records older than the --since cutoff. The justification for monthly sharding is the YYYY-MM filenames, but the read path throws that structure away: a repo with years of history running the common --since 30d (or the 90d default) still parses every archived month it will immediately drop. (Deferred 2026-07-06: not worth doing now — LOW-value perf optimization; the epic's 1-2yr history bound caps the scan at 12-24 small files. If revisited, add an additive LoadShardsSince(dir, cutoff) variant rather than changing LoadShards/LoadAll signatures, which would ripple into 7+ existing test call sites for no measured benefit.) | Prune glob results in LoadShards by comparing each shard's YYYY-MM stem against the cutoff month before calling Load; pass a lower-bound month into LoadShards/LoadAll (or add a windowed variant) so shards entirely before the window are never opened. Verify with a benchmark over 60 seeded shards and --since 30d reading at most 1-2 files. | performance | 60 | code-review | claude, dax, brad | HIGH |
+ | 3 | [/] | LOW | internal/history/writer.go:39 | Append does an unlocked O_APPEND write and documents that a large buffer split across multiple write() syscalls can be torn by a concurrent append. Epic 19.4 does not change the mechanism but changes exposure: history is now git-tracked and the project is run as multiple concurrent sessions appending to the same YYYY-MM.jsonl within a month. A torn line is silently dropped by Load's malformed-line skip, so lost findings are invisible; sharding by month did not reduce intra-month contention. (Accepted 2026-07-06: won't-fix — same history.Append write site and same decision as cmd/atcr/review.go:285 (resolved in lockstep); no cross-platform lock dependency added. Mirrors the 2026-07-04 accepted precedent for this exact O_APPEND pattern.) | If a hard guarantee is wanted wrap the shard write in an advisory file lock (flock) consistent with the mkdir-flock pattern used in the planning tooling; otherwise document that concurrent same-month runs can lose records. Verify with a stress test of N concurrent Appends and a line-count assertion. | error-handling | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: epic-19.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/history/shard.go:32 | LoadShards loads every shard into memory before Filter applies --since, so a narrow window still reads all shards (acceptable within the stated 1-2yr bound; no month-prefix pruning) (Deferred 2026-07-06: duplicate of the MEDIUM month-pruning item at this same line; same decision — defer, add LoadShardsSince additively if ever picked up.) | Skip shard files whose YYYY-MM stem is entirely older than now-since before loading, to keep long histories fast | UNDER_ENGINEERING | 30 | execute-epic-independent |
+ 
+ ### [2026-07-05] From Sprint: epic-19.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | cmd/atcr/review.go:384 | The audit hook re-reads sources/pool/findings.txt that the history hook read moments earlier in the same review, so the pool file is parsed twice per review run | Parse the pool findings once in the CLI layer and pass the finding set to both history.RecordReview and audit.RecordReview, or expose a shared parse result (Won't-fix: accepted — the duplicate parse mirrors internal/history's independent capture pattern per epic design; not worth a cross-package signature refactor for a sub-ms, once-per-run gain.) | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-07-05] From Review: pr-105-recovery
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index ca98bd37..2bc98034 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,13 @@
++## [22.5.0] - 2026-07-13
++
++Close the last residual test gap from the backup-swap hardening work: cover `backupExisting`'s non-`ErrNotExist` `Lstat(backup)` probe-failure branch, which filesystem permissions could not isolate because the staging siblings share a parent directory.
++
++### Added
++
++- Test coverage for `backupExisting`'s non-`ErrNotExist` `os.Lstat(backup)` probe-failure branch, via a new injectable `lstatFn` fault-injection seam (defaults to `os.Lstat`; no production behavior change).
++
++*Shipped via /execute-epic (epic 22.5)*
++
+ ## [22.4.0] - 2026-07-13
+ 
+ Reuse the payload builder's already-computed diff when building grounding data, eliminating the duplicate `git` subprocesses the grounding gate re-spawned for every review and every resume.
+diff --git a/internal/fanout/reviewdir.go b/internal/fanout/reviewdir.go
+index 7904a1e2..8ffcc492 100644
+--- a/internal/fanout/reviewdir.go
++++ b/internal/fanout/reviewdir.go
+@@ -296,91 +296,91 @@ func ScaffoldOutputDir(dir string) (string, error) {
+ // backupExisting moves path aside to path+".bak" so a --force re-run preserves
+ // the prior review tree instead of destroying it, leaving the path vacant for a
+ // fresh scaffold. --force keeps exactly one generation of backup —
+ // garbage-collecting older state is the user's responsibility (Epic 4.7: no
+ // automatic .bak GC). Returns the backup path.
+ //
+ // Crash-safe swap (Epic 4.7.1): the prior path+".bak" is renamed aside to
+ // path+".bak.old" (not destroyed) before path is renamed onto path+".bak"; the
+ // old generation is removed only after the swap succeeds, and is restored on any
+ // failure — so an interrupted swap never leaves the user with neither the new
+ // backup nor the prior one. When the path→.bak rename crosses a filesystem
+ // boundary (EXDEV — possible when path is itself a mountpoint, so its parent-dir
+ // sibling .bak is on a different mount), it falls back to copy-into-staging +
+ // same-fs rename-swap + RemoveAll(path), replicating the move's vacate-path
+ // postcondition. Stale atcr-owned staging artifacts (.bak.old/.bak.new) from a
+ // prior crashed run are reconciled away at entry, so retries start clean and the
+ // one-generation contract holds across a crash-then-retry sequence.
+ func backupExisting(ctx context.Context, path string) (string, error) {
+ 	backup := path + ".bak"
+ 	backupOld := path + ".bak.old"
+ 	backupNew := path + ".bak.new"
+ 
+ 	// Reconcile stragglers a prior crashed swap may have left, so a retry starts
+ 	// from a clean slate and no atcr-owned staging artifact accumulates.
+ 	// .bak.tmp-* sibling names are produced only by atomicfs.BackupToDotBak, not
+ 	// by backupExisting — only .bak.old and .bak.new need clearing here.
+ 	if err := os.RemoveAll(backupOld); err != nil {
+ 		return "", fmt.Errorf("clearing stale staging backup %q: %w", backupOld, err)
+ 	}
+ 	if err := os.RemoveAll(backupNew); err != nil {
+ 		return "", fmt.Errorf("clearing stale staging backup %q: %w", backupNew, err)
+ 	}
+ 
+ 	// Stage the prior generation aside instead of destroying it: a failed swap
+ 	// below restores it from .bak.old.
+ 	//
+ 	// Accepted TOCTOU window: between the os.Lstat(backup) probe and the
+ 	// os.Rename(backup, backupOld) below, another process or a symlink swap could
+ 	// change what `backup` refers to between check and use. The window is tiny and
+ 	// atcr is a single-user developer tool whose trust model assumes the user owns
+ 	// the reviews tree, so this race is an accepted risk rather than a guarded one:
+ 	// POSIX offers no portable rename-if-unchanged primitive (renameat2's
+ 	// RENAME_NOREPLACE is Linux-only), and the same accepted window exists at the
+ 	// atomicfs swap site.
+ 	priorStaged := false
+-	if _, err := os.Lstat(backup); err == nil {
++	if _, err := lstatFn(backup); err == nil {
+ 		if err := os.Rename(backup, backupOld); err != nil {
+ 			return "", fmt.Errorf("staging prior backup %q aside: %w", backup, err)
+ 		}
+ 		priorStaged = true
+ 	} else if !errors.Is(err, fs.ErrNotExist) {
+ 		return "", fmt.Errorf("checking prior backup %q: %w", backup, err)
+ 	}
+ 
+ 	// Swap the live tree into place as the new backup.
+ 	if err := renameFn(path, backup); err != nil {
+ 		if errors.Is(err, syscall.EXDEV) {
+ 			// path is on a different filesystem from its .bak sibling (path is a
+ 			// mountpoint): replicate the move with a same-fs copy + vacate.
+ 			if cerr := backupCrossDevice(path, backup, backupNew); cerr != nil {
+ 				// Only restore the prior backup if the new backup was never placed.
+ 				// When copy+rename succeeded but the final vacate failed, backup
+ 				// already holds the new generation — restoring .bak.old over it
+ 				// would destroy it. POSIX rename of a non-empty directory over
+ 				// another non-empty directory fails (ENOTEMPTY), so this Lstat
+ 				// guard is belt-and-suspenders that also makes the intent explicit.
+ 				if _, statErr := os.Lstat(backup); statErr != nil {
+ 					restorePriorBackup(ctx, priorStaged, backupOld, backup)
+ 				}
+ 				return "", cerr
+ 			}
+ 		} else {
+ 			restorePriorBackup(ctx, priorStaged, backupOld, backup)
+ 			return "", fmt.Errorf("backing up %q: %w", path, err)
+ 		}
+ 	}
+ 
+ 	// Swap succeeded — the prior generation staged in .bak.old is now superseded.
+ 	if priorStaged {
+ 		if err := os.RemoveAll(backupOld); err != nil {
+ 			return "", fmt.Errorf("removing superseded backup %q: %w", backupOld, err)
+ 		}
+ 	}
+ 	return backup, nil
+ }
+ 
+ // renameFn is the swap primitive backupExisting uses, indirected through a
+ // package var so fault-injection tests can drive the failed-swap and
+ // cross-filesystem (EXDEV) branches deterministically — the EXDEV branch cannot
+ // be reached by real-fs tricks without a cross-mount in CI. In production it is
+ // os.Rename.
+@@ -393,11 +393,19 @@ var copyPathFn = atomicfs.CopyPath
+ // removePathFn is the vacate primitive backupCrossDevice uses for the final
+ // os.RemoveAll(path) step, indirected so tests can inject vacate failures.
+ var removePathFn = os.RemoveAll
+ 
++// lstatFn is the probe primitive backupExisting uses to detect a prior .bak
++// before staging it aside, indirected through a package var so fault-injection
++// tests can drive its non-ErrNotExist failure branch deterministically — that
++// branch cannot be isolated by filesystem permissions because the staging
++// siblings (.bak/.bak.old/.bak.new) share a parent directory. In production it is
++// os.Lstat.
++var lstatFn = os.Lstat
++
+ // restorePriorBackup moves the staged prior generation (.bak.old) back to .bak
+ // after a failed swap, so a failure leaves the user with the prior backup intact.
+ // Best-effort: a restore failure cannot un-fail the swap, so the error is not
+ // propagated over the swap failure that is the caller's real concern. It is not
+ // silently dropped either — a failed restore strands the only surviving copy
+ // under .bak.old, so it is logged at Warn naming that path for manual recovery,
+ // making a crash-recovery failure visible in production instead of invisible.
+diff --git a/internal/fanout/reviewdir_test.go b/internal/fanout/reviewdir_test.go
+index f0c815d4..3ecc01e4 100644
+--- a/internal/fanout/reviewdir_test.go
++++ b/internal/fanout/reviewdir_test.go
+@@ -443,13 +443,25 @@ func withCopyPathStub(t *testing.T, stub func(src, dst string) error) {
+ // withRemovePathStub swaps the removePathFn seam so tests can inject vacate
+ // failures into backupCrossDevice without a real cross-mount in CI.
+ func withRemovePathStub(t *testing.T, stub func(path string) error) {
+ 	t.Helper()
+ 	orig := removePathFn
+ 	removePathFn = stub
+ 	t.Cleanup(func() { removePathFn = orig })
+ }
+ 
++// withLstatStub swaps the lstatFn seam so tests can drive the prior-backup probe
++// into its non-ErrNotExist failure branch deterministically. Permissions cannot
++// isolate this branch: the staging siblings (.bak, .bak.old, .bak.new) share a
++// parent directory, so a read-only parent would fail the earlier RemoveAll legs
++// first rather than the os.Lstat(backup) probe.
++func withLstatStub(t *testing.T, stub func(name string) (os.FileInfo, error)) {
++	t.Helper()
++	orig := lstatFn
++	lstatFn = stub
++	t.Cleanup(func() { lstatFn = orig })
++}
++
+ // TestBackupExisting_FailedSwapPreservesPriorBak verifies AC1: when the swap of
+ // the live tree onto <dir>.bak fails (non-EXDEV), the prior <dir>.bak generation
+ // is restored intact rather than left destroyed, and the live tree is untouched —
+ // the user is left with both, never neither.
+@@ -484,34 +496,67 @@ func TestBackupExisting_FailedSwapPreservesPriorBak(t *testing.T) {
+ // TestBackupExisting_StaleBakOldRemovalFailureSurfaces verifies the entry-time
+ // straggler cleanup does not silently swallow a RemoveAll failure: when a stale
+ // <dir>.bak.old cannot be removed (its parent dir is read-only), backupExisting
+ // returns the typed "clearing stale staging backup" error rather than proceeding
+ // as if the slate were clean (reviewdir.go entry-time cleanup, the .bak.old leg).
+ func TestBackupExisting_StaleBakOldRemovalFailureSurfaces(t *testing.T) {
+ 	if os.Getuid() == 0 {
+ 		t.Skip("root bypasses directory write permissions; cannot force a RemoveAll failure")
+ 	}
+ 	root := t.TempDir()
+ 	src := filepath.Join(root, "review")
+ 	require.NoError(t, os.MkdirAll(src, 0o755))
+ 
+ 	// A stale staging straggler a prior crashed swap left behind.
+ 	require.NoError(t, os.MkdirAll(src+".bak.old", 0o755))
+ 
+ 	// Make the parent read-only so the straggler cannot be unlinked: RemoveAll of
+ 	// <src>.bak.old needs write on its parent dir, which is now denied. Restore in
+ 	// cleanup so t.TempDir's own RemoveAll can still tear the tree down.
+ 	require.NoError(t, os.Chmod(root, 0o555))
+ 	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+ 
+ 	_, err := backupExisting(context.Background(), src)
+ 	require.Error(t, err, "an unremovable stale .bak.old must surface, not be swallowed")
+ 	assert.Contains(t, err.Error(), "clearing stale staging backup")
+ 	assert.Contains(t, err.Error(), ".bak.old")
+ }
+ 
++// TestBackupExisting_LstatProbeFailureSurfaces verifies that when the os.Lstat
++// probe of the prior <dir>.bak fails with a non-ErrNotExist error, backupExisting
++// surfaces the typed "checking prior backup" error rather than proceeding as if no
++// prior backup existed (reviewdir.go:341 probe, its non-ErrNotExist arm at
++// reviewdir.go:346-347). This branch needs the lstatFn seam because the staging
++// siblings share a parent directory, so filesystem permissions cannot isolate the
++// probe from the earlier stale-straggler RemoveAll legs.
++func TestBackupExisting_LstatProbeFailureSurfaces(t *testing.T) {
++	root := t.TempDir()
++	src := filepath.Join(root, "review")
++	require.NoError(t, os.MkdirAll(src, 0o755))
++
++	backup := src + ".bak"
++	// Fail the probe of <src>.bak with a non-ErrNotExist error; leave every other
++	// path (the .bak.old / .bak.new RemoveAll legs) on the real os.Lstat so only
++	// the probe branch is exercised.
++	probeErr := errors.New("simulated lstat failure")
++	withLstatStub(t, func(name string) (os.FileInfo, error) {
++		if name == backup {
++			return nil, probeErr
++		}
++		return os.Lstat(name)
++	})
++
++	_, err := backupExisting(context.Background(), src)
++	require.Error(t, err, "a non-ErrNotExist probe failure must surface, not be swallowed")
++	assert.Contains(t, err.Error(), "checking prior backup")
++	assert.ErrorIs(t, err, probeErr, "the underlying probe error must be wrapped, not discarded")
++	// The live tree must be untouched: the probe failed before any swap was attempted.
++	assert.DirExists(t, src, "live tree must survive a probe failure")
++	assert.NoDirExists(t, backup, "no backup should be created when the probe fails")
++}
++
+ // TestRestorePriorBackup_LogsRestoreFailure verifies that when the prior-backup
+ // restore after a failed swap cannot itself complete (its rename fails), the
+ // failure is logged via the context logger naming the stranded .bak.old path —
+ // not silently dropped. A crash-recovery failure leaves the user's only
+ // surviving copy stranded under .bak.old; if that is swallowed, the loss is
+ // invisible in production. The swap error is still the returned error.
