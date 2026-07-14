@@ -55,7 +55,7 @@ func newDebtResolveCmd() *cobra.Command {
 	cmd.Flags().Int("max", 10, "cap the number of selected items (0 = no cap)")
 	cmd.Flags().String("resolve", "", "mark the item with this id resolved (append-only)")
 	cmd.Flags().String("status", "resolved", "terminal status to record for --resolve (resolved|wontfix)")
-	cmd.Flags().String("reason", "", "justification recorded on the --resolve record (e.g. why a finding is wontfix)")
+	cmd.Flags().String("reason", "", "justification recorded on the --resolve record; replaces any existing justification (e.g. why a finding is wontfix)")
 	return cmd
 }
 
@@ -274,9 +274,10 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	rec.Timestamp = now
 	rec.Status = status
 	rec.ResolvedAt = now
-	// A supplied --reason records why the finding was dismissed/resolved; an empty
-	// reason preserves any justification the item already carried (e.g. reconcile
-	// enrichment), never blanking it.
+	// A supplied --reason records why the finding was dismissed/resolved and
+	// replaces any justification the item already carried (e.g. reconcile
+	// enrichment); an empty reason preserves the existing justification, never
+	// blanking it.
 	if r := strings.TrimSpace(reason); r != "" {
 		rec.Justification = r
 	}
