@@ -77,10 +77,12 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 
 // isClosedStatus reports whether a record's status takes an item out of the open
 // backlog. The reconcile hook writes records with an empty status (open); a
-// resolution/deferral record carries an explicit terminal status.
+// resolution/deferral/dismissal record carries an explicit terminal status.
+// wontfix (Epic 24.0) folds a finding out exactly like resolved — it marks a
+// false-positive/accepted pattern that agents must stop re-surfacing.
 func isClosedStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "resolved", "deferred":
+	case "resolved", "deferred", "wontfix":
 		return true
 	default:
 		return false
