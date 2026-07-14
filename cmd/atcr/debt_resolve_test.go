@@ -375,6 +375,11 @@ func TestDebtResolve_StatusOrReasonWithoutResolveIsUsageError(t *testing.T) {
 	assert.Contains(t, el, "--reason")
 	assert.NotContains(t, el, "--status")
 
+	// An explicitly empty --status is invalid status anyway, but it must also be
+	// rejected at the guard before falling through to the list view.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--status", "")
+	require.Error(t, err, "explicit --status=\"\" without --resolve must be a usage error")
+
 	// Plain --list (no --status/--reason) still works untouched.
 	_, err = runDebt(t, "resolve", "--dir", dir, "--list")
 	require.NoError(t, err, "a plain list must not be affected by the new guard")
