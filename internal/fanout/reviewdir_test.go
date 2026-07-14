@@ -449,6 +449,21 @@ func withRemovePathStub(t *testing.T, stub func(path string) error) {
 	t.Cleanup(func() { removePathFn = orig })
 }
 
+// withLstatStub swaps the lstatFn seam so tests can drive the prior-backup probe
+// into its non-ErrNotExist failure branch deterministically. That probe is the
+// only lstatFn call site in backupExisting — the .bak.old/.bak.new staging legs
+// use os.RemoveAll and never touch the seam — so a stub only needs to intercept
+// the probe path; any pass-through arm is defensive future-proofing. Permissions
+// cannot isolate this branch either: the staging siblings (.bak, .bak.old,
+// .bak.new) share a parent directory, so a read-only parent would fail the
+// earlier RemoveAll legs first rather than the os.Lstat(backup) probe.
+func withLstatStub(t *testing.T, stub func(name string) (os.FileInfo, error)) {
+	t.Helper()
+	orig := lstatFn
+	lstatFn = stub
+	t.Cleanup(func() { lstatFn = orig })
+}
+
 // TestBackupExisting_FailedSwapPreservesPriorBak verifies AC1: when the swap of
 // the live tree onto <dir>.bak fails (non-EXDEV), the prior <dir>.bak generation
 // is restored intact rather than left destroyed, and the live tree is untouched —
@@ -507,6 +522,41 @@ func TestBackupExisting_StaleBakOldRemovalFailureSurfaces(t *testing.T) {
 	require.Error(t, err, "an unremovable stale .bak.old must surface, not be swallowed")
 	assert.Contains(t, err.Error(), "clearing stale staging backup")
 	assert.Contains(t, err.Error(), ".bak.old")
+}
+
+// TestBackupExisting_LstatProbeFailureSurfaces verifies that when the os.Lstat
+// probe of the prior <dir>.bak fails with a non-ErrNotExist error, backupExisting
+// surfaces the typed "checking prior backup" error (the probe's non-ErrNotExist
+// arm, wrapping the underlying failure) rather than proceeding as if no prior
+// backup existed. This branch needs the lstatFn seam because the staging
+// siblings share a parent directory, so filesystem permissions cannot isolate the
+// probe from the earlier stale-straggler RemoveAll legs.
+func TestBackupExisting_LstatProbeFailureSurfaces(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+
+	backup := src + ".bak"
+	// Fail the prior-backup probe of <src>.bak with a non-ErrNotExist error. The
+	// probe is backupExisting's only lstatFn call (the .bak.old/.bak.new legs run
+	// on os.RemoveAll), so the pass-through arm below is defensive future-proofing
+	// — e.g. in case the belt-and-suspenders os.Lstat guard in the swap-failure
+	// path is ever rerouted through lstatFn — not a live requirement of this test.
+	probeErr := errors.New("simulated lstat failure")
+	withLstatStub(t, func(name string) (os.FileInfo, error) {
+		if name == backup {
+			return nil, probeErr
+		}
+		return os.Lstat(name)
+	})
+
+	_, err := backupExisting(context.Background(), src)
+	require.Error(t, err, "a non-ErrNotExist probe failure must surface, not be swallowed")
+	assert.Contains(t, err.Error(), "checking prior backup")
+	assert.ErrorIs(t, err, probeErr, "the underlying probe error must be wrapped, not discarded")
+	// The live tree must be untouched: the probe failed before any swap was attempted.
+	assert.DirExists(t, src, "live tree must survive a probe failure")
+	assert.NoDirExists(t, backup, "no backup should be created when the probe fails")
 }
 
 // TestRestorePriorBackup_LogsRestoreFailure verifies that when the prior-backup

@@ -338,7 +338,7 @@ func backupExisting(ctx context.Context, path string) (string, error) {
 	// RENAME_NOREPLACE is Linux-only), and the same accepted window exists at the
 	// atomicfs swap site.
 	priorStaged := false
-	if _, err := os.Lstat(backup); err == nil {
+	if _, err := lstatFn(backup); err == nil {
 		if err := os.Rename(backup, backupOld); err != nil {
 			return "", fmt.Errorf("staging prior backup %q aside: %w", backup, err)
 		}
@@ -393,6 +393,14 @@ var copyPathFn = atomicfs.CopyPath
 // removePathFn is the vacate primitive backupCrossDevice uses for the final
 // os.RemoveAll(path) step, indirected so tests can inject vacate failures.
 var removePathFn = os.RemoveAll
+
+// lstatFn is the probe primitive backupExisting uses to detect a prior .bak
+// before staging it aside, indirected through a package var so fault-injection
+// tests can drive its non-ErrNotExist failure branch deterministically — that
+// branch cannot be isolated by filesystem permissions because the staging
+// siblings (.bak/.bak.old/.bak.new) share a parent directory. In production it is
+// os.Lstat.
+var lstatFn = os.Lstat
 
 // restorePriorBackup moves the staged prior generation (.bak.old) back to .bak
 // after a failed swap, so a failure leaves the user with the prior backup intact.

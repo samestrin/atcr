@@ -1,3 +1,13 @@
+## [22.5.0] - 2026-07-13
+
+Close the last residual test gap from the backup-swap hardening work: cover `backupExisting`'s non-`ErrNotExist` `Lstat(backup)` probe-failure branch, which filesystem permissions could not isolate because the staging siblings share a parent directory.
+
+### Added
+
+- Test coverage for `backupExisting`'s non-`ErrNotExist` `os.Lstat(backup)` probe-failure branch, via a new injectable `lstatFn` fault-injection seam (defaults to `os.Lstat`; no production behavior change).
+
+*Shipped via /execute-epic (epic 22.5)*
+
 ## [22.4.0] - 2026-07-13
 
 Reuse the payload builder's already-computed diff when building grounding data, eliminating the duplicate `git` subprocesses the grounding gate re-spawned for every review and every resume.
