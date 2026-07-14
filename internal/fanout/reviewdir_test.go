@@ -450,10 +450,13 @@ func withRemovePathStub(t *testing.T, stub func(path string) error) {
 }
 
 // withLstatStub swaps the lstatFn seam so tests can drive the prior-backup probe
-// into its non-ErrNotExist failure branch deterministically. Permissions cannot
-// isolate this branch: the staging siblings (.bak, .bak.old, .bak.new) share a
-// parent directory, so a read-only parent would fail the earlier RemoveAll legs
-// first rather than the os.Lstat(backup) probe.
+// into its non-ErrNotExist failure branch deterministically. That probe is the
+// only lstatFn call site in backupExisting — the .bak.old/.bak.new staging legs
+// use os.RemoveAll and never touch the seam — so a stub only needs to intercept
+// the probe path; any pass-through arm is defensive future-proofing. Permissions
+// cannot isolate this branch either: the staging siblings (.bak, .bak.old,
+// .bak.new) share a parent directory, so a read-only parent would fail the
+// earlier RemoveAll legs first rather than the os.Lstat(backup) probe.
 func withLstatStub(t *testing.T, stub func(name string) (os.FileInfo, error)) {
 	t.Helper()
 	orig := lstatFn
@@ -534,9 +537,11 @@ func TestBackupExisting_LstatProbeFailureSurfaces(t *testing.T) {
 	require.NoError(t, os.MkdirAll(src, 0o755))
 
 	backup := src + ".bak"
-	// Fail the probe of <src>.bak with a non-ErrNotExist error; leave every other
-	// path (the .bak.old / .bak.new RemoveAll legs) on the real os.Lstat so only
-	// the probe branch is exercised.
+	// Fail the prior-backup probe of <src>.bak with a non-ErrNotExist error. The
+	// probe is backupExisting's only lstatFn call (the .bak.old/.bak.new legs run
+	// on os.RemoveAll), so the pass-through arm below is defensive future-proofing
+	// — e.g. in case the belt-and-suspenders os.Lstat guard in the swap-failure
+	// path is ever rerouted through lstatFn — not a live requirement of this test.
 	probeErr := errors.New("simulated lstat failure")
 	withLstatStub(t, func(name string) (os.FileInfo, error) {
 		if name == backup {
