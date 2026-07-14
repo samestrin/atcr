@@ -214,6 +214,22 @@ func TestDebtResolve_MarkResolvedIsIdempotent(t *testing.T) {
 	assert.Len(t, after, len(before), "re-resolving must not append another resolution record")
 }
 
+func TestDebtResolve_AlreadyClosedReportsActualStatus(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	// Mark as wontfix first.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	require.NoError(t, err)
+
+	// A subsequent plain resolve must report the existing terminal status, not
+	// hardcode "already resolved".
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "wontfix", "already-closed message must name the actual terminal status")
+	assert.NotContains(t, strings.ToLower(out), "already resolved", "must not hardcode 'already resolved' when the item is wontfix")
+}
+
 func TestDebtResolve_MarkResolvedUnknownIDErrors(t *testing.T) {
 	dir := writeDebtStore(t, openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "x"))
 	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", "deadbeef")
