@@ -10,7 +10,7 @@
 
 ## Story Context
 
-- **Background:** ATCR maintains one canonical severity rubric — `reconcile.SeverityRank` (`reconcile/severity.go`) with `reconcile.NormalizeSeverity()` as its case/whitespace-insensitive lookup key — and every existing severity consumer (report's md/json/checklist renderers, `internal/fanout/postprocess.go`'s constraint enforcement, `internal/ghaction`) already reuses it rather than redefining CRITICAL/HIGH/MEDIUM/LOW comparisons locally. `internal/fanout/postprocess.go:14` is cited in the plan as the existing precedent for correct reuse (it calls `reclib.NormalizeSeverity`/`reclib.SeverityRank` directly) and TD-0052 already documents the risk class this story must not add to: a fifth, drifted redefinition of the rubric.
+- **Background:** ATCR maintains one canonical severity rubric — `reconcile.SeverityRank` (`reconcile/severity.go`) with `reconcile.NormalizeSeverity()` as its case/whitespace-insensitive lookup key — and every existing severity consumer (report's md/json/checklist renderers, `internal/fanout/postprocess.go`'s constraint enforcement, `internal/ghaction`) already reuses it rather than redefining CRITICAL/HIGH/MEDIUM/LOW comparisons locally. `internal/fanout/postprocess.go:28-40` is cited in the plan as the existing precedent for correct reuse (it calls `reclib.NormalizeSeverity`/`reclib.SeverityRank` directly) and TD-0052 already documents the risk class this story must not add to: a fifth, drifted redefinition of the rubric.
 - **Assumptions:** Story 1 (SARIF formatter core) has established or will establish `internal/report/sarif.go` and the base `renderSarif(w io.Writer, findings []reconcile.JSONFinding) error` document structure this story's mapping function plugs into. `reconcile.JSONFinding.Severity` is the raw string field this story's function receives (after normalization).
 - **Constraints:** Must call `reconcile.NormalizeSeverity(f.Severity)` before ranking/comparing — never re-parse or re-case the raw string independently. Must not introduce a second severity constant map or a second CRITICAL/HIGH/MEDIUM/LOW string-comparison chain anywhere in the SARIF path. Output must be restricted to the three GitHub-recognized display levels (`error`, `warning`, `note`) — no `none`. An unrecognized/empty severity token (rank 0, per `SeverityRank`'s documented behavior) must resolve to a defined, non-crashing fallback level rather than an empty string or panic.
 
@@ -60,4 +60,4 @@
 ---
 
 **Created:** July 14, 2026 04:11:53PM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Defined

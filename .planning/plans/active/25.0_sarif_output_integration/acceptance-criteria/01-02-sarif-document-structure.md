@@ -9,11 +9,18 @@
 | Test Framework | `go test` (table-driven + golden-file), `encoding/json` round-trip via `json.Valid`/`json.Unmarshal` | Golden case added to `TestRender_GoldenFiles` (`internal/report/render_test.go:69-93`) |
 | Key Dependencies | stdlib `encoding/json` only; `github.com/google/jsonschema-go` (already in `go.mod`) optionally used in tests to validate structural conformance against a local SARIF 2.1.0 schema fixture | No new runtime dependency — hand-rolled struct tree, per story constraint |
 
-## Related Files
-- `internal/report/sarif.go` - create: defines the SARIF struct tree (`sarifLog`, `sarifRun`, `sarifTool`, `sarifDriver`, `sarifResult`, etc. — `sarifRule` is AC 01-03's concern) and `renderSarif`, applying the same nil-slice guard and `json.MarshalIndent(..., "", "  ")` + trailing-newline convention `renderJSON` uses.
-- `internal/report/sarif_test.go` - create: table-driven unit tests asserting top-level document shape (`$schema`, `version`, `runs[]`, `tool.driver.name`, `results[]` presence) for empty and non-empty findings inputs.
-- `internal/report/render_test.go` - modify: add a `{"sarif", FormatSarif, "report.sarif.json"}` entry to `goldenCases` (line 59-67) so `TestRender_GoldenFiles` exercises SARIF alongside md/json/checklist.
-- `internal/report/testdata/report.sarif.json` - create: golden fixture generated via `go test ./internal/report -update`, driven by the existing `sample()` fixture (two findings: CRITICAL/security, LOW/style).
+### Related Files (from codebase-discovery.json)
+
+- [`internal/report/sarif.go`](../../../../../internal/report/sarif.go) — create: defines the SARIF 2.1.0 struct tree (`sarifLog`, `sarifRun`, `sarifTool`, `sarifDriver`, `sarifResult`, etc. — `sarifRule` is AC 01-03's concern) and `renderSarif`, applying the same nil-slice guard and `json.MarshalIndent(..., "", "  ")` + trailing-newline convention [`renderJSON`](../../../../../internal/report/render.go) uses.
+- [`internal/report/sarif_test.go`](../../../../../internal/report/sarif_test.go) — create: table-driven unit tests asserting top-level document shape (`$schema`, `version`, non-empty `runs[]`, `runs[0].tool.driver.name == "atcr"`, `results[]` presence) for empty and non-empty findings inputs.
+- [`internal/report/render_test.go`](../../../../../internal/report/render_test.go) — modify: add a `{"sarif", FormatSarif, "report.sarif.json"}` entry to `goldenCases` ([`internal/report/render_test.go:59-67`](../../../../../internal/report/render_test.go)) so `TestRender_GoldenFiles` ([`internal/report/render_test.go:69-93`](../../../../../internal/report/render_test.go)) exercises SARIF alongside md/json/checklist.
+- [`internal/report/testdata/report.sarif.json`](../../../../../internal/report/testdata/report.sarif.json) — create: golden fixture generated via `go test ./internal/report -update`, driven by the existing `sample()` fixture (two findings: CRITICAL/security, LOW/style).
+
+### Technical References
+
+- [SARIF 2.1.0 Schema Reference](../documentation/sarif-schema-reference.md)
+- [encoding/json Conventions for renderSarif](../documentation/json-encoding-conventions.md)
+- [Schema-Validating SARIF Output with jsonschema-go](../documentation/schema-validation-with-jsonschema-go.md)
 
 ## Happy Path Scenarios
 **Scenario 1: non-empty findings produce a valid top-level SARIF document**
@@ -30,6 +37,11 @@
 - **Given** any `renderSarif` output (empty or non-empty findings)
 - **When** the bytes are passed to `json.Valid()` and then `json.Unmarshal` into a generic `map[string]any` or the local struct tree
 - **Then** both succeed with no error, confirming syntactic JSON validity
+
+**Scenario 4: SARIF output validates against the SARIF 2.1.0 JSON Schema**
+- **Given** a local `testdata/sarif-schema-2.1.0.json` fixture and `renderSarif` output from the `sample()` fixture
+- **When** the output is unmarshaled into `any` and validated with `github.com/google/jsonschema-go` (`Schema.UnmarshalJSON` → `Schema.Resolve` → `Resolved.Validate`)
+- **Then** validation returns no error, confirming schema conformance beyond field-by-field checks
 
 ## Edge Cases
 **Edge Case 1: nil findings slice does not panic and does not serialize as null**

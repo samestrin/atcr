@@ -9,10 +9,17 @@
 | Test Framework | `go test` (table-driven) | New tests in `internal/report/sarif_test.go` alongside AC 01-02's document-structure tests |
 | Key Dependencies | stdlib only (`encoding/json`) | Deterministic iteration requires an explicit first-seen-order slice, not a bare Go map (map iteration is unordered) |
 
-## Related Files
-- `internal/report/sarif.go` - modify: add `sarifRule` struct (`id`, `shortDescription.text`, `fullDescription.text`) and a helper that iterates `findings` once, collecting distinct `reconcile.JSONFinding.Category` values in first-seen order into `runs[0].tool.driver.rules[]`; each `reconcile.JSONFinding.Category` maps 1:1 to one `sarifRule.id` (per plan's Refinement: "one rule per distinct `reconcile.JSONFinding.Category`").
-- `internal/report/sarif_test.go` - modify/create: unit tests asserting rule count matches distinct-category count, rule `id`/`shortDescription.text`/`fullDescription.text` content, first-seen ordering, and empty-findings behavior (`rules[]` present as `[]`, not `null`).
-- `internal/reconcile/emit.go` - reference only (no modification): source of the `Category string` field (`JSONFinding.Category`, line 68) this AC's rule-collection logic reads.
+### Related Files (from codebase-discovery.json)
+
+- [`internal/report/sarif.go`](../../../../../internal/report/sarif.go) — modify: add `sarifRule` struct (`id`, `shortDescription.text`, `fullDescription.text`) and a helper that iterates `findings` once, collecting distinct `reconcile.JSONFinding.Category` values in first-seen order into `runs[0].tool.driver.rules[]`; each `reconcile.JSONFinding.Category` maps 1:1 to one `sarifRule.id` (per plan's refinement: "one rule per distinct `reconcile.JSONFinding.Category`").
+- [`internal/report/sarif_test.go`](../../../../../internal/report/sarif_test.go) — modify/create: unit tests asserting rule count matches distinct-category count, rule `id`/`shortDescription.text`/`fullDescription.text` content, first-seen ordering, and empty-findings behavior (`rules[]` present as `[]`, not `null`).
+- [`internal/reconcile/emit.go`](../../../../../internal/reconcile/emit.go) — reference only (no modification): source of the `Category string` field ([`internal/reconcile/emit.go:68`](../../../../../internal/reconcile/emit.go)) this AC's rule-collection logic reads.
+- [`internal/report/testdata/report.sarif.json`](../../../../../internal/report/testdata/report.sarif.json) — create/update: golden fixture should exercise at least two distinct categories so `rules[]` and `results[].ruleId` linkage is visible end-to-end.
+
+### Technical References
+
+- [GitHub Code Scanning SARIF Integration Constraints](../documentation/github-code-scanning-integration.md)
+- [SARIF 2.1.0 Schema Reference](../documentation/sarif-schema-reference.md)
 
 ## Happy Path Scenarios
 **Scenario 1: one rule per distinct category, first-seen order**

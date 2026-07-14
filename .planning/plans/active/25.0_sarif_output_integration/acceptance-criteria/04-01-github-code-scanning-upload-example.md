@@ -9,10 +9,16 @@
 | Test Framework | YAML lint / manual review | `yamllint` or `yq eval` against the extracted fenced block; `markdown-link-check` for the relative link |
 | Key Dependencies | `github/codeql-action/upload-sarif@v3` | External GitHub Action, referenced by tag only — not vendored or pinned to a SHA in this doc |
 
-## Related Files
-- `docs/ci-integration.md` - modify: add a new subsection (e.g. "SARIF Upload for GitHub Code Scanning") directly beneath the existing "Maintained PR Action" subsection, containing the GitHub Actions YAML snippet and the distinction sentence linking to `docs/github-action.md`
-- `docs/github-action.md` - reference only (no edits): link target proving the new subsection correctly points readers to the separate `atcr github` PR check/inline-comment flow instead of duplicating it
-- `.planning/plans/active/25.0_sarif_output_integration/documentation/github-code-scanning-integration.md` - reference: source of the verbatim, already-validated GitHub Actions snippet ("Code Examples" section) and the GitHub SARIF ingestion constraints (rules[]/ruleId linkage, size/count ceilings) that inform any caveat text added
+### Related Files (from codebase-discovery.json)
+
+- [`docs/ci-integration.md`](../../../../../docs/ci-integration.md) — modify: add a new subsection (e.g. "SARIF Upload for GitHub Code Scanning") directly beneath the existing "Maintained PR Action" subsection, containing the GitHub Actions YAML snippet and the distinction sentence linking to `docs/github-action.md`.
+- [`docs/github-action.md`](../../../../../docs/github-action.md) — reference only (no edits): link target pointing readers to the separate `atcr github` PR check/inline-comment flow instead of duplicating it.
+- [`.planning/plans/active/25.0_sarif_output_integration/documentation/github-code-scanning-integration.md](../documentation/github-code-scanning-integration.md) — reference: source of the verbatim, already-validated GitHub Actions snippet ("Code Examples" section) and the GitHub SARIF ingestion constraints (`rules[]`/`ruleId` linkage, size/count ceilings) that inform any caveat text added.
+- [`action.yml`](../../../../../action.yml) — reference only: the maintained composite Action this SARIF path explicitly does **not** replace.
+
+### Technical References
+
+- [GitHub Code Scanning SARIF Integration Constraints](../documentation/github-code-scanning-integration.md)
 
 ## Happy Path Scenarios
 **Scenario 1: Reader finds a copy-pasteable GitHub Actions snippet**

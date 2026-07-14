@@ -9,11 +9,17 @@
 | Test Framework | `go test` (table-driven) | Follows `internal/report/render_test.go` conventions |
 | Key Dependencies | `internal/reconcile` (`reconcile.JSONFinding`) | No new dependency introduced |
 
-## Related Files
-- `internal/report/sarif.go` - create: adds `sarifLocation(f reconcile.JSONFinding) sarifLocationObj` (or equivalent, named to match Story 1's struct tree) that builds `physicalLocation.artifactLocation.uri` from `f.File` unmodified, and for `f.Line > 0` sets `region.startLine = region.endLine = f.Line` with synthesized non-zero `startColumn`/`endColumn`.
-- `internal/report/sarif_test.go` - create: table-driven test cases asserting exact `artifactLocation.uri` and `region` field values for `Line > 0` inputs.
-- `internal/reconcile/emit.go` - reference only: source of `reconcile.JSONFinding.File` (string, repo-root-relative) and `.Line` (int) fields consumed by `sarifLocation`.
-- `internal/ghaction/render.go` - reference only: existing `location(f reconcile.JSONFinding) string` helper (lines 103-108) is the precedent for the `Line<=0` special-case pattern this story's helper mirrors (for AC 03-02), establishing that `File` is already repo-root-relative by the time it reaches the report layer.
+### Related Files (from codebase-discovery.json)
+
+- [`internal/report/sarif.go`](../../../../../internal/report/sarif.go) — create: adds `sarifLocation(f reconcile.JSONFinding) sarifLocationObj` (or equivalent, named to match Story 1's struct tree) that builds `physicalLocation.artifactLocation.uri` from `f.File` unmodified, and for `f.Line > 0` sets `region.startLine = region.endLine = f.Line` with synthesized non-zero `startColumn`/`endColumn`.
+- [`internal/report/sarif_test.go`](../../../../../internal/report/sarif_test.go) — create: table-driven test cases asserting exact `artifactLocation.uri` and `region` field values for `Line > 0` inputs.
+- [`internal/reconcile/emit.go`](../../../../../internal/reconcile/emit.go) — reference only: source of `reconcile.JSONFinding.File` (string, repo-root-relative) and `.Line` (int) fields consumed by `sarifLocation`.
+- [`internal/ghaction/render.go`](../../../../../internal/ghaction/render.go) — reference only: existing `location(f reconcile.JSONFinding) string` helper ([`internal/ghaction/render.go:103-108`](../../../../../internal/ghaction/render.go)) is the precedent for the `Line<=0` special-case pattern this story's helper mirrors (for AC 03-02), establishing that `File` is already repo-root-relative by the time it reaches the report layer.
+
+### Technical References
+
+- [SARIF 2.1.0 Schema Reference](../documentation/sarif-schema-reference.md)
+- [GitHub Code Scanning SARIF Integration Constraints](../documentation/github-code-scanning-integration.md)
 
 ## Happy Path Scenarios
 **Scenario 1: Finding with a valid positive line number anchors to that exact line**

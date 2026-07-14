@@ -8,7 +8,7 @@ Adds SARIF 2.1.0 JSON as a fourth `atcr report --format` render target (alongsid
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/25.0_sarif_output_integration/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/25.0_sarif_output_integration/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/25.0_sarif_output_integration/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/25.0_sarif_output_integration/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/25.0_sarif_output_integration/`
 
 ## Timeline & Milestones
@@ -46,5 +46,6 @@ Low-to-medium risk, contained to a single new render function plus documentation
 - [Codebase Discovery](codebase-discovery.json)
 - [Package Recommendations](package-recommendations.md)
 - [Documentation](documentation/)
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)
+- [Sprint Design](sprint-design.md)

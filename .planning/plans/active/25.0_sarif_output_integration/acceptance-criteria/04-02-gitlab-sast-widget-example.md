@@ -9,10 +9,15 @@
 | Test Framework | YAML lint / manual review | `yamllint` against the extracted fenced block; manual cross-check against GitLab's documented `artifacts:reports:sast` schema |
 | Key Dependencies | GitLab CI native SAST report artifact ingestion (`artifacts: reports: sast:`) | External GitLab CI mechanism, referenced not vendored — atcr has no existing GitLab integration to model it on |
 
-## Related Files
-- `docs/ci-integration.md` - modify: add a fenced `.gitlab-ci.yml` snippet in the same subsection as (or immediately adjacent to) the GitHub Actions example, showing the GitLab job that produces `results.sarif` and wires it via `artifacts: reports: sast:`
-- `docs/github-action.md` - reference only (no edits): ensures the GitLab-facing text does not conflate `atcr github` (a GitHub-only, direct-API flow) with the GitLab SAST widget path
-- `.planning/plans/active/25.0_sarif_output_integration/documentation/github-code-scanning-integration.md` - reference: grounds the "this is not `atcr github`" framing reused for the GitLab audience, and documents the shared `atcr review && atcr reconcile && atcr report --format=sarif` command the GitLab job also runs
+### Related Files (from codebase-discovery.json)
+
+- [`docs/ci-integration.md`](../../../../../docs/ci-integration.md) — modify: add a fenced `.gitlab-ci.yml` snippet in the same subsection as (or immediately adjacent to) the GitHub Actions example, showing the GitLab job that produces `results.sarif` and wires it via `artifacts: reports: sast:`.
+- [`docs/github-action.md`](../../../../../docs/github-action.md) — reference only (no edits): ensures the GitLab-facing text does not conflate `atcr github` (a GitHub-only, direct-API flow) with the GitLab SAST widget path.
+- [`.planning/plans/active/25.0_sarif_output_integration/documentation/github-code-scanning-integration.md](../documentation/github-code-scanning-integration.md) — reference: grounds the "this is not `atcr github`" framing reused for the GitLab audience, and documents the shared `atcr review && atcr reconcile && atcr report --format=sarif` command the GitLab job also runs.
+
+### Technical References
+
+- [GitHub Code Scanning SARIF Integration Constraints](../documentation/github-code-scanning-integration.md)
 
 ## Happy Path Scenarios
 **Scenario 1: Reader finds a GitLab CI job producing a SARIF SAST report artifact**

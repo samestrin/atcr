@@ -9,11 +9,17 @@
 | Test Framework | `go test` (table-driven) | Follows `internal/report/render_test.go` conventions |
 | Key Dependencies | `internal/reconcile` (`reconcile.JSONFinding`) | No new dependency introduced |
 
-## Related Files
-- `internal/report/sarif.go` - create: the `Line <= 0` branch of `sarifLocation(f reconcile.JSONFinding) sarifLocationObj` that synthesizes `region.startLine=1, startColumn=1, endLine=1, endColumn=1` instead of omitting `region` or leaving fields zero-valued, covering both `Line == 0` and `Line < 0` inputs with a single `<= 0` boundary check.
-- `internal/report/sarif_test.go` - create: table-driven test cases for `Line == 0` and `Line < 0` as two distinct rows, both asserting the exact synthesized `1,1,1,1` region values.
-- `internal/ghaction/render.go:103-108` - reference only: the existing `location(f reconcile.JSONFinding) string` helper's `if f.Line <= 0 { return f.File }` branch is the cited precedent for the `Line<=0` boundary condition (same `<=` comparison, not just `== 0`) — SARIF's `region` has no "omit the line" equivalent, so this AC synthesizes coordinates instead of omitting the field.
-- `internal/report/testdata/report.sarif.json` - modify: golden fixture (introduced by Story 1) should include at least one file-level (`Line<=0`) finding alongside line-level findings so `TestRender_GoldenFiles`-style coverage exercises this fallback end-to-end, not just via the isolated unit test.
+### Related Files (from codebase-discovery.json)
+
+- [`internal/report/sarif.go`](../../../../../internal/report/sarif.go) — create: the `Line <= 0` branch of `sarifLocation(f reconcile.JSONFinding) sarifLocationObj` that synthesizes `region.startLine=1, startColumn=1, endLine=1, endColumn=1` instead of omitting `region` or leaving fields zero-valued, covering both `Line == 0` and `Line < 0` inputs with a single `<= 0` boundary check.
+- [`internal/report/sarif_test.go`](../../../../../internal/report/sarif_test.go) — create: table-driven test cases for `Line == 0` and `Line < 0` as two distinct rows, both asserting the exact synthesized `1,1,1,1` region values.
+- [`internal/ghaction/render.go`](../../../../../internal/ghaction/render.go) — reference only: the existing `location(f reconcile.JSONFinding) string` helper ([`internal/ghaction/render.go:103-108`](../../../../../internal/ghaction/render.go)) is the cited precedent for the `Line<=0` boundary condition (same `<=` comparison, not just `== 0`) — SARIF's `region` has no "omit the line" equivalent, so this AC synthesizes coordinates instead of omitting the field.
+- [`internal/report/testdata/report.sarif.json`](../../../../../internal/report/testdata/report.sarif.json) — modify: golden fixture (introduced by Story 1) should include at least one file-level (`Line<=0`) finding alongside line-level findings so `TestRender_GoldenFiles`-style coverage exercises this fallback end-to-end, not just via the isolated unit test.
+
+### Technical References
+
+- [SARIF 2.1.0 Schema Reference](../documentation/sarif-schema-reference.md)
+- [GitHub Code Scanning SARIF Integration Constraints](../documentation/github-code-scanning-integration.md)
 
 ## Happy Path Scenarios
 **Scenario 1: Finding with `Line == 0` (file-level, no line data) gets the synthesized fallback**

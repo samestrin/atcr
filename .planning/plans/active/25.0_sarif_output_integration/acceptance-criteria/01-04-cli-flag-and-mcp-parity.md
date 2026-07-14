@@ -9,11 +9,21 @@
 | Test Framework | `go test` (CLI-path integration test + MCP handler regression test) | New/extended tests in `cmd/atcr` (or existing report-command test file) and `internal/mcp` |
 | Key Dependencies | `github.com/spf13/cobra` (already used) | No new dependency |
 
-## Related Files
-- `cmd/atcr/report.go` - modify: update the `--format` flag help text at line 25 from `"output format: md, json, or checklist"` to include `sarif` (e.g. `"output format: md, json, checklist, or sarif"`).
-- `internal/mcp/handlers.go` - reference only (no code change expected): `handleReport` routes through the shared `report.Render()` call, so SARIF becomes available automatically; this AC adds a regression test confirming that parity rather than modifying the handler.
-- `cmd/atcr/report_test.go` (or equivalent existing CLI test file for the `report` command) - modify: add a test invoking `atcr report --format=sarif` (or the `runReport` function directly) against a fixture reconciled dir, asserting the CLI output matches calling `report.Render(&buf, findings, report.FormatSarif)` directly byte-for-byte.
-- `internal/mcp/handlers_test.go` (or equivalent existing MCP handler test file) - modify: add a regression test calling `handleReport` with `format: "sarif"` and asserting it returns the same output `report.Render` would produce directly (confirming no MCP-specific gap).
+### Related Files (from codebase-discovery.json)
+
+- [`cmd/atcr/report.go`](../../../../../cmd/atcr/report.go) — modify:
+  - Update the `--format` flag help text from `"output format: md, json, or checklist"` to include `sarif` (e.g. `"output format: md, json, checklist, or sarif"`) ([`cmd/atcr/report.go:25`](../../../../../cmd/atcr/report.go)).
+  - The existing `runReport` flow ([`cmd/atcr/report.go:31-128`](../../../../../cmd/atcr/report.go)) already validates the format via `report.ValidFormat()` and routes to `report.Render()`; no new command wiring is required.
+  - The existing `--disagreements` incompatibility guard ([`cmd/atcr/report.go:97`](../../../../../cmd/atcr/report.go)) automatically rejects `--format sarif`.
+- [`internal/mcp/handlers.go`](../../../../../internal/mcp/handlers.go) — reference only (no code change expected): `handleReport` ([`internal/mcp/handlers.go:370-420`](../../../../../internal/mcp/handlers.go)) validates the format through `report.ValidFormat()` and routes non-markdown output through `report.Render()`, so SARIF becomes available to MCP clients automatically.
+- [`cmd/atcr/report_test.go`](../../../../../cmd/atcr/report_test.go) (or equivalent existing CLI test file) — modify: add a test invoking `atcr report --format=sarif` (or `runReport` directly) against a fixture reconciled directory, asserting the CLI output matches calling `report.Render(&buf, findings, report.FormatSarif)` directly byte-for-byte.
+- [`internal/mcp/handlers_test.go`](../../../../../internal/mcp/handlers_test.go) (or equivalent existing MCP handler test file) — modify: add a regression test calling `handleReport` with `format: "sarif"` and asserting it returns the same output `report.Render` would produce directly.
+- [`internal/report/render.go`](../../../../../internal/report/render.go) — reference: `FormatSarif`, `ValidFormat()`, `Formats()`, and `Render()` must already recognize SARIF (AC 01-01).
+
+### Technical References
+
+- [GitHub Code Scanning SARIF Integration Constraints](../documentation/github-code-scanning-integration.md)
+- [SARIF 2.1.0 Schema Reference](../documentation/sarif-schema-reference.md)
 
 ## Happy Path Scenarios
 **Scenario 1: --format=sarif is accepted at the CLI and produces SARIF output**

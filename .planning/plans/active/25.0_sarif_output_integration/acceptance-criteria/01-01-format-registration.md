@@ -9,10 +9,17 @@
 | Test Framework | `go test` (table-driven, `testify/assert`) | Mirrors `TestValidFormat` in `internal/report/render_test.go:51-56` |
 | Key Dependencies | none (stdlib only) | No new dependency; `renderSarif` (AC 01-02) is called from the new switch arm |
 
-## Related Files
-- `internal/report/render.go` - modify: add `FormatSarif = "sarif"` constant (next to `FormatMarkdown`/`FormatJSON`/`FormatChecklist`, lines 24-27); extend `ValidFormat()` (lines 34-41) to accept `"sarif"`; extend `Formats()` (line 44) to include `sarif` in the enumerated list; add a `case FormatSarif: return renderSarif(w, findings)` arm to `Render()`'s switch (lines 48-63).
-- `internal/report/render_test.go` - modify: extend `TestValidFormat` with `assert.True(t, ValidFormat("sarif"))`; add/extend a test asserting `Formats()` includes `"sarif"` and that `Render()` dispatches `FormatSarif` to `renderSarif` without error.
-- `internal/report/sarif.go` - create (paired with AC 01-02): defines the `renderSarif` function this AC's `Render()` switch arm calls; this AC only requires the function to exist with the correct signature — its internal document shape is AC 01-02's concern.
+### Related Files (from codebase-discovery.json)
+
+- [`internal/report/render.go`](../../../../../internal/report/render.go) — modify:
+  - Add `FormatSarif = "sarif"` constant alongside the existing `FormatMarkdown`/`FormatJSON`/`FormatChecklist` block ([`internal/report/render.go:23-27`](../../../../../internal/report/render.go)).
+  - Extend `ValidFormat()` to accept `"sarif"` ([`internal/report/render.go:34-41`](../../../../../internal/report/render.go)).
+  - Extend `Formats()` to include `sarif` in the supported-formats list ([`internal/report/render.go:44`](../../../../../internal/report/render.go)).
+  - Add a `case FormatSarif: return renderSarif(w, findings)` arm to `Render()`'s switch ([`internal/report/render.go:48-63`](../../../../../internal/report/render.go)).
+- [`internal/report/render_test.go`](../../../../../internal/report/render_test.go) — modify:
+  - Extend `TestValidFormat` ([`internal/report/render_test.go:51-56`](../../../../../internal/report/render_test.go)) to assert `ValidFormat("sarif")` is `true` and `ValidFormat("SARIF")` is `false`.
+  - Add/extend coverage asserting `Formats()` includes `"sarif"` and that `Render()` dispatches `FormatSarif` to `renderSarif` without error.
+- [`internal/report/sarif.go`](../../../../../internal/report/sarif.go) — create: defines `renderSarif(w io.Writer, findings []reconcile.JSONFinding) error` with the correct signature so this AC's `Render()` switch arm can call it; the SARIF document shape is owned by AC 01-02 and AC 01-03.
 
 ## Happy Path Scenarios
 **Scenario 1: sarif is accepted as a valid format**

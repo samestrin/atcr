@@ -9,11 +9,17 @@
 | Test Framework | `go test` (table-driven, `t.Run` per case) | Follows `internal/report/render_test.go` convention |
 | Key Dependencies | `github.com/samestrin/atcr/reconcile` (`reclib` alias) | `reclib.NormalizeSeverity`, `reclib.SeverityRank` — no new dependency |
 
-## Related Files
-- `internal/report/sarif.go` - create/modify: add `sarifLevel(severity string) string`, called from `renderSarif` (Story 1) when populating each `run.results[].level` field. Import `reclib "github.com/samestrin/atcr/reconcile"` following the alias convention already used in `internal/report/render.go:11`.
-- `internal/report/sarif_test.go` - create: table-driven `TestSarifLevel` covering all four canonical severities plus unrecognized/edge-case inputs, following `internal/report/render_test.go`'s `t.Run` subtest convention (e.g. `TestRender_GoldenFiles` at line 74, `TestRender_MixedCaseSeverityGridBucketing` at line 401).
-- `reconcile/severity.go` - reference only (no changes): `SeverityRank` (lines 19-24) and `NormalizeSeverity` (line 29) are the sole rubric source this function must call — CRITICAL=4, HIGH=3, MEDIUM=2, LOW=1, unrecognized=absent/rank 0.
-- `internal/fanout/postprocess.go` - reference only (no changes): lines 28-40 are the cited precedent for correct reuse (`reclib.NormalizeSeverity` / `reclib.SeverityRank` called directly, no local redefinition).
+### Related Files (from codebase-discovery.json)
+
+- [`internal/report/sarif.go`](../../../../../internal/report/sarif.go) — create/modify: add `sarifLevel(severity string) string`, called from `renderSarif` (Story 1) when populating each `run.results[].level` field. Import `reclib "github.com/samestrin/atcr/reconcile"` following the alias convention already used in [`internal/report/render.go:11`](../../../../../internal/report/render.go).
+- [`internal/report/sarif_test.go`](../../../../../internal/report/sarif_test.go) — create: table-driven `TestSarifLevel` covering all four canonical severities plus unrecognized/edge-case inputs, following [`internal/report/render_test.go`](../../../../../internal/report/render_test.go)'s `t.Run` subtest convention (e.g. [`TestRender_GoldenFiles` at line 74](../../../../../internal/report/render_test.go) and [`TestRender_MixedCaseSeverityGridBucketing` at line 401](../../../../../internal/report/render_test.go)).
+- [`reconcile/severity.go`](../../../../../reconcile/severity.go) — reference only (no changes): `SeverityRank` ([`reconcile/severity.go:19-24`](../../../../../reconcile/severity.go)) and `NormalizeSeverity` ([`reconcile/severity.go:29`](../../../../../reconcile/severity.go)) are the sole rubric source this function must call — CRITICAL=4, HIGH=3, MEDIUM=2, LOW=1, unrecognized=absent/rank 0.
+- [`internal/fanout/postprocess.go`](../../../../../internal/fanout/postprocess.go) — reference only (no changes): lines 28-40 are the cited precedent for correct reuse (`reclib.NormalizeSeverity` / `reclib.SeverityRank` called directly, no local redefinition).
+
+### Technical References
+
+- [SARIF 2.1.0 Schema Reference](../documentation/sarif-schema-reference.md)
+- [GitHub Code Scanning SARIF Integration Constraints](../documentation/github-code-scanning-integration.md)
 
 ## Happy Path Scenarios
 
@@ -44,12 +50,12 @@
 
 ## Edge Cases
 
-**Edge Case 1: Lowercase and mixed-case input normalizes correctly**
+**Edge Case 1: Lowercase and mixed-case input normalizes to the canonical-case output**
 - **Given** `sarifLevel("critical")`, `sarifLevel("High")`, `sarifLevel("mEdIuM")`
 - **When** each is called
 - **Then** each returns the same value as its canonical-case counterpart (`"error"`, `"error"`, `"warning"`), because the function normalizes via `reclib.NormalizeSeverity` before lookup
 
-**Edge Case 2: Whitespace-padded input normalizes correctly**
+**Edge Case 2: Whitespace-padded input normalizes to the canonical-case output**
 - **Given** `sarifLevel("  HIGH  ")`
 - **When** called
 - **Then** it returns `"error"` (leading/trailing whitespace trimmed by `reclib.NormalizeSeverity`)
