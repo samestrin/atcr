@@ -1,0 +1,2 @@
+# atcr-findings/v1
+HIGH|cmd/atcr/debt_resolve.go:216|atcr debt resolve output changed from "Marked %s resolved." to "Marked %s %s." breaking scripts that parse the output string|Restore the original output string or document the change and update consumers|compatibility|10|fmt.Fprintf(..., "Marked %s %s.\n", id, status)|vera

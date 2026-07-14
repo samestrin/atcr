@@ -1,0 +1,68 @@
+[
+  {
+    "severity": "HIGH",
+    "file": "cmd/atcr/debt_resolve.go",
+    "line": 216,
+    "problem": "atcr debt resolve output changed from \"Marked %s resolved.\" to \"Marked %s %s.\" breaking scripts that parse the output string",
+    "fix": "Restore the original output string or document the change and update consumers",
+    "category": "compatibility",
+    "est_minutes": 30,
+    "evidence": "[brad] recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}) scales linearly with history size and risks OOM on long-lived repos / [vera] fmt.Fprintf(..., \"Marked %s %s.\\n\", id, status)",
+    "reviewers": [
+      "brad",
+      "vera"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "MEDIUM vs HIGH",
+    "path_valid": true,
+    "justification": "HIGH|cmd/atcr/debt_resolve.go:250|No length validation on --reason allows multi-MB justification strings to exhaust disk and trigger OOM on subsequent ReadAll calls|Enforce a max length or truncate before assignment|exhaustion|10|rec.Justification = r accepts unbounded input directly from CLI flag\nMEDIUM|cmd/atcr/debt_resolve.go:238|Hardcoded \"already resolved\" message prints even when the record's actual terminal status is wontfix|Substitute the status variable into the success string|correctness|5|fmt.Fprintf(..., \"%s is already resolved; nothing to do.\\n\", id) ignores the passed status parameter\nMEDIUM|cmd/atcr/debt_resolve.go:216|markDebtResolved loads the entire append-only store into memory to locate a single finding ID|Replace ReadAll with a targeted seek or fail-fast ID scan|performance|30|recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}) scales linearly with history size and risks OOM on long-lived repos",
+    "source_report": {
+      "path": "sources/pool/raw/agent/brad/review.md",
+      "line": 3
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "cmd/atcr/debt_resolve.go",
+    "line": 250,
+    "problem": "(markDebtResolved) No length validation on --reason allows multi-MB justification strings to exhaust disk and trigger OOM on subsequent ReadAll calls",
+    "fix": "Enforce a max length or truncate before assignment",
+    "category": "exhaustion",
+    "est_minutes": 10,
+    "evidence": "rec.Justification = r accepts unbounded input directly from CLI flag",
+    "reviewers": [
+      "brad"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "HIGH|cmd/atcr/debt_resolve.go:250|No length validation on --reason allows multi-MB justification strings to exhaust disk and trigger OOM on subsequent ReadAll calls|Enforce a max length or truncate before assignment|exhaustion|10|rec.Justification = r accepts unbounded input directly from CLI flag\nMEDIUM|cmd/atcr/debt_resolve.go:238|Hardcoded \"already resolved\" message prints even when the record's actual terminal status is wontfix|Substitute the status variable into the success string|correctness|5|fmt.Fprintf(..., \"%s is already resolved; nothing to do.\\n\", id) ignores the passed status parameter\nMEDIUM|cmd/atcr/debt_resolve.go:216|markDebtResolved loads the entire append-only store into memory to locate a single finding ID|Replace ReadAll with a targeted seek or fail-fast ID scan|performance|30|recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}) scales linearly with history size and risks OOM on long-lived repos",
+    "source_report": {
+      "path": "sources/pool/raw/agent/brad/review.md",
+      "line": 1
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/debt_resolve.go",
+    "line": 64,
+    "problem": "(runDebtResolve) The `cmd.Flags().Changed(\"status\")` guard correctly rejects `--status` supplied without `--resolve`, but the error message says \"--status/--reason require --resolve \u003cid\u003e\" which conflates the two flags. If only `--status` was provided (no `--reason`), the error still mentions `--reason`, which is confusing. The error should mention only the flags that were actually supplied, not all gated flags.",
+    "fix": "Emit a targeted error listing only the flags that were provided without `--resolve`, e.g. \"flag(s) require --resolve \u003cid\u003e\" with a list of the offending flags",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "[dax] TestDebtResolve_StatusOrReasonWithoutResolveIsUsageError only tests `--status wontfix`; the guard condition `cmd.Flags().Changed(\"status\")` is value-agnostic. / [mira] return usageError(fmt.Errorf(\"--status/--reason require --resolve \u003cid\u003e\"))",
+    "reviewers": [
+      "dax",
+      "mira"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "mira": "minimax-m2.7"
+    },
+    "justification": "HIGH|cmd/atcr/reconcile_test.go:519|TestPersistLocalDebt_WontfixSuppressesReappend only asserts the wontfix finding is suppressed; it does not add a second, different finding to verify that suppression does not block appending of other new findings. A regression in dedup could silently drop all findings when a wontfix record exists, and this test would still pass.|Extend the test to include an additional finding with a different ID and assert it is appended alongside the suppressed wontfix record.|testing|15|The test body only creates one seed wontfix record and one matching finding; it asserts len(recs)==1 and never introduces a second finding.\nMEDIUM|cmd/atcr/debt_resolve.go:240|The already-closed message hardcodes \"already resolved\" regardless of the existing terminal status (e.g., wontfix). The new wontfix status path is untested for idempotent marks; the pre-existing TestDebtResolve_MarkResolvedIsIdempotent only covers resolved→resolved.|Add a test that marks a wontfix item as res…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 3
+    }
+  }
+]

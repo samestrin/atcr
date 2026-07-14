@@ -149,3 +149,14 @@
 {"ts":"2026-07-13T19:18:44.621699-07:00","package":"internal/fanout","severity":"MEDIUM","id":"26ffe929c07a76d2","file":"internal/fanout/reviewdir_test.go","category":"concurrency"}
 {"ts":"2026-07-13T19:18:44.621699-07:00","package":"internal/fanout","severity":"HIGH","id":"3c4b62f96701aff8","file":"internal/fanout/reviewdir_test.go","category":"copy-paste"}
 {"ts":"2026-07-13T19:18:44.621699-07:00","package":"internal/fanout","severity":"LOW","id":"2676e85a1347f37f","file":"internal/fanout/reviewdir_test.go","category":"style"}
+{"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"4fc76cc7a66a6e6d","file":"cmd/atcr/debt_resolve.go","category":" cmd.Flags().Changed(\"reason\")` "}
+{"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"7ece09b94400e286","file":"cmd/atcr/debt_resolve.go","category":"usability"}
+{"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"05781da99467386f","file":"cmd/atcr/debt_resolve.go","category":"wontfix\", status)"}
+{"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"LOW","id":"e129ae9bc4112c55","file":"cmd/atcr/debt_resolve_test.go","category":"test-coverage"}
+{"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"LOW","id":"0ed36b93605e1fad","file":"cmd/atcr/debt_resolve_test.go","category":"test-coverage"}
+{"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"5c68a53dba566ce1","file":"cmd/atcr/debt_resolve.go","category":"testing"}
+{"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"LOW","id":"aa1a5544cdea18e1","file":"cmd/atcr/debt_resolve.go","category":"testing"}
+{"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"LOW","id":"e5b056b342884553","file":"cmd/atcr/debt_resolve.go","category":"testing"}
+{"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"HIGH","id":"99af507ff12eeba5","file":"cmd/atcr/debt_resolve.go","category":"compatibility"}
+{"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"HIGH","id":"74a415b4386c3c47","file":"cmd/atcr/debt_resolve.go","category":"exhaustion"}
+{"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"628c94d4981a8cf3","file":"cmd/atcr/debt_resolve.go","category":"performance"}

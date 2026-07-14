@@ -1,3 +1,7 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
 # Epic Plan 24.0: False Positive / WontFix Dismissal Loop
 
 - **Estimated time**: TBD
@@ -90,3 +94,5 @@ All 5 user-confirm items above were reviewed and applied directly to the plan bo
 5. ✅ Dismissal-reason task rewritten to name the concrete `--reason` flag and the existing `Justification` field.
 
 Net effect: derived COMPONENT_COUNT drops from 5 to 2 (`internal/localdebt`, `cmd/atcr`) and TASK_COUNT to 3 — the plan now fits `/execute-epic`'s ≤6 tasks / ≤2 components scope guard. Execution field updated from `init-plan` to `execute-epic` accordingly.
+----- END SPRINT PLAN -----
+
