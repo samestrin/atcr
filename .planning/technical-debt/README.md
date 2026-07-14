@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 4 | 0 |
 | MEDIUM | 0 | 20 | 0 |
-| LOW | 0 | 33 | 0 |
+| LOW | 1 | 33 | 0 |
 
 
-**Last Modified:** 2026-07-13 | **Open Items:** 0 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 57
+**Last Modified:** 2026-07-13 | **Open Items:** 1 | **Deferred Items:** 57 | **Resolved Items:** 0 | **Total Items:** 58
 
 ## Directory Structure
 
@@ -63,6 +63,12 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table â†’ shards â
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-13] From Sprint: epic-22.5
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/fanout/reviewdir_test.go:102 | withLstatStub comment implies the .bak.old/.bak.new RemoveAll legs are left on real os.Lstat, but those legs use os.RemoveAll not lstat so the delegate fallthrough is never exercised in backupExisting/s flow | Reword the comment to say only the single line-341 probe routes through lstatFn (the RemoveAll legs never touch lstat) | UNDER_ENGINEERING | 5 | execute-epic-independent |
 
 ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
 
