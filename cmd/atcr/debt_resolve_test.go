@@ -292,6 +292,12 @@ func TestDebtResolve_InvalidStatusIsUsageError(t *testing.T) {
 	dir := writeDebtStore(t, rec)
 	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "bogus")
 	require.Error(t, err, "an unrecognized --status must be a usage error, not a silently non-folding record")
+
+	// The error must report the canonical lowercase form, not the user's casing.
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "BOGUS")
+	require.Error(t, err)
+	assert.Contains(t, out, `invalid --status "bogus"`, "error must show canonical lowercase status")
+	assert.NotContains(t, out, `invalid --status "BOGUS"`, "error must not echo user's uppercase input")
 }
 
 func TestDebtResolve_ReasonPopulatesJustification(t *testing.T) {
