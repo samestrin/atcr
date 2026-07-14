@@ -208,16 +208,378 @@ func TestDebtResolve_MarkResolvedIsIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
 	require.NoError(t, err)
-	assert.Contains(t, strings.ToLower(out), "already resolved")
+	assert.Contains(t, strings.ToLower(out), "already closed")
 	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
 	require.NoError(t, err)
 	assert.Len(t, after, len(before), "re-resolving must not append another resolution record")
+}
+
+func TestDebtResolve_AlreadyClosedReportsActualStatus(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	// Mark as wontfix first.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	require.NoError(t, err)
+
+	// A subsequent plain resolve must report the existing terminal status, not
+	// hardcode "already resolved".
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "wontfix", "already-closed message must name the actual terminal status")
+	assert.NotContains(t, strings.ToLower(out), "already resolved", "must not hardcode 'already resolved' when the item is wontfix")
+}
+
+func TestDebtResolve_MarkWontfixIsIdempotentAgainstResolved(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	// First resolve the item normally.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+
+	// A subsequent wontfix of the same id must no-op and report the actual status.
+	before, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "already closed as resolved")
+	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "wontfix after resolved must not append another terminal record")
+}
+
+func TestDebtResolve_MarkResolvedIsIdempotentAgainstWontfix(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	// First dismiss the item as wontfix.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	require.NoError(t, err)
+
+	// A subsequent resolved of the same id must no-op and report the actual status.
+	before, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "already closed as wontfix")
+	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "resolved after wontfix must not append another terminal record")
+}
+
+func TestDebtResolve_AlreadyClosedPrefersWontfixOverReadOrder(t *testing.T) {
+	// The no-lock TD-004 stance lets two concurrent invocations each pass the
+	// alreadyClosed check before either appends, so the store can carry divergent
+	// terminal records for one id — e.g. one resolved and one wontfix. A later
+	// invocation must report the effective status deterministically (wontfix, a
+	// permanent dismissal, outranks resolved) rather than by shard read order.
+	open := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+
+	wontfix := open
+	wontfix.RunID = "2026-07-01T11:00:00Z-a-wontfix"
+	wontfix.Timestamp = wontfix.RunID
+	wontfix.Status = "wontfix"
+
+	resolved := open
+	resolved.RunID = "2026-07-01T12:00:00Z-a-resolved"
+	resolved.Timestamp = resolved.RunID
+	resolved.Status = "resolved"
+
+	// wontfix is written (and thus read) BEFORE resolved, so a last-wins read-order
+	// reader would report "resolved"; only a precedence reader reports "wontfix".
+	dir := writeDebtStore(t, open, wontfix, resolved)
+
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", open.ID)
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "already closed as wontfix",
+		"divergent terminal records must report wontfix by precedence, not resolved by read order")
+	assert.NotContains(t, strings.ToLower(out), "already closed as resolved",
+		"read order must not decide the effective terminal status")
+}
+
+func TestDebtResolve_ReasonLengthCapRejectsOversized(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	before, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+
+	// A multi-KiB --reason pushes the stored JSONL record toward the store's 1 MiB
+	// per-line read cap (internal/localdebt/store.go maxLineBytes), where an over-long
+	// line is silently dropped on read. Reject oversized justifications up front so a
+	// finding never becomes silently unreadable.
+	huge := strings.Repeat("x", 5000)
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", huge)
+	require.Error(t, err, "an over-long --reason must be rejected, not stored")
+	assert.NotContains(t, strings.ToLower(out), "marked", "must not report success for a rejected oversized reason")
+
+	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "a rejected oversized --reason must not append a record")
+
+	// A reasonable justification still succeeds.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	require.NoError(t, err, "a normal-length --reason must still be accepted")
 }
 
 func TestDebtResolve_MarkResolvedUnknownIDErrors(t *testing.T) {
 	dir := writeDebtStore(t, openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "x"))
 	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", "deadbeef")
 	require.Error(t, err, "resolving an unknown id must error, not silently no-op")
+}
+
+func TestDebtResolve_WontfixStatusFoldsItemOutOfOpenList(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	// A terminal wontfix record for the same id must fold the finding out of the
+	// open backlog exactly like a resolved record (Epic 24.0 AC #2).
+	wontfix := rec
+	wontfix.RunID = "2026-07-01T11:00:00Z-a-wontfix"
+	wontfix.Timestamp = wontfix.RunID
+	wontfix.Status = "wontfix"
+	dir := writeDebtStore(t, rec, wontfix,
+		openRec("2026-07-02T10:00:00Z-b", "LOW", "internal/y/b.go", 34, "leak"),
+	)
+
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.NotContains(t, list, "internal/x/a.go", "a wontfix item must not appear as open")
+	assert.Contains(t, list, "internal/y/b.go", "the unrelated open item stays open")
+
+	// The JSON view folds the wontfix item out too.
+	js, err := runDebt(t, "resolve", "--dir", dir, "--json")
+	require.NoError(t, err)
+	assert.NotContains(t, js, "internal/x/a.go", "a wontfix item must not appear in --json")
+}
+
+func TestDebtResolve_MarkWontfixSetsStatusAndFoldsOut(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec,
+		openRec("2026-07-02T10:00:00Z-b", "LOW", "internal/y/b.go", 34, "leak"),
+	)
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "wontfix")
+
+	// AC #4: the dismissal state is durable — a wontfix status record is appended
+	// for the finding's stable id.
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var wontfixRec *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == "wontfix" {
+			wontfixRec = &recs[i]
+		}
+	}
+	require.NotNil(t, wontfixRec, "a wontfix status record must be appended for the id")
+
+	// AC #2: the wontfix item folds out of the open list; the other stays.
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.NotContains(t, list, "internal/x/a.go", "a wontfix item must not appear as open")
+	assert.Contains(t, list, "internal/y/b.go", "the other item stays open")
+}
+
+func TestDebtResolve_DefaultStatusStaysResolved(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var found bool
+	for _, r := range recs {
+		if r.ID == rec.ID && r.Status == "resolved" {
+			found = true
+		}
+	}
+	assert.True(t, found, "omitting --status must default to a resolved record, unchanged")
+}
+
+func TestDebtResolve_InvalidStatusIsUsageError(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "bogus")
+	require.Error(t, err, "an unrecognized --status must be a usage error, not a silently non-folding record")
+
+	// The error must report the canonical lowercase form, not the user's casing.
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "BOGUS")
+	require.Error(t, err)
+	assert.Contains(t, out, `invalid --status "bogus"`, "error must show canonical lowercase status")
+	assert.NotContains(t, out, `invalid --status "BOGUS"`, "error must not echo user's uppercase input")
+}
+
+func TestDebtResolve_WontfixRequiresReasonOrJustification(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	// wontfix with no --reason and no pre-existing justification must be rejected.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix")
+	require.Error(t, err, "wontfix without a reason or existing justification must be a usage error")
+	assert.Equal(t, exitUsage, exitCode(err))
+
+	// wontfix with a --reason is allowed.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	require.NoError(t, err)
+}
+
+func TestDebtResolve_ReasonPopulatesJustification(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID,
+		"--status", "wontfix", "--reason", "accepted pattern, reviewer hallucination")
+	require.NoError(t, err)
+
+	// AC #1 + #4: the reason is recorded in Justification on the durable terminal record.
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var terminal *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == "wontfix" {
+			terminal = &recs[i]
+		}
+	}
+	require.NotNil(t, terminal, "a wontfix record must be appended")
+	assert.Equal(t, "accepted pattern, reviewer hallucination", terminal.Justification,
+		"--reason must populate the record's Justification field")
+}
+
+func TestDebtResolve_WhitespaceReasonPreservesExistingJustification(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	rec.Justification = "original enrichment note"
+	dir := writeDebtStore(t, rec)
+
+	// A whitespace-only --reason is treated as empty and must preserve the existing
+	// justification, just like omitting --reason entirely.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "   ")
+	require.NoError(t, err)
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var terminal *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == "wontfix" {
+			terminal = &recs[i]
+		}
+	}
+	require.NotNil(t, terminal)
+	assert.Equal(t, "original enrichment note", terminal.Justification,
+		"whitespace-only --reason must preserve the item's existing justification")
+}
+
+func TestDebtResolve_ReasonReplacesExistingJustification(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	rec.Justification = "original enrichment note"
+	dir := writeDebtStore(t, rec)
+
+	// A supplied --reason replaces any pre-existing justification on the resolved
+	// record (documented behavior); it does not merge with it.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--reason", "replacement note")
+	require.NoError(t, err)
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var terminal *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == "resolved" {
+			terminal = &recs[i]
+		}
+	}
+	require.NotNil(t, terminal)
+	assert.Equal(t, "replacement note", terminal.Justification,
+		"a supplied --reason must replace the item's existing justification")
+}
+
+func TestDebtResolve_NoReasonWithEmptyJustificationStaysEmpty(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	rec.Justification = ""
+	dir := writeDebtStore(t, rec)
+
+	// Omitting --reason when the original record has no justification must leave
+	// the terminal record's Justification as the empty string (zero value), not
+	// unset/missing. Use resolved status so the item-6 wontfix-reason guard does
+	// not interfere with this empty-justification edge case.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var terminal *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == "resolved" {
+			terminal = &recs[i]
+		}
+	}
+	require.NotNil(t, terminal)
+	assert.Equal(t, "", terminal.Justification,
+		"omitting --reason on a record with empty justification must leave it empty")
+}
+
+func TestDebtResolve_NoReasonPreservesExistingJustification(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	rec.Justification = "original enrichment note"
+	dir := writeDebtStore(t, rec)
+	// Omitting --reason must not blank an existing justification carried on the item.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix")
+	require.NoError(t, err)
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var terminal *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == rec.ID && recs[i].Status == "wontfix" {
+			terminal = &recs[i]
+		}
+	}
+	require.NotNil(t, terminal)
+	assert.Equal(t, "original enrichment note", terminal.Justification,
+		"omitting --reason must preserve the item's existing justification")
+}
+
+func TestDebtResolve_StatusOrReasonWithoutResolveIsUsageError(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	errorLine := func(out string) string {
+		parts := strings.SplitN(out, "\n", 2)
+		return strings.ToLower(strings.TrimSpace(parts[0]))
+	}
+
+	// --status without --resolve must not silently fall through to the list view:
+	// it would drop the user's dismissal intent (and skip status validation).
+	out, err := runDebt(t, "resolve", "--dir", dir, "--status", "wontfix")
+	require.Error(t, err, "--status without --resolve must be a usage error, not a silent list")
+	el := errorLine(out)
+	assert.Contains(t, el, "--status", "error must mention only the supplied flag")
+	assert.NotContains(t, el, "--reason", "error must not mention --reason when only --status was supplied")
+
+	// The explicit default value must also be rejected without --resolve; this
+	// path is distinct from a non-default status and locks the guard behavior.
+	out, err = runDebt(t, "resolve", "--dir", dir, "--status", "resolved")
+	require.Error(t, err, "--status resolved without --resolve must be a usage error")
+	el = errorLine(out)
+	assert.Contains(t, el, "--status")
+	assert.NotContains(t, el, "--reason")
+
+	// --reason without --resolve is the same footgun.
+	out, err = runDebt(t, "resolve", "--dir", dir, "--reason", "some note")
+	require.Error(t, err, "--reason without --resolve must be a usage error")
+	el = errorLine(out)
+	assert.Contains(t, el, "--reason", "error must mention only the supplied flag")
+	assert.NotContains(t, el, "--status", "error must not mention --status when only --reason was supplied")
+
+	// An explicitly empty --reason without --resolve must also be rejected; it
+	// should be governed by Changed("reason"), not by the trimmed value.
+	out, err = runDebt(t, "resolve", "--dir", dir, "--reason", "")
+	require.Error(t, err, "explicit --reason=\"\" without --resolve must be a usage error")
+	el = errorLine(out)
+	assert.Contains(t, el, "--reason")
+	assert.NotContains(t, el, "--status")
+
+	// An explicitly empty --status is invalid status anyway, but it must also be
+	// rejected at the guard before falling through to the list view.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--status", "")
+	require.Error(t, err, "explicit --status=\"\" without --resolve must be a usage error")
+
+	// Plain --list (no --status/--reason) still works untouched.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err, "a plain list must not be affected by the new guard")
 }
 
 func TestDebtResolve_SelectionWorksWithoutOptionalFields(t *testing.T) {

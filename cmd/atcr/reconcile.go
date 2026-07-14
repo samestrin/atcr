@@ -199,8 +199,9 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 	if existing, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: diag}); err != nil {
 		// Fail open: append anyway so a corrupt/unreadable store does not drop this
 		// run's findings from the backlog. The error is already path-scrubbed by
-		// ReadAll (basePathErr).
-		_, _ = fmt.Fprintf(diag, "localdebt: dedup read failed, appending without dedup: %v\n", err)
+		// ReadAll (basePathErr). Because this also loses the set of previously
+		// dismissed (wontfix) ids, warn loudly that those dismissals may resurface.
+		_, _ = fmt.Fprintf(diag, "localdebt: dedup read failed, appending without dedup; previously dismissed/wontfix findings may be re-surfaced: %v\n", err)
 	} else {
 		for _, r := range existing {
 			seen[r.ID] = true

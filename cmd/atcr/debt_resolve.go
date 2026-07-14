@@ -24,6 +24,13 @@ var defaultDebtResolveDir = localdebt.DefaultDir(".")
 // elsewhere in cmd/atcr/debt.go.
 var resolveSeverities = map[string]bool{"CRITICAL": true, "HIGH": true, "MEDIUM": true, "LOW": true}
 
+// resolveStatuses is the validated --status enum for a mark action. Both values are
+// terminal (isClosedStatus folds them out): "resolved" means the code was actually
+// fixed; "wontfix" (Epic 24.0) dismisses a false-positive/accepted pattern so agents
+// stop re-surfacing it. "deferred" is intentionally excluded — it is written by other
+// paths, not by an explicit resolve.
+var resolveStatuses = map[string]bool{"resolved": true, "wontfix": true}
+
 // newDebtResolveCmd builds `atcr debt resolve`: the .atcr/-scoped resolver surface
 // the debt-resolve skill route shells out to. It lists open items from the local TD
 // store (deterministically sorted for the skill's selection rule) and records
@@ -47,14 +54,39 @@ func newDebtResolveCmd() *cobra.Command {
 	cmd.Flags().String("severity", "", "filter by severity (CRITICAL|HIGH|MEDIUM|LOW)")
 	cmd.Flags().Int("max", 10, "cap the number of selected items (0 = no cap)")
 	cmd.Flags().String("resolve", "", "mark the item with this id resolved (append-only)")
+	cmd.Flags().String("status", "resolved", "terminal status to record for --resolve (resolved|wontfix)")
+	cmd.Flags().String("reason", "", "justification recorded on the --resolve record; replaces any existing justification (e.g. why a finding is wontfix)")
 	return cmd
 }
 
 func runDebtResolve(cmd *cobra.Command, _ []string) error {
 	dir := mustFlag(cmd, "dir")
 
-	if id := mustFlag(cmd, "resolve"); id != "" {
-		return markDebtResolved(cmd, dir, id)
+	id := mustFlag(cmd, "resolve")
+	// --status/--reason only mean something for a mark action; without --resolve they
+	// would be silently ignored (dropping the user's dismissal intent and skipping
+	// --status validation). Reject that combination rather than fall through to list.
+	if id == "" {
+		var provided []string
+		if cmd.Flags().Changed("status") {
+			provided = append(provided, "--status")
+		}
+		if cmd.Flags().Changed("reason") {
+			provided = append(provided, "--reason")
+		}
+		if len(provided) == 1 {
+			return usageError(fmt.Errorf("%s requires --resolve <id>", provided[0]))
+		}
+		if len(provided) > 1 {
+			return usageError(fmt.Errorf("%s require --resolve <id>", strings.Join(provided, ", ")))
+		}
+	}
+	if id != "" {
+		status := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "status")))
+		if !resolveStatuses[status] {
+			return usageError(fmt.Errorf("invalid --status %q: expected resolved|wontfix", status))
+		}
+		return markDebtResolved(cmd, dir, id, status, mustFlag(cmd, "reason"))
 	}
 
 	sev := strings.ToUpper(mustFlag(cmd, "severity"))
@@ -77,14 +109,43 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 
 // isClosedStatus reports whether a record's status takes an item out of the open
 // backlog. The reconcile hook writes records with an empty status (open); a
-// resolution/deferral record carries an explicit terminal status.
+// resolution/deferral/dismissal record carries an explicit terminal status.
+// wontfix (Epic 24.0) folds a finding out exactly like resolved — it marks a
+// false-positive/accepted pattern that agents must stop re-surfacing.
 func isClosedStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "resolved", "deferred":
+	case "resolved", "deferred", "wontfix":
 		return true
 	default:
 		return false
 	}
+}
+
+// closedStatusRank orders terminal statuses so a deterministic effective status can
+// be chosen when divergent terminal records exist for one id (the no-lock TD-004
+// concurrency window in markDebtResolved). A permanent dismissal (wontfix) outranks a
+// resolved or deferred record, so the audit trail reports the strongest terminal
+// claim regardless of shard read order. An unknown/empty status ranks lowest.
+func closedStatusRank(status string) int {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "wontfix":
+		return 3
+	case "resolved":
+		return 2
+	case "deferred":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// higherClosedStatus returns whichever of the two terminal statuses ranks higher (see
+// closedStatusRank). An empty incumbent is always replaced by any real status.
+func higherClosedStatus(current, candidate string) string {
+	if closedStatusRank(candidate) > closedStatusRank(current) {
+		return candidate
+	}
+	return current
 }
 
 // selectOpenDebt folds the append-only record stream by id into the open backlog.
@@ -190,11 +251,28 @@ func renderResolveList(w io.Writer, recs []localdebt.Record) error {
 	return tw.Flush()
 }
 
+// maxReasonBytes bounds a --reason justification. It sits well under the store's 1 MiB
+// per-line read cap (internal/localdebt maxLineBytes) so a justification can never push
+// a record over the limit and be silently dropped on read.
+const maxReasonBytes = 4 << 10 // 4 KiB
+
 // markDebtResolved records an append-only resolution for id: it copies the item's
 // open record, stamps a terminal status/timestamp, and appends it so the fold in
 // selectOpenDebt drops the item from the open list. The stable id is preserved
 // (never re-stamped) so the resolution lines up with the original finding.
-func markDebtResolved(cmd *cobra.Command, dir, id string) error {
+func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error {
+	// A --reason is stored verbatim as the record's Justification. The store bounds a
+	// single JSONL line at maxLineBytes (1 MiB) on read and silently drops any line
+	// over that limit, so an unbounded reason could make a finding unreadable. Reject
+	// oversized justifications up front, well under the read cap, before touching the
+	// store.
+	if len(reason) > maxReasonBytes {
+		return usageError(fmt.Errorf("--reason too long: %d bytes exceeds the %d-byte limit", len(reason), maxReasonBytes))
+	}
+	// ReadAll loads the full append-only store into memory and then scans for id.
+	// The linear-scan pattern is intentional and shared with selectOpenDebt and
+	// persistLocalDebt; indexed or streaming ID lookup is tracked separately by
+	// the compaction/GC TD item at internal/localdebt/store.go:67.
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to read local debt store: %w", err)
@@ -202,12 +280,18 @@ func markDebtResolved(cmd *cobra.Command, dir, id string) error {
 
 	var orig *localdebt.Record
 	var alreadyClosed bool
+	var closedStatus string
 	for i := range recs {
 		if recs[i].ID != id {
 			continue
 		}
 		if isClosedStatus(recs[i].Status) {
 			alreadyClosed = true
+			// Divergent terminal records can coexist for one id (the no-lock TD-004
+			// window below): pick the reported status by precedence, not shard read
+			// order, so the effective status is deterministic — wontfix outranks
+			// resolved/deferred.
+			closedStatus = higherClosedStatus(closedStatus, recs[i].Status)
 			continue
 		}
 		if orig == nil && recs[i].File != "" {
@@ -216,28 +300,42 @@ func markDebtResolved(cmd *cobra.Command, dir, id string) error {
 		}
 	}
 	// Concurrency-tolerant, not lock-protected: a terminal record for this id already
-	// exists, so this invocation reports and no-ops instead of appending a duplicate
-	// resolution record. Two concurrent invocations can each pass this check before
-	// either appends (the accepted TD-004 no-lock stance); selectOpenDebt's append-only
-	// fold treats any extra resolution record for an already-closed id as redundant, so
-	// the result is harmless duplicate bloat, not corruption.
+	// exists, so this invocation reports and no-ops instead of appending another
+	// terminal record. Two concurrent invocations can each pass this check before
+	// either appends (the accepted TD-004 no-lock stance). Since epic 24.0 those two
+	// records need not be identical duplicates: one may be --status resolved and the
+	// other --status wontfix, so the durable trail can carry divergent terminal claims
+	// for one id. selectOpenDebt folds the item out either way (any terminal status
+	// closes it), and closedStatus above is chosen deterministically by precedence
+	// (higherClosedStatus: wontfix outranks resolved) rather than by shard read order —
+	// so the effective terminal status is well-defined, not order-dependent.
 	if alreadyClosed {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already resolved; nothing to do.\n", id)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already closed as %s; nothing to do.\n", id, closedStatus)
 		return nil
 	}
 	if orig == nil {
 		return fmt.Errorf("no open technical-debt item with id %q in the local store", id)
 	}
+	if status == "wontfix" && strings.TrimSpace(reason) == "" && orig.Justification == "" {
+		return usageError(fmt.Errorf("--status wontfix requires --reason <justification>"))
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	rec := *orig
-	rec.RunID = now + "-resolve"
+	rec.RunID = now + "-" + status
 	rec.Timestamp = now
-	rec.Status = "resolved"
+	rec.Status = status
 	rec.ResolvedAt = now
+	// A supplied --reason records why the finding was dismissed/resolved and
+	// replaces any justification the item already carried (e.g. reconcile
+	// enrichment); an empty reason preserves the existing justification, never
+	// blanking it.
+	if r := strings.TrimSpace(reason); r != "" {
+		rec.Justification = r
+	}
 	if err := localdebt.Append(dir, rec); err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to record resolution: %w", err)
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Marked %s resolved.\n", id)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Marked %s %s.\n", id, status)
 	return nil
 }
