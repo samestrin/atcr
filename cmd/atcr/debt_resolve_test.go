@@ -230,6 +230,44 @@ func TestDebtResolve_AlreadyClosedReportsActualStatus(t *testing.T) {
 	assert.NotContains(t, strings.ToLower(out), "already resolved", "must not hardcode 'already resolved' when the item is wontfix")
 }
 
+func TestDebtResolve_MarkWontfixIsIdempotentAgainstResolved(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	// First resolve the item normally.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+
+	// A subsequent wontfix of the same id must no-op and report the actual status.
+	before, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "already closed as resolved")
+	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "wontfix after resolved must not append another terminal record")
+}
+
+func TestDebtResolve_MarkResolvedIsIdempotentAgainstWontfix(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	// First dismiss the item as wontfix.
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	require.NoError(t, err)
+
+	// A subsequent resolved of the same id must no-op and report the actual status.
+	before, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "already closed as wontfix")
+	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "resolved after wontfix must not append another terminal record")
+}
+
 func TestDebtResolve_MarkResolvedUnknownIDErrors(t *testing.T) {
 	dir := writeDebtStore(t, openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "x"))
 	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", "deadbeef")
