@@ -503,3 +503,47 @@ func TestCommunityModel(t *testing.T) {
 	_, err := CommunityModel("not-a-real-persona")
 	require.Error(t, err)
 }
+
+// localModelToOllamaTag maps a community index `local/<model>` slug to the
+// `ollama pull` tag the offline-setup docs must cite. The library's local
+// personas follow one convention: strip the `local/` provider namespace, then
+// turn the first hyphen (the family↔variant separator) into ollama's `:` tag
+// delimiter — local/gemma3-27b→gemma3:27b, local/qwen3-30b-a3b→qwen3:30b-a3b,
+// local/llama3.3-70b→llama3.3:70b. A future local persona that does not follow
+// this convention surfaces here as a deliberate review point.
+func localModelToOllamaTag(model string) string {
+	return strings.Replace(strings.TrimPrefix(model, "local/"), "-", ":", 1)
+}
+
+// TestLocalPersonasDocumentOllamaPullTag closes the Epic 27.0 AC2 doc-coverage
+// gap (TD docs/personas-install.md:256): the install flow performs no automatic
+// local/<model>→ollama-tag translation, so the offline-setup guide is the only
+// place a user learns which tag to `ollama pull`. This guard asserts that every
+// provider:local persona in personas/community/index.json has its derived pull
+// tag cited in docs/personas-install.md, so adding or renaming a local persona
+// without documenting its pull command fails CI instead of shipping a guide the
+// user cannot follow. It is a zero-network doc-consistency check (mirrors the
+// cmd/atcr/docs_audit_test.go pattern); live-endpoint AC2 automation is
+// intentionally out of scope (it requires a running Ollama server).
+func TestLocalPersonasDocumentOllamaPullTag(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "docs", "personas-install.md"))
+	require.NoError(t, err, "docs/personas-install.md must exist")
+	doc := string(raw)
+
+	var localCount int
+	for _, e := range readCommunityIndex(t) {
+		if e.Provider != "local" {
+			continue
+		}
+		localCount++
+		require.Truef(t, strings.HasPrefix(e.Model, "local/"),
+			"local persona %q must use the local/ model namespace, got %q", e.Name, e.Model)
+		tag := localModelToOllamaTag(e.Model)
+		require.Containsf(t, doc, "ollama pull "+tag,
+			"docs/personas-install.md must document `ollama pull %s` for local persona %q (model %q); "+
+				"the install flow does not translate %q automatically, so the offline-setup guide is the "+
+				"only source for the pull tag", tag, e.Name, e.Model, e.Model)
+	}
+	require.NotZerof(t, localCount,
+		"expected at least one provider:local persona in the community index")
+}
