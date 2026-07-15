@@ -7,9 +7,12 @@ package report
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -269,6 +272,48 @@ func TestSarifLocation(t *testing.T) {
 			// Error Scenario 2 (03-01): region.startLine is never <= 0 for any input.
 			assert.Greater(t, r.StartLine, 0)
 			assert.Greater(t, r.EndLine, 0)
+		})
+	}
+}
+
+// --- Final Phase 4.1: Schema Conformance Validation ---
+
+// TestSarif_SchemaConformance validates renderSarif output against the canonical
+// SARIF 2.1.0 JSON Schema (SchemaStore's sarif-2.1.0-rtm.5.json, the variant
+// GitHub Code Scanning validates against). This is a stricter, structural check
+// than the field-by-field golden/unit tests: a missing required property, wrong
+// enum value, or mis-shaped nested object fails here even if it passed the golden.
+// Test-only — google/jsonschema-go is already a go.mod dependency (used by
+// internal/mcp); no production dependency is added.
+func TestSarif_SchemaConformance(t *testing.T) {
+	schemaBytes, err := os.ReadFile(filepath.Join("testdata", "sarif-schema-2.1.0.json"))
+	require.NoError(t, err)
+	var schema jsonschema.Schema
+	require.NoError(t, json.Unmarshal(schemaBytes, &schema))
+	// The schema's $refs are internal (#/definitions/...), so Resolve needs only a
+	// BaseURI and no external Loader.
+	resolved, err := schema.Resolve(&jsonschema.ResolveOptions{
+		BaseURI: "https://json.schemastore.org/sarif-2.1.0-rtm.5.json",
+	})
+	require.NoError(t, err)
+
+	cases := map[string][]reconcile.JSONFinding{
+		"sample":      sample(),
+		"sampleSarif": sampleSarif(), // includes a file-level (Line<=0) finding
+		"empty":       {},
+		"nil":         nil,
+		"file-level":  {{Severity: "MEDIUM", File: "x.go", Line: 0, Problem: "p", Category: "c"}},
+		"empty-cat":   {{Severity: "LOW", File: "y.go", Line: 3, Problem: "p", Category: ""}},
+	}
+	for name, findings := range cases {
+		t.Run(name, func(t *testing.T) {
+			out := renderSarifString(t, findings)
+			// Validate expects a value shaped like the result of unmarshaling JSON
+			// into any (map/slice/scalar), not raw bytes or a typed struct.
+			var data any
+			require.NoError(t, json.Unmarshal([]byte(out), &data))
+			require.NoError(t, resolved.Validate(data),
+				"renderSarif output must conform to the SARIF 2.1.0 schema")
 		})
 	}
 }
