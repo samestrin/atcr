@@ -48,21 +48,23 @@
 
 ## Execution Metrics
 
-_Populated by `/execute-sprint` upon completion_
-
-**Executed:** _Not yet executed_
-**Runtime:** _TBD_
-**Status:** _TBD_
+**Status:** Ready for Review
+**Executed:** 2026-07-14
 
 ### Progress
-- **Phases:** _TBD_
-- **Work Items:** _TBD_
+- **Phases:** 4/4 (Foundation, Severity & Anchoring, Integration, Validation) — task 4.3 (manual live-GitHub smoke test) deferred to user
+- **Work Items:** 4/4 user stories; 18/19 sprint tasks (4.3 manual, non-automatable)
 
 ### Quality
-- **Tests:** _TBD_
-- **Coverage:** _TBD_
-- **Lint:** _TBD_
+- **Tests:** full suite PASS (`go test ./...`); `internal/report` includes SARIF unit + golden + SARIF 2.1.0 schema-conformance tests
+- **Coverage:** `internal/report` 97.6% (≥80% threshold); all sarif.go helpers 100%, renderSarif 88.9% (only the defensively-unreachable marshal-error branch uncovered)
+- **Lint:** Clean (`golangci-lint run` → 0 issues; `go vet ./...` clean)
 
 ### Changes
-- **Files Changed:** _TBD_
-- **Commits:** _TBD_
+- **Files Changed:** 10 code/doc files (sarif.go new, render.go, report.go, ci-integration.md, + tests/fixtures)
+- **Commits:** 8 on `feature/25.0_sarif_output_integration`
+
+### Tech Debt Captured
+- TD-001 (MEDIUM): empty `File` → empty `artifactLocation.uri` may break GitHub ingestion (AC-mandated pass-through)
+- TD-002 (LOW): empty `Category` → blank `ruleId`/rule id (AC-mandated pass-through)
+- TD-003 (MEDIUM): MCP report tool transport enum excludes `sarif` (in-process parity proven; wire-level access is a scope decision)
