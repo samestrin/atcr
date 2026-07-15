@@ -1,0 +1,86 @@
+[
+  {
+    "severity": "HIGH",
+    "file": "internal/fanout/resume.go",
+    "line": 268,
+    "problem": "Resume rebuilds payloads using the caller's NoIgnore flag instead of the original run's value, violating payload consistency for pending agents",
+    "fix": "Persist NoIgnore in the review manifest and validate it matches the resume request before rebuilding payloads",
+    "category": "correctness",
+    "est_minutes": 20,
+    "evidence": "payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, req.NoIgnore)",
+    "reviewers": [
+      "brad"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "justification": "HIGH|internal/payload/diff.go:236|Unbounded exclude pathspec list exceeds OS execve ARG_MAX limits and crashes git diff|Filter ignored files in Go after retrieving the full diff or batch excludes into a temp file passed via stdin|reliability|45|exclude = append(exclude, \":(exclude,literal)\"+f.path) passed directly to git args at line 395\nHIGH|internal/fanout/resume.go:268|Resume rebuilds payloads using the caller's NoIgnore flag instead of the original run's value, violating payload consistency for pending agents|Persist NoIgnore in the review manifest and validate it matches the resume request before rebuilding payloads|correctness|20|payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, req.NoIgnore)\nMEDIUM|internal/payload/diff.go:208|Lazy initialization of ignore matcher lacks synchronization, causing data races if gitRunner is ever shared or called concurrently|Replace the boolean flag with sync.Once to guard the one-time load|concurrency|10|if !g.…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/brad/review.md",
+      "line": 2
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "internal/payload/diff.go",
+    "line": 236,
+    "problem": "(applyIgnore) Unbounded exclude pathspec list exceeds OS execve ARG_MAX limits and crashes git diff",
+    "fix": "Filter ignored files in Go after retrieving the full diff or batch excludes into a temp file passed via stdin",
+    "category": "reliability",
+    "est_minutes": 45,
+    "evidence": "exclude = append(exclude, \":(exclude,literal)\"+f.path) passed directly to git args at line 395",
+    "reviewers": [
+      "brad"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "justification": "HIGH|internal/payload/diff.go:236|Unbounded exclude pathspec list exceeds OS execve ARG_MAX limits and crashes git diff|Filter ignored files in Go after retrieving the full diff or batch excludes into a temp file passed via stdin|reliability|45|exclude = append(exclude, \":(exclude,literal)\"+f.path) passed directly to git args at line 395\nHIGH|internal/fanout/resume.go:268|Resume rebuilds payloads using the caller's NoIgnore flag instead of the original run's value, violating payload consistency for pending agents|Persist NoIgnore in the review manifest and validate it matches the resume request before rebuilding payloads|correctness|20|payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, req.NoIgnore)\nMEDIUM|internal/payload/diff.go:208|Lazy initialization of ignore matcher lacks synchronization, causing data races if gitRunner is ever shared or called concurrently|Replace the boolean flag with sync.Once to guard the one-time load|concurrency|10|if !g.…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/brad/review.md",
+      "line": 1
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "internal/payload/ignore.go",
+    "line": 84,
+    "problem": "(loadAtcrignore) Reading .atcrignore with os.ReadFile allows a malicious multi-gigabyte file to OOM the process",
+    "fix": "Use bufio.Scanner with a strict total size limit or io.LimitReader before parsing",
+    "category": "correctness",
+    "est_minutes": 15,
+    "evidence": "[brad] data, err := os.ReadFile(path) / [greta] lines = append(lines, ln) preserves carriage returns from CRLF endings so gitignore patterns never match forward-slash paths",
+    "reviewers": [
+      "brad",
+      "greta"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "MEDIUM vs HIGH",
+    "path_valid": true,
+    "justification": "HIGH|internal/payload/diff.go:236|Unbounded exclude pathspec list exceeds OS execve ARG_MAX limits and crashes git diff|Filter ignored files in Go after retrieving the full diff or batch excludes into a temp file passed via stdin|reliability|45|exclude = append(exclude, \":(exclude,literal)\"+f.path) passed directly to git args at line 395\nHIGH|internal/fanout/resume.go:268|Resume rebuilds payloads using the caller's NoIgnore flag instead of the original run's value, violating payload consistency for pending agents|Persist NoIgnore in the review manifest and validate it matches the resume request before rebuilding payloads|correctness|20|payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, req.NoIgnore)\nMEDIUM|internal/payload/diff.go:208|Lazy initialization of ignore matcher lacks synchronization, causing data races if gitRunner is ever shared or called concurrently|Replace the boolean flag with sync.Once to guard the one-time load|concurrency|10|if !g.…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/brad/review.md",
+      "line": 4
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/payload/diff.go",
+    "line": 208,
+    "problem": "(changedFilesMemo) Lazy initialization of ignore matcher lacks synchronization, causing data races if gitRunner is ever shared or called concurrently",
+    "fix": "Use `fmt.Sprintf` or a constant prefix for clarity, though string concatenation is performant here",
+    "category": "concurrency",
+    "est_minutes": 10,
+    "evidence": "[brad] if !g.ignoreReady { g.ignore = newIgnoreMatcher(g.dir, g.log()); g.ignoreReady = true } / [otto] line 209",
+    "reviewers": [
+      "brad",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "LOW vs MEDIUM",
+    "path_valid": true,
+    "justification": "HIGH|internal/payload/diff.go:236|Unbounded exclude pathspec list exceeds OS execve ARG_MAX limits and crashes git diff|Filter ignored files in Go after retrieving the full diff or batch excludes into a temp file passed via stdin|reliability|45|exclude = append(exclude, \":(exclude,literal)\"+f.path) passed directly to git args at line 395\nHIGH|internal/fanout/resume.go:268|Resume rebuilds payloads using the caller's NoIgnore flag instead of the original run's value, violating payload consistency for pending agents|Persist NoIgnore in the review manifest and validate it matches the resume request before rebuilding payloads|correctness|20|payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, req.NoIgnore)\nMEDIUM|internal/payload/diff.go:208|Lazy initialization of ignore matcher lacks synchronization, causing data races if gitRunner is ever shared or called concurrently|Replace the boolean flag with sync.Once to guard the one-time load|concurrency|10|if !g.…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/brad/review.md",
+      "line": 3
+    }
+  }
+]

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "internal/fanout/resume.go",
+      "line": 268,
+      "severity": "HIGH",
+      "problem": "Resume rebuilds payloads using the caller's NoIgnore flag instead of the original run's value, violating payload consistency for pending agents",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "brad"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/payload/diff.go",
+      "line": 236,
+      "severity": "HIGH",
+      "problem": "(applyIgnore) Unbounded exclude pathspec list exceeds OS execve ARG_MAX limits and crashes git diff",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "brad"
+      ]
+    },
+    {
+      "kind": "severity_split",
+      "file": "internal/payload/ignore.go",
+      "line": 84,
+      "severity": "HIGH",
+      "problem": "(loadAtcrignore) Reading .atcrignore with os.ReadFile allows a malicious multi-gigabyte file to OOM the process",
+      "score": 2,
+      "spread": 1,
+      "independence": 2,
+      "reviewers": [
+        "brad",
+        "greta"
+      ],
+      "disagreement": "MEDIUM vs HIGH"
+    },
+    {
+      "kind": "severity_split",
+      "file": "internal/payload/diff.go",
+      "line": 208,
+      "severity": "MEDIUM",
+      "problem": "(changedFilesMemo) Lazy initialization of ignore matcher lacks synchronization, causing data races if gitRunner is ever shared or called concurrently",
+      "score": 2,
+      "spread": 1,
+      "independence": 2,
+      "reviewers": [
+        "brad",
+        "otto"
+      ],
+      "disagreement": "LOW vs MEDIUM"
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/payload/ignore.go",
+      "line": 67,
+      "severity": "LOW",
+      "problem": "`loadAtcrignore` uses `strings.Split(string(data), \"\\n\")`",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "otto",
+          "severity": "LOW",
+          "problem": "`loadAtcrignore` uses `strings.Split(string(data), \"\\n\")`"
+        }
+      ]
+    }
+  ]
+}

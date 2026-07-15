@@ -1,0 +1,3 @@
+LOW|internal/payload/ignore.go:67|`loadAtcrignore` uses `strings.Split(string(data), "\n")`|Use `bufio.Scanner` or `bytes.Split` to avoid converting the entire file to a string before splitting|style|5|line 67
+
+LOW|internal/payload/diff.go:209|`exclude = append(exclude, ":(exclude,literal)"+f.path)`|Use `fmt.Sprintf` or a constant prefix for clarity, though string concatenation is performant here|style|2|line 209

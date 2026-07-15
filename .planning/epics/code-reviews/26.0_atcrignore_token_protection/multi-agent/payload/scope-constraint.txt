@@ -1,3 +1,7 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
 # Epic Plan 26.0: .atcrignore Token Waste Protection
 
 - **Estimated time**: TBD
@@ -20,9 +24,9 @@ If a developer runs a codegen tool or bumps a massive `vendor/` dependency, the 
 
 ## Acceptance Criteria
 
-- [x] Files matching `.gitignore` are excluded from the review payload.
-- [x] Files matching `.atcrignore` are excluded from the review payload.
-- [x] `atcr review` logs a trace/debug message noting which files were skipped due to ignore rules.
+- [ ] Files matching `.gitignore` are excluded from the review payload.
+- [ ] Files matching `.atcrignore` are excluded from the review payload.
+- [ ] `atcr review` logs a trace/debug message noting which files were skipped due to ignore rules.
 
 ## Components Touched
 
@@ -108,3 +112,5 @@ Net effect: COMPONENT_COUNT stays at 2 (`internal/payload`, `cmd/atcr`), TASK_CO
    A: Repo-root-only, matching the `.atcrignore` model. The file list is produced by a single repo-root-scoped `git diff --name-status` with no per-directory traversal; nested precedence would require new tree-walking infrastructure the plan doesn't otherwise touch. (Confidence 88%)
 3. Q: Opt-out control — always-on with no flag, or a `--no-ignore` escape hatch?
    A: Always-on filtering with a `--no-ignore` opt-out flag, mirroring the existing `--no-cache` pattern. Matches the codebase convention of pairing a safety default with a narrow bypass flag, and gives `cmd/atcr` an actual CLI-surface change. (Confidence 88%)
+----- END SPRINT PLAN -----
+

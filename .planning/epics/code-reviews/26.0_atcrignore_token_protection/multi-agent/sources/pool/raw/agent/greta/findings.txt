@@ -1,0 +1,2 @@
+# atcr-findings/v1
+HIGH|internal/payload/ignore.go:85|loadAtcrignore retains trailing \r on Windows files causing pattern mismatches|Append strings.TrimSpace(ln) instead of raw ln|correctness|10|lines = append(lines, ln) preserves carriage returns from CRLF endings so gitignore patterns never match forward-slash paths|greta

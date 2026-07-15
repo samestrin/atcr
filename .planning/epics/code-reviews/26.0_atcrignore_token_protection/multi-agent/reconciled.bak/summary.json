@@ -1,0 +1,21 @@
+{
+  "sources_scanned": [
+    "pool"
+  ],
+  "per_source_counts": {
+    "pool": 7
+  },
+  "clusters_collapsed": 2,
+  "severity_disagreements": 2,
+  "authority_promoted": 2,
+  "partial": true,
+  "skipped_sources": [],
+  "skipped_source_count": 0,
+  "ambiguous_hash": "sha256:2d89966f78956a43ee97de325a54cf50d8ad1b0477fa9acd9bdd889229cf20c2",
+  "ambiguous_count": 1,
+  "noise_count": 0,
+  "consensus_filtered": 1,
+  "out_of_scope": 0,
+  "total_findings": 4,
+  "reconciled_at": "2026-07-15T12:39:29Z"
+}
