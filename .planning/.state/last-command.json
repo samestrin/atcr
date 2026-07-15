@@ -1,9 +1,9 @@
 {
-  "skill": "execute-code-review",
-  "args": "@.planning/epics/completed/22.5_backup_swap_lstat_seam_test.md --multi-agent",
-  "invocation": "/execute-code-review @.planning/epics/completed/22.5_backup_swap_lstat_seam_test.md --multi-agent",
+  "skill": "sprint-complete",
+  "args": "@.planning/sprints/active/25.0_sarif_output_integration/",
+  "invocation": "/sprint-complete @.planning/sprints/active/25.0_sarif_output_integration/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "3dbd6a8e-ee37-469b-9912-e0e7d296e1ad",
-  "timestamp": "2026-07-14T02:18:12.513Z"
+  "session_id": "37526f6d-e38b-424a-878b-c111fd2260a7",
+  "timestamp": "2026-07-15T03:07:30.551Z"
 }

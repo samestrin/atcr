@@ -1,0 +1,404 @@
+{
+  "generated": "2026-07-14",
+  "refined": "2026-07-14",
+  "discovery_method": "semantic",
+  "queries": [
+    "SARIF format render target",
+    "report format dispatcher switch",
+    "severity level mapping function",
+    "json schema validation test",
+    "GitHub SARIF upload action"
+  ],
+  "match_count": 17,
+  "build_from": {
+    "primary_file": "internal/report/render.go",
+    "reason": "This is the exact extension point the epic's Proposed Solution item 1 names. It already defines FormatMarkdown/FormatJSON/FormatChecklist as string constants, a ValidFormat(s string) bool guard, a Formats() string for error messages, and a Render(w io.Writer, findings []reconcile.JSONFinding, format string) error dispatcher that switches on format. A FormatSarif constant plus a renderSarif(w, findings) function slots into the same switch with zero disruption to existing formats.",
+    "suggested_approach": "Add `FormatSarif = \"sarif\"` alongside the existing Format* constants, add it to ValidFormat's switch and Formats()'s output, add a `case FormatSarif: return renderSarif(w, findings)` arm to Render(), and implement renderSarif in a new internal/report/sarif.go file following the renderJSON/renderChecklist pattern already in render.go (indented json.Marshal of a hand-built SARIF struct tree)."
+  },
+  "semantic_matches": [
+    {
+      "file": "internal/report/render.go",
+      "symbol": "Render",
+      "type": "function",
+      "line": 48,
+      "score": 0.9995,
+      "query": "report format dispatcher switch",
+      "relevance": "The format dispatcher — exact extension point for a new FormatSarif case."
+    },
+    {
+      "file": "internal/report/render.go",
+      "symbol": "FormatMarkdown/FormatJSON/FormatChecklist",
+      "type": "const",
+      "line": 24,
+      "score": 0.9995,
+      "query": "report format dispatcher switch",
+      "relevance": "Existing format constant block; FormatSarif = \"sarif\" belongs here."
+    },
+    {
+      "file": "internal/report/render.go",
+      "symbol": "ValidFormat",
+      "type": "function",
+      "line": 34,
+      "score": 0.9995,
+      "query": "report format dispatcher switch",
+      "relevance": "Format allow-list the CLI and MCP handler check before any I/O — must recognize \"sarif\"."
+    },
+    {
+      "file": "cmd/atcr/report.go",
+      "symbol": "newReportCmd",
+      "type": "function",
+      "line": 18,
+      "score": 0.9995,
+      "query": "report format dispatcher switch",
+      "relevance": "Registers the --format flag (default \"md\") on `atcr report` — the only command that should gain sarif, per the epic's already-resolved refinement."
+    },
+    {
+      "file": "cmd/atcr/report.go",
+      "symbol": "runReport",
+      "type": "function",
+      "line": 31,
+      "score": 0.998,
+      "query": "report format dispatcher switch",
+      "relevance": "Validates --format via report.ValidFormat then routes to report.Render() in its default case — once FormatSarif is added to render.go, no change is needed here beyond the --format usage string, and the --disagreements combination should be rejected for sarif the same way it already is for checklist, via the existing default: usageError branch at report.go's disagreements switch."
+    },
+    {
+      "file": "internal/mcp/handlers.go",
+      "symbol": "handleReport",
+      "type": "function",
+      "line": 370,
+      "score": 0.9902,
+      "query": "report format dispatcher switch",
+      "relevance": "MCP report handler validates the format via report.ValidFormat and routes non-markdown formats through report.Render. Once FormatSarif is recognized, MCP clients receive SARIF output automatically; parity with the CLI should be verified."
+    },
+    {
+      "file": "internal/reconcile/emit.go",
+      "symbol": "JSONFinding",
+      "type": "struct",
+      "line": 62,
+      "score": 0.95,
+      "query": "severity level mapping function",
+      "relevance": "The struct every render function consumes: Severity, File, Line, Problem, Fix, Category, EstMinutes, Evidence, Reviewers, Confidence, Disagreement, Verification, PathValid, PathWarning, PathSuggestion. SARIF's result.locations[].physicalLocation maps from File+Line; result.message.text maps from Problem (or Problem+Fix); result.ruleId can derive from Category."
+    },
+    {
+      "file": "reconcile/severity.go",
+      "symbol": "SeverityRank, NormalizeSeverity",
+      "type": "var/function",
+      "line": 19,
+      "score": 0.95,
+      "query": "severity level mapping function",
+      "relevance": "The single canonical severity rubric (CRITICAL=4, HIGH=3, MEDIUM=2, LOW=1 — see reconcile/merge.go:11-14 for the Sev* string constants) that every other severity-consuming package (report, fanout, ghaction) already reuses via NormalizeSeverity(). The SARIF formatter's CRITICAL/HIGH→error, MEDIUM→warning, LOW→note mapping must key off NormalizeSeverity(f.Severity), not redefine its own rubric — internal/fanout/postprocess.go:14 shows what happens when a severity rubric is redefined locally (flagged as TD-0052, an existing duplication bug); the new SARIF path should not add a fourth copy."
+    },
+    {
+      "file": "internal/ghaction/render.go",
+      "symbol": "location",
+      "type": "function",
+      "line": 103,
+      "score": 0.987,
+      "query": "severity level mapping function",
+      "relevance": "Existing convention for turning a JSONFinding into a FILE:LINE anchor string, omitting the line when it is unknown (0). SARIF's physicalLocation.region.startLine has no \"unknown\" representation, so the formatter needs an explicit decision for Line<=0 findings (e.g. omit the region entirely, matching SARIF's own artifactLocation-only-no-region allowance) rather than emitting a fabricated line 0."
+    },
+    {
+      "file": "internal/reconcile/justification.go",
+      "symbol": "anchorRef",
+      "type": "type",
+      "line": 145,
+      "score": 0.988,
+      "query": "severity level mapping function",
+      "relevance": "An existing internal type for representing a file:line anchor tied to diff grounding; useful precedent for how the codebase already models a validated file/line pair, though it is unexported and specific to the justification/grounding gate rather than reusable directly by the report layer."
+    },
+    {
+      "file": "docs/ci-integration.md",
+      "symbol": "CI Integration doc",
+      "type": "doc",
+      "line": 1,
+      "score": 1.0,
+      "query": "GitHub SARIF upload action",
+      "relevance": "Existing CI docs already establish the atcr review && atcr reconcile two-step pattern this epic's Proposed Solution item 3 explicitly says to follow, plus a 'Maintained PR Action' subsection demonstrating the doc structure (fenced YAML step, link to a deeper doc) that a new 'Centralized Security Surfaces (SARIF)' subsection should mirror."
+    },
+    {
+      "file": "docs/github-action.md",
+      "symbol": "GitHub Action docs",
+      "type": "doc",
+      "line": 1,
+      "score": 0.991,
+      "query": "GitHub SARIF upload action",
+      "relevance": "Documents the existing composite Action (action.yml) that already posts a PR check + inline comments via direct API calls — the epic's Out of Scope section correctly excludes this flow; the new SARIF doc section must not duplicate or contradict it, only cover the separate GH Advanced Security Code Scanning tab / GitLab SAST widget surfaces."
+    },
+    {
+      "file": "cmd/atcr/github.go",
+      "symbol": "atcr github command",
+      "type": "file",
+      "line": 1,
+      "score": 0.79,
+      "query": "GitHub SARIF upload action",
+      "relevance": "The existing direct-API PR-comment command this epic is explicitly not touching (Out of Scope) — confirms no overlap risk with the SARIF export path."
+    },
+    {
+      "file": "internal/fanout/postprocess.go",
+      "symbol": "enforceConstraints",
+      "type": "function",
+      "line": 17,
+      "score": 0.996,
+      "query": "severity level mapping function",
+      "relevance": "A second, independently-defined severity comparison site (uses reclib.SeverityRank correctly, but is cited by TD-0052 alongside other sites as an example of rubric duplication risk) — cautionary precedent, not a file this epic touches."
+    },
+    {
+      "file": ".planning/specifications/packages/go-gitdiff.md",
+      "symbol": "go-gitdiff package doc",
+      "type": "doc",
+      "line": 1,
+      "score": 0.19,
+      "query": "severity level mapping function",
+      "relevance": "Existing diff-parsing dependency used elsewhere (internal/payload) for git-diff-aware line anchoring; not needed by the SARIF formatter itself since JSONFinding.File/Line are already resolved by the time report renders them, but confirms the repo has diff-anchoring infrastructure if line validation is ever needed at the SARIF layer."
+    },
+    {
+      "file": "internal/report/render_test.go",
+      "symbol": "TestRender_GoldenFiles",
+      "type": "function",
+      "line": 74,
+      "score": 0.93,
+      "query": "json schema validation test",
+      "relevance": "Existing golden-file testing pattern for report.Render() output; a new SARIF golden case should be added to goldenCases and a matching internal/report/testdata/report.sarif.json fixture committed."
+    },
+    {
+      "file": "internal/reconcile/testdata/golden/report.md",
+      "symbol": "golden report fixture",
+      "type": "testdata",
+      "line": 1,
+      "score": 0.93,
+      "query": "report format dispatcher switch",
+      "relevance": "Existing golden-file fixture pattern for report.Render() output; a new testdata/golden/report.sarif (or internal/report/testdata/report.sarif.json) fixture should follow the same convention for the new format's tests."
+    }
+  ],
+  "existing_patterns": [
+    {
+      "name": "Format constant + dispatcher switch",
+      "description": "internal/report/render.go defines string constants for each supported format (FormatMarkdown = \"md\", etc.), a ValidFormat() allow-list, a Formats() error-message helper, and a Render() function that switches on the format string to call a dedicated renderX function.",
+      "files": ["internal/report/render.go"],
+      "follow_for": "Adding FormatSarif and its renderSarif function — this is the exact shape the epic's Proposed Solution item 1 asks for."
+    },
+    {
+      "name": "Canonical severity rubric via reconcile.SeverityRank/NormalizeSeverity",
+      "description": "Severity strings are normalized case/whitespace-insensitively via reconcile.NormalizeSeverity and ranked via reconcile.SeverityRank (CRITICAL=4, HIGH=3, MEDIUM=2, LOW=1). Every consumer (report, ghaction, fanout) keys off this shared rubric rather than redefining its own.",
+      "files": ["reconcile/severity.go", "reconcile/merge.go", "internal/report/render.go", "internal/ghaction/render.go"],
+      "follow_for": "Mapping ATCR severities to SARIF levels (result.level: error/warning/note/none) — the mapping function should take reconcile.NormalizeSeverity(f.Severity) as input, not re-parse the raw string."
+    },
+    {
+      "name": "CLI format validation before I/O",
+      "description": "cmd/atcr/report.go validates --format against report.ValidFormat() before any file reads or writes, returning a usageError (exit 2) on an unrecognized value.",
+      "files": ["cmd/atcr/report.go"],
+      "follow_for": "No new validation code needed for sarif — it's covered automatically once FormatSarif is added to ValidFormat(). Update the flag help text to list sarif."
+    },
+    {
+      "name": "MCP report handler format validation",
+      "description": "internal/mcp/handlers.go:handleReport defensively re-validates the format through report.ValidFormat() and routes non-markdown output through report.Render(), so SARIF is available to MCP clients as soon as the report package supports it.",
+      "files": ["internal/mcp/handlers.go"],
+      "follow_for": "Verify MCP/CLI parity after adding FormatSarif — no code change required, but an integration test should exercise the SARIF path through the MCP handler."
+    },
+    {
+      "name": "Golden-file tests per format",
+      "description": "internal/report/render_test.go uses a goldenCases table that renders sample() for each format and compares byte-for-byte against internal/report/testdata/*. Run `go test ./internal/report -update` to regenerate after an intentional renderer change.",
+      "files": ["internal/report/render_test.go", "internal/report/testdata"],
+      "follow_for": "Add a SARIF entry to goldenCases and a corresponding internal/report/testdata/report.sarif.json fixture."
+    },
+    {
+      "name": "Documentation subsection per output/integration surface",
+      "description": "docs/ci-integration.md uses one subsection per integration surface (exit-code gating, then a 'Maintained PR Action' subsection with a fenced YAML snippet and a link to docs/github-action.md for depth).",
+      "files": ["docs/ci-integration.md", "docs/github-action.md"],
+      "follow_for": "The epic's AC4 CI-integration doc example — add a new subsection (or a new docs/sarif-integration.md linked from ci-integration.md) with a GitHub Actions snippet piping atcr report --format=sarif to codeql-action/upload-sarif, and the GitLab CI SAST-widget equivalent."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/report/render.go",
+      "relevance": "high",
+      "purpose": "Format constants, ValidFormat, Formats, Render dispatcher, and the renderJSON/renderMarkdown/renderChecklist implementations to pattern-match.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "cmd/atcr/report.go",
+      "relevance": "high",
+      "purpose": "Wires the --format flag and routes to report.Render(); the --format usage string in the flag help text (\"output format: md, json, or checklist\") also needs updating to mention sarif.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/reconcile/emit.go",
+      "relevance": "high",
+      "purpose": "Defines JSONFinding, the struct every render function consumes.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "reconcile/severity.go",
+      "relevance": "high",
+      "purpose": "Canonical severity rubric (SeverityRank, NormalizeSeverity) to reuse for the SARIF level mapping.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/ghaction/render.go",
+      "relevance": "medium",
+      "purpose": "Shows the existing FILE:LINE anchor convention (omit line when 0) that the new SARIF physicalLocation/region construction should mirror.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/mcp/handlers.go",
+      "relevance": "medium",
+      "purpose": "MCP report handler also consumes report.ValidFormat/report.Render; SARIF is automatically available but should be parity-checked against the CLI.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "docs/ci-integration.md",
+      "relevance": "high",
+      "purpose": "Existing CI docs page; the epic's AC4 doc example belongs here or in a new file linked from here, following its established subsection structure.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "docs/github-action.md",
+      "relevance": "low",
+      "purpose": "Documents the already-shipped, out-of-scope direct-API PR-comment Action — read for boundary awareness only, not modified.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/report/render_test.go",
+      "relevance": "medium",
+      "purpose": "Existing golden-file and behavioral test pattern for report.Render(); the new SARIF tests should extend this file or mirror its conventions.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/report/testdata",
+      "relevance": "medium",
+      "purpose": "Golden-file directory for report output; a new report.sarif.json fixture belongs here.",
+      "likely_modification": "create"
+    },
+    {
+      "path": ".planning/plans/active/25.0_sarif_output_integration/package-recommendations.md",
+      "relevance": "medium",
+      "purpose": "Documents the hand-rolled-struct default and the optional owenrumney/go-sarif/v2 alternative, plus the jsonschema-go validation approach for tests.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "go.mod",
+      "relevance": "low",
+      "purpose": "Already declares github.com/google/jsonschema-go v0.4.3, which tests can use to validate SARIF output without adding a new dependency.",
+      "likely_modification": "reference-only"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "internal/report/render.go:Render",
+      "type": "entry-point",
+      "description": "Add `case FormatSarif: return renderSarif(w, findings)` to the existing format switch."
+    },
+    {
+      "location": "internal/report/render.go:ValidFormat",
+      "type": "entry-point",
+      "description": "Add FormatSarif to the recognized-format switch so `atcr report --format=sarif` and the MCP report handler pass validation."
+    },
+    {
+      "location": "internal/report/render.go:Formats",
+      "type": "entry-point",
+      "description": "Add FormatSarif to the comma-joined list used in usage/error messages."
+    },
+    {
+      "location": "cmd/atcr/report.go:newReportCmd",
+      "type": "entry-point",
+      "description": "Update the --format flag's help text to list sarif alongside md/json/checklist."
+    },
+    {
+      "location": "internal/mcp/handlers.go:handleReport",
+      "type": "entry-point",
+      "description": "Non-markdown formats route through report.Render; once FormatSarif is recognized, MCP clients get SARIF output automatically. Verify parity with CLI."
+    }
+  ],
+  "integration_gaps": [
+    {
+      "location": "internal/report/sarif.go",
+      "type": "missing-implementation",
+      "description": "No SARIF formatter exists yet. Must create a hand-rolled SARIF 2.1.0 struct tree (run.tool.driver.{name,rules}, run.results[].{ruleId,level,message,locations}) with severity-to-level mapping via reconcile.NormalizeSeverity and Line<=0 region omission."
+    },
+    {
+      "location": "internal/report/sarif_test.go",
+      "type": "missing-test",
+      "description": "No SARIF-specific unit tests or golden fixture exist. Must add table-driven tests covering severity mapping (CRITICAL/HIGH→error, MEDIUM→warning, LOW→note), line anchoring including Line<=0, and SARIF-JSON schema shape; optionally validate against the SARIF 2.1.0 schema using the already-vendored google/jsonschema-go."
+    },
+    {
+      "location": "docs/ci-integration.md",
+      "type": "missing-doc",
+      "description": "No SARIF upload examples exist. Must add subsections showing how to pipe `atcr review && atcr reconcile && atcr report --format=sarif` to GitHub's codeql-action/upload-sarif and the GitLab CI SAST-widget equivalent."
+    },
+    {
+      "location": "internal/mcp/handlers.go:handleReport",
+      "type": "parity-check",
+      "description": "MCP report handler and CLI both consume report.ValidFormat/report.Render, but only the CLI has a user-visible help string to update. Add an MCP-level test or manual check that `format=sarif` returns valid SARIF JSON through the MCP tool."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "reconcile.NormalizeSeverity / reconcile.SeverityRank",
+      "path": "reconcile/severity.go",
+      "can_extend": false,
+      "usage_example": "level := sarifLevel(reclib.NormalizeSeverity(f.Severity)) // map CRITICAL/HIGH->error, MEDIUM->warning, LOW->note"
+    },
+    {
+      "name": "report.Render dispatch pattern",
+      "path": "internal/report/render.go",
+      "can_extend": true,
+      "usage_example": "renderSarif(w io.Writer, findings []reconcile.JSONFinding) error, following the exact signature and json.MarshalIndent style of renderJSON."
+    },
+    {
+      "name": "Golden-file test harness",
+      "path": "internal/report/render_test.go",
+      "can_extend": true,
+      "usage_example": "Add {\"sarif\", FormatSarif, \"report.sarif.json\"} to goldenCases and commit the generated internal/report/testdata/report.sarif.json fixture."
+    }
+  ],
+  "architecture_notes": [
+    "internal/report is the correct and only render-layer package to touch — it already owns the FormatMarkdown/FormatJSON/FormatChecklist pattern, so SARIF is a fourth sibling format, not a new subsystem.",
+    "internal/report imports the internal/reconcile package (aliased) for JSONFinding, and the top-level reconcile package (aliased reclib) for the severity rubric and Verdict constants — the new sarif.go file should follow the same two-import convention already established in render.go.",
+    "cmd/atcr/report.go's runReport() already fully generalizes over `format` via report.ValidFormat/report.Render for the non-disagreements path — no new command wiring beyond the format constant and help text is needed, confirming the epic's own refinement finding that atcr report (not atcr review/reconcile) is the correct CLI target.",
+    "internal/mcp/handlers.go:handleReport also validates against report.ValidFormat and routes non-markdown output through report.Render, so SARIF is automatically available over MCP once the report package supports it. Parity should be verified with a test.",
+    "TD-0052 (existing technical debt) flags that the severity rubric is independently redefined in multiple places; the SARIF formatter must consume reconcile.NormalizeSeverity/SeverityRank rather than adding a fifth redefinition.",
+    "SARIF's region.startLine is 1-based and has no defined behavior for line 0 — JSONFinding.Line can be 0 for file-level findings (see internal/ghaction/render.go's location() helper, which already special-cases Line<=0). The SARIF formatter needs an equivalent decision: omit the region block when Line<=0 rather than emitting startLine:0.",
+    "The project already depends on github.com/google/jsonschema-go (go.mod) for schema inference in the MCP layer; tests can reuse it to validate renderSarif output against the official SARIF 2.1.0 JSON schema without adding a new runtime dependency.",
+    "The default implementation approach is a hand-rolled struct tree (zero new runtime deps), per package-recommendations.md. owenrumney/go-sarif/v2 is reserved for a future epic if the SARIF surface grows beyond results[] + basic locations."
+  ],
+  "files_to_modify": [
+    {
+      "path": "internal/report/render.go",
+      "reason": "Add FormatSarif constant, extend ValidFormat/Formats/Render to recognize it.",
+      "scope": "minor"
+    },
+    {
+      "path": "cmd/atcr/report.go",
+      "reason": "Update the --format flag's help text to mention sarif.",
+      "scope": "trivial"
+    },
+    {
+      "path": "docs/ci-integration.md",
+      "reason": "Add a CI-integration example/subsection for the SARIF path (GitHub Code Scanning upload, GitLab SAST widget), per AC4.",
+      "scope": "minor"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "internal/report/sarif.go",
+      "purpose": "renderSarif(w io.Writer, findings []reconcile.JSONFinding) error — maps JSONFinding to the SARIF 2.1.0 JSON schema (run, tool.driver, results[], physicalLocation, level mapping via reconcile severity rubric).",
+      "based_on": "internal/report/render.go's renderJSON (indented json.MarshalIndent over a struct tree)"
+    },
+    {
+      "path": "internal/report/sarif_test.go",
+      "purpose": "Unit tests for renderSarif covering severity-to-level mapping, line anchoring (including Line<=0), and valid-SARIF-JSON schema shape.",
+      "based_on": "existing internal/report/render_test.go golden-case and table-driven patterns"
+    },
+    {
+      "path": "internal/report/testdata/report.sarif.json",
+      "purpose": "Golden-file fixture for renderSarif output, following the existing internal/report/testdata/report.md convention.",
+      "based_on": "internal/report/testdata/report.md and internal/report/testdata/findings.json"
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test (standard library testing package)",
+    "test_location": "internal/report/*_test.go",
+    "naming_convention": "*_test.go, table-driven subtests via t.Run",
+    "example_test": "internal/report/render_test.go (TestRender_GoldenFiles and TestRender_* behavioral tests)"
+  }
+}

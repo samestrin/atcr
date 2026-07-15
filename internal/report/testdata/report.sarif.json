@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0-rtm.5.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "atcr",
+          "informationUri": "https://github.com/samestrin/atcr",
+          "rules": [
+            {
+              "id": "security",
+              "shortDescription": {
+                "text": "security"
+              },
+              "fullDescription": {
+                "text": "ATCR findings categorized as 'security'."
+              }
+            },
+            {
+              "id": "style",
+              "shortDescription": {
+                "text": "style"
+              },
+              "fullDescription": {
+                "text": "ATCR findings categorized as 'style'."
+              }
+            },
+            {
+              "id": "architecture",
+              "shortDescription": {
+                "text": "architecture"
+              },
+              "fullDescription": {
+                "text": "ATCR findings categorized as 'architecture'."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "security",
+          "level": "error",
+          "message": {
+            "text": "token never expires"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "auth.go"
+                },
+                "region": {
+                  "startLine": 42,
+                  "startColumn": 1,
+                  "endLine": 42,
+                  "endColumn": 2
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "style",
+          "level": "note",
+          "message": {
+            "text": "unused var"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "util.go"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 7,
+                  "endColumn": 2
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "architecture",
+          "level": "warning",
+          "message": {
+            "text": "package-level concern with no specific line"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "internal/report/render.go"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

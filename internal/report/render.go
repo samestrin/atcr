@@ -24,6 +24,7 @@ const (
 	FormatMarkdown  = "md"
 	FormatJSON      = "json"
 	FormatChecklist = "checklist"
+	FormatSarif     = "sarif"
 )
 
 // maxTextLen bounds PROBLEM/FIX/EVIDENCE in the md and checklist views; the json
@@ -33,7 +34,7 @@ const maxTextLen = 500
 // ValidFormat reports whether s names a supported format.
 func ValidFormat(s string) bool {
 	switch s {
-	case FormatMarkdown, FormatJSON, FormatChecklist:
+	case FormatMarkdown, FormatJSON, FormatChecklist, FormatSarif:
 		return true
 	default:
 		return false
@@ -41,7 +42,9 @@ func ValidFormat(s string) bool {
 }
 
 // Formats lists the supported formats for error messages.
-func Formats() string { return FormatMarkdown + ", " + FormatJSON + ", " + FormatChecklist }
+func Formats() string {
+	return FormatMarkdown + ", " + FormatJSON + ", " + FormatChecklist + ", " + FormatSarif
+}
 
 // Render writes findings to w in the given format. An unknown format is an error
 // (the caller validates first; this is the defensive backstop).
@@ -57,6 +60,8 @@ func Render(w io.Writer, findings []reconcile.JSONFinding, format string) error 
 		return renderJSON(w, findings)
 	case FormatChecklist:
 		return renderChecklist(w, findings)
+	case FormatSarif:
+		return renderSarif(w, findings)
 	default:
 		return fmt.Errorf("unknown format %q: supported formats are %s", format, Formats())
 	}

@@ -7,7 +7,7 @@
 
 ---
 
-Everything in atcr beyond the five direct third-party dependencies (cobra, mcp-go-sdk, yaml.v3, testify, jsonschema-go) is intentionally standard library (Epic 1.0 constraint: keep the dependency tree small). This file documents which stdlib packages carry which subsystem and the conventions that apply.
+Everything in atcr beyond its direct third-party dependencies (see `go.mod`'s top-level `require` block for the current, authoritative list) is intentionally standard library (Epic 1.0 constraint: keep the dependency tree small). This file documents which stdlib packages carry which subsystem and the conventions that apply.
 
 | Package | atcr subsystem |
 |---------|----------------|

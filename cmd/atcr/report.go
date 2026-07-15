@@ -13,16 +13,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newReportCmd builds `atcr report`: render md, json, or checklist views over
-// the reconciled findings.json.
+// newReportCmd builds `atcr report`: render md, json, checklist, or sarif views
+// over the reconciled findings.json.
 func newReportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "report [id-or-path]",
-		Short: "Render md, json, or checklist views over reconciled findings",
+		Short: "Render md, json, checklist, or sarif views over reconciled findings",
 		Args:  usageArgs(cobra.MaximumNArgs(1)),
 		RunE:  runReport,
 	}
-	cmd.Flags().String("format", "md", "output format: md, json, or checklist")
+	cmd.Flags().String("format", "md", "output format: md, json, checklist, or sarif")
 	cmd.Flags().String("output", "", "write to a file instead of stdout")
 	cmd.Flags().Bool("disagreements", false, "render the disagreement radar: a ranked view of the highest-tension spots (severity splits, solo findings, gray-zone clusters) instead of the standard report")
 	return cmd
