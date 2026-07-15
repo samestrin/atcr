@@ -230,3 +230,15 @@ func TestReportCmd_SarifToOutputFile(t *testing.T) {
 	require.NoError(t, report.Render(&buf, findings, report.FormatSarif))
 	assert.Equal(t, buf.String(), string(data))
 }
+
+// TestReportCmd_DisagreementsWithSarifIsUsageError pins AC 01-04 Error Scenario 1:
+// --disagreements is incompatible with --format=sarif (the radar view supports
+// only md/json), so the combination is a usage error (exit 2) whose message names
+// sarif — mirroring the existing checklist/json incompatibility.
+func TestReportCmd_DisagreementsWithSarifIsUsageError(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "2026-06-10_ds", splitFinding)
+	code, out := execCmdCapture(t, "report", "--disagreements", "--format", "sarif", "2026-06-10_ds")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "sarif")
+}
