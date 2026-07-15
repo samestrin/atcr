@@ -115,6 +115,34 @@ func TestRangeBuilder_ExcludesIgnored(t *testing.T) {
 	assert.Equal(t, []string{"main.go"}, paths)
 }
 
+// Regression: an ignored filename containing git pathspec glob metacharacters
+// must NOT over-exclude an unrelated changed file. Without `literal` magic,
+// :(exclude)a[b].go also matches ab.go, silently dropping ab.go's diff body.
+// The .atcrignore uses escaped brackets so the MATCHER excludes only the literal
+// a[b].go — any collateral loss of ab.go can then come only from the pathspec.
+func TestBuildEntries_GlobMetacharFilename(t *testing.T) {
+	dir := initRepo(t)
+	writeIgnore(t, dir, ".atcrignore", `a\[b\].go`+"\n")
+	write(t, dir, "a[b].go", "v1\n")
+	write(t, dir, "ab.go", "keep-v1\n")
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a[b].go", "v2\n")
+	write(t, dir, "ab.go", "keep-v2\n")
+	head := commitAll(t, dir, "v2")
+
+	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
+	require.NoError(t, err)
+
+	paths := entryPaths(entries)
+	assert.NotContains(t, paths, "a[b].go", "the metachar file is ignored")
+	require.Contains(t, paths, "ab.go", "ab.go must not be collaterally excluded by the glob pathspec")
+
+	// ab.go must carry its real change, not an empty body (the silent-loss symptom).
+	out, err := BuildDiff(context.Background(), dir, base, head)
+	require.NoError(t, err)
+	assert.Contains(t, out, "keep-v2", "ab.go's changed content must survive")
+}
+
 // WithoutIgnoreFilter (the --no-ignore opt-out) bypasses the filter: every
 // changed file — including .gitignore/.atcrignore-matched ones — is reviewed.
 func TestRangeBuilder_NoIgnoreOption_IncludesIgnored(t *testing.T) {

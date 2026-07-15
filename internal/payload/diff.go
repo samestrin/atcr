@@ -232,11 +232,16 @@ func (g *gitRunner) applyIgnore(files []changedFile) (kept []changedFile, exclud
 			continue
 		}
 		g.log().Debug("payload: skipping ignored file", "file", f.path, "kind", f.kind)
-		exclude = append(exclude, ":(exclude)"+f.path)
+		// `literal` magic is mandatory: without it git treats the path as a glob,
+		// so an ignored filename containing pathspec metacharacters ([ * ?) would
+		// also exclude unrelated changed files (e.g. :(exclude)a[b].go matches
+		// ab.go), silently dropping a real file or leaving an unattributed chunk
+		// that hard-errors the splitter.
+		exclude = append(exclude, ":(exclude,literal)"+f.path)
 		// A rename whose head path is ignored: exclude the old path too so git
 		// drops the rename pair entirely rather than re-rendering it as an add.
 		if f.kind == kindRenamed {
-			exclude = append(exclude, ":(exclude)"+f.oldPath)
+			exclude = append(exclude, ":(exclude,literal)"+f.oldPath)
 		}
 	}
 	return kept, exclude
