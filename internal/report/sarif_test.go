@@ -197,6 +197,23 @@ func TestSarif_RulesDedupFirstSeenOrder(t *testing.T) {
 	}
 }
 
+func TestSarif_RulesCaseSensitive(t *testing.T) {
+	// Category is used verbatim as the rule id and deduped through a case-sensitive
+	// map. Pin current behavior so any future normalization change is explicit.
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Category: "security"},
+		{Severity: "LOW", File: "b.go", Line: 2, Problem: "p", Category: "Security"},
+	}
+	doc := unmarshalSarif(t, findings)
+	rules := doc.Runs[0].Tool.Driver.Rules
+	require.Len(t, rules, 2)
+	assert.Equal(t, "security", rules[0].ID)
+	assert.Equal(t, "Security", rules[1].ID)
+	for _, r := range doc.Runs[0].Results {
+		assert.Contains(t, []string{"security", "Security"}, r.RuleID)
+	}
+}
+
 func TestSarif_RulesEmptyCategory(t *testing.T) {
 	// Edge Case 2: an empty Category is one distinct value → one rule with id "".
 	findings := []reconcile.JSONFinding{{Severity: "LOW", File: "x.go", Line: 1, Problem: "p", Category: ""}}
