@@ -297,6 +297,8 @@ For privacy-conscious teams that refuse to send proprietary code to any external
 | `orson` | 32 GB long-context (256k, full-repo) | `local/qwen3-30b-a3b` | duplication & repo-wide redundancy |
 | `liam` | 64 GB+ heavyweight (dual-GPU / M4 Pro) | `local/llama3.3-70b` | invariants & state-consistency |
 
+The **Bound model** column is the discovery id the persona registers under (namespaced so `search --model` finds it); it is not the string your local server answers to. When you wire the persona, set your agent's `model` to the exact tag you pulled — e.g. `gemma3:27b`, not `local/gemma3-27b` (see the config block below). The persona ships the tuned prompt; you supply the model binding.
+
 Discover them by their `local` provider or by model:
 
 ```bash
