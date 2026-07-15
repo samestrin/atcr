@@ -1,0 +1,71 @@
+[
+  {
+    "severity": "HIGH",
+    "file": ".planning/sprints/active/25.0_sarif_output_integration/plan/acceptance-criteria/04-02-gitlab-sast-widget-example.md",
+    "line": 36,
+    "problem": "Flattened YAML key `artifacts: reports: sast:` is syntactically invalid and will fail when copied into `.gitlab-ci.yml`",
+    "fix": "Use proper nested mapping `artifacts:\\n  reports:\\n    sast: results.sarif`",
+    "category": "documentation",
+    "est_minutes": 2,
+    "evidence": "Snippet presents the key path as a single-line flattened string rather than valid YAML structure",
+    "reviewers": [
+      "archer"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "archer": "qwen3.6-35b-apex"
+    },
+    "justification": "HIGH|.planning/sprints/active/25.0_sarif_output_integration/plan/acceptance-criteria/04-02-gitlab-sast-widget-example.md:36|Flattened YAML key `artifacts: reports: sast:` is syntactically invalid and will fail when copied into `.gitlab-ci.yml`|Use proper nested mapping `artifacts:\\n  reports:\\n    sast: results.sarif`|documentation|2|Snippet presents the key path as a single-line flattened string rather than valid YAML structure\nMEDIUM|.planning/sprints/active/25.0_sarif_output_integration/plan/documentation/schema-validation-with-jsonschema-go.md:14|Package `github.com/google/jsonschema-go` does not exist in the official Go ecosystem; likely a hallucination for `github.com/santhosh-tekuri/jsonschema/v5` or similar|Verify and correct to the actual vendored JSON Schema library name before implementation|correctness|3|Text claims \"already-vendored google/jsonschema-go\" but standard validation uses santhosh-tekuri or invopop\nLOW|.planning/sprints/active/25.0_sarif_output_integration/plan/…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/archer/review.md",
+      "line": 1
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": ".planning/sprints/active/25.0_sarif_output_integration/plan/documentation/schema-validation-with-jsonschema-go.md",
+    "line": 14,
+    "problem": "Package `github.com/google/jsonschema-go` does not exist in the official Go ecosystem; likely a hallucination for `github.com/santhosh-tekuri/jsonschema/v5` or similar",
+    "fix": "Verify and correct to the actual vendored JSON Schema library name before implementation",
+    "category": "correctness",
+    "est_minutes": 3,
+    "evidence": "Text claims \"already-vendored google/jsonschema-go\" but standard validation uses santhosh-tekuri or invopop",
+    "reviewers": [
+      "archer"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "archer": "qwen3.6-35b-apex"
+    },
+    "justification": "HIGH|.planning/sprints/active/25.0_sarif_output_integration/plan/acceptance-criteria/04-02-gitlab-sast-widget-example.md:36|Flattened YAML key `artifacts: reports: sast:` is syntactically invalid and will fail when copied into `.gitlab-ci.yml`|Use proper nested mapping `artifacts:\\n  reports:\\n    sast: results.sarif`|documentation|2|Snippet presents the key path as a single-line flattened string rather than valid YAML structure\nMEDIUM|.planning/sprints/active/25.0_sarif_output_integration/plan/documentation/schema-validation-with-jsonschema-go.md:14|Package `github.com/google/jsonschema-go` does not exist in the official Go ecosystem; likely a hallucination for `github.com/santhosh-tekuri/jsonschema/v5` or similar|Verify and correct to the actual vendored JSON Schema library name before implementation|correctness|3|Text claims \"already-vendored google/jsonschema-go\" but standard validation uses santhosh-tekuri or invopop\nLOW|.planning/sprints/active/25.0_sarif_output_integration/plan/…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/archer/review.md",
+      "line": 2
+    }
+  },
+  {
+    "severity": "LOW",
+    "file": ".planning/sprints/active/25.0_sarif_output_integration/plan/acceptance-criteria/01-01-format-registration.md",
+    "line": 46,
+    "problem": "Scenario 3 title claims `Formats()` enumerates sarif \"for error messages\", but body describes the general supported-formats list output, not specifically the error message path",
+    "fix": "Rename to \"Formats() includes sarif in supported list\" for accuracy",
+    "category": "documentation",
+    "est_minutes": 1,
+    "evidence": "Title says \"for error messages\"; body says `Formats()` includes `\"sarif\"` alongside others",
+    "reviewers": [
+      "archer"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "archer": "qwen3.6-35b-apex"
+    },
+    "justification": "HIGH|.planning/sprints/active/25.0_sarif_output_integration/plan/acceptance-criteria/04-02-gitlab-sast-widget-example.md:36|Flattened YAML key `artifacts: reports: sast:` is syntactically invalid and will fail when copied into `.gitlab-ci.yml`|Use proper nested mapping `artifacts:\\n  reports:\\n    sast: results.sarif`|documentation|2|Snippet presents the key path as a single-line flattened string rather than valid YAML structure\nMEDIUM|.planning/sprints/active/25.0_sarif_output_integration/plan/documentation/schema-validation-with-jsonschema-go.md:14|Package `github.com/google/jsonschema-go` does not exist in the official Go ecosystem; likely a hallucination for `github.com/santhosh-tekuri/jsonschema/v5` or similar|Verify and correct to the actual vendored JSON Schema library name before implementation|correctness|3|Text claims \"already-vendored google/jsonschema-go\" but standard validation uses santhosh-tekuri or invopop\nLOW|.planning/sprints/active/25.0_sarif_output_integration/plan/…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/archer/review.md",
+      "line": 3
+    }
+  }
+]

@@ -1,0 +1,3 @@
+
+
+No findings emitted. The changed regions consist solely of planning and documentation files (.planning/sprints/active/25.0_sarif_output_integration/*) with no actual code modifications in internal/report, cmd/atcr, or docs/ directories. Performance review requires concrete runtime impact analysis of changed code, which is absent in the provided payload. All modified files are non-executable artifacts (markdown, yaml, planning metadata) containing no executable logic, allocations, loops, or runtime behavior to evaluate for performance issues. Per scope constraints, findings cannot be issued for unchanged code even if pre-existing issues exist. Without altered performance-critical code paths, no valid performance findings can be derived from the diff.
