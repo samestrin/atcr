@@ -269,7 +269,7 @@ func TestCommunityPersonas_SlugConsistency(t *testing.T) {
 // TestCommunityPersonas_Differentiation covers AC 04-07 Scenario 1 / Error 1: no
 // pair of personas has combined ## Role+## Focus token-set Jaccard above the
 // locked 0.85 threshold, evidencing genuine per-model task scoping rather than one
-// generic list restated ten times. Runs over all C(10,2)=45 pairs.
+// generic list restated ten times. Runs over all C(13,2)=78 pairs.
 func TestCommunityPersonas_Differentiation(t *testing.T) {
 	sets := make(map[string]map[string]struct{}, len(communityPersonas))
 	for _, p := range communityPersonas {
