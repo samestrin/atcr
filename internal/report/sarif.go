@@ -93,7 +93,8 @@ type sarifRegion struct {
 
 // renderSarif emits findings as a SARIF 2.1.0 log document. It mirrors
 // renderJSON's conventions (nil-slice guard so results[]/rules[] are [] not null,
-// json.MarshalIndent with two-space indent, trailing newline, error propagation).
+// json.MarshalIndent with two-space indent, trailing newline). Marshal errors are
+// wrapped with context before propagation, unlike renderJSON which returns them raw.
 // A single pass builds results[]; sarifRules does a second single pass for the
 // deduped rule catalog — both O(n), no quadratic scan.
 func renderSarif(w io.Writer, findings []reconcile.JSONFinding) error {
