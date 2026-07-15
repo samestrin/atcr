@@ -1,3 +1,13 @@
+## [Technical Debt] - 2026-07-14
+
+### Fixed
+
+- Resolved empty SARIF `ruleId` for category-level findings.
+- Removed a data race on the SARIF diagnostic sink by threading it through function parameters instead of a package-level variable.
+- Derived the MCP `report` tool's format enum from `report.FormatList()` so it can no longer drift from the CLI's supported formats.
+- De-duplicated the per-render SARIF unrecognized-severity diagnostic so it no longer repeats once per finding.
+- Defaulted blank SARIF `artifactLocation.uri` to a sentinel value instead of emitting an empty URI.
+
 ## [25.0.0] - 2026-07-14
 
 Add SARIF 2.1.0 output support so ATCR's reconciled review findings can feed GitHub Advanced Security's Code Scanning "Security" tab and GitLab CI's native SAST report widget — centralized surfaces the existing `atcr github` PR-check/inline-comment integration does not reach.
