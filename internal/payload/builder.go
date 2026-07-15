@@ -136,8 +136,11 @@ func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) (
 // It goes through changedFilesMemo so the count reflects the SAME ignore-filtered
 // set BuildEntries produces (repo-root .gitignore/.atcrignore excluded): the two
 // must agree, or a reviewer would see a file count larger than the files
-// actually reviewed. Rename detection (-M) matches changedFiles, so the count
-// equals len(BuildEntries(ModeDiff, ...)) for added, deleted, and renamed files.
+// actually reviewed. This invariant holds for the default filtered run only;
+// with --no-ignore, BuildEntries may include ignored files while ChangedFileCount
+// still filters them. Rename detection (-M) matches changedFiles, so the count
+// equals len(BuildEntries(ModeDiff, ...)) for added, deleted, and renamed files
+// when both use the same filtering mode.
 func ChangedFileCount(ctx context.Context, repo, base, head string) (int, error) {
 	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
 	if err := validateRange(g, base, head); err != nil {
