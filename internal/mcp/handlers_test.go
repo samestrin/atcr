@@ -14,7 +14,6 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
-	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
@@ -707,15 +706,12 @@ func TestReportHandler_SarifParity(t *testing.T) {
 	assert.Equal(t, report.FormatSarif, res.Format)
 	assert.Contains(t, res.Content, `"version": "2.1.0"`)
 
-	// Parity: same loader, same renderer the handler used — proves the handler
-	// adds no divergence for sarif, exactly as it doesn't for json/checklist.
-	dir, _, err := e.resolveReviewDir(id)
+	// Shape: compare in-process output against a golden fixture so the
+	// assertion validates SARIF structure rather than handler==Render tautology.
+	fixturePath := filepath.Join("testdata", "sarif_report.golden.json")
+	fixture, err := os.ReadFile(fixturePath)
 	require.NoError(t, err)
-	findings, err := reconcile.ReadReconciledFindings(dir)
-	require.NoError(t, err)
-	var buf bytes.Buffer
-	require.NoError(t, report.Render(&buf, findings, report.FormatSarif))
-	assert.Equal(t, buf.String(), res.Content)
+	assert.Equal(t, string(fixture), res.Content)
 
 	// Transport parity: an over-the-wire sarif request is now accepted by the
 	// schema enum and yields the same bytes as the in-process handler.
