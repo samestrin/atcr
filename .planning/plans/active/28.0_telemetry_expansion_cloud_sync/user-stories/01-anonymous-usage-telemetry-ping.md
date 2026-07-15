@@ -30,14 +30,22 @@
 - **Relevant:** Directly satisfies epic AC1 ("A background telemetry client exists and safely fails open") and AC2 ("The CLI securely sends anonymous usage events on run completion") — the foundational capability every other story in this plan (opt-out, persona hashing, cloud sync) builds on.
 - **Time-bound:** Deliverable within this sprint cycle as the first story in the plan's execution order, ahead of Stories 2–5 which depend on the client existing.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-fire-and-forget-telemetry-send.md) | Fire-and-Forget Telemetry Send | Unit |
+| [01-02](../acceptance-criteria/01-02-bounded-non-blocking-timeout.md) | Bounded, Non-Blocking Timeout | Unit |
+| [01-03](../acceptance-criteria/01-03-panic-safe-fail-open.md) | Panic-Safe, Fail-Open Behavior | Unit |
+| [01-04](../acceptance-criteria/01-04-schema-constrained-payload.md) | Schema-Constrained Payload (No Source Code or File Paths) | Unit |
+
+## Original Criteria Overview
 
 1. `internal/telemetry` exposes a client that sends a `{"event": "review_run", "lang": ..., "lines": ..., "status": ...}` JSON payload to a configurable endpoint over HTTPS, fired from a goroutine.
 2. The call is bounded by a short timeout and is provably non-blocking: a hung or unreachable endpoint does not delay `runReview` or `runReconcile` completion or change their exit codes.
 3. The client is panic-safe (recovers internally) and fail-open (logs failures at debug/trace level and continues) so no telemetry failure mode can crash or hang the CLI.
 4. The transmitted payload is schema-constrained to `event`, `lang`, `lines`, `status` only — no source code, file contents, or file paths are ever included, verified by a test asserting the marshaled payload shape.
 
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`_
 
 ## Technical Considerations
 

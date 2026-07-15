@@ -30,14 +30,22 @@
 - **Relevant:** Directly satisfies epic AC3 ("`ATCR_TELEMETRY=0` strictly disables all background telemetry") verbatim, and is the trust surface that makes AC1/AC2's default-on telemetry acceptable for privacy-conscious adopters — without it the epic cannot ship telemetry at all.
 - **Time-bound:** Deliverable within this sprint cycle immediately after Story 1 lands the client it gates, and before Stories 3-5 (which extend the export schema and add `--sync-cloud`) so the opt-out is in place before any additional data leaves the machine.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-env-var-disables-telemetry.md) | `ATCR_TELEMETRY=0` Disables Telemetry Process-Wide | Unit/Integration |
+| [02-02](../acceptance-criteria/02-02-config-set-telemetry-persists.md) | `atcr config set telemetry <bool>` Persists Opt-Out to `.atcr/config.yaml` | Unit/Integration |
+| [02-03](../acceptance-criteria/02-03-opt-out-surfaces-or-not-override.md) | Env Var and Config Opt-Outs Are OR'd, Never Overridden | Unit/Integration |
+| [02-04](../acceptance-criteria/02-04-docs-and-flag-coverage.md) | `docs/telemetry.md` Documents the Opt-Out and `docs_audit_test.go` Coverage Passes | Unit |
+
+## Original Criteria Overview
 
 1. `ATCR_TELEMETRY=0` (and recognized falsy equivalents), read once at root-command construction time, disables the Story 1 telemetry client for the entire process — verified by a test asserting zero network calls regardless of which command runs.
 2. `atcr config set telemetry false` persists the opt-out to `.atcr/config.yaml` (new `cmd/atcr/config.go`, following the `debt.go` subcommand-group pattern) so telemetry stays disabled on subsequent invocations without requiring the env var to be set each time; `atcr config set telemetry true` re-enables it.
 3. The two opt-out surfaces are OR'd (either one disabling telemetry is sufficient and final for that invocation) — no combination of flags/env/config can silently re-enable telemetry once either says "off".
 4. `docs/telemetry.md` documents `ATCR_TELEMETRY` and `atcr config set telemetry` with their exact accepted values, and `cmd/atcr/docs_audit_test.go`'s flag/env-var coverage checks pass for both, following the existing `ATCR_DISABLE_AST_GROUPING` coverage precedent.
 
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`_
 
 ## Technical Considerations
 

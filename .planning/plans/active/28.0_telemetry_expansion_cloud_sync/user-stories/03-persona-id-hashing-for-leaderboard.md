@@ -30,13 +30,20 @@
 - **Relevant:** Directly satisfies epic AC "The exported scorecard schema includes Persona ID hashing for the Persona Leaderboard" and unblocks the backend's ability to rank personas per the epic's stated objective.
 - **Time-bound:** Deliverable within the current sprint alongside the other four plan.md user story themes; no external dependency blocks start.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-hashed-persona-id-function.md) | Deterministic Hashed-Persona-ID Function | Unit |
+| [03-02](../acceptance-criteria/03-02-telemetry-persona-schema.md) | Dedicated Telemetry Persona Schema Type | Unit |
+| [03-03](../acceptance-criteria/03-03-leaderboard-export-regression.md) | Existing Leaderboard Export Path Byte-for-Byte Regression | Integration |
+| [03-04](../acceptance-criteria/03-04-hash-property-unit-tests.md) | Hash Determinism, Uniqueness, and Non-Reversibility Unit Tests | Unit |
+
+## Original Criteria Overview
 
 1. A new hashing function/schema is added to `internal/scorecard` that produces a deterministic, non-reversible hash of a run's Persona ID, kept fully separate from `PublicRecord`/`scrubField`/`AnonymizeRecord`/`ScrubPublicRecord`.
 2. A regression test asserts the existing Epic 10.0 `--export` (leaderboard) path's output is byte-for-byte unchanged after this story's changes land (same `PublicRecord` allowlist, same `scrubField` behavior, no new fields leaked onto that schema).
 3. A unit test on the new hashing path asserts determinism (same input -> same hash), uniqueness (different input -> different hash), and non-reversibility (raw Persona ID string never appears in the hash output or any log/error message on that path).
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`_
 
 ## Technical Considerations
 

@@ -30,13 +30,20 @@
 - **Relevant:** Directly satisfies epic AC5 ("The `--sync-cloud` flag successfully authenticates and pushes run history to a designated endpoint") and is the commercial/enterprise-facing capability that demonstrates concrete ROI (time/credits saved) to engineering managers evaluating `atcr` at team scale.
 - **Time-bound:** Deliverable within this sprint cycle as the fourth story in the plan's execution order, after Story 1 (telemetry client) and Story 3 (persona hashing) are complete, and independently testable via its own auth/exit-code contract.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-sync-cloud-flag-registration.md) | `--sync-cloud` Flag Registration | Unit |
+| [04-02](../acceptance-criteria/04-02-successful-authenticated-push.md) | Successful Authenticated Cloud Push | Unit/Integration |
+| [04-03](../acceptance-criteria/04-03-missing-api-key-exit-code.md) | Missing `ATCR_API_KEY` Dedicated Exit Code | Unit |
+| [04-04](../acceptance-criteria/04-04-invalid-rejected-api-key-exit-code.md) | Invalid/Rejected `ATCR_API_KEY` Dedicated Exit Code | Unit/Integration |
+
+## Original Criteria Overview
 
 1. `--sync-cloud` is registered as a flag on `review` and `reconcile` via a new `addSyncCloudFlags` helper in `cmd/atcr/flags.go`, following the existing `addRangeFlags` PreRunE-chaining convention.
 2. When `--sync-cloud` is set, the CLI reads `ATCR_API_KEY`, sends it as a `Bearer` token, and POSTs the complete anonymized scorecard (time/credits saved metrics, hashed Persona ID) to the configured cloud endpoint after the run completes.
 3. A missing or invalid `ATCR_API_KEY` when `--sync-cloud` is set causes the command to exit with a new, dedicated exit code (distinct from the generic usage-error code), and this behavior is covered by tests for both the missing-key and invalid/rejected-key cases.
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`_
 
 ## Technical Considerations
 

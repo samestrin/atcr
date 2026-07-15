@@ -30,13 +30,19 @@
 - **Relevant:** Directly satisfies epic AC3 ("`ATCR_TELEMETRY=0` strictly disables all background telemetry" — documented and discoverable) and the plan's Objective 5 ("Privacy Documentation"); unblocks CI for Stories 1-4 since `docs_audit_test.go` fails the moment their undocumented flags/env vars land.
 - **Time-bound:** Deliverable within this sprint cycle as the final story, sequenced after Stories 1-4 so it documents finalized, real flag/env-var/exit-code contracts rather than speculative ones.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-telemetry-doc-content-and-index.md) | `docs/telemetry.md` Content Coverage and `docs/README.md` Index Link | Unit |
+| [05-02](../acceptance-criteria/05-02-scorecard-privacy-model-updated.md) | `docs/scorecard.md` Privacy Model Section Updated for Telemetry/Cloud-Sync | Unit |
+| [05-03](../acceptance-criteria/05-03-docs-audit-tests-pass.md) | `docs_audit_test.go` Flag/Index Coverage Passes with Finalized Docs | Unit |
+
+## Original Criteria Overview
 
 1. `docs/telemetry.md` exists, is linked from `docs/README.md`'s index, and documents the telemetry event schema, opt-out mechanisms (`ATCR_TELEMETRY=0`, `atcr config set telemetry false`), Persona ID hashing behavior, and the `--sync-cloud`/`ATCR_API_KEY` flow including its distinct auth-failure exit code.
 2. `docs/scorecard.md`'s Privacy Model section is updated to describe the new hashed-persona telemetry/cloud-sync data path and clearly distinguish it from the existing `--export` allowlist/`scrubField` guarantee, with a cross-link to `docs/telemetry.md`.
 3. `go test ./cmd/atcr/... -run TestDocs` (covering `TestDocsIndexCoversEveryDoc` and `TestDocsClaimedFlagsAreReal`) passes with the new/updated documentation in place.
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`_
 
 ## Technical Considerations
 

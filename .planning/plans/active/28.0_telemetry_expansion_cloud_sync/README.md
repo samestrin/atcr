@@ -6,7 +6,7 @@ Opt-in, fail-open anonymous usage telemetry plus a `--sync-cloud` payload mechan
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`
 

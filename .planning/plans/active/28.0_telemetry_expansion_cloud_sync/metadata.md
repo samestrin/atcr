@@ -20,7 +20,7 @@
 
 ## Workflow Status
 
-**Document Status**: [x] Plan Created [x] User Stories Added [ ] Acceptance Criteria Added [ ] Ready for Sprint
+**Document Status**: [x] Plan Created [x] User Stories Added [x] Acceptance Criteria Added [ ] Ready for Sprint
 
 ## Sprint Tracking
 
