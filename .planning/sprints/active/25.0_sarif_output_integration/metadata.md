@@ -52,8 +52,8 @@
 **Executed:** 2026-07-14
 
 ### Progress
-- **Phases:** 4/4 (Foundation, Severity & Anchoring, Integration, Validation) — task 4.3 (manual live-GitHub smoke test) deferred to user
-- **Work Items:** 4/4 user stories; 18/19 sprint tasks (4.3 manual, non-automatable)
+- **Phases:** 4/4 (Foundation, Severity & Anchoring, Integration, Validation) — including 4.3 live GitHub Code Scanning smoke test (PASSED on samestrin/scratch)
+- **Work Items:** 4/4 user stories; 19/19 sprint tasks
 
 ### Quality
 - **Tests:** full suite PASS (`go test ./...`); `internal/report` includes SARIF unit + golden + SARIF 2.1.0 schema-conformance tests
@@ -67,4 +67,4 @@
 ### Tech Debt Captured
 - TD-001 (MEDIUM): empty `File` → empty `artifactLocation.uri` may break GitHub ingestion (AC-mandated pass-through)
 - TD-002 (LOW): empty `Category` → blank `ruleId`/rule id (AC-mandated pass-through)
-- TD-003 (MEDIUM): MCP report tool transport enum excludes `sarif` (in-process parity proven; wire-level access is a scope decision)
+- TD-003 (MEDIUM): MCP report tool transport enum excludes `sarif` — **RESOLVED 2026-07-14** (enum + doc strings + tests updated; over-the-wire parity now tested)
