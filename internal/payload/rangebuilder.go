@@ -32,14 +32,27 @@ type RangeBuilder struct {
 	inUse atomic.Int32
 }
 
+// RangeOption customizes the gitRunner a RangeBuilder wraps. It exists so review
+// callers can opt out of ignore filtering (--no-ignore) without threading a bool
+// through every payload entry point.
+type RangeOption func(*gitRunner)
+
+// WithoutIgnoreFilter disables the repo-root .gitignore/.atcrignore payload
+// filter for this builder — the --no-ignore escape hatch, for when a caller
+// deliberately wants an ignored file reviewed.
+func WithoutIgnoreFilter() RangeOption {
+	return func(g *gitRunner) { g.noIgnore = true }
+}
+
 // NewRangeBuilder returns a RangeBuilder for repo's base..head range, sharing one
-// gitRunner (seeded with the context logger) across all its builds.
-func NewRangeBuilder(ctx context.Context, repo, base, head string) *RangeBuilder {
-	return &RangeBuilder{
-		g:    &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)},
-		base: base,
-		head: head,
+// gitRunner (seeded with the context logger) across all its builds. Options
+// customize the runner (e.g. WithoutIgnoreFilter).
+func NewRangeBuilder(ctx context.Context, repo, base, head string, opts ...RangeOption) *RangeBuilder {
+	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
+	for _, o := range opts {
+		o(g)
 	}
+	return &RangeBuilder{g: g, base: base, head: head}
 }
 
 // validate runs validateRange once; subsequent builds on the same RangeBuilder
@@ -67,6 +80,18 @@ func (b *RangeBuilder) validate() error {
 // BuildChangedLines.
 func (b *RangeBuilder) Range() (base, head string) {
 	return b.base, b.head
+}
+
+// AllIgnored reports whether the range had changed files but the ignore filter
+// removed every one — the ignore-stage analogue of Truncation.AllDropped. count
+// is the number of changed files excluded. It lets the review layer emit a
+// --no-ignore hint instead of a misleading "no changed files" error when a
+// lockfile-only / vendored-only range is fully filtered. The signal is populated
+// by the --name-status pass, so call it after a BuildEntries or
+// BuildChangedLines has run on this builder; before any build it reports false.
+func (b *RangeBuilder) AllIgnored() (all bool, count int) {
+	s := b.g.forRange(b.base, b.head)
+	return s.allIgnored, s.allIgnoredCount
 }
 
 // BuildEntries returns the per-file payload contributions for mode, reusing the
