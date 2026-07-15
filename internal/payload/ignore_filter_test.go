@@ -184,3 +184,20 @@ func TestApplyIgnore_CopyDoesNotExcludeSource(t *testing.T) {
 		assert.NotContains(t, e, "old.go", "copy source must not be excluded")
 	}
 }
+
+// Ignored-file exclusions should be visible at the default (info) log level so
+// operators notice when a misconfigured .atcrignore silently drops changes.
+func TestBuildEntries_LogsSkippedSummaryAtInfo(t *testing.T) {
+	dir, base, head := ignoreFixture(t, true)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil)) // default level = Info
+	ctx := log.NewContext(context.Background(), logger)
+
+	_, err := BuildEntries(ctx, ModeDiff, dir, base, head)
+	require.NoError(t, err)
+
+	logged := buf.String()
+	assert.Contains(t, logged, "skipped", "summary should mention skipped files")
+	assert.Contains(t, logged, "ignore", "summary should mention ignore rules")
+}
