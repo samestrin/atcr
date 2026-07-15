@@ -342,9 +342,12 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 - [x] Lint/format clean (`golangci-lint run`) — 0 issues
 - [x] Build succeeds (`go build ./...`) — OK
 
-### 4.3 [ ] **Manual Smoke Test** — DEFERRED TO USER (cannot be automated)
-   Manually upload real SARIF output (`atcr review && atcr reconcile && atcr report --format=sarif > results.sarif`) to a scratch repo's Code Scanning tab, confirming results actually render (including at least one file-level/fallback-anchored finding) before marking the plan's AC1 done, per plan.md's Risk Mitigation.
-   **Status:** Requires a live GitHub repo + GitHub Advanced Security + auth — not automatable in this environment. Left unchecked for Sam to run. Schema conformance (4.1) validates structural correctness against the exact schema GitHub uses; the smoke test confirms live rendering. Note TD-001 (empty-`File` → empty `uri`) and TD-002 (empty `Category` → blank `ruleId`) are the two runtime-ingestion risks to watch for during this smoke test — both are schema-valid but may affect GitHub display.
+### 4.3 [x] **Manual Smoke Test** — PASSED (2026-07-14)
+   Uploaded real `atcr report --format=sarif` output to `github.com/samestrin/scratch`'s Code Scanning via `POST /code-scanning/sarifs`. Processing completed with no errors; both alerts rendered with `tool.driver.name=atcr`:
+   - Alert #1 [security/error] → `vuln.go:8` — line-level anchoring confirmed.
+   - Alert #2 [maintainability/warning] → `config.go:1` (col 1-1) — **file-level `Line<=0` → `1,1,1,1` fallback region renders in the Security tab** (plan.md's primary AC1 risk mitigation, confirmed live).
+   Severity→level mapping (HIGH→error, MEDIUM→warning) and `rules[]`/`ruleId` category linkage both verified live. URLs: security/code-scanning/1 and /2 on samestrin/scratch.
+   Note: both findings carried non-empty `File`/`Category`, so the degenerate cases behind TD-001 (empty `File`) and TD-002 (empty `Category`) remain live-untested — they stay as documented tech debt.
 
 ### Optional: Targeted Mutation Testing
 Mutation tool detection: `UNAVAILABLE` in this environment — skip. If a mutation tool becomes available later, target only `internal/report/sarif.go` (changed file), not the full codebase.
