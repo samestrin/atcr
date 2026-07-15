@@ -14,6 +14,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -454,6 +455,8 @@ func TestReportHandler_InvalidFormatRejected(t *testing.T) {
 	if err == nil {
 		require.True(t, res.IsError, "invalid format must be rejected")
 		assert.Contains(t, contentText(res), "xml")
+	} else {
+		assert.Contains(t, err.Error(), "xml")
 	}
 }
 
@@ -644,6 +647,7 @@ func TestReportHandler_InvalidFormatInProcess(t *testing.T) {
 	_, _, err := e.handleReport(context.Background(), nil, ReportArgs{Format: "xml"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid format")
+	assert.Contains(t, err.Error(), "sarif")
 }
 
 // TestReportHandler_InvalidReviewID verifies a path-traversal id_or_path is
@@ -683,4 +687,35 @@ func TestRangeHandler_InvalidBaseRef(t *testing.T) {
 	cs := connectTest(t, root, fakeCompleter{})
 	msg := callErr(t, cs, ToolRange, map[string]any{"base": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"})
 	assert.Contains(t, msg, "failed to resolve range")
+}
+
+// TestReportHandler_SarifParity verifies SARIF reaches MCP callers via the shared
+// Render() path (AC 01-04 Scenario 3), both in-process and over the transport
+// (the report tool's format enum now includes sarif), and that both are
+// byte-identical to a direct report.Render(..., FormatSarif).
+func TestReportHandler_SarifParity(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	id := reviewFixture(t, root)
+	cs := connectTest(t, root, fakeCompleter{})
+	callOK[ReconcileResult](t, cs, ToolReconcile, map[string]any{})
+
+	e := &engine{root: root}
+	_, res, err := e.handleReport(context.Background(), nil, ReportArgs{IDOrPath: id, Format: report.FormatSarif})
+	require.NoError(t, err)
+	assert.Equal(t, report.FormatSarif, res.Format)
+	assert.Contains(t, res.Content, `"version": "2.1.0"`)
+
+	// Shape: compare in-process output against a golden fixture so the
+	// assertion validates SARIF structure rather than handler==Render tautology.
+	fixturePath := filepath.Join("testdata", "sarif_report.golden.json")
+	fixture, err := os.ReadFile(fixturePath)
+	require.NoError(t, err)
+	assert.Equal(t, string(fixture), res.Content)
+
+	// Transport parity: an over-the-wire sarif request is now accepted by the
+	// schema enum and yields the same bytes as the in-process handler.
+	wire := callOK[ReportResult](t, cs, ToolReport, map[string]any{"id_or_path": id, "format": "sarif"})
+	assert.Equal(t, report.FormatSarif, wire.Format)
+	assert.Equal(t, res.Content, wire.Content)
 }

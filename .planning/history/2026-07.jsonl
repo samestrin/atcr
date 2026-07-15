@@ -160,3 +160,11 @@
 {"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"HIGH","id":"99af507ff12eeba5","file":"cmd/atcr/debt_resolve.go","category":"compatibility"}
 {"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"HIGH","id":"74a415b4386c3c47","file":"cmd/atcr/debt_resolve.go","category":"exhaustion"}
 {"ts":"2026-07-14T09:36:24.857468-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"628c94d4981a8cf3","file":"cmd/atcr/debt_resolve.go","category":"performance"}
+{"ts":"2026-07-14T18:18:02.00609-07:00","package":"internal/report","severity":"MEDIUM","id":"6cc2b18ea0ffabdf","file":"internal/report/render_test.go","category":"correctness"}
+{"ts":"2026-07-14T18:18:02.00609-07:00","package":"internal/report","severity":"MEDIUM","id":"0d1a363033734e94","file":"internal/report/render.go","category":"testing"}
+{"ts":"2026-07-14T18:18:02.00609-07:00","package":"internal/report","severity":"LOW","id":"ba41ae59574e7d87","file":"internal/report/render.go","category":"testing"}
+{"ts":"2026-07-14T18:18:02.00609-07:00","package":"internal/report","severity":"MEDIUM","id":"63529af01de1b414","file":"internal/report/render.go","category":"reliability"}
+{"ts":"2026-07-14T18:18:02.00609-07:00","package":"docs","severity":"MEDIUM","id":"e1db0d7c18d51114","file":"docs/ci-integration.md","category":"performance"}
+{"ts":"2026-07-14T18:18:02.00609-07:00","package":"internal/report","severity":"LOW","id":"7b8df9877fe7e3d8","file":"internal/report/render_test.go","category":"testing"}
+{"ts":"2026-07-14T18:18:02.00609-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"4f790181ac94272c","file":"cmd/atcr/report.go","category":"reliability"}
+{"ts":"2026-07-14T18:18:02.00609-07:00","package":"cmd/atcr","severity":"LOW","id":"3b47449fd3843c9e","file":"cmd/atcr/report.go","category":"consistency"}
