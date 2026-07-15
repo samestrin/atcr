@@ -107,10 +107,14 @@ func renderSarif(w io.Writer, findings []reconcile.JSONFinding) error {
 // do not share a mutable package-level sink.
 func renderSarifWithDiag(w io.Writer, findings []reconcile.JSONFinding, diag io.Writer) error {
 	results := make([]sarifResult, 0, len(findings))
+	// warned de-duplicates the unrecognized-severity diagnostic across this render
+	// call so a batch of findings sharing one corrupt severity token emits a single
+	// line, not one per finding.
+	warned := make(map[string]bool)
 	for _, f := range findings {
 		results = append(results, sarifResult{
 			RuleID:    sarifRuleID(f.Category),
-			Level:     sarifLevel(f.Severity, diag),
+			Level:     sarifLevel(f.Severity, diag, warned),
 			Message:   sarifText{Text: sarifMessageText(f)},
 			Locations: []sarifLocationObj{sarifLocation(f)},
 		})
@@ -187,8 +191,10 @@ func sarifRuleID(category string) string {
 // back to "warning". The return is always one of error/warning/note — never
 // "none" (which GitHub Code Scanning does not display) and never empty. A
 // non-empty token that still ranks 0 is treated as upstream corruption and
-// emits a diagnostic to sarifDiag (see below); the level stays "warning".
-func sarifLevel(severity string, diag io.Writer) string {
+// emits a diagnostic to the diag sink (de-duplicated per render via warned — see
+// below); the level stays "warning". warned must be non-nil (renderSarifWithDiag
+// owns one map per render call).
+func sarifLevel(severity string, diag io.Writer, warned map[string]bool) string {
 	rank := reclib.SeverityRank[reclib.NormalizeSeverity(severity)]
 	switch {
 	case rank >= reclib.SeverityRank[reclib.SevHigh]:
@@ -204,8 +210,9 @@ func sarifLevel(severity string, diag io.Writer) string {
 		// corrupted findings.json value — so emit a diagnostic to surface the
 		// corruption rather than downgrading it invisibly. Per AC 02-01 the
 		// returned level stays "warning" in both cases.
-		if strings.TrimSpace(severity) != "" {
+		if strings.TrimSpace(severity) != "" && !warned[severity] {
 			_, _ = fmt.Fprintf(diag, "atcr: sarif: unrecognized severity %q; defaulting to \"warning\"\n", severity)
+			warned[severity] = true
 		}
 		return "warning"
 	}

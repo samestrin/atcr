@@ -266,7 +266,7 @@ func TestSarifLevel(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := sarifLevel(tc.severity, io.Discard)
+			got := sarifLevel(tc.severity, io.Discard, map[string]bool{})
 			assert.Equal(t, tc.want, got)
 			// Edge Case 5: only the three GitHub-supported levels are ever returned.
 			assert.Contains(t, []string{"error", "warning", "note"}, got)
@@ -284,28 +284,28 @@ func TestSarifLevel(t *testing.T) {
 func TestSarifLevel_UnrecognizedDiagnostic(t *testing.T) {
 	t.Run("non-empty garbage emits diagnostic, stays warning", func(t *testing.T) {
 		var buf bytes.Buffer
-		got := sarifLevel("hihg", &buf)
+		got := sarifLevel("hihg", &buf, map[string]bool{})
 		assert.Equal(t, "warning", got, "AC 02-01: unrecognized token still falls back to warning")
 		assert.Contains(t, buf.String(), "hihg", "diagnostic must name the offending token")
 	})
 
 	t.Run("empty severity stays silent", func(t *testing.T) {
 		var buf bytes.Buffer
-		got := sarifLevel("", &buf)
+		got := sarifLevel("", &buf, map[string]bool{})
 		assert.Equal(t, "warning", got)
 		assert.Empty(t, buf.String(), "empty is empty-by-design — no diagnostic")
 	})
 
 	t.Run("whitespace-only severity stays silent", func(t *testing.T) {
 		var buf bytes.Buffer
-		got := sarifLevel("  \t\n", &buf)
+		got := sarifLevel("  \t\n", &buf, map[string]bool{})
 		assert.Equal(t, "warning", got)
 		assert.Empty(t, buf.String(), "blank token is empty-by-design — no diagnostic")
 	})
 
 	t.Run("recognized severity stays silent", func(t *testing.T) {
 		var buf bytes.Buffer
-		assert.Equal(t, "error", sarifLevel("HIGH", &buf))
+		assert.Equal(t, "error", sarifLevel("HIGH", &buf, map[string]bool{}))
 		assert.Empty(t, buf.String(), "recognized token is not corruption — no diagnostic")
 	})
 }
