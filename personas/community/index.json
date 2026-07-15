@@ -108,5 +108,25 @@
     "model": "local/gemma3-27b",
     "tasks": ["secrets-review"],
     "tags": ["secret", "privacy", "gemma", "local", "tier-32gb-dense"]
+  },
+  {
+    "name": "orson",
+    "version": "1.0.0",
+    "description": "Qwen long-context duplication and repo-wide redundancy reviewer (local 256k lens)",
+    "path": "orson.yaml",
+    "provider": "local",
+    "model": "local/qwen3-30b-a3b",
+    "tasks": ["duplication-review"],
+    "tags": ["duplication", "redundancy", "qwen", "local", "tier-32gb-long-context"]
+  },
+  {
+    "name": "liam",
+    "version": "1.0.0",
+    "description": "Llama heavyweight invariant and state-consistency reviewer (local 70B lens)",
+    "path": "liam.yaml",
+    "provider": "local",
+    "model": "local/llama3.3-70b",
+    "tasks": ["invariant-review"],
+    "tags": ["invariant", "consistency", "llama", "local", "tier-64gb-heavyweight"]
   }
 ]

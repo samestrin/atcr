@@ -1,0 +1,7 @@
+name: liam
+version: 1.0.0
+description: Llama heavyweight invariant and state-consistency reviewer (local 70B lens)
+provider: local
+model: local/llama3.3-70b
+persona: liam
+role: reviewer
