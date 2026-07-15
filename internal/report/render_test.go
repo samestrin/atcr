@@ -52,18 +52,24 @@ func TestValidFormat(t *testing.T) {
 	assert.True(t, ValidFormat("md"))
 	assert.True(t, ValidFormat("json"))
 	assert.True(t, ValidFormat("checklist"))
+	assert.True(t, ValidFormat("sarif"))
 	assert.False(t, ValidFormat("xml"))
+	// The format enum stays case-sensitive (AC 01-01 Edge Case 1): no
+	// normalization is introduced for sarif that the other formats lack.
+	assert.False(t, ValidFormat("SARIF"))
 }
 
 // goldenCases pins each renderer's full output to a checked-in golden file.
 var goldenCases = []struct {
-	name   string
-	format string
-	golden string
+	name     string
+	format   string
+	golden   string
+	findings []reconcile.JSONFinding // nil → use sample()
 }{
-	{"markdown", FormatMarkdown, "report.md"},
-	{"json", FormatJSON, "findings.json"},
-	{"checklist", FormatChecklist, "checklist.md"},
+	{"markdown", FormatMarkdown, "report.md", nil},
+	{"json", FormatJSON, "findings.json", nil},
+	{"checklist", FormatChecklist, "checklist.md", nil},
+	{"sarif", FormatSarif, "report.sarif.json", nil},
 }
 
 // TestRender_GoldenFiles compares each format's full render output byte-for-byte
@@ -74,8 +80,12 @@ var goldenCases = []struct {
 func TestRender_GoldenFiles(t *testing.T) {
 	for _, tc := range goldenCases {
 		t.Run(tc.name, func(t *testing.T) {
+			findings := tc.findings
+			if findings == nil {
+				findings = sample()
+			}
 			var b strings.Builder
-			require.NoError(t, Render(&b, sample(), tc.format))
+			require.NoError(t, Render(&b, findings, tc.format))
 			got := b.String()
 			path := filepath.Join("testdata", tc.golden)
 
