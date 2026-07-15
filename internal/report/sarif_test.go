@@ -410,6 +410,17 @@ func TestSarifLocation(t *testing.T) {
 	}
 }
 
+// TD-0053 (2026-07-14): a blank f.File must emit a sentinel URI ("unknown"), since
+// GitHub Code Scanning rejects a SARIF upload whose artifactLocation.uri is empty.
+// Every non-empty File — including upstream PathWarning-flagged absolute/traversal
+// paths — still passes through unmodified per AC 03-02 (only the empty case, which
+// upstream path validation leaves untouched, is defaulted here at export time).
+func TestSarifLocation_EmptyFileSentinel(t *testing.T) {
+	loc := sarifLocation(reconcile.JSONFinding{File: "", Line: 5})
+	assert.Equal(t, "unknown", loc.PhysicalLocation.ArtifactLocation.URI,
+		"blank File must become the non-empty sentinel, not an empty uri")
+}
+
 // --- Final Phase 4.1: Schema Conformance Validation ---
 
 // TestSarif_SchemaConformance validates renderSarif output against the canonical
