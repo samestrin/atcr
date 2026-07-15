@@ -57,21 +57,27 @@ side; one feeds PR checks/comments, the other feeds the Security tab.
 **GitHub Advanced Security — Code Scanning "Security" tab:**
 
 ```yaml
-- uses: actions/checkout@v4
-  with: { fetch-depth: 0 }
+jobs:
+  atcr-sarif:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # required by upload-sarif
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # full history so atcr can resolve the diff range
 
-- name: Run atcr and emit SARIF
-  run: atcr review && atcr reconcile && atcr report --format=sarif > results.sarif
+      - name: Run atcr and emit SARIF
+        run: atcr review && atcr reconcile && atcr report --format=sarif > results.sarif
 
-- name: Upload SARIF to GitHub Code Scanning
-  uses: github/codeql-action/upload-sarif@v3
-  with:
-    sarif_file: results.sarif
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
 ```
 
-The `upload-sarif` step requires the job to grant `security-events: write` (add a
-`permissions:` block to the job or workflow), and `fetch-depth: 0` gives atcr the
-full history it needs to resolve the diff range.
+The `permissions.security-events: write` grant is what lets `upload-sarif` write
+to the Security tab; without it the upload step fails.
 
 **GitLab CI — native SAST report widget:**
 
