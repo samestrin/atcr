@@ -15,6 +15,7 @@ require (
 require (
 	github.com/cli/safeexec v1.0.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
+	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06 // indirect
 )
 
 require (
