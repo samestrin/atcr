@@ -155,3 +155,32 @@ func TestRangeBuilder_NoIgnoreOption_IncludesIgnored(t *testing.T) {
 	paths := entryPaths(entries)
 	assert.ElementsMatch(t, []string{"main.go", "vendor/lib.go", "go.sum"}, paths)
 }
+
+// Regression: a copied file whose head path is ignored must not cause applyIgnore
+// to exclude the copy source. The source may be an independently modified file
+// with its own diff chunk; excluding it would leave that chunk orphaned and
+// produce an empty body.
+func TestApplyIgnore_CopyDoesNotExcludeSource(t *testing.T) {
+	dir := initRepo(t)
+	writeIgnore(t, dir, ".atcrignore", "new.go\n")
+	write(t, dir, "old.go", goFileV1)
+	write(t, dir, "new.go", goFileV1)
+	commitAll(t, dir, "v1")
+	write(t, dir, "old.go", goFileV2)
+	commitAll(t, dir, "v2")
+
+	g := &gitRunner{ctx: context.Background(), dir: dir}
+	files := []changedFile{
+		// Simulate a copy status: new.go is a copy of old.go and is ignored.
+		{path: "new.go", oldPath: "old.go", kind: kindRenamed},
+		{path: "old.go", kind: kindModified},
+	}
+	kept, exclude := g.applyIgnore(files)
+
+	// The copy target is filtered out; the source survives as an independent change.
+	require.Len(t, kept, 1)
+	assert.Equal(t, "old.go", kept[0].path)
+	for _, e := range exclude {
+		assert.NotContains(t, e, "old.go", "copy source must not be excluded")
+	}
+}
