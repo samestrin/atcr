@@ -176,6 +176,79 @@ func TestBuildChangedLines_NoIgnoreOption(t *testing.T) {
 	assert.True(t, keepsVendor, "--no-ignore grounding must keep ignored files")
 }
 
+// TD internal/payload/diff.go:74 — buildDiffPathspec bounds the whole-range diff
+// argv by min(|kept|,|ignored|): it excludes the ignored files by default, but
+// switches to a positive kept-file list once the exclude set is large and the
+// kept set is strictly smaller, so a huge ignored set cannot blow ARG_MAX.
+func TestBuildDiffPathspec(t *testing.T) {
+	old := excludePathspecThreshold
+	excludePathspecThreshold = 3
+	t.Cleanup(func() { excludePathspecThreshold = old })
+
+	kept := []changedFile{{path: "a.go"}}
+	small := []string{":(exclude,literal)i1", ":(exclude,literal)i2"}
+	big := []string{":(exclude,literal)i1", ":(exclude,literal)i2", ":(exclude,literal)i3", ":(exclude,literal)i4"}
+
+	// Nothing ignored → whole-range diff, no pathspec.
+	assert.Nil(t, buildDiffPathspec(kept, nil))
+
+	// Exclude set within threshold → root-anchored exclude form.
+	assert.Equal(t, []string{"--", ":/", ":(exclude,literal)i1", ":(exclude,literal)i2"},
+		buildDiffPathspec(kept, small))
+
+	// Large exclude set, strictly-smaller kept set → positive kept form.
+	assert.Equal(t, []string{"--", ":(top,literal)a.go"}, buildDiffPathspec(kept, big))
+
+	// A kept rename contributes both paths (old first) so git renders the rename,
+	// not a bare addition.
+	ren := []changedFile{{path: "new.go", oldPath: "old.go", kind: kindRenamed}}
+	assert.Equal(t, []string{"--", ":(top,literal)old.go", ":(top,literal)new.go"},
+		buildDiffPathspec(ren, big))
+
+	// Positive set not smaller than the exclude set → stay on the exclude form.
+	manyKept := []changedFile{{path: "a.go"}, {path: "b.go"}, {path: "c.go"}, {path: "d.go"}, {path: "e.go"}}
+	assert.Equal(t, append([]string{"--", ":/"}, big...), buildDiffPathspec(manyKept, big))
+}
+
+// End-to-end: with a lowered threshold the RangeBuilder takes the positive-kept
+// pathspec branch and produces byte-identical results to the exclude branch —
+// the ignored files are still absent and the kept file's content is intact.
+func TestBuildEntries_LargeExcludeUsesPositivePathspec(t *testing.T) {
+	old := excludePathspecThreshold
+	excludePathspecThreshold = 1
+	t.Cleanup(func() { excludePathspecThreshold = old })
+
+	dir, base, head := ignoreFixture(t, true) // kept: main.go; ignored: vendor/lib.go, go.sum
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"main.go"}, entryPaths(entries),
+		"positive-pathspec branch must select the same kept file the exclude branch would")
+
+	// The positive branch was taken: argv lists the kept file, not the ignored set.
+	assert.Equal(t, []string{"--", ":(top,literal)main.go"}, rb.g.state.diffPathspec)
+
+	// The flat diff carries no ignored content.
+	out, err := BuildDiff(context.Background(), dir, base, head)
+	require.NoError(t, err)
+	assert.NotContains(t, out, "vendor/lib.go")
+	assert.NotContains(t, out, "go.sum")
+}
+
+// An all-ignored range grounds to an empty map without ever passing a large
+// exclude argv: diffChunks short-circuits when no files are kept.
+func TestBuildChangedLines_AllIgnored_Empty(t *testing.T) {
+	old := excludePathspecThreshold
+	excludePathspecThreshold = 1
+	t.Cleanup(func() { excludePathspecThreshold = old })
+
+	dir, base, head := allIgnoredFixture(t)
+	cl, err := BuildChangedLines(context.Background(), dir, base, head)
+	require.NoError(t, err)
+	assert.Empty(t, cl, "all-ignored range grounds to an empty map")
+}
+
 // Regression: a copied file whose head path is ignored must not cause applyIgnore
 // to exclude the copy source. The source may be an independently modified file
 // with its own diff chunk; excluding it would leave that chunk orphaned and

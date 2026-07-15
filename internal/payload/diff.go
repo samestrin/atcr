@@ -57,13 +57,15 @@ type rangeState struct {
 	zeroCtx    map[string]string      // head path -> --unified=0 chunk (raw)
 	lineRanges map[string][]lineRange // head path -> head-side changed ranges
 
-	// excludeSpec holds git pathspecs for the files removed by the ignore filter,
-	// applied to every whole-range diff so git never emits their chunks. This
-	// keeps the diff splitter's "every chunk maps to a changed file" invariant
+	// diffPathspec holds the trailing `-- …` pathspec args applied to every
+	// whole-range diff so git emits exactly the kept (non-ignored) files' chunks.
+	// This keeps the diff splitter's "every chunk maps to a kept file" invariant
 	// intact: the filtered file list (files) and the diff output stay in lockstep.
-	// Populated by changedFilesMemo; empty when nothing was ignored (zero
-	// behavior change for the common case).
-	excludeSpec []string
+	// Precomputed by changedFilesMemo (nil when nothing was ignored, so the common
+	// case is zero behavior change): either an :(exclude) list of the ignored files
+	// (default) or a positive list of the kept files when the ignored set is large
+	// enough to risk ARG_MAX — see buildDiffPathspec.
+	diffPathspec []string
 
 	// allIgnored is true when the range had changed files but the ignore filter
 	// removed every one (the kept set is empty). It is the ignore-stage analogue
@@ -77,16 +79,49 @@ type rangeState struct {
 	allIgnoredCount int
 }
 
-// pathspecArgs returns the trailing `-- :/ :(exclude)<path>...` args for whole-
-// range diff commands, or nil when nothing was ignored. A positive `:/` pathspec
-// is required alongside the exclusions so git scopes them to the whole tree,
-// and it is anchored at the worktree root rather than relative to the current
-// directory (g.dir may be a subdirectory in future caller paths).
+// pathspecArgs returns the precomputed trailing pathspec args for whole-range
+// diff commands (nil when nothing was ignored). The value is built once per range
+// by changedFilesMemo via buildDiffPathspec.
 func (s *rangeState) pathspecArgs() []string {
-	if len(s.excludeSpec) == 0 {
+	return s.diffPathspec
+}
+
+// excludePathspecThreshold is the excluded-path count above which whole-range
+// diffs stop listing every ignored file as an :(exclude) pathspec and instead
+// list the (smaller) kept set positively, so a range that ignores thousands of
+// tracked files cannot blow ARG_MAX (E2BIG). git diff has no --pathspec-from-file
+// escape hatch (that option exists only on add/commit/reset/…, not diff), so
+// bounding argv by min(|kept|,|ignored|) is the only version-independent option.
+// A var, not a const, so tests can lower it to exercise the positive branch.
+var excludePathspecThreshold = 1000
+
+// buildDiffPathspec returns the trailing pathspec args that make git emit exactly
+// the kept files' chunks. With nothing ignored it returns nil (whole-range diff,
+// the common case). Otherwise it excludes the ignored files — `-- :/ :(exclude)…`,
+// anchored at the worktree root (`:/`) so g.dir may be a subdirectory — but when
+// that exclude set exceeds excludePathspecThreshold and the kept set is strictly
+// smaller, it lists the kept files positively instead (`-- :(top,literal)<kept>…`)
+// so argv scales with |kept|, not |ignored| — the vendored-tree-bump case (few
+// kept, thousands ignored). A kept rename contributes both of its paths: pathspec
+// filtering precedes rename pairing, so omitting the old path makes git render the
+// file as a bare addition. Both forms are root-anchored and literal, so an ignored
+// or kept filename containing pathspec metacharacters cannot over-match.
+func buildDiffPathspec(kept []changedFile, exclude []string) []string {
+	if len(exclude) == 0 {
 		return nil
 	}
-	return append([]string{"--", ":/"}, s.excludeSpec...)
+	if len(exclude) > excludePathspecThreshold {
+		var pos []string
+		for _, f := range kept {
+			for _, p := range f.pathspec() {
+				pos = append(pos, ":(top,literal)"+p)
+			}
+		}
+		if len(pos) > 0 && len(pos) < len(exclude) {
+			return append([]string{"--"}, pos...)
+		}
+	}
+	return append([]string{"--", ":/"}, exclude...)
 }
 
 // gitRunner executes git argv against a fixed directory and context. The
@@ -227,7 +262,7 @@ func (g *gitRunner) changedFilesMemo(base, head string) ([]changedFile, error) {
 		return nil, err
 	}
 	files, exclude := g.applyIgnore(raw)
-	s.excludeSpec = exclude
+	s.diffPathspec = buildDiffPathspec(files, exclude)
 	// Record the all-ignored signal: the range had changed files but the filter
 	// kept none. len(raw) > 0 excludes a genuinely empty range (nothing to hint).
 	if len(raw) > 0 && len(files) == 0 {
@@ -427,9 +462,15 @@ func (g *gitRunner) diffChunks(base, head string, opts ...string) (map[string]st
 	if err != nil {
 		return nil, err
 	}
-	// headPathSet ran changedFilesMemo, so s.excludeSpec is populated: excluding
-	// the ignored paths from the diff keeps git's chunk output in lockstep with
-	// the filtered head-path set the splitter matches against.
+	// No kept files (empty range, or every changed file ignore-filtered) → no
+	// chunks to emit, so skip the git call entirely. This also avoids passing a
+	// huge exclude pathspec set for an all-ignored range.
+	if len(heads) == 0 {
+		return map[string]string{}, nil
+	}
+	// headPathSet ran changedFilesMemo, so s.diffPathspec is populated: scoping the
+	// diff to the kept files keeps git's chunk output in lockstep with the filtered
+	// head-path set the splitter matches against.
 	s := g.forRange(base, head)
 	args := append([]string{"diff"}, opts...)
 	args = append(args, "-M", base+".."+head)
@@ -448,13 +489,18 @@ func (g *gitRunner) diffChunks(base, head string, opts ...string) (map[string]st
 // diff yields an empty (non-nil) set. The result is memoized so the N per-file
 // binary checks collapse to a single git process.
 func (g *gitRunner) binarySet(base, head string) (map[string]bool, error) {
-	// Ensure the ignore filter has run so s.excludeSpec is populated before the
+	// Ensure the ignore filter has run so s.diffPathspec is populated before the
 	// numstat diff — otherwise ignored binaries would leak into the set.
 	if _, err := g.changedFilesMemo(base, head); err != nil {
 		return nil, err
 	}
 	s := g.forRange(base, head)
 	if s.binary != nil {
+		return s.binary, nil
+	}
+	// No kept files → nothing binary; skip the git call (mirrors diffChunks).
+	if len(s.files) == 0 {
+		s.binary = map[string]bool{}
 		return s.binary, nil
 	}
 	args := append([]string{"diff", "--numstat", "-M", base + ".." + head}, s.pathspecArgs()...)
