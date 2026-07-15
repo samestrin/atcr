@@ -287,6 +287,57 @@ An OpenAI-compatible proxy that aggregates several providers behind a single end
 
 Claude/GPT/Gemini-tuned personas — each prompt-phrased per that provider's own official prompting guide — are installed deliberately by anyone who already holds that provider's API key. They stay opt-in and outside the default funnel: discover and install one by the model you have (see the discover-by-model flow above), then set that provider's key in your registry. They are never part of the `atcr quickstart` funnel.
 
+### Local / Privacy-First (zero data egress) — opt-in
+
+For privacy-conscious teams that refuse to send proprietary code to any external API, the library ships three personas tuned for a **local** endpoint (Ollama / llama.cpp / vLLM). Every byte of the review stays on your own hardware — no external network calls once the provider points at `localhost`. Each persona is tuned for a hardware tier:
+
+| Persona | Tier | Bound model | Review lens |
+|---------|------|-------------|-------------|
+| `gerald` | 32 GB dense (file-by-file) | `local/gemma3-27b` | secrets & data-egress |
+| `orson` | 32 GB long-context (256k, full-repo) | `local/qwen3-30b-a3b` | duplication & repo-wide redundancy |
+| `liam` | 64 GB+ heavyweight (dual-GPU / M4 Pro) | `local/llama3.3-70b` | invariants & state-consistency |
+
+Discover them by their `local` provider or by model:
+
+```bash
+atcr personas search --provider local
+atcr personas search --model gemma        # or qwen / llama
+```
+
+**Set it up entirely offline:**
+
+```bash
+# 1. Install and start a local model server
+brew install ollama
+ollama serve &                      # exposes an OpenAI-compatible endpoint on :11434
+
+# 2. Pull the model a persona binds (match the tier to your RAM/VRAM)
+ollama pull gemma3:27b              # gerald   (32 GB dense)
+# ollama pull qwen3:30b-a3b         # orson    (32 GB long-context)
+# ollama pull llama3.3:70b          # liam     (64 GB+ heavyweight)
+
+# 3. REQUIRED even for a keyless local endpoint — see the note below
+export OLLAMA_API_KEY=local-no-key-needed
+```
+
+**Wire the `local` provider in `~/.config/atcr/registry.yaml`** (the persona's `provider: local` resolves to this block; see [providers.md](providers.md) for the canonical example):
+
+```yaml
+providers:
+  local:
+    base_url: http://localhost:11434/v1   # ollama, llama.cpp, vllm, ...
+    api_key_env: OLLAMA_API_KEY           # must name an env var that is set — even locally
+agents:
+  gerald:
+    provider: local
+    model: gemma3:27b                     # the tag you pulled with `ollama pull`
+    role: reviewer
+```
+
+> **`api_key_env` placeholder requirement.** atcr requires every provider to declare `api_key_env`, and it errors at invoke time if that env var is unset or empty — even for a local endpoint that needs no real key. Export any non-empty placeholder value (`export OLLAMA_API_KEY=local-no-key-needed`) so the review can run. The value is never sent anywhere your `base_url` does not point; with `base_url` on `localhost`, nothing leaves the machine.
+
+Then run a review as usual — `gerald`, `orson`, and `liam` behave like any other reviewer persona, only their traffic terminates at your local server instead of a cloud router. These personas are never part of the `atcr quickstart` funnel; they are a deliberate opt-in.
+
 ## Quick walkthrough
 
 ```bash
