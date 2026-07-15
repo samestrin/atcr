@@ -138,18 +138,18 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 **Items:** AC [01-01](plan/acceptance-criteria/01-01-format-registration.md) (Format Constant Registration), AC [01-02](plan/acceptance-criteria/01-02-sarif-document-structure.md) (Base Document Structure), AC [01-03](plan/acceptance-criteria/01-03-rules-array-category-linkage.md) (Rules Array / Category Linkage)
 
-### 1.1 [ ] **[Story 1: SARIF Formatter Core - RED](plan/user-stories/01-sarif-formatter-core.md)**
+### 1.1 [x] **[Story 1: SARIF Formatter Core - RED](plan/user-stories/01-sarif-formatter-core.md)**
    1. Analyze AC 01-01/01-02/01-03, identify testable units: `FormatSarif` registration in `ValidFormat`/`Formats`/`Render`, top-level document shape (`$schema`, `version`, `runs[]`, `tool.driver.name`), `results[]`/`rules[]` nil-slice guard, `rules[]` dedup-by-`Category` in first-seen order with `id`/`shortDescription.text`/`fullDescription.text`.
    2. Write table-driven tests in `internal/report/sarif_test.go`: format registration (`ValidFormat("sarif")`, `Formats()` includes `sarif`, unknown-format error lists `sarif`), document shape assertions, empty/nil findings → `results:[]`/`rules:[]` never `null`, rules dedup ordering, empty-`Category` edge case.
    3. Extend `internal/report/render_test.go`'s `goldenCases` with `{"sarif", FormatSarif, "report.sarif.json"}` (fixture not yet generated — expected to fail).
    4. Verify all new tests fail correctly (compile error or assertion failure — `FormatSarif`/`renderSarif` do not exist yet).
    **Files:** `internal/report/sarif_test.go` (new), `internal/report/render_test.go` (modify) | **Duration:** 0.5 day
 
-### 1.2 [ ] **[Story 1: SARIF Formatter Core - GREEN](plan/user-stories/01-sarif-formatter-core.md)**
+### 1.2 [x] **[Story 1: SARIF Formatter Core - GREEN](plan/user-stories/01-sarif-formatter-core.md)**
    Add `FormatSarif = "sarif"` next to the existing format constants in `internal/report/render.go`; extend `ValidFormat()`, `Formats()`, and add a `case FormatSarif: return renderSarif(w, findings)` arm to `Render()`. Create `internal/report/sarif.go` defining the SARIF struct tree (`sarifLog`, `sarifRun`, `sarifTool`, `sarifDriver`, `sarifRule`, `sarifResult`) and `renderSarif(w io.Writer, findings []reconcile.JSONFinding) error`, applying `renderJSON`'s nil-slice guard to both `results[]` and `rules[]`, `json.MarshalIndent(..., "", "  ")` + trailing newline. Rule collection iterates findings once, deduping `Category` in first-seen order. Generate golden fixture `internal/report/testdata/report.sarif.json` (≥2 distinct categories) via `go test ./internal/report -update` once tests pass (T1 after each change, T2 once the story is complete). COMMIT: `git commit -m "feat(report): add SARIF 2.1.0 formatter core"`.
    **Files:** `internal/report/sarif.go` (new), `internal/report/render.go` (modify), `internal/report/testdata/report.sarif.json` (new) | **Duration:** 1 day
 
-### 1.2.A [ ] **[Story 1: SARIF Formatter Core - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-sarif-formatter-core.md)**
+### 1.2.A [x] **[Story 1: SARIF Formatter Core - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-sarif-formatter-core.md)**
    **Changed Files:** `internal/report/sarif.go`, `internal/report/render.go`, `internal/report/sarif_test.go`, `internal/report/render_test.go`, `internal/report/testdata/report.sarif.json`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -167,22 +167,22 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (fresh general-purpose subagent, 2026-07-14):**
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | MEDIUM | sarif.go:181 | Empty `File` → `artifactLocation.uri:""` may break GitHub ingestion | Captured TD-001 (AC 03-01 EC3 mandates pass-through) |
+   | LOW | sarif.go:143 | Empty `Category` → blank `ruleId`/rule `id` | Captured TD-002 (AC 01-03 EC2 mandates pass-through) |
+   | LOW | sarif.go:164 | Unknown severity → `"warning"` (above LOW's `"note"`) | Rejected — AC 02-01 EC3/4/5 explicitly mandate `"warning"` fallback |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 1.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   No CRITICAL/HIGH. Security (JSON injection) clean — encoding/json escaping sufficient for a JSON sink. Error propagation (marshal + write) covered. Dedup is O(n).
 
-### 1.3 [ ] **[Story 1: SARIF Formatter Core - REFACTOR](plan/user-stories/01-sarif-formatter-core.md)**
-   1. Fix CRITICAL/HIGH issues from 1.2.A (if any)
-   2. Improve code and tests (T1) — confirm `rules[]`/`results[]` dedup logic reads cleanly, no O(n²) scans
-   3. Validate all tests still pass (T3): `go test ./internal/report/...`
-   4. COMMIT: `git commit -m "refactor(report): address review + clean up SARIF formatter core"`
+   **Action Taken:** No CRITICAL/HIGH → proceed to 1.3. MEDIUM/LOW genuine risks appended to `tech-debt-captured.md` (TD-001, TD-002); the third finding contradicts AC 02-01 and was rejected with rationale.
+
+### 1.3 [x] **[Story 1: SARIF Formatter Core - REFACTOR](plan/user-stories/01-sarif-formatter-core.md)**
+   1. Fix CRITICAL/HIGH issues from 1.2.A (if any) — none found.
+   2. Improve code and tests (T1) — confirmed `sarifRules`/`results[]` dedup is O(n) (seen-set + ordered slice), no O(n²) scans; code already reads cleanly.
+   3. Validate all tests still pass (T3): `go test ./...` → ALL PASS.
+   4. COMMIT: skipped — no code changes to commit (no refactor needed; empty commit avoided).
    **Duration:** 0.25 day
 
 ---
@@ -191,17 +191,17 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 **Items:** AC [02-01](plan/acceptance-criteria/02-01-severity-level-mapping.md) (Severity-to-SARIF-Level Mapping), AC [03-01](plan/acceptance-criteria/03-01-line-level-anchoring.md) (Line-Level Anchoring), AC [03-02](plan/acceptance-criteria/03-02-file-level-fallback-anchoring.md) (File-Level Fallback Anchoring)
 
-### 2.1 [ ] **[Story 2+3: Severity Mapping & Line/File Anchoring - RED](plan/user-stories/02-severity-to-sarif-level-mapping.md)**
+### 2.1 [x] **[Story 2+3: Severity Mapping & Line/File Anchoring - RED](plan/user-stories/02-severity-to-sarif-level-mapping.md)**
    1. Analyze AC 02-01/03-01/03-02, identify testable units: `sarifLevel(severity string) string` (CRITICAL/HIGH→`error`, MEDIUM→`warning`, LOW→`note`, unrecognized→`warning` fallback), `sarifLocation(f reconcile.JSONFinding) ...` (`Line>0` → real line + non-zero synthesized columns; `Line<=0` including `Line==0` and negative → synthesized `1,1,1,1`).
    2. Write table-driven tests in `internal/report/sarif_test.go`: all four canonical severities plus an unrecognized/edge-case token (empty, lowercase, whitespace-padded); `Line>0` normal anchoring, `Line==0` fallback, `Line<0` fallback (as a distinct row, not collapsed with `Line==0`); `Line==1` boundary case asserted as the real-line path, not the fallback.
    3. Verify tests fail correctly (`sarifLevel`/`sarifLocation` do not exist yet).
    **Files:** `internal/report/sarif_test.go` (extend) | **Duration:** 0.5 day
 
-### 2.2 [ ] **[Story 2+3: Severity Mapping & Line/File Anchoring - GREEN](plan/user-stories/02-severity-to-sarif-level-mapping.md)**
-   Add `sarifLevel(severity string) string` to `internal/report/sarif.go`, normalizing via `reconcile.NormalizeSeverity`/`reconcile.SeverityRank` exclusively — no local redefinition of the severity comparison. Add `sarifLocation(f reconcile.JSONFinding) ...` building `artifactLocation.uri` from `f.File` unmodified; for `Line>0` sets `region.startLine=region.endLine=f.Line` with non-zero synthesized columns; for `Line<=0` synthesizes `region:{1,1,1,1}`. Wire both helpers into every `renderSarif` result. Extend the golden fixture (`internal/report/testdata/report.sarif.json`) with at least one file-level (`Line<=0`) finding via `go test ./internal/report -update`. Verify all pass (T1 after each change, T2 once complete). COMMIT: `git commit -m "feat(report): add SARIF severity mapping and line/file anchoring"`.
+### 2.2 [x] **[Story 2+3: Severity Mapping & Line/File Anchoring - GREEN](plan/user-stories/02-severity-to-sarif-level-mapping.md)**
+   Add `sarifLevel(severity string) string` to `internal/report/sarif.go`, normalizing via `reconcile.NormalizeSeverity`/`reconcile.SeverityRank` exclusively — no local redefinition of the severity comparison. Add `sarifLocation(f reconcile.JSONFinding) ...` building `artifactLocation.uri` from `f.File` unmodified; for `Line>0` sets `region.startLine=region.endLine=f.Line` with synthesized `startColumn=endColumn=1` (columns are not tracked in ATCR's finding pipeline, so a fixed `1` is synthesized — matching the file-level fallback's column convention); for `Line<=0` synthesizes `region:{1,1,1,1}`. Wire both helpers into every `renderSarif` result. Extend the golden fixture (`internal/report/testdata/report.sarif.json`) with at least one file-level (`Line<=0`) finding via `go test ./internal/report -update`. Verify all pass (T1 after each change, T2 once complete). COMMIT: `git commit -m "feat(report): add SARIF severity mapping and line/file anchoring"`.
    **Files:** `internal/report/sarif.go` (extend), `internal/report/testdata/report.sarif.json` (extend) | **Duration:** 1 day
 
-### 2.2.A [ ] **[Story 2+3: Severity Mapping & Line/File Anchoring - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-severity-to-sarif-level-mapping.md)**
+### 2.2.A [x] **[Story 2+3: Severity Mapping & Line/File Anchoring - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-severity-to-sarif-level-mapping.md)**
    **Changed Files:** `internal/report/sarif.go`, `internal/report/sarif_test.go`, `internal/report/testdata/report.sarif.json`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -219,22 +219,17 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent result (fresh general-purpose subagent, 2026-07-14):** No findings.
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   Confirmed: `sarifLevel` is the sole severity-comparison site and reuses the canonical `reclib.SeverityRank`/`NormalizeSeverity` rubric (no local map); the `Line <= 0` boundary correctly routes negatives to the 1,1,1,1 fallback (no `startLine <= 0` leak); no integer-overflow or determinism issue.
 
-### 2.3 [ ] **[Story 2+3: Severity Mapping & Line/File Anchoring - REFACTOR](plan/user-stories/02-severity-to-sarif-level-mapping.md)**
-   1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
-   2. Improve code and tests (T1) — confirm `sarifLevel` is the only severity-comparison site in `sarif.go`
-   3. Validate all tests still pass (T3): `go test ./internal/report/...`
-   4. COMMIT: `git commit -m "refactor(report): address review + clean up severity/anchoring"`
+   **Action Taken:** Adversarial review passed → proceed to 2.3.
+
+### 2.3 [x] **[Story 2+3: Severity Mapping & Line/File Anchoring - REFACTOR](plan/user-stories/02-severity-to-sarif-level-mapping.md)**
+   1. Fix CRITICAL/HIGH issues from 2.2.A (if any) — none found.
+   2. Improve code and tests (T1) — confirmed via grep that `sarifLevel` is the ONLY severity-comparison site in `sarif.go` (call site at :104, rubric at :170-179); no second comparison chain.
+   3. Validate all tests still pass (T3): `go test ./...` → ALL PASS.
+   4. COMMIT: skipped — no code changes to commit (no refactor needed).
    **Duration:** 0.25 day
 
 ---
@@ -243,17 +238,17 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 **Items:** AC [01-04](plan/acceptance-criteria/01-04-cli-flag-and-mcp-parity.md) (CLI Flag Help Text and MCP Parity), AC [04-01](plan/acceptance-criteria/04-01-github-code-scanning-upload-example.md) (GitHub Code Scanning Upload Example), AC [04-02](plan/acceptance-criteria/04-02-gitlab-sast-widget-example.md) (GitLab CI SAST Widget Example)
 
-### 3.1 [ ] **[Story 1 (AC 01-04): CLI/MCP Parity - RED](plan/user-stories/01-sarif-formatter-core.md)**
+### 3.1 [x] **[Story 1 (AC 01-04): CLI/MCP Parity - RED](plan/user-stories/01-sarif-formatter-core.md)**
    1. Analyze AC 01-04: `--format` help text mentions `sarif`; CLI output for `--format=sarif` is byte-identical to calling `report.Render` directly; `internal/mcp/handlers.go`'s `handleReport` produces SARIF parity with no code change.
    2. Write a CLI-vs-`report.Render` byte-identical parity test in `cmd/atcr/report_test.go` and a `handleReport` SARIF parity regression test in `internal/mcp/handlers_test.go` — both comparing bytes, not just asserting "no error".
    3. Verify tests fail correctly (help text not yet updated / parity not yet exercised).
    **Files:** `cmd/atcr/report_test.go` (extend), `internal/mcp/handlers_test.go` (extend) | **Duration:** 0.25 day
 
-### 3.2 [ ] **[Story 1 (AC 01-04): CLI/MCP Parity - GREEN](plan/user-stories/01-sarif-formatter-core.md)**
-   Update `cmd/atcr/report.go`'s `--format` flag help text to mention `sarif` (no new flag wiring — `report.ValidFormat`/`report.Render` already generalize). Verify all pass (T1, T2). COMMIT: `git commit -m "feat(cli): document sarif in --format help text"`.
+### 3.2 [x] **[Story 1 (AC 01-04): CLI/MCP Parity - GREEN](plan/user-stories/01-sarif-formatter-core.md)**
+   Update `cmd/atcr/report.go`'s `--format` flag help text (`cmd/atcr/report.go:25`, `"output format: md, json, or checklist"`) AND the command's `Short` description (`cmd/atcr/report.go:21`, `"Render md, json, or checklist views over reconciled findings"`) to include `sarif` — both enumerate the format list and both surface in `atcr report --help`, so leaving `Short` stale would omit `sarif` from the help summary line (no new flag wiring — `report.ValidFormat`/`report.Render` already generalize). Verify all pass (T1, T2). COMMIT: `git commit -m "feat(cli): document sarif in --format help text"`.
    **Files:** `cmd/atcr/report.go` (modify) | **Duration:** 0.25 day
 
-### 3.2.A [ ] **[Story 1 (AC 01-04): CLI/MCP Parity - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-sarif-formatter-core.md)**
+### 3.2.A [x] **[Story 1 (AC 01-04): CLI/MCP Parity - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-sarif-formatter-core.md)**
    **Changed Files:** `cmd/atcr/report.go`, `cmd/atcr/report_test.go`, `internal/mcp/handlers_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -271,34 +266,32 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (fresh general-purpose subagent, 2026-07-14):**
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | LOW | report_test.go | `--disagreements --format=sarif` incompatibility (report.go:96) is unpinned by any test | Fixed in 3.3 — added `TestReportCmd_DisagreementsWithSarifIsUsageError` (AC 01-04 Error Scenario 1 explicitly asks to verify this) |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   No CRITICAL/HIGH. Verified: both CLI parity tests assert genuine byte equality vs an independent `report.Render`; SARIF output is deterministic (no timestamps); the MCP in-process parity test is non-tautological; no `--help`/Short golden regression. The unchanged MCP transport enum is intentional/documented scope (see TD-003 below).
 
-### 3.3 [ ] **[Story 1 (AC 01-04): CLI/MCP Parity - REFACTOR](plan/user-stories/01-sarif-formatter-core.md)**
-   1. Fix CRITICAL/HIGH issues from 3.2.A (if any)
-   2. Improve code and tests (T1), validate (T3): `go test ./cmd/atcr/... ./internal/mcp/...`
-   3. COMMIT: `git commit -m "refactor(cli): address review + clean up CLI/MCP parity"`
+   **Action Taken:** No CRITICAL/HIGH → proceed. The LOW is an AC-required coverage gap → fixed inline in 3.3 (not deferred).
+
+### 3.3 [x] **[Story 1 (AC 01-04): CLI/MCP Parity - REFACTOR](plan/user-stories/01-sarif-formatter-core.md)**
+   1. Fix CRITICAL/HIGH issues from 3.2.A (if any) — none; addressed the LOW coverage gap instead.
+   2. Improve code and tests (T1) — added `TestReportCmd_DisagreementsWithSarifIsUsageError` (AC 01-04 Error Scenario 1). Validated (T3): `go test ./cmd/atcr/... ./internal/mcp/...` → PASS.
+   3. COMMIT: `refactor(cli): pin --disagreements/--format=sarif incompatibility` (c11e83f3).
    **Duration:** 0.25 day
 
-### 3.4 [ ] **[Story 4: SARIF CI Integration Documentation - RED](plan/user-stories/04-sarif-ci-integration-docs.md)**
+### 3.4 [x] **[Story 4: SARIF CI Integration Documentation - RED](plan/user-stories/04-sarif-ci-integration-docs.md)**
    1. Analyze AC 04-01/04-02: define the validation approach for documentation-only work — `yamllint` on both fenced YAML snippets, `markdown-link-check` on the new subsection's links, manual review confirming an explicit distinguishing sentence vs. `atcr github`'s already-shipped PR check/inline-comment flow.
    2. Confirm `docs/ci-integration.md`'s existing "Maintained PR Action" subsection structure (lead-in sentence + fenced snippet + doc link) as the template to mirror.
    3. Note: no automated `go test` coverage for this story (E2E/manual-static per Test Strategy) — `yamllint`/`markdown-link-check` are the T1/T2 equivalent here.
    **Files:** `docs/ci-integration.md` (read, no edit yet) | **Duration:** 0.25 day
 
-### 3.5 [ ] **[Story 4: SARIF CI Integration Documentation - GREEN](plan/user-stories/04-sarif-ci-integration-docs.md)**
+### 3.5 [x] **[Story 4: SARIF CI Integration Documentation - GREEN](plan/user-stories/04-sarif-ci-integration-docs.md)**
    Add a new "SARIF Upload for Code Scanning" subsection to `docs/ci-integration.md` beneath "Maintained PR Action": a fenced GitHub Actions YAML snippet (`atcr review && atcr reconcile && atcr report --format=sarif > results.sarif` → `codeql-action/upload-sarif@v3`) and a fenced `.gitlab-ci.yml` snippet (`artifacts: reports: sast: results.sarif`), each with an explicit sentence distinguishing this path from `atcr github`'s PR check/inline-comment flow, linking to `docs/github-action.md`. Run `yamllint`/`markdown-link-check` on the new content. COMMIT: `git commit -m "docs(ci): add SARIF upload examples for GitHub Code Scanning and GitLab SAST"`.
    **Files:** `docs/ci-integration.md` (modify) | **Duration:** 0.5 day
 
-### 3.5.A [ ] **[Story 4: SARIF CI Integration Documentation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-sarif-ci-integration-docs.md)**
+### 3.5.A [x] **[Story 4: SARIF CI Integration Documentation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-sarif-ci-integration-docs.md)**
    **Changed Files:** `docs/ci-integration.md`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.5 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -316,42 +309,42 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (fresh general-purpose subagent, 2026-07-14):**
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | MEDIUM | ci-integration.md GitHub snippet | `security-events: write` required by `upload-sarif` was in prose only, not in the copy-pasteable fence | Fixed in 3.6 — snippet restructured into a self-contained job with a `permissions:` block (AC 04-01 Edge Case 1 requires this detail not be silently omitted) |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.6, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   No CRITICAL/HIGH. Accuracy confirmed: GitHub snippet correctly pipes `atcr review && atcr reconcile && atcr report --format=sarif` into `codeql-action/upload-sarif@v3`; GitLab snippet uses only native `artifacts:reports:sast` (no invented upload action); distinction from `atcr github` is explicit at the top and links to github-action.md.
 
-### 3.6 [ ] **[Story 4: SARIF CI Integration Documentation - REFACTOR](plan/user-stories/04-sarif-ci-integration-docs.md)**
-   1. Fix CRITICAL/HIGH issues from 3.5.A (if any)
-   2. Polish wording, re-run `yamllint`/`markdown-link-check`
-   3. COMMIT: `git commit -m "refactor(docs): address review + polish SARIF CI documentation"`
+   **Action Taken:** No CRITICAL/HIGH → proceed. The MEDIUM is an AC-required copy-paste-correctness detail → fixed inline in 3.6 (not deferred).
+
+### 3.6 [x] **[Story 4: SARIF CI Integration Documentation - REFACTOR](plan/user-stories/04-sarif-ci-integration-docs.md)**
+   1. Fix CRITICAL/HIGH issues from 3.5.A (if any) — none; fixed the MEDIUM copy-paste-correctness gap instead.
+   2. Restructured the GitHub snippet into a self-contained job with a `permissions: security-events: write` block; re-ran `yamllint` (relaxed) + strict YAML parse (both snippets clean) and `markdown-link-check` (3 links OK).
+   3. COMMIT: `refactor(docs): make SARIF GitHub snippet self-contained with security-events permission` (b6d664e7).
    **Duration:** 0.25 day
 
 ---
 
 ## Final Phase: Validation
 
-### 4.1 [ ] **Schema Conformance Validation**
-   Validate `renderSarif` output against a local `internal/report/testdata/sarif-schema-2.1.0.json` fixture via `google/jsonschema-go` (`Schema.UnmarshalJSON` → `Resolve` → `Validate`), test-only — no production dependency added. Add this as a test case in `internal/report/sarif_test.go`.
+### 4.1 [x] **Schema Conformance Validation**
+   Validate `renderSarif` output against a local `internal/report/testdata/sarif-schema-2.1.0.json` fixture via `google/jsonschema-go` (`Schema.UnmarshalJSON` → `Resolve` → `Validate`), test-only — no production dependency added. Source the fixture from the canonical SARIF 2.1.0 schema — SchemaStore's `sarif-2.1.0-rtm.5.json` (`https://json.schemastore.org/sarif-2.1.0-rtm.5.json`), the variant GitHub Code Scanning validates against — not an arbitrary OASIS/csd01 copy. Its `$ref`s are internal (`#/definitions/...`), so `Resolve` needs only a `BaseURI` and no external `Loader`; `Schema.UnmarshalJSON` supports the schema's Draft-07 dialect (confirmed in `plan/documentation/schema-validation-with-jsonschema-go.md`). Add this as a test case in `internal/report/sarif_test.go`.
    **Files:** `internal/report/testdata/sarif-schema-2.1.0.json` (new), `internal/report/sarif_test.go` (extend) | **Duration:** 0.5 day
 
-### 4.2 [ ] **Cross-Cutting Regression**
+### 4.2 [x] **Cross-Cutting Regression**
    Run `go test ./...`, `golangci-lint run`, `go vet ./...` for the full project. Run `yamllint`/`markdown-link-check` on `docs/ci-integration.md`.
+   Results (2026-07-14): `go test ./...` → ALL PASS; `golangci-lint run` → 0 issues; `go vet ./...` → clean; `yamllint` (both snippets) → clean; `markdown-link-check` → 3 links OK. `internal/report` coverage 97.6%.
 
 ### Validation Checklist
-- [ ] All tests passing (T3)
-- [ ] Coverage meets threshold (≥80%, `go test -coverprofile=coverage.out ./...`)
-- [ ] Lint/format clean (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (T3) — `go test ./...` ALL PASS
+- [x] Coverage meets threshold (≥80%) — `internal/report` 97.6%
+- [x] Lint/format clean (`golangci-lint run`) — 0 issues
+- [x] Build succeeds (`go build ./...`) — OK
 
-### 4.3 [ ] **Manual Smoke Test**
+### 4.3 [ ] **Manual Smoke Test** — DEFERRED TO USER (cannot be automated)
    Manually upload real SARIF output (`atcr review && atcr reconcile && atcr report --format=sarif > results.sarif`) to a scratch repo's Code Scanning tab, confirming results actually render (including at least one file-level/fallback-anchored finding) before marking the plan's AC1 done, per plan.md's Risk Mitigation.
+   **Status:** Requires a live GitHub repo + GitHub Advanced Security + auth — not automatable in this environment. Left unchecked for Sam to run. Schema conformance (4.1) validates structural correctness against the exact schema GitHub uses; the smoke test confirms live rendering. Note TD-001 (empty-`File` → empty `uri`) and TD-002 (empty `Category` → blank `ruleId`) are the two runtime-ingestion risks to watch for during this smoke test — both are schema-valid but may affect GitHub display.
 
 ### Optional: Targeted Mutation Testing
 Mutation tool detection: `UNAVAILABLE` in this environment — skip. If a mutation tool becomes available later, target only `internal/report/sarif.go` (changed file), not the full codebase.
@@ -359,8 +352,8 @@ Mutation tool detection: `UNAVAILABLE` in this environment — skip. If a mutati
 
 ### Drift Analysis
 Compare final implementation against `plan/original-requirements.md`:
-- [ ] `atcr report --format=sarif` produces valid SARIF JSON — confirmed via Phase 1/4.
-- [ ] SARIF output correctly maps ATCR severities to SARIF levels — confirmed via Phase 2.
-- [ ] File paths and line numbers correctly anchor to the git diff — confirmed via Phase 2.
-- [ ] Documentation example exists for GitHub Code Scanning upload and GitLab CI SAST-widget equivalent — confirmed via Phase 3.
-- [ ] No scope creep into `atcr github`'s already-shipped direct-API PR check/inline-comment flow (explicitly out of scope).
+- [x] `atcr report --format=sarif` produces valid SARIF JSON — confirmed via Phase 1/4 (renderSarif + SARIF 2.1.0 schema conformance test).
+- [x] SARIF output correctly maps ATCR severities to SARIF levels — confirmed via Phase 2 (`sarifLevel`, sole rubric site).
+- [x] File paths and line numbers correctly anchor to the git diff — confirmed via Phase 2 (`sarifLocation`, Line>0 real-line, Line<=0 → 1,1,1,1 fallback).
+- [x] Documentation example exists for GitHub Code Scanning upload and GitLab CI SAST-widget equivalent — confirmed via Phase 3 (`docs/ci-integration.md`).
+- [x] No scope creep into `atcr github`'s already-shipped direct-API PR check/inline-comment flow — the SARIF doc explicitly distinguishes the two paths; no `cmd/atcr/github.go` or `action.yml` changes.

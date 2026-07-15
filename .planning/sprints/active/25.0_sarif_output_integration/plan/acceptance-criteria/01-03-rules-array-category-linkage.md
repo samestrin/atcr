@@ -74,15 +74,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/report/...`)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/report/...`)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `rules[]` contains exactly one entry per distinct `Category`, in first-seen order
-- [ ] Each rule entry has `id == shortDescription.text == Category`, and `fullDescription.text` is a synthesized, category-generic sentence (never sourced from a finding's `Problem`/`Fix`)
-- [ ] Each `results[].ruleId` matches the `id` of its finding's category rule entry
-- [ ] `rules[]` serializes as `[]` (never `null`) for empty/nil findings
+- [x] `rules[]` contains exactly one entry per distinct `Category`, in first-seen order
+- [x] Each rule entry has `id == shortDescription.text == Category`, and `fullDescription.text` is a synthesized, category-generic sentence (never sourced from a finding's `Problem`/`Fix`)
+- [x] Each `results[].ruleId` matches the `id` of its finding's category rule entry
+- [x] `rules[]` serializes as `[]` (never `null`) for empty/nil findings
 
 **Manual Review:**
 - [ ] Code reviewed and approved

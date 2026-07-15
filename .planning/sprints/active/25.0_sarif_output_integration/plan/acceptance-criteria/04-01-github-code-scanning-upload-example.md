@@ -70,15 +70,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] Markdown renders without lint errors (markdownlint)
-- [ ] Fenced YAML block parses cleanly (yamllint / yq)
-- [ ] No broken relative links (markdown-link-check against `docs/github-action.md`)
+- [x] Markdown renders without lint errors (markdownlint)
+- [x] Fenced YAML block parses cleanly (yamllint / yq)
+- [x] No broken relative links (markdown-link-check against `docs/github-action.md`)
 
 **Story-Specific:**
-- [ ] New subsection (e.g. "SARIF Upload for GitHub Code Scanning") added directly beneath "Maintained PR Action" in `docs/ci-integration.md`
-- [ ] YAML snippet matches the verbatim example in `documentation/github-code-scanning-integration.md` (checkout with `fetch-depth: 0`, atcr pipeline, `upload-sarif@v3`)
-- [ ] Distinction sentence present near the top of the subsection, linking to `docs/github-action.md`
-- [ ] No edits made to `docs/github-action.md` content (link-only reference)
+- [x] New subsection (e.g. "SARIF Upload for GitHub Code Scanning") added directly beneath "Maintained PR Action" in `docs/ci-integration.md`
+- [x] YAML snippet matches the verbatim example in `documentation/github-code-scanning-integration.md` (checkout with `fetch-depth: 0`, atcr pipeline, `upload-sarif@v3`)
+- [x] Distinction sentence present near the top of the subsection, linking to `docs/github-action.md`
+- [x] No edits made to `docs/github-action.md` content (link-only reference)
 
 **Manual Review:**
 - [ ] Doc reviewed and approved by a maintainer familiar with `docs/github-action.md`

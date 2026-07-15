@@ -25,7 +25,7 @@
 **Scenario 1: Finding with a valid positive line number anchors to that exact line**
 - **Given** a `reconcile.JSONFinding` with `File: "internal/foo/bar.go"` and `Line: 42`
 - **When** `sarifLocation(f)` is called
-- **Then** the returned `physicalLocation.artifactLocation.uri` equals `"internal/foo/bar.go"` exactly, and `region.startLine == region.endLine == 42`, with `region.startColumn` and `region.endColumn` both populated to a defined non-zero value (e.g. `1`)
+- **Then** the returned `physicalLocation.artifactLocation.uri` equals `"internal/foo/bar.go"` exactly, and `region.startLine == region.endLine == 42`, with `region.startColumn == region.endColumn == 1` (columns are not tracked in ATCR's finding pipeline, so a fixed `1` is synthesized — matching the `Line<=0` fallback's column convention)
 
 **Scenario 2: `artifactLocation.uri` passes through `File` unmodified regardless of path shape**
 - **Given** findings with varied but already repo-root-relative `File` values (e.g. `"cmd/atcr/main.go"`, `"internal/report/sarif.go"`)
@@ -77,15 +77,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/report/...`)
-- [ ] No linting errors (`golangci-lint` / project lint target)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/report/...`)
+- [x] No linting errors (`golangci-lint` / project lint target)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `sarifLocation` sets `artifactLocation.uri` to `f.File` unmodified for all tested `File` values
-- [ ] For `Line > 0`, `region.startLine == region.endLine == f.Line` exactly, verified for at least three distinct positive `Line` values including `1`
-- [ ] `region.startColumn`/`endColumn` are always non-zero for `Line > 0` cases
-- [ ] Table-driven test in `sarif_test.go` asserts exact field values (not just non-nil presence) for `Line > 0` cases
+- [x] `sarifLocation` sets `artifactLocation.uri` to `f.File` unmodified for all tested `File` values
+- [x] For `Line > 0`, `region.startLine == region.endLine == f.Line` exactly, verified for at least three distinct positive `Line` values including `1`
+- [x] `region.startColumn`/`endColumn` are always `1` (non-zero) for `Line > 0` cases, matching the file-level fallback's column convention
+- [x] Table-driven test in `sarif_test.go` asserts exact field values (not just non-nil presence) for `Line > 0` cases
 
 **Manual Review:**
 - [ ] Code reviewed and approved

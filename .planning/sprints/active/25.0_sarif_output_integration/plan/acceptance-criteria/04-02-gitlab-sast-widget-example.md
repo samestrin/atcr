@@ -69,15 +69,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] Markdown renders without lint errors (markdownlint)
-- [ ] Fenced YAML block parses cleanly (yamllint)
-- [ ] No broken links elsewhere in the subsection
+- [x] Markdown renders without lint errors (markdownlint)
+- [x] Fenced YAML block parses cleanly (yamllint)
+- [x] No broken links elsewhere in the subsection
 
 **Story-Specific:**
-- [ ] `.gitlab-ci.yml`-style fenced snippet added to `docs/ci-integration.md` alongside the GitHub Actions snippet
-- [ ] Snippet includes `atcr review && atcr reconcile && atcr report --format=sarif > results.sarif` and `artifacts: reports: sast: results.sarif`
-- [ ] Snippet stays minimal — no speculative or unverified GitLab features
-- [ ] Terminology stays GitLab-native — no bleed of GitHub-only "PR check"/"inline comment" language
+- [x] `.gitlab-ci.yml`-style fenced snippet added to `docs/ci-integration.md` alongside the GitHub Actions snippet
+- [x] Snippet includes `atcr review && atcr reconcile && atcr report --format=sarif > results.sarif` and `artifacts: reports: sast: results.sarif`
+- [x] Snippet stays minimal — no speculative or unverified GitLab features
+- [x] Terminology stays GitLab-native — no bleed of GitHub-only "PR check"/"inline comment" language
 
 **Manual Review:**
 - [ ] Doc reviewed and approved, cross-checked against GitLab's documented `artifacts:reports:sast` mechanism

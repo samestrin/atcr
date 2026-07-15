@@ -13,6 +13,7 @@
 
 - [`cmd/atcr/report.go`](../../../../../cmd/atcr/report.go) — modify:
   - Update the `--format` flag help text from `"output format: md, json, or checklist"` to include `sarif` (e.g. `"output format: md, json, checklist, or sarif"`) ([`cmd/atcr/report.go:25`](../../../../../cmd/atcr/report.go)).
+  - Update the command's `Short` description (`"Render md, json, or checklist views over reconciled findings"`) to include `sarif` ([`cmd/atcr/report.go:21`](../../../../../cmd/atcr/report.go)) — it enumerates the same format list and also appears in `atcr report --help`, so leaving it stale omits `sarif` from the help summary line.
   - The existing `runReport` flow ([`cmd/atcr/report.go:31-128`](../../../../../cmd/atcr/report.go)) already validates the format via `report.ValidFormat()` and routes to `report.Render()`; no new command wiring is required.
   - The existing `--disagreements` incompatibility guard ([`cmd/atcr/report.go:97`](../../../../../cmd/atcr/report.go)) automatically rejects `--format sarif`.
 - [`internal/mcp/handlers.go`](../../../../../internal/mcp/handlers.go) — reference only (no code change expected): `handleReport` ([`internal/mcp/handlers.go:370-420`](../../../../../internal/mcp/handlers.go)) validates the format through `report.ValidFormat()` and routes non-markdown output through `report.Render()`, so SARIF becomes available to MCP clients automatically.
@@ -85,15 +86,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./...`)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./...`)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `atcr report --format=sarif` produces the same output as `report.Render(..., FormatSarif)` (CLI/library parity test)
-- [ ] `--help` text for `--format` mentions `sarif`
-- [ ] `--format=bogus` error message lists `sarif`
-- [ ] `handleReport` with `format: "sarif"` returns output identical to direct `report.Render` (MCP parity regression test)
+- [x] `atcr report --format=sarif` produces the same output as `report.Render(..., FormatSarif)` (CLI/library parity test)
+- [x] `--help` text for `--format` mentions `sarif`
+- [x] The `report` command's `Short` description (`cmd/atcr/report.go:21`) also lists `sarif`, so the `--help` summary line is not stale
+- [x] `--format=bogus` error message lists `sarif`
+- [x] `handleReport` with `format: "sarif"` returns output identical to direct `report.Render` (MCP parity regression test)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

@@ -70,15 +70,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/report/...`)
-- [ ] No linting errors (`golangci-lint run` or project-configured linter)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/report/...`)
+- [x] No linting errors (`golangci-lint run` or project-configured linter)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `ValidFormat("sarif")` returns `true` and `ValidFormat("SARIF")` returns `false`
-- [ ] `Formats()` includes `"sarif"` in its output string
-- [ ] `Render(w, findings, FormatSarif)` returns `nil` and dispatches to `renderSarif`
-- [ ] `Render(w, findings, "bogus")` error message lists `sarif` among supported formats
+- [x] `ValidFormat("sarif")` returns `true` and `ValidFormat("SARIF")` returns `false`
+- [x] `Formats()` includes `"sarif"` in its output string
+- [x] `Render(w, findings, FormatSarif)` returns `nil` and dispatches to `renderSarif`
+- [x] `Render(w, findings, "bogus")` error message lists `sarif` among supported formats
 
 **Manual Review:**
 - [ ] Code reviewed and approved

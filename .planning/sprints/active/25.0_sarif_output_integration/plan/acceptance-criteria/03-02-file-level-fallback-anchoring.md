@@ -78,15 +78,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/report/...`)
-- [ ] No linting errors (`golangci-lint` / project lint target)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/report/...`)
+- [x] No linting errors (`golangci-lint` / project lint target)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `Line == 0` and `Line < 0` both independently verified to produce `region: {startLine:1, startColumn:1, endLine:1, endColumn:1}` via distinct table rows
-- [ ] `artifactLocation.uri` remains `f.File` unmodified in fallback cases (fallback affects only `region`, never `artifactLocation`)
-- [ ] `region` is never omitted, `nil`, or partially populated for `Line<=0` findings — all four fields explicitly asserted
-- [ ] Golden fixture (`report.sarif.json`) includes at least one `Line<=0` finding exercising this fallback end-to-end, if the fixture exists per Story 1's scope
+- [x] `Line == 0` and `Line < 0` both independently verified to produce `region: {startLine:1, startColumn:1, endLine:1, endColumn:1}` via distinct table rows
+- [x] `artifactLocation.uri` remains `f.File` unmodified in fallback cases (fallback affects only `region`, never `artifactLocation`)
+- [x] `region` is never omitted, `nil`, or partially populated for `Line<=0` findings — all four fields explicitly asserted
+- [x] Golden fixture (`report.sarif.json`) includes at least one `Line<=0` finding exercising this fallback end-to-end, if the fixture exists per Story 1's scope
 
 **Manual Review:**
 - [ ] Code reviewed and approved

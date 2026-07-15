@@ -86,15 +86,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/report/...`)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/report/...`)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `renderSarif` output has `$schema`, `version: "2.1.0"`, non-empty `runs[]`, `runs[0].tool.driver.name == "atcr"` for both empty and non-empty findings
-- [ ] `runs[0].results` serializes as `[]` (never `null`) when findings is nil/empty
-- [ ] `TestRender_GoldenFiles` passes for the new `"sarif"` case against `testdata/report.sarif.json`
-- [ ] Repeated calls with identical input produce byte-identical output (determinism)
+- [x] `renderSarif` output has `$schema`, `version: "2.1.0"`, non-empty `runs[]`, `runs[0].tool.driver.name == "atcr"` for both empty and non-empty findings
+- [x] `runs[0].results` serializes as `[]` (never `null`) when findings is nil/empty
+- [x] `TestRender_GoldenFiles` passes for the new `"sarif"` case against `testdata/report.sarif.json`
+- [x] Repeated calls with identical input produce byte-identical output (determinism)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

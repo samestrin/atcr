@@ -107,15 +107,15 @@ This function has no HTTP surface and cannot error in the Go `error`-return sens
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/report/...`)
-- [ ] No linting errors (`golangci-lint` / project lint target)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/report/...`)
+- [x] No linting errors (`golangci-lint` / project lint target)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `sarifLevel(severity string) string` exists in `internal/report/sarif.go` and is the only severity-comparison site in that file (verified by code inspection — no second CRITICAL/HIGH/MEDIUM/LOW string-comparison chain)
-- [ ] `sarifLevel` calls `reclib.NormalizeSeverity` before any comparison and derives its branches from `reclib.SeverityRank`, never a locally redefined map
-- [ ] Table-driven tests in `internal/report/sarif_test.go` cover all four canonical severities plus at least one unrecognized/empty-string edge case, using `t.Run` subtests
-- [ ] Every possible input maps to exactly one of `"error"` / `"warning"` / `"note"` — confirmed by an edge-case test asserting no `"none"` and no empty-string return
+- [x] `sarifLevel(severity string) string` exists in `internal/report/sarif.go` and is the only severity-comparison site in that file (verified by code inspection — no second CRITICAL/HIGH/MEDIUM/LOW string-comparison chain)
+- [x] `sarifLevel` calls `reclib.NormalizeSeverity` before any comparison and derives its branches from `reclib.SeverityRank`, never a locally redefined map
+- [x] Table-driven tests in `internal/report/sarif_test.go` cover all four canonical severities plus at least one unrecognized/empty-string edge case, using `t.Run` subtests
+- [x] Every possible input maps to exactly one of `"error"` / `"warning"` / `"note"` — confirmed by an edge-case test asserting no `"none"` and no empty-string return
 
 **Manual Review:**
 - [ ] Code reviewed and approved
