@@ -99,11 +99,18 @@ type sarifRegion struct {
 // A single pass builds results[]; sarifRules does a second single pass for the
 // deduped rule catalog — both O(n), no quadratic scan.
 func renderSarif(w io.Writer, findings []reconcile.JSONFinding) error {
+	return renderSarifWithDiag(w, findings, os.Stderr)
+}
+
+// renderSarifWithDiag is the testable core of renderSarif. The diag sink is
+// passed as a parameter so callers (including concurrent renderers and tests)
+// do not share a mutable package-level sink.
+func renderSarifWithDiag(w io.Writer, findings []reconcile.JSONFinding, diag io.Writer) error {
 	results := make([]sarifResult, 0, len(findings))
 	for _, f := range findings {
 		results = append(results, sarifResult{
 			RuleID:    sarifRuleID(f.Category),
-			Level:     sarifLevel(f.Severity),
+			Level:     sarifLevel(f.Severity, diag),
 			Message:   sarifText{Text: sarifMessageText(f)},
 			Locations: []sarifLocationObj{sarifLocation(f)},
 		})
@@ -181,7 +188,7 @@ func sarifRuleID(category string) string {
 // "none" (which GitHub Code Scanning does not display) and never empty. A
 // non-empty token that still ranks 0 is treated as upstream corruption and
 // emits a diagnostic to sarifDiag (see below); the level stays "warning".
-func sarifLevel(severity string) string {
+func sarifLevel(severity string, diag io.Writer) string {
 	rank := reclib.SeverityRank[reclib.NormalizeSeverity(severity)]
 	switch {
 	case rank >= reclib.SeverityRank[reclib.SevHigh]:
@@ -198,16 +205,11 @@ func sarifLevel(severity string) string {
 		// corruption rather than downgrading it invisibly. Per AC 02-01 the
 		// returned level stays "warning" in both cases.
 		if strings.TrimSpace(severity) != "" {
-			_, _ = fmt.Fprintf(sarifDiag, "atcr: sarif: unrecognized severity %q; defaulting to \"warning\"\n", severity)
+			_, _ = fmt.Fprintf(diag, "atcr: sarif: unrecognized severity %q; defaulting to \"warning\"\n", severity)
 		}
 		return "warning"
 	}
 }
-
-// sarifDiag is the sink for sarifLevel's unrecognized-severity diagnostic. It
-// defaults to os.Stderr and is a package var solely so tests can capture the
-// diagnostic; no production code reassigns it.
-var sarifDiag io.Writer = os.Stderr
 
 // sarifLocation builds a SARIF physical location for a finding. artifactLocation.uri
 // is f.File verbatim (already repo-root-relative by the time it reaches the report

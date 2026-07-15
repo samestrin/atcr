@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,7 +266,7 @@ func TestSarifLevel(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := sarifLevel(tc.severity)
+			got := sarifLevel(tc.severity, io.Discard)
 			assert.Equal(t, tc.want, got)
 			// Edge Case 5: only the three GitHub-supported levels are ever returned.
 			assert.Contains(t, []string{"error", "warning", "note"}, got)
@@ -281,39 +282,30 @@ func TestSarifLevel(t *testing.T) {
 // findings.json) is surfaced rather than silently downgraded. An empty token is
 // empty-by-design and must stay silent; a recognized token must stay silent.
 func TestSarifLevel_UnrecognizedDiagnostic(t *testing.T) {
-	withSink := func(t *testing.T) *bytes.Buffer {
-		t.Helper()
-		var buf bytes.Buffer
-		orig := sarifDiag
-		sarifDiag = &buf
-		t.Cleanup(func() { sarifDiag = orig })
-		return &buf
-	}
-
 	t.Run("non-empty garbage emits diagnostic, stays warning", func(t *testing.T) {
-		buf := withSink(t)
-		got := sarifLevel("hihg")
+		var buf bytes.Buffer
+		got := sarifLevel("hihg", &buf)
 		assert.Equal(t, "warning", got, "AC 02-01: unrecognized token still falls back to warning")
 		assert.Contains(t, buf.String(), "hihg", "diagnostic must name the offending token")
 	})
 
 	t.Run("empty severity stays silent", func(t *testing.T) {
-		buf := withSink(t)
-		got := sarifLevel("")
+		var buf bytes.Buffer
+		got := sarifLevel("", &buf)
 		assert.Equal(t, "warning", got)
 		assert.Empty(t, buf.String(), "empty is empty-by-design — no diagnostic")
 	})
 
 	t.Run("whitespace-only severity stays silent", func(t *testing.T) {
-		buf := withSink(t)
-		got := sarifLevel("  \t\n")
+		var buf bytes.Buffer
+		got := sarifLevel("  \t\n", &buf)
 		assert.Equal(t, "warning", got)
 		assert.Empty(t, buf.String(), "blank token is empty-by-design — no diagnostic")
 	})
 
 	t.Run("recognized severity stays silent", func(t *testing.T) {
-		buf := withSink(t)
-		assert.Equal(t, "error", sarifLevel("HIGH"))
+		var buf bytes.Buffer
+		assert.Equal(t, "error", sarifLevel("HIGH", &buf))
 		assert.Empty(t, buf.String(), "recognized token is not corruption — no diagnostic")
 	})
 }
@@ -325,29 +317,15 @@ func TestSarif_RenderConcurrent(t *testing.T) {
 	findings := append(sample(), reconcile.JSONFinding{
 		Severity: "weird", File: "z.go", Line: 1, Problem: "p", Category: "misc",
 	})
-	done := make(chan struct{})
-	defer close(done)
-
-	var a, b bytes.Buffer
-	go func() {
-		for {
-			select {
-			case <-done:
-				return
-			default:
-				sarifDiag = &a
-				sarifDiag = &b
-			}
-		}
-	}()
 
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			var buf strings.Builder
-			require.NoError(t, renderSarif(&buf, findings))
+			var diag, buf strings.Builder
+			require.NoError(t, renderSarifWithDiag(&buf, findings, &diag))
+			assert.Contains(t, diag.String(), "weird")
 		}()
 	}
 	wg.Wait()
