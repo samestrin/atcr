@@ -360,6 +360,7 @@ func TestSarif_SchemaConformance(t *testing.T) {
 		"nil":         nil,
 		"file-level":  {{Severity: "MEDIUM", File: "x.go", Line: 0, Problem: "p", Category: "c"}},
 		"empty-cat":   {{Severity: "LOW", File: "y.go", Line: 3, Problem: "p", Category: ""}},
+		"empty-file":  {{Severity: "LOW", File: "", Line: 5, Problem: "p", Category: "c"}},
 	}
 	for name, findings := range cases {
 		t.Run(name, func(t *testing.T) {
