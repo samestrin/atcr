@@ -366,9 +366,13 @@ func TestCommunityIndex_Registration(t *testing.T) {
 			require.Equalf(t, ym.Model, e.Model, "model drift for %q", p.Slug)
 			require.Equalf(t, ym.Description, e.Description, "description drift for %q", p.Slug)
 			require.NotEmptyf(t, e.Model, "index model must be non-empty for %q", p.Slug)
-			// Pin the routing key: every community persona routes through openrouter,
-			// never a vendor-named provider (LOCKED Q3 / Phase 5 clarifications).
-			require.Equalf(t, "openrouter", e.Provider, "index provider must be the openrouter routing key for %q", p.Slug)
+			// Pin the routing key to the sanctioned allowlist: a community persona routes
+			// through openrouter (the cloud pool) OR local (a zero-egress endpoint —
+			// ollama/llama.cpp/vllm, Epic 27.0), never an arbitrary vendor-named provider.
+			// Discovery still keys on the model, never the provider (the original Q3 /
+			// Phase 5 invariant); the allowlist merely admits the local routing key.
+			require.Containsf(t, []string{"openrouter", "local"}, e.Provider,
+				"index provider must be a sanctioned routing key (openrouter|local) for %q", p.Slug)
 
 			// Grouping key: the vendor token lives in model, never provider.
 			require.Containsf(t, strings.ToLower(e.Model), p.VendorToken,
