@@ -310,6 +310,25 @@ func TestSarifLevel_UnrecognizedDiagnostic(t *testing.T) {
 	})
 }
 
+// TD-0051 (2026-07-14): the unrecognized-severity diagnostic must be de-duplicated
+// per render call. A batch of findings sharing one corrupt severity token should
+// emit exactly one diagnostic line for that token, not one per finding; two
+// *distinct* corrupt tokens still each emit once.
+func TestSarif_RenderDedupsDiagnostic(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "hihg", File: "a.go", Line: 1, Problem: "p", Category: "c"},
+		{Severity: "hihg", File: "b.go", Line: 2, Problem: "p", Category: "c"},
+		{Severity: "hihg", File: "c.go", Line: 3, Problem: "p", Category: "c"},
+		{Severity: "wrng", File: "d.go", Line: 4, Problem: "p", Category: "c"},
+	}
+	var diag, buf strings.Builder
+	require.NoError(t, renderSarifWithDiag(&buf, findings, &diag))
+	assert.Equal(t, 1, strings.Count(diag.String(), "hihg"),
+		"each distinct corrupt token diagnosed exactly once per render")
+	assert.Equal(t, 1, strings.Count(diag.String(), "wrng"),
+		"a second distinct corrupt token still emits its own single diagnostic")
+}
+
 // TestSarif_RenderConcurrent exercises the render path concurrently with a
 // goroutine that swaps the diagnostic sink. Before the sink was threaded through
 // parameters this produced a data race on the package-level sarifDiag variable.
