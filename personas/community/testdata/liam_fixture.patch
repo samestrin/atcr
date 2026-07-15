@@ -1,0 +1,12 @@
+diff --git a/internal/ledger/balance.go b/internal/ledger/balance.go
+index 5555555..6666666 100644
+--- a/internal/ledger/balance.go
++++ b/internal/ledger/balance.go
+@@ -48,6 +48,11 @@ package ledger
+
++// Withdraw breaks the invariant balance == available + pending: it debits balance
++// but never adjusts pending, so the reconciler observes an inconsistent state.
++func (a *Account) Withdraw(amt int64) {
++	a.balance -= amt // postcondition violated: pending-total invariant no longer holds
++}
++

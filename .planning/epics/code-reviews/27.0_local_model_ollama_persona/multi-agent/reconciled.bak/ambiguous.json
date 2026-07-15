@@ -1,0 +1,98 @@
+[
+  {
+    "id": "amb-cf33967931f0a1b7789cd17254462bcd",
+    "file": "personas/community/gerald.md",
+    "line": 45,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "personas/community/gerald.md",
+        "Line": 45,
+        "Problem": "Example evidence uses / as string delimiters, colliding with the / escape rule for literal ",
+        "Fix": " characters",
+        "Category": "change the example to use standard quotes or escape the delimiter consistently",
+        "EstMinutes": 0,
+        "Evidence": "10/apiKey := /sk-live-EXAMPLE-not-a-real-key/ uses / as quotes, but rules say replace / with / — creates ambiguity for parsers or LLMs",
+        "Reviewer": "brad",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-e0cb6619131617546e16688998e084db",
+    "file": "docs/personas-install.md",
+    "line": 312,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "docs/personas-install.md",
+        "Line": 312,
+        "Problem": "`gerald` is listed as `local/gemma3-27b` in the table but the prompt refers to \"Gemma dense model\"",
+        "Fix": "Consistency: use the same terminology (e.g. \"Gemma 3 27B\") in both the table and the persona prompt",
+        "Category": "style",
+        "EstMinutes": 5,
+        "Evidence": "Table uses bound model slug while prompt uses generic name",
+        "Reviewer": "otto",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-cc1658b7239e969afebe6ebd89961d6f",
+    "file": "docs/personas-install.md",
+    "line": 315,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "docs/personas-install.md",
+        "Line": 315,
+        "Problem": "Placeholder api_key_env value assumes local server ignores auth headers, but vLLM/llama.cpp with auth enabled will 401 on dummy keys",
+        "Fix": "Clarify that auth must be disabled locally or provide a valid local token",
+        "Category": "documentation",
+        "EstMinutes": 15,
+        "Evidence": "export OLLAMA_API_KEY=local-no-key-needed fails if local endpoint enforces header validation",
+        "Reviewer": "brad",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-3a4672ef486c8902cd03417c2c0aff60",
+    "file": "personas/community_test.go",
+    "line": 274,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "personas/community_test.go",
+        "Line": 274,
+        "Problem": "Comment says \"C(10,2)=45 pairs\" but communityPersonas now has 13 entries; C(13,2)=78",
+        "Fix": "Update comment to C(13,2)=78",
+        "Category": "correctness",
+        "EstMinutes": 5,
+        "Evidence": "C(10,2)=45 pairs",
+        "Reviewer": "bruce",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  }
+]

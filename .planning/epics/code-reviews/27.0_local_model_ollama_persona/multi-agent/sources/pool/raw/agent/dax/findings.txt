@@ -1,0 +1,2 @@
+# atcr-findings/v1
+MEDIUM|personas/community_test.go:371|The test relaxes the provider constraint to allow "local" but does not verify that local-provider personas use the "local/" model prefix required by the drift exemption in internal/personas/drift.go|Add a check that if provider is "local", model must have prefix "local/" to ensure consistency|testing|10|require.Containsf(t, []string{"openrouter", "local"}, e.Provider, ...) without a corresponding model prefix check|dax

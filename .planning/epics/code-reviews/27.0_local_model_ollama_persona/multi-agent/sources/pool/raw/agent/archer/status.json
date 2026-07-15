@@ -1,0 +1,21 @@
+{
+  "agent": "archer",
+  "status": "ok",
+  "findings_count": 0,
+  "duration_ms": 33139,
+  "payload_mode": "blocks",
+  "truncated": true,
+  "files_dropped": [
+    ".planning/technical-debt/README.md"
+  ],
+  "response_truncated": true,
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0,
+  "model": "glm-5.2",
+  "tokens_in": 20006,
+  "tokens_out": 8192,
+  "effective_budget": 71680,
+  "resolved_window": 32768,
+  "reserved_output_tokens": 8192,
+  "degradation_action": "truncate"
+}

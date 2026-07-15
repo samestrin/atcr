@@ -178,3 +178,17 @@
 {"ts":"2026-07-15T05:29:24.220478-07:00","package":"internal/payload","severity":"MEDIUM","id":"4bf9ef9812ff6fb1","file":"internal/payload/ignore.go","category":"security"}
 {"ts":"2026-07-15T05:29:24.220478-07:00","package":"internal/payload","severity":"LOW","id":"2a822c86f8af0b0c","file":"internal/payload/ignore.go","category":"style"}
 {"ts":"2026-07-15T05:29:24.220478-07:00","package":"internal/payload","severity":"LOW","id":"afcb2bc55bf6dc9f","file":"internal/payload/diff.go","category":"style"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"personas","severity":"LOW","id":"87d157a7d1932601","file":"personas/community_test.go","category":"correctness"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"internal/personas","severity":"CRITICAL","id":"80f2fce69e01f155","file":"internal/personas/drift.go","category":"observability"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"docs","severity":"HIGH","id":"afeaa994fcc638a1","file":"docs/personas-install.md","category":"failure-handling"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"docs","severity":"HIGH","id":"bba641c76c3e499f","file":"docs/personas-install.md","category":"configuration"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"docs","severity":"HIGH","id":"d071e1585a847b42","file":"docs/personas-install.md","category":"failure-handling"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"personas/community/testdata","severity":"HIGH","id":"0e733d881aef6fe0","file":"personas/community/testdata/gerald_fixture.patch","category":"operational"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"personas","severity":"MEDIUM","id":"1172ac12a708459d","file":"personas/community_test.go","category":"configuration"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"internal/personas","severity":"MEDIUM","id":"2b3dfe03b5699f5d","file":"internal/personas/drift.go","category":"configuration"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"personas","severity":"MEDIUM","id":"5ebcb5f9bdb11e78","file":"personas/community_test.go","category":"operational"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"personas","severity":"MEDIUM","id":"71de4908cbd3fede","file":"personas/community_test.go","category":"testing"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"personas/community","severity":"MEDIUM","id":"79d646862ddc663f","file":"personas/community/gerald.md","category":"Change the example to use standard quotes or escape the delimiter consistently"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"docs","severity":"LOW","id":"4df6bca118d88abe","file":"docs/personas-install.md","category":"documentation"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"internal/personas","severity":"MEDIUM","id":"673e71223096eb01","file":"internal/personas/drift.go","category":"reliability"}
+{"ts":"2026-07-15T12:26:44.957246-07:00","package":"docs","severity":"LOW","id":"3b8568c535a3bbb9","file":"docs/personas-install.md","category":"style"}

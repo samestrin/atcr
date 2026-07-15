@@ -1,9 +1,9 @@
 {
-  "skill": "finalize-td",
-  "args": "",
-  "invocation": "/finalize-td",
+  "skill": "execute-code-review",
+  "args": "@.planning/epics/completed/27.0_local_model_ollama_persona.md --multi-agent",
+  "invocation": "/execute-code-review @.planning/epics/completed/27.0_local_model_ollama_persona.md --multi-agent",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "4ffafc8a-5e12-4a78-8e42-4b36d601be65",
-  "timestamp": "2026-07-15T04:34:02.631Z"
+  "session_id": "1df63aa4-7336-40ec-b40d-e09b18662262",
+  "timestamp": "2026-07-15T19:26:12.788Z"
 }

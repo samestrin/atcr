@@ -1,0 +1,164 @@
+[
+  {
+    "severity": "CRITICAL",
+    "file": "internal/personas/drift.go",
+    "line": 118,
+    "problem": "(CheckDrift) Drift exemption unconditionally skips `local/\u003cmodel\u003e` slugs so `atcr models check` returns green even when Ollama/llama.cpp is down, the model was never pulled, or `base_url` is unreachable — a broken local setup looks healthy until the runtime request fails",
+    "fix": "Probe the configured local `base_url` (and optionally `GET /api/tags`) before treating a `local/\u003cmodel\u003e` lock as drift-clean; emit a distinct `local-unreachable` or `local-model-missing` finding so the user gets a signal",
+    "category": "observability",
+    "est_minutes": 45,
+    "evidence": "if isLocalProviderSlug(slug) { continue }",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "justification": "CRITICAL|internal/personas/drift.go:118|Drift exemption unconditionally skips `local/\u003cmodel\u003e` slugs so `atcr models check` returns green even when Ollama/llama.cpp is down, the model was never pulled, or `base_url` is unreachable — a broken local setup looks healthy until the runtime request fails|Probe the configured local `base_url` (and optionally `GET /api/tags`) before treating a `local/\u003cmodel\u003e` lock as drift-clean; emit a distinct `local-unreachable` or `local-model-missing` finding so the user gets a signal|observability|45|if isLocalProviderSlug(slug) { continue }\nHIGH|docs/personas-install.md:325|Docs give no timeout guidance for local personas — a 70B Llama on consumer hardware routinely takes 30–120s per completion; if the LLM client has a cloud-tuned default timeout (common in OpenAI/Anthropic SDKs) every local review aborts mid-stream|Document the expected per-tier latency and surface a configurable per-provider timeout for `local`, or warn users to raise it before first i…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/mira/review.md",
+      "line": 3
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "docs/personas-install.md",
+    "line": 309,
+    "problem": "liam persona binds `local/llama3.3-70b` for a \"64 GB+ heavyweight\" tier but docs give no pre-flight VRAM/RAM check — attempting on insufficient hardware will OOM-kill the Ollama server mid-review and abort the whole panel with no per-persona isolation",
+    "fix": "Add a clear minimum-RAM callout AND wrap the local provider call in a per-request timeout/cancel that surfaces an actionable error (not a generic 500) when the upstream dies",
+    "category": "failure-handling",
+    "est_minutes": 25,
+    "evidence": "llama3.3-70b 64GB+ heavyweight (dual-GPU / M4 Pro)",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "justification": "CRITICAL|internal/personas/drift.go:118|Drift exemption unconditionally skips `local/\u003cmodel\u003e` slugs so `atcr models check` returns green even when Ollama/llama.cpp is down, the model was never pulled, or `base_url` is unreachable — a broken local setup looks healthy until the runtime request fails|Probe the configured local `base_url` (and optionally `GET /api/tags`) before treating a `local/\u003cmodel\u003e` lock as drift-clean; emit a distinct `local-unreachable` or `local-model-missing` finding so the user gets a signal|observability|45|if isLocalProviderSlug(slug) { continue }\nHIGH|docs/personas-install.md:325|Docs give no timeout guidance for local personas — a 70B Llama on consumer hardware routinely takes 30–120s per completion; if the LLM client has a cloud-tuned default timeout (common in OpenAI/Anthropic SDKs) every local review aborts mid-stream|Document the expected per-tier latency and surface a configurable per-provider timeout for `local`, or warn users to raise it before first i…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/mira/review.md",
+      "line": 6
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "docs/personas-install.md",
+    "line": 325,
+    "problem": "Docs give no timeout guidance for local personas — a 70B Llama on consumer hardware routinely takes 30–120s per completion; if the LLM client has a cloud-tuned default timeout (common in OpenAI/Anthropic SDKs) every local review aborts mid-stream",
+    "fix": "Document the expected per-tier latency and surface a configurable per-provider timeout for `local`, or warn users to raise it before first invoke",
+    "category": "failure-handling",
+    "est_minutes": 30,
+    "evidence": "ollama pull llama3.3:70b # liam (64 GB+ heavyweight)",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "justification": "CRITICAL|internal/personas/drift.go:118|Drift exemption unconditionally skips `local/\u003cmodel\u003e` slugs so `atcr models check` returns green even when Ollama/llama.cpp is down, the model was never pulled, or `base_url` is unreachable — a broken local setup looks healthy until the runtime request fails|Probe the configured local `base_url` (and optionally `GET /api/tags`) before treating a `local/\u003cmodel\u003e` lock as drift-clean; emit a distinct `local-unreachable` or `local-model-missing` finding so the user gets a signal|observability|45|if isLocalProviderSlug(slug) { continue }\nHIGH|docs/personas-install.md:325|Docs give no timeout guidance for local personas — a 70B Llama on consumer hardware routinely takes 30–120s per completion; if the LLM client has a cloud-tuned default timeout (common in OpenAI/Anthropic SDKs) every local review aborts mid-stream|Document the expected per-tier latency and surface a configurable per-provider timeout for `local`, or warn users to raise it before first i…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/mira/review.md",
+      "line": 4
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "docs/personas-install.md",
+    "line": 329,
+    "problem": "Model-id footgun — persona binds `local/gemma3-27b` but Ollama rejects that string (it answers to `gemma3:27b` or `gemma3-27b`); the docs explain the rewrite but a direct copy-paste of the persona `model` field into `registry.yaml` will 404 at runtime with no clear remediation",
+    "fix": "Validate the local-prefixed discovery id at persona load (strip `local/` and verify the tail against the server's model list) OR publish a side-by-side discovery-id↔server-tag table so the wire step is unambiguous",
+    "category": "configuration",
+    "est_minutes": 30,
+    "evidence": "model: gemma3:27b # the tag you pulled with `ollama pull`",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "justification": "CRITICAL|internal/personas/drift.go:118|Drift exemption unconditionally skips `local/\u003cmodel\u003e` slugs so `atcr models check` returns green even when Ollama/llama.cpp is down, the model was never pulled, or `base_url` is unreachable — a broken local setup looks healthy until the runtime request fails|Probe the configured local `base_url` (and optionally `GET /api/tags`) before treating a `local/\u003cmodel\u003e` lock as drift-clean; emit a distinct `local-unreachable` or `local-model-missing` finding so the user gets a signal|observability|45|if isLocalProviderSlug(slug) { continue }\nHIGH|docs/personas-install.md:325|Docs give no timeout guidance for local personas — a 70B Llama on consumer hardware routinely takes 30–120s per completion; if the LLM client has a cloud-tuned default timeout (common in OpenAI/Anthropic SDKs) every local review aborts mid-stream|Document the expected per-tier latency and surface a configurable per-provider timeout for `local`, or warn users to raise it before first i…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/mira/review.md",
+      "line": 5
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "personas/community/testdata/gerald_fixture.patch",
+    "line": 7,
+    "problem": "Fixture embeds the literal `sk-live-EXAMPLE-not-a-real-key` — the `sk-live-` prefix matches Stripe live-key patterns and the string ships in the binary via `//go:embed`; CI secret scanners (TruffleHog/Gitleaks rule sets that prefix-match) can intermittently fail the build or flag a committed test artifact as a real leak",
+    "fix": "Use an unambiguous synthetic marker that no scanner would prefix-match (e.g., `EXAMPLE-stripe-shape-only-not-a-key-`) and pin the prefix in a comment so reviewers know it is intentional",
+    "category": "operational",
+    "est_minutes": 15,
+    "evidence": "const apiSecret = \"sk-live-EXAMPLE-not-a-real-key\"",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "justification": "CRITICAL|internal/personas/drift.go:118|Drift exemption unconditionally skips `local/\u003cmodel\u003e` slugs so `atcr models check` returns green even when Ollama/llama.cpp is down, the model was never pulled, or `base_url` is unreachable — a broken local setup looks healthy until the runtime request fails|Probe the configured local `base_url` (and optionally `GET /api/tags`) before treating a `local/\u003cmodel\u003e` lock as drift-clean; emit a distinct `local-unreachable` or `local-model-missing` finding so the user gets a signal|observability|45|if isLocalProviderSlug(slug) { continue }\nHIGH|docs/personas-install.md:325|Docs give no timeout guidance for local personas — a 70B Llama on consumer hardware routinely takes 30–120s per completion; if the LLM client has a cloud-tuned default timeout (common in OpenAI/Anthropic SDKs) every local review aborts mid-stream|Document the expected per-tier latency and surface a configurable per-provider timeout for `local`, or warn users to raise it before first i…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/mira/review.md",
+      "line": 7
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/personas/drift.go",
+    "line": 71,
+    "problem": "Prefix-match exemption `strings.HasPrefix(slug, \"local/\")` is unanchored beyond the slash — a future catalog slug like `local/foo` from any vendor would be silently swallowed; reasonable today but the exemption will not warn when the catalog ever grows such an id",
+    "fix": "Switch to a set of known local model identifiers (or require the prefix to be the entire first path segment with no further `/`) rather than a bare prefix check",
+    "category": "configuration",
+    "est_minutes": 15,
+    "evidence": "[mira] return strings.HasPrefix(slug, localProviderSlugPrefix) / [brad] isLocalProviderSlug uses strings.HasPrefix(slug, \"local/\") without case normalization",
+    "reviewers": [
+      "brad",
+      "mira"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "justification": "CRITICAL|internal/personas/drift.go:118|Drift exemption unconditionally skips `local/\u003cmodel\u003e` slugs so `atcr models check` returns green even when Ollama/llama.cpp is down, the model was never pulled, or `base_url` is unreachable — a broken local setup looks healthy until the runtime request fails|Probe the configured local `base_url` (and optionally `GET /api/tags`) before treating a `local/\u003cmodel\u003e` lock as drift-clean; emit a distinct `local-unreachable` or `local-model-missing` finding so the user gets a signal|observability|45|if isLocalProviderSlug(slug) { continue }\nHIGH|docs/personas-install.md:325|Docs give no timeout guidance for local personas — a 70B Llama on consumer hardware routinely takes 30–120s per completion; if the LLM client has a cloud-tuned default timeout (common in OpenAI/Anthropic SDKs) every local review aborts mid-stream|Document the expected per-tier latency and surface a configurable per-provider timeout for `local`, or warn users to raise it before first i…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/mira/review.md",
+      "line": 9
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "personas/community_test.go",
+    "line": 126,
+    "problem": "New roster entries use `Tier: \"local\"` — if any downstream code switches on tier (selection logic, UI grouping, install defaults) it may have an unhandled case and silently demote or skip these personas",
+    "fix": "Audit tier switch sites and add an explicit `\"local\"` arm or a default branch that maps unknown tiers to a safe fallback",
+    "category": "operational",
+    "est_minutes": 30,
+    "evidence": "{Slug: \"gerald\", VendorToken: \"gemma\", Tier: \"local\", Category: \"secret\"}",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "justification": "CRITICAL|internal/personas/drift.go:118|Drift exemption unconditionally skips `local/\u003cmodel\u003e` slugs so `atcr models check` returns green even when Ollama/llama.cpp is down, the model was never pulled, or `base_url` is unreachable — a broken local setup looks healthy until the runtime request fails|Probe the configured local `base_url` (and optionally `GET /api/tags`) before treating a `local/\u003cmodel\u003e` lock as drift-clean; emit a distinct `local-unreachable` or `local-model-missing` finding so the user gets a signal|observability|45|if isLocalProviderSlug(slug) { continue }\nHIGH|docs/personas-install.md:325|Docs give no timeout guidance for local personas — a 70B Llama on consumer hardware routinely takes 30–120s per completion; if the LLM client has a cloud-tuned default timeout (common in OpenAI/Anthropic SDKs) every local review aborts mid-stream|Document the expected per-tier latency and surface a configurable per-provider timeout for `local`, or warn users to raise it before first i…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/mira/review.md",
+      "line": 10
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "personas/community_test.go",
+    "line": 371,
+    "problem": "(TestCommunityIndex_Registration) Locked `provider == \"openrouter\"` assertion is relaxed to an allowlist literal `{openrouter, local}` — any future sanctioned provider addition must touch this test plus the same literal; compile-time guarantee over routing keys is now weaker than for the rest of the persona contract",
+    "fix": "Move the allowed-providers set into a package-level `var` referenced by both production routing code and the test so the allowlist has a single source of truth and adding a provider is a one-line change",
+    "category": "configuration",
+    "est_minutes": 20,
+    "evidence": "[dax] require.Containsf(t, []string{\"openrouter\", \"local\"}, e.Provider, ...) without a corresponding model prefix check / [mira] require.Containsf(t, []string{\"openrouter\", \"local\"}, e.Provider",
+    "reviewers": [
+      "dax",
+      "mira"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "justification": "MEDIUM|personas/community_test.go:371|The test relaxes the provider constraint to allow \"local\" but does not verify that local-provider personas use the \"local/\" model prefix required by the drift exemption in internal/personas/drift.go|Add a check that if provider is \"local\", model must have prefix \"local/\" to ensure consistency|testing|10|require.Containsf(t, []string{\"openrouter\", \"local\"}, e.Provider, ...) without a corresponding model prefix check",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 1
+    }
+  }
+]

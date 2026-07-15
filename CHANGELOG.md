@@ -1,3 +1,19 @@
+## [27.0.0] - 2026-07-15
+
+Ship a "zero data egress" persona pack for privacy-conscious teams that refuse to send proprietary code to any external API. Three reviewer personas tuned for a local Ollama/llama.cpp/vLLM endpoint join the community library — the review runs entirely on your own hardware, with no external network calls once your registry points at `localhost`.
+
+### Added
+
+- Three local reviewer personas tuned for hardware tiers: `gerald` (32 GB dense, secrets & data-egress), `orson` (32 GB long-context, duplication & repo-wide redundancy), and `liam` (64 GB+ heavyweight, invariants & state-consistency).
+- `local` as a sanctioned provider routing key for community personas, alongside `openrouter`.
+- A Local / Privacy-First zero-egress setup walkthrough in the persona install docs, including the `api_key_env` placeholder requirement (a non-empty value is required even for a keyless local endpoint).
+
+### Changed
+
+- `atcr models check` no longer reports a `local/<model>` persona slug as drift `missing`; such a slug is resolved by the user's own local endpoint, not the OpenRouter catalog snapshot.
+
+*Shipped via /execute-epic (epic 27.0)*
+
 ## [26.0.0] - 2026-07-14
 
 Stop ATCR from spending LLM tokens (and money) reviewing generated code, vendored dependencies, or massive lockfiles: the review payload now excludes files matched by the repository's `.gitignore` and a new repo-root `.atcrignore`, filtered out before the diff ever reaches the byte-budget pass or a reviewer.
