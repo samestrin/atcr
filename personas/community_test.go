@@ -376,6 +376,16 @@ func TestCommunityIndex_Registration(t *testing.T) {
 			require.Containsf(t, []string{"openrouter", "local"}, e.Provider,
 				"index provider must be a sanctioned routing key (openrouter|local) for %q", p.Slug)
 
+			// Couple the provider:local routing key with the local/ model namespace
+			// so a future local persona cannot silently bypass the missing-model check.
+			if e.Provider == "local" {
+				require.Truef(t, strings.HasPrefix(e.Model, "local/"),
+					"local provider %q must use local/ model prefix, got %q", p.Slug, e.Model)
+			} else {
+				require.Falsef(t, strings.HasPrefix(e.Model, "local/"),
+					"non-local provider %q must not use local/ model prefix, got %q", p.Slug, e.Model)
+			}
+
 			// Grouping key: the vendor token lives in model, never provider.
 			require.Containsf(t, strings.ToLower(e.Model), p.VendorToken,
 				"model %q must carry vendor token %q", e.Model, p.VendorToken)
