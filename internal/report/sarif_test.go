@@ -5,6 +5,7 @@
 package report
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -270,6 +271,49 @@ func TestSarifLevel(t *testing.T) {
 			assert.NotEmpty(t, got)
 		})
 	}
+}
+
+// AC 02-01 (TD follow-up): an unrecognized *non-empty* severity still maps to
+// "warning" (AC 02-01 mandates the fallback), but must now emit a diagnostic so
+// upstream data corruption (a typo'd or externally-corrupted severity token in
+// findings.json) is surfaced rather than silently downgraded. An empty token is
+// empty-by-design and must stay silent; a recognized token must stay silent.
+func TestSarifLevel_UnrecognizedDiagnostic(t *testing.T) {
+	withSink := func(t *testing.T) *bytes.Buffer {
+		t.Helper()
+		var buf bytes.Buffer
+		orig := sarifDiag
+		sarifDiag = &buf
+		t.Cleanup(func() { sarifDiag = orig })
+		return &buf
+	}
+
+	t.Run("non-empty garbage emits diagnostic, stays warning", func(t *testing.T) {
+		buf := withSink(t)
+		got := sarifLevel("hihg")
+		assert.Equal(t, "warning", got, "AC 02-01: unrecognized token still falls back to warning")
+		assert.Contains(t, buf.String(), "hihg", "diagnostic must name the offending token")
+	})
+
+	t.Run("empty severity stays silent", func(t *testing.T) {
+		buf := withSink(t)
+		got := sarifLevel("")
+		assert.Equal(t, "warning", got)
+		assert.Empty(t, buf.String(), "empty is empty-by-design — no diagnostic")
+	})
+
+	t.Run("whitespace-only severity stays silent", func(t *testing.T) {
+		buf := withSink(t)
+		got := sarifLevel("  \t\n")
+		assert.Equal(t, "warning", got)
+		assert.Empty(t, buf.String(), "blank token is empty-by-design — no diagnostic")
+	})
+
+	t.Run("recognized severity stays silent", func(t *testing.T) {
+		buf := withSink(t)
+		assert.Equal(t, "error", sarifLevel("HIGH"))
+		assert.Empty(t, buf.String(), "recognized token is not corruption — no diagnostic")
+	})
 }
 
 // Scenario 5: renderSarif populates every result.level via sarifLevel — no other

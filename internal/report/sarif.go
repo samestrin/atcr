@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	reclib "github.com/samestrin/atcr/reconcile"
@@ -166,7 +167,9 @@ func sarifMessageText(f reconcile.JSONFinding) string {
 // silently desync this mapping (the TD-0052 failure mode). CRITICAL/HIGH → error,
 // MEDIUM → warning, LOW → note; any unrecognized or empty token (rank 0) falls
 // back to "warning". The return is always one of error/warning/note — never
-// "none" (which GitHub Code Scanning does not display) and never empty.
+// "none" (which GitHub Code Scanning does not display) and never empty. A
+// non-empty token that still ranks 0 is treated as upstream corruption and
+// emits a diagnostic to sarifDiag (see below); the level stays "warning".
 func sarifLevel(severity string) string {
 	rank := reclib.SeverityRank[reclib.NormalizeSeverity(severity)]
 	switch {
@@ -177,9 +180,23 @@ func sarifLevel(severity string) string {
 	case rank == reclib.SeverityRank[reclib.SevLow]:
 		return "note"
 	default:
+		// Rank 0 splits two ways: an empty/blank token is empty-by-design (a
+		// finding with no severity) and stays silent; a non-empty token that
+		// still ranked 0 is unrecognized garbage — a typo'd or externally
+		// corrupted findings.json value — so emit a diagnostic to surface the
+		// corruption rather than downgrading it invisibly. Per AC 02-01 the
+		// returned level stays "warning" in both cases.
+		if strings.TrimSpace(severity) != "" {
+			fmt.Fprintf(sarifDiag, "atcr: sarif: unrecognized severity %q; defaulting to \"warning\"\n", severity)
+		}
 		return "warning"
 	}
 }
+
+// sarifDiag is the sink for sarifLevel's unrecognized-severity diagnostic. It
+// defaults to os.Stderr and is a package var solely so tests can capture the
+// diagnostic; no production code reassigns it.
+var sarifDiag io.Writer = os.Stderr
 
 // sarifLocation builds a SARIF physical location for a finding. artifactLocation.uri
 // is f.File verbatim (already repo-root-relative by the time it reaches the report
