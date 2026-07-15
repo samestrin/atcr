@@ -89,6 +89,12 @@ const localProviderSlugPrefix = "local/"
 // isLocalProviderSlug reports whether slug names a local-endpoint model that no
 // remote catalog can list, so drift comparison against the OpenRouter snapshot
 // does not apply to it.
+//
+// This is an intentional, unenforced convention: CheckDrift only sees the bound
+// Model, not the provider field, so the exemption keys on the model namespace.
+// A caller that wants to enforce provider:local <-> model:local/ coupling must do
+// so before invoking CheckDrift (the community index registration test asserts
+// this coupling for authored personas).
 func isLocalProviderSlug(slug string) bool {
 	return strings.HasPrefix(slug, localProviderSlugPrefix)
 }
