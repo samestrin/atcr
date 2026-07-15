@@ -66,14 +66,16 @@ type rangeState struct {
 	excludeSpec []string
 }
 
-// pathspecArgs returns the trailing `-- . :(exclude)<path>...` args for whole-
-// range diff commands, or nil when nothing was ignored. A positive `.` pathspec
-// is required alongside the exclusions so git scopes them to the whole tree.
+// pathspecArgs returns the trailing `-- :/ :(exclude)<path>...` args for whole-
+// range diff commands, or nil when nothing was ignored. A positive `:/` pathspec
+// is required alongside the exclusions so git scopes them to the whole tree,
+// and it is anchored at the worktree root rather than relative to the current
+// directory (g.dir may be a subdirectory in future caller paths).
 func (s *rangeState) pathspecArgs() []string {
 	if len(s.excludeSpec) == 0 {
 		return nil
 	}
-	return append([]string{"--", "."}, s.excludeSpec...)
+	return append([]string{"--", ":/"}, s.excludeSpec...)
 }
 
 // gitRunner executes git argv against a fixed directory and context. The
