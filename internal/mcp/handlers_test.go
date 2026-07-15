@@ -687,13 +687,10 @@ func TestRangeHandler_InvalidBaseRef(t *testing.T) {
 	assert.Contains(t, msg, "failed to resolve range")
 }
 
-// TestReportHandler_SarifParity verifies the in-process handleReport renders SARIF
-// identically to a direct report.Render(..., FormatSarif) — SARIF reaches MCP
-// callers via the shared Render() path with no MCP-specific code (AC 01-04
-// Scenario 3). Note: the report tool's transport-level format enum
-// (reportInputSchema) is md|json|checklist, so an over-the-wire `sarif` request is
-// rejected before the handler; this parity is exercised in-process, matching the
-// AC's Scenario 3 which invokes handleReport directly.
+// TestReportHandler_SarifParity verifies SARIF reaches MCP callers via the shared
+// Render() path (AC 01-04 Scenario 3), both in-process and over the transport
+// (the report tool's format enum now includes sarif), and that both are
+// byte-identical to a direct report.Render(..., FormatSarif).
 func TestReportHandler_SarifParity(t *testing.T) {
 	isolateUserConfig(t)
 	root := t.TempDir()
@@ -716,4 +713,10 @@ func TestReportHandler_SarifParity(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, report.Render(&buf, findings, report.FormatSarif))
 	assert.Equal(t, buf.String(), res.Content)
+
+	// Transport parity: an over-the-wire sarif request is now accepted by the
+	// schema enum and yields the same bytes as the in-process handler.
+	wire := callOK[ReportResult](t, cs, ToolReport, map[string]any{"id_or_path": id, "format": "sarif"})
+	assert.Equal(t, report.FormatSarif, wire.Format)
+	assert.Equal(t, res.Content, wire.Content)
 }

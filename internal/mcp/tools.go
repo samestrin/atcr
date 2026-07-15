@@ -94,7 +94,7 @@ type DebateResult struct {
 // constrained to a closed enum by reportInputSchema.
 type ReportArgs struct {
 	IDOrPath string `json:"id_or_path,omitempty" jsonschema:"review id to render (review id only; paths are not accepted); defaults to .atcr/latest"`
-	Format   string `json:"format,omitempty" jsonschema:"output format: md (default), json, or checklist"`
+	Format   string `json:"format,omitempty" jsonschema:"output format: md (default), json, checklist, or sarif"`
 }
 
 // RangeArgs are the atcr_range tool arguments (all optional).
@@ -204,7 +204,7 @@ const (
 		"Runs after atcr_reconcile (and atcr_verify, for verification disagreements). Returns {review_id, selected, upheld, overturned, split, unresolved, overflow, durationMs, gateStatus?}. " +
 		"Optional args: id_or_path (review id only; defaults to the latest review), singleModel, failOn (CRITICAL|HIGH|MEDIUM|LOW), requireVerified."
 	descReport = "Render a view over a review's reconciled findings. " +
-		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), format (md|json|checklist; default md)."
+		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), format (md|json|checklist|sarif; default md)."
 	descRange = "Resolve a git review range without calling any provider. " +
 		"Returns {base, head, commit_count, file_count}. Optional args: base, head, merge_commit (defaults to the current branch vs. the default branch)."
 	descStatus = "Report a review's fan-out progress. " +
@@ -214,7 +214,7 @@ const (
 )
 
 // reportInputSchema builds the atcr_report input schema with the format property
-// constrained to the closed enum md|json|checklist, so an invalid format is
+// constrained to the closed enum md|json|checklist|sarif, so an invalid format is
 // rejected by JSON Schema validation before the handler runs (AC 04-04 Edge
 // Case 2). The handler additionally defends with its own enum check.
 func reportInputSchema() (*jsonschema.Schema, error) {
@@ -227,7 +227,7 @@ func reportInputSchema() (*jsonschema.Schema, error) {
 		return nil, fmt.Errorf("inferring atcr_report schema: %w", err)
 	}
 	if p := s.Properties["format"]; p != nil {
-		p.Enum = []any{report.FormatMarkdown, report.FormatJSON, report.FormatChecklist}
+		p.Enum = []any{report.FormatMarkdown, report.FormatJSON, report.FormatChecklist, report.FormatSarif}
 	}
 	return s, nil
 }

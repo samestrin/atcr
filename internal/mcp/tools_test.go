@@ -66,7 +66,7 @@ func TestToolSchema_ReportFormatEnum(t *testing.T) {
 	require.True(t, ok, "format property must be present")
 	enum, ok := format["enum"].([]any)
 	require.True(t, ok, "format must declare an enum")
-	assert.ElementsMatch(t, []any{"md", "json", "checklist"}, enum)
+	assert.ElementsMatch(t, []any{"md", "json", "checklist", "sarif"}, enum)
 }
 
 // schemaProperties extracts the "properties" object from a tool's input schema
@@ -108,7 +108,7 @@ func TestReportInputSchema_Enum(t *testing.T) {
 	s, err := reportInputSchema()
 	require.NoError(t, err)
 	require.NotNil(t, s.Properties["format"])
-	assert.ElementsMatch(t, []any{"md", "json", "checklist"}, s.Properties["format"].Enum)
+	assert.ElementsMatch(t, []any{"md", "json", "checklist", "sarif"}, s.Properties["format"].Enum)
 }
 
 // TestRegisterTool_NoOpAfterError verifies that once an error is recorded, later
