@@ -126,6 +126,7 @@ var communityPersonas = []communityPersona{
 	{Slug: "quinn", VendorToken: "qwen", Tier: "open", Category: "type"},
 	{Slug: "celeste", VendorToken: "kimi", Tier: "open", Category: "dependency"},
 	{Slug: "glenna", VendorToken: "glm", Tier: "open", Category: "observability"},
+	{Slug: "gerald", VendorToken: "gemma", Tier: "local", Category: "secret"},
 }
 
 const communityDir = "community"

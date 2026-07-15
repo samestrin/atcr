@@ -98,5 +98,15 @@
     "model": "z-ai/glm-5.2",
     "tasks": ["observability-review"],
     "tags": ["observability", "logging", "glm", "open-model"]
+  },
+  {
+    "name": "gerald",
+    "version": "1.0.0",
+    "description": "Gemma secrets and data-egress reviewer (local zero-egress lens)",
+    "path": "gerald.yaml",
+    "provider": "local",
+    "model": "local/gemma3-27b",
+    "tasks": ["secrets-review"],
+    "tags": ["secret", "privacy", "gemma", "local", "tier-32gb-dense"]
   }
 ]

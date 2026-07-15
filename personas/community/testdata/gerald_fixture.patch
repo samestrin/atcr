@@ -1,0 +1,10 @@
+diff --git a/internal/auth/token.go b/internal/auth/token.go
+index 1111111..2222222 100644
+--- a/internal/auth/token.go
++++ b/internal/auth/token.go
+@@ -3,6 +3,10 @@ package auth
+
++// apiSecret is a hardcoded credential embedded directly in source; it ships with
++// the binary and leaks the live key to anyone who can read the build artifact.
++const apiSecret = "sk-live-9f3c2b7e41d84a6f" // secret committed straight into the diff
++
