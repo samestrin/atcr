@@ -456,6 +456,8 @@ func TestReportHandler_InvalidFormatRejected(t *testing.T) {
 	if err == nil {
 		require.True(t, res.IsError, "invalid format must be rejected")
 		assert.Contains(t, contentText(res), "xml")
+	} else {
+		assert.Contains(t, err.Error(), "xml")
 	}
 }
 
