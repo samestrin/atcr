@@ -24,6 +24,8 @@ providers:
 
 Keys are resolved from the environment at invoke time — never stored, never written to disk by atcr.
 
+> **Local endpoints still need an `api_key_env` placeholder.** `api_key_env` is required on every provider, and atcr errors at invoke time if the named variable is unset or empty — even for the keyless `local` endpoint above. Export any non-empty value before running (`export OLLAMA_API_KEY=local-no-key-needed`); the value never travels beyond wherever `base_url` points, so with `base_url` on `localhost` nothing leaves the machine. This is the zero-egress path for the shipped `local` personas (`gerald`, `orson`, `liam`) — see [personas-install.md](personas-install.md#local--privacy-first-zero-data-egress--opt-in).
+
 ## When you need what
 
 - **Prompt-based panel review (stage 1): nothing is required.** Direct provider blocks like the ones above are the complete setup — no proxy, no infrastructure.
