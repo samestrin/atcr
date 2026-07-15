@@ -25,6 +25,12 @@ func ignoreFixture(t *testing.T, withIgnoreFiles bool) (dir, base, head string) 
 	write(t, dir, "main.go", goFileV1)
 	write(t, dir, "vendor/lib.go", goFileV1)
 	write(t, dir, "go.sum", "hash v1\n")
+	if withIgnoreFiles {
+		// Force-track vendor/lib.go despite .gitignore matching it — the exact
+		// case the filter targets: a file committed to git but that should never
+		// reach the reviewer (e.g. vendored deps committed before the ignore rule).
+		gitCmd(t, dir, "add", "-f", "vendor/lib.go")
+	}
 	base = commitAll(t, dir, "v1")
 
 	write(t, dir, "main.go", goFileV2)

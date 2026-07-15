@@ -55,6 +55,24 @@ type rangeState struct {
 	raw        map[string]string      // head path -> plain -M diff chunk
 	zeroCtx    map[string]string      // head path -> --unified=0 chunk (raw)
 	lineRanges map[string][]lineRange // head path -> head-side changed ranges
+
+	// excludeSpec holds git pathspecs for the files removed by the ignore filter,
+	// applied to every whole-range diff so git never emits their chunks. This
+	// keeps the diff splitter's "every chunk maps to a changed file" invariant
+	// intact: the filtered file list (files) and the diff output stay in lockstep.
+	// Populated by changedFilesMemo; empty when nothing was ignored (zero
+	// behavior change for the common case).
+	excludeSpec []string
+}
+
+// pathspecArgs returns the trailing `-- . :(exclude)<path>...` args for whole-
+// range diff commands, or nil when nothing was ignored. A positive `.` pathspec
+// is required alongside the exclusions so git scopes them to the whole tree.
+func (s *rangeState) pathspecArgs() []string {
+	if len(s.excludeSpec) == 0 {
+		return nil
+	}
+	return append([]string{"--", "."}, s.excludeSpec...)
 }
 
 // gitRunner executes git argv against a fixed directory and context. The
@@ -74,9 +92,33 @@ type gitRunner struct {
 	// the constant-process-count regression test; it is otherwise inert.
 	execCount int
 
+	// noIgnore disables the .gitignore/.atcrignore payload filter for this runner
+	// (the --no-ignore opt-out). Default false → filtering active.
+	noIgnore bool
+
+	// ignore is the lazily-loaded repo-root ignore matcher (nil until first use).
+	// ignoreReady guards the one-time load so a repo with no ignore files is not
+	// re-stat'd on every range.
+	ignore      *ignoreMatcher
+	ignoreReady bool
+
 	// state holds the whole-range caches for the current base..head pair.
 	// Access only via forRange, which resets state when the range changes.
 	state rangeState
+}
+
+// matcher returns the runner's repo-root ignore matcher, loading it once from
+// g.dir. Returns nil when filtering is disabled (--no-ignore) so callers skip
+// the partition entirely.
+func (g *gitRunner) matcher() *ignoreMatcher {
+	if g.noIgnore {
+		return nil
+	}
+	if !g.ignoreReady {
+		g.ignore = newIgnoreMatcher(g.dir, g.log())
+		g.ignoreReady = true
+	}
+	return g.ignore
 }
 
 // run executes `git -C <dir> args...` and returns trimmed stdout. LC_ALL=C
@@ -165,11 +207,39 @@ func (g *gitRunner) changedFilesMemo(base, head string) ([]changedFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	files, s.excludeSpec = g.applyIgnore(files)
 	if files == nil {
 		files = []changedFile{} // non-nil so an empty range still memoizes
 	}
 	s.files = files
 	return files, nil
+}
+
+// applyIgnore partitions files into the kept set (returned) and the excluded
+// set, returning git pathspecs for the excluded paths. Each excluded file is
+// logged at slog debug (AC #3). When the matcher is inactive (no ignore files,
+// or --no-ignore) the input is returned unchanged with a nil exclude spec, so
+// the common case pays only one map/nil check.
+func (g *gitRunner) applyIgnore(files []changedFile) (kept []changedFile, exclude []string) {
+	m := g.matcher()
+	if !m.active() {
+		return files, nil
+	}
+	kept = make([]changedFile, 0, len(files))
+	for _, f := range files {
+		if !m.match(f.path) {
+			kept = append(kept, f)
+			continue
+		}
+		g.log().Debug("payload: skipping ignored file", "file", f.path, "kind", f.kind)
+		exclude = append(exclude, ":(exclude)"+f.path)
+		// A rename whose head path is ignored: exclude the old path too so git
+		// drops the rename pair entirely rather than re-rendering it as an add.
+		if f.kind == kindRenamed {
+			exclude = append(exclude, ":(exclude)"+f.oldPath)
+		}
+	}
+	return kept, exclude
 }
 
 // headPathSet returns the set of head-side paths in base..head, the authoritative
@@ -319,8 +389,13 @@ func (g *gitRunner) diffChunks(base, head string, opts ...string) (map[string]st
 	if err != nil {
 		return nil, err
 	}
+	// headPathSet ran changedFilesMemo, so s.excludeSpec is populated: excluding
+	// the ignored paths from the diff keeps git's chunk output in lockstep with
+	// the filtered head-path set the splitter matches against.
+	s := g.forRange(base, head)
 	args := append([]string{"diff"}, opts...)
 	args = append(args, "-M", base+".."+head)
+	args = append(args, s.pathspecArgs()...)
 	out, err := g.output(args...)
 	if err != nil {
 		return nil, err
@@ -335,11 +410,17 @@ func (g *gitRunner) diffChunks(base, head string, opts ...string) (map[string]st
 // diff yields an empty (non-nil) set. The result is memoized so the N per-file
 // binary checks collapse to a single git process.
 func (g *gitRunner) binarySet(base, head string) (map[string]bool, error) {
+	// Ensure the ignore filter has run so s.excludeSpec is populated before the
+	// numstat diff — otherwise ignored binaries would leak into the set.
+	if _, err := g.changedFilesMemo(base, head); err != nil {
+		return nil, err
+	}
 	s := g.forRange(base, head)
 	if s.binary != nil {
 		return s.binary, nil
 	}
-	out, err := g.run("diff", "--numstat", "-M", base+".."+head)
+	args := append([]string{"diff", "--numstat", "-M", base + ".." + head}, s.pathspecArgs()...)
+	out, err := g.run(args...)
 	if err != nil {
 		return nil, fmt.Errorf("git diff --numstat failed: %w", err)
 	}

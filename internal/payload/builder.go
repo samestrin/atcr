@@ -133,14 +133,17 @@ func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) (
 // ChangedFileCount returns the number of files changed in base..head from a
 // single `git diff --name-status` call — the cheap pre-flight counterpart to
 // BuildEntries, which materializes every per-file diff body just to be counted.
-// Rename detection (-M) matches changedFiles, so the count equals
-// len(BuildEntries(ModeDiff, ...)) for added, deleted, and renamed files.
+// It goes through changedFilesMemo so the count reflects the SAME ignore-filtered
+// set BuildEntries produces (repo-root .gitignore/.atcrignore excluded): the two
+// must agree, or a reviewer would see a file count larger than the files
+// actually reviewed. Rename detection (-M) matches changedFiles, so the count
+// equals len(BuildEntries(ModeDiff, ...)) for added, deleted, and renamed files.
 func ChangedFileCount(ctx context.Context, repo, base, head string) (int, error) {
 	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
 	if err := validateRange(g, base, head); err != nil {
 		return 0, err
 	}
-	files, err := g.changedFiles(base, head)
+	files, err := g.changedFilesMemo(base, head)
 	if err != nil {
 		return 0, err
 	}
