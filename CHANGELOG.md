@@ -1,3 +1,21 @@
+## [25.0.0] - 2026-07-14
+
+Add SARIF 2.1.0 output support so ATCR's reconciled review findings can feed GitHub Advanced Security's Code Scanning "Security" tab and GitLab CI's native SAST report widget — centralized surfaces the existing `atcr github` PR-check/inline-comment integration does not reach.
+
+### Added
+
+- `atcr report --format=sarif` renders reconciled findings as a schema-conformant SARIF 2.1.0 document (`$schema`, `runs[]`, `tool.driver`, `rules[]`, `results[]`), validated against the SARIF 2.1.0 schema.
+- Severity-to-SARIF-`level` mapping (CRITICAL/HIGH→`error`, MEDIUM→`warning`, LOW→`note`) reusing ATCR's canonical severity rubric.
+- Line-level anchoring for findings, with a synthesized fallback region for file-level findings so every result still displays in GitHub's Security tab.
+- CI integration documentation for uploading SARIF to GitHub Code Scanning and for GitLab CI's native SAST report widget.
+- MCP `report` tool's format enum now accepts `sarif` over the wire, matching CLI/MCP output parity.
+
+### Changed
+
+- `atcr report --format` help text and command description now list `sarif` alongside the existing formats.
+
+*Shipped via /execute-sprint (sprint 25.0)*
+
 ## [24.0.0] - 2026-07-13
 
 Give developers a way to permanently dismiss a technical-debt finding as won't-fix / false-positive so ATCR's agents stop re-surfacing it in later review loops.
