@@ -234,11 +234,13 @@ func (g *gitRunner) applyIgnore(files []changedFile) (kept []changedFile, exclud
 		return files, nil
 	}
 	kept = make([]changedFile, 0, len(files))
+	skipped := 0
 	for _, f := range files {
 		if !m.match(f.path) {
 			kept = append(kept, f)
 			continue
 		}
+		skipped++
 		g.log().Debug("payload: skipping ignored file", "file", f.path, "kind", f.kind)
 		// `literal` magic is mandatory: without it git treats the path as a glob,
 		// so an ignored filename containing pathspec metacharacters ([ * ?) would
@@ -253,6 +255,9 @@ func (g *gitRunner) applyIgnore(files []changedFile) (kept []changedFile, exclud
 		if f.kind == kindRenamed {
 			exclude = append(exclude, ":(exclude,literal)"+f.oldPath)
 		}
+	}
+	if skipped > 0 {
+		g.log().Info("payload: skipped changed files by ignore rules", "skipped", skipped, "kept", len(kept))
 	}
 	return kept, exclude
 }
