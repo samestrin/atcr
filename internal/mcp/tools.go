@@ -203,8 +203,6 @@ const (
 	descDebate = "Cross-examine a review's disputed findings (severity splits, gray-zone clusters, verification disagreements) through a bounded proposer/challenger/judge debate and integrate the rulings. " +
 		"Runs after atcr_reconcile (and atcr_verify, for verification disagreements). Returns {review_id, selected, upheld, overturned, split, unresolved, overflow, durationMs, gateStatus?}. " +
 		"Optional args: id_or_path (review id only; defaults to the latest review), singleModel, failOn (CRITICAL|HIGH|MEDIUM|LOW), requireVerified."
-	descReport = "Render a view over a review's reconciled findings. " +
-		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), format (md|json|checklist|sarif; default md)."
 	descRange = "Resolve a git review range without calling any provider. " +
 		"Returns {base, head, commit_count, file_count}. Optional args: base, head, merge_commit (defaults to the current branch vs. the default branch)."
 	descStatus = "Report a review's fan-out progress. " +
@@ -212,6 +210,12 @@ const (
 	descMetrics = "Return the atcr in-process metrics (review/agent counts and latencies, API errors, findings) in Prometheus text exposition format, cumulative since the server started. " +
 		"Returns {format:\"prometheus\", content}. No arguments. Local-only: do not expose the server publicly."
 )
+
+// descReport is a var (not const) so the embedded format list is derived from
+// report.Formats(), the single source of truth for the closed enum.
+var descReport = "Render a view over a review's reconciled findings. " +
+	"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), " +
+	"format (" + report.Formats() + "; default " + report.FormatMarkdown + ")."
 
 // reportInputSchema builds the atcr_report input schema with the format property
 // constrained to the closed enum md|json|checklist|sarif, so an invalid format is
@@ -228,6 +232,7 @@ func reportInputSchema() (*jsonschema.Schema, error) {
 	}
 	if p := s.Properties["format"]; p != nil {
 		p.Enum = []any{report.FormatMarkdown, report.FormatJSON, report.FormatChecklist, report.FormatSarif}
+		p.Description = "output format (default " + report.FormatMarkdown + "): " + report.Formats()
 	}
 	return s, nil
 }
