@@ -184,11 +184,12 @@ func sarifLevel(severity string) string {
 // sarifLocation builds a SARIF physical location for a finding. artifactLocation.uri
 // is f.File verbatim (already repo-root-relative by the time it reaches the report
 // layer — no normalization). Columns are not tracked in ATCR's finding pipeline, so
-// startColumn/endColumn are synthesized to 1. For Line > 0 the region anchors to the
-// real line; for Line <= 0 (file-level findings — both Line == 0 and negative, via a
-// single <= 0 boundary, mirroring internal/ghaction/render.go's location() precedent)
-// a full 1,1,1,1 region is synthesized rather than omitted, since GitHub Code Scanning
-// requires all four region fields for a result to display.
+// startColumn is synthesized to 1; endColumn is 2 for Line > 0 because SARIF 2.1.0's
+// endColumn is exclusive (a 1,1 start/end would be a zero-length region). For Line <= 0
+// (file-level findings — both Line == 0 and negative, via a single <= 0 boundary,
+// mirroring internal/ghaction/render.go's location() precedent) a full 1,1,1,1 region is
+// synthesized rather than omitted, since GitHub Code Scanning requires all four region
+// fields for a result to display.
 func sarifLocation(f reconcile.JSONFinding) sarifLocationObj {
 	startLine, endLine := f.Line, f.Line
 	endColumn := 2
