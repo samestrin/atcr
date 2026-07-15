@@ -104,12 +104,17 @@ func TestRegisterTool_Duplicate(t *testing.T) {
 }
 
 // TestReportInputSchema_Enum verifies the schema builder sets the format enum at
-// the source (unit, no transport).
+// the source (unit, no transport) and that the enum is derived from the same
+// source as report.Formats() so they cannot drift.
 func TestReportInputSchema_Enum(t *testing.T) {
 	s, err := reportInputSchema()
 	require.NoError(t, err)
 	require.NotNil(t, s.Properties["format"])
-	assert.ElementsMatch(t, []any{"md", "json", "checklist", "sarif"}, s.Properties["format"].Enum)
+	want := make([]any, len(report.FormatList()))
+	for i, f := range report.FormatList() {
+		want[i] = f
+	}
+	assert.ElementsMatch(t, want, s.Properties["format"].Enum)
 }
 
 // TestReportFormatDescriptions_DerivedFromFormats verifies the format list shown

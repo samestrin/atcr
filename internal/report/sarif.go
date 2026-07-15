@@ -99,13 +99,24 @@ type sarifRegion struct {
 // A single pass builds results[]; sarifRules does a second single pass for the
 // deduped rule catalog — both O(n), no quadratic scan.
 func renderSarif(w io.Writer, findings []reconcile.JSONFinding) error {
+	return renderSarifWithDiag(w, findings, os.Stderr)
+}
+
+// renderSarifWithDiag is the testable core of renderSarif. The diag sink is
+// passed as a parameter so callers (including concurrent renderers and tests)
+// do not share a mutable package-level sink.
+func renderSarifWithDiag(w io.Writer, findings []reconcile.JSONFinding, diag io.Writer) error {
 	results := make([]sarifResult, 0, len(findings))
+	// warned de-duplicates the unrecognized-severity diagnostic across this render
+	// call so a batch of findings sharing one corrupt severity token emits a single
+	// line, not one per finding.
+	warned := make(map[string]bool)
 	for _, f := range findings {
 		results = append(results, sarifResult{
-			RuleID:    f.Category,
-			Level:     sarifLevel(f.Severity),
+			RuleID:    sarifRuleID(f.Category),
+			Level:     sarifLevel(f.Severity, diag, warned),
 			Message:   sarifText{Text: sarifMessageText(f)},
-			Locations: []sarifLocationObj{sarifLocation(f)},
+			Locations: []sarifLocationObj{sarifLocation(f, diag)},
 		})
 	}
 
@@ -138,14 +149,15 @@ func sarifRules(findings []reconcile.JSONFinding) []sarifRule {
 	rules := make([]sarifRule, 0)
 	seen := make(map[string]bool)
 	for _, f := range findings {
-		if seen[f.Category] {
+		id := sarifRuleID(f.Category)
+		if seen[id] {
 			continue
 		}
-		seen[f.Category] = true
+		seen[id] = true
 		rules = append(rules, sarifRule{
-			ID:               f.Category,
-			ShortDescription: sarifText{Text: f.Category},
-			FullDescription:  sarifText{Text: fmt.Sprintf("ATCR findings categorized as '%s'.", f.Category)},
+			ID:               id,
+			ShortDescription: sarifText{Text: id},
+			FullDescription:  sarifText{Text: fmt.Sprintf("ATCR findings categorized as '%s'.", id)},
 		})
 	}
 	return rules
@@ -160,6 +172,16 @@ func sarifMessageText(f reconcile.JSONFinding) string {
 	return sarifNoMessage
 }
 
+// sarifRuleID returns the category to use as a SARIF rule id. An empty or
+// whitespace-only category is mapped to a sentinel value so the emitted rule
+// catalog and every result.ruleId reference a real, non-empty identifier.
+func sarifRuleID(category string) string {
+	if strings.TrimSpace(category) != "" {
+		return category
+	}
+	return "uncategorized"
+}
+
 // sarifLevel maps an ATCR severity to a SARIF result.level. It is the SOLE
 // severity-comparison site in this file: it derives its branches from the
 // canonical reclib.SeverityRank rubric (normalized via reclib.NormalizeSeverity)
@@ -169,8 +191,10 @@ func sarifMessageText(f reconcile.JSONFinding) string {
 // back to "warning". The return is always one of error/warning/note — never
 // "none" (which GitHub Code Scanning does not display) and never empty. A
 // non-empty token that still ranks 0 is treated as upstream corruption and
-// emits a diagnostic to sarifDiag (see below); the level stays "warning".
-func sarifLevel(severity string) string {
+// emits a diagnostic to the diag sink (de-duplicated per render via warned — see
+// below); the level stays "warning". warned must be non-nil (renderSarifWithDiag
+// owns one map per render call).
+func sarifLevel(severity string, diag io.Writer, warned map[string]bool) string {
 	rank := reclib.SeverityRank[reclib.NormalizeSeverity(severity)]
 	switch {
 	case rank >= reclib.SeverityRank[reclib.SevHigh]:
@@ -186,36 +210,44 @@ func sarifLevel(severity string) string {
 		// corrupted findings.json value — so emit a diagnostic to surface the
 		// corruption rather than downgrading it invisibly. Per AC 02-01 the
 		// returned level stays "warning" in both cases.
-		if strings.TrimSpace(severity) != "" {
-			_, _ = fmt.Fprintf(sarifDiag, "atcr: sarif: unrecognized severity %q; defaulting to \"warning\"\n", severity)
+		if strings.TrimSpace(severity) != "" && !warned[severity] {
+			_, _ = fmt.Fprintf(diag, "atcr: sarif: unrecognized severity %q; defaulting to \"warning\"\n", severity)
+			warned[severity] = true
 		}
 		return "warning"
 	}
 }
 
-// sarifDiag is the sink for sarifLevel's unrecognized-severity diagnostic. It
-// defaults to os.Stderr and is a package var solely so tests can capture the
-// diagnostic; no production code reassigns it.
-var sarifDiag io.Writer = os.Stderr
-
 // sarifLocation builds a SARIF physical location for a finding. artifactLocation.uri
 // is f.File verbatim (already repo-root-relative by the time it reaches the report
-// layer — no normalization). Columns are not tracked in ATCR's finding pipeline, so
-// startColumn is synthesized to 1; endColumn is 2 for Line > 0 because SARIF 2.1.0's
-// endColumn is exclusive (a 1,1 start/end would be a zero-length region). For Line <= 0
-// (file-level findings — both Line == 0 and negative, via a single <= 0 boundary,
-// mirroring internal/ghaction/render.go's location() precedent) a full 1,1,1,1 region is
-// synthesized rather than omitted, since GitHub Code Scanning requires all four region
-// fields for a result to display.
-func sarifLocation(f reconcile.JSONFinding) sarifLocationObj {
+// layer — no normalization) for every non-empty File, including ones upstream path
+// validation flagged with a PathWarning (absolute/traversal/not-found): AC 03-02
+// mandates the anchoring mapping never rewrite a real File. The one exception is a
+// blank File, which internal/stream/validate.go leaves untouched ("Empty File ->
+// left untouched"); emitted as-is it would be an empty artifactLocation.uri, and
+// GitHub Code Scanning rejects the entire SARIF upload for any empty uri — so a
+// blank File is defaulted here to a non-empty sentinel ("unknown", mirroring
+// sarifRuleID's "uncategorized") with a diagnostic to diag. Columns are not tracked
+// in ATCR's finding pipeline, so startColumn is synthesized to 1; endColumn is 2 for
+// Line > 0 because SARIF 2.1.0's endColumn is exclusive (a 1,1 start/end would be a
+// zero-length region). For Line <= 0 (file-level findings — both Line == 0 and
+// negative, via a single <= 0 boundary, mirroring internal/ghaction/render.go's
+// location() precedent) a full 1,1,1,1 region is synthesized rather than omitted,
+// since GitHub Code Scanning requires all four region fields for a result to display.
+func sarifLocation(f reconcile.JSONFinding, diag io.Writer) sarifLocationObj {
 	startLine, endLine := f.Line, f.Line
 	endColumn := 2
 	if f.Line <= 0 {
 		startLine, endLine = 1, 1
 		endColumn = 1
 	}
+	uri := f.File
+	if strings.TrimSpace(f.File) == "" {
+		uri = "unknown"
+		_, _ = fmt.Fprintf(diag, "atcr: sarif: finding has empty file path; defaulting uri to %q\n", uri)
+	}
 	return sarifLocationObj{PhysicalLocation: sarifPhysicalLocation{
-		ArtifactLocation: sarifArtifactLocation{URI: f.File},
+		ArtifactLocation: sarifArtifactLocation{URI: uri},
 		Region:           sarifRegion{StartLine: startLine, StartColumn: 1, EndLine: endLine, EndColumn: endColumn},
 	}}
 }

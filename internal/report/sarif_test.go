@@ -8,9 +8,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -216,13 +218,14 @@ func TestSarif_RulesCaseSensitive(t *testing.T) {
 }
 
 func TestSarif_RulesEmptyCategory(t *testing.T) {
-	// Edge Case 2: an empty Category is one distinct value → one rule with id "".
+	// Edge Case 2: an empty Category is mapped to a sentinel rule id so the SARIF
+	// rule catalog and every result.ruleId reference a non-empty identifier.
 	findings := []reconcile.JSONFinding{{Severity: "LOW", File: "x.go", Line: 1, Problem: "p", Category: ""}}
 	doc := unmarshalSarif(t, findings)
 	require.Len(t, doc.Runs[0].Tool.Driver.Rules, 1)
-	assert.Equal(t, "", doc.Runs[0].Tool.Driver.Rules[0].ID)
+	assert.Equal(t, "uncategorized", doc.Runs[0].Tool.Driver.Rules[0].ID)
 	require.Len(t, doc.Runs[0].Results, 1)
-	assert.Equal(t, "", doc.Runs[0].Results[0].RuleID)
+	assert.Equal(t, "uncategorized", doc.Runs[0].Results[0].RuleID)
 }
 
 func TestSarif_RulesSingleCategoryRepeated(t *testing.T) {
@@ -263,7 +266,7 @@ func TestSarifLevel(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := sarifLevel(tc.severity)
+			got := sarifLevel(tc.severity, io.Discard, map[string]bool{})
 			assert.Equal(t, tc.want, got)
 			// Edge Case 5: only the three GitHub-supported levels are ever returned.
 			assert.Contains(t, []string{"error", "warning", "note"}, got)
@@ -279,41 +282,72 @@ func TestSarifLevel(t *testing.T) {
 // findings.json) is surfaced rather than silently downgraded. An empty token is
 // empty-by-design and must stay silent; a recognized token must stay silent.
 func TestSarifLevel_UnrecognizedDiagnostic(t *testing.T) {
-	withSink := func(t *testing.T) *bytes.Buffer {
-		t.Helper()
-		var buf bytes.Buffer
-		orig := sarifDiag
-		sarifDiag = &buf
-		t.Cleanup(func() { sarifDiag = orig })
-		return &buf
-	}
-
 	t.Run("non-empty garbage emits diagnostic, stays warning", func(t *testing.T) {
-		buf := withSink(t)
-		got := sarifLevel("hihg")
+		var buf bytes.Buffer
+		got := sarifLevel("hihg", &buf, map[string]bool{})
 		assert.Equal(t, "warning", got, "AC 02-01: unrecognized token still falls back to warning")
 		assert.Contains(t, buf.String(), "hihg", "diagnostic must name the offending token")
 	})
 
 	t.Run("empty severity stays silent", func(t *testing.T) {
-		buf := withSink(t)
-		got := sarifLevel("")
+		var buf bytes.Buffer
+		got := sarifLevel("", &buf, map[string]bool{})
 		assert.Equal(t, "warning", got)
 		assert.Empty(t, buf.String(), "empty is empty-by-design — no diagnostic")
 	})
 
 	t.Run("whitespace-only severity stays silent", func(t *testing.T) {
-		buf := withSink(t)
-		got := sarifLevel("  \t\n")
+		var buf bytes.Buffer
+		got := sarifLevel("  \t\n", &buf, map[string]bool{})
 		assert.Equal(t, "warning", got)
 		assert.Empty(t, buf.String(), "blank token is empty-by-design — no diagnostic")
 	})
 
 	t.Run("recognized severity stays silent", func(t *testing.T) {
-		buf := withSink(t)
-		assert.Equal(t, "error", sarifLevel("HIGH"))
+		var buf bytes.Buffer
+		assert.Equal(t, "error", sarifLevel("HIGH", &buf, map[string]bool{}))
 		assert.Empty(t, buf.String(), "recognized token is not corruption — no diagnostic")
 	})
+}
+
+// TD-0051 (2026-07-14): the unrecognized-severity diagnostic must be de-duplicated
+// per render call. A batch of findings sharing one corrupt severity token should
+// emit exactly one diagnostic line for that token, not one per finding; two
+// *distinct* corrupt tokens still each emit once.
+func TestSarif_RenderDedupsDiagnostic(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "hihg", File: "a.go", Line: 1, Problem: "p", Category: "c"},
+		{Severity: "hihg", File: "b.go", Line: 2, Problem: "p", Category: "c"},
+		{Severity: "hihg", File: "c.go", Line: 3, Problem: "p", Category: "c"},
+		{Severity: "wrng", File: "d.go", Line: 4, Problem: "p", Category: "c"},
+	}
+	var diag, buf strings.Builder
+	require.NoError(t, renderSarifWithDiag(&buf, findings, &diag))
+	assert.Equal(t, 1, strings.Count(diag.String(), "hihg"),
+		"each distinct corrupt token diagnosed exactly once per render")
+	assert.Equal(t, 1, strings.Count(diag.String(), "wrng"),
+		"a second distinct corrupt token still emits its own single diagnostic")
+}
+
+// TestSarif_RenderConcurrent exercises the render path concurrently with a
+// goroutine that swaps the diagnostic sink. Before the sink was threaded through
+// parameters this produced a data race on the package-level sarifDiag variable.
+func TestSarif_RenderConcurrent(t *testing.T) {
+	findings := append(sample(), reconcile.JSONFinding{
+		Severity: "weird", File: "z.go", Line: 1, Problem: "p", Category: "misc",
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var diag, buf strings.Builder
+			require.NoError(t, renderSarifWithDiag(&buf, findings, &diag))
+			assert.Contains(t, diag.String(), "weird")
+		}()
+	}
+	wg.Wait()
 }
 
 // Scenario 5: renderSarif populates every result.level via sarifLevel — no other
@@ -357,12 +391,14 @@ func TestSarifLocation(t *testing.T) {
 		{"line-zero", "internal/foo/bar.go", 0, "internal/foo/bar.go", 1, 1, 1, 1},
 		{"line-negative-one", "internal/foo/bar.go", -1, "internal/foo/bar.go", 1, 1, 1, 1},
 		{"line-negative-large", "internal/foo/bar.go", -999, "internal/foo/bar.go", 1, 1, 1, 1},
-		// AC 03-01 Edge Case 3: empty File passes through unmodified (no defaulting).
-		{"empty-file", "", 5, "", 5, 1, 5, 2},
+		// TD-0053: a blank File is defaulted to the "unknown" sentinel at export time
+		// (an empty artifactLocation.uri makes GitHub Code Scanning reject the upload).
+		// The region is still driven by Line (5 here), only the uri is sentinelized.
+		{"empty-file", "", 5, "unknown", 5, 1, 5, 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			loc := sarifLocation(reconcile.JSONFinding{File: tc.file, Line: tc.line})
+			loc := sarifLocation(reconcile.JSONFinding{File: tc.file, Line: tc.line}, io.Discard)
 			assert.Equal(t, tc.wantURI, loc.PhysicalLocation.ArtifactLocation.URI)
 			r := loc.PhysicalLocation.Region
 			assert.Equal(t, tc.wantStart, r.StartLine)
@@ -374,6 +410,27 @@ func TestSarifLocation(t *testing.T) {
 			assert.Greater(t, r.EndLine, 0)
 		})
 	}
+}
+
+// TD-0053 (2026-07-14): a blank f.File must emit a sentinel URI ("unknown"), since
+// GitHub Code Scanning rejects a SARIF upload whose artifactLocation.uri is empty.
+// Every non-empty File — including upstream PathWarning-flagged absolute/traversal
+// paths — still passes through unmodified per AC 03-02 (only the empty case, which
+// upstream path validation leaves untouched, is defaulted here at export time).
+func TestSarifLocation_EmptyFileSentinel(t *testing.T) {
+	var diag bytes.Buffer
+	loc := sarifLocation(reconcile.JSONFinding{File: "", Line: 5}, &diag)
+	assert.Equal(t, "unknown", loc.PhysicalLocation.ArtifactLocation.URI,
+		"blank File must become the non-empty sentinel, not an empty uri")
+	assert.NotEmpty(t, diag.String(), "empty File must surface a diagnostic")
+
+	// A non-empty File — even an upstream-flagged absolute path — passes through
+	// unmodified per AC 03-02, and emits no diagnostic.
+	var diag2 bytes.Buffer
+	loc2 := sarifLocation(reconcile.JSONFinding{File: "/etc/passwd", Line: 1}, &diag2)
+	assert.Equal(t, "/etc/passwd", loc2.PhysicalLocation.ArtifactLocation.URI,
+		"non-empty File is emitted verbatim (AC 03-02) — guarding belongs upstream")
+	assert.Empty(t, diag2.String(), "a non-empty File is not the empty-path case — no diagnostic")
 }
 
 // --- Final Phase 4.1: Schema Conformance Validation ---

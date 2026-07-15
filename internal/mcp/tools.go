@@ -231,7 +231,10 @@ func reportInputSchema() (*jsonschema.Schema, error) {
 		return nil, fmt.Errorf("inferring atcr_report schema: %w", err)
 	}
 	if p := s.Properties["format"]; p != nil {
-		p.Enum = []any{report.FormatMarkdown, report.FormatJSON, report.FormatChecklist, report.FormatSarif}
+		p.Enum = make([]any, len(report.FormatList()))
+		for i, f := range report.FormatList() {
+			p.Enum[i] = f
+		}
 		p.Description = "output format (default " + report.FormatMarkdown + "): " + report.Formats()
 	}
 	return s, nil
