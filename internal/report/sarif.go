@@ -102,7 +102,7 @@ func renderSarif(w io.Writer, findings []reconcile.JSONFinding) error {
 	results := make([]sarifResult, 0, len(findings))
 	for _, f := range findings {
 		results = append(results, sarifResult{
-			RuleID:    f.Category,
+			RuleID:    sarifRuleID(f.Category),
 			Level:     sarifLevel(f.Severity),
 			Message:   sarifText{Text: sarifMessageText(f)},
 			Locations: []sarifLocationObj{sarifLocation(f)},
@@ -138,14 +138,15 @@ func sarifRules(findings []reconcile.JSONFinding) []sarifRule {
 	rules := make([]sarifRule, 0)
 	seen := make(map[string]bool)
 	for _, f := range findings {
-		if seen[f.Category] {
+		id := sarifRuleID(f.Category)
+		if seen[id] {
 			continue
 		}
-		seen[f.Category] = true
+		seen[id] = true
 		rules = append(rules, sarifRule{
-			ID:               f.Category,
-			ShortDescription: sarifText{Text: f.Category},
-			FullDescription:  sarifText{Text: fmt.Sprintf("ATCR findings categorized as '%s'.", f.Category)},
+			ID:               id,
+			ShortDescription: sarifText{Text: id},
+			FullDescription:  sarifText{Text: fmt.Sprintf("ATCR findings categorized as '%s'.", id)},
 		})
 	}
 	return rules
@@ -158,6 +159,16 @@ func sarifMessageText(f reconcile.JSONFinding) string {
 		return f.Problem
 	}
 	return sarifNoMessage
+}
+
+// sarifRuleID returns the category to use as a SARIF rule id. An empty or
+// whitespace-only category is mapped to a sentinel value so the emitted rule
+// catalog and every result.ruleId reference a real, non-empty identifier.
+func sarifRuleID(category string) string {
+	if strings.TrimSpace(category) != "" {
+		return category
+	}
+	return "uncategorized"
 }
 
 // sarifLevel maps an ATCR severity to a SARIF result.level. It is the SOLE
