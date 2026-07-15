@@ -35,6 +35,18 @@ func unmarshalSarif(t *testing.T, findings []reconcile.JSONFinding) sarifLog {
 	return doc
 }
 
+// sampleSarif extends sample() with a file-level finding (Line == 0) in a third
+// distinct category, so the SARIF golden exercises the synthesized 1,1,1,1 fallback
+// region and a 3-entry rules[] end-to-end. Kept separate from sample() (which is
+// pinned to "Total findings: 2" by the md/json/checklist goldens).
+func sampleSarif() []reconcile.JSONFinding {
+	return append(sample(), reconcile.JSONFinding{
+		Severity: "MEDIUM", File: "internal/report/render.go", Line: 0,
+		Problem: "package-level concern with no specific line", Category: "architecture",
+		Reviewers: []string{"greta"}, Confidence: "HIGH",
+	})
+}
+
 // --- AC 01-01: Format Constant Registration ---
 
 func TestSarif_FormatRegistration(t *testing.T) {
@@ -169,5 +181,94 @@ func TestSarif_RulesSingleCategoryRepeated(t *testing.T) {
 	assert.Len(t, doc.Runs[0].Results, 5)
 	for _, r := range doc.Runs[0].Results {
 		assert.Equal(t, "security", r.RuleID)
+	}
+}
+
+// --- AC 02-01: Severity-to-SARIF-Level Mapping (Phase 2) ---
+
+func TestSarifLevel(t *testing.T) {
+	cases := []struct {
+		name     string
+		severity string
+		want     string
+	}{
+		{"critical", "CRITICAL", "error"},
+		{"high", "HIGH", "error"},
+		{"medium", "MEDIUM", "warning"},
+		{"low", "LOW", "note"},
+		{"lowercase-critical", "critical", "error"},
+		{"mixedcase-high", "High", "error"},
+		{"mixedcase-medium", "mEdIuM", "warning"},
+		{"lowercase-low", "low", "note"},
+		{"padded-high", "  HIGH  ", "error"},
+		{"padded-low", "\tLOW\n", "note"},
+		{"empty", "", "warning"},
+		{"bogus", "BOGUS", "warning"},
+		{"unknown", "UNKNOWN", "warning"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sarifLevel(tc.severity)
+			assert.Equal(t, tc.want, got)
+			// Edge Case 5: only the three GitHub-supported levels are ever returned.
+			assert.Contains(t, []string{"error", "warning", "note"}, got)
+			assert.NotEqual(t, "none", got)
+			assert.NotEmpty(t, got)
+		})
+	}
+}
+
+// Scenario 5: renderSarif populates every result.level via sarifLevel — no other
+// severity comparison exists in sarif.go (that single-call-site property is also
+// checked by inspection in task 2.3).
+func TestSarif_ResultLevelMatchesSarifLevel(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "CRITICAL", File: "a.go", Line: 1, Problem: "p", Category: "c1"},
+		{Severity: "MEDIUM", File: "b.go", Line: 2, Problem: "p", Category: "c2"},
+		{Severity: "LOW", File: "c.go", Line: 3, Problem: "p", Category: "c3"},
+		{Severity: "weird", File: "d.go", Line: 4, Problem: "p", Category: "c4"},
+	}
+	doc := unmarshalSarif(t, findings)
+	require.Len(t, doc.Runs[0].Results, len(findings))
+	for i, f := range findings {
+		assert.Equal(t, sarifLevel(f.Severity), doc.Runs[0].Results[i].Level)
+	}
+}
+
+// --- AC 03-01 / 03-02: Line-Level and File-Level Fallback Anchoring (Phase 2) ---
+
+func TestSarifLocation(t *testing.T) {
+	cases := []struct {
+		name                                         string
+		file                                         string
+		line                                         int
+		wantURI                                      string
+		wantStart, wantStartCol, wantEnd, wantEndCol int
+	}{
+		// AC 03-01: Line > 0 anchors to the real line, columns synthesized to 1.
+		{"line-1-boundary", "internal/report/sarif.go", 1, "internal/report/sarif.go", 1, 1, 1, 1},
+		{"line-42", "internal/foo/bar.go", 42, "internal/foo/bar.go", 42, 1, 42, 1},
+		{"line-large", "big.go", 999999, "big.go", 999999, 1, 999999, 1},
+		// AC 03-02: Line <= 0 synthesizes the 1,1,1,1 fallback region. Line == 0 and
+		// Line < 0 are DISTINCT rows so a future <=→< off-by-one regression is caught.
+		{"line-zero", "internal/foo/bar.go", 0, "internal/foo/bar.go", 1, 1, 1, 1},
+		{"line-negative-one", "internal/foo/bar.go", -1, "internal/foo/bar.go", 1, 1, 1, 1},
+		{"line-negative-large", "internal/foo/bar.go", -999, "internal/foo/bar.go", 1, 1, 1, 1},
+		// AC 03-01 Edge Case 3: empty File passes through unmodified (no defaulting).
+		{"empty-file", "", 5, "", 5, 1, 5, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			loc := sarifLocation(reconcile.JSONFinding{File: tc.file, Line: tc.line})
+			assert.Equal(t, tc.wantURI, loc.PhysicalLocation.ArtifactLocation.URI)
+			r := loc.PhysicalLocation.Region
+			assert.Equal(t, tc.wantStart, r.StartLine)
+			assert.Equal(t, tc.wantStartCol, r.StartColumn)
+			assert.Equal(t, tc.wantEnd, r.EndLine)
+			assert.Equal(t, tc.wantEndCol, r.EndColumn)
+			// Error Scenario 2 (03-01): region.startLine is never <= 0 for any input.
+			assert.Greater(t, r.StartLine, 0)
+			assert.Greater(t, r.EndLine, 0)
+		})
 	}
 }

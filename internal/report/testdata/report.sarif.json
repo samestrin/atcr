@@ -25,6 +25,15 @@
               "fullDescription": {
                 "text": "ATCR findings categorized as 'style'."
               }
+            },
+            {
+              "id": "architecture",
+              "shortDescription": {
+                "text": "architecture"
+              },
+              "fullDescription": {
+                "text": "ATCR findings categorized as 'architecture'."
+              }
             }
           ]
         }
@@ -68,6 +77,28 @@
                   "startLine": 7,
                   "startColumn": 1,
                   "endLine": 7,
+                  "endColumn": 1
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "architecture",
+          "level": "warning",
+          "message": {
+            "text": "package-level concern with no specific line"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "internal/report/render.go"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
                   "endColumn": 1
                 }
               }

@@ -101,9 +101,9 @@ func renderSarif(w io.Writer, findings []reconcile.JSONFinding) error {
 	for _, f := range findings {
 		results = append(results, sarifResult{
 			RuleID:    f.Category,
-			Level:     sarifResultLevel(f.Severity),
+			Level:     sarifLevel(f.Severity),
 			Message:   sarifText{Text: sarifMessageText(f)},
-			Locations: []sarifLocationObj{sarifResultLocation(f)},
+			Locations: []sarifLocationObj{sarifLocation(f)},
 		})
 	}
 
@@ -158,10 +158,15 @@ func sarifMessageText(f reconcile.JSONFinding) string {
 	return sarifNoMessage
 }
 
-// sarifResultLevel maps a finding severity to a SARIF result.level. It is the
-// interim inline mapping for Phase 1; Story 2 (Phase 2) replaces it with the
-// canonical sarifLevel helper and this shim is removed.
-func sarifResultLevel(severity string) string {
+// sarifLevel maps an ATCR severity to a SARIF result.level. It is the SOLE
+// severity-comparison site in this file: it derives its branches from the
+// canonical reclib.SeverityRank rubric (normalized via reclib.NormalizeSeverity)
+// rather than a locally redefined severity map, so a rubric change can never
+// silently desync this mapping (the TD-0052 failure mode). CRITICAL/HIGH → error,
+// MEDIUM → warning, LOW → note; any unrecognized or empty token (rank 0) falls
+// back to "warning". The return is always one of error/warning/note — never
+// "none" (which GitHub Code Scanning does not display) and never empty.
+func sarifLevel(severity string) string {
 	rank := reclib.SeverityRank[reclib.NormalizeSeverity(severity)]
 	switch {
 	case rank >= reclib.SeverityRank[reclib.SevHigh]:
@@ -175,10 +180,15 @@ func sarifResultLevel(severity string) string {
 	}
 }
 
-// sarifResultLocation builds a SARIF location for a finding. It is the interim
-// inline mapping for Phase 1; Story 3 (Phase 2) replaces it with the sarifLocation
-// helper and this shim is removed.
-func sarifResultLocation(f reconcile.JSONFinding) sarifLocationObj {
+// sarifLocation builds a SARIF physical location for a finding. artifactLocation.uri
+// is f.File verbatim (already repo-root-relative by the time it reaches the report
+// layer — no normalization). Columns are not tracked in ATCR's finding pipeline, so
+// startColumn/endColumn are synthesized to 1. For Line > 0 the region anchors to the
+// real line; for Line <= 0 (file-level findings — both Line == 0 and negative, via a
+// single <= 0 boundary, mirroring internal/ghaction/render.go's location() precedent)
+// a full 1,1,1,1 region is synthesized rather than omitted, since GitHub Code Scanning
+// requires all four region fields for a result to display.
+func sarifLocation(f reconcile.JSONFinding) sarifLocationObj {
 	startLine, endLine := f.Line, f.Line
 	if f.Line <= 0 {
 		startLine, endLine = 1, 1

@@ -69,7 +69,7 @@ var goldenCases = []struct {
 	{"markdown", FormatMarkdown, "report.md", nil},
 	{"json", FormatJSON, "findings.json", nil},
 	{"checklist", FormatChecklist, "checklist.md", nil},
-	{"sarif", FormatSarif, "report.sarif.json", nil},
+	{"sarif", FormatSarif, "report.sarif.json", sampleSarif()},
 }
 
 // TestRender_GoldenFiles compares each format's full render output byte-for-byte
