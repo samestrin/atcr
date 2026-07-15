@@ -248,17 +248,19 @@ func TestSarifLocation(t *testing.T) {
 		wantURI                                      string
 		wantStart, wantStartCol, wantEnd, wantEndCol int
 	}{
-		// AC 03-01: Line > 0 anchors to the real line, columns synthesized to 1.
-		{"line-1-boundary", "internal/report/sarif.go", 1, "internal/report/sarif.go", 1, 1, 1, 1},
-		{"line-42", "internal/foo/bar.go", 42, "internal/foo/bar.go", 42, 1, 42, 1},
-		{"line-large", "big.go", 999999, "big.go", 999999, 1, 999999, 1},
+		// AC 03-01: Line > 0 anchors to the real line, columns synthesized to 1,2
+		// (endColumn is exclusive in SARIF 2.1.0, so startColumn==endColumn would be
+		// a zero-length region).
+		{"line-1-boundary", "internal/report/sarif.go", 1, "internal/report/sarif.go", 1, 1, 1, 2},
+		{"line-42", "internal/foo/bar.go", 42, "internal/foo/bar.go", 42, 1, 42, 2},
+		{"line-large", "big.go", 999999, "big.go", 999999, 1, 999999, 2},
 		// AC 03-02: Line <= 0 synthesizes the 1,1,1,1 fallback region. Line == 0 and
 		// Line < 0 are DISTINCT rows so a future <=→< off-by-one regression is caught.
 		{"line-zero", "internal/foo/bar.go", 0, "internal/foo/bar.go", 1, 1, 1, 1},
 		{"line-negative-one", "internal/foo/bar.go", -1, "internal/foo/bar.go", 1, 1, 1, 1},
 		{"line-negative-large", "internal/foo/bar.go", -999, "internal/foo/bar.go", 1, 1, 1, 1},
 		// AC 03-01 Edge Case 3: empty File passes through unmodified (no defaulting).
-		{"empty-file", "", 5, "", 5, 1, 5, 1},
+		{"empty-file", "", 5, "", 5, 1, 5, 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
