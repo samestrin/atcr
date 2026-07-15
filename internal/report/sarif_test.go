@@ -134,8 +134,28 @@ func TestSarif_MessageTextNeverEmpty(t *testing.T) {
 }
 
 func TestSarif_Deterministic(t *testing.T) {
-	// Edge Case 2: repeated calls with identical input are byte-identical.
-	assert.Equal(t, renderSarifString(t, sample()), renderSarifString(t, sample()))
+	// Edge Case 2: repeated calls with identical input are byte-identical, and
+	// rule ordering follows first-seen order. Use enough distinct categories that
+	// a raw map-iteration regression would reliably produce a different order.
+	findings := []reconcile.JSONFinding{
+		{Severity: "LOW", File: "a.go", Line: 1, Category: "alpha"},
+		{Severity: "LOW", File: "b.go", Line: 2, Category: "bravo"},
+		{Severity: "LOW", File: "c.go", Line: 3, Category: "charlie"},
+		{Severity: "LOW", File: "d.go", Line: 4, Category: "delta"},
+		{Severity: "LOW", File: "e.go", Line: 5, Category: "echo"},
+		{Severity: "LOW", File: "f.go", Line: 6, Category: "foxtrot"},
+		{Severity: "LOW", File: "g.go", Line: 7, Category: "golf"},
+		{Severity: "LOW", File: "h.go", Line: 8, Category: "hotel"},
+	}
+	first := renderSarifString(t, findings)
+	second := renderSarifString(t, findings)
+	assert.Equal(t, first, second)
+
+	doc := unmarshalSarif(t, findings)
+	require.Len(t, doc.Runs[0].Tool.Driver.Rules, 8)
+	for i, want := range []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"} {
+		assert.Equal(t, want, doc.Runs[0].Tool.Driver.Rules[i].ID)
+	}
 }
 
 // errWriter always fails on Write, for the write-error propagation path.
