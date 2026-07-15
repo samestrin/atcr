@@ -280,7 +280,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		return nil, nil, err
 	}
 
-	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
+	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, req.NoIgnore)
 	if err != nil {
 		return nil, nil, err
 	}

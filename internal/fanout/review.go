@@ -94,6 +94,11 @@ type ReviewRequest struct {
 	// entries and every subsequent run benefits. Defaulting false keeps caching
 	// fully active for callers that do not opt out (e.g. the MCP handler).
 	NoCache bool
+	// NoIgnore bypasses the repo-root .gitignore/.atcrignore payload filter for
+	// this run (the --no-ignore flag, Epic 26.0), so a deliberately-ignored file
+	// can be reviewed on demand. Defaulting false keeps filtering active for
+	// callers that do not opt out (e.g. the MCP handler).
+	NoIgnore bool
 	// SprintPlanPath, when non-empty, points at a markdown sprint/epic plan whose
 	// content is wrapped in a SCOPE CONSTRAINT block and prepended to every
 	// reviewer's payload, immediately before the diff (Epic 12.2). It scopes the
@@ -236,7 +241,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if err := validateReviewRequest(cfg, req); err != nil {
 		return nil, err
 	}
-	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
+	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, req.NoIgnore)
 	if err != nil {
 		return nil, err
 	}
@@ -769,8 +774,12 @@ type modePayload struct {
 // It returns the shared payload.RangeBuilder so the caller can compute grounding
 // data (computeGroundingData) on the same gitRunner, reusing the memoized
 // --name-status / --unified=0 diffs instead of re-spawning them (Epic 22.4).
-func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head string) (map[string]modePayload, *payload.RangeBuilder, error) {
-	rb := payload.NewRangeBuilder(ctx, repo, base, head)
+func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head string, noIgnore bool) (map[string]modePayload, *payload.RangeBuilder, error) {
+	var opts []payload.RangeOption
+	if noIgnore {
+		opts = append(opts, payload.WithoutIgnoreFilter())
+	}
+	rb := payload.NewRangeBuilder(ctx, repo, base, head, opts...)
 	out := map[string]modePayload{}
 	for _, mode := range neededModes(cfg) {
 		entries, err := rb.BuildEntries(payload.PayloadMode(mode))

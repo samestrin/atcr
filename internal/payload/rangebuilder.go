@@ -41,8 +41,7 @@ type RangeOption func(*gitRunner)
 // filter for this builder — the --no-ignore escape hatch, for when a caller
 // deliberately wants an ignored file reviewed.
 func WithoutIgnoreFilter() RangeOption {
-	// RED stub: no-op. GREEN sets g.noIgnore = true.
-	return func(_ *gitRunner) {}
+	return func(g *gitRunner) { g.noIgnore = true }
 }
 
 // NewRangeBuilder returns a RangeBuilder for repo's base..head range, sharing one
