@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 4 | 0 |
-| MEDIUM | 0 | 21 | 0 |
-| LOW | 0 | 35 | 0 |
+| MEDIUM | 1 | 21 | 0 |
+| LOW | 4 | 35 | 0 |
 
 
-**Last Modified:** 2026-07-14 | **Open Items:** 0 | **Deferred Items:** 60 | **Resolved Items:** 0 | **Total Items:** 60
+**Last Modified:** 2026-07-14 | **Open Items:** 5 | **Deferred Items:** 60 | **Resolved Items:** 0 | **Total Items:** 65
 
 ## Directory Structure
 
@@ -63,6 +63,16 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards �
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-14] From Sprint: epic-26.0
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/payload/diff.go:174 | When the ignore filter drops ALL changed files the review proceeds with a silent empty payload, unlike ApplyByteBudget's AllDropped/ErrPayloadFullyDropped signal — a lockfile-only PR yields an empty review with no explanation | Add an all-ignored signal analogous to Truncation.AllDropped so callers can distinguish "every changed file was ignored" from "no files changed" | EDGE_CASES | 30 | execute-epic-stage3 |
+| 1 | [ ] | MEDIUM | internal/payload/diff.go:74 | The ignore filter emits one git :(exclude)<path> pathspec per ignored file; a diff touching thousands of tracked-but-ignored files (e.g. a committed vendor/ tree bumped, skipped via .atcrignore) can exceed ARG_MAX and fail the diff with E2BIG — the feature's own headline many-files case | Switch the exclusion to git --pathspec-from-file (write ignored paths to a temp file) to remove the argv-length ceiling; note the git 2.25+ floor and temp-file lifecycle | PERFORMANCE | 60 | execute-epic-cumulative |
+| 1 | [ ] | LOW | internal/payload/diff.go:75 | The `-- .` positive pathspec scopes whole-range diffs to g.dir while changedFiles' --name-status runs with no pathspec; if a caller ever passes a subdirectory rather than the repo/worktree root the two enumerate different sets and the splitter breaks (only once a file is ignored) — all current callers pass the repo root so it is latent | Anchor the positive pathspec to the worktree top (:/) or assert g.dir is the repo root before filtering | EDGE_CASES | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/payload/diff.go:234 | Ignored-file exclusions are logged only at slog debug; with debug off in production a misconfigured or overly-broad .atcrignore silently drops changed files with no default-visible signal | Emit a single info-level summary (e.g. N files skipped by ignore rules) so exclusions are visible at the default log level | OBSERVABILITY | 30 | execute-epic-independent |
+| U | [ ] | LOW | internal/mcp/handlers.go:507 | ChangedFileCount now returns the ignore-filtered count so the MCP atcr_range pre-flight silently reports fewer changed files with no --no-ignore bypass exposed to MCP callers | Document the filtered semantics on atcr_range or expose the no-ignore bypass to the MCP path | REGRESSION_RISK | 20 | execute-epic-independent |
 
 ### [2026-07-14] From Sprint: 25.0_sarif_output_integration
 
