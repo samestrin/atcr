@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 4 | 0 |
 | MEDIUM | 0 | 21 | 0 |
-| LOW | 0 | 35 | 0 |
+| LOW | 3 | 35 | 0 |
 
 
-**Last Modified:** 2026-07-15 | **Open Items:** 0 | **Deferred Items:** 60 | **Resolved Items:** 0 | **Total Items:** 60
+**Last Modified:** 2026-07-15 | **Open Items:** 3 | **Deferred Items:** 60 | **Resolved Items:** 0 | **Total Items:** 63
 
 ## Directory Structure
 
@@ -63,6 +63,14 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table â†’ shards â
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-15] From Sprint: epic-27.0
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | personas/community/index.json:1 | Local persona Ollama model tags (gemma3:27b, qwen3:30b-a3b, llama3.3:70b) are illustrative and unverified against the live Ollama library | Verify each tag resolves via `ollama pull` and correct the docs table/config if a tag differs before announcing the personas | docs | 15 | execute-epic-cumulative |
+| U | [ ] | LOW | internal/personas/drift.go:90 | Local-drift exemption keys on the model-slug prefix local/ not the provider field, so a genuinely-missing catalog model whose slug coincidentally begins local/ would be silently exempted from a real missing finding | Gate the exemption on the provider too (thread provider into CheckDrift), or document that the provider:local <-> model:local/ coupling is intentional and unenforced | edge_cases | 30 | execute-epic-independent |
+| U | [ ] | LOW | docs/personas-install.md:256 | AC2 (a local persona executes a review with zero external calls) has no automated coverage and depends on a manual model-tag translation (local/gemma3-27b -> gemma3:27b) the install flow does not perform | Add a doc-level smoke check or an install-time hint surfacing the required agent-config model-tag step (full automation needs a live Ollama endpoint) | observability | 60 | execute-epic-independent |
 
 ### [2026-07-14] From Sprint: 25.0_sarif_output_integration
 
