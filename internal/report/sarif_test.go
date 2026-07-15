@@ -276,16 +276,19 @@ func TestSarifLevel(t *testing.T) {
 // severity comparison exists in sarif.go (that single-call-site property is also
 // checked by inspection in task 2.3).
 func TestSarif_ResultLevelMatchesSarifLevel(t *testing.T) {
+	// Wiring + literal-value guard: prove renderSarif routes severity through
+	// sarifLevel AND that the mapping itself is correct.
 	findings := []reconcile.JSONFinding{
 		{Severity: "CRITICAL", File: "a.go", Line: 1, Problem: "p", Category: "c1"},
 		{Severity: "MEDIUM", File: "b.go", Line: 2, Problem: "p", Category: "c2"},
 		{Severity: "LOW", File: "c.go", Line: 3, Problem: "p", Category: "c3"},
 		{Severity: "weird", File: "d.go", Line: 4, Problem: "p", Category: "c4"},
 	}
+	want := []string{"error", "warning", "note", "warning"}
 	doc := unmarshalSarif(t, findings)
 	require.Len(t, doc.Runs[0].Results, len(findings))
 	for i, f := range findings {
-		assert.Equal(t, sarifLevel(f.Severity), doc.Runs[0].Results[i].Level)
+		assert.Equal(t, want[i], doc.Runs[0].Results[i].Level, "severity %q", f.Severity)
 	}
 }
 
