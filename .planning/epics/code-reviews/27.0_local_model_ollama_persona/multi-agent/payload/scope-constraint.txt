@@ -1,3 +1,7 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
 # Epic Plan 27.0: Local Model / Ollama Persona Integration
 
 - **Estimated time**: TBD
@@ -22,9 +26,9 @@ While LiteLLM and proxy configurations are supported, privacy-conscious enterpri
 
 ## Acceptance Criteria
 
-- [x] `personas/community/` includes a ready-to-use local persona for each of the 3 hardware tiers, each passing its `internal/personas/community_fixture_test.go` fixture.
-- [x] A local model can successfully execute a review pipeline using one of these personas without external network calls (once the user's own `registry.yaml` defines a matching `local` provider, per `docs/providers.md`).
-- [x] Documentation clearly outlines the zero-egress setup, including the `api_key_env` placeholder-value requirement.
+- [ ] `personas/community/` includes a ready-to-use local persona for each of the 3 hardware tiers, each passing its `internal/personas/community_fixture_test.go` fixture.
+- [ ] A local model can successfully execute a review pipeline using one of these personas without external network calls (once the user's own `registry.yaml` defines a matching `local` provider, per `docs/providers.md`).
+- [ ] Documentation clearly outlines the zero-egress setup, including the `api_key_env` placeholder-value requirement.
 
 ## Components Touched
 
@@ -130,3 +134,5 @@ Item 8 (advisory: model names unverified against a live catalog) required no act
    A: Names confirmed collision-free; distinct-lens assignment feasible (room for 3 more categories/tasks). Assistant to propose specific local-appropriate lenses.
 4. Q: Confirm editing the `communityPersonas` roster slice + count assertions?
    A: Confirmed — required, not optional. Both `TestCommunityAccessors` and `TestCommunityIndex_Registration` cross-check counts against the static slice. One-line addition per new persona.
+----- END SPRINT PLAN -----
+

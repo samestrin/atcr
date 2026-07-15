@@ -1,0 +1,168 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "internal/personas/drift.go",
+      "line": 118,
+      "severity": "CRITICAL",
+      "problem": "(CheckDrift) Drift exemption unconditionally skips `local/\u003cmodel\u003e` slugs so `atcr models check` returns green even when Ollama/llama.cpp is down, the model was never pulled, or `base_url` is unreachable — a broken local setup looks healthy until the runtime request fails",
+      "score": 4,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "docs/personas-install.md",
+      "line": 309,
+      "severity": "HIGH",
+      "problem": "liam persona binds `local/llama3.3-70b` for a \"64 GB+ heavyweight\" tier but docs give no pre-flight VRAM/RAM check — attempting on insufficient hardware will OOM-kill the Ollama server mid-review and abort the whole panel with no per-persona isolation",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "docs/personas-install.md",
+      "line": 325,
+      "severity": "HIGH",
+      "problem": "Docs give no timeout guidance for local personas — a 70B Llama on consumer hardware routinely takes 30–120s per completion; if the LLM client has a cloud-tuned default timeout (common in OpenAI/Anthropic SDKs) every local review aborts mid-stream",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "docs/personas-install.md",
+      "line": 329,
+      "severity": "HIGH",
+      "problem": "Model-id footgun — persona binds `local/gemma3-27b` but Ollama rejects that string (it answers to `gemma3:27b` or `gemma3-27b`); the docs explain the rewrite but a direct copy-paste of the persona `model` field into `registry.yaml` will 404 at runtime with no clear remediation",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "personas/community/testdata/gerald_fixture.patch",
+      "line": 7,
+      "severity": "HIGH",
+      "problem": "Fixture embeds the literal `sk-live-EXAMPLE-not-a-real-key` — the `sk-live-` prefix matches Stripe live-key patterns and the string ships in the binary via `//go:embed`; CI secret scanners (TruffleHog/Gitleaks rule sets that prefix-match) can intermittently fail the build or flag a committed test artifact as a real leak",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "personas/community/gerald.md",
+      "line": 45,
+      "severity": "MEDIUM",
+      "problem": "Example evidence uses / as string delimiters, colliding with the / escape rule for literal ",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "brad"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "brad",
+          "severity": "MEDIUM",
+          "problem": "Example evidence uses / as string delimiters, colliding with the / escape rule for literal "
+        }
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "personas/community_test.go",
+      "line": 126,
+      "severity": "MEDIUM",
+      "problem": "New roster entries use `Tier: \"local\"` — if any downstream code switches on tier (selection logic, UI grouping, install defaults) it may have an unhandled case and silently demote or skip these personas",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "docs/personas-install.md",
+      "line": 312,
+      "severity": "LOW",
+      "problem": "`gerald` is listed as `local/gemma3-27b` in the table but the prompt refers to \"Gemma dense model\"",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "otto",
+          "severity": "LOW",
+          "problem": "`gerald` is listed as `local/gemma3-27b` in the table but the prompt refers to \"Gemma dense model\""
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "docs/personas-install.md",
+      "line": 315,
+      "severity": "LOW",
+      "problem": "Placeholder api_key_env value assumes local server ignores auth headers, but vLLM/llama.cpp with auth enabled will 401 on dummy keys",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "brad"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "brad",
+          "severity": "LOW",
+          "problem": "Placeholder api_key_env value assumes local server ignores auth headers, but vLLM/llama.cpp with auth enabled will 401 on dummy keys"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "personas/community_test.go",
+      "line": 274,
+      "severity": "LOW",
+      "problem": "Comment says \"C(10,2)=45 pairs\" but communityPersonas now has 13 entries; C(13,2)=78",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "bruce"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "bruce",
+          "severity": "LOW",
+          "problem": "Comment says \"C(10,2)=45 pairs\" but communityPersonas now has 13 entries; C(13,2)=78"
+        }
+      ]
+    }
+  ]
+}

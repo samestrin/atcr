@@ -1,0 +1,1069 @@
+diff --git a/.planning/epics/active/27.0_local_model_ollama_persona.md b/.planning/epics/active/27.0_local_model_ollama_persona.md
+deleted file mode 100644
+index cee0f659..00000000
+--- a/.planning/epics/active/27.0_local_model_ollama_persona.md
++++ /dev/null
+@@ -1,42 +0,0 @@
+-# Epic Plan 27.0: Local Model / Ollama Persona Integration
+-
+-- **Estimated time**: TBD
+-- **Tasks/Components**: TBD
+-- **Execution**: init-plan
+-
+-## Objective
+-
+-Deliver a "Zero Data Egress" out-of-the-box local persona (using Ollama or llama.cpp) in the community registry to completely resolve enterprise privacy objections during onboarding.
+-
+-## Context
+-
+-While LiteLLM and proxy configurations are supported, privacy-conscious enterprise teams often refuse to send proprietary code to external APIs like OpenAI or Anthropic. Having a first-class, officially supported local persona (e.g., pointing to `localhost:11434` with a highly optimized prompt for `Ornith 1.0` or `Qwen 3.6`) makes the "privacy first" adoption path friction-free.
+-
+-## Proposed Solution
+-
+-1. **Local Persona Definition**: Author a persona using the human naming convention (e.g., `Ollie (Local)`) in `registry.yaml` configured to hit a standard local Ollama/llama.cpp endpoint.
+-2. **Targeted Persona Pack (The 3-Tier Strategy)**: Instead of one generic "local" persona, ship a focused pack of personas tuned for specific hardware tiers:
+-   - **Tier 1: 32GB Dense** (e.g. `Gemma 4`, `Qwen 3.6`): High reasoning, standard context (32k). Best for file-by-file review.
+-   - **Tier 2: 32GB Long-Context** (e.g. `Ornith 1.0`): Optimized for massive context (256k on 32GB VRAM). Best for full-repo architectural reviews.
+-   - **Tier 3: 64GB+ Heavyweight** (e.g. `Llama 4 70B` or `DeepSeek V4 Pro`): For Mac Mini M4 Pro or dual-GPU setups. Fits 70B+ quants with massive context, rivaling frontier cloud APIs. 
+-   Creating a new persona just requires a new YAML file and prompt tuning (not new Go code), so expanding this library is low-effort/high-reward.
+-3. **Documentation**: Add a "Local / Privacy-First Quickstart" to the docs explaining how to `brew install ollama`, pull the model, and run `atcr` entirely offline.
+-
+-## Acceptance Criteria
+-
+-- [ ] `registry.yaml` includes a ready-to-use local persona.
+-- [ ] A local model can successfully execute a review pipeline using this persona without external network calls.
+-- [ ] Documentation clearly outlines the zero-egress setup.
+-
+-## Components Touched
+-
+-- `registry.yaml` (Community Hub)
+-- `docs/`
+-
+-## Out of Scope
+-
+-- Managing or installing the local model server itself (user is expected to run Ollama/llama.cpp themselves).
+-
+-## Dependencies
+-
+-- Epic 19.6 (Community Registry Hub)
+diff --git a/.planning/epics/completed/27.0_local_model_ollama_persona.md b/.planning/epics/completed/27.0_local_model_ollama_persona.md
+new file mode 100644
+index 00000000..4cc5756a
+--- /dev/null
++++ b/.planning/epics/completed/27.0_local_model_ollama_persona.md
+@@ -0,0 +1,132 @@
++# Epic Plan 27.0: Local Model / Ollama Persona Integration
++
++- **Estimated time**: TBD
++- **Tasks/Components**: TBD
++- **Execution**: init-plan
++
++## Objective
++
++Ship a "Zero Data Egress" persona pack (using Ollama or llama.cpp) in the `personas/community/` registry, tuned for local hardware tiers, to resolve enterprise privacy objections during onboarding. The local-endpoint provider wiring itself already exists (`docs/providers.md`'s `local:` example) — the gap this epic closes is the tuned persona content and the walkthrough connecting it end-to-end.
++
++## Context
++
++While LiteLLM and proxy configurations are supported, privacy-conscious enterprise teams often refuse to send proprietary code to external APIs like OpenAI or Anthropic. `docs/providers.md` already documents a `local:` provider block (`base_url: http://localhost:11434/v1`) for wiring atcr at a local Ollama/llama.cpp endpoint — the missing piece is a first-class, officially supported persona tuned for local models (e.g., a highly optimized prompt for `Ornith 1.0` or `Qwen 3.6`), which makes the "privacy first" adoption path friction-free.
++
++## Proposed Solution
++
++1. **Targeted Persona Pack (The 3-Tier Strategy)**: Author a focused pack of personas — each a `<name>.yaml` + `<name>.md` + `community/testdata/<name>_fixture.patch` triple under `personas/community/` (with a matching `index.json` entry), following the established bare-human-first-name convention (no parenthetical qualifiers, no model name in the display name — model identity lives only in the `provider`/`model` fields) and passing `internal/personas/community_fixture_test.go`'s fixture gate. New files are auto-embedded via the existing `//go:embed` globs — no Go code changes needed. Using mnemonic human names that hint at the underlying model (e.g., Quinn for Qwen, Gerald for Gemma). Tuned for specific hardware tiers:
++   - **Tier 1: 32GB Dense** (e.g. `Gerald` for Gemma 4 or `Quinn` for Qwen 3.6): High reasoning, standard context (32k). Best for file-by-file review.
++   - **Tier 2: 32GB Long-Context** (e.g. `Orson` for Ornith 1.0): Optimized for massive context (256k on 32GB VRAM). Best for full-repo architectural reviews.
++   - **Tier 3: 64GB+ Heavyweight** (e.g. `Liam` for Llama 4 70B or `Dexter` for DeepSeek V4 Pro): For Mac Mini M4 Pro or dual-GPU setups. Fits 70B+ quants with massive context, rivaling frontier cloud APIs.
++2. **Documentation**: Extend `docs/personas-install.md`'s existing "Provider tiers beyond Synthetic" section with a Local / Privacy-First subsection explaining how to `brew install ollama`, pull a model, and run `atcr` entirely offline — including a reminder to `export OLLAMA_API_KEY=<placeholder>` (the provider config's `api_key_env` field is required even though a local endpoint needs no real key).
++
++## Acceptance Criteria
++
++- [ ] `personas/community/` includes a ready-to-use local persona for each of the 3 hardware tiers, each passing its `internal/personas/community_fixture_test.go` fixture.
++- [ ] A local model can successfully execute a review pipeline using one of these personas without external network calls (once the user's own `registry.yaml` defines a matching `local` provider, per `docs/providers.md`).
++- [ ] Documentation clearly outlines the zero-egress setup, including the `api_key_env` placeholder-value requirement.
++
++## Components Touched
++
++- `personas/community/` (persona content: yaml + md + fixture patch + index.json)
++- `docs/` (providers.md + personas-install.md)
++
++## Out of Scope
++
++- Managing or installing the local model server itself (user is expected to run Ollama/llama.cpp themselves).
++
++## Dependencies
++
++- Epic 19.6 (Community Registry Hub)
++
++## Refinements (2026-07-15)
++
++This section records findings from `/refine-epic` run on July 15, 2026 10:16:24AM. It is additive — original plan content above is preserved.
++
++### Auto-applied corrections (0)
++
++None — every finding this run changes the plan's intent or mechanism enough to need your confirmation (see below).
++
++### Items needing user confirmation (7)
++
++1. ⏸️ **Mechanism mismatch: `registry.yaml` is not the community hub.** No `registry.yaml` exists as shared/community content anywhere in this repo. `~/.config/atcr/registry.yaml` (and the optional `.atcr/registry.yaml` project overlay) is the user-local **provider/agent config** file (`docs/registry.md:5-18`) — not a persona registry. The actual community persona distribution channel — built by **Epic 19.6**, this epic's own listed dependency — is `personas/community/*.yaml` + `personas/community/index.json` (confirmed on disk: `milo.yaml`, `anthony.yaml`, `gia.yaml`, etc.). Epic 19.6 explicitly ruled this out: *"Any `registry.yaml` task→model mapping schema — the existing named-agent + roster model stands"* (Out of Scope) and *"this epic does not touch `ATCR_REGISTRY_URL`/`registry.yaml` hosting."* All three concrete citations of `registry.yaml` in this plan (Proposed Solution item 1, Acceptance Criteria, Components Touched) point at the wrong file/mechanism.
++
++2. ⏸️ **A community persona is a 3-file unit, not a config edit.** Every existing community persona ships as a triple: `<slug>.yaml` (metadata: name/provider/model/persona/role), `<slug>.md` (the actual prompt template, e.g. `personas/community/milo.md`), and `community/testdata/<slug>_fixture.patch` (a fixture case). All three are embedded into the binary via `//go:embed` globs (`personas/community.go:17,24,32`) — new files under `personas/community/` are auto-discovered with **no Go code edit needed** — but every persona must pass `internal/personas/community_fixture_test.go:19` (`TestTemplateFixtureRunner_CommunityPersonasPass`), which asserts exactly one passing fixture case per persona. The plan's Task 1 ("Author a persona ... in registry.yaml") does not account for the `.md` prompt or the fixture-test requirement.
++
++3. ⏸️ **Naming convention mismatch.** Commit `73afa1f0` updated this plan's example from `local-reviewer` to `Ollie (Local)` to "match the human naming convention," but every existing built-in and community persona uses a single bare human first name with **no** parenthetical qualifier or model name (anthony, sonny, gia, milo, flint, delia, quinn, celeste, glenna, gene; built-ins bruce/dax/greta/ingrid/kai/mira/otto/penny/sasha). Model identity lives only in the structured `provider`/`model` fields, never in the display name. `Ollie (Local)`, `Gemma 4`, `Qwen 3.6`, `Ornith 1.0`, `Llama 4 70B`, `DeepSeek V4 Pro` all diverge from this convention.
++
++4. ⏸️ **Self-contradiction between item 1 and item 2 of Proposed Solution.** Item 1 says "Author a persona ... (e.g., `Ollie (Local)`)" — singular, one persona. Item 2 opens with "Instead of one generic 'local' persona, ship a focused pack of personas tuned for specific hardware tiers" — directly negating item 1's own example as the discouraged "one generic persona." The two items read as alternatives, not a sequence.
++
++5. ⏸️ **The provider-level building block already exists.** `docs/providers.md:20-22` already documents, under a "Direct (always works, zero infrastructure)" section:
++   ```yaml
++   local:
++     base_url: http://localhost:11434/v1   # ollama, llama.cpp, vllm, ...
++     api_key_env: OLLAMA_API_KEY
++   ```
++   and `internal/registry/config_test.go` already has a passing test for this exact provider shape (a `local-llm` provider at `http://localhost:11434/v1`). So "pointing to a standard local Ollama/llama.cpp endpoint" is **already shipped and documented** — the real net-new work is narrower than the Objective states: a tuned persona (prompt + fixture) plus a connecting walkthrough, not a provider-config feature.
++
++6. ⏸️ **`api_key_env` is required-non-empty; no keyless-local path is addressed.** `internal/registry/config.go:686-687` makes `api_key_env` mandatory for every provider, and `internal/llmclient/client.go:325-327` errors ("API key env var %s is not set") if that env var isn't set to a non-empty value at invoke time — even for a keyless local Ollama endpoint. Neither this plan nor the existing `docs/providers.md` example addresses this: the user will still need to `export` some placeholder value for `OLLAMA_API_KEY`. Minor, but the "Zero Data Egress... out-of-the-box" framing and AC2 ("execute a review pipeline... without external network calls") imply more friction-free than this actually is today.
++
++7. ⏸️ **Documentation target under-specified.** `docs/personas-install.md:256` already has a `## Provider tiers beyond Synthetic` section covering DashScope, Chutes→Featherless, and LiteLLM as sibling tier write-ups. Task 3 ("Add a Local/Privacy-First Quickstart") doesn't cite this file/section, risking a disconnected or duplicate doc page instead of a natural extension of the existing structure.
++
++### Advisory observations (1)
++
++- ℹ️ **Model names not verified.** `Gemma 4`, `Qwen 3.6`, `Ornith 1.0`, `Llama 4 70B`, `DeepSeek V4 Pro` are external LLM model identifiers, not codebase symbols — out of scope for codebase grep verification. Flagging only so you're aware these weren't checked against a live model catalog (cf. `atcr models check`, `internal/personas/testdata/catalog_snapshot.json`).
++
++### Verification context
++
++- Refinement depth: deep
++- Derived TASK_COUNT: 5 (limit: 6)
++- Derived COMPONENT_COUNT: 2 (limit: 2)
++- COMPONENTS_TOUCHED (corrected): `personas/community/` (persona yaml + prompt md + fixture patch + index.json entries), `docs/` (providers.md + personas-install.md)
++- VISUAL_SURFACE: false
++- HAS_GATED_WORK: false
++- HAS_CROSS_SYSTEM: false
++- Cited references checked: 1 file path (`registry.yaml` — stale/wrong mechanism, does not exist as community content), 6 external model-name mentions (not code symbols, unverified against catalog)
++- Codebase search queries (spot-check): grep `localhost:11434|11434|base_url.*local|ollama` (case-insensitive); dedicated Explore subagent tasked with locating the real registry/persona/naming/docs structure; manual reads of `docs/registry.md`, `docs/providers.md`, `docs/personas-install.md`, `internal/registry/config.go`, `internal/llmclient/client.go`, `internal/personas/community_fixture_test.go`, and Epic 19.6's completed plan
++- Deep discovery method: semantic+keyword+agent
++- Deep discovery queries: ["local model Ollama llama.cpp zero data egress persona" (semantic), "localhost:11434|11434|base_url.*local|ollama" (grep)]
++- Deep discovery match count: 47
++- Deep discovery snapshot: `.planning/.temp/refine-epic/codebase-discovery.json` (temp-only — not committed)
++
++### Resolution (2026-07-15)
++
++All 7 user-confirm items above were accepted and applied directly to the plan sections above (Objective, Context, Proposed Solution, Acceptance Criteria, Components Touched):
++
++1. ✅ `registry.yaml` references replaced with `personas/community/` throughout.
++2. ✅ Proposed Solution item 1 now specifies the yaml + md + fixture-patch triple and the `community_fixture_test.go` gate.
++3. ✅ Example persona names changed to bare first names (`Nadia`, `Ezra`, `Hugo`) — model identity kept in prose, not the display name.
++4. ✅ The standalone single-persona item merged into the 3-tier pack item.
++5. ✅ Objective/Context reframed to acknowledge the existing `docs/providers.md` `local:` provider example.
++6. ✅ Documentation task now notes the `api_key_env` placeholder-value requirement.
++7. ✅ Documentation task now targets `docs/personas-install.md`'s existing "Provider tiers beyond Synthetic" section.
++
++Item 8 (advisory: model names unverified against a live catalog) required no action.
++
++## Clarifications
++
++### Recorded 2026-07-15 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- **Path A (narrowly scoped)** chosen to resolve the feasibility blocker: the community pool's `index.json` registration test (`personas/community_test.go:371`) hard-asserts `provider == "openrouter"` for every persona (comment: "LOCKED Q3 / Phase 5 clarifications"). A true zero-egress local persona needs `provider: local`. Resolution: loosen that single assertion to a small allowlist `{openrouter, local}` (+ its doc comment). No other test needs editing — the `/`-namespacing check (`TestCommunityModel`, :484) and the vendor-token check (:374) both pass unmodified against a `local/<model>` string.
++- **Drift-check exemption added** (accepted caveat): `atcr models check` runs `CheckDrift` against the checked-in OpenRouter catalog snapshot for every community persona. A `local/<model>` slug never matches the catalog and would be permanently reported `missing` (`internal/personas/drift.go:116`). Fix: add a `local/`-prefix exemption in `CheckDrift`, mirroring the existing `aliasSlugSet` TD-005 exemption (drift.go:113) — a lock resolvable outside the catalog is skipped, not flagged missing.
++- **Roster edit required** (corrects the plan's "no Go code changes needed"): the hard-coded `communityPersonas` slice in `personas/community_test.go:118-129` plus count assertions (`TestCommunityAccessors:175`, `TestCommunityIndex_Registration:339`) cross-check the embedded-file count against the slice length. Each new persona needs a one-line roster entry. The `//go:embed` globs and the fixture gate (`community_fixture_test.go`) are fully dynamic; only this separately-maintained test roster needs editing.
++
++**Scope Boundaries:**
++- IN scope: 3 local personas (Gerald / Orson / Liam) as yaml + md + fixture-patch triples + index.json entries; the one-assertion contract relaxation; the drift-check exemption; the roster-slice edits; docs extensions to `docs/personas-install.md` and `docs/providers.md`.
++- OUT of scope: any change to the search/discovery architecture (discovery stays by model, not provider); managing/installing the Ollama server; broadening the provider allowlist beyond `{openrouter, local}`.
++
++**Technical Approach:**
++- New personas use `provider: local`, `model: local/<ollama-model>`, `role: reviewer`, each with a distinct review lens (category + primary task) — the tests forbid lens/category/task duplication and enforce Role+Focus Jaccard < 0.85.
++- Names: **Gerald** (Gemma, Tier‑1 32GB dense, `local/gemma3-27b`), **Orson** (Qwen long-context, Tier‑2 256k, `local/qwen3-30b-a3b`), **Liam** (Llama, Tier‑3 64GB+ heavyweight, `local/llama3.3-70b`). All three confirmed collision-free against on-disk personas and the roster.
++- Each `.md` carries all 7 template tokens, `## Role` + `## Output Format` with the byte-for-byte 7-column contract and "7 pipe-delimited columns" text, and exactly one vendor-guidance citation.
++
++**Original Questions and Answers:**
++1. Q: How to resolve the `openrouter`-locked contract vs. a true local persona? (A relax / B docs-only / C re-scope)
++   A: Path A, narrowly scoped — loosen the single string-equality assertion at `community_test.go:371` to an allowlist `{openrouter, local}`. B silently drops AC1; C is disproportionate for a one-assertion change. Vendor-token and namespacing checks pass unmodified. Caveat: also add a drift-check exemption for non-catalog (`local`) providers.
++2. Q: Consent to edit the locked `openrouter` assertion (and model-format assertions)?
++   A: Only `community_test.go:371` needs editing (provider-equality). `:484` passes unmodified with a `local/<model>` string. The lock was designed as an extendable allowlist ("may include synthetic"), not immutable architecture. Proceeding on the Path-A selection as authorization.
++3. Q: Confirm names Gerald / Orson / Liam + model bindings + distinct lenses?
++   A: Names confirmed collision-free; distinct-lens assignment feasible (room for 3 more categories/tasks). Assistant to propose specific local-appropriate lenses.
++4. Q: Confirm editing the `communityPersonas` roster slice + count assertions?
++   A: Confirmed — required, not optional. Both `TestCommunityAccessors` and `TestCommunityIndex_Registration` cross-check counts against the static slice. One-line addition per new persona.
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index 9a16a013..5765f250 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,17 +3,17 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 4 | 0 |
+ | MEDIUM | 0 | 21 | 0 |
+-| LOW | 0 | 35 | 0 |
++| LOW | 3 | 35 | 0 |
+ 
+ 
+-**Last Modified:** 2026-07-15 | **Open Items:** 0 | **Deferred Items:** 60 | **Resolved Items:** 0 | **Total Items:** 60
++**Last Modified:** 2026-07-15 | **Open Items:** 3 | **Deferred Items:** 60 | **Resolved Items:** 0 | **Total Items:** 63
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -63,71 +63,79 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
+ 
++### [2026-07-15] From Sprint: epic-27.0
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| U | [ ] | LOW | personas/community/index.json:1 | Local persona Ollama model tags (gemma3:27b, qwen3:30b-a3b, llama3.3:70b) are illustrative and unverified against the live Ollama library | Verify each tag resolves via `ollama pull` and correct the docs table/config if a tag differs before announcing the personas | docs | 15 | execute-epic-cumulative |
++| U | [ ] | LOW | internal/personas/drift.go:90 | Local-drift exemption keys on the model-slug prefix local/ not the provider field, so a genuinely-missing catalog model whose slug coincidentally begins local/ would be silently exempted from a real missing finding | Gate the exemption on the provider too (thread provider into CheckDrift), or document that the provider:local <-> model:local/ coupling is intentional and unenforced | edge_cases | 30 | execute-epic-independent |
++| U | [ ] | LOW | docs/personas-install.md:256 | AC2 (a local persona executes a review with zero external calls) has no automated coverage and depends on a manual model-tag translation (local/gemma3-27b -> gemma3:27b) the install flow does not perform | Add a doc-level smoke check or an install-time hint surfacing the required agent-config model-tag step (full automation needs a live Ollama endpoint) | observability | 60 | execute-epic-independent |
++
+ ### [2026-07-14] From Sprint: 25.0_sarif_output_integration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/report/sarif.go:143 | An empty Category yields a rule with id:"" and results with ruleId:"" (intent_note: deferred per sprint-plan §1.2.A — AC 01-03 EC2 mandates empty-Category pass-through). | add category normalization/defaulting ("uncategorized") upstream or in renderSarif, coordinated with an AC 01-03 update [Clarified: pass-through (empty string verbatim) is correct per AC 01-03 EC2; no code change.] | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 2 | [/] | MEDIUM | internal/report/sarif.go:178 | A finding with an empty File emits artifactLocation.uri:"" (intent_note: deferred per sprint-plan §1.2.A — AC 03-01 EC3 mandates empty-File pass-through). | post-4.3 smoke test / future sprint — if GitHub rejects empty-uri results, add a placeholder-uri or location-omission branch and update AC 03-01 accordingly. [Clarified: TD row had copy-pasted FIX from row 77; no production change.] | error-handling | 30 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-14] From Sprint: 24.0_false_positive_wontfix_dismissal
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/localdebt/store.go:67 | The store is append-only with no compaction; every resolve/wontfix appends a full record copy, and every ReadAll/selectOpenDebt/persistLocalDebt re-reads and folds the entire history on each invocation. Combined with the line-sensitive id (record.go StampID), a churny false positive accumulates: each line drift appends a fresh open record plus a fresh wontfix record, growing shards unbounded while every command pays the full O(total-records) scan. There is no cap or GC path. (Deferred: Epic Plan 43.0) | Add a compaction/GC command (or periodic fold-and-rewrite that drops superseded closed records) so shard size tracks live findings, not total history. Verify by simulating many resolve cycles and asserting bounded on-disk size after compaction. | performance | 240 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go | Systemic symlink exposure across all five append-only ledgers (localdebt, scorecard, history, audit, debate/tools): each opens its shard with O_CREATE/O_WRONLY/O_APPEND and no O_NOFOLLOW, and MkdirAll follows symlinked path components, so a pre-planted symlink at the ledger path or a parent redirects appends outside the store. LOW: exploiting requires pre-existing local write access to a 0700 per-user/per-repo dir (same-uid, no trust-boundary crossing). localdebt already documents this as an accepted won't-fix (internal/localdebt/doc.go); tracked here so the systemic posture is visible, not localdebt-only. (intent_note: surfaced during 20.1 resolve-td; bundle into a future FS-safety pass, do not fix localdebt in isolation) | Do NOT harden localdebt alone (inconsistent, false security). Bundle into a future filesystem-safety epic: a shared GOOS-guarded O_NOFOLLOW append helper (precedent: internal/tools/open_unix.go and open_other.go) swapped across all five ledgers, plus symlink-planted unix-only tests. Prioritize only if a ledger moves to a shared/multi-user dir or a pentest/supply-chain audit flags it. Final-component only; parent-symlink resistance (openat2/RESOLVE_NO_SYMLINKS) is out of scope. | security | 480 | resolve-td | claude | MEDIUM |
+ 
+ ### [2026-07-11] From Sprint: 20.0_standalone_skill_release
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | go.mod:41 | `go install github.com/samestrin/atcr/cmd/atcr@latest` cannot work for external users. Two layered causes: the root go.mod carries a `replace ... => ./reconcile` directive (Go refuses to install any module whose published go.mod has a replace), and the binding cause is that the samestrin/atcr repo is PRIVATE so the module is not on the public proxy. Makes AC1 (go install), install.sh (AC4), and the go-install lines in README/docs unsatisfiable until the repo is public. (Deferred: .planning/epics/active/33.2_public_launch.md) | Resolve in Epic 33.2 (Public Launch): external `go install` is gated on the repo going public, which happens at launch (Epic 33 cluster). 33.2 makes the repo public, publishes `reconcile` + drops the replace directive, and delivers install.sh + a real-install integration test. | security | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-09] From Sprint: 19.7_live_model_resolution
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/personas/drift.go | For a bound persona the `family` JSON field is the bare binding token (glm); for a bindingless persona it is the derived vendor/tier prefix (anthropic/claude-opus) — two shapes under one key that a 19.8 agent grouping on `family` would see inconsistently. (intent_note: deferred per sprint-plan §5.6 — shape documented as advisory; normalization deferred to 19.8 (TD-008)) | Phase 8/later: when wiring `models refresh` against the live catalog, confirm the `~…-latest` ids are present; else skip the `missing` check for a lock slug equal to an `aliasTable` value (or resolve alias locks through the passthrough before the catalog lookup) and add a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 2 | [/] | LOW | internal/personas/upgrade.go | `resolveNewestInPrefix` selects the newest-by-`created` catalog member, but the lock gate advances only when the extracted semver is a version-advance (`isNewer`), so a newer-created-but-lower-semver hotfix slug is selected by the resolver yet blocked by the gate and silently not adopted. | Deferred (Story 6/later, semver philosophy): keep the semver isNewer gate authoritative for the lock-advance decision (consistent with the major-bump re-validation gate and the explicit-upgrade/reproducibility posture), but emit a visible signal in the personas upgrade before→after report or a models check finding when resolveNewestInPrefix's created-order pick diverges from what the gate accepts, rather than silently leaving the lock stale; cover the divergent hotfix case with a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | LOW | docs/personas-authoring.md | AC 08-03 Scenario 3 links the shipped persona doc sections to `../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/*.md`; those links resolve now but `/finalize-sprint` moves the sprint active/→completed/, after which the active/ path 404s in the shipped docs. | Future docs-stabilization pass: update the two links to the completed/ path after archival, or promote the durable plan documentation into a stable home (docs/ or .planning/specifications/) and point the persona docs there; add a link-check that fails on a dangling docs→.planning link. | docs | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-08] From Sprint: 19.6_community_registry_hub
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/init.go:47 / cmd/atcr/quickstart.go:102 | `init`/`quickstart` fetch-and-pin the roster `builtins.Names()` (the 9 model-agnostic built-ins: bruce/greta/kai/mira/dax/otto/sasha/penny/ingrid), but the shipped `personas/community/index.json` publishes only the 10 model-indexed library personas (anthony…glenna) — a fully disjoint set. (intent_note: deferred per sprint-plan TD-011) (Deferred: Epic Plan .planning/epics/active/19.7_live_model_resolution.md — design-sprint decision; lean toward publishing built-ins into the community channel behind a model-agnostic tag/gate) | rebuild init/quickstart model enablement so online `init`/`quickstart` deliver a working, non-noisy persona set: either publish the built-in lenses into the community channel behind a model-agnostic gate carve-out (keeps C2), or align the roster with what the index publishes and drop the misleading skip-warning. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | u | [/] | LOW | cmd/atcr/init.go:142 | installCommunityPersonas records each candidate's preExisted flag then, on a later roster failure, rollback() removes any candidate path where !preExisted && fileExists. If another process creates <name>.yaml/.md between candidate recording (line 142) and the eventual rollback, the rollback deletes that not-ours file believing this run created it. The window is narrow and needs concurrency; the actual overwrite protection lives in InstallUnit. (Accepted LOW-severity risk — atcr is a single-user local CLI; if ever addressed, add an inode+mtime re-stat guard to the rollback rather than changing InstallUnit's return contract.) | Have rollback delete only files it observed itself successfully create (capture created paths from InstallUnit's result rather than re-deriving from candidates), or re-stat and skip if inode/mtime differs from what this run wrote. Verify with a concurrency test that plants a file mid-roster and asserts it survives rollback. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-06] From Sprint: 19.5_response_truncation_failover
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | LOW | internal/fanout/artifacts.go:214 | The TD-019 memo short-circuit only fires for parsedFindingCount==0, so a truncated-with-findings result (memo set to >=1 by the failover gate) re-runs stream.ParseModelOutput at line 217 — the redundant parse the refactor aimed to remove, though bounded to the rare truncated-with-findings path. | Cache the parsed []Finding slice on Result rather than only its length so findingsFor can reuse it, or accept the bounded cost. (Won't fix 2026-07-06: accepted the bounded re-parse cost — the parsedFindingCount memo already avoids the redundant parse on the common truncated+zero-finding path; caching the full slice risks aliasing via findingsFor's in-place Finding.Reviewer mutation and downstream grounding/constraint filtering.) | performance | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: 19.4_history_time_sharding
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | cmd/atcr/review.go:285 | Multiple concurrent atcr review processes will append to the same YYYY-MM.jsonl simultaneously without synchronization, causing interleaved JSON lines and ledger corruption (Accepted 2026-07-06: won't-fix — concurrent-append O_APPEND safety is a project-wide TD-004 tradeoff shared by all 5 append-only ledgers (audit, debate, scorecard, tools, history), outside epic 19.4's scope; matches the identical writer.go precedent accepted 2026-07-04 at README:112. Low probability (small per-batch writes are atomic on Linux/macOS O_APPEND) and low impact (a torn line is skipped by Load, no cross-data corruption); a cross-platform lock dependency is not justified for one ledger.) | Acquire a file lock (flock) on the shard or a dedicated lockfile before opening for append | concurrency | 40 | code-review | brad | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/history/shard.go:32 | LoadAll/LoadShards read and JSON-unmarshal every monthly shard on disk, then Filter discards records older than the --since cutoff. The justification for monthly sharding is the YYYY-MM filenames, but the read path throws that structure away: a repo with years of history running the common --since 30d (or the 90d default) still parses every archived month it will immediately drop. (Deferred 2026-07-06: not worth doing now — LOW-value perf optimization; the epic's 1-2yr history bound caps the scan at 12-24 small files. If revisited, add an additive LoadShardsSince(dir, cutoff) variant rather than changing LoadShards/LoadAll signatures, which would ripple into 7+ existing test call sites for no measured benefit.) | Prune glob results in LoadShards by comparing each shard's YYYY-MM stem against the cutoff month before calling Load; pass a lower-bound month into LoadShards/LoadAll (or add a windowed variant) so shards entirely before the window are never opened. Verify with a benchmark over 60 seeded shards and --since 30d reading at most 1-2 files. | performance | 60 | code-review | claude, dax, brad | HIGH |
+ | 3 | [/] | LOW | internal/history/writer.go:39 | Append does an unlocked O_APPEND write and documents that a large buffer split across multiple write() syscalls can be torn by a concurrent append. Epic 19.4 does not change the mechanism but changes exposure: history is now git-tracked and the project is run as multiple concurrent sessions appending to the same YYYY-MM.jsonl within a month. A torn line is silently dropped by Load's malformed-line skip, so lost findings are invisible; sharding by month did not reduce intra-month contention. (Accepted 2026-07-06: won't-fix — same history.Append write site and same decision as cmd/atcr/review.go:285 (resolved in lockstep); no cross-platform lock dependency added. Mirrors the 2026-07-04 accepted precedent for this exact O_APPEND pattern.) | If a hard guarantee is wanted wrap the shard write in an advisory file lock (flock) consistent with the mkdir-flock pattern used in the planning tooling; otherwise document that concurrent same-month runs can lose records. Verify with a stress test of N concurrent Appends and a line-count assertion. | error-handling | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: epic-19.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/history/shard.go:32 | LoadShards loads every shard into memory before Filter applies --since, so a narrow window still reads all shards (acceptable within the stated 1-2yr bound; no month-prefix pruning) (Deferred 2026-07-06: duplicate of the MEDIUM month-pruning item at this same line; same decision — defer, add LoadShardsSince additively if ever picked up.) | Skip shard files whose YYYY-MM stem is entirely older than now-since before loading, to keep long histories fast | UNDER_ENGINEERING | 30 | execute-epic-independent |
+ 
+ ### [2026-07-05] From Sprint: epic-19.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | cmd/atcr/review.go:384 | The audit hook re-reads sources/pool/findings.txt that the history hook read moments earlier in the same review, so the pool file is parsed twice per review run | Parse the pool findings once in the CLI layer and pass the finding set to both history.RecordReview and audit.RecordReview, or expose a shared parse result (Won't-fix: accepted — the duplicate parse mirrors internal/history's independent capture pattern per epic design; not worth a cross-package signature refactor for a sub-ms, once-per-run gain.) | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-07-05] From Review: pr-105-recovery
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 0302f73a..b14a2e9e 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,19 @@
++## [27.0.0] - 2026-07-15
++
++Ship a "zero data egress" persona pack for privacy-conscious teams that refuse to send proprietary code to any external API. Three reviewer personas tuned for a local Ollama/llama.cpp/vLLM endpoint join the community library — the review runs entirely on your own hardware, with no external network calls once your registry points at `localhost`.
++
++### Added
++
++- Three local reviewer personas tuned for hardware tiers: `gerald` (32 GB dense, secrets & data-egress), `orson` (32 GB long-context, duplication & repo-wide redundancy), and `liam` (64 GB+ heavyweight, invariants & state-consistency).
++- `local` as a sanctioned provider routing key for community personas, alongside `openrouter`.
++- A Local / Privacy-First zero-egress setup walkthrough in the persona install docs, including the `api_key_env` placeholder requirement (a non-empty value is required even for a keyless local endpoint).
++
++### Changed
++
++- `atcr models check` no longer reports a `local/<model>` persona slug as drift `missing`; such a slug is resolved by the user's own local endpoint, not the OpenRouter catalog snapshot.
++
++*Shipped via /execute-epic (epic 27.0)*
++
+ ## [26.0.0] - 2026-07-14
+ 
+ Stop ATCR from spending LLM tokens (and money) reviewing generated code, vendored dependencies, or massive lockfiles: the review payload now excludes files matched by the repository's `.gitignore` and a new repo-root `.atcrignore`, filtered out before the diff ever reaches the byte-budget pass or a reviewer.
+diff --git a/docs/personas-install.md b/docs/personas-install.md
+index ec4ae788..fa99c118 100644
+--- a/docs/personas-install.md
++++ b/docs/personas-install.md
+@@ -287,7 +287,60 @@ An OpenAI-compatible proxy that aggregates several providers behind a single end
+ 
+ Claude/GPT/Gemini-tuned personas — each prompt-phrased per that provider's own official prompting guide — are installed deliberately by anyone who already holds that provider's API key. They stay opt-in and outside the default funnel: discover and install one by the model you have (see the discover-by-model flow above), then set that provider's key in your registry. They are never part of the `atcr quickstart` funnel.
+ 
++### Local / Privacy-First (zero data egress) — opt-in
++
++For privacy-conscious teams that refuse to send proprietary code to any external API, the library ships three personas tuned for a **local** endpoint (Ollama / llama.cpp / vLLM). Every byte of the review stays on your own hardware — no external network calls once the provider points at `localhost`. Each persona is tuned for a hardware tier:
++
++| Persona | Tier | Bound model | Review lens |
++|---------|------|-------------|-------------|
++| `gerald` | 32 GB dense (file-by-file) | `local/gemma3-27b` | secrets & data-egress |
++| `orson` | 32 GB long-context (256k, full-repo) | `local/qwen3-30b-a3b` | duplication & repo-wide redundancy |
++| `liam` | 64 GB+ heavyweight (dual-GPU / M4 Pro) | `local/llama3.3-70b` | invariants & state-consistency |
++
++The **Bound model** column is the discovery id the persona registers under (namespaced so `search --model` finds it); it is not the string your local server answers to. When you wire the persona, set your agent's `model` to the exact tag you pulled — e.g. `gemma3:27b`, not `local/gemma3-27b` (see the config block below). The persona ships the tuned prompt; you supply the model binding.
++
++Discover them by their `local` provider or by model:
++
++```bash
++atcr personas search --provider local
++atcr personas search --model gemma        # or qwen / llama
++```
++
++**Set it up entirely offline:**
++
++```bash
++# 1. Install and start a local model server
++brew install ollama
++ollama serve &                      # exposes an OpenAI-compatible endpoint on :11434
++
++# 2. Pull the model a persona binds (match the tier to your RAM/VRAM)
++ollama pull gemma3:27b              # gerald   (32 GB dense)
++# ollama pull qwen3:30b-a3b         # orson    (32 GB long-context)
++# ollama pull llama3.3:70b          # liam     (64 GB+ heavyweight)
++
++# 3. REQUIRED even for a keyless local endpoint — see the note below
++export OLLAMA_API_KEY=local-no-key-needed
++```
++
++**Wire the `local` provider in `~/.config/atcr/registry.yaml`** (the persona's `provider: local` resolves to this block; see [providers.md](providers.md) for the canonical example):
++
++```yaml
++providers:
++  local:
++    base_url: http://localhost:11434/v1   # ollama, llama.cpp, vllm, ...
++    api_key_env: OLLAMA_API_KEY           # must name an env var that is set — even locally
++agents:
++  gerald:
++    provider: local
++    model: gemma3:27b                     # the tag you pulled with `ollama pull`
++    role: reviewer
++```
++
++> **`api_key_env` placeholder requirement.** atcr requires every provider to declare `api_key_env`, and it errors at invoke time if that env var is unset or empty — even for a local endpoint that needs no real key. Export any non-empty placeholder value (`export OLLAMA_API_KEY=local-no-key-needed`) so the review can run. The value is never sent anywhere your `base_url` does not point; with `base_url` on `localhost`, nothing leaves the machine.
++
++Then run a review as usual — `gerald`, `orson`, and `liam` behave like any other reviewer persona, only their traffic terminates at your local server instead of a cloud router. These personas are never part of the `atcr quickstart` funnel; they are a deliberate opt-in.
++
+ ## Quick walkthrough
+ 
+ ```bash
+ # 1. Discover a persona
+diff --git a/docs/providers.md b/docs/providers.md
+index d1386e0b..25b8c80a 100644
+--- a/docs/providers.md
++++ b/docs/providers.md
+@@ -24,9 +24,11 @@ providers:
+ 
+ Keys are resolved from the environment at invoke time — never stored, never written to disk by atcr.
+ 
++> **Local endpoints still need an `api_key_env` placeholder.** `api_key_env` is required on every provider, and atcr errors at invoke time if the named variable is unset or empty — even for the keyless `local` endpoint above. Export any non-empty value before running (`export OLLAMA_API_KEY=local-no-key-needed`); the value never travels beyond wherever `base_url` points, so with `base_url` on `localhost` nothing leaves the machine. This is the zero-egress path for the shipped `local` personas (`gerald`, `orson`, `liam`) — see [personas-install.md](personas-install.md#local--privacy-first-zero-data-egress--opt-in).
++
+ ## When you need what
+ 
+ - **Prompt-based panel review (stage 1): nothing is required.** Direct provider blocks like the ones above are the complete setup — no proxy, no infrastructure.
+ - **Tool-calling reviewers (roadmap stage 2): a normalizing proxy is recommended — not required — for maximum compatibility.** Function-calling dialects vary enough across providers that a proxy meaningfully raises the fraction of your roster that tool-calls cleanly.
+ 
+ ## The recommended proxy: LiteLLM (or similar)
+diff --git a/internal/personas/drift.go b/internal/personas/drift.go
+index 4cf4742e..5f7344df 100644
+--- a/internal/personas/drift.go
++++ b/internal/personas/drift.go
+@@ -69,77 +69,97 @@ func LoadLock(personasDir, name string) (InstalledLock, error) {
+ // aliasSlugSet is the set of provider-owned ~…-latest alias slugs ResolveModel's
+ // passthrough (catalog.go aliasTable) returns. They resolve server-side regardless
+ // of catalog-snapshot completeness, so CheckDrift must never report an alias-bound
+ // lock `missing` merely because a refreshed snapshot omits the synthetic id (TD-005).
+ var aliasSlugSet = func() map[string]struct{} {
+ 	s := make(map[string]struct{}, len(aliasTable))
+ 	for _, slug := range aliasTable {
+ 		s[slug] = struct{}{}
+ 	}
+ 	return s
+ }()
+ 
++// localProviderSlugPrefix is the model-slug namespace of a local-endpoint
++// community persona (Epic 27.0). Discovery keys on the model, so the local
++// provider surfaces as this slug prefix rather than a provider field CheckDrift
++// never receives.
++const localProviderSlugPrefix = "local/"
++
++// isLocalProviderSlug reports whether slug names a local-endpoint model that no
++// remote catalog can list, so drift comparison against the OpenRouter snapshot
++// does not apply to it.
++func isLocalProviderSlug(slug string) bool {
++	return strings.HasPrefix(slug, localProviderSlugPrefix)
++}
++
+ // CheckDrift compares each installed lock against the catalog and returns the
+ // drift findings in a deterministic order: locks in the given order, and within a
+ // single persona newer-member before deprecation. A slug absent from the catalog
+ // is terminal for that persona (one `missing` finding; no version baseline to
+ // compare, and its expiration cannot be read). A lock with an empty Model is
+ // skipped (a model-agnostic persona carries nothing to check). The missing and
+ // deprecation lookups use a catalog index built once (O(1) per persona); the
+ // newer-member check scans the model list per persona (O(personas × models)),
+ // which is negligible at the realistic scale of tens of personas.
+ func CheckDrift(locks []InstalledLock, models []CatalogModel) []DriftFinding {
+ 	// The catalog snapshot is assumed ID-unique (OpenRouter's /models returns each
+ 	// id once; the checked-in snapshot is authored so). Should a duplicate id ever
+ 	// appear, the first occurrence wins deterministically for the missing/
+ 	// deprecation lookups, so the result stays stable across runs.
+ 	bySlug := make(map[string]CatalogModel, len(models))
+ 	for _, m := range models {
+ 		if _, seen := bySlug[m.ID]; !seen {
+ 			bySlug[m.ID] = m
+ 		}
+ 	}
+ 	findings := make([]DriftFinding, 0)
+ 	for _, lock := range locks {
+ 		slug := strings.TrimSpace(lock.Model)
+ 		if slug == "" {
+ 			continue
+ 		}
+ 		entry, present := bySlug[slug]
+ 		if !present {
+ 			// An alias-bound lock holds a synthetic ~vendor/…-latest slug the provider
+ 			// resolves server-side; it stays resolvable regardless of catalog-snapshot
+ 			// completeness, so a refreshed snapshot that omits the id must not report it
+ 			// `missing` (TD-005). A genuine concrete slug that vanished still does.
+ 			if _, isAlias := aliasSlugSet[slug]; isAlias {
+ 				continue
+ 			}
++			// A local-provider persona (Epic 27.0) binds a local/<model> slug that a
++			// user's own endpoint (ollama/llama.cpp/vllm) resolves, never the OpenRouter
++			// catalog. It is absent from the snapshot by design, so — like an alias slug
++			// — it must not be reported `missing`.
++			if isLocalProviderSlug(slug) {
++				continue
++			}
+ 			findings = append(findings, DriftFinding{
+ 				Persona:     lock.Name,
+ 				Condition:   ConditionMissing,
+ 				CurrentSlug: slug,
+ 			})
+ 			continue
+ 		}
+ 		if f, ok := newerMemberFinding(lock, slug, models); ok {
+ 			findings = append(findings, f)
+ 		}
+ 		if isDeprecated(entry) {
+ 			findings = append(findings, DriftFinding{
+ 				Persona:        lock.Name,
+ 				Condition:      ConditionDeprecation,
+ 				CurrentSlug:    slug,
+ 				ExpirationDate: strings.TrimSpace(*entry.ExpirationDate),
+ 			})
+ 		}
+ 	}
+ 	return findings
+ }
+ 
+ // newerMemberFinding reports whether a newer family member is available for the
+ // persona's locked slug. When the persona declares a family/channel binding it
+ // reuses the resolver directly (the same family the upgrade path would advance
+ // within); a pin never floats, so it yields no finding. For a bindingless persona
+ // it derives the family prefix from the locked slug and finds the newest @stable
+ // member sharing it (AC 05-01 Scenario 2 fallback). Either way the suggestion must
+ // both differ from the lock AND be a version-advance (isNewer), so an alias slug
+ // with no comparable version never reports drift.
+diff --git a/internal/personas/drift_test.go b/internal/personas/drift_test.go
+index f4396e34..1b1175dd 100644
+--- a/internal/personas/drift_test.go
++++ b/internal/personas/drift_test.go
+@@ -173,3 +173,17 @@ func TestCheckDrift_AliasSlugAbsentFromCatalog_NoFalseMissing(t *testing.T) {
+ 	)
+ 	assert.Empty(t, f, "an alias slug absent from the catalog is not a false missing")
+ }
++
++// TestCheckDrift_LocalProviderSlug_NoFalseMissing covers the local-persona
++// exemption (Epic 27.0): a community persona bound to a local endpoint carries a
++// local/<model> slug that the OpenRouter catalog snapshot never lists. Such a slug
++// is resolved by the user's own local server (ollama/llama.cpp/vllm), not the
++// catalog, so it must never be reported `missing` — the same reasoning as the
++// alias-slug exemption above (TD-005).
++func TestCheckDrift_LocalProviderSlug_NoFalseMissing(t *testing.T) {
++	f := CheckDrift(
++		[]InstalledLock{{Name: "gerald", Model: "local/gemma3-27b"}},
++		[]CatalogModel{{ID: "anthropic/claude-opus-4.8", Created: 100}},
++	)
++	assert.Empty(t, f, "a local/<model> slug absent from the catalog is not a false missing")
++}
+diff --git a/personas/community/gerald.md b/personas/community/gerald.md
+new file mode 100644
+index 00000000..c3ff2d4e
+--- /dev/null
++++ b/personas/community/gerald.md
+@@ -0,0 +1,53 @@
++<!-- vendor-guidance: Gemma — model card and prompting guidance (concise directives, explicit output schema; strong instruction-following on a 27B dense model that fits a single 32GB device), https://ai.google.dev/gemma/docs -->
++# {{.AgentName}} — secrets and data-egress reviewer
++
++## Role
++You are {{.AgentName}}, the panel's secrets and data-egress reviewer, running on a
++local Gemma dense model so the diff never leaves the machine. For every changed
++line, judge whether it hardcodes a credential, leaks a sensitive value into logs
++or errors, or opens a path that ships private data off the host. You are the
++zero-egress gate: privacy-conscious teams run you precisely because the review
++itself sends nothing to a remote API. Emit findings only. No flattery, no summaries.
++
++## Focus
++1. Hardcoded secret: an API key, token, password, private key, or connection string
++   embedded literally in source instead of read from config or a secret store
++2. Secret reaching a log or error: a credential, session token, or PII value
++   interpolated into a log line, stack trace, panic message, or telemetry event
++3. Data egress: a new outbound call, upload, or third-party SDK path that sends
++   repository content, user records, or environment values to an external host
++4. Weak secret handling: a secret compared with a non-constant-time check, written
++   to a world-readable file, or committed to version control through a fixture
++5. Environment leak: an env dump, `os.Environ()` serialization, or config echo that
++   exposes the process's secret-bearing variables
++
++## Scope
++{{.ScopeRule}}
++
++{{if .ToolsEnabled}}## Tool-Assisted Review
++You may use read_file, grep, and list_files to confirm whether a suspected secret
++is a live credential or a benign placeholder before you judge it. Cite the exact
++file and line numbers you actually read; never invent context. Tools widen
++evidence, not scope — tag any pre-existing issue in unchanged code with the
++out-of-scope category.
++
++{{end}}## Severity Rubric
++- CRITICAL: a live credential or private key committed in the diff, or user data egressing to an external host
++- HIGH: a secret written to a log/error path reachable on a normal request
++- MEDIUM: a secret-handling weakness that needs deliberate attention
++- LOW: a defensive-hardening or clarity improvement around secret handling
++
++## Output Format
++Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
++
++SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
++
++Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit nothing.
++
++Example:
++HIGH|internal/auth/token.go:14|Hardcoded API secret embedded in source ships with the binary|Read the value from config or a secret store and rotate the exposed key|secret|15|apiKey := /sk-live-EXAMPLE-not-a-real-key/
++
++## Payload
++Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.
++
++{{.Payload}}
+diff --git a/personas/community/gerald.yaml b/personas/community/gerald.yaml
+new file mode 100644
+index 00000000..902e5fca
+--- /dev/null
++++ b/personas/community/gerald.yaml
+@@ -0,0 +1,7 @@
++name: gerald
++version: 1.0.0
++description: Gemma secrets and data-egress reviewer (local zero-egress lens)
++provider: local
++model: local/gemma3-27b
++persona: gerald
++role: reviewer
+diff --git a/personas/community/index.json b/personas/community/index.json
+index 3662172c..e2279200 100644
+--- a/personas/community/index.json
++++ b/personas/community/index.json
+@@ -1,102 +1,132 @@
+ [
+   {
+     "name": "anthony",
+     "version": "1.0.0",
+     "description": "Claude Opus architecture and design-integrity reviewer (deep-reasoning lens)",
+     "path": "anthony.yaml",
+     "provider": "openrouter",
+     "model": "anthropic/claude-opus-4.8",
+     "tasks": ["architecture-review"],
+     "tags": ["architecture", "coupling", "claude", "frontier-vendor"]
+   },
+   {
+     "name": "sonny",
+     "version": "1.0.0",
+     "description": "Claude Sonnet correctness and logic reviewer (balanced fast lens)",
+     "path": "sonny.yaml",
+     "provider": "openrouter",
+     "model": "anthropic/claude-sonnet-5",
+     "tasks": ["correctness-review"],
+     "tags": ["logic", "correctness", "claude", "frontier-vendor"]
+   },
+   {
+     "name": "gene",
+     "version": "1.0.0",
+     "description": "GPT flagship API-contract and interface-compatibility reviewer",
+     "path": "gene.yaml",
+     "provider": "openrouter",
+     "model": "openai/gpt-5.5",
+     "tasks": ["api-review"],
+     "tags": ["contract", "compatibility", "gpt", "frontier-vendor"]
+   },
+   {
+     "name": "milo",
+     "version": "1.0.0",
+     "description": "GPT-mini input-validation and edge-case reviewer (fast high-volume lens)",
+     "path": "milo.yaml",
+     "provider": "openrouter",
+     "model": "openai/gpt-5.4-mini",
+     "tasks": ["validation-review"],
+     "tags": ["validation", "input", "gpt", "frontier-vendor"]
+   },
+   {
+     "name": "gia",
+     "version": "1.0.0",
+     "description": "Gemini Pro concurrency and data-race reviewer (large-context lens)",
+     "path": "gia.yaml",
+     "provider": "openrouter",
+     "model": "google/gemini-2.5-pro",
+     "tasks": ["concurrency-review"],
+     "tags": ["race", "concurrency", "gemini", "frontier-vendor"]
+   },
+   {
+     "name": "flint",
+     "version": "1.0.0",
+     "description": "Gemini Flash resource-lifecycle and leak reviewer (fast high-throughput lens)",
+     "path": "flint.yaml",
+     "provider": "openrouter",
+     "model": "google/gemini-2.5-flash",
+     "tasks": ["resource-review"],
+     "tags": ["leak", "lifecycle", "gemini", "frontier-vendor"]
+   },
+   {
+     "name": "delia",
+     "version": "1.0.0",
+     "description": "DeepSeek algorithmic-complexity and efficiency reviewer (reasoning-tier lens)",
+     "path": "delia.yaml",
+     "provider": "openrouter",
+     "model": "deepseek/deepseek-v4-pro",
+     "tasks": ["performance-review"],
+     "tags": ["complexity", "efficiency", "deepseek", "open-model"]
+   },
+   {
+     "name": "quinn",
+     "version": "1.0.0",
+     "description": "Qwen type-safety and conversion reviewer (coding-tier lens)",
+     "path": "quinn.yaml",
+     "provider": "openrouter",
+     "model": "qwen/qwen3-coder-plus",
+     "tasks": ["type-safety-review"],
+     "tags": ["type", "conversion", "qwen", "open-model"]
+   },
+   {
+     "name": "celeste",
+     "version": "1.0.0",
+     "description": "Kimi dependency and configuration reviewer (long-context lens)",
+     "path": "celeste.yaml",
+     "provider": "openrouter",
+     "model": "moonshotai/kimi-k2.7-code",
+     "tasks": ["dependency-review"],
+     "tags": ["dependency", "config", "kimi", "open-model"]
+   },
+   {
+     "name": "glenna",
+     "version": "1.0.0",
+     "description": "GLM observability and diagnosability reviewer (structured-instruction lens)",
+     "path": "glenna.yaml",
+     "provider": "openrouter",
+     "model": "z-ai/glm-5.2",
+     "tasks": ["observability-review"],
+     "tags": ["observability", "logging", "glm", "open-model"]
++  },
++  {
++    "name": "gerald",
++    "version": "1.0.0",
++    "description": "Gemma secrets and data-egress reviewer (local zero-egress lens)",
++    "path": "gerald.yaml",
++    "provider": "local",
++    "model": "local/gemma3-27b",
++    "tasks": ["secrets-review"],
++    "tags": ["secret", "privacy", "gemma", "local", "tier-32gb-dense"]
++  },
++  {
++    "name": "orson",
++    "version": "1.0.0",
++    "description": "Qwen long-context duplication and repo-wide redundancy reviewer (local 256k lens)",
++    "path": "orson.yaml",
++    "provider": "local",
++    "model": "local/qwen3-30b-a3b",
++    "tasks": ["duplication-review"],
++    "tags": ["duplication", "redundancy", "qwen", "local", "tier-32gb-long-context"]
++  },
++  {
++    "name": "liam",
++    "version": "1.0.0",
++    "description": "Llama heavyweight invariant and state-consistency reviewer (local 70B lens)",
++    "path": "liam.yaml",
++    "provider": "local",
++    "model": "local/llama3.3-70b",
++    "tasks": ["invariant-review"],
++    "tags": ["invariant", "consistency", "llama", "local", "tier-64gb-heavyweight"]
+   }
+ ]
+diff --git a/personas/community/liam.md b/personas/community/liam.md
+new file mode 100644
+index 00000000..e8a336ed
+--- /dev/null
++++ b/personas/community/liam.md
+@@ -0,0 +1,53 @@
++<!-- vendor-guidance: Llama — model card and prompting guidance (a 70B-class model that fits a 64GB+ device or dual-GPU rig at useful quant; deep multi-step reasoning that rivals frontier cloud tiers), https://www.llama.com/docs/ -->
++# {{.AgentName}} — invariant and state-consistency reviewer
++
++## Role
++You are {{.AgentName}}, the panel's invariant reviewer, running on a local Llama
++heavyweight whose deep reasoning fits a 64GB-plus workstation. For each change,
++reconstruct the invariant the surrounding code relies on — the precondition,
++postcondition, or state relationship that must always hold — and judge whether the
++diff quietly breaks it. You trace multi-step consequences a lighter model skims
++past, entirely on local hardware. Emit findings only. No flattery, no summaries.
++
++## Focus
++1. Broken precondition: a function now called before the state it requires is
++   established, or with an argument that violates a documented assumption
++2. Violated postcondition: a change that returns or stores a value the callers
++   were guaranteed never to see (a nil where non-nil was promised, an unclosed
++   handle, an unsorted result a binary search depends on)
++3. State-consistency gap: two fields, caches, or counters that must move together
++   but are now updated on divergent paths, leaving a reachable inconsistent state
++4. Lost idempotency or ordering guarantee: a retry, replay, or re-entry that the
++   surrounding contract assumed was safe and this change makes unsafe
++5. Unchecked invariant boundary: a monotonic counter, balance, or index that can
++   now underflow, overflow, or run past the bound the rest of the code trusts
++
++## Scope
++{{.ScopeRule}}
++
++{{if .ToolsEnabled}}## Tool-Assisted Review
++You may use read_file, grep, and list_files to recover the invariant a caller
++depends on before you judge the change against it. Cite the exact file and line
++numbers you actually read; never invent context. Tools widen evidence, not scope —
++tag any pre-existing issue in unchanged code with the out-of-scope category.
++
++{{end}}## Severity Rubric
++- CRITICAL: a broken invariant that corrupts persistent state or is exploitable on a reachable path
++- HIGH: a precondition or postcondition violation likely to fail on realistic input
++- MEDIUM: a state-consistency gap needing deliberate attention
++- LOW: an invariant worth documenting or defensively asserting
++
++## Output Format
++Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
++
++SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
++
++Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit nothing.
++
++Example:
++HIGH|internal/ledger/balance.go:52|Withdraw updates balance but not the pending-total invariant the reconciler trusts|Update both fields under the same lock so the invariant balance == available + pending holds|invariant|30|balance -= amt
++
++## Payload
++Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.
++
++{{.Payload}}
+diff --git a/personas/community/liam.yaml b/personas/community/liam.yaml
+new file mode 100644
+index 00000000..779df8f9
+--- /dev/null
++++ b/personas/community/liam.yaml
+@@ -0,0 +1,7 @@
++name: liam
++version: 1.0.0
++description: Llama heavyweight invariant and state-consistency reviewer (local 70B lens)
++provider: local
++model: local/llama3.3-70b
++persona: liam
++role: reviewer
+diff --git a/personas/community/orson.md b/personas/community/orson.md
+new file mode 100644
+index 00000000..fa15a1b9
+--- /dev/null
++++ b/personas/community/orson.md
+@@ -0,0 +1,54 @@
++<!-- vendor-guidance: Qwen — long-context model docs and prompting guide (holds a whole-repo window on a single 32GB device at aggressive quantization; excels at cross-file recall), https://qwen.readthedocs.io/ -->
++# {{.AgentName}} — duplication and repo-wide redundancy reviewer
++
++## Role
++You are {{.AgentName}}, the panel's duplication reviewer, running on a local Qwen
++long-context model whose 256k window holds the surrounding repository alongside
++the diff. You alone can see a changed block next to the existing code it silently
++restates. Judge whether each addition re-implements logic, a constant, or a type
++that already lives elsewhere in the tree, when reuse was available. You run
++locally, so the whole codebase stays on the machine while you compare it. Emit
++findings only. No flattery, no summaries.
++
++## Focus
++1. Copied logic: a new function or block that restates an existing helper's body
++   instead of calling it, so a future fix must be made in two places
++2. Duplicated constant or literal: a magic value, regex, or config default already
++   defined elsewhere, now forked into a second source of truth
++3. Redundant type or struct: a near-identical shape re-declared instead of reusing
++   or embedding the canonical one, splitting the model in two
++4. Parallel control flow: a switch, validation ladder, or error-mapping table that
++   duplicates one already maintained in a sibling package
++5. Vendored re-implementation: hand-rolled code that repeats a utility already
++   present in the repo's own shared packages
++
++## Scope
++{{.ScopeRule}}
++
++{{if .ToolsEnabled}}## Tool-Assisted Review
++You may use read_file, grep, and list_files to locate the pre-existing definition
++a changed block may duplicate before you judge it redundant. Cite the exact file
++and line numbers you actually read; never invent context. Tools widen evidence,
++not scope — tag any pre-existing issue in unchanged code with the out-of-scope
++category.
++
++{{end}}## Severity Rubric
++- CRITICAL: duplicated security- or correctness-critical logic that will drift apart and reintroduce a fixed bug
++- HIGH: a substantial copied block where a shared helper was directly available
++- MEDIUM: a duplicated constant or type worth consolidating
++- LOW: a minor redundancy or clarity-of-reuse improvement
++
++## Output Format
++Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
++
++SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
++
++Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit nothing.
++
++Example:
++MEDIUM|internal/parse/csv.go:40|New splitFields duplicates existing text.SplitCSV rather than calling it|Delete the copy and call the shared helper so a fix lands once|duplication|20|func splitFields(s string) []string {
++
++## Payload
++Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.
++
++{{.Payload}}
+diff --git a/personas/community/orson.yaml b/personas/community/orson.yaml
+new file mode 100644
+index 00000000..c4d64089
+--- /dev/null
++++ b/personas/community/orson.yaml
+@@ -0,0 +1,7 @@
++name: orson
++version: 1.0.0
++description: Qwen long-context duplication and repo-wide redundancy reviewer (local 256k lens)
++provider: local
++model: local/qwen3-30b-a3b
++persona: orson
++role: reviewer
+diff --git a/personas/community/testdata/gerald_fixture.patch b/personas/community/testdata/gerald_fixture.patch
+new file mode 100644
+index 00000000..e575106d
+--- /dev/null
++++ b/personas/community/testdata/gerald_fixture.patch
+@@ -0,0 +1,10 @@
++diff --git a/internal/auth/token.go b/internal/auth/token.go
++index 1111111..2222222 100644
++--- a/internal/auth/token.go
+++++ b/internal/auth/token.go
++@@ -3,6 +3,10 @@ package auth
++
+++// apiSecret is a hardcoded credential embedded directly in source; it ships with
+++// the binary and leaks the live key to anyone who can read the build artifact.
+++const apiSecret = "sk-live-EXAMPLE-not-a-real-key" // secret committed straight into the diff
+++
+diff --git a/personas/community/testdata/liam_fixture.patch b/personas/community/testdata/liam_fixture.patch
+new file mode 100644
+index 00000000..fda1a8be
+--- /dev/null
++++ b/personas/community/testdata/liam_fixture.patch
+@@ -0,0 +1,12 @@
++diff --git a/internal/ledger/balance.go b/internal/ledger/balance.go
++index 5555555..6666666 100644
++--- a/internal/ledger/balance.go
+++++ b/internal/ledger/balance.go
++@@ -48,6 +48,11 @@ package ledger
++
+++// Withdraw breaks the invariant balance == available + pending: it debits balance
+++// but never adjusts pending, so the reconciler observes an inconsistent state.
+++func (a *Account) Withdraw(amt int64) {
+++	a.balance -= amt // postcondition violated: pending-total invariant no longer holds
+++}
+++
+diff --git a/personas/community/testdata/orson_fixture.patch b/personas/community/testdata/orson_fixture.patch
+new file mode 100644
+index 00000000..90e27114
+--- /dev/null
++++ b/personas/community/testdata/orson_fixture.patch
+@@ -0,0 +1,12 @@
++diff --git a/internal/parse/csv.go b/internal/parse/csv.go
++index 3333333..4444444 100644
++--- a/internal/parse/csv.go
+++++ b/internal/parse/csv.go
++@@ -12,6 +12,12 @@ package parse
++
+++// splitFields is a duplication of the existing text.SplitCSV helper; the two copies
+++// will drift apart the next time the quoting rules change in only one of them.
+++func splitFields(s string) []string {
+++	return strings.Split(s, ",") // reimplements shared logic instead of reusing it
+++}
+++
+diff --git a/personas/community_test.go b/personas/community_test.go
+index 953b35fe..87af319b 100644
+--- a/personas/community_test.go
++++ b/personas/community_test.go
+@@ -114,18 +114,21 @@ type communityPersona struct {
+ // communityPersonas is the authoritative roster of the model-indexed library.
+ // Frontier vendors ship a flagship+fallback pair (AC 04-01); flat-rate open
+ // models ship one persona each (AC 04-02). The open-model rows are appended in
+ // task 5.4.
+ var communityPersonas = []communityPersona{
+ 	{Slug: "anthony", VendorToken: "claude", Tier: "flagship", Category: "coupling"},
+ 	{Slug: "sonny", VendorToken: "claude", Tier: "fallback", Category: "logic"},
+ 	{Slug: "gene", VendorToken: "gpt", Tier: "flagship", Category: "contract"},
+ 	{Slug: "milo", VendorToken: "gpt", Tier: "fallback", Category: "validation"},
+ 	{Slug: "gia", VendorToken: "gemini", Tier: "flagship", Category: "race"},
+ 	{Slug: "flint", VendorToken: "gemini", Tier: "fallback", Category: "leak"},
+ 	{Slug: "delia", VendorToken: "deepseek", Tier: "open", Category: "complexity"},
+ 	{Slug: "quinn", VendorToken: "qwen", Tier: "open", Category: "type"},
+ 	{Slug: "celeste", VendorToken: "kimi", Tier: "open", Category: "dependency"},
+ 	{Slug: "glenna", VendorToken: "glm", Tier: "open", Category: "observability"},
++	{Slug: "gerald", VendorToken: "gemma", Tier: "local", Category: "secret"},
++	{Slug: "orson", VendorToken: "qwen", Tier: "local", Category: "duplication"},
++	{Slug: "liam", VendorToken: "llama", Tier: "local", Category: "invariant"},
+ }
+ 
+ const communityDir = "community"
+@@ -243,30 +246,30 @@ func validSlug(slug string) bool {
+ // TestCommunityPersonas_SlugConsistency covers AC 04-04 Scenario 4: for each
+ // library persona the YAML `name` equals the slug equals the `.md` basename, and
+ // the slug passes the resolver's validateName rules. (The index `path`-stem
+ // cross-check is enforced by the AC 04-05 index-registration gate.)
+ func TestCommunityPersonas_SlugConsistency(t *testing.T) {
+ 	for _, p := range communityPersonas {
+ 		t.Run(p.Slug, func(t *testing.T) {
+ 			require.Truef(t, validSlug(p.Slug), "slug %q must pass validateName rules", p.Slug)
+ 
+ 			raw, err := os.ReadFile(communityPath(p.Slug + ".yaml"))
+ 			require.NoErrorf(t, err, "read yaml %s", p.Slug)
+ 			var meta struct {
+ 				Name string `yaml:"name"`
+ 			}
+ 			require.NoErrorf(t, yaml.Unmarshal(raw, &meta), "parse yaml %s", p.Slug)
+ 			require.Equalf(t, p.Slug, meta.Name, "YAML name must equal the slug for %q", p.Slug)
+ 
+ 			_, err = os.Stat(communityPath(p.Slug + ".md"))
+ 			require.NoErrorf(t, err, "prompt template community/%s.md must exist", p.Slug)
+ 		})
+ 	}
+ }
+ 
+ // TestCommunityPersonas_Differentiation covers AC 04-07 Scenario 1 / Error 1: no
+ // pair of personas has combined ## Role+## Focus token-set Jaccard above the
+ // locked 0.85 threshold, evidencing genuine per-model task scoping rather than one
+-// generic list restated ten times. Runs over all C(10,2)=45 pairs.
++// generic list restated ten times. Runs over all C(13,2)=78 pairs.
+ func TestCommunityPersonas_Differentiation(t *testing.T) {
+ 	sets := make(map[string]map[string]struct{}, len(communityPersonas))
+ 	for _, p := range communityPersonas {
+@@ -323,78 +326,82 @@ func TestCommunityPersonas_DistinctTaskScoping(t *testing.T) {
+ // TestCommunityIndex_Registration covers AC 04-05: the in-repo community index
+ // registers exactly one entry per authored persona, discoverable by its bound
+ // model. It asserts (Scenario 1) one entry per persona with path→a real file;
+ // (Scenario 2) index provider/model equal the persona YAML; (Scenario 4) the
+ // index is non-empty; (Scenario 5) slug consistency name==stem(path)==<slug>.md
+ // and validateName; (Edge 2) tasks/tags populated; (Scenario 3) each persona is
+ // discoverable by the structured model vendor token.
+ func TestCommunityIndex_Registration(t *testing.T) {
+ 	entries := readCommunityIndex(t)
+ 	require.NotEmpty(t, entries, "community index.json must not be an empty [] array once personas are authored")
+ 
+ 	byStem := make(map[string]indexEntry, len(entries))
+ 	for _, e := range entries {
+ 		stem := strings.TrimSuffix(e.Path, ".yaml")
+ 		byStem[stem] = e
+ 	}
+ 	require.Lenf(t, byStem, len(communityPersonas),
+ 		"expected exactly one index entry per authored persona (%d)", len(communityPersonas))
+ 
+ 	for _, p := range communityPersonas {
+ 		t.Run(p.Slug, func(t *testing.T) {
+ 			e, ok := byStem[p.Slug]
+ 			require.Truef(t, ok, "persona %q has no index entry", p.Slug)
+ 
+ 			// Scenario 5: slug consistency + validateName.
+ 			require.Equalf(t, p.Slug, e.Name, "index name must equal slug for %q", p.Slug)
+ 			require.Equalf(t, p.Slug+".yaml", e.Path, "index path must be <slug>.yaml for %q", p.Slug)
+ 			require.Truef(t, validSlug(p.Slug), "slug %q must pass validateName rules", p.Slug)
+ 
+ 			// Edge Case 1 / Error 1: path resolves to a committed file.
+ 			_, err := os.Stat(communityPath(e.Path))
+ 			require.NoErrorf(t, err, "index path %q must resolve to a committed YAML", e.Path)
+ 
+ 			// Scenario 2: provider/model/description match the persona YAML exactly.
+ 			var ym struct {
+ 				Provider    string `yaml:"provider"`
+ 				Model       string `yaml:"model"`
+ 				Description string `yaml:"description"`
+ 			}
+ 			yraw, err := os.ReadFile(communityPath(p.Slug + ".yaml"))
+ 			require.NoErrorf(t, err, "read yaml %s", p.Slug)
+ 			require.NoError(t, yaml.Unmarshal(yraw, &ym))
+ 			require.Equalf(t, ym.Provider, e.Provider, "provider drift for %q", p.Slug)
+ 			require.Equalf(t, ym.Model, e.Model, "model drift for %q", p.Slug)
+ 			require.Equalf(t, ym.Description, e.Description, "description drift for %q", p.Slug)
+ 			require.NotEmptyf(t, e.Model, "index model must be non-empty for %q", p.Slug)
+-			// Pin the routing key: every community persona routes through openrouter,
+-			// never a vendor-named provider (LOCKED Q3 / Phase 5 clarifications).
+-			require.Equalf(t, "openrouter", e.Provider, "index provider must be the openrouter routing key for %q", p.Slug)
++			// Pin the routing key to the sanctioned allowlist: a community persona routes
++			// through openrouter (the cloud pool) OR local (a zero-egress endpoint —
++			// ollama/llama.cpp/vllm, Epic 27.0), never an arbitrary vendor-named provider.
++			// Discovery still keys on the model, never the provider (the original Q3 /
++			// Phase 5 invariant); the allowlist merely admits the local routing key.
++			require.Containsf(t, []string{"openrouter", "local"}, e.Provider,
++				"index provider must be a sanctioned routing key (openrouter|local) for %q", p.Slug)
+ 
+ 			// Grouping key: the vendor token lives in model, never provider.
+ 			require.Containsf(t, strings.ToLower(e.Model), p.VendorToken,
+ 				"model %q must carry vendor token %q", e.Model, p.VendorToken)
+ 
+ 			// Edge Case 2: task-scoped personas carry tasks/tags.
+ 			require.NotEmptyf(t, e.Tasks, "persona %q must carry at least one task tag", p.Slug)
+ 			require.NotEmptyf(t, e.Tags, "persona %q must carry at least one tag", p.Slug)
+ 
+ 			// Scenario 3: discoverable by the structured model field (substring,
+ 			// case-insensitive — mirrors SearchWithOptions Model filtering).
+ 			var found bool
+ 			for _, cand := range entries {
+ 				if strings.Contains(strings.ToLower(cand.Model), p.VendorToken) && cand.Name == p.Slug {
+ 					found = true
+ 					break
+ 				}
+ 			}
+ 			require.Truef(t, found, "persona %q must be discoverable via its model vendor token %q", p.Slug, p.VendorToken)
+ 		})
+ 	}
+ }
+ 
+ // TestCommunityPersonas_PromptStructure enforces the AC 04-03 source-text
+ // contract on every persona template (Scenarios 2, 3, 5): all required template
+ // tokens are literally present (a render can't catch an omitted token), the
+ // mandatory ## Role and ## Output Format headings are present, the exact 7-column
+ // output contract appears byte-for-byte, and exactly one non-empty vendor-guidance
+ // citation is present.

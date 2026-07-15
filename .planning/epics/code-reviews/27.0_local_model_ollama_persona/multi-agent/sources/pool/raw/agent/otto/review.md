@@ -1,0 +1,1 @@
+LOW|docs/personas-install.md:312|`gerald` is listed as `local/gemma3-27b` in the table but the prompt refers to "Gemma dense model"|Consistency: use the same terminology (e.g. "Gemma 3 27B") in both the table and the persona prompt|style|5|Table uses bound model slug while prompt uses generic name
