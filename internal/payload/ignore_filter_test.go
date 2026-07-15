@@ -114,3 +114,16 @@ func TestRangeBuilder_ExcludesIgnored(t *testing.T) {
 	paths := entryPaths(entries)
 	assert.Equal(t, []string{"main.go"}, paths)
 }
+
+// WithoutIgnoreFilter (the --no-ignore opt-out) bypasses the filter: every
+// changed file — including .gitignore/.atcrignore-matched ones — is reviewed.
+func TestRangeBuilder_NoIgnoreOption_IncludesIgnored(t *testing.T) {
+	dir, base, head := ignoreFixture(t, true)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head, WithoutIgnoreFilter())
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+
+	paths := entryPaths(entries)
+	assert.ElementsMatch(t, []string{"main.go", "vendor/lib.go", "go.sum"}, paths)
+}
