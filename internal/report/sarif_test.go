@@ -216,13 +216,14 @@ func TestSarif_RulesCaseSensitive(t *testing.T) {
 }
 
 func TestSarif_RulesEmptyCategory(t *testing.T) {
-	// Edge Case 2: an empty Category is one distinct value → one rule with id "".
+	// Edge Case 2: an empty Category is mapped to a sentinel rule id so the SARIF
+	// rule catalog and every result.ruleId reference a non-empty identifier.
 	findings := []reconcile.JSONFinding{{Severity: "LOW", File: "x.go", Line: 1, Problem: "p", Category: ""}}
 	doc := unmarshalSarif(t, findings)
 	require.Len(t, doc.Runs[0].Tool.Driver.Rules, 1)
-	assert.Equal(t, "", doc.Runs[0].Tool.Driver.Rules[0].ID)
+	assert.Equal(t, "uncategorized", doc.Runs[0].Tool.Driver.Rules[0].ID)
 	require.Len(t, doc.Runs[0].Results, 1)
-	assert.Equal(t, "", doc.Runs[0].Results[0].RuleID)
+	assert.Equal(t, "uncategorized", doc.Runs[0].Results[0].RuleID)
 }
 
 func TestSarif_RulesSingleCategoryRepeated(t *testing.T) {
