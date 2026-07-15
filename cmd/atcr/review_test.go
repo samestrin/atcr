@@ -301,6 +301,17 @@ func TestReviewCmd_NoCacheFlagRegistered(t *testing.T) {
 	require.False(t, v, "--no-cache defaults to false (caching active)")
 }
 
+// TestReviewCmd_NoIgnoreFlagRegistered verifies the --no-ignore flag exists on
+// the review command and defaults to false (Epic 26.0: ignore filtering on
+// unless opted out).
+func TestReviewCmd_NoIgnoreFlagRegistered(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NotNil(t, cmd.Flags().Lookup("no-ignore"), "review must define --no-ignore")
+	v, err := cmd.Flags().GetBool("no-ignore")
+	require.NoError(t, err)
+	require.False(t, v, "--no-ignore defaults to false (ignore filtering active)")
+}
+
 // TestReviewCmd_SprintPlanFlagRegistered verifies the --sprint-plan flag exists
 // on the review command and defaults to empty (diff-wide review when unset), per
 // Epic 12.2 AC1.

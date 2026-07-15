@@ -26,6 +26,14 @@ type Manifest struct {
 	CompletedAt     time.Time         `json:"completed_at,omitempty"`
 	Partial         bool              `json:"partial"`
 
+	// NoIgnore records that the review ran with the .gitignore/.atcrignore payload
+	// filter disabled (--no-ignore). It is persisted so a resume recovers the flag
+	// from on-disk state rather than the resume request, locking pending agents to
+	// the same filtering the completed agents saw — exactly as the range, roster,
+	// and scope are locked. omitempty keeps a normal (filtered) run's manifest
+	// byte-identical to the pre-field shape so older readers are unaffected.
+	NoIgnore bool `json:"no_ignore,omitempty"`
+
 	// Interrupted is true when the fan-out was cut short by an external signal
 	// (SIGINT/SIGTERM cancelling the root context), as opposed to running to
 	// completion or hitting its own timeout (epic 4.1). It is the durable marker

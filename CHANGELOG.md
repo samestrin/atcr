@@ -1,3 +1,20 @@
+## [26.0.0] - 2026-07-14
+
+Stop ATCR from spending LLM tokens (and money) reviewing generated code, vendored dependencies, or massive lockfiles: the review payload now excludes files matched by the repository's `.gitignore` and a new repo-root `.atcrignore`, filtered out before the diff ever reaches the byte-budget pass or a reviewer.
+
+### Added
+
+- Repo-root `.gitignore` support: files matched by the repository's `.gitignore` are excluded from the review payload.
+- Repo-root `.atcrignore` support: a dedicated, additive ignore file (one `.gitignore`-syntax pattern per line, no negation) for files committed to git that should never reach the AI reviewer (e.g. `go.sum`, `package-lock.json`, `docs/`).
+- `atcr review --no-ignore` flag to bypass ignore filtering and review normally-excluded files on demand.
+- Files skipped by the ignore rules are logged at debug level.
+
+### Changed
+
+- The review payload now filters ignored files out of the changed-file list ahead of the byte-budget truncation pass; pre-flight changed-file counts reflect the same filtered set.
+
+*Shipped via /execute-epic (epic 26.0)*
+
 ## [Technical Debt] - 2026-07-14
 
 ### Fixed

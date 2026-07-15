@@ -73,6 +73,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
 	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
+	cmd.Flags().Bool("no-ignore", false, "review files matched by the repo-root .gitignore/.atcrignore that are normally filtered out of the payload")
 	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
 	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
 	addRangeFlags(cmd)
@@ -314,6 +315,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		OutputDir:      outputDir,
 		Force:          boolFlag(cmd, "force"),
 		NoCache:        boolFlag(cmd, "no-cache"),
+		NoIgnore:       boolFlag(cmd, "no-ignore"),
 		SprintPlanPath: sprintPlanPath(cmd),
 		PRNumber:       prNumberFromFlags(cmd),
 	}

@@ -21,6 +21,7 @@ const (
 	kindAdded
 	kindDeleted
 	kindRenamed
+	kindCopied
 )
 
 // changedFile describes one file in the base..head range. Path is the
@@ -36,7 +37,7 @@ type changedFile struct {
 // so limiting to the head path alone makes git render the file as a bare
 // addition (full file as added lines).
 func (f changedFile) pathspec() []string {
-	if f.kind == kindRenamed {
+	if f.kind == kindRenamed || f.kind == kindCopied {
 		return []string{f.oldPath, f.path}
 	}
 	return []string{f.path}
@@ -55,6 +56,72 @@ type rangeState struct {
 	raw        map[string]string      // head path -> plain -M diff chunk
 	zeroCtx    map[string]string      // head path -> --unified=0 chunk (raw)
 	lineRanges map[string][]lineRange // head path -> head-side changed ranges
+
+	// diffPathspec holds the trailing `-- …` pathspec args applied to every
+	// whole-range diff so git emits exactly the kept (non-ignored) files' chunks.
+	// This keeps the diff splitter's "every chunk maps to a kept file" invariant
+	// intact: the filtered file list (files) and the diff output stay in lockstep.
+	// Precomputed by changedFilesMemo (nil when nothing was ignored, so the common
+	// case is zero behavior change): either an :(exclude) list of the ignored files
+	// (default) or a positive list of the kept files when the ignored set is large
+	// enough to risk ARG_MAX — see buildDiffPathspec.
+	diffPathspec []string
+
+	// allIgnored is true when the range had changed files but the ignore filter
+	// removed every one (the kept set is empty). It is the ignore-stage analogue
+	// of Truncation.AllDropped: it lets the review layer distinguish "every
+	// changed file was ignored" (recoverable with --no-ignore) from a genuinely
+	// empty range, so a lockfile-only / vendored-only PR gets a --no-ignore hint
+	// instead of a misleading "no changed files" error. allIgnoredCount records
+	// how many were excluded so the diagnostic can name the count. Populated by
+	// changedFilesMemo.
+	allIgnored      bool
+	allIgnoredCount int
+}
+
+// pathspecArgs returns the precomputed trailing pathspec args for whole-range
+// diff commands (nil when nothing was ignored). The value is built once per range
+// by changedFilesMemo via buildDiffPathspec.
+func (s *rangeState) pathspecArgs() []string {
+	return s.diffPathspec
+}
+
+// excludePathspecThreshold is the excluded-path count above which whole-range
+// diffs stop listing every ignored file as an :(exclude) pathspec and instead
+// list the (smaller) kept set positively, so a range that ignores thousands of
+// tracked files cannot blow ARG_MAX (E2BIG). git diff has no --pathspec-from-file
+// escape hatch (that option exists only on add/commit/reset/…, not diff), so
+// bounding argv by min(|kept|,|ignored|) is the only version-independent option.
+// A var, not a const, so tests can lower it to exercise the positive branch.
+var excludePathspecThreshold = 1000
+
+// buildDiffPathspec returns the trailing pathspec args that make git emit exactly
+// the kept files' chunks. With nothing ignored it returns nil (whole-range diff,
+// the common case). Otherwise it excludes the ignored files — `-- :/ :(exclude)…`,
+// anchored at the worktree root (`:/`) so g.dir may be a subdirectory — but when
+// that exclude set exceeds excludePathspecThreshold and the kept set is strictly
+// smaller, it lists the kept files positively instead (`-- :(top,literal)<kept>…`)
+// so argv scales with |kept|, not |ignored| — the vendored-tree-bump case (few
+// kept, thousands ignored). A kept rename contributes both of its paths: pathspec
+// filtering precedes rename pairing, so omitting the old path makes git render the
+// file as a bare addition. Both forms are root-anchored and literal, so an ignored
+// or kept filename containing pathspec metacharacters cannot over-match.
+func buildDiffPathspec(kept []changedFile, exclude []string) []string {
+	if len(exclude) == 0 {
+		return nil
+	}
+	if len(exclude) > excludePathspecThreshold {
+		var pos []string
+		for _, f := range kept {
+			for _, p := range f.pathspec() {
+				pos = append(pos, ":(top,literal)"+p)
+			}
+		}
+		if len(pos) > 0 && len(pos) < len(exclude) {
+			return append([]string{"--"}, pos...)
+		}
+	}
+	return append([]string{"--", ":/"}, exclude...)
 }
 
 // gitRunner executes git argv against a fixed directory and context. The
@@ -74,9 +141,33 @@ type gitRunner struct {
 	// the constant-process-count regression test; it is otherwise inert.
 	execCount int
 
+	// noIgnore disables the .gitignore/.atcrignore payload filter for this runner
+	// (the --no-ignore opt-out). Default false → filtering active.
+	noIgnore bool
+
+	// ignore is the lazily-loaded repo-root ignore matcher (nil until first use).
+	// ignoreReady guards the one-time load so a repo with no ignore files is not
+	// re-stat'd on every range.
+	ignore      *ignoreMatcher
+	ignoreReady bool
+
 	// state holds the whole-range caches for the current base..head pair.
 	// Access only via forRange, which resets state when the range changes.
 	state rangeState
+}
+
+// matcher returns the runner's repo-root ignore matcher, loading it once from
+// g.dir. Returns nil when filtering is disabled (--no-ignore) so callers skip
+// the partition entirely.
+func (g *gitRunner) matcher() *ignoreMatcher {
+	if g.noIgnore {
+		return nil
+	}
+	if !g.ignoreReady {
+		g.ignore = newIgnoreMatcher(g.dir, g.log())
+		g.ignoreReady = true
+	}
+	return g.ignore
 }
 
 // run executes `git -C <dir> args...` and returns trimmed stdout. LC_ALL=C
@@ -138,11 +229,16 @@ func (g *gitRunner) changedFiles(base, head string) ([]changedFile, error) {
 			continue
 		}
 		switch status[0] {
-		case 'R', 'C': // rename/copy: status, old, new
+		case 'R': // rename: status, old, new
 			if len(fields) < 3 {
 				continue
 			}
 			files = append(files, changedFile{path: fields[2], oldPath: fields[1], kind: kindRenamed})
+		case 'C': // copy: status, old, new
+			if len(fields) < 3 {
+				continue
+			}
+			files = append(files, changedFile{path: fields[2], oldPath: fields[1], kind: kindCopied})
 		case 'D':
 			files = append(files, changedFile{path: fields[1], kind: kindDeleted})
 		case 'A':
@@ -161,15 +257,62 @@ func (g *gitRunner) changedFilesMemo(base, head string) ([]changedFile, error) {
 	if s.files != nil {
 		return s.files, nil
 	}
-	files, err := g.changedFiles(base, head)
+	raw, err := g.changedFiles(base, head)
 	if err != nil {
 		return nil, err
+	}
+	files, exclude := g.applyIgnore(raw)
+	s.diffPathspec = buildDiffPathspec(files, exclude)
+	// Record the all-ignored signal: the range had changed files but the filter
+	// kept none. len(raw) > 0 excludes a genuinely empty range (nothing to hint).
+	if len(raw) > 0 && len(files) == 0 {
+		s.allIgnored = true
+		s.allIgnoredCount = len(raw)
 	}
 	if files == nil {
 		files = []changedFile{} // non-nil so an empty range still memoizes
 	}
 	s.files = files
 	return files, nil
+}
+
+// applyIgnore partitions files into the kept set (returned) and the excluded
+// set, returning git pathspecs for the excluded paths. Each excluded file is
+// logged at slog debug (AC #3). When the matcher is inactive (no ignore files,
+// or --no-ignore) the input is returned unchanged with a nil exclude spec, so
+// the common case pays only one map/nil check.
+func (g *gitRunner) applyIgnore(files []changedFile) (kept []changedFile, exclude []string) {
+	m := g.matcher()
+	if !m.active() {
+		return files, nil
+	}
+	kept = make([]changedFile, 0, len(files))
+	skipped := 0
+	for _, f := range files {
+		if !m.match(f.path) {
+			kept = append(kept, f)
+			continue
+		}
+		skipped++
+		g.log().Debug("payload: skipping ignored file", "file", f.path, "kind", f.kind)
+		// `literal` magic is mandatory: without it git treats the path as a glob,
+		// so an ignored filename containing pathspec metacharacters ([ * ?) would
+		// also exclude unrelated changed files (e.g. :(exclude)a[b].go matches
+		// ab.go), silently dropping a real file or leaving an unattributed chunk
+		// that hard-errors the splitter.
+		exclude = append(exclude, ":(exclude,literal)"+f.path)
+		// A rename whose head path is ignored: exclude the old path too so git
+		// drops the rename pair entirely rather than re-rendering it as an add.
+		// Copies intentionally keep their source path: the source survives in the
+		// tree and may have its own independent changed-file entry.
+		if f.kind == kindRenamed {
+			exclude = append(exclude, ":(exclude,literal)"+f.oldPath)
+		}
+	}
+	if skipped > 0 {
+		g.log().Info("payload: skipped changed files by ignore rules", "skipped", skipped, "kept", len(kept))
+	}
+	return kept, exclude
 }
 
 // headPathSet returns the set of head-side paths in base..head, the authoritative
@@ -319,8 +462,19 @@ func (g *gitRunner) diffChunks(base, head string, opts ...string) (map[string]st
 	if err != nil {
 		return nil, err
 	}
+	// No kept files (empty range, or every changed file ignore-filtered) → no
+	// chunks to emit, so skip the git call entirely. This also avoids passing a
+	// huge exclude pathspec set for an all-ignored range.
+	if len(heads) == 0 {
+		return map[string]string{}, nil
+	}
+	// headPathSet ran changedFilesMemo, so s.diffPathspec is populated: scoping the
+	// diff to the kept files keeps git's chunk output in lockstep with the filtered
+	// head-path set the splitter matches against.
+	s := g.forRange(base, head)
 	args := append([]string{"diff"}, opts...)
 	args = append(args, "-M", base+".."+head)
+	args = append(args, s.pathspecArgs()...)
 	out, err := g.output(args...)
 	if err != nil {
 		return nil, err
@@ -335,11 +489,22 @@ func (g *gitRunner) diffChunks(base, head string, opts ...string) (map[string]st
 // diff yields an empty (non-nil) set. The result is memoized so the N per-file
 // binary checks collapse to a single git process.
 func (g *gitRunner) binarySet(base, head string) (map[string]bool, error) {
+	// Ensure the ignore filter has run so s.diffPathspec is populated before the
+	// numstat diff — otherwise ignored binaries would leak into the set.
+	if _, err := g.changedFilesMemo(base, head); err != nil {
+		return nil, err
+	}
 	s := g.forRange(base, head)
 	if s.binary != nil {
 		return s.binary, nil
 	}
-	out, err := g.run("diff", "--numstat", "-M", base+".."+head)
+	// No kept files → nothing binary; skip the git call (mirrors diffChunks).
+	if len(s.files) == 0 {
+		s.binary = map[string]bool{}
+		return s.binary, nil
+	}
+	args := append([]string{"diff", "--numstat", "-M", base + ".." + head}, s.pathspecArgs()...)
+	out, err := g.run(args...)
 	if err != nil {
 		return nil, fmt.Errorf("git diff --numstat failed: %w", err)
 	}

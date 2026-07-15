@@ -33,8 +33,16 @@ type ChangedLines map[string]FileChange
 // text), which the gate treats as "changed but no lines to check" and keeps (fail
 // open); a file absent from the map was not changed by the patch, so the gate
 // drops findings that cite it (the fabricated-file hallucination class).
-func BuildChangedLines(ctx context.Context, repo, base, head string) (ChangedLines, error) {
+// Options customize the underlying gitRunner (e.g. WithoutIgnoreFilter for the
+// --no-ignore escape hatch), so a caller that falls back to this standalone path
+// grounds under the same filtering as the payload it is grounding — otherwise a
+// --no-ignore review whose grounding took this path would silently drop every
+// finding on an ignored file (the file absent from the changed-lines map).
+func BuildChangedLines(ctx context.Context, repo, base, head string, opts ...RangeOption) (ChangedLines, error) {
 	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
+	for _, o := range opts {
+		o(g)
+	}
 	if err := validateRange(g, base, head); err != nil {
 		return nil, err
 	}

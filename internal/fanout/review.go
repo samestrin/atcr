@@ -94,6 +94,11 @@ type ReviewRequest struct {
 	// entries and every subsequent run benefits. Defaulting false keeps caching
 	// fully active for callers that do not opt out (e.g. the MCP handler).
 	NoCache bool
+	// NoIgnore bypasses the repo-root .gitignore/.atcrignore payload filter for
+	// this run (the --no-ignore flag, Epic 26.0), so a deliberately-ignored file
+	// can be reviewed on demand. Defaulting false keeps filtering active for
+	// callers that do not opt out (e.g. the MCP handler).
+	NoIgnore bool
 	// SprintPlanPath, when non-empty, points at a markdown sprint/epic plan whose
 	// content is wrapped in a SCOPE CONSTRAINT block and prepended to every
 	// reviewer's payload, immediately before the diff (Epic 12.2). It scopes the
@@ -236,7 +241,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if err := validateReviewRequest(cfg, req); err != nil {
 		return nil, err
 	}
-	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
+	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, req.NoIgnore)
 	if err != nil {
 		return nil, err
 	}
@@ -251,6 +256,12 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		}
 	}
 	if empty {
+		// Distinguish "every changed file was ignore-filtered" from a genuinely
+		// empty range: the former is recoverable with --no-ignore, so hint at it
+		// instead of the misleading "only merge or empty commits?" hypothesis.
+		if allIgnored, n := rb.AllIgnored(); allIgnored {
+			return nil, fmt.Errorf("%w: all %d changed file(s) in the range were excluded by .gitignore/.atcrignore; re-run with --no-ignore to review them", ErrNoReviewableContent, n)
+		}
 		return nil, fmt.Errorf("%w: the range contains commits but no changed files (only merge or empty commits?); review a range that changes files", ErrNoReviewableContent)
 	}
 	// Sprint-plan scope (Epic 12.2): read the plan once here and prepend its
@@ -370,8 +381,11 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		PerAgentPayload: perAgentMode,
 		Roster:          rosterNames(cfg.Project),
 		StartedAt:       req.StartedAt,
-		Partial:         false,              // finalized by ExecuteReview once outcomes are known
-		Stages:          []string{"review"}, // 1.x runs only the review stage (Epic 1.1 reserved field)
+		Partial:         false, // finalized by ExecuteReview once outcomes are known
+		// Persist --no-ignore so a resume recovers the filtering mode from disk
+		// rather than the resume request (the completed agents' context is locked).
+		NoIgnore: req.NoIgnore,
+		Stages:   []string{"review"}, // 1.x runs only the review stage (Epic 1.1 reserved field)
 	}
 	if err := WriteManifest(dir, m); err != nil {
 		return nil, err
@@ -440,7 +454,14 @@ func computeGroundingData(ctx context.Context, req ReviewRequest, rb *payload.Ra
 	if rb != nil {
 		cl, err = rb.BuildChangedLines()
 	} else {
-		cl, err = payload.BuildChangedLines(ctx, req.Repo, req.Range.Base, req.Range.Head)
+		// Inherit --no-ignore so the standalone grounding path agrees with the
+		// payload: without it, grounding would re-filter ignored files the payload
+		// kept and silently drop every finding on them.
+		var opts []payload.RangeOption
+		if req.NoIgnore {
+			opts = append(opts, payload.WithoutIgnoreFilter())
+		}
+		cl, err = payload.BuildChangedLines(ctx, req.Repo, req.Range.Base, req.Range.Head, opts...)
 	}
 	if err != nil {
 		log.FromContext(ctx).Warn("grounding disabled: could not compute changed lines", "err", err)
@@ -769,8 +790,12 @@ type modePayload struct {
 // It returns the shared payload.RangeBuilder so the caller can compute grounding
 // data (computeGroundingData) on the same gitRunner, reusing the memoized
 // --name-status / --unified=0 diffs instead of re-spawning them (Epic 22.4).
-func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head string) (map[string]modePayload, *payload.RangeBuilder, error) {
-	rb := payload.NewRangeBuilder(ctx, repo, base, head)
+func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head string, noIgnore bool) (map[string]modePayload, *payload.RangeBuilder, error) {
+	var opts []payload.RangeOption
+	if noIgnore {
+		opts = append(opts, payload.WithoutIgnoreFilter())
+	}
+	rb := payload.NewRangeBuilder(ctx, repo, base, head, opts...)
 	out := map[string]modePayload{}
 	for _, mode := range neededModes(cfg) {
 		entries, err := rb.BuildEntries(payload.PayloadMode(mode))

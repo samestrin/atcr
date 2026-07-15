@@ -502,7 +502,9 @@ func validateRangeArgs(base, head, mergeCommit string) error {
 
 // changedFileCount counts the changed files in base..head via the payload
 // package's single name-status call — atcr_range is a cheap pre-flight, so it
-// must not materialize per-file diff bodies just to count them.
+// must not materialize per-file diff bodies just to count them. The returned
+// count is ignore-filtered: it excludes files matched by repo-root .gitignore
+// or .atcrignore rules, matching the default review payload.
 func changedFileCount(ctx context.Context, root, base, head string) (int, error) {
 	return payload.ChangedFileCount(ctx, root, base, head)
 }
