@@ -172,7 +172,7 @@ func TestApplyIgnore_CopyDoesNotExcludeSource(t *testing.T) {
 	g := &gitRunner{ctx: context.Background(), dir: dir}
 	files := []changedFile{
 		// Simulate a copy status: new.go is a copy of old.go and is ignored.
-		{path: "new.go", oldPath: "old.go", kind: kindRenamed},
+		{path: "new.go", oldPath: "old.go", kind: kindCopied},
 		{path: "old.go", kind: kindModified},
 	}
 	kept, exclude := g.applyIgnore(files)

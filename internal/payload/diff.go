@@ -21,6 +21,7 @@ const (
 	kindAdded
 	kindDeleted
 	kindRenamed
+	kindCopied
 )
 
 // changedFile describes one file in the base..head range. Path is the
@@ -36,7 +37,7 @@ type changedFile struct {
 // so limiting to the head path alone makes git render the file as a bare
 // addition (full file as added lines).
 func (f changedFile) pathspec() []string {
-	if f.kind == kindRenamed {
+	if f.kind == kindRenamed || f.kind == kindCopied {
 		return []string{f.oldPath, f.path}
 	}
 	return []string{f.path}
@@ -180,11 +181,16 @@ func (g *gitRunner) changedFiles(base, head string) ([]changedFile, error) {
 			continue
 		}
 		switch status[0] {
-		case 'R', 'C': // rename/copy: status, old, new
+		case 'R': // rename: status, old, new
 			if len(fields) < 3 {
 				continue
 			}
 			files = append(files, changedFile{path: fields[2], oldPath: fields[1], kind: kindRenamed})
+		case 'C': // copy: status, old, new
+			if len(fields) < 3 {
+				continue
+			}
+			files = append(files, changedFile{path: fields[2], oldPath: fields[1], kind: kindCopied})
 		case 'D':
 			files = append(files, changedFile{path: fields[1], kind: kindDeleted})
 		case 'A':
@@ -240,6 +246,8 @@ func (g *gitRunner) applyIgnore(files []changedFile) (kept []changedFile, exclud
 		exclude = append(exclude, ":(exclude,literal)"+f.path)
 		// A rename whose head path is ignored: exclude the old path too so git
 		// drops the rename pair entirely rather than re-rendering it as an add.
+		// Copies intentionally keep their source path: the source survives in the
+		// tree and may have its own independent changed-file entry.
 		if f.kind == kindRenamed {
 			exclude = append(exclude, ":(exclude,literal)"+f.oldPath)
 		}
