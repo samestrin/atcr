@@ -41,9 +41,15 @@ func ValidFormat(s string) bool {
 	}
 }
 
+// FormatList returns the supported output formats as a slice. It is the single
+// source of truth for both human-readable listings and the MCP schema enum.
+func FormatList() []string {
+	return []string{FormatMarkdown, FormatJSON, FormatChecklist, FormatSarif}
+}
+
 // Formats lists the supported formats for error messages.
 func Formats() string {
-	return FormatMarkdown + ", " + FormatJSON + ", " + FormatChecklist + ", " + FormatSarif
+	return strings.Join(FormatList(), ", ")
 }
 
 // Render writes findings to w in the given format. An unknown format is an error

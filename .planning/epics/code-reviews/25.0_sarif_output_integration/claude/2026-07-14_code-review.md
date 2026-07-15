@@ -1,0 +1,74 @@
+# Code Review Report: 25.0_sarif_output_integration
+
+## 1. Executive Summary
+- **Overall Result:** Pass
+- **Items Checked:** 4 / 4
+- **Approval Status:** Approved
+- **Review Date:** July 14, 2026
+- **Review Mode:** Epic (Acceptance Criteria + Adversarial) + Tests
+
+## 2. Checklist Changes Applied
+- **.planning/epics/active/25.0_sarif_output_integration.md** – AC1: `atcr report --format=sarif` produces valid SARIF JSON
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `cmd/atcr/report.go:25`, `internal/report/render.go:63-64`, `internal/report/sarif.go:101-131`
+- **.planning/epics/active/25.0_sarif_output_integration.md** – AC2: SARIF output correctly maps ATCR severities to SARIF levels
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `internal/report/sarif.go:173-194`
+- **.planning/epics/active/25.0_sarif_output_integration.md** – AC3: File paths and line numbers correctly anchor to the git diff
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `internal/report/sarif.go:210-221`
+- **.planning/epics/active/25.0_sarif_output_integration.md** – AC4: Documentation example shows CI integration (GitHub Code Scanning + GitLab SAST)
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `docs/ci-integration.md:47-98`
+
+## 3. Evidence Map
+- **AC1 — valid SARIF JSON**
+  - Evidence: `internal/report/render.go:37,46,63-64`, `internal/report/sarif.go:101-131`, `internal/report/sarif_test.go`, `internal/report/testdata/{report.sarif.json,sarif-schema-2.1.0.json}`
+  - Summary: `FormatSarif` is a registered format; `Render` routes it to `renderSarif`, which marshals a SARIF 2.1.0 log with nil-slice guards and trailing newline. Output shape is schema-validated and golden-compared in tests.
+- **AC2 — severity mapping**
+  - Evidence: `internal/report/sarif.go:173-194`
+  - Summary: `sarifLevel` derives from the canonical `reclib.SeverityRank` rubric (CRITICAL/HIGH → error, MEDIUM → warning, LOW → note; unrecognized → warning + diagnostic). Single comparison site avoids rubric desync.
+- **AC3 — file/line anchoring**
+  - Evidence: `internal/report/sarif.go:210-221`, `acceptance-criteria/03-01`, `03-02`
+  - Summary: `sarifLocation` emits `uri = f.File` verbatim (repo-root-relative) and `startLine/endLine = f.Line`; file-level (`Line <= 0`) findings synthesize a full `1,1,1,1` region per AC 03-02.
+- **AC4 — CI docs**
+  - Evidence: `docs/ci-integration.md:47-98`
+  - Summary: Documents both GitHub Code Scanning (`codeql-action/upload-sarif@v3`, `security-events: write`) and GitLab (`artifacts:reports:sast`), each piping `atcr report --format=sarif`.
+
+## 4. Remaining Unchecked Items
+No remaining unchecked items - all verified.
+
+## 5. Manual Review Status
+- **Code Reviewed and Approved:** Checked
+- **Rationale:** All four acceptance criteria have concrete implementation + test evidence; quality gates green; adversarial pass surfaced only non-blocking hardening/maintainability follow-ups.
+
+## 6. Coverage Analysis
+- **Coverage:** 97.6% (internal/report; cmd/atcr 85.2%)
+- **Baseline:** 80%
+- **Delta:** ↑17.6%
+- **Status:** PASSING
+
+## 7. Quality Checks
+| Check | Status | Command |
+|-------|--------|---------|
+| Lint | PASSING | golangci-lint run |
+| Types | PASSING | go vet ./... |
+| Format | PASSING | gofmt -l (go fmt ./...) |
+
+## 8. Adversarial Analysis
+- **Files Reviewed:** 4 (internal/report/sarif.go, internal/report/render.go, cmd/atcr/report.go, internal/mcp/tools.go)
+- **Issues Found:** 5 (Critical: 0, High: 0)
+- **Verification:** 2 agent findings dropped as false-positives — the file-level `1,1,1,1` "zero-length region" is spec-mandated by AC 03-02 (tested/documented), and the `doc.go` format-hardcode claim was verified false.
+
+### Issues by Severity
+- **MEDIUM** `internal/report/sarif.go:218` (correctness) — `artifactLocation.uri = f.File` emitted verbatim with no guard against empty/absolute/traversal paths; an empty or non-repo-relative uri makes GitHub Code Scanning reject the whole upload.
+- **LOW** `internal/report/sarif.go:105` (correctness) — empty finding Category yields an empty `ruleId`/rule id; schema-valid but a weak identifier and possible GitHub-ingest rejection. Suggest a sentinel (`uncategorized`).
+- **LOW** `internal/mcp/tools.go:234` (maintainability) — MCP format enum is hand-maintained while descriptions derive from `report.Formats()`; drift risk if a new format is added.
+- **LOW** `internal/report/sarif.go:190` (error-handling) — unrecognized-severity diagnostic writes only to server `os.Stderr`, invisible/spammy on the MCP path.
+- **LOW** `internal/report/sarif.go:199` (maintainability) — `sarifDiag` package global is a latent data race if `renderSarif` is ever run concurrently or a `t.Parallel()` is added.
+
+## 9. Follow-ups
+- Run `/reconcile-code-review @.planning/epics/active/25.0_sarif_output_integration.md` to merge these findings into the TD README with reviewer/confidence attribution, then `/resolve-td` the MEDIUM uri-guard item before enterprise SARIF rollout.
+
+---
+*Generated by /execute-code-review on July 14, 2026 08:40:01PM*

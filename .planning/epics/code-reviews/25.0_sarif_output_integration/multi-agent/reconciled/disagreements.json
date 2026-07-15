@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": ".planning/sprints/active/25.0_sarif_output_integration/plan/acceptance-criteria/04-02-gitlab-sast-widget-example.md",
+      "line": 36,
+      "severity": "HIGH",
+      "problem": "Flattened YAML key `artifacts: reports: sast:` is syntactically invalid and will fail when copied into `.gitlab-ci.yml`",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "archer"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": ".planning/sprints/active/25.0_sarif_output_integration/plan/documentation/schema-validation-with-jsonschema-go.md",
+      "line": 14,
+      "severity": "MEDIUM",
+      "problem": "Package `github.com/google/jsonschema-go` does not exist in the official Go ecosystem; likely a hallucination for `github.com/santhosh-tekuri/jsonschema/v5` or similar",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "archer"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": ".planning/sprints/active/25.0_sarif_output_integration/plan/acceptance-criteria/01-01-format-registration.md",
+      "line": 46,
+      "severity": "LOW",
+      "problem": "Scenario 3 title claims `Formats()` enumerates sarif \"for error messages\", but body describes the general supported-formats list output, not specifically the error message path",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "archer"
+      ]
+    }
+  ]
+}

@@ -1,9 +1,9 @@
 {
-  "skill": "sprint-complete",
-  "args": "@.planning/sprints/active/25.0_sarif_output_integration/",
-  "invocation": "/sprint-complete @.planning/sprints/active/25.0_sarif_output_integration/",
+  "skill": "finalize-td",
+  "args": "",
+  "invocation": "/finalize-td",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "37526f6d-e38b-424a-878b-c111fd2260a7",
-  "timestamp": "2026-07-15T03:07:30.551Z"
+  "session_id": "4ffafc8a-5e12-4a78-8e42-4b36d601be65",
+  "timestamp": "2026-07-15T04:34:02.631Z"
 }
