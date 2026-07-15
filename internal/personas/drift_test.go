@@ -173,3 +173,17 @@ func TestCheckDrift_AliasSlugAbsentFromCatalog_NoFalseMissing(t *testing.T) {
 	)
 	assert.Empty(t, f, "an alias slug absent from the catalog is not a false missing")
 }
+
+// TestCheckDrift_LocalProviderSlug_NoFalseMissing covers the local-persona
+// exemption (Epic 27.0): a community persona bound to a local endpoint carries a
+// local/<model> slug that the OpenRouter catalog snapshot never lists. Such a slug
+// is resolved by the user's own local server (ollama/llama.cpp/vllm), not the
+// catalog, so it must never be reported `missing` — the same reasoning as the
+// alias-slug exemption above (TD-005).
+func TestCheckDrift_LocalProviderSlug_NoFalseMissing(t *testing.T) {
+	f := CheckDrift(
+		[]InstalledLock{{Name: "gerald", Model: "local/gemma3-27b"}},
+		[]CatalogModel{{ID: "anthropic/claude-opus-4.8", Created: 100}},
+	)
+	assert.Empty(t, f, "a local/<model> slug absent from the catalog is not a false missing")
+}

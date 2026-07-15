@@ -1,0 +1,12 @@
+diff --git a/internal/parse/csv.go b/internal/parse/csv.go
+index 3333333..4444444 100644
+--- a/internal/parse/csv.go
++++ b/internal/parse/csv.go
+@@ -12,6 +12,12 @@ package parse
+
++// splitFields is a duplication of the existing text.SplitCSV helper; the two copies
++// will drift apart the next time the quoting rules change in only one of them.
++func splitFields(s string) []string {
++	return strings.Split(s, ",") // reimplements shared logic instead of reusing it
++}
++

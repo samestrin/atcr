@@ -107,7 +107,6 @@ var vendorGuidanceRe = regexp.MustCompile(`(?m)<!--\s*vendor-guidance:\s*(\S.*?)
 type communityPersona struct {
 	Slug        string
 	VendorToken string // claude|gpt|gemini|deepseek|qwen|kimi|glm
-	Tier        string // flagship|fallback|open
 	Category    string // single lowercase category word
 }
 
@@ -116,16 +115,19 @@ type communityPersona struct {
 // models ship one persona each (AC 04-02). The open-model rows are appended in
 // task 5.4.
 var communityPersonas = []communityPersona{
-	{Slug: "anthony", VendorToken: "claude", Tier: "flagship", Category: "coupling"},
-	{Slug: "sonny", VendorToken: "claude", Tier: "fallback", Category: "logic"},
-	{Slug: "gene", VendorToken: "gpt", Tier: "flagship", Category: "contract"},
-	{Slug: "milo", VendorToken: "gpt", Tier: "fallback", Category: "validation"},
-	{Slug: "gia", VendorToken: "gemini", Tier: "flagship", Category: "race"},
-	{Slug: "flint", VendorToken: "gemini", Tier: "fallback", Category: "leak"},
-	{Slug: "delia", VendorToken: "deepseek", Tier: "open", Category: "complexity"},
-	{Slug: "quinn", VendorToken: "qwen", Tier: "open", Category: "type"},
-	{Slug: "celeste", VendorToken: "kimi", Tier: "open", Category: "dependency"},
-	{Slug: "glenna", VendorToken: "glm", Tier: "open", Category: "observability"},
+	{Slug: "anthony", VendorToken: "claude", Category: "coupling"},
+	{Slug: "sonny", VendorToken: "claude", Category: "logic"},
+	{Slug: "gene", VendorToken: "gpt", Category: "contract"},
+	{Slug: "milo", VendorToken: "gpt", Category: "validation"},
+	{Slug: "gia", VendorToken: "gemini", Category: "race"},
+	{Slug: "flint", VendorToken: "gemini", Category: "leak"},
+	{Slug: "delia", VendorToken: "deepseek", Category: "complexity"},
+	{Slug: "quinn", VendorToken: "qwen", Category: "type"},
+	{Slug: "celeste", VendorToken: "kimi", Category: "dependency"},
+	{Slug: "glenna", VendorToken: "glm", Category: "observability"},
+	{Slug: "gerald", VendorToken: "gemma", Category: "secret"},
+	{Slug: "orson", VendorToken: "qwen", Category: "duplication"},
+	{Slug: "liam", VendorToken: "llama", Category: "invariant"},
 }
 
 const communityDir = "community"
@@ -266,7 +268,7 @@ func TestCommunityPersonas_SlugConsistency(t *testing.T) {
 // TestCommunityPersonas_Differentiation covers AC 04-07 Scenario 1 / Error 1: no
 // pair of personas has combined ## Role+## Focus token-set Jaccard above the
 // locked 0.85 threshold, evidencing genuine per-model task scoping rather than one
-// generic list restated ten times. Runs over all C(10,2)=45 pairs.
+// generic list restated ten times. Runs over all C(13,2)=78 pairs.
 func TestCommunityPersonas_Differentiation(t *testing.T) {
 	sets := make(map[string]map[string]struct{}, len(communityPersonas))
 	for _, p := range communityPersonas {
@@ -290,7 +292,7 @@ func TestCommunityPersonas_Differentiation(t *testing.T) {
 
 // TestCommunityPersonas_DistinctCategories is a categorical anti-duplication
 // guard complementing the AC-locked Jaccard gate (whose 0.85 threshold is loose
-// vs the observed ~0.168 — see TD-009): the 10 personas' finding-category words
+// vs the observed ~0.168 — see TD-009): the 13 personas' finding-category words
 // must all be distinct, so a "same lens, renamed target" duplicate the loose
 // Jaccard would miss is caught here.
 func TestCommunityPersonas_DistinctCategories(t *testing.T) {
@@ -366,9 +368,23 @@ func TestCommunityIndex_Registration(t *testing.T) {
 			require.Equalf(t, ym.Model, e.Model, "model drift for %q", p.Slug)
 			require.Equalf(t, ym.Description, e.Description, "description drift for %q", p.Slug)
 			require.NotEmptyf(t, e.Model, "index model must be non-empty for %q", p.Slug)
-			// Pin the routing key: every community persona routes through openrouter,
-			// never a vendor-named provider (LOCKED Q3 / Phase 5 clarifications).
-			require.Equalf(t, "openrouter", e.Provider, "index provider must be the openrouter routing key for %q", p.Slug)
+			// Pin the routing key to the sanctioned allowlist: a community persona routes
+			// through openrouter (the cloud pool) OR local (a zero-egress endpoint —
+			// ollama/llama.cpp/vllm, Epic 27.0), never an arbitrary vendor-named provider.
+			// Discovery still keys on the model, never the provider (the original Q3 /
+			// Phase 5 invariant); the allowlist merely admits the local routing key.
+			require.Containsf(t, []string{"openrouter", "local"}, e.Provider,
+				"index provider must be a sanctioned routing key (openrouter|local) for %q", p.Slug)
+
+			// Couple the provider:local routing key with the local/ model namespace
+			// so a future local persona cannot silently bypass the missing-model check.
+			if e.Provider == "local" {
+				require.Truef(t, strings.HasPrefix(e.Model, "local/"),
+					"local provider %q must use local/ model prefix, got %q", p.Slug, e.Model)
+			} else {
+				require.Falsef(t, strings.HasPrefix(e.Model, "local/"),
+					"non-local provider %q must not use local/ model prefix, got %q", p.Slug, e.Model)
+			}
 
 			// Grouping key: the vendor token lives in model, never provider.
 			require.Containsf(t, strings.ToLower(e.Model), p.VendorToken,
@@ -486,4 +502,48 @@ func TestCommunityModel(t *testing.T) {
 
 	_, err := CommunityModel("not-a-real-persona")
 	require.Error(t, err)
+}
+
+// localModelToOllamaTag maps a community index `local/<model>` slug to the
+// `ollama pull` tag the offline-setup docs must cite. The library's local
+// personas follow one convention: strip the `local/` provider namespace, then
+// turn the first hyphen (the family↔variant separator) into ollama's `:` tag
+// delimiter — local/gemma3-27b→gemma3:27b, local/qwen3-30b-a3b→qwen3:30b-a3b,
+// local/llama3.3-70b→llama3.3:70b. A future local persona that does not follow
+// this convention surfaces here as a deliberate review point.
+func localModelToOllamaTag(model string) string {
+	return strings.Replace(strings.TrimPrefix(model, "local/"), "-", ":", 1)
+}
+
+// TestLocalPersonasDocumentOllamaPullTag closes the Epic 27.0 AC2 doc-coverage
+// gap (TD docs/personas-install.md:256): the install flow performs no automatic
+// local/<model>→ollama-tag translation, so the offline-setup guide is the only
+// place a user learns which tag to `ollama pull`. This guard asserts that every
+// provider:local persona in personas/community/index.json has its derived pull
+// tag cited in docs/personas-install.md, so adding or renaming a local persona
+// without documenting its pull command fails CI instead of shipping a guide the
+// user cannot follow. It is a zero-network doc-consistency check (mirrors the
+// cmd/atcr/docs_audit_test.go pattern); live-endpoint AC2 automation is
+// intentionally out of scope (it requires a running Ollama server).
+func TestLocalPersonasDocumentOllamaPullTag(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "docs", "personas-install.md"))
+	require.NoError(t, err, "docs/personas-install.md must exist")
+	doc := string(raw)
+
+	var localCount int
+	for _, e := range readCommunityIndex(t) {
+		if e.Provider != "local" {
+			continue
+		}
+		localCount++
+		require.Truef(t, strings.HasPrefix(e.Model, "local/"),
+			"local persona %q must use the local/ model namespace, got %q", e.Name, e.Model)
+		tag := localModelToOllamaTag(e.Model)
+		require.Containsf(t, doc, "ollama pull "+tag,
+			"docs/personas-install.md must document `ollama pull %s` for local persona %q (model %q); "+
+				"the install flow does not translate %q automatically, so the offline-setup guide is the "+
+				"only source for the pull tag", tag, e.Name, e.Model, e.Model)
+	}
+	require.NotZerof(t, localCount,
+		"expected at least one provider:local persona in the community index")
 }

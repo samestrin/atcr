@@ -1,0 +1,7 @@
+name: orson
+version: 1.0.0
+description: Qwen long-context duplication and repo-wide redundancy reviewer (local 256k lens)
+provider: local
+model: local/qwen3-30b-a3b
+persona: orson
+role: reviewer

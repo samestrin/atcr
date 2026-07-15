@@ -78,6 +78,27 @@ var aliasSlugSet = func() map[string]struct{} {
 	return s
 }()
 
+// localProviderSlugPrefix is the open model-slug namespace of a local-endpoint
+// community persona (Epic 27.0). Discovery keys on the model, so the local
+// provider surfaces as this slug prefix rather than as a provider field CheckDrift
+// ever receives. This is an open-namespace convention, not a closed membership set
+// like aliasSlugSet: any non-empty slug beginning with this prefix is exempt from
+// remote-catalog drift comparison because no remote catalog can list a localhost model.
+const localProviderSlugPrefix = "local/"
+
+// isLocalProviderSlug reports whether slug names a local-endpoint model that no
+// remote catalog can list, so drift comparison against the OpenRouter snapshot
+// does not apply to it.
+//
+// This is an intentional, unenforced convention: CheckDrift only sees the bound
+// Model, not the provider field, so the exemption keys on the model namespace.
+// A caller that wants to enforce provider:local <-> model:local/ coupling must do
+// so before invoking CheckDrift (the community index registration test asserts
+// this coupling for authored personas).
+func isLocalProviderSlug(slug string) bool {
+	return strings.HasPrefix(slug, localProviderSlugPrefix)
+}
+
 // CheckDrift compares each installed lock against the catalog and returns the
 // drift findings in a deterministic order: locks in the given order, and within a
 // single persona newer-member before deprecation. A slug absent from the catalog
@@ -111,6 +132,13 @@ func CheckDrift(locks []InstalledLock, models []CatalogModel) []DriftFinding {
 			// completeness, so a refreshed snapshot that omits the id must not report it
 			// `missing` (TD-005). A genuine concrete slug that vanished still does.
 			if _, isAlias := aliasSlugSet[slug]; isAlias {
+				continue
+			}
+			// A local-provider persona (Epic 27.0) binds a local/<model> slug that a
+			// user's own endpoint (ollama/llama.cpp/vllm) resolves, never the OpenRouter
+			// catalog. It is absent from the snapshot by design, so — like an alias slug
+			// — it must not be reported `missing`.
+			if isLocalProviderSlug(slug) {
 				continue
 			}
 			findings = append(findings, DriftFinding{

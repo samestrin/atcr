@@ -1,0 +1,7 @@
+name: gerald
+version: 1.0.0
+description: Gemma secrets and data-egress reviewer (local zero-egress lens)
+provider: local
+model: local/gemma3-27b
+persona: gerald
+role: reviewer
