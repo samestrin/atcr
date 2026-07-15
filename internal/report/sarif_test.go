@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -315,6 +316,41 @@ func TestSarifLevel_UnrecognizedDiagnostic(t *testing.T) {
 		assert.Equal(t, "error", sarifLevel("HIGH"))
 		assert.Empty(t, buf.String(), "recognized token is not corruption — no diagnostic")
 	})
+}
+
+// TestSarif_RenderConcurrent exercises the render path concurrently with a
+// goroutine that swaps the diagnostic sink. Before the sink was threaded through
+// parameters this produced a data race on the package-level sarifDiag variable.
+func TestSarif_RenderConcurrent(t *testing.T) {
+	findings := append(sample(), reconcile.JSONFinding{
+		Severity: "weird", File: "z.go", Line: 1, Problem: "p", Category: "misc",
+	})
+	done := make(chan struct{})
+	defer close(done)
+
+	var a, b bytes.Buffer
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				sarifDiag = &a
+				sarifDiag = &b
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var buf strings.Builder
+			require.NoError(t, renderSarif(&buf, findings))
+		}()
+	}
+	wg.Wait()
 }
 
 // Scenario 5: renderSarif populates every result.level via sarifLevel — no other
