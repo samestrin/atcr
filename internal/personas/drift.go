@@ -78,10 +78,12 @@ var aliasSlugSet = func() map[string]struct{} {
 	return s
 }()
 
-// localProviderSlugPrefix is the model-slug namespace of a local-endpoint
+// localProviderSlugPrefix is the open model-slug namespace of a local-endpoint
 // community persona (Epic 27.0). Discovery keys on the model, so the local
-// provider surfaces as this slug prefix rather than a provider field CheckDrift
-// never receives.
+// provider surfaces as this slug prefix rather than as a provider field CheckDrift
+// ever receives. This is an open-namespace convention, not a closed membership set
+// like aliasSlugSet: any non-empty slug beginning with this prefix is exempt from
+// remote-catalog drift comparison because no remote catalog can list a localhost model.
 const localProviderSlugPrefix = "local/"
 
 // isLocalProviderSlug reports whether slug names a local-endpoint model that no
