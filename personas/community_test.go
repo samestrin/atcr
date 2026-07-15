@@ -292,7 +292,7 @@ func TestCommunityPersonas_Differentiation(t *testing.T) {
 
 // TestCommunityPersonas_DistinctCategories is a categorical anti-duplication
 // guard complementing the AC-locked Jaccard gate (whose 0.85 threshold is loose
-// vs the observed ~0.168 — see TD-009): the 10 personas' finding-category words
+// vs the observed ~0.168 — see TD-009): the 13 personas' finding-category words
 // must all be distinct, so a "same lens, renamed target" duplicate the loose
 // Jaccard would miss is caught here.
 func TestCommunityPersonas_DistinctCategories(t *testing.T) {
