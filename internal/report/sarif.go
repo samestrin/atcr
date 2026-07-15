@@ -187,7 +187,7 @@ func sarifLevel(severity string) string {
 		// corruption rather than downgrading it invisibly. Per AC 02-01 the
 		// returned level stays "warning" in both cases.
 		if strings.TrimSpace(severity) != "" {
-			fmt.Fprintf(sarifDiag, "atcr: sarif: unrecognized severity %q; defaulting to \"warning\"\n", severity)
+			_, _ = fmt.Fprintf(sarifDiag, "atcr: sarif: unrecognized severity %q; defaulting to \"warning\"\n", severity)
 		}
 		return "warning"
 	}
