@@ -648,6 +648,7 @@ func TestReportHandler_InvalidFormatInProcess(t *testing.T) {
 	_, _, err := e.handleReport(context.Background(), nil, ReportArgs{Format: "xml"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid format")
+	assert.Contains(t, err.Error(), "sarif")
 }
 
 // TestReportHandler_InvalidReviewID verifies a path-traversal id_or_path is
