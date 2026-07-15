@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/report"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -176,4 +180,53 @@ func TestReportCmd_DisagreementsWithJSONFormat(t *testing.T) {
 	require.Contains(t, s, `"schemaVersion"`, "JSON output must include the schema version")
 	require.Contains(t, s, `"items"`, "JSON output must include the items array")
 	require.Contains(t, s, `"LOW vs CRITICAL"`, "JSON output must include the disagreement annotation")
+}
+
+// TestReportCmd_HelpMentionsSarif asserts the --format flag usage AND the command
+// Short description both enumerate sarif (AC 01-04 Edge Case 1 / Story-Specific).
+// Both surface in `atcr report --help`, so a stale Short would omit sarif from the
+// summary line. RED until task 3.2 updates both strings.
+func TestReportCmd_HelpMentionsSarif(t *testing.T) {
+	cmd := newReportCmd()
+	assert.Contains(t, cmd.Flags().Lookup("format").Usage, "sarif",
+		"--format help text must list sarif")
+	assert.Contains(t, cmd.Short, "sarif",
+		"report command Short description must list sarif")
+}
+
+// TestReportCmd_SarifMatchesRender asserts `atcr report --format=sarif` output is
+// byte-identical to calling report.Render(..., FormatSarif) directly — the CLI
+// layer adds no formatting divergence (AC 01-04 Scenario 2).
+func TestReportCmd_SarifMatchesRender(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "2026-06-10_s", oneFinding)
+
+	code, cliOut := execCmdCapture(t, "report", "--format", "sarif", "2026-06-10_s")
+	require.Equal(t, 0, code)
+
+	findings, err := reconcile.ReadReconciledFindings(filepath.Join(".atcr", "reviews", "2026-06-10_s"))
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	require.NoError(t, report.Render(&buf, findings, report.FormatSarif))
+
+	assert.Equal(t, buf.String(), cliOut, "CLI --format=sarif must equal a direct report.Render")
+	assert.Contains(t, cliOut, `"version": "2.1.0"`)
+}
+
+// TestReportCmd_SarifToOutputFile asserts --format=sarif --output writes the same
+// bytes to a file that would have gone to stdout (AC 01-04 Edge Case 3).
+func TestReportCmd_SarifToOutputFile(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "2026-06-10_so", oneFinding)
+
+	out := filepath.Join(t.TempDir(), "results.sarif")
+	require.Equal(t, 0, execCmd(t, "report", "--format", "sarif", "--output", out, "2026-06-10_so"))
+	data, err := os.ReadFile(out)
+	require.NoError(t, err)
+
+	findings, err := reconcile.ReadReconciledFindings(filepath.Join(".atcr", "reviews", "2026-06-10_so"))
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	require.NoError(t, report.Render(&buf, findings, report.FormatSarif))
+	assert.Equal(t, buf.String(), string(data))
 }

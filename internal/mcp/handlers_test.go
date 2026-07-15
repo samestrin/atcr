@@ -14,6 +14,8 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -683,4 +685,35 @@ func TestRangeHandler_InvalidBaseRef(t *testing.T) {
 	cs := connectTest(t, root, fakeCompleter{})
 	msg := callErr(t, cs, ToolRange, map[string]any{"base": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"})
 	assert.Contains(t, msg, "failed to resolve range")
+}
+
+// TestReportHandler_SarifParity verifies the in-process handleReport renders SARIF
+// identically to a direct report.Render(..., FormatSarif) — SARIF reaches MCP
+// callers via the shared Render() path with no MCP-specific code (AC 01-04
+// Scenario 3). Note: the report tool's transport-level format enum
+// (reportInputSchema) is md|json|checklist, so an over-the-wire `sarif` request is
+// rejected before the handler; this parity is exercised in-process, matching the
+// AC's Scenario 3 which invokes handleReport directly.
+func TestReportHandler_SarifParity(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	id := reviewFixture(t, root)
+	cs := connectTest(t, root, fakeCompleter{})
+	callOK[ReconcileResult](t, cs, ToolReconcile, map[string]any{})
+
+	e := &engine{root: root}
+	_, res, err := e.handleReport(context.Background(), nil, ReportArgs{IDOrPath: id, Format: report.FormatSarif})
+	require.NoError(t, err)
+	assert.Equal(t, report.FormatSarif, res.Format)
+	assert.Contains(t, res.Content, `"version": "2.1.0"`)
+
+	// Parity: same loader, same renderer the handler used — proves the handler
+	// adds no divergence for sarif, exactly as it doesn't for json/checklist.
+	dir, _, err := e.resolveReviewDir(id)
+	require.NoError(t, err)
+	findings, err := reconcile.ReadReconciledFindings(dir)
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	require.NoError(t, report.Render(&buf, findings, report.FormatSarif))
+	assert.Equal(t, buf.String(), res.Content)
 }
