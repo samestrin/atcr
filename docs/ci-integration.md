@@ -43,3 +43,56 @@ steps above:
 
 See [github-action.md](github-action.md) for inputs, required permissions, and a
 manual smoke-test procedure.
+
+## SARIF Upload for Code Scanning
+
+This path is **separate from** the [Maintained PR Action](#maintained-pr-action)
+above: `atcr github` posts a PR check and inline "Files Changed" comments directly
+via the GitHub API (see [github-action.md](github-action.md)), while `atcr report
+--format=sarif` produces a SARIF 2.1.0 file for the *centralized* security
+surfaces the PR flow does not reach — GitHub Advanced Security's Code Scanning
+"Security" tab and GitLab CI's native SAST report widget. Both can run side by
+side; one feeds PR checks/comments, the other feeds the Security tab.
+
+**GitHub Advanced Security — Code Scanning "Security" tab:**
+
+```yaml
+jobs:
+  atcr-sarif:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # required by upload-sarif
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # full history so atcr can resolve the diff range
+
+      - name: Run atcr and emit SARIF
+        run: atcr review && atcr reconcile && atcr report --format=sarif > results.sarif
+
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+```
+
+The `permissions.security-events: write` grant is what lets `upload-sarif` write
+to the Security tab; without it the upload step fails.
+
+**GitLab CI — native SAST report widget:**
+
+GitLab has no upload action; it ingests the SARIF file as a native SAST report
+artifact instead. Wire `results.sarif` through `artifacts:reports:sast`:
+
+```yaml
+atcr-sast:
+  script:
+    - atcr review && atcr reconcile && atcr report --format=sarif > results.sarif
+  artifacts:
+    reports:
+      sast: results.sarif
+```
+
+This is GitLab's own artifact-based mechanism — there is no `upload-sarif`
+equivalent step, and the `artifacts:reports:sast` key is what surfaces the results
+in GitLab's SAST report widget.
