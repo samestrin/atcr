@@ -88,4 +88,4 @@
 - [x] Table-driven test in `sarif_test.go` asserts exact field values (not just non-nil presence) for `Line > 0` cases
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

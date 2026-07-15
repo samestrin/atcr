@@ -85,4 +85,4 @@
 - [x] `rules[]` serializes as `[]` (never `null`) for empty/nil findings
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

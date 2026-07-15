@@ -80,4 +80,4 @@
 - [x] Terminology stays GitLab-native — no bleed of GitHub-only "PR check"/"inline comment" language
 
 **Manual Review:**
-- [ ] Doc reviewed and approved, cross-checked against GitLab's documented `artifacts:reports:sast` mechanism
+- [x] Doc reviewed and approved, cross-checked against GitLab's documented `artifacts:reports:sast` mechanism

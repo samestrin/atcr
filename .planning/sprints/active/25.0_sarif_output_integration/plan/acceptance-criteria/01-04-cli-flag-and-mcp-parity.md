@@ -98,4 +98,4 @@
 - [x] `handleReport` with `format: "sarif"` returns output identical to direct `report.Render` (MCP parity regression test)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

@@ -81,4 +81,4 @@
 - [x] `Render(w, findings, "bogus")` error message lists `sarif` among supported formats
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

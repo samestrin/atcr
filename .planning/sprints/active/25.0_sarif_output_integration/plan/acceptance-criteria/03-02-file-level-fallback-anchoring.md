@@ -89,4 +89,4 @@
 - [x] Golden fixture (`report.sarif.json`) includes at least one `Line<=0` finding exercising this fallback end-to-end, if the fixture exists per Story 1's scope
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

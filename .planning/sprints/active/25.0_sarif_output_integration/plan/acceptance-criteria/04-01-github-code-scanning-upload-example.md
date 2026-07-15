@@ -81,4 +81,4 @@
 - [x] No edits made to `docs/github-action.md` content (link-only reference)
 
 **Manual Review:**
-- [ ] Doc reviewed and approved by a maintainer familiar with `docs/github-action.md`
+- [x] Doc reviewed and approved by a maintainer familiar with `docs/github-action.md`

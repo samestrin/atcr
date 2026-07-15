@@ -118,4 +118,4 @@ This function has no HTTP surface and cannot error in the Go `error`-return sens
 - [x] Every possible input maps to exactly one of `"error"` / `"warning"` / `"note"` — confirmed by an edge-case test asserting no `"none"` and no empty-string return
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

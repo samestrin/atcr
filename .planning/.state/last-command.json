@@ -1,9 +1,9 @@
 {
-  "skill": "create-sprint",
-  "args": "@.planning/plans/active/25.0_sarif_output_integration/ --adversarial",
-  "invocation": "/create-sprint @.planning/plans/active/25.0_sarif_output_integration/ --adversarial",
+  "skill": "sprint-complete",
+  "args": "@.planning/sprints/active/25.0_sarif_output_integration/",
+  "invocation": "/sprint-complete @.planning/sprints/active/25.0_sarif_output_integration/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "597b97cc-a1a2-4bc0-a369-799e4e72decd",
-  "timestamp": "2026-07-15T00:02:46.104Z"
+  "session_id": "37526f6d-e38b-424a-878b-c111fd2260a7",
+  "timestamp": "2026-07-15T03:07:30.551Z"
 }
