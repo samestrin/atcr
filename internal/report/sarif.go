@@ -191,11 +191,13 @@ func sarifLevel(severity string) string {
 // requires all four region fields for a result to display.
 func sarifLocation(f reconcile.JSONFinding) sarifLocationObj {
 	startLine, endLine := f.Line, f.Line
+	endColumn := 2
 	if f.Line <= 0 {
 		startLine, endLine = 1, 1
+		endColumn = 1
 	}
 	return sarifLocationObj{PhysicalLocation: sarifPhysicalLocation{
 		ArtifactLocation: sarifArtifactLocation{URI: f.File},
-		Region:           sarifRegion{StartLine: startLine, StartColumn: 1, EndLine: endLine, EndColumn: 1},
+		Region:           sarifRegion{StartLine: startLine, StartColumn: 1, EndLine: endLine, EndColumn: endColumn},
 	}}
 }
