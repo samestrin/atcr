@@ -1,0 +1,26 @@
+[
+  {
+    "id": "amb-14e60f1d67a86c7a946063d51c45617d",
+    "file": "internal/payload/ignore.go",
+    "line": 67,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "internal/payload/ignore.go",
+        "Line": 67,
+        "Problem": "`loadAtcrignore` uses `strings.Split(string(data), \"\\n\")`",
+        "Fix": "Use `bufio.Scanner` or `bytes.Split` to avoid converting the entire file to a string before splitting",
+        "Category": "style",
+        "EstMinutes": 5,
+        "Evidence": "line 67",
+        "Reviewer": "otto",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  }
+]

@@ -179,7 +179,7 @@ type RangeResult struct {
 	Base          string `json:"base"`
 	Head          string `json:"head"`
 	CommitCount   int    `json:"commit_count"`
-	FileCount     int    `json:"file_count"`
+	FileCount     int    `json:"file_count"` // ignore-filtered count: excludes repo-root .gitignore/.atcrignore matches
 	DetectionMode string `json:"detection_mode,omitempty"`
 	DefaultBranch string `json:"default_branch,omitempty"`
 	Shallow       bool   `json:"shallow"`

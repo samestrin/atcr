@@ -1,0 +1,116 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
+# Epic Plan 26.0: .atcrignore Token Waste Protection
+
+- **Estimated time**: TBD
+- **Tasks/Components**: 3 tasks / 2 components
+- **Execution**: execute-epic
+
+## Objective
+
+Prevent ATCR from wasting LLM tokens (and money) on auto-generated code, vendored dependencies, or massive lockfiles by respecting `.gitignore` and introducing a native `.atcrignore` filtering layer.
+
+## Context
+
+If a developer runs a codegen tool or bumps a massive `vendor/` dependency, the resulting git diff can be hundreds of thousands of lines. While Epic 19.5 handles truncation and dropping files to fit the token budget, it does so based on size/priority. It is far safer to explicitly never send these files to the payload builder in the first place.
+
+## Proposed Solution
+
+1. **File Filtering Layer**: Update the diff ingestion logic in `internal/payload` (`diff.go`'s `changedFiles`/`changedFilesMemo`, ahead of `budget.go`'s `ApplyByteBudget` truncation pass) to completely exclude files that match standard ignore patterns.
+2. **.gitignore Support**: By default, parse and respect the repository's `.gitignore`.
+3. **.atcrignore Support**: Support a dedicated `.atcrignore` for files that should be committed to git but ignored by the AI (e.g., `go.sum`, `package-lock.json`, `docs/`). Repo-root-only, one gitignore-syntax pattern per line, purely additive to `.gitignore`'s exclusions (no `!` negation support).
+
+## Acceptance Criteria
+
+- [ ] Files matching `.gitignore` are excluded from the review payload.
+- [ ] Files matching `.atcrignore` are excluded from the review payload.
+- [ ] `atcr review` logs a trace/debug message noting which files were skipped due to ignore rules.
+
+## Components Touched
+
+- `internal/payload` (file-list filtering — `diff.go`/`builder.go`, ahead of the existing byte-budget pass)
+- `cmd/atcr` (CLI interface)
+
+## Out of Scope
+
+- Complex globbing beyond standard `.gitignore` syntax.
+
+## Dependencies
+
+- None.
+
+## Refinements (2026-07-13)
+
+This section records findings from `/refine-epic` run on July 13, 2026 01:13:32PM. It is additive — original plan content above is preserved.
+
+### Auto-applied corrections (0)
+
+None — no mechanical errors found. All cited paths (`internal/gitrange`, `internal/payload/builder.go`, `cmd/atcr`) exist and are valid.
+
+### Items needing user confirmation (2)
+
+⏸️ **Components mismatch — `internal/gitrange` is architecturally the wrong "or" alternative.** Plan lists `internal/payload/builder.go` or `internal/gitrange` as the filtering-layer location. Verified: `internal/gitrange` (`resolver.go`) only resolves the base/head SHAs via git plumbing (merge-base, default-branch detection, shallow-clone checks) — it never enumerates files or computes diffs, so it has no file-level data to filter. The actual file list comes from `git diff --name-status` in `internal/payload/diff.go`'s `changedFiles`/`changedFilesMemo`, called by `builder.go`'s `BuildEntries`/`BuildDiff`/`BuildBlocks`/`BuildFiles`, ahead of the existing `ApplyByteBudget` truncation pass (`internal/payload/budget.go`). Suggested action: drop `internal/gitrange` from Components Touched and Proposed Solution item 1 — the filter belongs entirely in `internal/payload`. Proposed COMPONENTS_TOUCHED: `internal/payload`, `cmd/atcr` (count unchanged at 2 — still fits the scope guard).
+
+⏸️ **`.atcrignore` location and precedence are undefined.** The plan doesn't say whether `.atcrignore` is repo-root-only or per-directory like `.gitignore`, nor its precedence relative to `.gitignore` (can an `.atcrignore` entry re-include a file `.gitignore` excludes? does it support `!` negation?). Given the plan's own Out-of-Scope bound on "complex globbing," suggested addition to Proposed Solution item 3: "`.atcrignore` is repo-root-only, one gitignore-syntax pattern per line, purely additive to `.gitignore`'s exclusions (no negation support)." This is the smallest testable surface and mirrors the stated simplicity boundary.
+
+Note that these were NOT applied automatically — see the copy-paste block emitted at end of skill run.
+
+### Advisory observations (3)
+
+ℹ️ **No existing gitignore-pattern-matching capability.** Verified via grep across `internal/` + `go.mod`/`go.sum` — no vendored `.gitignore`-glob library and no hand-rolled matcher exists today (the only `.gitignore` references found are test fixtures, `atcr init`'s own `.atcr/.gitignore` scaffold, and an unrelated dotfile-extension guard in `internal/verify/select.go`). Recommend a vetted third-party library (e.g. `github.com/sabhiram/go-gitignore`) over hand-rolling `.gitignore` syntax (negation, `**`, anchoring, and directory-only patterns are easy to get subtly wrong) — consistent with the plan's own "no complex globbing" scope bound.
+
+ℹ️ **Suggested architecture: pre-filter stage ahead of the byte-budget pass.** `internal/payload/budget.go`'s `ApplyByteBudget` already sheds oversized entries by size (it does not classify by filename pattern today — "generated files/lockfiles" in its doc comment describes an emergent effect of size-based shedding, not a name-based classifier). The ignore-filter reads naturally as an earlier stage over the same file list — right after `changedFilesMemo` in `diff.go`, before `ApplyByteBudget` runs — so it composes with existing truncation instead of duplicating file-list plumbing.
+
+ℹ️ **Logging convention already exists for AC #3.** `internal/payload/diff.go`'s `gitRunner` already exposes a `log() *slog.Logger`. Recommend AC #3 point at this concretely: "skipped files are logged at `slog` debug level via the existing `gitRunner` logger" — makes the AC testable rather than a vague "trace/debug message."
+
+### Verification context
+
+- Refinement depth: spot-check
+- Derived TASK_COUNT: 3 (limit: 6)
+- Derived COMPONENT_COUNT: 2 (limit: 2)
+- COMPONENTS_TOUCHED: internal/payload, cmd/atcr
+- VISUAL_SURFACE: false
+- HAS_GATED_WORK: false
+- HAS_CROSS_SYSTEM: false
+- Cited references checked: 3 (paths) + 3 codebase spot-check searches
+- Codebase search queries (spot-check): "gitignore|atcrignore|ignore pattern|IsIgnored" (internal/, cmd/), "vendor/|lockfile|go.sum|package-lock|token budget|truncat" (internal/payload), "gitignore|doublestar|glob" (go.mod/go.sum)
+
+### Resolution (2026-07-13)
+
+Both user-confirm items above were reviewed and applied directly to the plan body (Proposed Solution, Components Touched):
+
+1. ✅ `internal/gitrange` dropped — filtering logic scoped entirely to `internal/payload` (`diff.go`/`builder.go`, ahead of `ApplyByteBudget`).
+2. ✅ `.atcrignore` semantics made explicit: repo-root-only, one pattern per line, purely additive to `.gitignore` (no negation).
+
+Net effect: COMPONENT_COUNT stays at 2 (`internal/payload`, `cmd/atcr`), TASK_COUNT stays at 3 — plan already fit `/execute-epic`'s scope guard and still does. Execution field updated from `init-plan` to `execute-epic` accordingly.
+
+## Clarifications
+
+### Recorded 2026-07-14 (rubber duck — /execute-epic)
+
+**Key Decisions:**
+- Use the third-party library `github.com/sabhiram/go-gitignore` for pattern matching rather than hand-rolling a matcher (no gitignore-matching capability exists in the codebase; hand-rolling risks silent under/over-exclusion).
+- `.gitignore` support is repo-root-only, matching the `.atcrignore` model — no nested-tree git semantics (the file list comes from a single repo-root-scoped `git diff --name-status`; nested precedence would need new tree-walking infrastructure out of scope for this plan).
+- Filtering is always-on with a `--no-ignore` opt-out flag on `atcr review`, mirroring the existing `--no-cache` pattern (`cmd/atcr/review.go` → `ReviewRequest.NoCache` → `internal/fanout/review.go`). This gives the `cmd/atcr` component an actual CLI-surface change rather than only log wiring.
+
+**Scope Boundaries:**
+- IN scope: filter the git-range changed-file list (`internal/payload/diff.go` `changedFiles`/`changedFilesMemo`, ahead of `ApplyByteBudget`) against repo-root `.gitignore` + repo-root `.atcrignore`; `--no-ignore` flag; slog debug logging of skipped files.
+- OUT of scope: nested `.gitignore` files; `!` negation in `.atcrignore`; the diff-file ingestion path (`BuildEntriesFromDiff`, used by autofix and `--diff`/`--diff-file` review) — only the git-range path is filtered; complex globbing beyond standard `.gitignore` syntax.
+
+**Technical Approach:**
+- Ignore files are read from the working tree at the repo dir (`g.dir` / `e.root`), not from a git ref.
+- Filtering matches on the head-side path for every change kind (added/modified/deleted/renamed via new path).
+- The filter lives at a single chokepoint over the changed-file list so `BuildEntries` and `ChangedFileCount` agree on the filtered set.
+- Skipped files are logged at slog debug level via the existing `gitRunner` logger.
+
+**Original Questions and Answers:**
+1. Q: Add `github.com/sabhiram/go-gitignore` as a dependency, or hand-roll a minimal matcher?
+   A: Add `github.com/sabhiram/go-gitignore`. No gitignore-matching capability exists today; the "no complex globbing" out-of-scope line bounds the surface, it is not a mandate to hand-roll. A hand-rolled matcher risks silent under/over-exclusion — worse than one small, widely-used dependency. (Confidence 90%)
+2. Q: `.gitignore` scope — repo-root-only, or true nested-tree git semantics?
+   A: Repo-root-only, matching the `.atcrignore` model. The file list is produced by a single repo-root-scoped `git diff --name-status` with no per-directory traversal; nested precedence would require new tree-walking infrastructure the plan doesn't otherwise touch. (Confidence 88%)
+3. Q: Opt-out control — always-on with no flag, or a `--no-ignore` escape hatch?
+   A: Always-on filtering with a `--no-ignore` opt-out flag, mirroring the existing `--no-cache` pattern. Matches the codebase convention of pairing a safety default with a narrow bypass flag, and gives `cmd/atcr` an actual CLI-surface change. (Confidence 88%)
+----- END SPRINT PLAN -----
+

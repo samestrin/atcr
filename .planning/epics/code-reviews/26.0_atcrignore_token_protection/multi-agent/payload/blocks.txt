@@ -1,0 +1,1731 @@
+diff --git a/.planning/.knowledge/clarifications-26.0_atcrignore_token_protection-Q1.md b/.planning/.knowledge/clarifications-26.0_atcrignore_token_protection-Q1.md
+new file mode 100644
+index 00000000..2b99f1bc
+--- /dev/null
++++ b/.planning/.knowledge/clarifications-26.0_atcrignore_token_protection-Q1.md
+@@ -0,0 +1,32 @@
++---
++id: mem-2026-07-14-589344
++question: "Gitignore matching: vetted library vs hand-rolled matcher"
++created: 2026-07-14
++last_retrieved: ""
++sprints: []
++files: [go.mod, internal/verify/select.go, cmd/atcr/init.go]
++tags: [clarifications, epic-26.0_atcrignore_token_protection, implementation]
++retrievals: 0
++status: active
++type: clarifications
++---
++
++# Gitignore matching: vetted library vs hand-rolled matcher
++
++## Decision
++
++Use github.com/sabhiram/go-gitignore rather than hand-rolling .gitignore semantics. No gitignore-matching capability exists anywhere in the codebase (grep across internal/, cmd/ only turns up unrelated hits: internal/verify/select.go:126-127 dotfile-extension guard, cmd/atcr/init.go:58-74 the .atcr/.gitignore scaffold). go.mod (Go 1.25.0) has a modest, curated dependency set with no existing gitignore library. A hand-rolled matcher risks silently mishandling negation, **, anchoring, or directory-only patterns — either leaking ignored files into the LLM payload (the exact token-waste problem the feature exists to prevent) or over-excluding real diffs from review. Applies to any future ATCR feature that needs .gitignore-syntax pattern matching.
++
++## Rationale
++
++- [from context]
++
++## Applies When
++
++- [conditions]
++
++## Code Reference
++
++- go.mod
++- internal/verify/select.go
++- cmd/atcr/init.go
+diff --git a/.planning/.knowledge/clarifications-26.0_atcrignore_token_protection-Q2.md b/.planning/.knowledge/clarifications-26.0_atcrignore_token_protection-Q2.md
+new file mode 100644
+index 00000000..722f5465
+--- /dev/null
++++ b/.planning/.knowledge/clarifications-26.0_atcrignore_token_protection-Q2.md
+@@ -0,0 +1,31 @@
++---
++id: mem-2026-07-14-8a73e4
++question: "Ignore-file filtering scope: repo-root-only vs nested tree-wide .gitignore"
++created: 2026-07-14
++last_retrieved: ""
++sprints: []
++files: [internal/payload/diff.go, internal/payload/builder.go]
++tags: [clarifications, epic-26.0_atcrignore_token_protection, scope, architecture]
++retrievals: 0
++status: active
++type: clarifications
++---
++
++# Ignore-file filtering scope: repo-root-only vs nested tree-w
++
++## Decision
++
++ATCR's ignore-file filtering (both .gitignore and .atcrignore) is scoped repo-root-only, not true git semantics with nested per-directory .gitignore files. The file list the filter gates comes from a single repo-root-scoped git call — g.run("diff", "--name-status", "-M", base..head) at internal/payload/diff.go:123, run with -C g.dir (internal/payload/diff.go:96) — returning a flat list of repo-root-relative paths, consumed by changedFilesMemo (internal/payload/diff.go:159) and buildEntriesValidated (internal/payload/builder.go:117). There is no existing per-directory walk or nested-config discovery step; adding nested .gitignore precedence would require a second filesystem/git traversal purely to build the ignore-pattern set. This mirrors the .atcrignore scope decision (already root-only) and keeps the feature inside its stated "no complex globbing" bound.
++
++## Rationale
++
++- [from context]
++
++## Applies When
++
++- [conditions]
++
++## Code Reference
++
++- internal/payload/diff.go
++- internal/payload/builder.go
+diff --git a/.planning/.knowledge/clarifications-26.0_atcrignore_token_protection-Q3.md b/.planning/.knowledge/clarifications-26.0_atcrignore_token_protection-Q3.md
+new file mode 100644
+index 00000000..9b68b1be
+--- /dev/null
++++ b/.planning/.knowledge/clarifications-26.0_atcrignore_token_protection-Q3.md
+@@ -0,0 +1,32 @@
++---
++id: mem-2026-07-14-322ea7
++question: "CLI convention: pair safety-default behavior with an explicit opt-out flag"
++created: 2026-07-14
++last_retrieved: ""
++sprints: []
++files: [cmd/atcr/review.go, internal/fanout/review.go, internal/fanout/resume.go]
++tags: [clarifications, epic-26.0_atcrignore_token_protection, architecture, cli-convention]
++retrievals: 0
++status: active
++type: clarifications
++---
++
++# CLI convention: pair safety-default behavior with an explici
++
++## Decision
++
++ATCR's cmd/atcr consistently pairs a default-safe behavior with a narrow, well-documented bypass flag rather than making behavior unconditional. Precedent: --no-cache (cmd/atcr/review.go:75) bypasses the diff cache read via ReviewRequest.NoCache threaded through internal/fanout/review.go:63,92,96 and consumed at internal/fanout/resume.go:334; --force bypasses collision protection (review.go:74); --exec requires opt-in for sandboxed reproduction (review.go:69, gated at review.go:211-213); --fresh/--thorough modify default verify behavior. New always-on safety features (e.g. the .gitignore/.atcrignore filter) should follow this same pattern: default-on filtering with a --no-ignore-style bool flag threaded through ReviewRequest, not an unconditional/non-bypassable behavior.
++
++## Rationale
++
++- [from context]
++
++## Applies When
++
++- [conditions]
++
++## Code Reference
++
++- cmd/atcr/review.go
++- internal/fanout/review.go
++- internal/fanout/resume.go
+diff --git a/.planning/epics/active/26.0_atcrignore_token_protection.md b/.planning/epics/completed/26.0_atcrignore_token_protection.md
+similarity index 69%
+rename from .planning/epics/active/26.0_atcrignore_token_protection.md
+rename to .planning/epics/completed/26.0_atcrignore_token_protection.md
+index 01b1e72f..6054da1a 100644
+--- a/.planning/epics/active/26.0_atcrignore_token_protection.md
++++ b/.planning/epics/completed/26.0_atcrignore_token_protection.md
+@@ -81,3 +81,30 @@ Both user-confirm items above were reviewed and applied directly to the plan bod
+ 2. ✅ `.atcrignore` semantics made explicit: repo-root-only, one pattern per line, purely additive to `.gitignore` (no negation).
+ 
+ Net effect: COMPONENT_COUNT stays at 2 (`internal/payload`, `cmd/atcr`), TASK_COUNT stays at 3 — plan already fit `/execute-epic`'s scope guard and still does. Execution field updated from `init-plan` to `execute-epic` accordingly.
++
++## Clarifications
++
++### Recorded 2026-07-14 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- Use the third-party library `github.com/sabhiram/go-gitignore` for pattern matching rather than hand-rolling a matcher (no gitignore-matching capability exists in the codebase; hand-rolling risks silent under/over-exclusion).
++- `.gitignore` support is repo-root-only, matching the `.atcrignore` model — no nested-tree git semantics (the file list comes from a single repo-root-scoped `git diff --name-status`; nested precedence would need new tree-walking infrastructure out of scope for this plan).
++- Filtering is always-on with a `--no-ignore` opt-out flag on `atcr review`, mirroring the existing `--no-cache` pattern (`cmd/atcr/review.go` → `ReviewRequest.NoCache` → `internal/fanout/review.go`). This gives the `cmd/atcr` component an actual CLI-surface change rather than only log wiring.
++
++**Scope Boundaries:**
++- IN scope: filter the git-range changed-file list (`internal/payload/diff.go` `changedFiles`/`changedFilesMemo`, ahead of `ApplyByteBudget`) against repo-root `.gitignore` + repo-root `.atcrignore`; `--no-ignore` flag; slog debug logging of skipped files.
++- OUT of scope: nested `.gitignore` files; `!` negation in `.atcrignore`; the diff-file ingestion path (`BuildEntriesFromDiff`, used by autofix and `--diff`/`--diff-file` review) — only the git-range path is filtered; complex globbing beyond standard `.gitignore` syntax.
++
++**Technical Approach:**
++- Ignore files are read from the working tree at the repo dir (`g.dir` / `e.root`), not from a git ref.
++- Filtering matches on the head-side path for every change kind (added/modified/deleted/renamed via new path).
++- The filter lives at a single chokepoint over the changed-file list so `BuildEntries` and `ChangedFileCount` agree on the filtered set.
++- Skipped files are logged at slog debug level via the existing `gitRunner` logger.
++
++**Original Questions and Answers:**
++1. Q: Add `github.com/sabhiram/go-gitignore` as a dependency, or hand-roll a minimal matcher?
++   A: Add `github.com/sabhiram/go-gitignore`. No gitignore-matching capability exists today; the "no complex globbing" out-of-scope line bounds the surface, it is not a mandate to hand-roll. A hand-rolled matcher risks silent under/over-exclusion — worse than one small, widely-used dependency. (Confidence 90%)
++2. Q: `.gitignore` scope — repo-root-only, or true nested-tree git semantics?
++   A: Repo-root-only, matching the `.atcrignore` model. The file list is produced by a single repo-root-scoped `git diff --name-status` with no per-directory traversal; nested precedence would require new tree-walking infrastructure the plan doesn't otherwise touch. (Confidence 88%)
++3. Q: Opt-out control — always-on with no flag, or a `--no-ignore` escape hatch?
++   A: Always-on filtering with a `--no-ignore` opt-out flag, mirroring the existing `--no-cache` pattern. Matches the codebase convention of pairing a safety default with a narrow bypass flag, and gives `cmd/atcr` an actual CLI-surface change. (Confidence 88%)
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index 4e734f9f..7cd0b3c6 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,17 +3,17 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 4 | 0 |
+-| MEDIUM | 0 | 21 | 0 |
+-| LOW | 0 | 35 | 0 |
++| MEDIUM | 1 | 21 | 0 |
++| LOW | 4 | 35 | 0 |
+ 
+ 
+-**Last Modified:** 2026-07-14 | **Open Items:** 0 | **Deferred Items:** 60 | **Resolved Items:** 0 | **Total Items:** 60
++**Last Modified:** 2026-07-14 | **Open Items:** 5 | **Deferred Items:** 60 | **Resolved Items:** 0 | **Total Items:** 65
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -63,71 +63,81 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
+ 
++### [2026-07-14] From Sprint: epic-26.0
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| 1 | [ ] | LOW | internal/payload/diff.go:174 | When the ignore filter drops ALL changed files the review proceeds with a silent empty payload, unlike ApplyByteBudget's AllDropped/ErrPayloadFullyDropped signal — a lockfile-only PR yields an empty review with no explanation | Add an all-ignored signal analogous to Truncation.AllDropped so callers can distinguish "every changed file was ignored" from "no files changed" | EDGE_CASES | 30 | execute-epic-stage3 |
++| 1 | [ ] | MEDIUM | internal/payload/diff.go:74 | The ignore filter emits one git :(exclude)<path> pathspec per ignored file; a diff touching thousands of tracked-but-ignored files (e.g. a committed vendor/ tree bumped, skipped via .atcrignore) can exceed ARG_MAX and fail the diff with E2BIG — the feature's own headline many-files case | Switch the exclusion to git --pathspec-from-file (write ignored paths to a temp file) to remove the argv-length ceiling; note the git 2.25+ floor and temp-file lifecycle | PERFORMANCE | 60 | execute-epic-cumulative |
++| 1 | [ ] | LOW | internal/payload/diff.go:75 | The `-- .` positive pathspec scopes whole-range diffs to g.dir while changedFiles' --name-status runs with no pathspec; if a caller ever passes a subdirectory rather than the repo/worktree root the two enumerate different sets and the splitter breaks (only once a file is ignored) — all current callers pass the repo root so it is latent | Anchor the positive pathspec to the worktree top (:/) or assert g.dir is the repo root before filtering | EDGE_CASES | 30 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/payload/diff.go:234 | Ignored-file exclusions are logged only at slog debug; with debug off in production a misconfigured or overly-broad .atcrignore silently drops changed files with no default-visible signal | Emit a single info-level summary (e.g. N files skipped by ignore rules) so exclusions are visible at the default log level | OBSERVABILITY | 30 | execute-epic-independent |
++| U | [ ] | LOW | internal/mcp/handlers.go:507 | ChangedFileCount now returns the ignore-filtered count so the MCP atcr_range pre-flight silently reports fewer changed files with no --no-ignore bypass exposed to MCP callers | Document the filtered semantics on atcr_range or expose the no-ignore bypass to the MCP path | REGRESSION_RISK | 20 | execute-epic-independent |
++
+ ### [2026-07-14] From Sprint: 25.0_sarif_output_integration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/report/sarif.go:143 | An empty Category yields a rule with id:"" and results with ruleId:"" (intent_note: deferred per sprint-plan §1.2.A — AC 01-03 EC2 mandates empty-Category pass-through). | add category normalization/defaulting ("uncategorized") upstream or in renderSarif, coordinated with an AC 01-03 update [Clarified: pass-through (empty string verbatim) is correct per AC 01-03 EC2; no code change.] | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 2 | [/] | MEDIUM | internal/report/sarif.go:178 | A finding with an empty File emits artifactLocation.uri:"" (intent_note: deferred per sprint-plan §1.2.A — AC 03-01 EC3 mandates empty-File pass-through). | post-4.3 smoke test / future sprint — if GitHub rejects empty-uri results, add a placeholder-uri or location-omission branch and update AC 03-01 accordingly. [Clarified: TD row had copy-pasted FIX from row 77; no production change.] | error-handling | 30 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-14] From Sprint: 24.0_false_positive_wontfix_dismissal
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/localdebt/store.go:67 | The store is append-only with no compaction; every resolve/wontfix appends a full record copy, and every ReadAll/selectOpenDebt/persistLocalDebt re-reads and folds the entire history on each invocation. Combined with the line-sensitive id (record.go StampID), a churny false positive accumulates: each line drift appends a fresh open record plus a fresh wontfix record, growing shards unbounded while every command pays the full O(total-records) scan. There is no cap or GC path. (Deferred: Epic Plan 43.0) | Add a compaction/GC command (or periodic fold-and-rewrite that drops superseded closed records) so shard size tracks live findings, not total history. Verify by simulating many resolve cycles and asserting bounded on-disk size after compaction. | performance | 240 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go | Systemic symlink exposure across all five append-only ledgers (localdebt, scorecard, history, audit, debate/tools): each opens its shard with O_CREATE/O_WRONLY/O_APPEND and no O_NOFOLLOW, and MkdirAll follows symlinked path components, so a pre-planted symlink at the ledger path or a parent redirects appends outside the store. LOW: exploiting requires pre-existing local write access to a 0700 per-user/per-repo dir (same-uid, no trust-boundary crossing). localdebt already documents this as an accepted won't-fix (internal/localdebt/doc.go); tracked here so the systemic posture is visible, not localdebt-only. (intent_note: surfaced during 20.1 resolve-td; bundle into a future FS-safety pass, do not fix localdebt in isolation) | Do NOT harden localdebt alone (inconsistent, false security). Bundle into a future filesystem-safety epic: a shared GOOS-guarded O_NOFOLLOW append helper (precedent: internal/tools/open_unix.go and open_other.go) swapped across all five ledgers, plus symlink-planted unix-only tests. Prioritize only if a ledger moves to a shared/multi-user dir or a pentest/supply-chain audit flags it. Final-component only; parent-symlink resistance (openat2/RESOLVE_NO_SYMLINKS) is out of scope. | security | 480 | resolve-td | claude | MEDIUM |
+ 
+ ### [2026-07-11] From Sprint: 20.0_standalone_skill_release
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | go.mod:41 | `go install github.com/samestrin/atcr/cmd/atcr@latest` cannot work for external users. Two layered causes: the root go.mod carries a `replace ... => ./reconcile` directive (Go refuses to install any module whose published go.mod has a replace), and the binding cause is that the samestrin/atcr repo is PRIVATE so the module is not on the public proxy. Makes AC1 (go install), install.sh (AC4), and the go-install lines in README/docs unsatisfiable until the repo is public. (Deferred: .planning/epics/active/33.2_public_launch.md) | Resolve in Epic 33.2 (Public Launch): external `go install` is gated on the repo going public, which happens at launch (Epic 33 cluster). 33.2 makes the repo public, publishes `reconcile` + drops the replace directive, and delivers install.sh + a real-install integration test. | security | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-09] From Sprint: 19.7_live_model_resolution
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/personas/drift.go | For a bound persona the `family` JSON field is the bare binding token (glm); for a bindingless persona it is the derived vendor/tier prefix (anthropic/claude-opus) — two shapes under one key that a 19.8 agent grouping on `family` would see inconsistently. (intent_note: deferred per sprint-plan §5.6 — shape documented as advisory; normalization deferred to 19.8 (TD-008)) | Phase 8/later: when wiring `models refresh` against the live catalog, confirm the `~…-latest` ids are present; else skip the `missing` check for a lock slug equal to an `aliasTable` value (or resolve alias locks through the passthrough before the catalog lookup) and add a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 2 | [/] | LOW | internal/personas/upgrade.go | `resolveNewestInPrefix` selects the newest-by-`created` catalog member, but the lock gate advances only when the extracted semver is a version-advance (`isNewer`), so a newer-created-but-lower-semver hotfix slug is selected by the resolver yet blocked by the gate and silently not adopted. | Deferred (Story 6/later, semver philosophy): keep the semver isNewer gate authoritative for the lock-advance decision (consistent with the major-bump re-validation gate and the explicit-upgrade/reproducibility posture), but emit a visible signal in the personas upgrade before→after report or a models check finding when resolveNewestInPrefix's created-order pick diverges from what the gate accepts, rather than silently leaving the lock stale; cover the divergent hotfix case with a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | LOW | docs/personas-authoring.md | AC 08-03 Scenario 3 links the shipped persona doc sections to `../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/*.md`; those links resolve now but `/finalize-sprint` moves the sprint active/→completed/, after which the active/ path 404s in the shipped docs. | Future docs-stabilization pass: update the two links to the completed/ path after archival, or promote the durable plan documentation into a stable home (docs/ or .planning/specifications/) and point the persona docs there; add a link-check that fails on a dangling docs→.planning link. | docs | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-08] From Sprint: 19.6_community_registry_hub
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/init.go:47 / cmd/atcr/quickstart.go:102 | `init`/`quickstart` fetch-and-pin the roster `builtins.Names()` (the 9 model-agnostic built-ins: bruce/greta/kai/mira/dax/otto/sasha/penny/ingrid), but the shipped `personas/community/index.json` publishes only the 10 model-indexed library personas (anthony…glenna) — a fully disjoint set. (intent_note: deferred per sprint-plan TD-011) (Deferred: Epic Plan .planning/epics/active/19.7_live_model_resolution.md — design-sprint decision; lean toward publishing built-ins into the community channel behind a model-agnostic tag/gate) | rebuild init/quickstart model enablement so online `init`/`quickstart` deliver a working, non-noisy persona set: either publish the built-in lenses into the community channel behind a model-agnostic gate carve-out (keeps C2), or align the roster with what the index publishes and drop the misleading skip-warning. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | u | [/] | LOW | cmd/atcr/init.go:142 | installCommunityPersonas records each candidate's preExisted flag then, on a later roster failure, rollback() removes any candidate path where !preExisted && fileExists. If another process creates <name>.yaml/.md between candidate recording (line 142) and the eventual rollback, the rollback deletes that not-ours file believing this run created it. The window is narrow and needs concurrency; the actual overwrite protection lives in InstallUnit. (Accepted LOW-severity risk — atcr is a single-user local CLI; if ever addressed, add an inode+mtime re-stat guard to the rollback rather than changing InstallUnit's return contract.) | Have rollback delete only files it observed itself successfully create (capture created paths from InstallUnit's result rather than re-deriving from candidates), or re-stat and skip if inode/mtime differs from what this run wrote. Verify with a concurrency test that plants a file mid-roster and asserts it survives rollback. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-06] From Sprint: 19.5_response_truncation_failover
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | LOW | internal/fanout/artifacts.go:214 | The TD-019 memo short-circuit only fires for parsedFindingCount==0, so a truncated-with-findings result (memo set to >=1 by the failover gate) re-runs stream.ParseModelOutput at line 217 — the redundant parse the refactor aimed to remove, though bounded to the rare truncated-with-findings path. | Cache the parsed []Finding slice on Result rather than only its length so findingsFor can reuse it, or accept the bounded cost. (Won't fix 2026-07-06: accepted the bounded re-parse cost — the parsedFindingCount memo already avoids the redundant parse on the common truncated+zero-finding path; caching the full slice risks aliasing via findingsFor's in-place Finding.Reviewer mutation and downstream grounding/constraint filtering.) | performance | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: 19.4_history_time_sharding
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | cmd/atcr/review.go:285 | Multiple concurrent atcr review processes will append to the same YYYY-MM.jsonl simultaneously without synchronization, causing interleaved JSON lines and ledger corruption (Accepted 2026-07-06: won't-fix — concurrent-append O_APPEND safety is a project-wide TD-004 tradeoff shared by all 5 append-only ledgers (audit, debate, scorecard, tools, history), outside epic 19.4's scope; matches the identical writer.go precedent accepted 2026-07-04 at README:112. Low probability (small per-batch writes are atomic on Linux/macOS O_APPEND) and low impact (a torn line is skipped by Load, no cross-data corruption); a cross-platform lock dependency is not justified for one ledger.) | Acquire a file lock (flock) on the shard or a dedicated lockfile before opening for append | concurrency | 40 | code-review | brad | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/history/shard.go:32 | LoadAll/LoadShards read and JSON-unmarshal every monthly shard on disk, then Filter discards records older than the --since cutoff. The justification for monthly sharding is the YYYY-MM filenames, but the read path throws that structure away: a repo with years of history running the common --since 30d (or the 90d default) still parses every archived month it will immediately drop. (Deferred 2026-07-06: not worth doing now — LOW-value perf optimization; the epic's 1-2yr history bound caps the scan at 12-24 small files. If revisited, add an additive LoadShardsSince(dir, cutoff) variant rather than changing LoadShards/LoadAll signatures, which would ripple into 7+ existing test call sites for no measured benefit.) | Prune glob results in LoadShards by comparing each shard's YYYY-MM stem against the cutoff month before calling Load; pass a lower-bound month into LoadShards/LoadAll (or add a windowed variant) so shards entirely before the window are never opened. Verify with a benchmark over 60 seeded shards and --since 30d reading at most 1-2 files. | performance | 60 | code-review | claude, dax, brad | HIGH |
+ | 3 | [/] | LOW | internal/history/writer.go:39 | Append does an unlocked O_APPEND write and documents that a large buffer split across multiple write() syscalls can be torn by a concurrent append. Epic 19.4 does not change the mechanism but changes exposure: history is now git-tracked and the project is run as multiple concurrent sessions appending to the same YYYY-MM.jsonl within a month. A torn line is silently dropped by Load's malformed-line skip, so lost findings are invisible; sharding by month did not reduce intra-month contention. (Accepted 2026-07-06: won't-fix — same history.Append write site and same decision as cmd/atcr/review.go:285 (resolved in lockstep); no cross-platform lock dependency added. Mirrors the 2026-07-04 accepted precedent for this exact O_APPEND pattern.) | If a hard guarantee is wanted wrap the shard write in an advisory file lock (flock) consistent with the mkdir-flock pattern used in the planning tooling; otherwise document that concurrent same-month runs can lose records. Verify with a stress test of N concurrent Appends and a line-count assertion. | error-handling | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: epic-19.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/history/shard.go:32 | LoadShards loads every shard into memory before Filter applies --since, so a narrow window still reads all shards (acceptable within the stated 1-2yr bound; no month-prefix pruning) (Deferred 2026-07-06: duplicate of the MEDIUM month-pruning item at this same line; same decision — defer, add LoadShardsSince additively if ever picked up.) | Skip shard files whose YYYY-MM stem is entirely older than now-since before loading, to keep long histories fast | UNDER_ENGINEERING | 30 | execute-epic-independent |
+ 
+ ### [2026-07-05] From Sprint: epic-19.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | cmd/atcr/review.go:384 | The audit hook re-reads sources/pool/findings.txt that the history hook read moments earlier in the same review, so the pool file is parsed twice per review run | Parse the pool findings once in the CLI layer and pass the finding set to both history.RecordReview and audit.RecordReview, or expose a shared parse result (Won't-fix: accepted — the duplicate parse mirrors internal/history's independent capture pattern per epic design; not worth a cross-package signature refactor for a sub-ms, once-per-run gain.) | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-07-05] From Review: pr-105-recovery
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index ea414087..0302f73a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,11 +1,28 @@
++## [26.0.0] - 2026-07-14
++
++Stop ATCR from spending LLM tokens (and money) reviewing generated code, vendored dependencies, or massive lockfiles: the review payload now excludes files matched by the repository's `.gitignore` and a new repo-root `.atcrignore`, filtered out before the diff ever reaches the byte-budget pass or a reviewer.
++
++### Added
++
++- Repo-root `.gitignore` support: files matched by the repository's `.gitignore` are excluded from the review payload.
++- Repo-root `.atcrignore` support: a dedicated, additive ignore file (one `.gitignore`-syntax pattern per line, no negation) for files committed to git that should never reach the AI reviewer (e.g. `go.sum`, `package-lock.json`, `docs/`).
++- `atcr review --no-ignore` flag to bypass ignore filtering and review normally-excluded files on demand.
++- Files skipped by the ignore rules are logged at debug level.
++
++### Changed
++
++- The review payload now filters ignored files out of the changed-file list ahead of the byte-budget truncation pass; pre-flight changed-file counts reflect the same filtered set.
++
++*Shipped via /execute-epic (epic 26.0)*
++
+ ## [Technical Debt] - 2026-07-14
+ 
+ ### Fixed
+ 
+ - Resolved empty SARIF `ruleId` for category-level findings.
+ - Removed a data race on the SARIF diagnostic sink by threading it through function parameters instead of a package-level variable.
+ - Derived the MCP `report` tool's format enum from `report.FormatList()` so it can no longer drift from the CLI's supported formats.
+ - De-duplicated the per-render SARIF unrecognized-severity diagnostic so it no longer repeats once per finding.
+ - Defaulted blank SARIF `artifactLocation.uri` to a sentinel value instead of emitting an empty URI.
+ 
+ ## [25.0.0] - 2026-07-14
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index f86e25b3..3f92f948 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -49,40 +49,41 @@ func writeAuditRecord(stderr io.Writer, ctx context.Context, auditPath, reviewDi
+ // newReviewCmd builds `atcr review`: resolve the git range, build payloads,
+ // create the review directory, and fan out to the persona pool.
+ func newReviewCmd() *cobra.Command {
+ 	cmd := &cobra.Command{
+ 		Use:   "review",
+ 		Short: "Fan a code change out to the reviewer pool",
+ 		Args:  usageArgs(cobra.NoArgs),
+ 		RunE:  runReview,
+ 	}
+ 	cmd.Flags().String("id", "", "review id (default: <YYYY-MM-DD>_<branch-slug>)")
+ 	cmd.Flags().String("output-dir", "", "write the review tree to this path instead of .atcr/reviews/<id>/ (mutually exclusive with --id; does not update .atcr/latest)")
+ 	cmd.Flags().String("payload", "", "payload mode override: diff, blocks, or files")
+ 	cmd.Flags().Int("timeout", 0, "global timeout in seconds (overrides config)")
+ 	cmd.Flags().Int64("byte-budget", 0, "per-payload byte budget, 0 = unlimited (overrides config)")
+ 	cmd.Flags().Int("max-parallel", 0, "max concurrent parallel-lane agent calls, 0 = unbounded (default when unset: 10 from config, not unbounded)")
+ 	cmd.Flags().String("fail-on", "", "one-shot: review + reconcile, then exit 1 if any finding at/above this severity survives")
+ 	cmd.Flags().Bool("verify", false, "one-shot: chain review -> reconcile -> verify (adversarial skeptics) in a single run")
+ 	cmd.Flags().Bool("require-verified", false, "with --verify and --fail-on: gate counts only skeptic-confirmed (VERIFIED) findings — the strictest gate")
+ 	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict")
+ 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
+ 	cmd.Flags().Bool("exec", false, "with --verify: let skeptics reproduce findings in a sandbox (requires a [sandbox] block in .atcr/config.yaml that passes preflight); refuses otherwise")
+ 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
+ 	cmd.Flags().Bool("debate", false, "one-shot: chain a cross-examination stage (proposer/challenger/judge) after reconcile/verify, settling disputed findings")
+ 	cmd.Flags().Bool("single-model", false, "with --debate: allow the same-model persona fallback when fewer than 3 distinct models are available")
+ 	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
+ 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
+ 	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
++	cmd.Flags().Bool("no-ignore", false, "review files matched by the repo-root .gitignore/.atcrignore that are normally filtered out of the payload")
+ 	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
+ 	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
+ 	addRangeFlags(cmd)
+ 	addAutoFixFlags(cmd)
+ 	return cmd
+ }
+ 
+ // outputDirFromFlags resolves the --output-dir override for `atcr review`. It
+ // returns "" when the flag is unset (the default .atcr/reviews/<id>/ layout). An
+ // explicit value is mutually exclusive with --id (the id is meaningless when the
+ // path is explicit) and must be non-empty; a relative path is resolved against
+ // CWD here, at flag-parse time, so PrepareReview receives an absolute path.
+ // Every rejection is a usageError so it maps to exit 2.
+@@ -166,355 +167,356 @@ func prFromGitHubRef(ref string) int {
+ // runReview resolves the range, loads config, and runs the full review flow.
+ // Range/config problems are usage errors (exit 2); an all-agents-failed review
+ // is a plain failure (exit 1) with the artifacts preserved on disk.
+ func runReview(cmd *cobra.Command, _ []string) error {
+ 	// --resume targets an existing review directory and runs only its pending
+ 	// agents (epic 4.1.1); it is a distinct flow from a fresh review, so branch
+ 	// before any new-review flag handling.
+ 	if cmd.Flags().Changed("resume") {
+ 		// --resume (continue an existing review non-destructively) and --force
+ 		// (back up and overwrite it) are opposite collision resolutions; passing
+ 		// both is a usage error (Epic 4.7 AC1b). Checked here, before the resume
+ 		// short-circuit, so the conflict fires regardless of flag order.
+ 		if cmd.Flags().Changed("force") {
+ 			return usageError(errors.New("--resume and --force are mutually exclusive"))
+ 		}
+ 		anchor, _ := cmd.Flags().GetString("resume")
+ 		return runResume(cmd, anchor)
+ 	}
+ 
+ 	ctx := cmd.Context()
+ 	base, _ := cmd.Flags().GetString("base")
+ 	head, _ := cmd.Flags().GetString("head")
+ 	mergeCommit, _ := cmd.Flags().GetString("merge-commit")
+ 	idOverride, _ := cmd.Flags().GetString("id")
+ 
+ 	// Resolve --output-dir (mutually exclusive with --id, relative→absolute)
+ 	// before any review work, so a bad flag combination is a usage error (exit 2)
+ 	// with no wasted API calls.
+ 	outputDir, err := outputDirFromFlags(cmd)
+ 	if err != nil {
+ 		return err
+ 	}
+ 
+ 	// Resolve the gate threshold (--fail-on flag > project config > registry)
+ 	// before any review work; a bad configured value is a usage error (exit 2).
+ 	threshold, err := resolveGateThreshold(cmd)
+ 	if err != nil {
+ 		return err
+ 	}
+ 
+ 	// --verify chains review -> reconcile -> verify (AC 04-02). Validate its
+ 	// --min-severity here too, before any API calls, so a bad value fails fast.
+ 	verifyFlag, _ := cmd.Flags().GetBool("verify")
+ 	// --exec only has consumers in the verify stage (skeptics/repro); reject the
+ 	// silent no-op of `review --exec` without --verify (Epic 11.0).
+ 	if execFlag, _ := cmd.Flags().GetBool("exec"); execFlag && !verifyFlag {
+ 		return usageError(errors.New("--exec requires --verify (execution reproduction runs in the adversarial verify stage)"))
+ 	}
+ 	verifyMinSev := ""
+ 	if verifyFlag {
+ 		if verifyMinSev, err = verifyMinSeverity(cmd); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	// execBackend is resolved AFTER gitrange.Resolve and LoadReviewConfig so that
+ 	// cheap local validation (bad range, invalid registry) fails fast without paying
+ 	// for a sandbox preflight container spawn. It is still resolved before any paid
+ 	// review API calls.
+ 	var execBackend sandbox.Backend
+ 	var execTestCmd []string
+ 	var execTimeout time.Duration
+ 
+ 	// --debate chains the cross-examination stage after reconcile (and verify, when
+ 	// present). It needs no extra validation: it runs on reconciled findings and is
+ 	// independent of --verify, though the canonical chain is --verify --debate.
+ 	debateFlag, _ := cmd.Flags().GetBool("debate")
+ 
+ 	// --require-verified hardens the one-shot gate to count only VERIFIED findings.
+ 	// It needs a gate (--fail-on) and a stage that produces confirmed verdicts:
+ 	// --verify, or --debate (a debate uphold/split writes verdict "confirmed",
+ 	// promoted to VERIFIED — debate alone genuinely yields verified findings, the
+ 	// same semantics the MCP handleDebate gates on). Without any verdict-producing
+ 	// stage a strict gate would silently pass everything, so fail fast as a usage
+ 	// error (parity with `atcr reconcile` and the MCP debate handler).
+ 	requireVerified, _ := cmd.Flags().GetBool("require-verified")
+ 	if requireVerified && (threshold == "" || (!verifyFlag && !debateFlag)) {
+ 		return usageError(errors.New("--require-verified requires --fail-on and --verify or --debate"))
+ 	}
+ 
+ 	// --single-model only affects the debate stage's casting (it opts into the
+ 	// same-model persona fallback). Without --debate it is silently a no-op, so a
+ 	// user setting it alone gets no effect and no feedback; fail fast as a usage
+ 	// error, mirroring the --require-verified guard.
+ 	singleModel, _ := cmd.Flags().GetBool("single-model")
+ 	if singleModel && !debateFlag {
+ 		return usageError(errors.New("--single-model requires --debate"))
+ 	}
+ 
+ 	// --auto-fix (Sprint 17.0, Story 6) is the opt-in write-back flow. Its
+ 	// refuse-without-backend gate is resolved after config load (it needs the
+ 	// project config) but before any fix is applied; afBackend carries the
+ 	// resolved backend forward to the post-reconcile orchestration.
+ 	autoFix := boolFlag(cmd, "auto-fix")
+ 	var afBackend autoFixBackend
+ 
+ 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
+ 	if err != nil {
+ 		// A SIGINT/SIGTERM during range resolution surfaces as context.Canceled
+ 		// here; route it to the graceful interrupt path (exit 1 + notice) rather
+ 		// than a confusing "review failed: context canceled" usage error (exit 2).
+ 		if errors.Is(ctx.Err(), context.Canceled) {
+ 			return interruptedBeforeFanout(cmd)
+ 		}
+ 		// A range failure aborts the pipeline before any agent runs — a usage
+ 		// error (exit 2), per AC 03-02 Error Scenario 2 ("review failed: ...").
+ 		return usageError(fmt.Errorf("review failed: %w", err))
+ 	}
+ 
+ 	cfg, err := fanout.LoadReviewConfig(".", cliOverrides(cmd))
+ 	if err != nil {
+ 		return usageError(err) // missing/invalid config → exit 2
+ 	}
+ 	if banner := cfg.Registry.ProjectProviderBanner(); banner != "" {
+ 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), banner)
+ 	}
+ 
+ 	// The --auto-fix backend must be fully configured before any review work so a
+ 	// half-configured run refuses fast (exit 2) instead of reviewing, applying,
+ 	// and stalling mid-flow. The gate is shape-only (no network/exec); "." is the
+ 	// working-tree root every review runs against.
+ 	if autoFix {
+ 		if afBackend, err = validateAutoFixBackend(cmd, cfg.Project, "."); err != nil {
+ 			return err
+ 		}
+ 	}
+ 
+ 	if verifyFlag {
+ 		if execBackend, execTestCmd, execTimeout, err = resolveExec(cmd, cfg.Project); err != nil {
+ 			return err // refuse-without-backend / preflight failure (exit 2)
+ 		}
+ 	}
+ 
+ 	now := time.Now()
+ 	req := fanout.ReviewRequest{
+ 		Repo: ".",
+ 		Root: ".",
+ 		Range: fanout.ReviewRange{
+ 			Base:          res.Base,
+ 			Head:          res.Head,
+ 			DetectionMode: res.DetectionMode,
+ 			DefaultBranch: res.DefaultBranch,
+ 			CommitCount:   res.CommitCount,
+ 		},
+ 		Branch:         gitrange.CurrentBranch(ctx, "."),
+ 		Date:           now.Format("2006-01-02"),
+ 		TimeSuffix:     now.Format("150405"),
+ 		StartedAt:      now,
+ 		IDOverride:     idOverride,
+ 		OutputDir:      outputDir,
+ 		Force:          boolFlag(cmd, "force"),
+ 		NoCache:        boolFlag(cmd, "no-cache"),
++		NoIgnore:       boolFlag(cmd, "no-ignore"),
+ 		SprintPlanPath: sprintPlanPath(cmd),
+ 		PRNumber:       prNumberFromFlags(cmd),
+ 	}
+ 
+ 	// Run the two review phases separately so build-phase failures (persona
+ 	// resolution, unknown provider, prompt render — configuration errors per
+ 	// AC 03-02) map to exit 2, while an all-agents-failed execution stays the
+ 	// plain exit 1 with artifacts preserved on disk.
+ 	prep, err := fanout.PrepareReview(ctx, cfg, req)
+ 	if err != nil {
+ 		// An interrupt during payload build / scaffolding cancels the context; no
+ 		// review directory exists yet, so route to the graceful no-results path
+ 		// instead of a usage error.
+ 		if errors.Is(ctx.Err(), context.Canceled) {
+ 			return interruptedBeforeFanout(cmd)
+ 		}
+ 		return usageError(err)
+ 	}
+ 
+ 	// The review id is the earliest correlation anchor (it exists only after
+ 	// PrepareReview). correlateAndRedact attaches it to the context logger so every
+ 	// downstream stage — execute, reconcile, verify — emits log lines greppable by
+ 	// review_id (AC9), and installs sink-level redaction (AC5/AC6) for the whole
+ 	// review — including the resolved registry key values (epic 4.9) so non-sk-/
+ 	// non-Bearer keys are scrubbed by exact value, not only by token shape. Shared
+ 	// with runResume so the contract can't drift between paths. From here on use
+ 	// this correlated ctx, never cmd.Context() again.
+ 	secrets, secretWarnings := prep.SecretValues()
+ 	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, secrets...)
+ 	for _, w := range secretWarnings {
+ 		log.FromContext(ctx).Debug(w)
+ 	}
+ 
+ 	if err := preflightAPIKeys(prep.Slots); err != nil {
+ 		return err // no slot can authenticate → exit 2 before any provider call
+ 	}
+ 
+ 	// Snapshot the summary counters before fan-out so the end-of-review summary can
+ 	// diff against this baseline and report only this review's contribution, not the
+ 	// process-cumulative registry totals (correct even if a future process runs more
+ 	// than one review against the shared DefaultRegistry).
+ 	metricsBaseline := snapshotSummaryMetrics(metrics.DefaultRegistry)
+ 
+ 	result, err := fanout.ExecuteReview(ctx, llmclient.New(), prep)
+ 
+ 	// Graceful interrupt (SIGINT/SIGTERM cancelled the root context): completed
+ 	// agents are already persisted by WritePool and the manifest is marked
+ 	// interrupted, so report what was saved and stop — running reconcile/verify on
+ 	// a cancelled context would only fail. The check is on the parent ctx, the one
+ 	// signal that survives the engine's per-agent timeout classification. Exit 1
+ 	// (consistent with the 10s force-exit path); skips the normal success line so
+ 	// an interrupted run is never reported as "succeeded".
+ 	if errors.Is(ctx.Err(), context.Canceled) {
+ 		return reportInterrupt(cmd, ctx, result, prep)
+ 	}
+ 
+ 	// End-of-review status + metrics summary (Epic 4.4 AC3): the one-line outcome
+ 	// plus duration, agent outcome, API calls, and findings. Both are emitted before
+ 	// the all-agents-failed error guard below, so an exit-1 review (every agent
+ 	// failed, artifacts preserved) still prints the breakdown an operator most needs
+ 	// on a failure. The summary diffs the post-review registry against metricsBaseline
+ 	// so the counts reflect this review alone — the same metrics the MCP server exports.
+ 	// Note: time.Since(now) is CLI-level elapsed time (includes range resolution,
+ 	// config load, and scaffolding overhead); atcr_review_duration_seconds is
+ 	// engine-level (starts inside fanout.ExecuteReview). The two values measure
+ 	// slightly different spans and will rarely agree exactly — this is intentional.
+ 	if result != nil {
+ 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
+ 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
+ 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
+ 		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now))
+ 	}
+ 	if err != nil {
+ 		return err // all-agents-failed → exit 1, artifacts preserved
+ 	}
+ 
+ 	// Persist this run's findings to the append-only history ledger (Epic 19.0)
+ 	// so `atcr history` can answer per-package trend queries later. It runs on
+ 	// every successful review — before the conditional in-process reconcile
+ 	// below — reading the pool findings.txt that WritePool always writes, and
+ 	// always targets <root>/.planning/history regardless of --output-dir (the
+ 	// ledger is a repo-level accumulator, not part of the redirected review
+ 	// tree). Findings are appended to the current month's shard (Epic 19.4) so
+ 	// the version-controlled history stops churning one ever-growing blob. A
+ 	// history write failure is non-fatal: it must never fail an
+ 	// otherwise-successful review, so it is logged and swallowed.
+ 	histRoot, rerr := repoRoot()
+ 	if rerr != nil {
+ 		histRoot = req.Root // fall back to the review root on resolution failure
+ 	}
+ 	recordHistory(ctx, histRoot, result.Dir, now)
+ 
+ 	// Append this run's audit record to the append-only compliance ledger (Epic
+ 	// 19.1): run timestamp, resolved base/head SHAs, PR number (0 = none), and a
+ 	// findings-by-severity summary. Like the history ledger it always targets
+ 	// <root>/.atcr regardless of --output-dir (a repo-level accumulator) and its
+ 	// failure is non-fatal — a compliance write must never fail an otherwise
+ 	// successful review, so it is logged and swallowed.
+ 	auditPath := filepath.Join(req.Root, ".atcr", "audit.log.jsonl")
+ 	writeAuditRecord(cmd.ErrOrStderr(), ctx, auditPath, result.Dir, now, req.PRNumber, req.Range.Base, req.Range.Head)
+ 
+ 	// One-shot mode: reconcile in-process and gate on the threshold. Review
+ 	// artifacts are already on disk, so a reconcile failure (exit 2) preserves
+ 	// them for inspection (AC 03-02 Error Scenario 3).
+ 	//
+ 	// result.Summary.Partial is used directly (not ReadManifestPartial) because
+ 	// the `if err != nil { return err }` guard above ensures this block is only
+ 	// reached when ExecuteReview succeeded — a WritePool fault returns a non-nil
+ 	// error and short-circuits before this line. The FailureMarker correction in
+ 	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
+ 	// path that runs after the fact against the on-disk summary.json.
+ 	if threshold != "" || verifyFlag || debateFlag || autoFix {
+ 		rec, rerr := reconcile.RunReconcile(ctx, result.Dir, nil, reclib.Options{
+ 			ReconciledAt: time.Now(),
+ 			Partial:      result.Summary.Partial,
+ 			Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
+ 		})
+ 		if rerr != nil {
+ 			return usageError(fmt.Errorf("review failed: %w", rerr))
+ 		}
+ 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
+ 
+ 		// --verify chains the adversarial verify stage after the single reconcile
+ 		// (AC 04-02). --debate then chains the cross-examination stage. Both mutate
+ 		// the on-disk findings, so the one-shot gate runs LAST, on the post-chain
+ 		// findings — a refuted or overturned finding never blocks the gate.
+ 		if verifyFlag {
+ 			vres, verr := verify.Verify(ctx, ".", result.Dir, cfg.Registry, verify.Options{
+ 				Fresh:             boolFlag(cmd, "fresh"),
+ 				Thorough:          boolFlag(cmd, "thorough"),
+ 				MinSeverity:       verifyMinSev,
+ 				SharedTimeoutSecs: cfg.Settings.TimeoutSecs,
+ 				ExecBackend:       execBackend,
+ 				ExecTestCmd:       execTestCmd,
+ 				ExecTimeout:       execTimeout,
+ 				// Scrub the same review secrets the log sink redacts from reproduced
+ 				// exec evidence before it is persisted into findings.json (Epic 11.0).
+ 				Redactor: log.NewRedactor(resolveRedactRoot(ctx, prep.Repo), secrets...),
+ 			})
+ 			if verr != nil {
+ 				return verifyFailureError(verr)
+ 			}
+ 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+ 				"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable\n",
+ 				vres.FindingsProcessed, vres.VerdictCounts.Confirmed, vres.VerdictCounts.Refuted,
+ 				vres.VerdictCounts.Unverifiable)
+ 		}
+ 		// A debate failure here intentionally leaves the verify findings already
+ 		// written to disk: they are valid artifacts the operator can still inspect,
+ 		// and re-running --debate resumes from them. There is no cross-stage rollback;
+ 		// the failure is surfaced via debateFailureError. The debate stage's own
+ 		// internal write durability is tracked separately as TD at
+ 		// internal/debate/debate.go:146.
+ 		if debateFlag {
+ 			dres, derr := debate.Debate(ctx, ".", result.Dir, cfg.Registry, debate.Options{
+ 				SingleModel: boolFlag(cmd, "single-model"),
+ 			})
+ 			if derr != nil {
+ 				return debateFailureError(derr)
+ 			}
+ 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+ 				"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow)\n",
+ 				dres.Selected, dres.Upheld, dres.Overturned, dres.Split, dres.Unresolved, dres.Overflow)
+ 		}
+ 
+ 		// --auto-fix consumes the reconciled (and, when chained, verified/debated)
+ 		// findings: apply each selected fix, validate locally, and open a PR only
+ 		// if validation passes. It runs LAST so it operates on the post-chain
+ 		// findings, and it is terminal — the fail-on exit gate below is bypassed
+ 		// because the intent under --auto-fix is to remediate, not to fail CI.
+ 		if autoFix {
+ 			return orchestrateAutoFix(ctx, cmd.OutOrStdout(), afBackend, result.Dir, threshold, res.DefaultBranch)
+ 		}
+ 
+ 		// Gate on the post-chain findings.json when a stage rewrote it; otherwise
+ 		// gate the reconcile result directly.
+ 		if verifyFlag || debateFlag {
+ 			if threshold != "" {
+ 				findings, ferr := reconcile.ReadReconciledFindings(result.Dir)
+ 				if ferr != nil {
+ 					return usageError(ferr)
+ 				}
+ 				if n := reconcile.CountFailingJSON(findings, threshold, requireVerified); n > 0 {
+ 					// Keep the verify-only message stable (operators/CI may match on it);
+ 					// name cross-examination only when --debate actually ran.
+ 					stage := "verification"
+ 					if debateFlag {
+ 						stage = "cross-examination"
+ 					}
+ 					return fmt.Errorf("%d finding(s) at or above %s survived %s", n, threshold, stage)
+ 				}
+ 			}
+ 			return nil
+ 		}
+ 		return gateFindings(rec, threshold, false)
+ 	}
+ 	return nil
+ }
+ 
+ // interruptedBeforeFanout handles a SIGINT/SIGTERM that arrived before the
+ // fan-out started (during range resolution, config load, or scaffolding). No
+ // review directory exists yet, so there are no partial results to preserve — the
+ // notice just confirms the interrupt and exits 1, consistent with the post-fan-out
+ // interrupt path (and never the misleading exit-2 "review failed" usage error).
+diff --git a/cmd/atcr/review_test.go b/cmd/atcr/review_test.go
+index 8aafafa7..23e8e2fa 100644
+--- a/cmd/atcr/review_test.go
++++ b/cmd/atcr/review_test.go
+@@ -294,13 +294,24 @@ func TestReviewCmd_ForceFlagRegistered(t *testing.T) {
+ // TestReviewCmd_NoCacheFlagRegistered verifies the --no-cache flag exists on the
+ // review command and defaults to false (Epic 5.2: caching on unless opted out).
+ func TestReviewCmd_NoCacheFlagRegistered(t *testing.T) {
+ 	cmd := newReviewCmd()
+ 	require.NotNil(t, cmd.Flags().Lookup("no-cache"), "review must define --no-cache")
+ 	v, err := cmd.Flags().GetBool("no-cache")
+ 	require.NoError(t, err)
+ 	require.False(t, v, "--no-cache defaults to false (caching active)")
+ }
+ 
++// TestReviewCmd_NoIgnoreFlagRegistered verifies the --no-ignore flag exists on
++// the review command and defaults to false (Epic 26.0: ignore filtering on
++// unless opted out).
++func TestReviewCmd_NoIgnoreFlagRegistered(t *testing.T) {
++	cmd := newReviewCmd()
++	require.NotNil(t, cmd.Flags().Lookup("no-ignore"), "review must define --no-ignore")
++	v, err := cmd.Flags().GetBool("no-ignore")
++	require.NoError(t, err)
++	require.False(t, v, "--no-ignore defaults to false (ignore filtering active)")
++}
++
+ // TestReviewCmd_SprintPlanFlagRegistered verifies the --sprint-plan flag exists
+ // on the review command and defaults to empty (diff-wide review when unset), per
+ // Epic 12.2 AC1.
+diff --git a/go.mod b/go.mod
+index 12bfb14f..c28780c5 100644
+--- a/go.mod
++++ b/go.mod
+@@ -5,9 +5,10 @@ go 1.25.0
+ require (
+ 	github.com/bluekeyes/go-gitdiff v0.8.1
+ 	github.com/cli/go-gh/v2 v2.13.0
+ 	github.com/google/jsonschema-go v0.4.3
++	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
+ 	github.com/spf13/cobra v1.10.2
+ 	github.com/stretchr/testify v1.11.1
+ 	github.com/tetratelabs/wazero v1.12.0
+ 	golang.org/x/mod v0.37.0
+ )
+diff --git a/go.sum b/go.sum
+index 8a9cfead..fa873b4c 100644
+--- a/go.sum
++++ b/go.sum
+@@ -22,6 +22,7 @@ github.com/cli/shurcooL-graphql v0.0.4 h1:6MogPnQJLjKkaXPyGqPRXOI2qCsQdqNfUY1QSJ
+ github.com/cli/shurcooL-graphql v0.0.4/go.mod h1:3waN4u02FiZivIV+p1y4d0Jo1jc6BViMA73C+sZo2fk=
+ github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
+ github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
++github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
+ github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+ github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
+@@ -58,6 +59,8 @@ github.com/rivo/uniseg v0.4.7/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUc
+ github.com/rogpeppe/go-internal v1.9.0 h1:73kH8U+JUqXU8lRuOHeVHaa/SZPifC7BkcraZVejAe8=
+ github.com/rogpeppe/go-internal v1.9.0/go.mod h1:WtVeX8xhTBvf0smdhujwtBcq4Qrzq/fJaraNFVN+nFs=
+ github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
++github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06 h1:OkMGxebDjyw0ULyrTYWeN0UNCCkmCWfjPnIA2W6oviI=
++github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06/go.mod h1:+ePHsJ1keEjQtpvf9HHw0f4ZeJ0TLRsxhunSI2hYJSs=
+ github.com/segmentio/asm v1.1.3 h1:WM03sfUOENvvKexOLp+pCqgb/WDjsi7EK8gIsICtzhc=
+ github.com/segmentio/asm v1.1.3/go.mod h1:Ld3L4ZXGNcSLRg4JBsZ3//1+f/TjYl0Mzen/DQy1EJg=
+ github.com/segmentio/encoding v0.5.4 h1:OW1VRern8Nw6ITAtwSZ7Idrl3MXCFwXHPgqESYfvNt0=
+@@ -66,6 +69,8 @@ github.com/spf13/cobra v1.10.2 h1:DMTTonx5m65Ic0GOoRY2c16WCbHxOOw6xxezuLaBpcU=
+ github.com/spf13/cobra v1.10.2/go.mod h1:7C1pvHqHw5A4vrJfjNwvOdzYu0Gml16OCs2GRiTUUS4=
+ github.com/spf13/pflag v1.0.9 h1:9exaQaMOCwffKiiiYk6/BndUBv+iRViNW+4lEMi0PvY=
+ github.com/spf13/pflag v1.0.9/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
++github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
++github.com/stretchr/testify v1.6.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
+ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
+ github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
+ github.com/tetratelabs/wazero v1.12.0 h1:DuWcpNu/FzgEXgGBDp8J1Spc+CWOvvtvVyjKlaZopYU=
+@@ -92,5 +97,6 @@ golang.org/x/tools v0.45.0/go.mod h1:LuUGqqaXcXMEFEruIVJVm5mgDD8vww/z/SR1gQ4uE/0
+ gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+ gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 h1:qIbj1fsPNlZgppZ+VLlY7N33q108Sa+fhmuc+sWQYwY=
+ gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
++gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+ gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+diff --git a/internal/fanout/resume.go b/internal/fanout/resume.go
+index e937a7c2..0d384e5f 100644
+--- a/internal/fanout/resume.go
++++ b/internal/fanout/resume.go
+@@ -260,86 +260,86 @@ func filterPendingSlots(slots []Slot, done map[string]bool) []Slot {
+ // PrepareResume validates an existing review directory against the current
+ // working tree and configured roster, then assembles a PreparedReview whose Dir
+ // is that existing directory and whose Slots are only the pending agents. The
+ // range and roster are locked: a changed git range (ErrRangeChanged) or a
+ // changed roster set (ErrRosterChanged) aborts before any agent runs, so a resume
+ // can never mix inconsistent contexts or silently run a different panel. Payloads
+ // are rebuilt from the (validated-identical) recorded range so pending agents see
+ // exactly what the completed agents reviewed. The returned ResumeInfo reports the
+ // completed/pending split; when AllComplete is true the Slots are empty and the
+ // caller reconciles without a fan-out.
+ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req ReviewRequest) (*PreparedReview, *ResumeInfo, error) {
+ 	m, err := ReadManifest(reviewDir)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 	if err := ValidateResumeRange(m, req.Range); err != nil {
+ 		return nil, nil, err
+ 	}
+ 	configured := rosterNames(cfg.Project)
+ 	if err := ValidateResumeRoster(m, configured); err != nil {
+ 		return nil, nil, err
+ 	}
+ 
+-	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
++	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, req.NoIgnore)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 	// Recover the SCOPE CONSTRAINT from the review's persisted artifact rather than
+ 	// re-deriving it from req.SprintPlanPath: the resume entry point does not thread
+ 	// that flag, so the scope is locked to on-disk review state exactly as the range
+ 	// and roster are — guaranteeing pending agents review under the same constraint
+ 	// the completed agents did (Epic 12.2 AC4.3).
+ 	scopeConstraint, err := readScopeConstraintArtifact(reviewDir)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 	slots, _, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint, false)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 
+ 	done, err := CompletedAgents(reviewDir)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 
+ 	info := &ResumeInfo{}
+ 	for _, name := range configured {
+ 		if done[name] {
+ 			info.Completed = append(info.Completed, name)
+ 		} else {
+ 			info.Pending = append(info.Pending, name)
+ 		}
+ 	}
+ 
+ 	changed, groundingDisabledReason := computeGroundingData(ctx, req, rb)
+ 	p := &PreparedReview{
+ 		ID:          filepath.Base(reviewDir),
+ 		Dir:         reviewDir,
+ 		Slots:       filterPendingSlots(slots, done),
+ 		TimeoutSec:  cfg.Settings.TimeoutSecs,
+ 		MaxParallel: cfg.Settings.MaxParallel,
+ 		Repo:        req.Repo,
+ 		Head:        req.Range.Head,
+ 		// Epic 14.1: ground a resumed agent's fresh output identically to a
+ 		// first-run agent's, so a re-run agent cannot reintroduce hallucinations a
+ 		// normal run would have dropped. Same fail-open contract as the fresh path.
+ 		Changed:                 changed,
+ 		GroundingDisabledReason: groundingDisabledReason,
+ 		manifest:                m,
+ 		// Wire the diff cache for resumed agents too (Epic 5.2): a resumed agent's
+ 		// fresh output is written back so a later full run benefits — matching the
+ 		// "fresh results are always written" contract — rather than being re-called.
+ 		cache:       cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes),
+ 		cacheNoRead: req.NoCache,
+ 	}
+ 	return p, info, nil
+ }
+ 
+ // readScopeConstraintArtifact recovers the SCOPE CONSTRAINT block a scoped review
+ // (Epic 12.2) persisted to payload/scope-constraint.txt, so a resumed run injects
+ // the same scope the completed agents reviewed under. A diff-wide review writes no
+ // artifact, so a missing file yields ("", nil): the resume proceeds diff-wide,
+ // matching the original run. Any other read error is surfaced so a resume fails
+ // closed (exit 2 at the caller) rather than silently dropping the scope the
+ // completed agents had — the exact regression this guards against.
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index f1a79386..9ebe0097 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -60,57 +60,62 @@ type ReviewRange struct {
+ // ReviewRequest is everything RunReview needs beyond the config: the repo/range,
+ // the branch + date used to derive the review id, the collision suffix, the run
+ // start time, and an optional id override.
+ type ReviewRequest struct {
+ 	Repo       string // git work tree to diff
+ 	Root       string // where .atcr lives (usually == Repo)
+ 	Range      ReviewRange
+ 	Branch     string
+ 	Date       string // YYYY-MM-DD
+ 	TimeSuffix string // HHMMSS collision suffix
+ 	StartedAt  time.Time
+ 	IDOverride string
+ 	// OutputDir, when non-empty, redirects the whole review tree to this
+ 	// (absolute) path instead of .atcr/reviews/<id>/, and suppresses the
+ 	// .atcr/latest update. The id is still derived (for provenance/output) but
+ 	// is not used for path construction. Mutually exclusive with IDOverride,
+ 	// enforced by the CLI before the request is built.
+ 	//
+ 	// Security: arbitrary absolute paths (including outside the repo root) are
+ 	// accepted by design; --output-dir is intended for trusted orchestrators that
+ 	// own their output destination. PrepareReview rejects paths inside ReviewsRoot
+ 	// to prevent invisible half-state reviews. Untrusted callers must validate the
+ 	// path before populating this field.
+ 	OutputDir string
+ 	// Force, when true, overwrites an existing review target instead of failing
+ 	// the collision (Epic 4.7 AC2): the prior tree is backed up to <dir>.bak and
+ 	// a fresh directory is scaffolded. It applies to the IDOverride path (a
+ 	// pre-existing .atcr/reviews/<id>/) and the non-empty OutputDir path; derived
+ 	// ids never collide (claimReviewDir auto-suffixes) so Force is a no-op there.
+ 	// Defaulting false preserves the safe fail-on-collision behavior for callers
+ 	// that do not opt in (e.g. the MCP handler).
+ 	Force bool
+ 	// NoCache bypasses diff-cache READS for this run (the --no-cache flag, Epic
+ 	// 5.2) while still WRITING fresh results, so the run refreshes any stale
+ 	// entries and every subsequent run benefits. Defaulting false keeps caching
+ 	// fully active for callers that do not opt out (e.g. the MCP handler).
+ 	NoCache bool
++	// NoIgnore bypasses the repo-root .gitignore/.atcrignore payload filter for
++	// this run (the --no-ignore flag, Epic 26.0), so a deliberately-ignored file
++	// can be reviewed on demand. Defaulting false keeps filtering active for
++	// callers that do not opt out (e.g. the MCP handler).
++	NoIgnore bool
+ 	// SprintPlanPath, when non-empty, points at a markdown sprint/epic plan whose
+ 	// content is wrapped in a SCOPE CONSTRAINT block and prepended to every
+ 	// reviewer's payload, immediately before the diff (Epic 12.2). It scopes the
+ 	// review to the plan's active work items so reviewers suppress findings for
+ 	// unrelated changes in the diff. A missing or empty file is ignored (the
+ 	// review proceeds diff-wide); an unreadable file warns on stderr but does not
+ 	// abort. The constraint becomes part of the rendered prompt, so the diff-cache
+ 	// key invalidates correctly when the plan changes. Defaulting empty preserves
+ 	// the unconstrained, diff-wide review for callers that do not set it (e.g. the
+ 	// MCP handler).
+ 	SprintPlanPath string
+ 	// PRNumber is the pull-request number this run reviews, stamped onto the
+ 	// run's append-only audit record (Epic 19.1). It is optional: 0 means "no PR
+ 	// context" (a local review, or CI without a PR ref), in which case the audit
+ 	// record omits the PR but is still written. The engine does not use it for
+ 	// review logic — it is pure provenance threaded through to the audit hook.
+ 	PRNumber int
+ }
+ 
+ // ReviewResult is the outcome of a completed review run.
+@@ -226,52 +231,52 @@ func validateReviewRequest(cfg *ReviewConfig, req ReviewRequest) error {
+ // PrepareReview runs phase one of a review: build per-mode payloads, assemble
+ // the roster into parallel/serial slots (with fallback chains), derive the
+ // review id, scaffold the review directory, and write the payload artifacts, an
+ // in-progress manifest, and the .atcr/latest pointer. No agent runs here, so it
+ // returns quickly; ExecuteReview performs the fan-out.
+ //
+ // An empty roster is rejected before scaffolding so a no-op run never creates a
+ // review directory or repoints .atcr/latest. (LoadReviewConfig also rejects
+ // this earlier; PrepareReview is defended for direct/MCP callers.)
+ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*PreparedReview, error) {
+ 	if err := validateReviewRequest(cfg, req); err != nil {
+ 		return nil, err
+ 	}
+-	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
++	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, req.NoIgnore)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	// Only a roster that resolved to payload modes can be "empty": a roster of
+ 	// unknown agents builds zero modes and must keep its "not found in
+ 	// registry" diagnostic from buildSlots below.
+ 	empty := len(payloads) > 0
+ 	for _, mp := range payloads {
+ 		if mp.FileCount > 0 {
+ 			empty = false
+ 			break
+ 		}
+ 	}
+ 	if empty {
+ 		return nil, fmt.Errorf("%w: the range contains commits but no changed files (only merge or empty commits?); review a range that changes files", ErrNoReviewableContent)
+ 	}
+ 	// Sprint-plan scope (Epic 12.2): read the plan once here and prepend its
+ 	// SCOPE CONSTRAINT to every reviewer's payload via buildSlots. An unreadable
+ 	// or oversized plan warns but never aborts the review.
+ 	scopeConstraint, scopeWarn := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes)
+ 	if scopeWarn != "" {
+ 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
+ 	}
+ 	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint, true)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode, rb)
+ }
+ 
+ // finalizePreparedReview is the shared scaffold-and-assemble tail of the two
+ // review-preparation entry points (PrepareReview's git-range path and
+ // PrepareReviewFromDiff's ingestion path): it derives the review id, claims the
+ // review directory (honoring --output-dir/--id/--force), writes the payload
+ // artifacts, an in-progress manifest, and the .atcr/latest pointer, and wires the
+ // diff cache. payloadMode is recorded as the manifest's PayloadMode (the
+ // configured mode for the git path, "diff" for the ingestion path); the range
+ // provenance comes from req.Range, which the ingestion caller leaves empty.
+@@ -768,37 +773,41 @@ type modePayload struct {
+ // buildPayloads builds each distinct payload mode the roster uses exactly once.
+ // It returns the shared payload.RangeBuilder so the caller can compute grounding
+ // data (computeGroundingData) on the same gitRunner, reusing the memoized
+ // --name-status / --unified=0 diffs instead of re-spawning them (Epic 22.4).
+-func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head string) (map[string]modePayload, *payload.RangeBuilder, error) {
+-	rb := payload.NewRangeBuilder(ctx, repo, base, head)
++func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head string, noIgnore bool) (map[string]modePayload, *payload.RangeBuilder, error) {
++	var opts []payload.RangeOption
++	if noIgnore {
++		opts = append(opts, payload.WithoutIgnoreFilter())
++	}
++	rb := payload.NewRangeBuilder(ctx, repo, base, head, opts...)
+ 	out := map[string]modePayload{}
+ 	for _, mode := range neededModes(cfg) {
+ 		entries, err := rb.BuildEntries(payload.PayloadMode(mode))
+ 		if err != nil {
+ 			return nil, nil, fmt.Errorf("building %s payload: %w", mode, err)
+ 		}
+ 		kept, trunc := payload.ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget)
+ 		if trunc.AllDropped {
+ 			return nil, nil, fmt.Errorf("%w (mode %s, dropped %d file(s))", ErrPayloadFullyDropped, mode, len(trunc.FilesDropped))
+ 		}
+ 		var b strings.Builder
+ 		for _, e := range kept {
+ 			b.WriteString(e.Body)
+ 		}
+ 		// FileCount reflects what the reviewer actually saw (post-truncation), not
+ 		// the pre-budget total — the dropped files are recorded in trunc. Entries
+ 		// keeps the raw pre-budget files so buildSlots re-sheds them per agent
+ 		// against each model's window (Epic 19.10 F2).
+ 		out[mode] = modePayload{Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc}
+ 	}
+ 	// Every payload mode's entries are now materialized into out, so the
+ 	// per-mode diff chunk caches (fc/plain/raw) and the line-range cache on the
+ 	// shared gitRunner are dead weight. Grounding (computeGroundingData) reads
+ 	// only the zero-context diff and the --name-status list, both retained, so
+ 	// releasing the per-mode caches here lowers peak heap during grounding for
+ 	// large multi-mode diffs without re-spawning any git process (Epic 22.4).
+ 	rb.ReleaseModeCaches()
+ 	return out, rb, nil
+ }
+ 
+ // neededModes returns the distinct payload modes across the whole roster.
+diff --git a/internal/payload/builder.go b/internal/payload/builder.go
+index 091b2b27..6b4a3330 100644
+--- a/internal/payload/builder.go
++++ b/internal/payload/builder.go
+@@ -114,38 +114,41 @@ func (g *gitRunner) buildEntries(mode PayloadMode, base, head string) ([]FileEnt
+ // buildEntriesValidated is buildEntries without the range validation, for callers
+ // (RangeBuilder) that validate the range once and reuse the runner across
+ // multiple builds so the two rev-parse processes are not re-spent per mode.
+ func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) ([]FileEntry, error) {
+ 	files, err := g.changedFilesMemo(base, head)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	entries := make([]FileEntry, 0, len(files))
+ 	for _, f := range files {
+ 		body, err := g.fileBody(mode, base, head, f)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+ 		entries = append(entries, FileEntry{Path: f.path, Size: int64(len(body)), Body: body})
+ 	}
+ 	return entries, nil
+ }
+ 
+ // ChangedFileCount returns the number of files changed in base..head from a
+ // single `git diff --name-status` call — the cheap pre-flight counterpart to
+ // BuildEntries, which materializes every per-file diff body just to be counted.
+-// Rename detection (-M) matches changedFiles, so the count equals
+-// len(BuildEntries(ModeDiff, ...)) for added, deleted, and renamed files.
++// It goes through changedFilesMemo so the count reflects the SAME ignore-filtered
++// set BuildEntries produces (repo-root .gitignore/.atcrignore excluded): the two
++// must agree, or a reviewer would see a file count larger than the files
++// actually reviewed. Rename detection (-M) matches changedFiles, so the count
++// equals len(BuildEntries(ModeDiff, ...)) for added, deleted, and renamed files.
+ func ChangedFileCount(ctx context.Context, repo, base, head string) (int, error) {
+ 	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
+ 	if err := validateRange(g, base, head); err != nil {
+ 		return 0, err
+ 	}
+-	files, err := g.changedFiles(base, head)
++	files, err := g.changedFilesMemo(base, head)
+ 	if err != nil {
+ 		return 0, err
+ 	}
+ 	return len(files), nil
+ }
+ 
+ // fileBody renders one changed file's contribution for mode, including the
+ // trailing newline so concatenating bodies reproduces the flat payload.
+diff --git a/internal/payload/diff.go b/internal/payload/diff.go
+index bc2b8552..3b133fea 100644
+--- a/internal/payload/diff.go
++++ b/internal/payload/diff.go
+@@ -45,40 +45,82 @@ func (f changedFile) pathspec() []string {
+ // rangeState holds the whole-range cache fields for one base..head pair.
+ // All cache reads must go through gitRunner.forRange, which reconciles the
+ // key before returning a pointer — no accessor can read a cache field without
+ // first passing through that gate.
+ type rangeState struct {
+ 	key        string
+ 	files      []changedFile          // changed files (one --name-status -M)
+ 	binary     map[string]bool        // head path -> binary (one --numstat -M)
+ 	fc         map[string]string      // head path -> --function-context chunk
+ 	plain      map[string]string      // head path -> --unified=10 chunk
+ 	raw        map[string]string      // head path -> plain -M diff chunk
+ 	zeroCtx    map[string]string      // head path -> --unified=0 chunk (raw)
+ 	lineRanges map[string][]lineRange // head path -> head-side changed ranges
++
++	// excludeSpec holds git pathspecs for the files removed by the ignore filter,
++	// applied to every whole-range diff so git never emits their chunks. This
++	// keeps the diff splitter's "every chunk maps to a changed file" invariant
++	// intact: the filtered file list (files) and the diff output stay in lockstep.
++	// Populated by changedFilesMemo; empty when nothing was ignored (zero
++	// behavior change for the common case).
++	excludeSpec []string
++}
++
++// pathspecArgs returns the trailing `-- . :(exclude)<path>...` args for whole-
++// range diff commands, or nil when nothing was ignored. A positive `.` pathspec
++// is required alongside the exclusions so git scopes them to the whole tree.
++func (s *rangeState) pathspecArgs() []string {
++	if len(s.excludeSpec) == 0 {
++		return nil
++	}
++	return append([]string{"--", "."}, s.excludeSpec...)
+ }
+ 
+ // gitRunner executes git argv against a fixed directory and context. The
+ // payload package wraps os/exec directly (there is no internal/git package).
+ //
+ // The whole-range caches batch the per-file fan-out: each diff variant for a
+ // base..head range is computed once (one git process), split per file on
+ // column-0 `diff --git` boundaries, and served to every file from the cache.
+ // This keeps the per-file helpers' signatures intact (so their direct unit
+ // tests are unaffected) while collapsing O(N) git processes to O(1) per mode.
+ type gitRunner struct {
+ 	ctx    context.Context
+ 	dir    string
+ 	logger *slog.Logger // nil → no-op discard logger; set to capture output without swapping global
+ 
+ 	// execCount counts git subprocess invocations (every output call). It backs
+ 	// the constant-process-count regression test; it is otherwise inert.
+ 	execCount int
+ 
++	// noIgnore disables the .gitignore/.atcrignore payload filter for this runner
++	// (the --no-ignore opt-out). Default false → filtering active.
++	noIgnore bool
++
++	// ignore is the lazily-loaded repo-root ignore matcher (nil until first use).
++	// ignoreReady guards the one-time load so a repo with no ignore files is not
++	// re-stat'd on every range.
++	ignore      *ignoreMatcher
++	ignoreReady bool
++
+ 	// state holds the whole-range caches for the current base..head pair.
+ 	// Access only via forRange, which resets state when the range changes.
+ 	state rangeState
+ }
+ 
++// matcher returns the runner's repo-root ignore matcher, loading it once from
++// g.dir. Returns nil when filtering is disabled (--no-ignore) so callers skip
++// the partition entirely.
++func (g *gitRunner) matcher() *ignoreMatcher {
++	if g.noIgnore {
++		return nil
++	}
++	if !g.ignoreReady {
++		g.ignore = newIgnoreMatcher(g.dir, g.log())
++		g.ignoreReady = true
++	}
++	return g.ignore
++}
++
+ // run executes `git -C <dir> args...` and returns trimmed stdout. LC_ALL=C
+ // pins stderr to English for stable error matching; a cancelled context is
+ // surfaced as ctx.Err().
+@@ -157,21 +199,54 @@ func (g *gitRunner) changedFiles(base, head string) ([]changedFile, error) {
+ // changedFilesMemo memoizes changedFiles so the splitter (which keys chunks
+ // against this list) and buildEntries share one --name-status -M process.
+ func (g *gitRunner) changedFilesMemo(base, head string) ([]changedFile, error) {
+ 	s := g.forRange(base, head)
+ 	if s.files != nil {
+ 		return s.files, nil
+ 	}
+ 	files, err := g.changedFiles(base, head)
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	files, s.excludeSpec = g.applyIgnore(files)
+ 	if files == nil {
+ 		files = []changedFile{} // non-nil so an empty range still memoizes
+ 	}
+ 	s.files = files
+ 	return files, nil
+ }
+ 
++// applyIgnore partitions files into the kept set (returned) and the excluded
++// set, returning git pathspecs for the excluded paths. Each excluded file is
++// logged at slog debug (AC #3). When the matcher is inactive (no ignore files,
++// or --no-ignore) the input is returned unchanged with a nil exclude spec, so
++// the common case pays only one map/nil check.
++func (g *gitRunner) applyIgnore(files []changedFile) (kept []changedFile, exclude []string) {
++	m := g.matcher()
++	if !m.active() {
++		return files, nil
++	}
++	kept = make([]changedFile, 0, len(files))
++	for _, f := range files {
++		if !m.match(f.path) {
++			kept = append(kept, f)
++			continue
++		}
++		g.log().Debug("payload: skipping ignored file", "file", f.path, "kind", f.kind)
++		// `literal` magic is mandatory: without it git treats the path as a glob,
++		// so an ignored filename containing pathspec metacharacters ([ * ?) would
++		// also exclude unrelated changed files (e.g. :(exclude)a[b].go matches
++		// ab.go), silently dropping a real file or leaving an unattributed chunk
++		// that hard-errors the splitter.
++		exclude = append(exclude, ":(exclude,literal)"+f.path)
++		// A rename whose head path is ignored: exclude the old path too so git
++		// drops the rename pair entirely rather than re-rendering it as an add.
++		if f.kind == kindRenamed {
++			exclude = append(exclude, ":(exclude,literal)"+f.oldPath)
++		}
++	}
++	return kept, exclude
++}
++
+ // headPathSet returns the set of head-side paths in base..head, the authoritative
+ // key list the diff splitter matches chunks against.
+ func (g *gitRunner) headPathSet(base, head string) (map[string]bool, error) {
+@@ -314,47 +389,58 @@ func splitDiffByFile(diff string, heads map[string]bool) (map[string]string, err
+ // diffChunks runs one whole-range `git diff <opts> -M base..head` and splits it
+ // per file, verbatim (raw bytes — diff payloads ship to reviewers as-is), keyed
+ // against the changed-file list.
+ func (g *gitRunner) diffChunks(base, head string, opts ...string) (map[string]string, error) {
+ 	heads, err := g.headPathSet(base, head)
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	// headPathSet ran changedFilesMemo, so s.excludeSpec is populated: excluding
++	// the ignored paths from the diff keeps git's chunk output in lockstep with
++	// the filtered head-path set the splitter matches against.
++	s := g.forRange(base, head)
+ 	args := append([]string{"diff"}, opts...)
+ 	args = append(args, "-M", base+".."+head)
++	args = append(args, s.pathspecArgs()...)
+ 	out, err := g.output(args...)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	return splitDiffByFile(string(out), heads)
+ }
+ 
+ // binarySet returns the set of head paths that are binary in base..head, from
+ // one whole-range `--numstat -M`. git numstat prints "-\t-\t<path>" for binary
+ // files. git diff exits zero whether or not differences exist, so any error is
+ // fatal (bad repo, killed process, cancelled context) and propagated; an empty
+ // diff yields an empty (non-nil) set. The result is memoized so the N per-file
+ // binary checks collapse to a single git process.
+ func (g *gitRunner) binarySet(base, head string) (map[string]bool, error) {
++	// Ensure the ignore filter has run so s.excludeSpec is populated before the
++	// numstat diff — otherwise ignored binaries would leak into the set.
++	if _, err := g.changedFilesMemo(base, head); err != nil {
++		return nil, err
++	}
+ 	s := g.forRange(base, head)
+ 	if s.binary != nil {
+ 		return s.binary, nil
+ 	}
+-	out, err := g.run("diff", "--numstat", "-M", base+".."+head)
++	args := append([]string{"diff", "--numstat", "-M", base + ".." + head}, s.pathspecArgs()...)
++	out, err := g.run(args...)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("git diff --numstat failed: %w", err)
+ 	}
+ 	set := make(map[string]bool)
+ 	if out != "" {
+ 		for _, line := range strings.Split(out, "\n") {
+ 			fields := strings.SplitN(line, "\t", 3)
+ 			if len(fields) >= 3 && fields[0] == "-" && fields[1] == "-" {
+ 				set[numstatNewPath(fields[2])] = true
+ 			}
+ 		}
+ 	}
+ 	s.binary = set
+ 	return set, nil
+ }
+ 
+ // fcChunks / plainChunks / rawChunks memoize the whole-range function-context,
+ // -U10, and plain -M diffs respectively, each split per head path.
+diff --git a/internal/payload/ignore.go b/internal/payload/ignore.go
+new file mode 100644
+index 00000000..fcb4cbaf
+--- /dev/null
++++ b/internal/payload/ignore.go
+@@ -0,0 +1,110 @@
++package payload
++
++import (
++	"log/slog"
++	"os"
++	"path/filepath"
++	"strings"
++
++	gitignore "github.com/sabhiram/go-gitignore"
++)
++
++// Repo-root ignore sources consulted to keep generated/vendored/lockfile churn
++// out of the review payload (Epic 26.0). Both are repo-root-only.
++const (
++	ignoreFileGit  = ".gitignore"
++	ignoreFileAtcr = ".atcrignore"
++)
++
++// ignoreMatcher decides whether a changed file should be excluded from the
++// review payload. It combines two repo-root sources, OR'd together so exclusion
++// is purely additive:
++//   - .gitignore: full gitignore semantics (including "!" negation between its
++//     own patterns), matching what git itself would ignore.
++//   - .atcrignore: repo-root-only, additive to .gitignore. "!" negation lines
++//     are dropped so an .atcrignore entry can never re-include a file — it can
++//     only add exclusions on top of .gitignore's.
++//
++// A path is ignored when EITHER source matches. Keeping the two as separate
++// matchers OR'd together (rather than one merged pattern list) means a
++// .gitignore negation cannot un-exclude an .atcrignore match and vice-versa —
++// exactly the "purely additive" contract the epic specifies.
++type ignoreMatcher struct {
++	git  *gitignore.GitIgnore
++	atcr *gitignore.GitIgnore
++}
++
++// newIgnoreMatcher loads the repo-root .gitignore and .atcrignore from dir. A
++// missing file is a no-op (not an error): token-waste protection is best-effort,
++// so an absent or unreadable ignore file disables that source rather than
++// failing the review. Read/parse failures are logged at debug via logger.
++func newIgnoreMatcher(dir string, logger *slog.Logger) *ignoreMatcher {
++	return &ignoreMatcher{
++		git:  loadGitignore(filepath.Join(dir, ignoreFileGit), logger),
++		atcr: loadAtcrignore(filepath.Join(dir, ignoreFileAtcr), logger),
++	}
++}
++
++// loadGitignore compiles path with full gitignore semantics. A missing file
++// returns nil (source disabled); a parse failure is logged at debug and also
++// disables the source rather than aborting the review.
++func loadGitignore(path string, logger *slog.Logger) *gitignore.GitIgnore {
++	if _, err := os.Stat(path); err != nil {
++		return nil // absent (or unstattable) → no-op
++	}
++	gi, err := gitignore.CompileIgnoreFile(path)
++	if err != nil {
++		logger.Debug("payload: unreadable .gitignore, ignore filtering skips it", "path", path, "err", err)
++		return nil
++	}
++	return gi
++}
++
++// loadAtcrignore reads .atcrignore line-by-line and strips "!" negation lines
++// before compiling, enforcing the additive-only contract (no re-inclusion). A
++// missing file returns nil; an unreadable file is logged at debug and disabled.
++func loadAtcrignore(path string, logger *slog.Logger) *gitignore.GitIgnore {
++	data, err := os.ReadFile(path)
++	if err != nil {
++		if !os.IsNotExist(err) {
++			logger.Debug("payload: unreadable .atcrignore, ignore filtering skips it", "path", path, "err", err)
++		}
++		return nil // absent → no-op
++	}
++	var lines []string
++	for _, ln := range strings.Split(string(data), "\n") {
++		// Drop negation lines: .atcrignore is purely additive, so "!pat" must not
++		// re-include a file already excluded. A leading backslash escapes a literal
++		// "!" (gitignore rule 4) and is a real pattern, so it is kept.
++		if strings.HasPrefix(strings.TrimSpace(ln), "!") {
++			continue
++		}
++		lines = append(lines, ln)
++	}
++	if len(lines) == 0 {
++		return nil
++	}
++	return gitignore.CompileIgnoreLines(lines...)
++}
++
++// active reports whether either source contributed patterns; when false the
++// filter is a pure no-op and callers skip partitioning entirely.
++func (m *ignoreMatcher) active() bool {
++	return m != nil && (m.git != nil || m.atcr != nil)
++}
++
++// match reports whether path (repo-root-relative, forward slashes — the form
++// git diff --name-status emits with core.quotePath=false) is excluded by either
++// source.
++func (m *ignoreMatcher) match(path string) bool {
++	if m == nil {
++		return false
++	}
++	if m.git != nil && m.git.MatchesPath(path) {
++		return true
++	}
++	if m.atcr != nil && m.atcr.MatchesPath(path) {
++		return true
++	}
++	return false
++}
+diff --git a/internal/payload/ignore_filter_test.go b/internal/payload/ignore_filter_test.go
+new file mode 100644
+index 00000000..26d2ae5d
+--- /dev/null
++++ b/internal/payload/ignore_filter_test.go
+@@ -0,0 +1,157 @@
++package payload
++
++import (
++	"bytes"
++	"context"
++	"log/slog"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/log"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// ignoreFixture builds a repo whose base..head range changes three tracked
++// files — a normal source file, a .gitignore-matched file (vendor/), and an
++// .atcrignore-matched file (go.sum) — plus committed .gitignore/.atcrignore
++// that are unchanged across the range (so they never appear in the diff).
++func ignoreFixture(t *testing.T, withIgnoreFiles bool) (dir, base, head string) {
++	t.Helper()
++	dir = initRepo(t)
++	if withIgnoreFiles {
++		write(t, dir, ".gitignore", "vendor/\n")
++		write(t, dir, ".atcrignore", "go.sum\n")
++	}
++	write(t, dir, "main.go", goFileV1)
++	write(t, dir, "vendor/lib.go", goFileV1)
++	write(t, dir, "go.sum", "hash v1\n")
++	if withIgnoreFiles {
++		// Force-track vendor/lib.go despite .gitignore matching it — the exact
++		// case the filter targets: a file committed to git but that should never
++		// reach the reviewer (e.g. vendored deps committed before the ignore rule).
++		gitCmd(t, dir, "add", "-f", "vendor/lib.go")
++	}
++	base = commitAll(t, dir, "v1")
++
++	write(t, dir, "main.go", goFileV2)
++	write(t, dir, "vendor/lib.go", goFileV2)
++	write(t, dir, "go.sum", "hash v2\n")
++	head = commitAll(t, dir, "v2")
++	return dir, base, head
++}
++
++func entryPaths(entries []FileEntry) []string {
++	out := make([]string, len(entries))
++	for i, e := range entries {
++		out[i] = e.Path
++	}
++	return out
++}
++
++func TestBuildEntries_ExcludesIgnored(t *testing.T) {
++	dir, base, head := ignoreFixture(t, true)
++
++	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
++	require.NoError(t, err)
++
++	paths := entryPaths(entries)
++	assert.Contains(t, paths, "main.go")
++	assert.NotContains(t, paths, "vendor/lib.go", "vendor/ is .gitignore-matched")
++	assert.NotContains(t, paths, "go.sum", "go.sum is .atcrignore-matched")
++
++	// The flat payload must not error (splitter stays consistent) and must not
++	// carry the ignored files' content.
++	out, err := BuildDiff(context.Background(), dir, base, head)
++	require.NoError(t, err)
++	assert.NotContains(t, out, "vendor/lib.go")
++	assert.NotContains(t, out, "go.sum")
++}
++
++func TestChangedFileCount_ExcludesIgnored(t *testing.T) {
++	dir, base, head := ignoreFixture(t, true)
++
++	n, err := ChangedFileCount(context.Background(), dir, base, head)
++	require.NoError(t, err)
++	assert.Equal(t, 1, n, "only main.go survives ignore filtering")
++}
++
++// Baseline: with no ignore files, every changed file is present (proves the
++// filter is a strict no-op when there is nothing to ignore).
++func TestBuildEntries_NoIgnoreFiles_AllPresent(t *testing.T) {
++	dir, base, head := ignoreFixture(t, false)
++
++	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
++	require.NoError(t, err)
++
++	paths := entryPaths(entries)
++	assert.ElementsMatch(t, []string{"main.go", "vendor/lib.go", "go.sum"}, paths)
++}
++
++// AC #3: skipped files are logged at slog debug via the gitRunner logger.
++func TestBuildEntries_LogsSkippedAtDebug(t *testing.T) {
++	dir, base, head := ignoreFixture(t, true)
++
++	var buf bytes.Buffer
++	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
++	ctx := log.NewContext(context.Background(), logger)
++
++	_, err := BuildEntries(ctx, ModeDiff, dir, base, head)
++	require.NoError(t, err)
++
++	logged := buf.String()
++	assert.Contains(t, logged, "vendor/lib.go")
++	assert.Contains(t, logged, "go.sum")
++}
++
++// The production fan-out path (RangeBuilder) excludes ignored files too.
++func TestRangeBuilder_ExcludesIgnored(t *testing.T) {
++	dir, base, head := ignoreFixture(t, true)
++
++	rb := NewRangeBuilder(context.Background(), dir, base, head)
++	entries, err := rb.BuildEntries(ModeDiff)
++	require.NoError(t, err)
++
++	paths := entryPaths(entries)
++	assert.Equal(t, []string{"main.go"}, paths)
++}
++
++// Regression: an ignored filename containing git pathspec glob metacharacters
++// must NOT over-exclude an unrelated changed file. Without `literal` magic,
++// :(exclude)a[b].go also matches ab.go, silently dropping ab.go's diff body.
++// The .atcrignore uses escaped brackets so the MATCHER excludes only the literal
++// a[b].go — any collateral loss of ab.go can then come only from the pathspec.
++func TestBuildEntries_GlobMetacharFilename(t *testing.T) {
++	dir := initRepo(t)
++	writeIgnore(t, dir, ".atcrignore", `a\[b\].go`+"\n")
++	write(t, dir, "a[b].go", "v1\n")
++	write(t, dir, "ab.go", "keep-v1\n")
++	base := commitAll(t, dir, "v1")
++	write(t, dir, "a[b].go", "v2\n")
++	write(t, dir, "ab.go", "keep-v2\n")
++	head := commitAll(t, dir, "v2")
++
++	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
++	require.NoError(t, err)
++
++	paths := entryPaths(entries)
++	assert.NotContains(t, paths, "a[b].go", "the metachar file is ignored")
++	require.Contains(t, paths, "ab.go", "ab.go must not be collaterally excluded by the glob pathspec")
++
++	// ab.go must carry its real change, not an empty body (the silent-loss symptom).
++	out, err := BuildDiff(context.Background(), dir, base, head)
++	require.NoError(t, err)
++	assert.Contains(t, out, "keep-v2", "ab.go's changed content must survive")
++}
++
++// WithoutIgnoreFilter (the --no-ignore opt-out) bypasses the filter: every
++// changed file — including .gitignore/.atcrignore-matched ones — is reviewed.
++func TestRangeBuilder_NoIgnoreOption_IncludesIgnored(t *testing.T) {
++	dir, base, head := ignoreFixture(t, true)
++
++	rb := NewRangeBuilder(context.Background(), dir, base, head, WithoutIgnoreFilter())
++	entries, err := rb.BuildEntries(ModeDiff)
++	require.NoError(t, err)
++
++	paths := entryPaths(entries)
++	assert.ElementsMatch(t, []string{"main.go", "vendor/lib.go", "go.sum"}, paths)
++}
+diff --git a/internal/payload/ignore_test.go b/internal/payload/ignore_test.go
+new file mode 100644
+index 00000000..41615fa4
+--- /dev/null
++++ b/internal/payload/ignore_test.go
+@@ -0,0 +1,102 @@
++package payload
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/log"
++)
++
++// writeIgnore writes name with content into dir, failing the test on error.
++func writeIgnore(t *testing.T, dir, name, content string) {
++	t.Helper()
++	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
++		t.Fatalf("write %s: %v", name, err)
++	}
++}
++
++func TestNewIgnoreMatcher_NoFiles(t *testing.T) {
++	m := newIgnoreMatcher(t.TempDir(), log.Discard())
++	if m.active() {
++		t.Fatal("expected inactive matcher when no ignore files exist")
++	}
++	if m.match("anything.go") {
++		t.Fatal("inactive matcher must not match")
++	}
++}
++
++func TestIgnoreMatcher_Gitignore(t *testing.T) {
++	dir := t.TempDir()
++	writeIgnore(t, dir, ".gitignore", "vendor/\n*.log\n")
++	m := newIgnoreMatcher(dir, log.Discard())
++
++	if !m.active() {
++		t.Fatal("expected active matcher")
++	}
++	for _, p := range []string{"vendor/pkg/x.go", "app.log"} {
++		if !m.match(p) {
++			t.Errorf("expected %q to be ignored by .gitignore", p)
++		}
++	}
++	if m.match("cmd/main.go") {
++		t.Error("cmd/main.go must not be ignored")
++	}
++}
++
++// Gitignore negation ("!") is honored within the .gitignore source itself.
++func TestIgnoreMatcher_GitignoreNegation(t *testing.T) {
++	dir := t.TempDir()
++	writeIgnore(t, dir, ".gitignore", "*.log\n!keep.log\n")
++	m := newIgnoreMatcher(dir, log.Discard())
++
++	if !m.match("a.log") {
++		t.Error("a.log should be ignored")
++	}
++	if m.match("keep.log") {
++		t.Error("keep.log should be re-included by .gitignore negation")
++	}
++}
++
++// .atcrignore is additive to .gitignore's exclusions.
++func TestIgnoreMatcher_AtcrignoreAdditive(t *testing.T) {
++	dir := t.TempDir()
++	writeIgnore(t, dir, ".gitignore", "vendor/\n")
++	writeIgnore(t, dir, ".atcrignore", "go.sum\ndocs/\n")
++	m := newIgnoreMatcher(dir, log.Discard())
++
++	for _, p := range []string{"vendor/x.go", "go.sum", "docs/readme.md"} {
++		if !m.match(p) {
++			t.Errorf("expected %q to be ignored", p)
++		}
++	}
++	if m.match("internal/payload/ignore.go") {
++		t.Error("source file must not be ignored")
++	}
++}
++
++// A "!" negation line in .atcrignore is dropped: it must NOT re-include a file,
++// so the additive exclusion on the same pattern still applies.
++func TestIgnoreMatcher_AtcrignoreNoNegation(t *testing.T) {
++	dir := t.TempDir()
++	writeIgnore(t, dir, ".atcrignore", "build.txt\n!build.txt\n")
++	m := newIgnoreMatcher(dir, log.Discard())
++
++	if !m.match("build.txt") {
++		t.Error("build.txt must stay ignored — .atcrignore negation is not supported")
++	}
++}
++
++// .atcrignore alone (no .gitignore) still activates the matcher.
++func TestIgnoreMatcher_AtcrignoreOnly(t *testing.T) {
++	dir := t.TempDir()
++	writeIgnore(t, dir, ".atcrignore", "package-lock.json\n")
++	m := newIgnoreMatcher(dir, log.Discard())
++
++	if !m.active() {
++		t.Fatal("expected active matcher from .atcrignore alone")
++	}
++	if !m.match("package-lock.json") {
++		t.Error("package-lock.json should be ignored")
++	}
++}
+diff --git a/internal/payload/rangebuilder.go b/internal/payload/rangebuilder.go
+index 52f9dcbb..12e36730 100644
+--- a/internal/payload/rangebuilder.go
++++ b/internal/payload/rangebuilder.go
+@@ -10,37 +10,50 @@ import (
+ // RangeBuilder computes every whole-range artifact a fan-out review needs — the
+ // per-mode payload entries and the grounding changed-lines map — from a single
+ // gitRunner, so the whole-range git processes (ref validation, --name-status,
+ // and the per-mode / zero-context diffs) run once for the range and are memoized
+ // across both the payload build and the grounding build. Construct one per review
+ // range via NewRangeBuilder and use it for both BuildEntries and
+ // BuildChangedLines; the review layer previously built each with its own
+ // throwaway gitRunner, re-spending validateRange + --name-status + --unified=0 in
+ // grounding (Epic 22.4).
+ //
+ // It is NOT safe for concurrent use: the gitRunner's range-state cache is
+ // single-writer, so BuildEntries and BuildChangedLines CAS-guard against
+ // concurrent use and panic (rather than silently corrupting the cache) if a
+ // caller shares one builder across goroutines. Callers use it sequentially
+ // (payload modes, then grounding).
+ type RangeBuilder struct {
+ 	g          *gitRunner
+ 	base, head string
+ 	validated  bool
+ 	// inUse is a CAS sentinel: 0 idle, 1 mid-build. It makes accidental concurrent
+ 	// use fail loudly (panic) instead of corrupting the single-writer rangeState
+ 	// cache. Uncontended sequential use pays one CompareAndSwap per build.
+ 	inUse atomic.Int32
+ }
+ 
++// RangeOption customizes the gitRunner a RangeBuilder wraps. It exists so review
++// callers can opt out of ignore filtering (--no-ignore) without threading a bool
++// through every payload entry point.
++type RangeOption func(*gitRunner)
++
++// WithoutIgnoreFilter disables the repo-root .gitignore/.atcrignore payload
++// filter for this builder — the --no-ignore escape hatch, for when a caller
++// deliberately wants an ignored file reviewed.
++func WithoutIgnoreFilter() RangeOption {
++	return func(g *gitRunner) { g.noIgnore = true }
++}
++
+ // NewRangeBuilder returns a RangeBuilder for repo's base..head range, sharing one
+-// gitRunner (seeded with the context logger) across all its builds.
+-func NewRangeBuilder(ctx context.Context, repo, base, head string) *RangeBuilder {
+-	return &RangeBuilder{
+-		g:    &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)},
+-		base: base,
+-		head: head,
++// gitRunner (seeded with the context logger) across all its builds. Options
++// customize the runner (e.g. WithoutIgnoreFilter).
++func NewRangeBuilder(ctx context.Context, repo, base, head string, opts ...RangeOption) *RangeBuilder {
++	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
++	for _, o := range opts {
++		o(g)
+ 	}
++	return &RangeBuilder{g: g, base: base, head: head}
+ }
+ 
+ // validate runs validateRange once; subsequent builds on the same RangeBuilder
+ // skip the two rev-parse processes.

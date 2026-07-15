@@ -171,3 +171,10 @@
 {"ts":"2026-07-14T20:40:31.344741-07:00","package":".planning/sprints/active/25.0_sarif_output_integration/plan/acceptance-criteria","severity":"HIGH","id":"fba0b8be82ce04dc","file":".planning/sprints/active/25.0_sarif_output_integration/plan/acceptance-criteria/04-02-gitlab-sast-widget-example.md","category":"documentation"}
 {"ts":"2026-07-14T20:40:31.344741-07:00","package":".planning/sprints/active/25.0_sarif_output_integration/plan/documentation","severity":"MEDIUM","id":"96bff583080ffaf3","file":".planning/sprints/active/25.0_sarif_output_integration/plan/documentation/schema-validation-with-jsonschema-go.md","category":"correctness"}
 {"ts":"2026-07-14T20:40:31.344741-07:00","package":".planning/sprints/active/25.0_sarif_output_integration/plan/acceptance-criteria","severity":"LOW","id":"d301bafc28fc66db","file":".planning/sprints/active/25.0_sarif_output_integration/plan/acceptance-criteria/01-01-format-registration.md","category":"documentation"}
+{"ts":"2026-07-15T05:29:24.220478-07:00","package":"internal/payload","severity":"HIGH","id":"815c1a5efdacf192","file":"internal/payload/ignore.go","category":"correctness"}
+{"ts":"2026-07-15T05:29:24.220478-07:00","package":"internal/payload","severity":"HIGH","id":"a292df7031917b9c","file":"internal/payload/diff.go","category":"reliability"}
+{"ts":"2026-07-15T05:29:24.220478-07:00","package":"internal/fanout","severity":"HIGH","id":"421bca3bd20274c2","file":"internal/fanout/resume.go","category":"correctness"}
+{"ts":"2026-07-15T05:29:24.220478-07:00","package":"internal/payload","severity":"MEDIUM","id":"77112fef923a8532","file":"internal/payload/diff.go","category":"concurrency"}
+{"ts":"2026-07-15T05:29:24.220478-07:00","package":"internal/payload","severity":"MEDIUM","id":"4bf9ef9812ff6fb1","file":"internal/payload/ignore.go","category":"security"}
+{"ts":"2026-07-15T05:29:24.220478-07:00","package":"internal/payload","severity":"LOW","id":"2a822c86f8af0b0c","file":"internal/payload/ignore.go","category":"style"}
+{"ts":"2026-07-15T05:29:24.220478-07:00","package":"internal/payload","severity":"LOW","id":"afcb2bc55bf6dc9f","file":"internal/payload/diff.go","category":"style"}
