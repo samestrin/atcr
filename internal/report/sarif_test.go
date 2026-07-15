@@ -111,12 +111,26 @@ func TestSarif_EmptyAndNilFindings(t *testing.T) {
 }
 
 func TestSarif_MessageTextNeverEmpty(t *testing.T) {
-	// Edge Case 3: a single finding with all optional fields empty still renders
-	// exactly one result whose message.text is a non-empty fallback string.
-	findings := []reconcile.JSONFinding{{Severity: "LOW", File: "x.go", Line: 1, Category: "misc"}}
-	doc := unmarshalSarif(t, findings)
-	require.Len(t, doc.Runs[0].Results, 1)
-	assert.NotEmpty(t, doc.Runs[0].Results[0].Message.Text)
+	// Edge Case 3: message.text is never empty. A populated Problem renders as-is,
+	// an empty/whitespace Problem falls back to sarifNoMessage, and the fallback
+	// string is pinned exactly (not just NotEmpty).
+	cases := []struct {
+		name     string
+		problem  string
+		wantText string
+	}{
+		{"populated", "token never expires", "token never expires"},
+		{"empty", "", sarifNoMessage},
+		{"whitespace-only", "   ", sarifNoMessage},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings := []reconcile.JSONFinding{{Severity: "LOW", File: "x.go", Line: 1, Category: "misc", Problem: tc.problem}}
+			doc := unmarshalSarif(t, findings)
+			require.Len(t, doc.Runs[0].Results, 1)
+			assert.Equal(t, tc.wantText, doc.Runs[0].Results[0].Message.Text)
+		})
+	}
 }
 
 func TestSarif_Deterministic(t *testing.T) {
