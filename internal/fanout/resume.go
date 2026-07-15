@@ -280,7 +280,11 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		return nil, nil, err
 	}
 
-	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, req.NoIgnore)
+	// Recover NoIgnore from the manifest, not req: the resume entry point does not
+	// thread --no-ignore, and even if it did, the value must come from the original
+	// run so pending agents are filtered exactly as the completed agents were —
+	// locked to on-disk state like the range, roster, and scope (Epic 26.0 TD).
+	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, m.NoIgnore)
 	if err != nil {
 		return nil, nil, err
 	}
