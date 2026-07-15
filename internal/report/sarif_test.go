@@ -391,12 +391,14 @@ func TestSarifLocation(t *testing.T) {
 		{"line-zero", "internal/foo/bar.go", 0, "internal/foo/bar.go", 1, 1, 1, 1},
 		{"line-negative-one", "internal/foo/bar.go", -1, "internal/foo/bar.go", 1, 1, 1, 1},
 		{"line-negative-large", "internal/foo/bar.go", -999, "internal/foo/bar.go", 1, 1, 1, 1},
-		// AC 03-01 Edge Case 3: empty File passes through unmodified (no defaulting).
-		{"empty-file", "", 5, "", 5, 1, 5, 2},
+		// TD-0053: a blank File is defaulted to the "unknown" sentinel at export time
+		// (an empty artifactLocation.uri makes GitHub Code Scanning reject the upload).
+		// The region is still driven by Line (5 here), only the uri is sentinelized.
+		{"empty-file", "", 5, "unknown", 5, 1, 5, 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			loc := sarifLocation(reconcile.JSONFinding{File: tc.file, Line: tc.line})
+			loc := sarifLocation(reconcile.JSONFinding{File: tc.file, Line: tc.line}, io.Discard)
 			assert.Equal(t, tc.wantURI, loc.PhysicalLocation.ArtifactLocation.URI)
 			r := loc.PhysicalLocation.Region
 			assert.Equal(t, tc.wantStart, r.StartLine)
@@ -416,9 +418,19 @@ func TestSarifLocation(t *testing.T) {
 // paths — still passes through unmodified per AC 03-02 (only the empty case, which
 // upstream path validation leaves untouched, is defaulted here at export time).
 func TestSarifLocation_EmptyFileSentinel(t *testing.T) {
-	loc := sarifLocation(reconcile.JSONFinding{File: "", Line: 5})
+	var diag bytes.Buffer
+	loc := sarifLocation(reconcile.JSONFinding{File: "", Line: 5}, &diag)
 	assert.Equal(t, "unknown", loc.PhysicalLocation.ArtifactLocation.URI,
 		"blank File must become the non-empty sentinel, not an empty uri")
+	assert.NotEmpty(t, diag.String(), "empty File must surface a diagnostic")
+
+	// A non-empty File — even an upstream-flagged absolute path — passes through
+	// unmodified per AC 03-02, and emits no diagnostic.
+	var diag2 bytes.Buffer
+	loc2 := sarifLocation(reconcile.JSONFinding{File: "/etc/passwd", Line: 1}, &diag2)
+	assert.Equal(t, "/etc/passwd", loc2.PhysicalLocation.ArtifactLocation.URI,
+		"non-empty File is emitted verbatim (AC 03-02) — guarding belongs upstream")
+	assert.Empty(t, diag2.String(), "a non-empty File is not the empty-path case — no diagnostic")
 }
 
 // --- Final Phase 4.1: Schema Conformance Validation ---

@@ -116,7 +116,7 @@ func renderSarifWithDiag(w io.Writer, findings []reconcile.JSONFinding, diag io.
 			RuleID:    sarifRuleID(f.Category),
 			Level:     sarifLevel(f.Severity, diag, warned),
 			Message:   sarifText{Text: sarifMessageText(f)},
-			Locations: []sarifLocationObj{sarifLocation(f)},
+			Locations: []sarifLocationObj{sarifLocation(f, diag)},
 		})
 	}
 
@@ -220,22 +220,34 @@ func sarifLevel(severity string, diag io.Writer, warned map[string]bool) string 
 
 // sarifLocation builds a SARIF physical location for a finding. artifactLocation.uri
 // is f.File verbatim (already repo-root-relative by the time it reaches the report
-// layer — no normalization). Columns are not tracked in ATCR's finding pipeline, so
-// startColumn is synthesized to 1; endColumn is 2 for Line > 0 because SARIF 2.1.0's
-// endColumn is exclusive (a 1,1 start/end would be a zero-length region). For Line <= 0
-// (file-level findings — both Line == 0 and negative, via a single <= 0 boundary,
-// mirroring internal/ghaction/render.go's location() precedent) a full 1,1,1,1 region is
-// synthesized rather than omitted, since GitHub Code Scanning requires all four region
-// fields for a result to display.
-func sarifLocation(f reconcile.JSONFinding) sarifLocationObj {
+// layer — no normalization) for every non-empty File, including ones upstream path
+// validation flagged with a PathWarning (absolute/traversal/not-found): AC 03-02
+// mandates the anchoring mapping never rewrite a real File. The one exception is a
+// blank File, which internal/stream/validate.go leaves untouched ("Empty File ->
+// left untouched"); emitted as-is it would be an empty artifactLocation.uri, and
+// GitHub Code Scanning rejects the entire SARIF upload for any empty uri — so a
+// blank File is defaulted here to a non-empty sentinel ("unknown", mirroring
+// sarifRuleID's "uncategorized") with a diagnostic to diag. Columns are not tracked
+// in ATCR's finding pipeline, so startColumn is synthesized to 1; endColumn is 2 for
+// Line > 0 because SARIF 2.1.0's endColumn is exclusive (a 1,1 start/end would be a
+// zero-length region). For Line <= 0 (file-level findings — both Line == 0 and
+// negative, via a single <= 0 boundary, mirroring internal/ghaction/render.go's
+// location() precedent) a full 1,1,1,1 region is synthesized rather than omitted,
+// since GitHub Code Scanning requires all four region fields for a result to display.
+func sarifLocation(f reconcile.JSONFinding, diag io.Writer) sarifLocationObj {
 	startLine, endLine := f.Line, f.Line
 	endColumn := 2
 	if f.Line <= 0 {
 		startLine, endLine = 1, 1
 		endColumn = 1
 	}
+	uri := f.File
+	if strings.TrimSpace(f.File) == "" {
+		uri = "unknown"
+		_, _ = fmt.Fprintf(diag, "atcr: sarif: finding has empty file path; defaulting uri to %q\n", uri)
+	}
 	return sarifLocationObj{PhysicalLocation: sarifPhysicalLocation{
-		ArtifactLocation: sarifArtifactLocation{URI: f.File},
+		ArtifactLocation: sarifArtifactLocation{URI: uri},
 		Region:           sarifRegion{StartLine: startLine, StartColumn: 1, EndLine: endLine, EndColumn: endColumn},
 	}}
 }
