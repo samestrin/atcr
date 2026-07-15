@@ -107,7 +107,6 @@ var vendorGuidanceRe = regexp.MustCompile(`(?m)<!--\s*vendor-guidance:\s*(\S.*?)
 type communityPersona struct {
 	Slug        string
 	VendorToken string // claude|gpt|gemini|deepseek|qwen|kimi|glm
-	Tier        string // flagship|fallback|open
 	Category    string // single lowercase category word
 }
 
@@ -116,19 +115,19 @@ type communityPersona struct {
 // models ship one persona each (AC 04-02). The open-model rows are appended in
 // task 5.4.
 var communityPersonas = []communityPersona{
-	{Slug: "anthony", VendorToken: "claude", Tier: "flagship", Category: "coupling"},
-	{Slug: "sonny", VendorToken: "claude", Tier: "fallback", Category: "logic"},
-	{Slug: "gene", VendorToken: "gpt", Tier: "flagship", Category: "contract"},
-	{Slug: "milo", VendorToken: "gpt", Tier: "fallback", Category: "validation"},
-	{Slug: "gia", VendorToken: "gemini", Tier: "flagship", Category: "race"},
-	{Slug: "flint", VendorToken: "gemini", Tier: "fallback", Category: "leak"},
-	{Slug: "delia", VendorToken: "deepseek", Tier: "open", Category: "complexity"},
-	{Slug: "quinn", VendorToken: "qwen", Tier: "open", Category: "type"},
-	{Slug: "celeste", VendorToken: "kimi", Tier: "open", Category: "dependency"},
-	{Slug: "glenna", VendorToken: "glm", Tier: "open", Category: "observability"},
-	{Slug: "gerald", VendorToken: "gemma", Tier: "local", Category: "secret"},
-	{Slug: "orson", VendorToken: "qwen", Tier: "local", Category: "duplication"},
-	{Slug: "liam", VendorToken: "llama", Tier: "local", Category: "invariant"},
+	{Slug: "anthony", VendorToken: "claude", Category: "coupling"},
+	{Slug: "sonny", VendorToken: "claude", Category: "logic"},
+	{Slug: "gene", VendorToken: "gpt", Category: "contract"},
+	{Slug: "milo", VendorToken: "gpt", Category: "validation"},
+	{Slug: "gia", VendorToken: "gemini", Category: "race"},
+	{Slug: "flint", VendorToken: "gemini", Category: "leak"},
+	{Slug: "delia", VendorToken: "deepseek", Category: "complexity"},
+	{Slug: "quinn", VendorToken: "qwen", Category: "type"},
+	{Slug: "celeste", VendorToken: "kimi", Category: "dependency"},
+	{Slug: "glenna", VendorToken: "glm", Category: "observability"},
+	{Slug: "gerald", VendorToken: "gemma", Category: "secret"},
+	{Slug: "orson", VendorToken: "qwen", Category: "duplication"},
+	{Slug: "liam", VendorToken: "llama", Category: "invariant"},
 }
 
 const communityDir = "community"
