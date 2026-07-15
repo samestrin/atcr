@@ -156,6 +156,26 @@ func TestRangeBuilder_NoIgnoreOption_IncludesIgnored(t *testing.T) {
 	assert.ElementsMatch(t, []string{"main.go", "vendor/lib.go", "go.sum"}, paths)
 }
 
+// TD internal/payload/grounding.go:37 — the standalone BuildChangedLines honors
+// the --no-ignore opt-out via a RangeOption, so grounding and payload agree when
+// the fan-out falls back to the standalone grounding path under --no-ignore.
+func TestBuildChangedLines_NoIgnoreOption(t *testing.T) {
+	dir, base, head := ignoreFixture(t, true)
+
+	// Default: ignored files are absent from the grounding map.
+	filtered, err := BuildChangedLines(context.Background(), dir, base, head)
+	require.NoError(t, err)
+	_, hasVendor := filtered["vendor/lib.go"]
+	assert.False(t, hasVendor, "grounding filters ignored files by default")
+
+	// With the opt-out: ignored files are present, matching an unfiltered payload,
+	// so findings on them survive the grounding gate.
+	unfiltered, err := BuildChangedLines(context.Background(), dir, base, head, WithoutIgnoreFilter())
+	require.NoError(t, err)
+	_, keepsVendor := unfiltered["vendor/lib.go"]
+	assert.True(t, keepsVendor, "--no-ignore grounding must keep ignored files")
+}
+
 // Regression: a copied file whose head path is ignored must not cause applyIgnore
 // to exclude the copy source. The source may be an independently modified file
 // with its own diff chunk; excluding it would leave that chunk orphaned and
@@ -200,4 +220,67 @@ func TestBuildEntries_LogsSkippedSummaryAtInfo(t *testing.T) {
 	logged := buf.String()
 	assert.Contains(t, logged, "skipped", "summary should mention skipped files")
 	assert.Contains(t, logged, "ignore", "summary should mention ignore rules")
+}
+
+// allIgnoredFixture builds a range where EVERY changed file is ignore-filtered
+// (a lockfile-only / vendored-only PR), so the kept set is empty even though the
+// range has changed files.
+func allIgnoredFixture(t *testing.T) (dir, base, head string) {
+	t.Helper()
+	dir = initRepo(t)
+	writeIgnore(t, dir, ".atcrignore", "vendor/\n")
+	write(t, dir, "vendor/a.go", goFileV1)
+	write(t, dir, "vendor/b.go", goFileV1)
+	gitCmd(t, dir, "add", "-f", "vendor/a.go", "vendor/b.go")
+	base = commitAll(t, dir, "v1")
+	write(t, dir, "vendor/a.go", goFileV2)
+	write(t, dir, "vendor/b.go", goFileV2)
+	head = commitAll(t, dir, "v2")
+	return dir, base, head
+}
+
+// When every changed file is ignore-filtered, the RangeBuilder exposes an
+// all-ignored signal (the ignore-stage analogue of Truncation.AllDropped) so the
+// review layer can emit a --no-ignore hint instead of a misleading
+// "no changed files" error. TD: internal/payload/diff.go:174 / diff.go:223.
+func TestRangeBuilder_AllIgnored_Signal(t *testing.T) {
+	dir, base, head := allIgnoredFixture(t)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	require.Empty(t, entries, "every changed file is ignore-filtered")
+
+	all, n := rb.AllIgnored()
+	assert.True(t, all, "all changed files were ignore-filtered")
+	assert.Equal(t, 2, n, "two changed files were excluded")
+}
+
+// Baseline: a range where some files survive the filter must NOT report
+// all-ignored.
+func TestRangeBuilder_AllIgnored_FalseWhenSomeKept(t *testing.T) {
+	dir, base, head := ignoreFixture(t, true)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	_, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+
+	all, _ := rb.AllIgnored()
+	assert.False(t, all, "main.go survives filtering, so not all-ignored")
+}
+
+// Baseline: a genuinely empty range (no changed files) is not all-ignored —
+// nothing was filtered, so the --no-ignore hint must not fire.
+func TestRangeBuilder_AllIgnored_FalseWhenNoChanges(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "main.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, base)
+	_, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+
+	all, n := rb.AllIgnored()
+	assert.False(t, all, "an empty range is not all-ignored")
+	assert.Zero(t, n)
 }

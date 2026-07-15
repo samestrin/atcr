@@ -64,6 +64,17 @@ type rangeState struct {
 	// Populated by changedFilesMemo; empty when nothing was ignored (zero
 	// behavior change for the common case).
 	excludeSpec []string
+
+	// allIgnored is true when the range had changed files but the ignore filter
+	// removed every one (the kept set is empty). It is the ignore-stage analogue
+	// of Truncation.AllDropped: it lets the review layer distinguish "every
+	// changed file was ignored" (recoverable with --no-ignore) from a genuinely
+	// empty range, so a lockfile-only / vendored-only PR gets a --no-ignore hint
+	// instead of a misleading "no changed files" error. allIgnoredCount records
+	// how many were excluded so the diagnostic can name the count. Populated by
+	// changedFilesMemo.
+	allIgnored      bool
+	allIgnoredCount int
 }
 
 // pathspecArgs returns the trailing `-- :/ :(exclude)<path>...` args for whole-
@@ -211,11 +222,18 @@ func (g *gitRunner) changedFilesMemo(base, head string) ([]changedFile, error) {
 	if s.files != nil {
 		return s.files, nil
 	}
-	files, err := g.changedFiles(base, head)
+	raw, err := g.changedFiles(base, head)
 	if err != nil {
 		return nil, err
 	}
-	files, s.excludeSpec = g.applyIgnore(files)
+	files, exclude := g.applyIgnore(raw)
+	s.excludeSpec = exclude
+	// Record the all-ignored signal: the range had changed files but the filter
+	// kept none. len(raw) > 0 excludes a genuinely empty range (nothing to hint).
+	if len(raw) > 0 && len(files) == 0 {
+		s.allIgnored = true
+		s.allIgnoredCount = len(raw)
+	}
 	if files == nil {
 		files = []changedFile{} // non-nil so an empty range still memoizes
 	}

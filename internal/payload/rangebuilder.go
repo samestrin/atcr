@@ -82,6 +82,18 @@ func (b *RangeBuilder) Range() (base, head string) {
 	return b.base, b.head
 }
 
+// AllIgnored reports whether the range had changed files but the ignore filter
+// removed every one — the ignore-stage analogue of Truncation.AllDropped. count
+// is the number of changed files excluded. It lets the review layer emit a
+// --no-ignore hint instead of a misleading "no changed files" error when a
+// lockfile-only / vendored-only range is fully filtered. The signal is populated
+// by the --name-status pass, so call it after a BuildEntries or
+// BuildChangedLines has run on this builder; before any build it reports false.
+func (b *RangeBuilder) AllIgnored() (all bool, count int) {
+	s := b.g.forRange(b.base, b.head)
+	return s.allIgnored, s.allIgnoredCount
+}
+
 // BuildEntries returns the per-file payload contributions for mode, reusing the
 // builder's memoized range caches. Mirrors the package-level BuildEntries.
 func (b *RangeBuilder) BuildEntries(mode PayloadMode) ([]FileEntry, error) {
