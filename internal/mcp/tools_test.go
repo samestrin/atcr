@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/samestrin/atcr/internal/report"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -109,6 +110,19 @@ func TestReportInputSchema_Enum(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, s.Properties["format"])
 	assert.ElementsMatch(t, []any{"md", "json", "checklist", "sarif"}, s.Properties["format"].Enum)
+}
+
+// TestReportFormatDescriptions_DerivedFromFormats verifies the format list shown
+// to users in tool descriptions and schema metadata is derived from the single
+// source of truth (report.Formats()), so a future format add/remove cannot drift
+// out of sync with the schema enum and report.ValidFormat (AC 04-04).
+func TestReportFormatDescriptions_DerivedFromFormats(t *testing.T) {
+	wantDesc := "output format (default " + report.FormatMarkdown + "): " + report.Formats()
+	s, err := reportInputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, s.Properties["format"])
+	assert.Equal(t, wantDesc, s.Properties["format"].Description)
+	assert.Contains(t, descReport, report.Formats())
 }
 
 // TestRegisterTool_NoOpAfterError verifies that once an error is recorded, later
