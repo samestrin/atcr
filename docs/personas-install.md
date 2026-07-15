@@ -299,12 +299,13 @@ For privacy-conscious teams that refuse to send proprietary code to any external
 
 The **Bound model** column is the discovery id the persona registers under (namespaced so `search --model` finds it); it is not the string your local server answers to. When you wire the persona, set your agent's `model` to the exact tag you pulled — e.g. `gemma3:27b`, not `local/gemma3-27b` (see the config block below). The persona ships the tuned prompt; you supply the model binding.
 
-Discover them by their `local` provider or by model:
+Discover them by their `local` provider — this is the primary, unambiguous path because it filters out cloud personas that share a vendor token:
 
 ```bash
 atcr personas search --provider local
-atcr personas search --model gemma        # or qwen / llama
 ```
+
+You can also search by model (`gemma`, `qwen`, or `llama`), but note that `qwen` returns both the local `orson` persona and the cloud `quinn` persona, which share the same vendor token. Use `--provider local` to disambiguate.
 
 **Set it up entirely offline:**
 
