@@ -123,4 +123,9 @@ func TestResolveSyncCloudOutcome(t *testing.T) {
 	// Auth rejection must NOT mask an already-coded (exit 2) infra/usage failure.
 	assert.Equal(t, exitUsage, exitCode(resolveSyncCloudOutcome(usage, authErr)))
 	assert.Equal(t, usage, resolveSyncCloudOutcome(usage, authErr), "the original coded error is preserved verbatim")
+
+	// A non-auth sync error never overrides the run outcome.
+	timeout := errors.New("sync timeout")
+	assert.Equal(t, gate, resolveSyncCloudOutcome(gate, timeout), "non-auth sync error must preserve the run error")
+	assert.Equal(t, exitFailure, exitCode(resolveSyncCloudOutcome(gate, timeout)))
 }
