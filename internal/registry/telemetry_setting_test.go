@@ -163,3 +163,21 @@ func TestSetTelemetrySetting_SymlinkRejected(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, info.Mode()&os.ModeSymlink != 0, "the symlink must remain a symlink")
 }
+
+// TestSetTelemetrySetting_PreservesValueInlineComment verifies an inline comment
+// on the telemetry VALUE node survives a config-set. setMappingBool must mutate
+// the existing value node in place (preserving its LineComment/FootComment) rather
+// than swapping in a fresh node that drops the comment.
+func TestSetTelemetrySetting_PreservesValueInlineComment(t *testing.T) {
+	dir := writeConfigDir(t, "agents: [bruce]\ntelemetry: true  # forced on by CI\n")
+	require.NoError(t, SetTelemetrySetting(dir, false))
+
+	got, err := LoadTelemetrySetting(dir)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.False(t, *got, "telemetry must be flipped to false")
+
+	data, err := os.ReadFile(DefaultProjectConfigPath(dir))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "forced on by CI", "the value node's inline comment must survive the surgical edit")
+}
