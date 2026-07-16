@@ -146,7 +146,14 @@ func setMappingBool(mapping *yaml.Node, key string, val bool) {
 	valNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: boolLiteral(val)}
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
 		if mapping.Content[i].Value == key {
-			mapping.Content[i+1] = valNode
+			// Mutate the existing value node in place so its LineComment/FootComment
+			// survive (a wholesale node swap would discard them), honoring the doc
+			// comment's "preserving its position/comments" promise.
+			existing := mapping.Content[i+1]
+			existing.Kind = yaml.ScalarNode
+			existing.Tag = "!!bool"
+			existing.Value = boolLiteral(val)
+			existing.Content = nil
 			return
 		}
 	}
