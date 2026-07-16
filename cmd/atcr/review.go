@@ -195,6 +195,18 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		return err
 	}
 
+	// result is assigned later by fanout.ExecuteReview. It is declared up front so
+	// an early return (before any result exists) can still observe whether a
+	// --sync-cloud push was skipped and warn the user instead of dropping it silently.
+	var result *fanout.ReviewResult
+	if syncPlan.enabled {
+		defer func() {
+			if result == nil {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "warning: --sync-cloud push skipped because the run did not produce a result")
+			}
+		}()
+	}
+
 	ctx := cmd.Context()
 	base, _ := cmd.Flags().GetString("base")
 	head, _ := cmd.Flags().GetString("head")
@@ -371,7 +383,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// than one review against the shared DefaultRegistry).
 	metricsBaseline := snapshotSummaryMetrics(metrics.DefaultRegistry)
 
-	result, err := fanout.ExecuteReview(ctx, llmclient.New(), prep)
+	result, err = fanout.ExecuteReview(ctx, llmclient.New(), prep)
 
 	// Graceful interrupt (SIGINT/SIGTERM cancelled the root context): completed
 	// agents are already persisted by WritePool and the manifest is marked
