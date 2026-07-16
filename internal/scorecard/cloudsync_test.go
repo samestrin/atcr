@@ -153,6 +153,38 @@ func TestPush_RefusesNonHTTPSRemote(t *testing.T) {
 	}
 }
 
+// TestPush_DoesNotFollowRedirect_NoBearerLeak covers the cloudsync.go:38 TD: the
+// dedicated client must NOT follow redirects, so a validated https endpoint that
+// 3xx-redirects to a plaintext/other target cannot forward the
+// Authorization: Bearer <ATCR_API_KEY> header — ValidateCloudEndpoint only vets the
+// initial URL, not a redirect target.
+func TestPush_DoesNotFollowRedirect_NoBearerLeak(t *testing.T) {
+	targetGot := false
+	targetAuth := ""
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetGot = true
+		targetAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(target.Close)
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/ingest", http.StatusFound)
+	}))
+	t.Cleanup(redirector.Close)
+
+	err := Push(context.Background(), redirector.URL, "secret-key", sampleCloudRecord())
+	if err == nil {
+		t.Fatal("Push must not silently succeed by following a redirect response")
+	}
+	if errors.Is(err, ErrCloudAuthRejected) {
+		t.Fatalf("a 3xx redirect must not map to ErrCloudAuthRejected: %v", err)
+	}
+	if targetGot {
+		t.Fatalf("Push followed the redirect to the target (Authorization=%q) — the Bearer key must never be forwarded to a redirect target", targetAuth)
+	}
+}
+
 // TestValidateCloudEndpoint_Cases covers AC 04-02 EC4 and the HTTPS-with-loopback
 // exemption.
 func TestValidateCloudEndpoint_Cases(t *testing.T) {
