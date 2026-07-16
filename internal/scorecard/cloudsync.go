@@ -38,8 +38,10 @@ var cloudRequestTimeout = 5 * time.Second
 var cloudHTTPClient = &http.Client{}
 
 // CloudSyncPersona is one per-reviewer identity+metrics entry in a cloud-sync
-// push. Identity is the one-way HashPersonaID digest (never the raw reviewer
-// name); Model is non-PII. The metrics are the real raw scorecard facts — the
+// push. PersonaIDHash is a one-way HashPersonaID digest (pseudonymous, not
+// anonymous; it must be hardened to a keyed HMAC-SHA256 before production
+// endpoint activation to prevent dictionary attacks reversing enumerable persona names).
+// Model is non-PII. The metrics are the real raw scorecard facts — the
 // atcr.dev backend derives any "time/credits saved" figure from these (the CLI
 // ships facts, not a fabricated ROI number).
 type CloudSyncPersona struct {

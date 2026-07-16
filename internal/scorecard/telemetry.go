@@ -41,6 +41,8 @@ func HashPersonaID(raw string) string {
 // allowlist of its own: the one-way-hashed persona id plus the model (non-PII,
 // already public elsewhere in the codebase). It never carries the raw Reviewer,
 // RunID, cost, or token fields. Consumed by the Story 4 --sync-cloud payload.
+// Note: PersonaIDHash is pseudonymous (not anonymous) and requires HMAC hardening
+// before production endpoint activation to prevent dictionary reversing of hashes.
 type TelemetryPersonaRecord struct {
 	PersonaIDHash string `json:"persona_id_hash"`
 	// Model is the bound provider+model slug that answered this review, carried
