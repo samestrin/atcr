@@ -3,6 +3,7 @@ package scorecard
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"unsafe"
 )
 
 // HashPersonaID returns the lowercase hex SHA-256 digest of raw, pseudonymizing a
@@ -24,7 +25,13 @@ import (
 // sprint's tech-debt-captured.md TD-007): it needs a provisioned secret and would
 // change the AC-pinned digest values, so it is scoped with the real-endpoint decision.
 func HashPersonaID(raw string) string {
-	sum := sha256.Sum256([]byte(raw))
+	// Hash the string's bytes in place without the []byte(raw) copy: a string is
+	// an immutable byte sequence, so unsafe.Slice over unsafe.StringData yields the
+	// exact same bytes (and thus the exact same digest) as []byte(raw), with no
+	// per-call allocation. unsafe.Slice is safe for any pointer when len == 0, so
+	// the empty-string case (StringData's result is unspecified there) still hashes
+	// to the well-known SHA-256("") constant.
+	sum := sha256.Sum256(unsafe.Slice(unsafe.StringData(raw), len(raw)))
 	return hex.EncodeToString(sum[:])
 }
 
