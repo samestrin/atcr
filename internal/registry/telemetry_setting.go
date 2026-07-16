@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -55,68 +58,127 @@ func SetTelemetrySetting(root string, enabled bool) error {
 	if li, err := os.Lstat(path); err == nil && li.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("config %s: symlinked configs are unsupported — rename would sever the link; use a regular file", path)
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
-	}
 
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("parse %s: %w", filepath.Base(path), err)
-	}
-	mapping, err := configMapping(&doc, filepath.Base(path))
-	if err != nil {
-		return err
-	}
-	setMappingBool(mapping, "telemetry", enabled)
-
-	out, err := yaml.Marshal(&doc)
-	if err != nil {
-		return fmt.Errorf("encode %s: %w", filepath.Base(path), err)
-	}
-	// Atomic replace (temp + rename) so a rename-swap never leaves a half-written
-	// file at the live path: the temp is fully written and fsync'd, then the rename
-	// flips the name atomically. Rename alone only atomizes the name swap — fsync
-	// of the temp's data and the parent dir is what makes the write durable across
-	// a crash; without it a crash can leave the renamed file's blocks un-persisted.
-	// Mirrors the trust-store write (trust.go).
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	return withConfigLock(dir, "set-telemetry", func() error {
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+
+		var doc yaml.Node
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			return fmt.Errorf("parse %s: %w", filepath.Base(path), err)
+		}
+		mapping, err := configMapping(&doc, filepath.Base(path))
+		if err != nil {
+			return err
+		}
+		setMappingBool(mapping, "telemetry", enabled)
+
+		out, err := yaml.Marshal(&doc)
+		if err != nil {
+			return fmt.Errorf("encode %s: %w", filepath.Base(path), err)
+		}
+		// Atomic replace (temp + rename) so a rename-swap never leaves a half-written
+		// file at the live path: the temp is fully written and fsync'd, then the rename
+		// flips the name atomically. Rename alone only atomizes the name swap — fsync
+		// of the temp's data and the parent dir is what makes the write durable across
+		// a crash; without it a crash can leave the renamed file's blocks un-persisted.
+		// Mirrors the trust-store write (trust.go).
+		tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+		if err != nil {
+			return fmt.Errorf("create %s temp: %w", filepath.Base(path), err)
+		}
+		tmpName := tmp.Name()
+		defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
+		if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+			_ = tmp.Close()
+			return fmt.Errorf("chmod %s temp: %w", filepath.Base(path), err)
+		}
+		if _, err := tmp.Write(out); err != nil {
+			_ = tmp.Close()
+			return fmt.Errorf("write %s temp: %w", filepath.Base(path), err)
+		}
+		// fsync the temp's data before the rename so the renamed file's blocks are
+		// persisted, not just the name swap.
+		if err := tmp.Sync(); err != nil {
+			_ = tmp.Close()
+			return fmt.Errorf("sync %s temp: %w", filepath.Base(path), err)
+		}
+		if err := tmp.Close(); err != nil {
+			return fmt.Errorf("close %s temp: %w", filepath.Base(path), err)
+		}
+		if err := os.Rename(tmpName, path); err != nil {
+			return fmt.Errorf("replace %s: %w", path, err)
+		}
+		// fsync the parent directory so the rename (a directory-entry update) is
+		// durable too; otherwise a crash can roll the live path back to the old file.
+		if err := syncDir(dir); err != nil {
+			return fmt.Errorf("sync %s dir: %w", filepath.Base(path), err)
+		}
+		return nil
+	})
+}
+
+// withConfigLock acquires a mkdir-based advisory lock under the config directory
+// to serialize concurrent reads-modify-writes to config.yaml.
+func withConfigLock(dir, session string, fn func() error) error {
+	lockDir := filepath.Join(dir, "config.lock")
+	ownerFile := filepath.Join(lockDir, "owner.txt")
+
+	// Ensure the parent directory (.atcr/) exists.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create config lock parent directories: %w", err)
+	}
+
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		err := os.Mkdir(lockDir, 0o755)
+		if err == nil {
+			// Acquired. Write owner metadata and ensure cleanup.
+			epoch := time.Now().Unix()
+			_ = os.WriteFile(ownerFile, []byte(fmt.Sprintf("session=%s|epoch=%d", session, epoch)), 0o644)
+			defer func() { _ = os.RemoveAll(lockDir) }()
+			return fn()
+		}
+		if !os.IsExist(err) {
+			return fmt.Errorf("acquire config lock: %w", err)
+		}
+
+		// Lock is held. Check for stale owner before waiting.
+		if data, err := os.ReadFile(ownerFile); err == nil {
+			if e := parseConfigOwnerEpoch(data); e > 0 {
+				if time.Since(time.Unix(e, 0)) > 300*time.Second {
+					_ = os.RemoveAll(lockDir)
+					continue
+				}
+			}
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timeout acquiring config lock at %s", lockDir)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func parseConfigOwnerEpoch(data []byte) int64 {
+	s := strings.TrimSpace(string(data))
+	const prefix = "epoch="
+	i := strings.Index(s, prefix)
+	if i < 0 {
+		return 0
+	}
+	n, err := strconv.ParseInt(s[i+len(prefix):], 10, 64)
 	if err != nil {
-		return fmt.Errorf("create %s temp: %w", filepath.Base(path), err)
+		return 0
 	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
-	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod %s temp: %w", filepath.Base(path), err)
-	}
-	if _, err := tmp.Write(out); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write %s temp: %w", filepath.Base(path), err)
-	}
-	// fsync the temp's data before the rename so the renamed file's blocks are
-	// persisted, not just the name swap.
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("sync %s temp: %w", filepath.Base(path), err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close %s temp: %w", filepath.Base(path), err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("replace %s: %w", path, err)
-	}
-	// fsync the parent directory so the rename (a directory-entry update) is
-	// durable too; otherwise a crash can roll the live path back to the old file.
-	if err := syncDir(dir); err != nil {
-		return fmt.Errorf("sync %s dir: %w", filepath.Base(path), err)
-	}
-	return nil
+	return n
 }
 
 // configMapping returns the top-level mapping node to mutate, tolerating an
