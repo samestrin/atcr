@@ -62,6 +62,12 @@ func runSyncCloud(ctx context.Context, w io.Writer, plan syncCloudPlan, reviewDi
 	return finishCloudSync(w, scorecard.Push(ctx, plan.endpoint, plan.apiKey, rec))
 }
 
+// cloudSyncPushable reports whether a run reached a finalized review outcome that a
+// --sync-cloud record should describe. STUB (RED): always true.
+func cloudSyncPushable(err error) bool {
+	return true
+}
+
 // resolveSyncCloudOutcome combines the run's own outcome (runErr) with the result
 // of the cloud-sync push (syncErr, always nil or an authError from finishCloudSync)
 // into the command's final return. An auth rejection (exit 3) overrides a SUCCESS

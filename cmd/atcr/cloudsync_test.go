@@ -11,6 +11,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestCloudSyncPushable_SkipsCodedInfraFailures covers the review.go:428 TD: the
+// deferred --sync-cloud push must fire only for a finalized review outcome (success
+// or a plain exit-1 findings-gate / all-agents-failed error), NOT for an already-coded
+// exit-2 infra failure (usage/verify/debate I/O broke) — pushing then would make a
+// needless network call and send the backend a misleading CloudSyncRecord.
+func TestCloudSyncPushable_SkipsCodedInfraFailures(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"success", nil, true},
+		{"findings-gate (plain exit-1)", fmt.Errorf("3 finding(s) survived"), true},
+		{"all-agents-failed (plain exit-1)", errors.New("all agents failed"), true},
+		{"usage/infra failure (exit-2 coded)", usageError(errors.New("reconcile I/O failed")), false},
+		{"wrapped exit-2 coded", fmt.Errorf("outer: %w", usageError(errors.New("verify failed"))), false},
+		{"auth failure (exit-3 coded)", authError(errors.New("bad key")), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, cloudSyncPushable(tc.err))
+		})
+	}
+}
+
 func TestResolveSyncCloud_DisabledWhenFlagOmitted(t *testing.T) {
 	cmd := newReconcileCmd()
 	require.NoError(t, cmd.ParseFlags(nil))
