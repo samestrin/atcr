@@ -727,21 +727,21 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
 
 **Focus:** Cumulative cross-story regression — full `go test ./...`, the AC 03-03 byte-for-byte leaderboard-export regression, `go test ./cmd/atcr/... -run TestDocs`, the 4-combination opt-out precedence matrix (AC 02-03), coverage gate (baseline 80%), lint/vet, and adversarial risk-profile prep ahead of `/execute-code-review`.
 
-### 6.1 [ ] **Cumulative Regression Suite**
+### 6.1 [x] **Cumulative Regression Suite**
    1. `go test ./...` — full suite across all packages touched by Stories 1-5
    2. Re-run `TestRunLeaderboardExport_ByteForByteRegression` (AC 03-03) in isolation to confirm no Phase 4/5 change altered it
    3. Re-run `TestTelemetryOptOut_FourCombinationMatrix` (AC 02-03) in isolation
    4. `go test ./cmd/atcr/... -run TestDocs` — `TestDocsIndexCoversEveryDoc`, `TestDocsClaimedFlagsAreReal`
    **Duration:** 0.5 day
 
-### 6.2 [ ] **Coverage & Lint/Vet Gate**
+### 6.2 [x] **Coverage & Lint/Vet Gate**
    1. `go test -coverprofile=coverage.out ./...` — confirm ≥80% baseline maintained, with special attention to `internal/telemetry` and `internal/scorecard`
    2. `golangci-lint run` — 0 errors
    3. `go vet ./...` — clean
    4. `go build ./...` — succeeds
    **Duration:** 0.25 day
 
-### 6.3 [ ] **Cumulative Adversarial Risk-Profile Review (subagent)**
+### 6.3 [x] **Cumulative Adversarial Risk-Profile Review (subagent)**
    **Scope:** Full sprint diff (all files changed across Phases 1-5)
 
    **Spawn a fresh subagent** via the Agent tool to perform this review, using the Risk Analysis table from [sprint-design.md](plan/sprint-design.md) as its checklist source. The subagent has no memory of the implementation — this is intentional. Do NOT review inline.
@@ -763,11 +763,12 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh general-purpose risk-profile reviewer — no new findings):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | _(none)_ | — | No new CRITICAL/HIGH/MEDIUM/LOW beyond the accepted TD-006..TD-013 list | — |
+
+   **Cumulative risk-profile review passed.** Fresh general-purpose subagent (no memory of implementation) verified all 8 checklist items against source: (1) telemetry payload is exactly `{event,lang,lines,status}` — `reviewTelemetryEvent`/`dominantLang`/`changedLineCount` emit only aggregate label + count, never paths/content; (2) `HashPersonaID` SHA-256 one-way, raw `Reviewer`/`Agent` hashed at every construction site, never logged; (3) `ATCR_API_KEY` trimmed (whitespace-only == unset → `exitAuth=3`), sent only in the `Authorization` header (never body/error string), endpoint HTTPS-only with a documented loopback exception that correctly rejects `user@host`/`localhost.evil.com` spoofs; (4) `git diff main -- internal/scorecard/export.go cmd/atcr/leaderboard.go` EMPTY — `scrubField`/`PublicRecord` byte-for-byte unchanged, `HashPersonaID`/`TelemetryPersonaRecord` never touch the export path; (5) telemetry goroutine has `defer recover()` + 3s bounded ctx, fires open silently, no blocking wait; (6) `--sync-cloud` push runs synchronously post-finalization with a 5s bound, `resolveSyncCloudOutcome` preserves an already-coded exit-2 pipeline failure while letting 401/403 supersede only success or the plain exit-1 gate — verified at both `review.go` (deferred, final `err`) and `reconcile.go` (inline, `gateErr` only nil/exit-1); (7) `telemetryEnabled` = strict OR-of-disables across all 6 combinations, disabled always wins, no override chain; (8) panic safety present on every telemetry/cloud-sync goroutine. Everything found maps to accepted design or an already-listed TD. No new tech-debt entry needed.
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before Phase 6 DoD, do NOT proceed until fixed
@@ -775,7 +776,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
    - None found -> Note "Cumulative risk-profile review passed" and proceed
    **Duration:** 30-45 min
 
-### 6.4 [ ] **Phase 6 — DoD Validation**
+### 6.4 [x] **Phase 6 — DoD Validation**
    - `go test ./...` fully green across the whole sprint diff
    - `go build ./...` clean; `go vet ./...` clean; `golangci-lint run` 0 errors
    - Coverage ≥80% maintained project-wide
@@ -788,7 +789,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      Manual Review: [ ] Cumulative risk-profile review reviewed
      ```
 
-### 6.LAST [ ] **Phase 6 - GATE: Cumulative Integration & Exit Review (subagent)**
+### 6.LAST [x] **Phase 6 - GATE: Cumulative Integration & Exit Review (subagent)**
    **Scope:** Cumulative — full sprint diff (integration-level)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the implementation — this is intentional. Do NOT review inline.
@@ -807,11 +808,12 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh general-purpose cumulative integration reviewer — no new findings):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | _(none)_ | — | No new findings beyond accepted TD-006..TD-013 | — |
+
+   **Phase gate passed.** Fresh general-purpose integrator (no memory of implementation) verified all 5 checklist items: CONTRACT EXIT — all 19 ACs across Stories 01-05 satisfied (spot-checked each AC file against real code + tests). CONFIG SURFACE — `ATCR_TELEMETRY`/`ATCR_API_KEY`/`atcr config set telemetry`/`--sync-cloud`/`--cloud-endpoint` all documented; `ProjectConfig.Telemetry *bool` with `omitempty` (nil=enabled) is back-compat with pre-field `.atcr/config.yaml`, permissive `LoadTelemetrySetting` decode for roster-less configs. INTEGRATION — telemetry ping, opt-out gate, Persona hashing, cloud-sync push all compose via httptest mocks; per-surface test suites green (cloudsync 9, config 9, docs_audit 13, telemetry_gate 4, telemetry_setting 3, scorecard/telemetry 5, scorecard/cloudsync 9, telemetry/client 9, export 38). PHASE-EXIT — ready for `/execute-code-review`, no unresolved ambiguity. REGRESSION — `go build`/`go vet`/`go test ./...`/`golangci-lint run` (0 issues) all green; `git diff main -- internal/scorecard/export.go cmd/atcr/leaderboard.go` byte-for-byte empty; `internal/boundaries_test.go` scopes the new `telemetry` package to `{log}` only, preserving layering. All residual gaps covered by accepted TD-006..TD-013. No new tech-debt entry needed.
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before sprint completion, do NOT stop. Re-run gate.
