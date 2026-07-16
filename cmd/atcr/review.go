@@ -169,7 +169,7 @@ func prFromGitHubRef(ref string) int {
 // runReview resolves the range, loads config, and runs the full review flow.
 // Range/config problems are usage errors (exit 2); an all-agents-failed review
 // is a plain failure (exit 1) with the artifacts preserved on disk.
-func runReview(cmd *cobra.Command, _ []string) error {
+func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// --resume targets an existing review directory and runs only its pending
 	// agents (epic 4.1.1); it is a distinct flow from a fresh review, so branch
 	// before any new-review flag handling.
@@ -413,20 +413,27 @@ func runReview(cmd *cobra.Command, _ []string) error {
 			telemetry.FromContext(ctx).Send(ctx, reviewTelemetryEvent(prep, status))
 		}
 
-		// --sync-cloud push (Story 4): an explicit, user-invoked action fired once
-		// the review fan-out's outcome is finalized (success or all-agents-failed).
-		// It reads the pool-summary metrics + hashed persona ids from result.Dir. An
-		// auth rejection returns exit 3 (overriding the run outcome, AC 04-04); any
-		// other push failure is a non-fatal warning that preserves the run's exit
-		// code (AC 04-02). Gated only by the explicit flag + key, never telemetryGate.
+		// --sync-cloud push (Story 4): an explicit, user-invoked action, DEFERRED so
+		// it fires once runReview's full outcome is finalized — the history/audit
+		// ledgers below and the one-shot reconcile/verify/debate/gate all run first.
+		// This mirrors reconcile.go's push-last ordering: an optional cloud auth
+		// rejection must never skip core bookkeeping or the --fail-on gate (AC 04-04
+		// EC2 — the finalized run outcome must not be corrupted). The outcome is read
+		// from the FINAL err (so a gate failure records "failure", aligned with
+		// reconcile); an auth rejection overrides err with exitAuth (AC 04-04); any
+		// other push failure is a non-fatal warning that preserves err (AC 04-02).
+		// Registered inside `result != nil` so an interrupted/no-result run pushes
+		// nothing. Gated only by the explicit flag + key, never telemetryGate.
 		if syncPlan.enabled {
-			outcome := "success"
-			if err != nil {
-				outcome = "failure"
-			}
-			if syncErr := runSyncCloud(ctx, cmd.ErrOrStderr(), syncPlan, result.Dir, outcome); syncErr != nil {
-				return syncErr
-			}
+			defer func() {
+				outcome := "success"
+				if err != nil {
+					outcome = "failure"
+				}
+				if syncErr := runSyncCloud(ctx, cmd.ErrOrStderr(), syncPlan, result.Dir, outcome); syncErr != nil {
+					err = syncErr
+				}
+			}()
 		}
 	}
 	if err != nil {
