@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -25,6 +26,22 @@ func TestAddSyncCloudFlags_RegisteredOnReviewAndReconcile(t *testing.T) {
 		assert.Equal(t, "string", ce.Value.Type())
 		assert.Equal(t, defaultCloudEndpoint, ce.DefValue)
 	}
+}
+
+// TestAddSyncCloudFlags_DefaultEndpointWarns verifies that using --sync-cloud
+// with the placeholder production default emits a visible stderr warning so users
+// know the endpoint is not operational until a real contract/key is live (TD-015).
+func TestAddSyncCloudFlags_DefaultEndpointWarns(t *testing.T) {
+	cmd := newReviewCmd()
+	var buf bytes.Buffer
+	cmd.SetErr(&buf)
+	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud"}))
+	require.NotNil(t, cmd.PreRunE)
+
+	err := cmd.PreRunE(cmd, nil)
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "placeholder")
+	assert.Contains(t, buf.String(), defaultCloudEndpoint)
 }
 
 // TestAddSyncCloudFlags_PreservesPriorPreRunE covers AC 04-01 EC2: review
