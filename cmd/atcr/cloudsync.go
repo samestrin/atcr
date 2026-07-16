@@ -35,6 +35,7 @@ func resolveSyncCloud(cmd *cobra.Command) (syncCloudPlan, error) {
 		return syncCloudPlan{}, nil
 	}
 	endpoint, _ := cmd.Flags().GetString("cloud-endpoint")
+	endpoint = strings.TrimSpace(endpoint)
 	if err := scorecard.ValidateCloudEndpoint(endpoint); err != nil {
 		return syncCloudPlan{}, usageError(err)
 	}
@@ -44,7 +45,7 @@ func resolveSyncCloud(cmd *cobra.Command) (syncCloudPlan, error) {
 	if apiKey == "" {
 		return syncCloudPlan{}, authError(errors.New("ATCR_API_KEY is not set; --sync-cloud requires a valid API key"))
 	}
-	return syncCloudPlan{enabled: true, endpoint: strings.TrimSpace(endpoint), apiKey: apiKey}, nil
+	return syncCloudPlan{enabled: true, endpoint: endpoint, apiKey: apiKey}, nil
 }
 
 // runSyncCloud builds the CloudSyncRecord from the finalized run at reviewDir and
