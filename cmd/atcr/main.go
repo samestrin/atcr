@@ -266,7 +266,12 @@ func telemetryEnabledFromEnv() bool {
 	}
 	enabled, err := strconv.ParseBool(v)
 	if err != nil {
-		return true // unparseable fails open to the documented default (enabled)
+		// Unparseable values fail open to the documented default (enabled), but
+		// warn once so a misspelled opt-out (e.g. "flase") is visible rather than
+		// silently ignored. This function is read once per run via telemetryGate,
+		// so the warning is inherently one-time.
+		_, _ = fmt.Fprintf(os.Stderr, "warning: unrecognized ATCR_TELEMETRY value %q; treating as enabled\n", v)
+		return true
 	}
 	return enabled
 }
