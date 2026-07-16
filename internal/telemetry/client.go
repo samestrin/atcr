@@ -10,7 +10,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -45,7 +47,17 @@ type Client struct {
 // documented Phase-2 default until a real ingestion backend is configured. A
 // configured endpoint MUST be an https:// URL; plaintext http is refused (no-op).
 func New(endpoint string) *Client {
-	return &Client{endpoint: endpoint, httpClient: http.DefaultClient}
+	// A dedicated client (not http.DefaultClient) so telemetry's connection pool
+	// and Transport are isolated from the rest of the process.
+	return &Client{endpoint: endpoint, httpClient: &http.Client{}}
+}
+
+// isHTTPS reports whether endpoint is a well-formed https URL (case-insensitive
+// scheme). An empty, malformed, or plaintext-http endpoint is refused, so Send
+// no-ops rather than ever sending in the clear.
+func isHTTPS(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	return err == nil && strings.EqualFold(u.Scheme, "https")
 }
 
 // Send fires ev to the endpoint on a detached goroutine and returns immediately.
@@ -55,7 +67,7 @@ func New(endpoint string) *Client {
 // user about an opt-in background feature) and swallowed: Send has no error
 // return and never affects the caller's outcome or exit code.
 func (c *Client) Send(ctx context.Context, ev Event) {
-	if c == nil || !strings.HasPrefix(c.endpoint, "https://") {
+	if c == nil || !isHTTPS(c.endpoint) {
 		return
 	}
 	c.wg.Add(1)
@@ -95,6 +107,8 @@ func (c *Client) send(ctx context.Context, ev Event) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		log.FromContext(ctx).Debug("telemetry: non-2xx response", "status", resp.StatusCode)
 	}
+	// Drain (bounded) so the keep-alive connection can be reused.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
 }
 
 // Wait blocks until all in-flight sends complete. Intended for deterministic
