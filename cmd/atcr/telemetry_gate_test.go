@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/telemetry"
 )
 
@@ -197,4 +198,21 @@ func TestReconcile_TelemetryGate_EndToEnd(t *testing.T) {
 		runReconcileGated(t, telemetry.New(endpoint), "r")
 		assert.Equal(t, int32(1), atomic.LoadInt32(hits), "enabled: exactly one telemetry request fires")
 	})
+}
+
+// TestDominantLang_TieBreakIsDeterministic covers the map-iteration tie-break
+// fix: when two files have the same changed-line count, the winner must be the
+// lexicographically smallest path, not whichever map slot Go happens to visit
+// first this run.
+func TestDominantLang_TieBreakIsDeterministic(t *testing.T) {
+	changed := payload.ChangedLines{
+		"b.md": {ChangedText: []string{"x"}},
+		"a.go": {ChangedText: []string{"y"}},
+	}
+	seen := map[string]int{}
+	for i := 0; i < 100; i++ {
+		seen[dominantLang(changed)]++
+	}
+	assert.Equal(t, 1, len(seen), "dominantLang must be deterministic on ties")
+	assert.Equal(t, 100, seen["go"], "lexicographically smallest path should win on a tie")
 }
