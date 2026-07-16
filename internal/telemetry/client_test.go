@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -240,6 +242,35 @@ func TestIsHTTPS_RequiresHost(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("isHTTPS(%q) = %v, want %v", tc.endpoint, got, tc.want)
 		}
+	}
+}
+
+// TestClient_Send_SurvivesCancelledContext proves that cancelling the caller's
+// command context before the detached goroutine runs does not abort the in-flight
+// telemetry request — the request context must be detached from the caller's
+// lifetime (TD-017).
+func TestClient_Send_SurvivesCancelledContext(t *testing.T) {
+	var calls int32
+	restore := SetDoRequestForTest(func(_ *http.Client, req *http.Request) (*http.Response, error) {
+		if req.Context().Err() != nil {
+			t.Errorf("request context was already done: %v", req.Context().Err())
+		}
+		atomic.AddInt32(&calls, 1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("")),
+		}, nil
+	})
+	defer restore()
+
+	c := New("https://example.com")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before the goroutine is scheduled
+	c.Send(ctx, Event{Event: "review_run", Status: "success"})
+	c.Wait()
+
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Fatalf("cancelled context prevented send; got %d request(s), want 1", n)
 	}
 }
 
