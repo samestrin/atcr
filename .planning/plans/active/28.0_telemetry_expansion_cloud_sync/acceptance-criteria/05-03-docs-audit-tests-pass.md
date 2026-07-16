@@ -9,8 +9,8 @@
 | Test Framework | `go test` | `TestDocsIndexCoversEveryDoc` (~line 468), `TestDocsClaimedFlagsAreReal` (~line 587) |
 | Key Dependencies | `github.com/spf13/cobra`, `github.com/spf13/pflag` (already in `go.mod`, used by the audit test to walk the live command tree) | No new dependency introduced by this AC |
 
-## Related Files
-- `cmd/atcr/docs_audit_test.go` - reference only (no code change expected): the existing test file whose `TestDocsIndexCoversEveryDoc` and `TestDocsClaimedFlagsAreReal` functions gate this AC
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/docs_audit_test.go` - reference only (no code change expected): the existing test file whose `TestDocsIndexCoversEveryDoc` (`cmd/atcr/docs_audit_test.go:468`) and `TestDocsClaimedFlagsAreReal` (`cmd/atcr/docs_audit_test.go:587`) functions gate this AC
 - `docs/telemetry.md` - reference (created by AC 05-01): input to both audited tests (must be indexed and its flag idiom must resolve)
 - `docs/README.md` - reference (modified by AC 05-01): input to `TestDocsIndexCoversEveryDoc`
 - `docs/scorecard.md` - reference (modified by AC 05-02): re-audited as part of the full `docs/*.md` sweep even though it is not the primary target of either test's new-content concern

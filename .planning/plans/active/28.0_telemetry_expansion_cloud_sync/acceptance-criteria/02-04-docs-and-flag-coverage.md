@@ -9,11 +9,11 @@
 | Test Framework | `go test` | Existing `docs_audit_test.go` pattern: `TestArchitectureDocDescribesReconciler`-style fact cross-check, `TestDocsClaimedFlagsAreReal`-style flag cross-check |
 | Key Dependencies | None new | Reuses `canonicalFlags()`, `auditedMarkdown(t)` helpers already in `docs_audit_test.go` |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `docs/telemetry.md` - create: documents `ATCR_TELEMETRY` (exact accepted values, inverse boolean direction vs. `ATCR_DISABLE_AST_GROUPING`) and `atcr config set telemetry <true|false>` (exact command, key restriction, persistence target).
-- `cmd/atcr/docs_audit_test.go` - modify: add a fact-check (following `TestArchitectureDocDescribesReconciler`'s `facts` table pattern, lines 555-559) asserting `docs/telemetry.md` contains the literal string `ATCR_TELEMETRY`, and extend/add coverage so `atcr config set` is recognized as a real, documented command (following `TestDocsClaimedFlagsAreReal`'s `canonicalFlags()` cross-check pattern, lines 587-598, or an equivalent command-existence check).
+- `cmd/atcr/docs_audit_test.go` - modify: add a fact-check (following `TestArchitectureDocDescribesReconciler`'s `facts` table pattern, `cmd/atcr/docs_audit_test.go:555-559`) asserting `docs/telemetry.md` contains the literal string `ATCR_TELEMETRY`, and extend/add coverage so `atcr config set` is recognized as a real, documented command (following `TestDocsClaimedFlagsAreReal`'s `canonicalFlags()` cross-check pattern, `cmd/atcr/docs_audit_test.go:587-598`, or an equivalent command-existence check).
 - `cmd/atcr/config.go` - modify: `Long` help text on `newConfigSetCmd()` states the exact accepted boolean values and that `telemetry` is currently the only supported key, per the story's third Potential Risk (confusable inverse-direction env vars).
-- `docs/README.md` - modify: add `telemetry.md` to the linked-docs index (the audit test's `linked`/`expected` map, per the pattern visible around docs_audit_test.go:520-526, requires every doc under `docs/` to be linked from `docs/README.md`).
+- `docs/README.md` - modify: add `telemetry.md` to the linked-docs index (the audit test's `linked`/`expected` map, per the pattern visible around `cmd/atcr/docs_audit_test.go:520-526`, requires every doc under `docs/` to be linked from `docs/README.md`).
 
 ## Happy Path Scenarios
 **Scenario 1: doc exists and states the env var**

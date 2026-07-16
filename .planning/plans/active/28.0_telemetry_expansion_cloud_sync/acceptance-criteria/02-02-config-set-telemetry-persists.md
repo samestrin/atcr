@@ -9,10 +9,10 @@
 | Test Framework | `go test`, `testify` `assert`/`require` | Test location: `cmd/atcr/config_test.go` |
 | Key Dependencies | `github.com/spf13/cobra`, `gopkg.in/yaml.v3` (existing project YAML lib), `internal/registry` | No new third-party dependency |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `cmd/atcr/config.go` - create: `newConfigCmd()` (`Use: "config"`, `RunE: cmd.Help`, `Args: usageArgs(cobra.NoArgs)`) and `newConfigSetCmd()` (`Use: "set"`, `Args: usageArgs(cobra.ExactArgs(2))`), validating key `== "telemetry"` (else `usageError`) and value parses via `strconv.ParseBool` (else `usageError`), then loading/mutating/rewriting `.atcr/config.yaml`.
-- `cmd/atcr/main.go` - modify: register `newConfigCmd()` in `newRootCmd`'s `AddCommand` list (main.go:185-208).
-- `internal/registry/project.go` - modify: add `Telemetry *bool` field to `ProjectConfig` struct (project.go:56-90), `yaml:"telemetry,omitempty"`, matching the `Sandbox`/`AutoFix`/`MaxParallel` pointer idiom so an explicit `false` survives default application.
+- `cmd/atcr/main.go` - modify: register `newConfigCmd()` in `newRootCmd`'s `AddCommand` list (`cmd/atcr/main.go:185-208`).
+- `internal/registry/project.go` - modify: add `Telemetry *bool` field to `ProjectConfig` struct (`internal/registry/project.go:56-90`), `yaml:"telemetry,omitempty"`, matching the `Sandbox`/`AutoFix`/`MaxParallel` pointer idiom so an explicit `false` survives default application.
 - `cmd/atcr/config_test.go` - create: unit tests for `atcr config set telemetry false`/`true`, invalid key, invalid value, and round-trip persistence.
 
 ## Happy Path Scenarios

@@ -9,10 +9,10 @@
 | Test Framework | `go test` (Go standard testing package) | `cmd/atcr/docs_audit_test.go` audits the file's prose against the live command tree |
 | Key Dependencies | None (pure documentation, no new package) | Content must describe real Stories 1-4 behavior, not aspirational behavior |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `docs/telemetry.md` - create: new document covering the telemetry event schema, opt-out mechanisms, Persona ID hashing, and `--sync-cloud`/`ATCR_API_KEY` cloud-sync flow with its distinct auth exit code
 - `docs/README.md` - modify: add a new entry for `docs/telemetry.md` under the existing "Benchmarking & observability" section (alongside `scorecard.md` and `metrics.md`)
-- `cmd/atcr/docs_audit_test.go` - reference only (no code change): `TestDocsIndexCoversEveryDoc` (~line 468) and `TestDocsClaimedFlagsAreReal` (~line 587) are the gates this AC's file additions must satisfy
+- `cmd/atcr/docs_audit_test.go` - reference only (no code change): `TestDocsIndexCoversEveryDoc` (`cmd/atcr/docs_audit_test.go:468`) and `TestDocsClaimedFlagsAreReal` (`cmd/atcr/docs_audit_test.go:587`) are the gates this AC's file additions must satisfy
 
 ## Happy Path Scenarios
 

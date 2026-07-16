@@ -9,11 +9,11 @@
 | Test Framework | `go test` (standard `testing`, `net/http/httptest`) | Test files: `cmd/atcr/review_test.go`, `cmd/atcr/reconcile_test.go`, `internal/scorecard/cloudsync_test.go` |
 | Key Dependencies | Go stdlib `net/http`, `errors` | Reuses `exitAuth`/`authError` from AC 04-03 |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/scorecard/cloudsync.go` - modify: `Push` inspects the HTTP response status; a `401 Unauthorized` or `403 Forbidden` response is returned as a distinguishable sentinel error (e.g. `ErrCloudAuthRejected`) rather than a generic push-failure error.
-- `cmd/atcr/main.go` - modify: extend the `errors.As`/`authError` dispatch (`cmd/atcr/main.go:109` area) so `scorecard.ErrCloudAuthRejected` (wrapped via `errors.Is`/`errors.As`) is mapped to `exitAuth`, the same dedicated code used for the missing-key case in AC 04-03.
-- `cmd/atcr/review.go` - modify: propagate `scorecard.ErrCloudAuthRejected` from the push call up through `runReview`'s return path as an `authError`.
-- `cmd/atcr/reconcile.go` - modify: apply the identical propagation for `runReconcile`.
+- `cmd/atcr/main.go` - modify: extend the `errors.As`/`authError` dispatch (`cmd/atcr/main.go:109`) so `scorecard.ErrCloudAuthRejected` (wrapped via `errors.Is`/`errors.As`) is mapped to `exitAuth`, the same dedicated code used for the missing-key case in AC 04-03.
+- `cmd/atcr/review.go` - modify: propagate `scorecard.ErrCloudAuthRejected` from the push call up through `runReview`'s return path as an `authError` (`cmd/atcr/review.go:170`).
+- `cmd/atcr/reconcile.go` - modify: apply the identical propagation for `runReconcile` (`cmd/atcr/reconcile.go:71`).
 - `internal/scorecard/cloudsync_test.go` - create or modify: unit test simulating a `401`/`403` mock endpoint response and asserting `ErrCloudAuthRejected` is returned.
 
 ## Happy Path Scenarios

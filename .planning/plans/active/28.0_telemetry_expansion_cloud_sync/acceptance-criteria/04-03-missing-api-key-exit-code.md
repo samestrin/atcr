@@ -9,10 +9,10 @@
 | Test Framework | `go test` (standard `testing`) | Test files: `cmd/atcr/main_test.go`, `cmd/atcr/review_test.go`, `cmd/atcr/reconcile_test.go` |
 | Key Dependencies | Go stdlib `errors`, `os` | Matches the existing `codedError`/`usageError` pattern in `cmd/atcr/main.go` |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `cmd/atcr/main.go` - modify: add `exitAuth = 3` alongside the existing `exitFailure = 1` and `exitUsage = 2` constants (`cmd/atcr/main.go:84-85`), and add an `authError(err error) *codedError` (or equivalent) constructor mirroring `usageError` (`cmd/atcr/main.go:100`) but tagged with `exitAuth`; ensure the existing `errors.As` dispatch (`cmd/atcr/main.go:109`) resolves `exitAuth` correctly for this new coded-error case.
-- `cmd/atcr/review.go` - modify: when `--sync-cloud` is set and `ATCR_API_KEY` is unset/empty after `strings.TrimSpace`, return an `authError(...)` before attempting the push.
-- `cmd/atcr/reconcile.go` - modify: apply the identical missing-key check before pushing.
+- `cmd/atcr/review.go` - modify: when `--sync-cloud` is set and `ATCR_API_KEY` is unset/empty after `strings.TrimSpace`, return an `authError(...)` before attempting the push (`cmd/atcr/review.go:170`).
+- `cmd/atcr/reconcile.go` - modify: apply the identical missing-key check before pushing (`cmd/atcr/reconcile.go:71`).
 - `cmd/atcr/main_test.go` - create or modify: unit test asserting `exitAuth` resolves to `3` via the `errors.As` dispatch path.
 
 ## Happy Path Scenarios

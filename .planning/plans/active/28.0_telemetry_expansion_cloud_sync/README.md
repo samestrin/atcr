@@ -7,8 +7,8 @@ Opt-in, fail-open anonymous usage telemetry plus a `--sync-cloud` payload mechan
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`
-- [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/28.0_telemetry_expansion_cloud_sync/`
+- [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/28.0_telemetry_expansion_cloud_sync/ --gated`
 
 ## Timeline & Milestones
 Timeline TBD — to be estimated during `/design-sprint` once user stories and acceptance criteria are in place. Complexity is assessed as **Complex** (cross-system: external network calls to `atcr.dev`; touches 4 components: `internal/scorecard`, `internal/telemetry` (new), `cmd/atcr`, `docs/`).
@@ -30,5 +30,6 @@ Primary risk is architectural: `internal/scorecard/export.go`'s `scrubField`/`Pu
 - [Plan](plan.md)
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)
+- [Sprint Design](sprint-design.md) - Complexity 11/12 (VERY COMPLEX), 6 phases, 13 days

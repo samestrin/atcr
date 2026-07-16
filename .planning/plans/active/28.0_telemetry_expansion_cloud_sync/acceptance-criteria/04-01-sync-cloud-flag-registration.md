@@ -9,9 +9,9 @@
 | Test Framework | `go test` (standard `testing`, `spf13/cobra` test harness) | Test file: `cmd/atcr/flags_test.go` |
 | Key Dependencies | `github.com/spf13/cobra`, Go stdlib `errors` | Matches the existing `addRangeFlags`/`validateRangeFlags` dependency set |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `cmd/atcr/flags.go` - modify: add `addSyncCloudFlags(cmd *cobra.Command)` alongside the existing `addRangeFlags` (`cmd/atcr/flags.go:14`), registering a `--sync-cloud` bool flag and an optional `--cloud-endpoint` string override flag (defaulting to the documented `atcr.dev/dashboard` endpoint), chaining into `cmd.PreRunE` using the same "chain rather than assign" convention used by `addRangeFlags`.
-- `cmd/atcr/review.go` - modify: call `addSyncCloudFlags(cmd)` at flag-registration time for the `review` subcommand (alongside the existing `addRangeFlags(cmd)` call).
+- `cmd/atcr/review.go` - modify: call `addSyncCloudFlags(cmd)` at flag-registration time for the `review` subcommand (alongside the existing `addRangeFlags(cmd)` call in the `review` subcommand constructor).
 - `cmd/atcr/reconcile.go` - modify: call `addSyncCloudFlags(cmd)` at flag-registration time for the `reconcile` subcommand (`cmd/atcr/reconcile.go:47` area, alongside the existing `--no-scorecard` flag registration).
 - `cmd/atcr/flags_test.go` - create or modify: unit tests asserting both subcommands expose `--sync-cloud` and `--cloud-endpoint`.
 

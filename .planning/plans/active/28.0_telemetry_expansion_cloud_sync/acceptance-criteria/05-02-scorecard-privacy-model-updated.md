@@ -9,8 +9,8 @@
 | Test Framework | `go test` (Go standard testing package) | `cmd/atcr/docs_audit_test.go` audits the edited section along with the rest of `docs/` |
 | Key Dependencies | None (pure documentation, no new package) | Must preserve, not replace, existing Epic 10.0 content |
 
-## Related Files
-- `docs/scorecard.md` - modify: extend the "Privacy Model" section (~line 277) with a subsection describing the telemetry ping / hashed-Persona-ID / `--sync-cloud` data path, cross-linking to `docs/telemetry.md`
+### Related Files (from codebase-discovery.json)
+- `docs/scorecard.md` - modify: extend the "Privacy Model" section (`docs/scorecard.md:277`) with a subsection describing the telemetry ping / hashed-Persona-ID / `--sync-cloud` data path, cross-linking to `docs/telemetry.md`
 - `docs/telemetry.md` - reference (created by AC 05-01): the cross-link target this AC's edit must point to
 
 ## Happy Path Scenarios

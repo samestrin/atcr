@@ -9,10 +9,10 @@
 | Test Framework | `go test` + `testify` (`assert`/`require`) | |
 | Key Dependencies | `encoding/json` (Go stdlib) for the schema's JSON tags | Consumed later by the `--sync-cloud` payload story (Story 4) |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/scorecard/telemetry.go` - create: defines the telemetry-scoped record type (e.g. `TelemetryPersonaRecord`) carrying `PersonaIDHash` (and any other Persona Leaderboard fields needed, e.g. `Model`), plus a constructor (e.g. `NewTelemetryPersonaRecord(r Record) TelemetryPersonaRecord`) that populates it using `HashPersonaID` (AC 03-01).
-- `internal/scorecard/export.go` - reference only (not modified by this AC): `PublicRecord` (line ~35) is the allowlist this new type must remain visibly and structurally distinct from — no shared struct embedding, no field aliasing.
-- `internal/scorecard/scorecard.go` - reference only (not modified by this AC): `Record` (line ~52) is the input the constructor reads from; no new field is added to `Record` itself.
+- `internal/scorecard/export.go` - reference only (not modified by this AC): `PublicRecord` (`internal/scorecard/export.go:35`) is the allowlist this new type must remain visibly and structurally distinct from — no shared struct embedding, no field aliasing.
+- `internal/scorecard/scorecard.go` - reference only (not modified by this AC): `Record` (`internal/scorecard/scorecard.go:52`) is the input the constructor reads from; no new field is added to `Record` itself.
 
 ## Happy Path Scenarios
 **Scenario 1: Build a telemetry record from a scorecard Record**

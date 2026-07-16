@@ -9,9 +9,9 @@
 | Test Framework | `go test`, `testify` `assert`/`require`, table-driven tests | Test location: `cmd/atcr/main_test.go` or a new `cmd/atcr/telemetry_gate_test.go` |
 | Key Dependencies | None new — combines outputs of AC 02-01 (`telemetryEnabledFromEnv`) and AC 02-02 (`ProjectConfig.Telemetry`) | |
 
-## Related Files
-- `cmd/atcr/main.go` - modify: add a combining function (e.g. `telemetryDisabled(envEnabled bool, cfg *registry.ProjectConfig) bool`) called once at root-command construction / client-construction time, implementing strict OR-disables semantics.
-- `internal/telemetry/telemetry.go` - modify (Story 1 client): construction seam accepts the final resolved boolean (not the two raw inputs), so the client itself has no precedence logic to get wrong.
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/main.go` - modify: add a combining function (e.g. `telemetryDisabled(envEnabled bool, cfg *registry.ProjectConfig) bool`) called once at root-command construction / client-construction time (`cmd/atcr/main.go:217`), implementing strict OR-disables semantics.
+- `internal/telemetry/client.go` - modify (Story 1 client): construction seam accepts the final resolved boolean (not the two raw inputs), so the client itself has no precedence logic to get wrong.
 - `cmd/atcr/main_test.go` - modify/create: table test covering all four combinations of `{env unset/0} x {config true/false}` asserting disabled wins whenever either source says disabled.
 - `cmd/atcr/review_test.go` - modify: integration-level assertion that the OR combination holds for a real `review` invocation (env unset + config false = disabled; env `0` + config true = disabled).
 

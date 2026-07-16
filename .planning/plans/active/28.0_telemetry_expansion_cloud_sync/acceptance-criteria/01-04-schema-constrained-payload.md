@@ -9,11 +9,11 @@
 | Test Framework | `go test` (standard `testing`, `encoding/json`) | Test file: `internal/telemetry/event_test.go` (or within `client_test.go`) |
 | Key Dependencies | `encoding/json` (stdlib) | JSON struct tags define the exact wire schema |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/telemetry/event.go` - create: defines `type Event struct { Event string \`json:"event"\`; Lang string \`json:"lang"\`; Lines int \`json:"lines"\`; Status string \`json:"status"\` }` — a dedicated, narrow struct with exactly these four fields, deliberately not embedding or extending any `scorecard` struct.
 - `internal/telemetry/event_test.go` - create: marshals a populated `Event` and asserts (via `json.Unmarshal` into a `map[string]interface{}`) that the result has exactly the keys `event`, `lang`, `lines`, `status` — no more, no fewer.
-- `cmd/atcr/review.go` - modify: the `Event` passed from `runReview` is built from already-computed values (detected `lang`, line count used for the scorecard, `status` from the run outcome) — never from raw diff content, file paths, or findings text.
-- `cmd/atcr/reconcile.go` - modify: the `Event` passed from `runReconcile` is built the same way, from already-computed values, never from `reconcile.Result` findings/file data directly.
+- `cmd/atcr/review.go` - modify: the `Event` passed from `runReview` is built from already-computed values (detected `lang`, line count used for the scorecard, `status` from the run outcome) — never from raw diff content, file paths, or findings text (`cmd/atcr/review.go:170`).
+- `cmd/atcr/reconcile.go` - modify: the `Event` passed from `runReconcile` is built the same way, from already-computed values, never from `reconcile.Result` findings/file data directly (`cmd/atcr/reconcile.go:71`).
 
 ## Happy Path Scenarios
 **Scenario 1: Marshaled payload contains exactly four allowlisted keys**

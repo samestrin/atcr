@@ -9,10 +9,10 @@
 | Test Framework | `go test` + `testify` (`assert`/`require`) | Matches existing `internal/scorecard/export_test.go` conventions |
 | Key Dependencies | Go stdlib `crypto/sha256`, `encoding/hex` | No new external dependency, per plan.md's stdlib-only package list |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/scorecard/telemetry.go` - create: defines `HashPersonaID(raw string) string`, a hex-encoded SHA-256 digest function kept in a file separate from `export.go`'s `PublicRecord`/`scrubField`/`AnonymizeRecord`/`ScrubPublicRecord` boundary.
-- `internal/scorecard/export.go` - reference only (not modified by this AC): `AnonymizeRecord` (line ~143) establishes the "scrub/hash once, at ingestion" shape this function reuses; `scrubField` (line ~321) and `PublicRecord` (line ~35) must remain untouched.
-- `internal/scorecard/scorecard.go` - reference only (not modified by this AC): `Record.Reviewer` (line ~56) is the raw Persona ID source field this function hashes.
+- `internal/scorecard/export.go` - reference only (not modified by this AC): `AnonymizeRecord` (`internal/scorecard/export.go:143`) establishes the "scrub/hash once, at ingestion" shape this function reuses; `scrubField` (`internal/scorecard/export.go:321`) and `PublicRecord` (`internal/scorecard/export.go:35`) must remain untouched.
+- `internal/scorecard/scorecard.go` - reference only (not modified by this AC): `Record.Reviewer` (`internal/scorecard/scorecard.go:52`) is the raw Persona ID source field this function hashes.
 
 ## Happy Path Scenarios
 **Scenario 1: Hash a real Persona ID**

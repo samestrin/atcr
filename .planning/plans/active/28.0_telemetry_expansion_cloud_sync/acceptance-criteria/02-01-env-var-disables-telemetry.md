@@ -9,11 +9,11 @@
 | Test Framework | `go test` (standard library `testing`), `testify` `assert`/`require` | Mirrors existing `main_test.go` / `docs_audit_test.go` conventions |
 | Key Dependencies | `strconv` (`ParseBool`), `os` (`Getenv`), `github.com/spf13/cobra` | No new third-party dependency |
 
-## Related Files
-- `cmd/atcr/main.go` - modify: add `telemetryEnabledFromEnv() bool` beside `logLevelFromEnv` (main.go:216), read once at `newRootCmd` construction time (main.go:128-210), and thread the resolved bool into the telemetry client constructor used by `review`/`reconcile`.
-- `internal/telemetry/telemetry.go` - modify (Story 1 client): add a construction-time `enabled bool` (or equivalent) seam so a disabled client is a true no-op — no goroutine spawned, no HTTP client allocated.
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/main.go` - modify: add `telemetryEnabledFromEnv() bool` beside `logLevelFromEnv` (`cmd/atcr/main.go:216`), read once at `newRootCmd` construction time (`cmd/atcr/main.go:128-210`), and thread the resolved bool into the telemetry client constructor used by `review`/`reconcile`.
+- `internal/telemetry/client.go` - modify (Story 1 client): add a construction-time `enabled bool` (or equivalent) seam so a disabled client is a true no-op — no goroutine spawned, no HTTP client allocated.
 - `cmd/atcr/main_test.go` - modify: add `TestTelemetryEnabledFromEnv` table test covering unset/true/false/invalid values.
-- `cmd/atcr/review_test.go`, `cmd/atcr/reconcile_test.go` - modify: add a test asserting zero HTTP requests to a mock telemetry endpoint when `ATCR_TELEMETRY=0` is set, for both `review` and `reconcile`.
+- `cmd/atcr/review_test.go`, `cmd/atcr/reconcile_test.go` - modify: add a test asserting zero HTTP requests to a mock telemetry endpoint when `ATCR_TELEMETRY=0` is set, for both `review` (`cmd/atcr/review.go:170`) and `reconcile` (`cmd/atcr/reconcile.go:71`).
 
 ## Happy Path Scenarios
 **Scenario 1: env var set to `0` disables telemetry for `review`**

@@ -9,11 +9,11 @@
 | Test Framework | `go test` (standard `testing`, `net/http/httptest`) | Test file: `internal/telemetry/client_test.go` |
 | Key Dependencies | Go stdlib only: `net/http`, `encoding/json`, `context` | No new third-party dependency, per plan's "Recommended Packages" conclusion |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/telemetry/client.go` - create: defines the `Client` type, a `New(endpoint string) *Client` constructor, and a `Send(ctx context.Context, ev Event)` method that launches a goroutine to POST the JSON-marshaled `Event` payload to the configured HTTPS endpoint.
-- `cmd/atcr/main.go` - modify: construct a package-level (or dependency-injected) `telemetry.Client` at `newRootCmd` time (around line 217), following the existing `logLevelFromEnv`/`LOG_LEVEL` read pattern for any config needed at startup.
-- `cmd/atcr/review.go` - modify: invoke `telemetry.Client.Send` from `runReview` (around line 170-249, alongside `writeAuditRecord`) on command completion.
-- `cmd/atcr/reconcile.go` - modify: invoke `telemetry.Client.Send` from `runReconcile` (around line 71-148, alongside `scorecard.EmitForReconcile`) on command completion.
+- `cmd/atcr/main.go` - modify: construct a package-level (or dependency-injected) `telemetry.Client` at `newRootCmd` time (`cmd/atcr/main.go:217`), following the existing `logLevelFromEnv`/`LOG_LEVEL` read pattern for any config needed at startup.
+- `cmd/atcr/review.go` - modify: invoke `telemetry.Client.Send` from `runReview` (`cmd/atcr/review.go:170`, alongside `writeAuditRecord`) on command completion.
+- `cmd/atcr/reconcile.go` - modify: invoke `telemetry.Client.Send` from `runReconcile` (`cmd/atcr/reconcile.go:71`, alongside `scorecard.EmitForReconcile`) on command completion.
 
 ## Happy Path Scenarios
 **Scenario 1: Successful ping on review completion**

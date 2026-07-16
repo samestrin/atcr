@@ -9,10 +9,10 @@
 | Test Framework | `go test` + `testify` (`assert`/`require`) | Extends `internal/scorecard/export_test.go` patterns |
 | Key Dependencies | None new — reuses `scorecard.Export`, `FilterOpts`, fixed-clock helpers already in `export_test.go` | |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/scorecard/export_test.go` - modify: add a regression test that captures `scorecard.Export`'s output for a fixed, representative input set and asserts it is byte-for-byte identical to a pinned golden value/checksum, both before and after this story's `telemetry.go` changes land.
-- `internal/scorecard/export.go` - reference only (must remain unmodified by this story): `Export` (line ~212), `PublicRecord` (line ~35), `scrubField` (line ~321), `AnonymizeRecord`/`ScrubPublicRecord` (line ~143-160).
-- `cmd/atcr/leaderboard.go` - reference only (must remain unmodified by this story): `runLeaderboardExport` (line ~156) calls `scorecard.Export` unchanged.
+- `internal/scorecard/export.go` - reference only (must remain unmodified by this story): `Export` (`internal/scorecard/export.go:212`), `PublicRecord` (`internal/scorecard/export.go:35`), `scrubField` (`internal/scorecard/export.go:321`), `AnonymizeRecord`/`ScrubPublicRecord` (`internal/scorecard/export.go:143-160`).
+- `cmd/atcr/leaderboard.go` - reference only (must remain unmodified by this story): `runLeaderboardExport` (`cmd/atcr/leaderboard.go:156`) calls `scorecard.Export` unchanged.
 
 ## Happy Path Scenarios
 **Scenario 1: Export output is byte-for-byte unchanged**

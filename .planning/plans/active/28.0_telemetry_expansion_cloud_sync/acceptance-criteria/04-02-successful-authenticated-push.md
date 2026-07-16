@@ -9,9 +9,9 @@
 | Test Framework | `go test` (standard `testing`, `net/http/httptest`) | Test files: `internal/scorecard/cloudsync_test.go`, `cmd/atcr/review_test.go`, `cmd/atcr/reconcile_test.go` |
 | Key Dependencies | Go stdlib `net/http`, `encoding/json`, `context`, `os` | No new third-party dependency |
 
-## Related Files
-- `internal/scorecard/cloudsync.go` - create: defines a dedicated allowlist struct (e.g. `CloudSyncRecord`) distinct from `PublicRecord` (`internal/scorecard/export.go:33`), including time/credits saved metrics and the hashed Persona ID (Story 3), plus a `Push(ctx context.Context, endpoint, apiKey string, rec CloudSyncRecord) error` function that POSTs the JSON payload with an `Authorization: Bearer <apiKey>` header.
-- `cmd/atcr/review.go` - modify: after the run completes (`runReview`, `cmd/atcr/review.go:170` area), when `--sync-cloud` is set, build a `CloudSyncRecord` from the finalized local scorecard record and call `scorecard.Push`.
+### Related Files (from codebase-discovery.json)
+- `internal/scorecard/cloudsync.go` - create: defines a dedicated allowlist struct (e.g. `CloudSyncRecord`) distinct from `PublicRecord` (`internal/scorecard/export.go:35`), including time/credits saved metrics and the hashed Persona ID (Story 3), plus a `Push(ctx context.Context, endpoint, apiKey string, rec CloudSyncRecord) error` function that POSTs the JSON payload with an `Authorization: Bearer <apiKey>` header.
+- `cmd/atcr/review.go` - modify: after the run completes (`runReview`, `cmd/atcr/review.go:170`), when `--sync-cloud` is set, build a `CloudSyncRecord` from the finalized local scorecard record and call `scorecard.Push`.
 - `cmd/atcr/reconcile.go` - modify: after `scorecard.EmitForReconcile` (`cmd/atcr/reconcile.go:148`), when `--sync-cloud` is set, build and push the equivalent `CloudSyncRecord`.
 - `internal/scorecard/cloudsync_test.go` - create: unit tests asserting the JSON body's allowlisted fields and the `Authorization: Bearer` header.
 

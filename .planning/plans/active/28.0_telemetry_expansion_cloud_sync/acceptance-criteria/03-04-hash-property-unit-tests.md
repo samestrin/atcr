@@ -9,7 +9,7 @@
 | Test Framework | `go test` + `testify` (`assert`/`require`) | |
 | Key Dependencies | None new — tests the stdlib-backed `HashPersonaID` function directly | |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/scorecard/telemetry_test.go` - create: unit tests for `HashPersonaID` covering determinism, uniqueness, and non-reversibility.
 - `internal/scorecard/telemetry.go` - reference only (implemented by AC 03-01): the `HashPersonaID(raw string) string` function under test.
 

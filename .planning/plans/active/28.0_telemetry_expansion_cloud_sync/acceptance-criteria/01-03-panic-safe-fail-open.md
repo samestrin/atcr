@@ -9,11 +9,11 @@
 | Test Framework | `go test` (standard `testing`) | Test file: `internal/telemetry/client_test.go` |
 | Key Dependencies | Go stdlib (`recover`, `log`/`internal/log`) | Reuses the project's existing `internal/log` logger for debug/trace-level failure logging |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/telemetry/client.go` - create: `Send`'s goroutine body opens with `defer func() { if r := recover(); r != nil { ... log and swallow ... } }()` per implementation-standards.md's Panic Safety / Defer Cleanup guidance (`.planning/specifications/implementation-standards.md:66-67`).
 - `internal/telemetry/client_test.go` - create: a test that forces an internal panic (e.g. via an injectable hook or a deliberately malformed internal step) and asserts the parent test/process does not crash and the calling command still returns normally.
-- `cmd/atcr/review.go` - modify: `runReview`'s completion-point telemetry call must never propagate a panic or error that changes `runReview`'s return value.
-- `cmd/atcr/reconcile.go` - modify: `runReconcile`'s completion-point telemetry call must never propagate a panic or error that changes `runReconcile`'s return value.
+- `cmd/atcr/review.go` - modify: `runReview`'s completion-point telemetry call (`cmd/atcr/review.go:170`) must never propagate a panic or error that changes `runReview`'s return value.
+- `cmd/atcr/reconcile.go` - modify: `runReconcile`'s completion-point telemetry call (`cmd/atcr/reconcile.go:71`) must never propagate a panic or error that changes `runReconcile`'s return value.
 
 ## Happy Path Scenarios
 **Scenario 1: Network failure is logged and swallowed**

@@ -9,10 +9,10 @@
 | Test Framework | `go test` (standard `testing`, `net/http/httptest`) | Test file: `internal/telemetry/client_test.go` |
 | Key Dependencies | `context`, `net/http`, `time` (stdlib only) | 2-3 second bounded timeout per implementation-standards.md guidance |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/telemetry/client.go` - create: `Send` derives a bounded `context.Context` (e.g. `context.WithTimeout(ctx, 3*time.Second)`) for the outbound request; the goroutine itself is fire-and-forget so the timeout only bounds the background request's own lifetime, never the caller.
-- `cmd/atcr/review.go` - modify: `runReview`'s call to the telemetry send at its completion point (~line 170-249) must return immediately, not await the goroutine.
-- `cmd/atcr/reconcile.go` - modify: `runReconcile`'s call to the telemetry send at its completion point (~line 71-148) must return immediately, not await the goroutine.
+- `cmd/atcr/review.go` - modify: `runReview`'s call to the telemetry send at its completion point (`cmd/atcr/review.go:170`) must return immediately, not await the goroutine.
+- `cmd/atcr/reconcile.go` - modify: `runReconcile`'s call to the telemetry send at its completion point (`cmd/atcr/reconcile.go:71`) must return immediately, not await the goroutine.
 - `internal/telemetry/client_test.go` - create: tests simulating a hung/unreachable endpoint and asserting bounded goroutine lifetime plus prompt caller return.
 
 ## Happy Path Scenarios
