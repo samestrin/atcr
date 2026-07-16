@@ -180,6 +180,40 @@ func TestClient_Send_NilReceiverNoOps(t *testing.T) {
 	c.Wait()
 }
 
+// TestContext_RoundTrip covers the context injection seam: a client stored via
+// NewContext is returned by FromContext, and a bare context yields nil (whose
+// Send is a safe no-op).
+func TestContext_RoundTrip(t *testing.T) {
+	c := New("https://example.test")
+	got := FromContext(NewContext(context.Background(), c))
+	if got != c {
+		t.Fatalf("FromContext returned %p, want %p", got, c)
+	}
+	if FromContext(context.Background()) != nil {
+		t.Fatal("FromContext on a bare context must return nil")
+	}
+}
+
+// TestClient_Send_Non2xxIsSwallowed drives the non-2xx branch: the endpoint
+// returns 500, the request is still made, and the caller is unaffected (the
+// failure is logged at debug and swallowed).
+func TestClient_Send_Non2xxIsSwallowed(t *testing.T) {
+	var hits int32
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	c := newTestClient(ts)
+	c.Send(context.Background(), Event{Event: "review_run", Status: "failure"})
+	c.Wait()
+
+	if n := atomic.LoadInt32(&hits); n != 1 {
+		t.Fatalf("expected 1 request to the 500 endpoint, got %d", n)
+	}
+}
+
 // TestClient_Send_ConcurrentSendsNoRace fires many overlapping sends from one
 // process (the review + reconcile rapid-succession case) and drains them; run
 // under -race it proves no shared mutable state is written unsafely (AC 01-01
