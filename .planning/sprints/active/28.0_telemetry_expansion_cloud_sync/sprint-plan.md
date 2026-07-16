@@ -33,6 +33,25 @@ Before each phase, review `/CLAUDE.md` (or AGENTS.md).
 
 **Unvalidated assumptions:** None — every cited file/symbol/line verified before execution.
 
+### Phase 4 Clarifications (recorded 2026-07-15)
+
+**Key Decisions:**
+- **TD-001 resolved — payload metrics (user decision, Option A):** `CloudSyncRecord` ships the REAL raw metrics the scorecard already computes — `cost_usd`, `tokens_in`, `tokens_out`, `latency_ms` — plus the hashed Persona ID, `model`, and run outcome. NO client-side "time/credits saved" formula: the atcr.dev backend derives savings against whatever baseline the SaaS product defines (same backend owner this sprint already deferred the endpoint contract to). Rejected inventing a baseline/formula in the CLI (unilateral business logic) and rejected deferring with a placeholder (strictly weaker than shipping real data). AC 04-02's regression test only asserts the ABSENCE of disallowed keys (`path`/`source`/`file`/raw identifiers) — it never pins literal `time_saved`/`credits_saved` field names, so Option A satisfies the AC's actual assertions.
+- **Payload granularity — single push, real-reviewer-sourced identity (user decision):** exactly one `Push(ctx, endpoint, apiKey, rec CloudSyncRecord)` per command invocation — no batching (AC 04-02 Performance: "Single push per command invocation"). Persona/model identity is sourced from the REAL per-reviewer `scorecard.Record`s, NEVER the aggregate record (whose `Reviewer`/`Model` are zero-value — hashing `""` would emit an identical meaningless persona hash every run, scorecard.go:161-215, defeating the Persona-Leaderboard purpose). Synthesis: one `CloudSyncRecord` carries run-level aggregate metrics PLUS a nested `personas []{persona_id_hash, model}` list built from the per-reviewer records — one HTTP request, singular `rec` signature, meaningful per-persona attribution.
+
+**Scope Boundaries:**
+- IN scope: `--sync-cloud` + `--cloud-endpoint` flags on `review`/`reconcile`; `exitAuth=3` + `authError()`; `Bearer` auth; HTTPS-only with a loopback exemption (AC 04-02 Security); a dedicated `CloudSyncRecord` allowlist struct (NOT a `PublicRecord` superset) excluding `path`/`source`/`file`/raw identifiers.
+- OUT of scope: any savings/ROI formula (backend-owned); a real production cloud endpoint. Default `--cloud-endpoint` is the placeholder `https://atcr.dev/dashboard`; tests override it via `--cloud-endpoint` against `httptest` — zero live network in CI.
+
+**Technical Approach (verified against live code 2026-07-15):**
+- `exitAuth = 3` + `authError(err)` beside `exitFailure`/`exitUsage` (main.go:85-88); resolved through the existing `errors.As` dispatch (`exitCode`, main.go:106).
+- `--sync-cloud` push is a NEW synchronous, visible-failure `Push` in `internal/scorecard/cloudsync.go` — NOT a `telemetry.Client` reuse (telemetry is fire-and-forget; cloud sync must surface failures).
+- `ErrCloudAuthRejected` sentinel for remote `401`/`403` → mapped to `exitAuth`; other `4xx`/`5xx`/timeout → a non-fatal cloud-sync error that never corrupts the already-finalized `review`/`reconcile` exit code (AC 04-02/04-04).
+- Record source: `EmitForReconcile` currently returns void and the review path emits no scorecard, so a small shared record-builder (from `res` + `fanout.ReadPoolSummary`) feeds BOTH the existing emit path and the new cloud-sync payload on the `review` and `reconcile` call sites.
+- `--sync-cloud` is NOT gated by `telemetryGate` (explicit user action; its own opt-in surface is the flag + a valid `ATCR_API_KEY`) — honoring the Phase-3 SCOPE doc-comment on `telemetryGate` (telemetry.go:52).
+
+**Unvalidated assumptions:** None — TD-001 resolved by user decision; every cited file/symbol/line verified before execution.
+
 ---
 
 ## Sprint Overview
@@ -498,7 +517,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
 
 > **Pre-implementation check:** `grep -rn "addRangeFlags" cmd/atcr/flags.go` to confirm the exact PreRunE-chaining convention before adding `addSyncCloudFlags` alongside it.
 
-### 4.1 [ ] **[Cloud Sync Push - RED](plan/user-stories/04-sync-cloud-authenticated-push.md)**
+### 4.1 [x] **[Cloud Sync Push - RED](plan/user-stories/04-sync-cloud-authenticated-push.md)**
    Write comprehensive failing tests, verify they fail correctly:
    - `TestAddSyncCloudFlags_RegisteredOnReviewAndReconcile` — `--sync-cloud` flag present on both commands (04-01)
    - `TestSyncCloud_SuccessfulPush_BearerHeaderAndAllowlistedBody` — successful push against `httptest.NewServer` sends `Authorization: Bearer <ATCR_API_KEY>` and a JSON body containing only the allowlisted fields (time/credits-saved metrics + hashed Persona ID, no raw source/file paths/un-hashed identifiers) (04-02)
@@ -507,7 +526,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
    - `TestSyncCloud_FlagOmitted_ZeroCloudNetworkCalls` — omitting `--sync-cloud` entirely results in zero network calls to the cloud endpoint
    **Files:** `cmd/atcr/flags_test.go`, `cmd/atcr/main_test.go` | **Duration:** 1 day
 
-### 4.2 [ ] **[Cloud Sync Push - GREEN](plan/user-stories/04-sync-cloud-authenticated-push.md)**
+### 4.2 [x] **[Cloud Sync Push - GREEN](plan/user-stories/04-sync-cloud-authenticated-push.md)**
    Minimal code, one test at a time (T1), verify all (T2), COMMIT:
    - `cmd/atcr/flags.go` — `addSyncCloudFlags(cmd *cobra.Command)` alongside `addRangeFlags`, registering `--sync-cloud` (bool) and an optional `--cloud-endpoint` override (defaulting to the documented `atcr.dev/dashboard` endpoint, for test override)
    - `cmd/atcr/main.go` — new `exitAuth` constant alongside `exitFailure`/`exitUsage`; a corresponding `codedError` value returned when `ATCR_API_KEY` is unset (trimmed, validated) or the remote endpoint responds 401/403, surfaced via the existing `errors.As` dispatch
@@ -516,7 +535,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
    COMMIT: `git commit -m "feat(cloud-sync): --sync-cloud authenticated push with dedicated exitAuth (green)"`
    **Files:** `cmd/atcr/flags.go`, `cmd/atcr/main.go`, `internal/scorecard/telemetry.go`, `cmd/atcr/review.go`, `cmd/atcr/reconcile.go` | **Duration:** 2 days
 
-### 4.2.A [ ] **[Cloud Sync Push - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-sync-cloud-authenticated-push.md)**
+### 4.2.A [x] **[Cloud Sync Push - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-sync-cloud-authenticated-push.md)**
    **Changed Files:** `cmd/atcr/flags.go`, `cmd/atcr/main.go`, `internal/scorecard/telemetry.go`, `cmd/atcr/review.go`, `cmd/atcr/reconcile.go`, `cmd/atcr/flags_test.go`, `cmd/atcr/main_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 4.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -534,25 +553,24 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh general-purpose subagent, no CRITICAL/HIGH):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | cmd/atcr/review.go:~422 | The `--sync-cloud` push was placed BEFORE the history ledger, the compliance audit ledger, and the in-process reconcile/`--fail-on` gate. A server auth rejection (401/403) `return syncErr` short-circuited and silently skipped the audit record, history record, and the entire gate — an optional cloud push cannibalizing core bookkeeping/gating. `reconcile.go` correctly pushes LAST; review was asymmetric. This corrupts the already-finalized run outcome, which AC 04-04 EC2 forbids. | Fixed inline in 4.3: `runReview` uses a named return + a deferred push registered once `result != nil`, so the push fires AFTER history/audit/gate and an auth rejection overrides the FINAL exit code without skipping anything. |
+   | LOW | cmd/atcr/review.go / reconcile.go | Cross-command `run_outcome` inconsistency: review reported `"success"` from the fan-out result BEFORE `--fail-on`/`--verify`/`--debate` ran, while reconcile derives it from the gate. A gate-tripping review would land in the dashboard as `success`. | Fixed inline in 4.3 as a side effect: the deferred push reads the FINAL `err` (post-gate), so a gate failure now records `"failure"` — aligned with reconcile. |
+   | LOW | cmd/atcr/review.go | When `--sync-cloud` is set but the review errors out before producing a `result` (usage error before fan-out), the push silently no-ops with no notice. | Deferred → **TD-013**. Non-blocking: those are error paths (exit 2) with no scorecard to sync; a notice would be noise. |
+   | LOW | internal/scorecard/telemetry.go:26 | The unsalted `HashPersonaID` (already TD-007) is now shipped to a REMOTE party via `--sync-cloud`, widening exposure beyond local telemetry. | Deferred → **TD-007** (augmented): land the keyed-HMAC hardening before enabling the real production cloud endpoint; treat `persona_id_hash` as pseudonymous (not anonymous) in the Story 5 privacy docs. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 4.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH — proceed. The MEDIUM is a genuine AC 04-04 EC2 violation (auth rejection must not corrupt the finalized run outcome) with a clear repo precedent (reconcile.go's push-last ordering), so it is fixed inline in 4.3 (resolved > deferred), and that fix also resolves the `run_outcome` LOW. The two remaining LOWs → **TD-013** / **TD-007 (augmented)**.
 
-### 4.3 [ ] **[Cloud Sync Push - REFACTOR](plan/user-stories/04-sync-cloud-authenticated-push.md)**
+### 4.3 [x] **[Cloud Sync Push - REFACTOR](plan/user-stories/04-sync-cloud-authenticated-push.md)**
    1. Fix CRITICAL/HIGH issues from 4.2.A (if any)
    2. Improve code quality (T1); confirm `exitAuth` dispatch is unambiguous versus `exitUsage`/`exitFailure`
    3. Validate all tests still pass (T3)
    4. COMMIT: `git commit -m "refactor(cloud-sync): address review + clean up"`
    **Duration:** 0.5 day
 
-### 4.4 [ ] **Phase 4 — DoD Validation**
+### 4.4 [x] **Phase 4 — DoD Validation**
    - `go test ./cmd/atcr/... ./internal/scorecard/...` (T3 scoped) — all passing
    - `go build ./...` clean; `go vet ./...` clean; `golangci-lint run` 0 errors
    - Coverage: `cmd/atcr`, `internal/scorecard` both ≥80%
@@ -564,7 +582,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      Manual Review: [ ] Code reviewed
      ```
 
-### 4.LAST [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+### 4.LAST [x] **Phase 4 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 4 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -583,11 +601,12 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh general-purpose integration reviewer — no CRITICAL/HIGH):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | cmd/atcr/review.go (deferred push) | The `--sync-cloud` push is `defer`-registered inside `if result != nil`, so it fires on ALL later returns — including the exit-2 `usageError` returns from a failed in-process reconcile/verify/debate (one-shot mode). A post-run 401/403 then rewrote the named `err` to `authError` (exit 3), masking BOTH the original exit-2 code and its stderr message; `reconcile.go` had no such exposure (its push only ever supersedes the exit-1 findings gate). | Fixed inline: `resolveSyncCloudOutcome(runErr, syncErr)` lets an auth rejection override only a success or a plain (exit-1) findings-gate failure, never an already-coded (exit-2) usage/infra failure. Applied at BOTH call sites for symmetry; proven by `TestResolveSyncCloudOutcome`. |
+
+   **Phase gate passed.** Build/vet/tests green across `cmd/atcr` (85.7% cov) and `internal/scorecard` (92.6% cov); `golangci-lint run` 0 issues; `go test ./...` exit 0. Frozen boundary intact — `git diff main --stat` empty for `export.go`/`leaderboard.go`, AC 03-03 byte-for-byte regression PASS. Contracts stable & final for Phase 5 docs: `exitAuth=3` (main.go:88), `--sync-cloud`/`--cloud-endpoint` flags, `ATCR_API_KEY` (os.Getenv+TrimSpace, matching LOG_LEVEL/ATCR_TELEMETRY), and the versioned/allowlisted `CloudSyncRecord`. The push is NOT gated by `telemetryGate` (explicit opt-in); Phase 2-3 telemetry ping + opt-out gate unaffected. Only a MEDIUM was found and fixed inline (resolved > deferred, matching 4.2.A); 4.2.A LOWs captured as TD-013 / TD-007 (augmented).
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
