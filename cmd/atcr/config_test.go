@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -128,4 +130,25 @@ func TestConfigSet_MissingConfigFileIsIOError(t *testing.T) {
 
 	_, code, _ := execConfig(t, "config", "set", "telemetry", "false")
 	assert.Equal(t, 1, code, "a missing config file is an I/O error (exit 1), not a usage error")
+}
+
+// TestConfigSetTelemetry_ResolvesRepoRoot covers the cwd-independence fix: when
+// run from a subdirectory of the repo, config set should locate .atcr/config.yaml
+// via the repo root rather than failing with a cwd-relative path.
+func TestConfigSetTelemetry_ResolvesRepoRoot(t *testing.T) {
+	isolate(t)
+	repo := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".atcr", "config.yaml"), []byte("agents: [bruce]\n"), 0o644))
+	subdir := filepath.Join(repo, "subdir")
+	require.NoError(t, os.MkdirAll(subdir, 0o755))
+	t.Chdir(subdir)
+
+	_, code, _ := execConfig(t, "config", "set", "telemetry", "false")
+	require.Equal(t, 0, code, "config set from a repo subdirectory must succeed")
+
+	got, err := registry.LoadTelemetrySetting(repo)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.False(t, *got, "telemetry must be persisted at the discovered repo root")
 }
