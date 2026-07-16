@@ -56,6 +56,16 @@ func TestResolveSyncCloud_ValidKeyAndEndpoint_Enabled(t *testing.T) {
 	assert.Equal(t, "https://mock.test/ingest", plan.endpoint)
 }
 
+func TestResolveSyncCloud_EndpointTrimmedOnce(t *testing.T) {
+	t.Setenv("ATCR_API_KEY", "valid-key")
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", "  https://mock.test/ingest  "}))
+	plan, err := resolveSyncCloud(cmd)
+	require.NoError(t, err)
+	assert.True(t, plan.enabled)
+	assert.Equal(t, "https://mock.test/ingest", plan.endpoint)
+}
+
 func TestFinishCloudSync_AuthRejectedMapsToExitAuth(t *testing.T) {
 	var buf bytes.Buffer
 	err := finishCloudSync(&buf, scorecard.ErrCloudAuthRejected)
