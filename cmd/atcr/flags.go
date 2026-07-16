@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -24,6 +26,42 @@ func addRangeFlags(cmd *cobra.Command) {
 		}
 		if prev != nil {
 			return prev(cmd, args)
+		}
+		return nil
+	}
+}
+
+// defaultCloudEndpoint is the compiled-in --sync-cloud destination. It is a
+// placeholder URL only: the real production ingest contract is owned by the
+// atcr.dev backend and is not operational until ATCR_API_KEY issuance is live.
+// Tests point --cloud-endpoint at an httptest server instead (loopback http is
+// permitted for that; see scorecard.ValidateCloudEndpoint). When a user invokes
+// --sync-cloud without overriding the default, a warning is emitted so the
+// placeholder default is visible rather than silently POSTing to an inactive URL.
+const defaultCloudEndpoint = "https://atcr.dev/dashboard"
+
+// addSyncCloudFlags declares the --sync-cloud opt-in and its --cloud-endpoint
+// override (Story 4) on cmd. --cloud-endpoint's well-formedness and the presence
+// of ATCR_API_KEY are validated at run time (resolveSyncCloud), not at flag-parse
+// time, to keep this helper narrowly scoped to wiring (AC 04-01). The PreRunE is
+// chained (not assigned), matching addRangeFlags, so a prior hook (review and
+// reconcile both also register range flags) is never silently overwritten and a
+// future --sync-cloud precondition can slot in without clobbering it.
+func addSyncCloudFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("sync-cloud", false, "after the run, push the anonymized scorecard to the cloud dashboard (requires ATCR_API_KEY)")
+	cmd.Flags().String("cloud-endpoint", defaultCloudEndpoint, "override the --sync-cloud destination (https://, or loopback http:// for local testing)")
+	prev := cmd.PreRunE
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		if prev != nil {
+			if err := prev(cmd, args); err != nil {
+				return err
+			}
+		}
+		if boolFlag(cmd, "sync-cloud") {
+			endpoint, _ := cmd.Flags().GetString("cloud-endpoint")
+			if strings.TrimSpace(endpoint) == defaultCloudEndpoint {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: --cloud-endpoint default %q is a placeholder; --sync-cloud will not work until a real endpoint and ATCR_API_KEY are configured\n", defaultCloudEndpoint)
+			}
 		}
 		return nil
 	}

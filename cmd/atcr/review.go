@@ -22,6 +22,7 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/sandbox"
+	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/samestrin/atcr/internal/validation"
 	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
@@ -78,6 +79,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
 	addRangeFlags(cmd)
 	addAutoFixFlags(cmd)
+	addSyncCloudFlags(cmd)
 	return cmd
 }
 
@@ -167,7 +169,7 @@ func prFromGitHubRef(ref string) int {
 // runReview resolves the range, loads config, and runs the full review flow.
 // Range/config problems are usage errors (exit 2); an all-agents-failed review
 // is a plain failure (exit 1) with the artifacts preserved on disk.
-func runReview(cmd *cobra.Command, _ []string) error {
+func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// --resume targets an existing review directory and runs only its pending
 	// agents (epic 4.1.1); it is a distinct flow from a fresh review, so branch
 	// before any new-review flag handling.
@@ -181,6 +183,28 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		}
 		anchor, _ := cmd.Flags().GetString("resume")
 		return runResume(cmd, anchor)
+	}
+
+	// Resolve --sync-cloud preconditions before any review work so a missing/empty
+	// ATCR_API_KEY (exit 3) or a bad --cloud-endpoint (exit 2) fails fast — before
+	// gitrange resolution, config load, and any paid agent call (Story 4). Placed
+	// after the --resume short-circuit: --sync-cloud is not wired into the resume
+	// recovery flow this sprint.
+	syncPlan, err := resolveSyncCloud(cmd)
+	if err != nil {
+		return err
+	}
+
+	// result is assigned later by fanout.ExecuteReview. It is declared up front so
+	// an early return (before any result exists) can still observe whether a
+	// --sync-cloud push was skipped and warn the user instead of dropping it silently.
+	var result *fanout.ReviewResult
+	if syncPlan.enabled {
+		defer func() {
+			if result == nil {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "warning: --sync-cloud push skipped because the run did not produce a result")
+			}
+		}()
 	}
 
 	ctx := cmd.Context()
@@ -359,7 +383,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// than one review against the shared DefaultRegistry).
 	metricsBaseline := snapshotSummaryMetrics(metrics.DefaultRegistry)
 
-	result, err := fanout.ExecuteReview(ctx, llmclient.New(), prep)
+	result, err = fanout.ExecuteReview(ctx, llmclient.New(), prep)
 
 	// Graceful interrupt (SIGINT/SIGTERM cancelled the root context): completed
 	// agents are already persisted by WritePool and the manifest is marked
@@ -387,6 +411,53 @@ func runReview(cmd *cobra.Command, _ []string) error {
 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
 		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now))
+
+		// Fire the anonymous usage ping on run completion — success or
+		// all-agents-failed — as a fire-and-forget side effect alongside the
+		// audit/history writes below. It never blocks or changes this command's
+		// outcome (Story 1). The opt-out gate (Story 2) is checked BEFORE Send so a
+		// disabled run spawns no goroutine and builds no payload; a nil client no-ops.
+		if telemetryGate() {
+			status := "success"
+			if err != nil {
+				status = "failure"
+			}
+			telemetry.FromContext(ctx).Send(ctx, reviewTelemetryEvent(prep, status))
+		}
+
+		// --sync-cloud push (Story 4): an explicit, user-invoked action, DEFERRED so
+		// it fires once runReview's full outcome is finalized — the history/audit
+		// ledgers below and the one-shot reconcile/verify/debate/gate all run first.
+		// This mirrors reconcile.go's push-last ordering: an optional cloud auth
+		// rejection must never skip core bookkeeping or the --fail-on gate (AC 04-04
+		// EC2 — the finalized run outcome must not be corrupted). The outcome is read
+		// from the FINAL err (so a gate failure records "failure", aligned with
+		// reconcile); an auth rejection overrides err with exitAuth (AC 04-04); any
+		// other push failure is a non-fatal warning that preserves err (AC 04-02).
+		// Registered inside `result != nil` so an interrupted/no-result run pushes
+		// nothing. Gated only by the explicit flag + key, never telemetryGate.
+		if syncPlan.enabled {
+			defer func() {
+				// Only push for a finalized review outcome (success or a plain exit-1
+				// findings-gate / all-agents-failed error). An already-coded exit-2 infra
+				// failure (a usageError from the in-process reconcile/verify/debate paths)
+				// means the tooling broke: pushing would make a needless network call and
+				// send a misleading CloudSyncRecord(outcome="failure"). This matches
+				// reconcile.go, which returns before its push on the same I/O-failure path
+				// (TD review.go:428).
+				if !cloudSyncPushable(err) {
+					return
+				}
+				outcome := "success"
+				if err != nil {
+					outcome = "failure"
+				}
+				// resolveSyncCloudOutcome bounds the auth override so a post-run 401 can
+				// supersede a success or a plain findings-gate failure, but never masks
+				// an already-coded exit-2 pipeline failure (reconcile/verify/debate I/O).
+				err = resolveSyncCloudOutcome(err, runSyncCloud(ctx, cmd.ErrOrStderr(), syncPlan, result.Dir, outcome))
+			}()
+		}
 	}
 	if err != nil {
 		return err // all-agents-failed → exit 1, artifacts preserved

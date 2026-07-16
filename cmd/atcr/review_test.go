@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -615,4 +618,88 @@ func TestRunReview_AllAgentsFailedAppendsNoAudit(t *testing.T) {
 	recs, err := audit.Load(filepath.Join(".", ".atcr", "audit.log.jsonl"))
 	require.NoError(t, err)
 	require.Empty(t, recs, "an all-agents-failed review must append no audit record")
+}
+
+// TestReviewCmd_SyncCloud_MissingKey_FailFast covers AC 04-03: `review
+// --sync-cloud` with an unset ATCR_API_KEY exits exitAuth (3) — and fails fast,
+// before any review work, so the check needs no git range or roster.
+func TestReviewCmd_SyncCloud_MissingKey_FailFast(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_API_KEY", "")
+	require.Equal(t, exitAuth, execCmd(t, "review", "--sync-cloud"))
+}
+
+// TestReviewCmd_SyncCloud_InvalidEndpoint_ExitsUsage covers AC 04-02 EC4: a
+// non-URL --cloud-endpoint with --sync-cloud set is a usage error (2), before any
+// request or review work.
+func TestReviewCmd_SyncCloud_InvalidEndpoint_ExitsUsage(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_API_KEY", "valid-key")
+	require.Equal(t, exitUsage, execCmd(t, "review", "--sync-cloud", "--cloud-endpoint", "not-a-url"))
+}
+
+// TestReviewCmd_SyncCloud_PushesAfterRunOnFailure is the 4.2.A MEDIUM regression:
+// the review-path push is DEFERRED to run after the fan-out outcome is finalized.
+// Even on an all-agents-failed review (exit 1, artifacts preserved), the push
+// still fires (AC 04-02 EC2) with run_outcome="failure" (the gate-aware outcome),
+// and a non-auth-successful (200) push preserves the run's exit code.
+func TestReviewCmd_SyncCloud_PushesAfterRunOnFailure(t *testing.T) {
+	isolate(t)
+	initGitRepoWithChange(t)
+	writeReviewFixtureConfig(t)
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "k") // preflight passes; agents then fail on the unreachable URL
+
+	got := false
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = true
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	t.Setenv("ATCR_API_KEY", "valid-key")
+	code := execCmd(t, "review", "--base", "HEAD^", "--sync-cloud", "--cloud-endpoint", srv.URL)
+	require.Equal(t, 1, code, "all agents failed → exit 1; a successful push preserves it")
+	require.True(t, got, "review --sync-cloud must push even when the run failed")
+	require.Contains(t, string(body), `"run_outcome":"failure"`)
+	// Privacy allowlist: CloudSyncRecord must never carry raw reviewer identities
+	// or source file paths — those are hashed/omitted at the boundary.
+	assert.NotContains(t, string(body), `"reviewer"`)
+	assert.NotContains(t, string(body), `"file"`)
+	assert.NotContains(t, string(body), `"path"`)
+}
+
+// TestReviewCmd_SyncCloud_AuthRejectionOverridesExit covers AC 04-04 on the
+// review path: a 401 from the endpoint overrides the run's own exit code with
+// exitAuth (3) — the push runs after the run, so bookkeeping is not skipped, but
+// the auth failure wins the final code.
+// TestReviewCmd_SyncCloud_WarnsWhenNoResult verifies that when --sync-cloud is
+// enabled but the run exits before producing a result, the user sees a clear
+// stderr notice instead of a silently skipped push.
+func TestReviewCmd_SyncCloud_WarnsWhenNoResult(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_API_KEY", "valid-key")
+	root := newRootCmd()
+	var stderr bytes.Buffer
+	root.SetOut(io.Discard)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"review", "--sync-cloud", "--require-verified"})
+	_ = root.ExecuteContext(context.Background())
+	require.Contains(t, stderr.String(), "--sync-cloud push skipped because the run did not produce a result")
+}
+
+func TestReviewCmd_SyncCloud_AuthRejectionOverridesExit(t *testing.T) {
+	isolate(t)
+	initGitRepoWithChange(t)
+	writeReviewFixtureConfig(t)
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "k")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	t.Setenv("ATCR_API_KEY", "bad-key")
+	require.Equal(t, exitAuth, execCmd(t, "review", "--base", "HEAD^", "--sync-cloud", "--cloud-endpoint", srv.URL))
 }
