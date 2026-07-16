@@ -141,3 +141,25 @@ func TestSetTelemetrySetting(t *testing.T) {
 		require.Error(t, err, "a key cannot be set on a YAML list root")
 	})
 }
+
+// TestSetTelemetrySetting_SymlinkRejected verifies a symlinked .atcr/config.yaml
+// is rejected with a clear error instead of silently severed: the atomic
+// os.Rename would replace the symlink with a regular file (Stat/ReadFile follow
+// the link, Rename does not), writing to the wrong logical location.
+func TestSetTelemetrySetting_SymlinkRejected(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".atcr"), 0o755))
+	target := filepath.Join(dir, "real-config.yaml")
+	require.NoError(t, os.WriteFile(target, []byte("agents: [bruce]\ntelemetry: false\n"), 0o644))
+	link := DefaultProjectConfigPath(dir)
+	require.NoError(t, os.Symlink(target, link))
+
+	err := SetTelemetrySetting(dir, true)
+	require.Error(t, err, "a symlinked config must be rejected, not silently severed")
+	assert.Contains(t, err.Error(), "symlink")
+
+	// The symlink itself must survive the rejected write.
+	info, err := os.Lstat(link)
+	require.NoError(t, err)
+	assert.True(t, info.Mode()&os.ModeSymlink != 0, "the symlink must remain a symlink")
+}
