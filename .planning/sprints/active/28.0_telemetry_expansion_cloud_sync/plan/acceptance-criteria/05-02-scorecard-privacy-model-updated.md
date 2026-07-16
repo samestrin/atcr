@@ -40,7 +40,7 @@
 **Edge Case 1: Section heading structure**
 - **Given** the existing "Privacy Model" H2 heading and its established list-based structure ("Preserved (allowlist):" / "Stripped / never exported:")
 - **When** the new telemetry/cloud-sync subsection is added
-- **Then** it uses a consistent heading level (H3 under the existing H2, or a clearly separated new paragraph block) so the document's structure/TOC remains coherent and the new content is not visually merged into the existing allowlist tables
+- **Then** it uses an H3 subsection under the existing Privacy Model H2 so the document's structure/TOC remains coherent and the new content is not visually merged into the existing allowlist tables
 
 **Edge Case 2: Wording does not imply a privacy regression**
 - **Given** the Potential Risks section of this story flags the risk that new telemetry wording could be misread as weakening the existing guarantee
@@ -75,16 +75,16 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./cmd/atcr/... -run TestDocs` passes (no flag/index regressions introduced by this edit)
-- [ ] No linting errors (markdown lint / repo formatting conventions, if configured)
-- [ ] Build succeeds (`go build ./...`)
+- [x] `go test ./cmd/atcr/... -run TestDocs` passes (no flag/index regressions introduced by this edit)
+- [x] No linting errors (markdown lint / repo formatting conventions, if configured)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] Existing "Preserved (allowlist)" / "Stripped / never exported" content is unchanged
-- [ ] New subsection describes the telemetry ping and `--sync-cloud` path as separate/additive from the `--export` allowlist
-- [ ] New subsection cross-links to `docs/telemetry.md`
-- [ ] No sentence implies the new data path weakens or supersedes the existing `--export` guarantee
+- [x] Existing "Preserved (allowlist)" / "Stripped / never exported" content is unchanged
+- [x] New subsection describes the telemetry ping and `--sync-cloud` path as separate/additive from the `--export` allowlist
+- [x] New subsection cross-links to `docs/telemetry.md`
+- [x] No sentence implies the new data path weakens or supersedes the existing `--export` guarantee
 
 **Manual Review:**
 - [ ] Code reviewed and approved
-- [ ] Diff confirms the edit is additive only (no removed or reworded existing Privacy Model content)
+- [x] Diff confirms the edit is additive only (no removed or reworded existing Privacy Model content)

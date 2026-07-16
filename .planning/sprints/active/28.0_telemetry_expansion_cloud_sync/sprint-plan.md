@@ -626,13 +626,13 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
 
 **Story:** [05 - Telemetry Privacy Documentation](plan/user-stories/05-telemetry-privacy-documentation.md) | **ACs:** [05-01](plan/acceptance-criteria/05-01-telemetry-doc-content-and-index.md), [05-02](plan/acceptance-criteria/05-02-scorecard-privacy-model-updated.md), [05-03](plan/acceptance-criteria/05-03-docs-audit-tests-pass.md)
 
-### 5.1 [ ] **[Telemetry Privacy Documentation - RED](plan/user-stories/05-telemetry-privacy-documentation.md)**
+### 5.1 [x] **[Telemetry Privacy Documentation - RED](plan/user-stories/05-telemetry-privacy-documentation.md)**
    Confirm the existing gates fail correctly against the not-yet-written docs, verify they fail correctly:
    - Run `go test ./cmd/atcr/... -run TestDocs` before writing any docs — confirm `TestDocsIndexCoversEveryDoc` and `TestDocsClaimedFlagsAreReal` currently pass (no undocumented flags reference `docs/telemetry.md` yet) and note the exact flags/env vars from Phases 2-4 that must appear once the doc is written: `--sync-cloud`, `--cloud-endpoint`, `ATCR_TELEMETRY`, `ATCR_API_KEY`, `atcr config set telemetry`
    - Add `TestDocsAudit_TelemetryDocIndexed` if not already covered generically by `TestDocsIndexCoversEveryDoc` — asserts `docs/telemetry.md` is linked from `docs/README.md` once created (05-01)
    **Files:** `cmd/atcr/docs_audit_test.go` (verify existing coverage, add only if a gap exists) | **Duration:** 0.25 day
 
-### 5.2 [ ] **[Telemetry Privacy Documentation - GREEN](plan/user-stories/05-telemetry-privacy-documentation.md)**
+### 5.2 [x] **[Telemetry Privacy Documentation - GREEN](plan/user-stories/05-telemetry-privacy-documentation.md)**
    Minimal content (T1), verify all (T2), COMMIT:
    - `docs/telemetry.md` (new) — modeled on `docs/scorecard.md`'s Privacy Model structure: overview of what runs and when; a Privacy Model section with "Preserved"/"Stripped — never exported" lists for the `{event, lang, lines, status}` telemetry payload (Story 1); an Opt-Out section documenting both `` `ATCR_TELEMETRY=0` `` and `` `atcr config set telemetry false` `` with example commands (Story 2); a Persona Leaderboard Data section explaining the hashed Persona ID and why it is a one-way hash (Story 3); a Cloud Sync (`` `--sync-cloud` ``) section documenting the `ATCR_API_KEY` Bearer-token flow and the distinct `exitAuth` exit code (Story 4)
    - `docs/README.md` — add a new link to `docs/telemetry.md` in the Benchmarking & observability section, alongside `scorecard.md`/`metrics.md`
@@ -640,7 +640,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
    COMMIT: `git commit -m "docs(telemetry): add telemetry.md, index link, scorecard privacy cross-reference (green)"`
    **Files:** `docs/telemetry.md`, `docs/README.md`, `docs/scorecard.md` | **Duration:** 0.5 day
 
-### 5.2.A [ ] **[Telemetry Privacy Documentation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-telemetry-privacy-documentation.md)**
+### 5.2.A [x] **[Telemetry Privacy Documentation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-telemetry-privacy-documentation.md)**
    **Changed Files:** `docs/telemetry.md`, `docs/README.md`, `docs/scorecard.md`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 5.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -658,25 +658,23 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh general-purpose subagent, no CRITICAL/HIGH):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | docs/telemetry.md:14 (+ scorecard.md) | Doc stated the usage ping "fires silently as a byproduct" (present/active), but `defaultTelemetryEndpoint = ""` (cmd/atcr/telemetry.go:18) makes every `Send` a wired no-op — nothing is transmitted in any build today. Safe direction (overstates transmission) but inaccurate against the current build. | Fixed inline in 5.3: added a "Currently inactive" disclosure note (compiled-in endpoint empty → wired no-op; schema describes the payload that *would* be sent) and softened the scorecard.md cross-reference to "wired to emit ... currently an inactive no-op". |
+   | LOW | docs/telemetry.md:25-33 | `reconcile_run` events send `lang=""`/`lines=0` by contract (cmd/atcr/telemetry.go:86, TD-005); the schema table implied both fields are always populated. | Fixed inline in 5.3: added a note that `lang`/`lines` are populated only for `review_run`; a `reconcile_run` carries empty `lang` and `0` lines. |
+   | LOW | docs/telemetry.md:25-30 | Only `review_run` was shown as the `event` example; the real second value `reconcile_run` (cmd/atcr/telemetry.go:86) was never shown. | Fixed inline in 5.3: `event` example now lists both `review_run`/`reconcile_run`. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 5.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH — proceed. All three findings are doc-accuracy defects in a Story whose sole purpose is accuracy, and each fix is a trivial additive clarification, so all three are fixed inline in 5.3 (resolved > deferred, matching the earlier phases' handling of trivial findings). No new tech-debt entry needed. `go test ./cmd/atcr/... -run TestDocs` re-run green after the edits.
 
-### 5.3 [ ] **[Telemetry Privacy Documentation - REFACTOR](plan/user-stories/05-telemetry-privacy-documentation.md)**
+### 5.3 [x] **[Telemetry Privacy Documentation - REFACTOR](plan/user-stories/05-telemetry-privacy-documentation.md)**
    1. Fix CRITICAL/HIGH issues from 5.2.A (if any)
    2. Cross-reference every documented flag/env var against the actual implemented code from Phases 2-4 (not the plan's proposed names); maintain green (T3)
    3. Manual review: read `docs/telemetry.md` and the updated `docs/scorecard.md` Privacy Model section without source-code lookups, confirm they stand alone and don't contradict each other (05-01, 05-02)
    4. COMMIT: `git commit -m "docs(telemetry): address review + cross-reference finalized contracts"`
    **Duration:** 0.25 day
 
-### 5.4 [ ] **Phase 5 — DoD Validation**
+### 5.4 [x] **Phase 5 — DoD Validation**
    - `go test ./cmd/atcr/... -run TestDocs` passing — `TestDocsIndexCoversEveryDoc` and `TestDocsClaimedFlagsAreReal` both green (05-03)
    - `go build ./...` clean; `go vet ./...` clean; `golangci-lint run` 0 errors
    - Manual read-through confirms no claim in `docs/telemetry.md` contradicts the actual Phase 2-4 implementation
@@ -687,7 +685,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      Manual Review: [ ] docs/telemetry.md walkthrough  [ ] docs/scorecard.md cross-reference validated
      ```
 
-### 5.LAST [ ] **Phase 5 - GATE: Integration & Exit Review (subagent)**
+### 5.LAST [x] **Phase 5 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 5 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -706,11 +704,12 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh general-purpose integration reviewer — no findings):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | _(none)_ | — | No findings across all 5 checklist items | — |
+
+   **Phase gate passed.** Fresh integration reviewer verified every load-bearing doc claim against source: CONTRACT EXIT — `--sync-cloud`/`--cloud-endpoint` (flags.go:47-48), `ATCR_TELEMETRY`, `ATCR_API_KEY`+`Bearer` (cloudsync.go:169), `exitAuth=3`/`exitUsage=2`/`exitFailure=1` (main.go:88-90), 401/403→exitAuth, unsalted SHA-256 hash, empty `defaultTelemetryEndpoint`, the 4-field `{event,lang,lines,status}` allowlist, and `reconcile_run`'s empty `lang`/`lines=0` all match code exactly; the only two flags scoped by the `` `--x` flag `` audit idiom (`--sync-cloud`, `--cloud-endpoint`) are both real. CONFIG SURFACE — `telemetry.md` linked under "Benchmarking & observability" (README.md:66-67), no orphan. INTEGRATION — `git diff main` confirms the `docs/scorecard.md` change is a purely additive H3 that explicitly *reinforces* (never weakens) the Epic 10.0 `--export` guarantee. REGRESSION — `go test ./cmd/atcr/... -run TestDocs -count=1` → green. No CRITICAL/HIGH/MEDIUM/LOW.
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.

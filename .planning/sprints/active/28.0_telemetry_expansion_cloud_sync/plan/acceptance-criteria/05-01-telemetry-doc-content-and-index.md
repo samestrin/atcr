@@ -2,6 +2,8 @@
 
 **Related User Story:** [05: Telemetry Privacy Documentation](../user-stories/05-telemetry-privacy-documentation.md)
 
+> **Refinement note (2026-07-15, /refine-sprint):** This AC is the **sole creator** of `docs/telemetry.md` and its `docs/README.md` "Benchmarking & observability" index link. Its Opt-Out section must satisfy the content requirements defined in AC 02-04 (exact `ATCR_TELEMETRY` accepted values, `atcr config set telemetry <true|false>` command, and the inverse-boolean-direction warning vs. `ATCR_DISABLE_AST_GROUPING`). AC 02-04's `docs_audit_test.go` fact-check is validated here in Phase 5, once this file exists.
+
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -81,18 +83,18 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./cmd/atcr/... -run TestDocsIndexCoversEveryDoc` passes
-- [ ] `go test ./cmd/atcr/... -run TestDocsClaimedFlagsAreReal` passes
-- [ ] No linting errors (markdown lint / repo formatting conventions, if configured)
-- [ ] Build succeeds (`go build ./...`)
+- [x] `go test ./cmd/atcr/... -run TestDocsIndexCoversEveryDoc` passes
+- [x] `go test ./cmd/atcr/... -run TestDocsClaimedFlagsAreReal` passes
+- [x] No linting errors (markdown lint / repo formatting conventions, if configured)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `docs/telemetry.md` documents the `{event, lang, lines, status}` schema and what is never collected
-- [ ] `docs/telemetry.md` documents `ATCR_TELEMETRY` and `atcr config set telemetry` with correct value semantics and OR'd behavior
-- [ ] `docs/telemetry.md` documents Persona ID hashing (deterministic, non-reversible, separate from `--export`)
-- [ ] `docs/telemetry.md` documents `--sync-cloud`/`ATCR_API_KEY`/Bearer auth and the dedicated auth exit code
-- [ ] `docs/README.md` links `telemetry.md` under "Benchmarking & observability"
+- [x] `docs/telemetry.md` documents the `{event, lang, lines, status}` schema and what is never collected
+- [x] `docs/telemetry.md` documents `ATCR_TELEMETRY` and `atcr config set telemetry` with correct value semantics and OR'd behavior
+- [x] `docs/telemetry.md` documents Persona ID hashing (deterministic, non-reversible, separate from `--export`)
+- [x] `docs/telemetry.md` documents `--sync-cloud`/`ATCR_API_KEY`/Bearer auth and the dedicated auth exit code
+- [x] `docs/README.md` links `telemetry.md` under "Benchmarking & observability"
 
 **Manual Review:**
 - [ ] Code reviewed and approved
-- [ ] Each documented flag/env var/exit code cross-checked against the actual merged Stories 1-4 implementation, not the plan's proposed names
+- [x] Each documented flag/env var/exit code cross-checked against the actual merged Stories 1-4 implementation, not the plan's proposed names

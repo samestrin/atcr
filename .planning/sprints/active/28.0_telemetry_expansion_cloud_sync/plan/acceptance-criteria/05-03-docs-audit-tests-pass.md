@@ -72,15 +72,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./cmd/atcr/... -run TestDocs` exits 0
-- [ ] `go vet ./cmd/atcr/...` reports no issues
-- [ ] Build succeeds (`go build ./...`)
+- [x] `go test ./cmd/atcr/... -run TestDocs` exits 0
+- [x] `go vet ./cmd/atcr/...` reports no issues
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `TestDocsIndexCoversEveryDoc` passes with `docs/telemetry.md` present and linked
-- [ ] `TestDocsClaimedFlagsAreReal` passes with `--sync-cloud` (and any other newly documented flag) resolving against the real compiled command tree
-- [ ] Test run performed against a build that includes Stories 1-4's merged flag/env-var/exit-code contracts, not speculative names
+- [x] `TestDocsIndexCoversEveryDoc` passes with `docs/telemetry.md` present and linked
+- [x] `TestDocsClaimedFlagsAreReal` passes with `--sync-cloud` (and any other newly documented flag) resolving against the real compiled command tree
+- [x] Test run performed against a build that includes Stories 1-4's merged flag/env-var/exit-code contracts, not speculative names
 
 **Manual Review:**
 - [ ] Code reviewed and approved
-- [ ] Test output captured/confirmed locally (`go test ./cmd/atcr/... -run TestDocs -v`) as part of this story's Definition of Done, per the story's Potential Risks mitigation
+- [x] Test output captured/confirmed locally (`go test ./cmd/atcr/... -run TestDocs -v`) as part of this story's Definition of Done, per the story's Potential Risks mitigation
