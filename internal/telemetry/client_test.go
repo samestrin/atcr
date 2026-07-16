@@ -219,6 +219,30 @@ func TestClient_Send_SetDoRequestForTest_NoRace(t *testing.T) {
 	c.Wait()
 }
 
+// TestIsHTTPS_RequiresHost asserts isHTTPS rejects structurally-invalid HTTPS
+// URLs that lack a host, preventing the client from spawning a goroutine for an
+// endpoint that can never succeed (TD-016).
+func TestIsHTTPS_RequiresHost(t *testing.T) {
+	cases := []struct {
+		endpoint string
+		want     bool
+	}{
+		{"https://example.com/path", true},
+		{"https://example.com", true},
+		{"https://", false},
+		{"https:///x", false},
+		{"https:foo", false},
+		{"", false},
+		{"http://example.com", false},
+	}
+	for _, tc := range cases {
+		got := isHTTPS(tc.endpoint)
+		if got != tc.want {
+			t.Errorf("isHTTPS(%q) = %v, want %v", tc.endpoint, got, tc.want)
+		}
+	}
+}
+
 // TestContext_RoundTrip covers the context injection seam: a client stored via
 // NewContext is returned by FromContext, and a bare context yields nil (whose
 // Send is a safe no-op).
