@@ -45,6 +45,15 @@ func TestResolveSyncCloud_InvalidEndpoint_UsageError(t *testing.T) {
 	assert.Equal(t, exitUsage, exitCode(err))
 }
 
+func TestResolveSyncCloud_NonLoopbackHTTP_Rejected(t *testing.T) {
+	t.Setenv("ATCR_API_KEY", "valid-key")
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", "http://example.com"}))
+	_, err := resolveSyncCloud(cmd)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+}
+
 func TestResolveSyncCloud_ValidKeyAndEndpoint_Enabled(t *testing.T) {
 	t.Setenv("ATCR_API_KEY", "valid-key")
 	cmd := newReviewCmd()
