@@ -72,9 +72,12 @@ func SetTelemetrySetting(root string, enabled bool) error {
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", filepath.Base(path), err)
 	}
-	// Atomic replace (temp + rename) so a crash or full disk mid-write can never
-	// truncate the whole config — roster and every other key — into a state the
-	// strict loader rejects. Mirrors the trust-store write (trust.go).
+	// Atomic replace (temp + rename) so a rename-swap never leaves a half-written
+	// file at the live path: the temp is fully written and fsync'd, then the rename
+	// flips the name atomically. Rename alone only atomizes the name swap — fsync
+	// of the temp's data and the parent dir is what makes the write durable across
+	// a crash; without it a crash can leave the renamed file's blocks un-persisted.
+	// Mirrors the trust-store write (trust.go).
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
 	if err != nil {
@@ -90,11 +93,22 @@ func SetTelemetrySetting(root string, enabled bool) error {
 		_ = tmp.Close()
 		return fmt.Errorf("write %s temp: %w", filepath.Base(path), err)
 	}
+	// fsync the temp's data before the rename so the renamed file's blocks are
+	// persisted, not just the name swap.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync %s temp: %w", filepath.Base(path), err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close %s temp: %w", filepath.Base(path), err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	// fsync the parent directory so the rename (a directory-entry update) is
+	// durable too; otherwise a crash can roll the live path back to the old file.
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("sync %s dir: %w", filepath.Base(path), err)
 	}
 	return nil
 }
@@ -139,4 +153,16 @@ func boolLiteral(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// syncDir fsyncs the directory holding the config so the rename that swapped in
+// the new config is durable across a crash — the rename updates a directory
+// entry, which the filesystem must persist separately from the file's data.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
