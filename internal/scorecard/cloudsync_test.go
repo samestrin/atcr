@@ -185,6 +185,27 @@ func TestPush_DoesNotFollowRedirect_NoBearerLeak(t *testing.T) {
 	}
 }
 
+// TestPush_TransportError_RedactsEndpointUserinfo covers the cloudsync.go:173 TD: a
+// --cloud-endpoint carrying embedded userinfo (https://user:pass@host) must have its
+// password redacted from the transport-error message — that error is surfaced to
+// stderr as `warning: %v` by finishCloudSync, so echoing the raw endpoint leaks the
+// password to logs.
+func TestPush_TransportError_RedactsEndpointUserinfo(t *testing.T) {
+	restore := cloudRequestTimeout
+	cloudRequestTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { cloudRequestTimeout = restore })
+
+	// https scheme passes ValidateCloudEndpoint; port 1 is closed, so Do fails at
+	// transport — exercising the error path that formats the endpoint string.
+	err := Push(context.Background(), "https://user:secretpass@127.0.0.1:1/ingest", "k", sampleCloudRecord())
+	if err == nil {
+		t.Fatal("expected a transport error against a closed port")
+	}
+	if containsStr(err.Error(), "secretpass") {
+		t.Fatalf("endpoint password leaked into error message: %v", err)
+	}
+}
+
 // TestValidateCloudEndpoint_Cases covers AC 04-02 EC4 and the HTTPS-with-loopback
 // exemption.
 func TestValidateCloudEndpoint_Cases(t *testing.T) {
