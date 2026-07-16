@@ -62,8 +62,13 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return usageError(fmt.Errorf("invalid value %q for telemetry: must be a boolean (true/false/1/0)", raw))
 	}
-	// cwd-relative, matching how every other command locates project config.
-	if err := registry.SetTelemetrySetting(".", enabled); err != nil {
+	// Resolve the repo root so `config set` works from any subdirectory, not
+	// just the directory that happens to contain .atcr/config.yaml.
+	root, err := repoRoot()
+	if err != nil {
+		return err
+	}
+	if err := registry.SetTelemetrySetting(root, enabled); err != nil {
 		// An I/O failure (missing/unwritable file) is an environment error (exit
 		// 1), NOT a usage mistake — config set never silently creates the file.
 		return err
