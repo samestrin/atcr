@@ -49,6 +49,12 @@ func LoadTelemetrySetting(root string) (*bool, error) {
 // environment failure, not a usage mistake); this never creates the file.
 func SetTelemetrySetting(root string, enabled bool) error {
 	path := DefaultProjectConfigPath(root)
+	// A symlinked config would be silently severed: Stat/ReadFile follow the
+	// link while the atomic Rename replaces the link itself with a regular file,
+	// writing to the wrong logical location. Reject up front.
+	if li, err := os.Lstat(path); err == nil && li.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("config %s: symlinked configs are unsupported — rename would sever the link; use a regular file", path)
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
