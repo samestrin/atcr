@@ -81,3 +81,10 @@ Read by `/execute-code-review` (pre-seeded into the adversarial TD stream, tagge
 **Issue:** Only the reconcile call site has a counting-send end-to-end test (`TestReconcile_TelemetryGate_EndToEnd`). The review call site shares the same `telemetryGate()` function and is guarded identically, but a future divergence in the review path (e.g. building the event outside the `if` gate) would go uncaught.
 **Why accepted:** Non-blocking; the gate is a single shared function, exhaustively unit-tested (env matrix, 4-way OR matrix, malformed) and proven end-to-end on the reconcile path. `runReview` is heavy to drive to completion in a unit test (real git range + roster + fanout engine), which is why the e2e proof lives on the lighter reconcile path.
 **Fix in:** A later pass — add a review-path end-to-end test mirroring the reconcile one once a lightweight `runReview` harness (stubbed fanout) exists, or lift the gate check into a shared helper both call sites invoke so one test covers both.
+
+## TD-012 — `atcr init` config template omits the telemetry key (MEDIUM)
+**Origin:** Phase 3, task 3.LAST gate review, 2026-07-15
+**File:** internal/registry/project.go (DefaultProjectConfigYAML)
+**Issue:** Every other project-config knob is self-documented in the template `atcr init` writes, but `telemetry` is emitted nowhere — no key, no comment. A privacy-relevant opt-out is undiscoverable from the generated `.atcr/config.yaml` itself; users must find external docs. The default (nil = enabled) and back-compat with pre-field configs are correct — this is purely a discoverability gap.
+**Why accepted:** Non-blocking; the opt-out is fully functional and will be documented in `docs/telemetry.md` (Story 5, Phase 5). The AC scope for Story 2 (02-04) is `docs/telemetry.md` + the `config set` help text, not the init template.
+**Fix in:** Phase 5 (Story 5) or a later docs pass — add a commented `# telemetry: true  # anonymous usage ping; set false (or ATCR_TELEMETRY=0) to opt out` line to `DefaultProjectConfigYAML`, matching the self-documenting convention of the other knobs.

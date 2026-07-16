@@ -48,6 +48,13 @@ func telemetryEnabled(envEnabled bool, cfgTelemetry *bool) bool {
 // can never re-enable a ping the user may have intended to disable. (On the
 // review path the same corruption also surfaces loudly via the strict
 // LoadProjectConfig roster load, aborting before Send is ever reached.)
+//
+// SCOPE — passive ping ONLY. This gate governs the anonymous, background usage
+// ping. It MUST NOT gate the Phase-4 `--sync-cloud` push: that is an EXPLICIT,
+// user-invoked action, so suppressing it via this passive-ping opt-out would
+// silently no-op something the user explicitly requested — the wrong consent
+// model. `--sync-cloud` gets its own opt-in surface (the presence of a valid
+// ATCR_API_KEY plus the explicit flag), independent of telemetryGate.
 func telemetryGate() bool {
 	env := telemetryEnabledFromEnv()
 	cfg, err := registry.LoadTelemetrySetting(".")
