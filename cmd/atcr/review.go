@@ -430,9 +430,10 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 				if err != nil {
 					outcome = "failure"
 				}
-				if syncErr := runSyncCloud(ctx, cmd.ErrOrStderr(), syncPlan, result.Dir, outcome); syncErr != nil {
-					err = syncErr
-				}
+				// resolveSyncCloudOutcome bounds the auth override so a post-run 401 can
+				// supersede a success or a plain findings-gate failure, but never masks
+				// an already-coded exit-2 pipeline failure (reconcile/verify/debate I/O).
+				err = resolveSyncCloudOutcome(err, runSyncCloud(ctx, cmd.ErrOrStderr(), syncPlan, result.Dir, outcome))
 			}()
 		}
 	}

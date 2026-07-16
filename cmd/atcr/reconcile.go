@@ -194,9 +194,10 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		if gateErr != nil {
 			outcome = "failure"
 		}
-		if syncErr := runSyncCloud(cmd.Context(), cmd.ErrOrStderr(), syncPlan, reviewDir, outcome); syncErr != nil {
-			return syncErr
-		}
+		// Symmetric with review.go: an auth rejection overrides the findings gate
+		// (exit 1) but never an already-coded failure — though at this point gateErr
+		// is only ever nil or the plain exit-1 gate error (infra errors returned above).
+		return resolveSyncCloudOutcome(gateErr, runSyncCloud(cmd.Context(), cmd.ErrOrStderr(), syncPlan, reviewDir, outcome))
 	}
 	return gateErr
 }

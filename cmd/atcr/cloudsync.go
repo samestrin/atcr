@@ -61,6 +61,25 @@ func runSyncCloud(ctx context.Context, w io.Writer, plan syncCloudPlan, reviewDi
 	return finishCloudSync(w, scorecard.Push(ctx, plan.endpoint, plan.apiKey, rec))
 }
 
+// resolveSyncCloudOutcome combines the run's own outcome (runErr) with the result
+// of the cloud-sync push (syncErr, always nil or an authError from finishCloudSync)
+// into the command's final return. An auth rejection (exit 3) overrides a SUCCESS
+// (nil) or a plain findings-gate failure (a non-coded, exit-1 error) — per AC 04-04
+// — but MUST NOT mask an already-coded failure (a usage/config/infra error, exit 2):
+// misreporting a reconcile/verify I/O failure as an auth failure would hide the real
+// cause and its message. This bounds the auth override to the same blast radius as
+// reconcile.go, where the push can only ever supersede the exit-1 findings gate.
+func resolveSyncCloudOutcome(runErr, syncErr error) error {
+	if syncErr == nil {
+		return runErr
+	}
+	var coded *codedError
+	if runErr == nil || !errors.As(runErr, &coded) {
+		return syncErr
+	}
+	return runErr // preserve an already-coded (usage/config/infra) failure
+}
+
 // finishCloudSync maps a scorecard.Push error to the command's return value: an
 // auth rejection becomes an authError (exit 3); any other push failure is a
 // non-fatal, clearly-labeled warning to w and returns nil (the already-finalized

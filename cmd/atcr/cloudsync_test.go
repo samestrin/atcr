@@ -75,3 +75,25 @@ func TestFinishCloudSync_NilIsNoop(t *testing.T) {
 	assert.NoError(t, finishCloudSync(&buf, nil))
 	assert.Empty(t, buf.String())
 }
+
+// TestResolveSyncCloudOutcome covers the 4.LAST gate fix: an auth rejection
+// overrides a success or a plain findings-gate failure (exit 1), but must NOT mask
+// an already-coded (exit 2) usage/infra failure.
+func TestResolveSyncCloudOutcome(t *testing.T) {
+	authErr := authError(errors.New("auth rejected"))
+	usage := usageError(errors.New("reconcile I/O failed")) // exit 2
+	gate := errors.New("findings survived")                 // plain → exit 1
+
+	// No push error → the run's own outcome is returned unchanged.
+	assert.Nil(t, resolveSyncCloudOutcome(nil, nil))
+	assert.Equal(t, usage, resolveSyncCloudOutcome(usage, nil))
+	assert.Equal(t, gate, resolveSyncCloudOutcome(gate, nil))
+
+	// Auth rejection overrides a success and a plain findings-gate failure.
+	assert.Equal(t, exitAuth, exitCode(resolveSyncCloudOutcome(nil, authErr)))
+	assert.Equal(t, exitAuth, exitCode(resolveSyncCloudOutcome(gate, authErr)))
+
+	// Auth rejection must NOT mask an already-coded (exit 2) infra/usage failure.
+	assert.Equal(t, exitUsage, exitCode(resolveSyncCloudOutcome(usage, authErr)))
+	assert.Equal(t, usage, resolveSyncCloudOutcome(usage, authErr), "the original coded error is preserved verbatim")
+}
