@@ -669,6 +669,21 @@ func TestReviewCmd_SyncCloud_PushesAfterRunOnFailure(t *testing.T) {
 // review path: a 401 from the endpoint overrides the run's own exit code with
 // exitAuth (3) — the push runs after the run, so bookkeeping is not skipped, but
 // the auth failure wins the final code.
+// TestReviewCmd_SyncCloud_WarnsWhenNoResult verifies that when --sync-cloud is
+// enabled but the run exits before producing a result, the user sees a clear
+// stderr notice instead of a silently skipped push.
+func TestReviewCmd_SyncCloud_WarnsWhenNoResult(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_API_KEY", "valid-key")
+	root := newRootCmd()
+	var stderr bytes.Buffer
+	root.SetOut(io.Discard)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"review", "--sync-cloud", "--require-verified"})
+	_ = root.ExecuteContext(context.Background())
+	require.Contains(t, stderr.String(), "--sync-cloud push skipped because the run did not produce a result")
+}
+
 func TestReviewCmd_SyncCloud_AuthRejectionOverridesExit(t *testing.T) {
 	isolate(t)
 	initGitRepoWithChange(t)
