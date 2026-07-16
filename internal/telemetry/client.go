@@ -80,7 +80,7 @@ func New(endpoint string) *Client {
 // no-ops rather than ever sending in the clear.
 func isHTTPS(endpoint string) bool {
 	u, err := url.Parse(endpoint)
-	return err == nil && strings.EqualFold(u.Scheme, "https")
+	return err == nil && strings.EqualFold(u.Scheme, "https") && u.Host != ""
 }
 
 // Send fires ev to the endpoint on a detached goroutine and returns immediately.
