@@ -12,6 +12,29 @@ Before each phase, review `/CLAUDE.md` (or AGENTS.md).
 
 ---
 
+## Clarifications
+
+### Phase 1 Clarifications (recorded 2026-07-15)
+
+**Key Decisions:**
+- Gated run scope: this `/execute-sprint` invocation executes **Phase 1 (Research & Spike) only**, then HARD STOPs at the `1.LAST` gate before Phase 2. Phase 1 merges no production code — its deliverable is a confirmed design note.
+- "Isolated from `PublicRecord`" is interpreted as a brand-new struct in a new file (`internal/scorecard/telemetry.go`), never a field added to `PublicRecord` nor a bypass flag on `scrubField`.
+- stdlib-only implementation (`net/http`, `encoding/json`, `context`, `crypto/sha256`) — no new third-party dependency.
+
+**Scope Boundaries:**
+- IN scope: CLI telemetry emission, Persona ID hashing, `--sync-cloud` push, opt-out gate, privacy docs.
+- OUT of scope: building the `atcr.dev/dashboard` SaaS UI (per original-requirements Out of Scope). The real cloud endpoint auth/response contract is owned outside this plan; all tests use `httptest` mocks + a `--cloud-endpoint` override — zero live network in CI.
+
+**Technical Approach (verified against live code 2026-07-15):**
+- Construction/exit seams exist as planned: `newRootCmd` (main.go:128), `logLevelFromEnv` (:216), `exitFailure`/`exitUsage` (:84-85), `codedError` (:89).
+- Call sites exist: `runReview` (review.go:170), `runReconcile` (reconcile.go:71), `EmitForReconcile` (reconcile.go:148).
+- Privacy boundary intact and locatable: `PublicRecord` (export.go:35), `AnonymizeRecord` (:143), `ScrubPublicRecord` (:156), `scrubField` (:321); `Record.Reviewer` (scorecard.go:56).
+- Idioms to model on: `newDebtCmd` (debt.go:26), `addRangeFlags` (flags.go:14), `ProjectConfig` pointer fields (project.go:74-89).
+
+**Unvalidated assumptions:** None — every cited file/symbol/line verified before execution.
+
+---
+
 ## Sprint Overview
 
 **Metadata:** See [metadata.md](metadata.md) for complete plan and sprint tracking details.
@@ -140,14 +163,15 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
 
 **Focus:** Validate the `internal/telemetry` client's construction shape (goroutine + bounded `context.Context` + `defer recover()`) and confirm the separate-schema design for Persona ID hashing before any RED tests are written, since neither pattern has codebase precedent. No production code merged in this phase — output is a confirmed design note, not a deliverable.
 
-### 1.1 [ ] **[Telemetry Client + Persona-Hash Schema Design Spike](plan/sprint-design.md)**
+### 1.1 [x] **[Telemetry Client + Persona-Hash Schema Design Spike](plan/sprint-design.md)**
+   **Design note:** `.planning/.temp/execute-sprint/phase1-design-note.md` (confirmed 2026-07-15). All 3 shapes confirmed: (a) `telemetry.Client.Send` goroutine + bounded 2-3s ctx + `defer recover()`, gate-seam inside `Send` so Story 2 adds no call-site reshape; (b) `HashPersonaID` in new `internal/scorecard/telemetry.go`, no `PublicRecord` field / no `scrubField` bypass; (c) `CloudSyncRecord` NOT a `PublicRecord` superset, consumes Story 3 hash unmodified. GAP surfaced → TD-001 (time/credits-saved metric absent from codebase; Phase-4-scoped, non-blocking).
    1. Draft the `internal/telemetry.Client` construction shape: goroutine + bounded `context.Context` (2-3s timeout) + `defer recover()`; confirm it can be constructed once at `cmd/atcr/main.go:newRootCmd` and later gated to a no-op (Story 2) without reshaping the `runReview`/`runReconcile` call sites.
    2. Draft the dedicated Persona ID hashing shape (`HashPersonaID(raw string) string` + a new telemetry/cloud-sync record type) and confirm it stays structurally isolated from `PublicRecord`/`scrubField`/`AnonymizeRecord`/`ScrubPublicRecord` in `internal/scorecard/export.go`.
    3. Confirm the cloud-sync allowlist schema (Story 4) is NOT a superset of `PublicRecord` and can carry the Story 3 hashed Persona ID plus time/credits-saved metrics.
    4. Record the confirmed shapes as a design note (in this task's checkbox comment or a scratch file under `.planning/.temp/`) — no RED tests are written elsewhere until this spike confirms all three shapes.
    **Files:** none (design note only) | **Duration:** 1 day
 
-### 1.2 [ ] **Phase 1 — DoD Validation**
+### 1.2 [x] **Phase 1 — DoD Validation**
    - No production code changed this phase — `go build ./...` and `go test ./...` remain green at baseline (no regression risk)
    - Design note confirms: (a) telemetry client construction shape, (b) persona-hash schema isolation from `PublicRecord`, (c) cloud-sync schema is not a `PublicRecord` superset
    - DoD report:
@@ -157,7 +181,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      Manual Review: [ ] Design note reviewed
      ```
 
-### 1.LAST [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+### 1.LAST [x] **Phase 1 - GATE: Integration & Exit Review (subagent)**
    **Scope:** The Phase 1 design note (no code changed)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -176,11 +200,12 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (final, round 4 — no CRITICAL/HIGH):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | _(none)_ | — | No CRITICAL/HIGH after 4 fresh-subagent gate rounds | — |
+
+   **Phase gate passed.** The gate ran 4 rounds against a fresh subagent each time (design note: `.planning/.temp/execute-sprint/phase1-design-note.md`). Rounds 1-3 caught and resolved: (r1) `enabled` frozen at construction couldn't honor persisted config opt-out → per-run `telemetryGate(cmd)`; (r2) bare-func RunE seam + reconcile has no config in scope → package-var `telemetryClient` + helper self-loads `registry.ProjectConfig`; (r3) nil-receiver panic in tests → `if c == nil` guard in `Send`. Round 4: **no CRITICAL/HIGH**. Remaining 2 MEDIUM + 2 LOW captured as **TD-002..TD-005** in `tech-debt-captured.md` (empty-endpoint no-op, global-client test-isolation, dead `ctx` param, reconcile event-field derivation) and folded into the design note's Phase 2 Build Guidance.
 
    **Action Required:**
    - CRITICAL/HIGH found -> Revise the design note before Phase 2 starts, do NOT proceed until resolved. Re-run gate.
@@ -202,7 +227,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
 
 **Story:** [01 - Anonymous Usage Telemetry Ping](plan/user-stories/01-anonymous-usage-telemetry-ping.md) | **ACs:** [01-01](plan/acceptance-criteria/01-01-fire-and-forget-telemetry-send.md), [01-02](plan/acceptance-criteria/01-02-bounded-non-blocking-timeout.md), [01-03](plan/acceptance-criteria/01-03-panic-safe-fail-open.md), [01-04](plan/acceptance-criteria/01-04-schema-constrained-payload.md)
 
-### 2.1 [ ] **[Telemetry Client - RED](plan/user-stories/01-anonymous-usage-telemetry-ping.md)**
+### 2.1 [x] **[Telemetry Client - RED](plan/user-stories/01-anonymous-usage-telemetry-ping.md)**
    Write comprehensive failing tests, verify they fail correctly:
    - `TestClient_Send_FiresFromGoroutine` — call returns immediately, request observed asynchronously via `httptest.NewServer` (01-01)
    - `TestClient_Send_BoundedTimeout_UnblocksOnHangOrUnreachable` — hung/unreachable mock endpoint, parent command still exits promptly (01-02)
@@ -210,7 +235,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
    - `TestClient_Send_PayloadHasExactlyFourAllowlistedKeys` — marshaled JSON asserted to contain only `event`, `lang`, `lines`, `status` (01-04)
    **Files:** `internal/telemetry/client_test.go` | **Duration:** 1 day
 
-### 2.2 [ ] **[Telemetry Client - GREEN](plan/user-stories/01-anonymous-usage-telemetry-ping.md)**
+### 2.2 [x] **[Telemetry Client - GREEN](plan/user-stories/01-anonymous-usage-telemetry-ping.md)**
    Minimal code, one test at a time (T1), verify all (T2), COMMIT:
    - `internal/telemetry/client.go` (new package) — `Client` type with a goroutine-based `Send(ctx context.Context, event TelemetryEvent)`; bounded `context.Context` (2-3s timeout); `defer recover()` around the goroutine body per `implementation-standards.md`'s Panic Safety guidance
    - `TelemetryEvent{Event, Lang string; Lines int; Status string}` — the sole allowlisted payload struct
@@ -219,7 +244,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
    COMMIT: `git commit -m "feat(telemetry): fire-and-forget client wired into review/reconcile (green)"`
    **Files:** `internal/telemetry/client.go`, `cmd/atcr/main.go`, `cmd/atcr/review.go`, `cmd/atcr/reconcile.go` | **Duration:** 1.5 days
 
-### 2.2.A [ ] **[Telemetry Client - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-anonymous-usage-telemetry-ping.md)**
+### 2.2.A [x] **[Telemetry Client - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-anonymous-usage-telemetry-ping.md)**
    **Changed Files:** `internal/telemetry/client.go`, `cmd/atcr/main.go`, `cmd/atcr/review.go`, `cmd/atcr/reconcile.go`, `internal/telemetry/client_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -237,18 +262,17 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh general-purpose subagent, no CRITICAL/HIGH):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | cmd/atcr/main.go:46-52 | Latent non-delivery: `main()` returns/`os.Exit` immediately after Send with no `Wait()` drain, so once a real endpoint lands the in-flight POST is killed mid-flight (~0% delivery). Harmless today (empty endpoint = no-op). | Bounded drain in `main()` before exit — captured as TD-006 (deferred: feature is a no-op this sprint; drain wiring pairs with the real-endpoint decision). |
+   | LOW | internal/telemetry/client.go:48 | `New` shares process-global `http.DefaultClient`. | Fixed in 2.3: dedicated `&http.Client{}`. |
+   | LOW | internal/telemetry/client.go:94 | Response body closed but not drained (blocks keep-alive reuse). | Fixed in 2.3: drain via `io.Copy(io.Discard, ...)`. |
+   | LOW | internal/telemetry/client.go:58 | Case-sensitive `https://` prefix check silently no-ops `HTTPS://`. | Fixed in 2.3: `net/url` scheme compare. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH — proceed. MEDIUM → TD-006. The 3 LOWs are trivial pure-quality hardening, fixed inline in 2.3 REFACTOR (resolved > deferred).
 
-### 2.3 [ ] **[Telemetry Client - REFACTOR](plan/user-stories/01-anonymous-usage-telemetry-ping.md)**
+### 2.3 [x] **[Telemetry Client - REFACTOR](plan/user-stories/01-anonymous-usage-telemetry-ping.md)**
    1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
    2. Improve code quality (T1); confirm the client exposes only `Send`/construction — no `net/http` leakage into `cmd/atcr` call sites
    3. Validate all tests still pass (T3)
@@ -259,7 +283,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
 
 **Story:** [03 - Persona ID Hashing for the Persona Leaderboard](plan/user-stories/03-persona-id-hashing-for-leaderboard.md) | **ACs:** [03-01](plan/acceptance-criteria/03-01-hashed-persona-id-function.md), [03-02](plan/acceptance-criteria/03-02-telemetry-persona-schema.md), [03-03](plan/acceptance-criteria/03-03-leaderboard-export-regression.md), [03-04](plan/acceptance-criteria/03-04-hash-property-unit-tests.md)
 
-### 2.4 [ ] **[Persona ID Hashing - RED](plan/user-stories/03-persona-id-hashing-for-leaderboard.md)**
+### 2.4 [x] **[Persona ID Hashing - RED](plan/user-stories/03-persona-id-hashing-for-leaderboard.md)**
    Write comprehensive failing tests, verify they fail correctly:
    - `TestHashPersonaID_Deterministic` — same input across repeated calls and simulated process restarts produces identical output (03-01, 03-04)
    - `TestHashPersonaID_UniquenessAcrossDifferentInputs` — different Persona IDs produce different hashes (03-04)
@@ -268,7 +292,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
    - `TestRunLeaderboardExport_ByteForByteRegression` — golden-file diff of `runLeaderboardExport`'s existing `--export` output before/after this story's changes (03-03)
    **Files:** `internal/scorecard/export_test.go` (regression) + new `internal/scorecard/telemetry_test.go` (hashing/schema) | **Duration:** 1 day
 
-### 2.5 [ ] **[Persona ID Hashing - GREEN](plan/user-stories/03-persona-id-hashing-for-leaderboard.md)**
+### 2.5 [x] **[Persona ID Hashing - GREEN](plan/user-stories/03-persona-id-hashing-for-leaderboard.md)**
    Minimal code, one test at a time (T1), verify all (T2), COMMIT:
    - `internal/scorecard/telemetry.go` (new file, kept out of `export.go` to reduce risk of accidental coupling to `PublicRecord`) — `HashPersonaID(raw string) string` via stdlib `crypto/sha256`, sourced from `Record.Reviewer` (`internal/scorecard/scorecard.go:52`), same field `AnonymizeRecord` already reads; explicit doc comment stating this is NOT part of the `PublicRecord` allowlist path
    - A dedicated telemetry/cloud-sync-scoped record type in the same file — distinct from `PublicRecord`, carries the hashed Persona ID plus time/credits-saved metrics
@@ -276,7 +300,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
    COMMIT: `git commit -m "feat(scorecard): deterministic Persona ID hashing + dedicated telemetry schema (green)"`
    **Files:** `internal/scorecard/telemetry.go` | **Duration:** 1.5 days
 
-### 2.5.A [ ] **[Persona ID Hashing - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-persona-id-hashing-for-leaderboard.md)**
+### 2.5.A [x] **[Persona ID Hashing - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-persona-id-hashing-for-leaderboard.md)**
    **Changed Files:** `internal/scorecard/telemetry.go`, `internal/scorecard/telemetry_test.go`, `internal/scorecard/export_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.5 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -294,25 +318,22 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh general-purpose subagent):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | internal/scorecard/telemetry.go:18 | Unsalted plain SHA-256 over low-entropy, enumerable persona names (`Record.Reviewer`, e.g. "bruce") is dictionary/rainbow-reversible — "non-reversible" is overstated. | Reviewer's option A (HMAC+pepper) **conflicts with the AC**: AC 03-01 EC1 pins the empty-string digest to plain-SHA-256 `e3b0c44…`, AC 03-04 pins plain digests, and no secret pepper is provisioned (out of Phase 2 scope). Applied reviewer's option B inline in 2.6: refine the docstring to accurately state the pseudonymization guarantee and its bound. HMAC hardening deferred → **TD-007** (pairs with the real-endpoint decision, needs secret + AC change). |
+   | LOW | internal/scorecard/telemetry.go:30 | `Model` copied through unhashed on an asserted "non-PII, already public" assumption; a future free-form/fine-tuned model id could carry sensitive data. | Deferred → **TD-008** (enforce Model is a known non-sensitive enum at the payload boundary). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.6, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action taken:** HIGH triaged — the spec-compatible part of the reviewer's own recommendation (accurate guarantee wording) applied inline in 2.6; the algorithm change (HMAC+pepper) contradicts the AC-pinned plain-SHA-256 digests and needs out-of-scope secret provisioning, so deferred as **TD-007** with rationale. LOW → **TD-008**. Plain SHA-256 kept per AC 03-01/03-04. **Flagged for user decision at the 2.LAST gate.**
 
-### 2.6 [ ] **[Persona ID Hashing - REFACTOR](plan/user-stories/03-persona-id-hashing-for-leaderboard.md)**
+### 2.6 [x] **[Persona ID Hashing - REFACTOR](plan/user-stories/03-persona-id-hashing-for-leaderboard.md)**
    1. Fix CRITICAL/HIGH issues from 2.5.A (if any)
    2. Improve code quality (T1); confirm no accidental import/coupling between `telemetry.go` and `PublicRecord`'s allowlist path
    3. Validate all tests still pass (T3)
    4. COMMIT: `git commit -m "refactor(scorecard): address review + clean up"`
    **Duration:** 0.5 day
 
-### 2.7 [ ] **Phase 2 — DoD Validation**
+### 2.7 [x] **Phase 2 — DoD Validation**
    - `go test ./internal/telemetry/... ./internal/scorecard/...` (T3 scoped) — all passing
    - `go build ./...` clean; `go vet ./...` clean; `golangci-lint run` 0 errors
    - Coverage: `internal/telemetry`, `internal/scorecard` both ≥80%
@@ -324,7 +345,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      Manual Review: [ ] Code reviewed
      ```
 
-### 2.LAST [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+### 2.LAST [x] **Phase 2 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -343,17 +364,12 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh general-purpose integration reviewer — no CRITICAL/HIGH):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | cmd/atcr/reconcile.go:163 | Reconcile telemetry status hardcoded `"success"`, fired before the gate — cannot distinguish gate-passed/failed reconciles (asymmetric with review). | Deferred → **TD-009**. Non-blocking. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-   - None found -> Note "Phase gate passed" and proceed to phase stop
-   **Duration:** 15-30 min
+   **Phase gate passed.** Build/vet/tests green across `internal/telemetry`, `internal/scorecard`, `cmd/atcr`; `git diff main --stat` empty for `export.go`/`leaderboard.go` (leaderboard `--export` byte-for-byte intact, pinned by the AC 03-03 checksum regression). Contracts stable: `Client.Send` short-circuits (`if c == nil || !isHTTPS`) before `wg.Add`/goroutine spawn, so Phase 3's opt-out gates at the same `PersistentPreRunE`/`FromContext` seam with zero call-site rework; `HashPersonaID` isolated in `scorecard/telemetry.go`, ready for Phase 4. Only LOW → TD-009.
 
 ---
 
@@ -375,7 +391,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
    - `TestConfigSetTelemetry_SubsequentInvocationGatedWithNoEnvVar` — after persisting `false`, a later `atcr review` with no env var set still makes zero HTTP requests (02-02)
    - `TestTelemetryOptOut_FourCombinationMatrix` — {env unset/0} × {config true/false}, disabled wins whenever either surface says off, no override chain (02-03)
    - `TestConfigSet_RejectsNonTelemetryKey` / `TestConfigSet_RejectsNonBoolValue` — `usageError` (`exitUsage`), never silently ignored
-   - `TestDocsAudit_ATCRTelemetryEnvVarCoverage` / `TestDocsAudit_ConfigSetTelemetryFlagCoverage` — `docs_audit_test.go` coverage extension for the new env var/command (02-04)
+   - `TestDocsAudit_ATCRTelemetryEnvVarCoverage` / `TestDocsAudit_ConfigSetTelemetryFlagCoverage` — `docs_audit_test.go` coverage extension for the new env var/command (02-04). In Phase 3 these assert the `atcr config set` `Long`/`--help` text (real this phase); the `docs/telemetry.md` content fact-check they author is **validated in Phase 5 (AC 05-03)** once Story 5 creates the doc. Do NOT create `docs/telemetry.md` in Phase 3 — it is owned solely by Story 5 (task 5.2).
    **Files:** `cmd/atcr/main_test.go`, `cmd/atcr/config_test.go` (new), `internal/registry/project_test.go`, `cmd/atcr/docs_audit_test.go` | **Duration:** 1 day
 
 ### 3.2 [ ] **[Telemetry Opt-Out - GREEN](plan/user-stories/02-telemetry-opt-out.md)**

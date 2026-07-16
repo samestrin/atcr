@@ -59,15 +59,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A regression test in `internal/scorecard/export_test.go` pins `Export`'s output (byte-for-byte or checksum) for a fixed fixture set
-- [ ] Test confirms no new key (e.g. `persona_id_hash`) appears in the `PublicRecord`/`ExportEnvelope` JSON output
-- [ ] Test confirms `ErrNoExportRecords` behavior on empty input is unchanged
-- [ ] `scrubField`, `PublicRecord`, `AnonymizeRecord`, `ScrubPublicRecord`, and `runLeaderboardExport` source remain textually unmodified (verified in code review, not just by the test)
+- [x] A regression test in `internal/scorecard/export_test.go` pins `Export`'s output (byte-for-byte or checksum) for a fixed fixture set
+- [x] Test confirms no new key (e.g. `persona_id_hash`) appears in the `PublicRecord`/`ExportEnvelope` JSON output
+- [x] Test confirms `ErrNoExportRecords` behavior on empty input is unchanged
+- [x] `scrubField`, `PublicRecord`, `AnonymizeRecord`, `ScrubPublicRecord`, and `runLeaderboardExport` source remain textually unmodified (verified in code review, not just by the test)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

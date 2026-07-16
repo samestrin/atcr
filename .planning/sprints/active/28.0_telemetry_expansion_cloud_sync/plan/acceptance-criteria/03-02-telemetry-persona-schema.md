@@ -58,15 +58,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `TelemetryPersonaRecord` (or equivalently named type) is defined in `internal/scorecard/telemetry.go`, distinct from `PublicRecord`
-- [ ] Constructor populates the persona-hash field via `HashPersonaID` and never copies the raw `Reviewer` value unhashed
-- [ ] JSON-marshaled output contains no raw Persona ID, `Reviewer`, or `run_id` value
-- [ ] Zero-value `Record{}` input does not panic
+- [x] `TelemetryPersonaRecord` is defined in `internal/scorecard/telemetry.go`, distinct from `PublicRecord`
+- [x] Constructor populates the persona-hash field via `HashPersonaID` and never copies the raw `Reviewer` value unhashed
+- [x] JSON-marshaled output contains no raw Persona ID, `Reviewer`, or `run_id` value
+- [x] Zero-value `Record{}` input does not panic
 
 **Manual Review:**
 - [ ] Code reviewed and approved

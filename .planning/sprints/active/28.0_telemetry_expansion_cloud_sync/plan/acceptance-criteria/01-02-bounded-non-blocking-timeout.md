@@ -7,7 +7,7 @@
 |-----------|------------|-------|
 | Component Type | Go package (`internal/telemetry`) | `context.WithTimeout` bounding an `http.Client` request |
 | Test Framework | `go test` (standard `testing`, `net/http/httptest`) | Test file: `internal/telemetry/client_test.go` |
-| Key Dependencies | `context`, `net/http`, `time` (stdlib only) | 2-3 second bounded timeout per implementation-standards.md guidance |
+| Key Dependencies | `context`, `net/http`, `time` (stdlib only) | Fixed 3-second bounded timeout (`3*time.Second`) per implementation-standards.md guidance |
 
 ### Related Files (from codebase-discovery.json)
 - `internal/telemetry/client.go` - create: `Send` derives a bounded `context.Context` (e.g. `context.WithTimeout(ctx, 3*time.Second)`) for the outbound request; the goroutine itself is fire-and-forget so the timeout only bounds the background request's own lifetime, never the caller.
@@ -23,7 +23,7 @@
 
 **Scenario 2: Timeout bounds the background request**
 - **Given** the telemetry goroutine's HTTP request is in flight
-- **When** the configured timeout (2-3 seconds) elapses without a response
+- **When** the configured timeout (3 seconds) elapses without a response
 - **Then** the request context is canceled, the underlying `http.Client` call returns a context-deadline error, and the goroutine logs and exits cleanly
 
 ## Edge Cases
@@ -46,7 +46,7 @@
 
 ## Performance Requirements
 - **Response Time:** The telemetry send call adds no measurable latency (target: <5ms overhead) to `runReview`/`runReconcile`'s own completion path, verified via a test with an artificially slow/hung endpoint.
-- **Throughput:** Telemetry request itself is bounded to a single attempt within a 2-3 second window (per implementation-standards.md guidance); no retries within this story's scope.
+- **Throughput:** Telemetry request itself is bounded to a single attempt within a 3-second window (per implementation-standards.md guidance); no retries within this story's scope.
 
 ## Security Considerations
 - **Authentication/Authorization:** N/A (no credentials transmitted).
@@ -59,15 +59,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `Send` derives a bounded context (2-3s) for its outbound request
-- [ ] A test with a hung/unreachable endpoint proves `runReview`/`runReconcile` returns promptly (not blocked)
-- [ ] A test proves the command's exit code is unaffected by telemetry timeout or failure
-- [ ] Timeout elapsing cancels the in-flight request and the goroutine exits cleanly
+- [x] `Send` derives a bounded context (3s, `3*time.Second`) for its outbound request
+- [x] A test with a hung/unreachable endpoint proves `runReview`/`runReconcile` returns promptly (not blocked)
+- [x] A test proves the command's exit code is unaffected by telemetry timeout or failure
+- [x] Timeout elapsing cancels the in-flight request and the goroutine exits cleanly
 
 **Manual Review:**
 - [ ] Code reviewed and approved

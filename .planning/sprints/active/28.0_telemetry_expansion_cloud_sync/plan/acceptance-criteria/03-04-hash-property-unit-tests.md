@@ -58,15 +58,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Determinism test: same input produces the same hash across repeated calls
-- [ ] Uniqueness test: distinct inputs (including near-identical strings) produce distinct hashes across a 20+ entry table with no collisions
-- [ ] Non-reversibility test: the raw input string never appears as a substring of the hash output
-- [ ] Edge cases (empty string, Unicode, whitespace/case variants) all pass without panic
+- [x] Determinism test: same input produces the same hash across repeated calls
+- [x] Uniqueness test: distinct inputs (including near-identical strings) produce distinct hashes across a 20+ entry table with no collisions
+- [x] Non-reversibility test: the raw input string never appears as a substring of the hash output
+- [x] Edge cases (empty string, Unicode, whitespace/case variants) all pass without panic
 
 **Manual Review:**
 - [ ] Code reviewed and approved

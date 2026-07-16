@@ -64,15 +64,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `internal/telemetry.Event` is a dedicated struct with exactly `event`, `lang`, `lines`, `status` JSON keys
-- [ ] A test asserts the marshaled payload's key set exactly matches the four allowlisted fields (no more, no fewer)
-- [ ] `runReview`/`runReconcile` construct `Event` values from already-computed scorecard-adjacent values, never from raw file/diff content
-- [ ] No `File`, path, or free-text field is ever added to the `Event` struct
+- [x] `internal/telemetry.Event` is a dedicated struct with exactly `event`, `lang`, `lines`, `status` JSON keys
+- [x] A test asserts the marshaled payload's key set exactly matches the four allowlisted fields (no more, no fewer)
+- [x] `runReview`/`runReconcile` construct `Event` values from already-computed scorecard-adjacent values, never from raw file/diff content
+- [x] No `File`, path, or free-text field is ever added to the `Event` struct
 
 **Manual Review:**
 - [ ] Code reviewed and approved

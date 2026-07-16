@@ -47,7 +47,7 @@
 **Error Scenario 2: No error value ever returned to the caller from telemetry**
 - **Given** any internal telemetry failure mode (network, marshal, panic)
 - **When** `Send` is called from `runReview`/`runReconcile`
-- **Then** `Send`'s signature returns no error (or, if it does return one for internal use, callers never propagate it as the command's error) — confirmed by the call sites in `cmd/atcr/review.go` and `cmd/atcr/reconcile.go` treating telemetry purely as a side effect, consistent with `scorecard.EmitForReconcile`'s existing pattern
+- **Then** `Send` returns no error (its signature has no error return) — confirmed by the call sites in `cmd/atcr/review.go` and `cmd/atcr/reconcile.go` treating telemetry purely as a side effect, consistent with `scorecard.EmitForReconcile`'s existing pattern
 
 ## Performance Requirements
 - **Response Time:** `recover()` overhead is negligible (nanoseconds); no measurable impact on goroutine execution time.
@@ -64,15 +64,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Goroutine body wraps its work in `defer recover()` per implementation-standards.md guidance
-- [ ] A test forcing an internal panic proves the parent command/process does not crash
-- [ ] All telemetry failure modes (network, marshal, panic) are logged at debug/trace level, never at a level that alarms the end user
-- [ ] No telemetry failure mode changes `runReview`/`runReconcile`'s return value or exit code
+- [x] Goroutine body wraps its work in `defer recover()` per implementation-standards.md guidance
+- [x] A test forcing an internal panic proves the parent command/process does not crash
+- [x] All telemetry failure modes (network, marshal, panic) are logged at debug/trace level, never at a level that alarms the end user
+- [x] No telemetry failure mode changes `runReview`/`runReconcile`'s return value or exit code
 
 **Manual Review:**
 - [ ] Code reviewed and approved

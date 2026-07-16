@@ -11,7 +11,7 @@
 
 ### Related Files (from codebase-discovery.json)
 - `internal/telemetry/client.go` - create: defines the `Client` type, a `New(endpoint string) *Client` constructor, and a `Send(ctx context.Context, ev Event)` method that launches a goroutine to POST the JSON-marshaled `Event` payload to the configured HTTPS endpoint.
-- `cmd/atcr/main.go` - modify: construct a package-level (or dependency-injected) `telemetry.Client` at `newRootCmd` time (`cmd/atcr/main.go:217`), following the existing `logLevelFromEnv`/`LOG_LEVEL` read pattern for any config needed at startup.
+- `cmd/atcr/main.go` - modify: construct a single dependency-injected `telemetry.Client` at `newRootCmd` time (`cmd/atcr/main.go:217`), passing a compiled-in `defaultTelemetryEndpoint` constant as the endpoint (a placeholder/empty value is acceptable until the external ingestion backend lands — Edge Case 1's no-op behavior covers that state), following the existing `logLevelFromEnv`/`LOG_LEVEL` read pattern. The constructor's `endpoint` parameter is the injection seam tests use to point `Client` at an `httptest` server; the client is not a package-level singleton.
 - `cmd/atcr/review.go` - modify: invoke `telemetry.Client.Send` from `runReview` (`cmd/atcr/review.go:170`, alongside `writeAuditRecord`) on command completion.
 - `cmd/atcr/reconcile.go` - modify: invoke `telemetry.Client.Send` from `runReconcile` (`cmd/atcr/reconcile.go:71`, alongside `scorecard.EmitForReconcile`) on command completion.
 
@@ -69,15 +69,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `internal/telemetry.Client.Send` POSTs the `{event, lang, lines, status}` payload over HTTPS from a goroutine
-- [ ] `runReview` and `runReconcile` both invoke `Send` on completion alongside their existing non-fatal side effects
-- [ ] A single `Client` instance is constructed once at `newRootCmd` time
-- [ ] An empty/unset endpoint no-ops safely
+- [x] `internal/telemetry.Client.Send` POSTs the `{event, lang, lines, status}` payload over HTTPS from a goroutine
+- [x] `runReview` and `runReconcile` both invoke `Send` on completion alongside their existing non-fatal side effects
+- [x] A single `Client` instance is constructed once at `newRootCmd` time
+- [x] An empty/unset endpoint no-ops safely
 
 **Manual Review:**
 - [ ] Code reviewed and approved

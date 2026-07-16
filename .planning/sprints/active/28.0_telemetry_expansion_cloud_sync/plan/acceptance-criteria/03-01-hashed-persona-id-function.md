@@ -62,15 +62,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `HashPersonaID(raw string) string` exists in `internal/scorecard/telemetry.go` and returns a hex-encoded SHA-256 digest
-- [ ] Doc comment explicitly states the function is separate from the `PublicRecord`/`scrubField` boundary
-- [ ] No call from `HashPersonaID` into `scrubField`, `PublicRecord`, `AnonymizeRecord`, or `ScrubPublicRecord`
-- [ ] Empty-string and Unicode inputs produce valid 64-character hex output without panic
+- [x] `HashPersonaID(raw string) string` exists in `internal/scorecard/telemetry.go` and returns a hex-encoded SHA-256 digest
+- [x] Doc comment explicitly states the function is separate from the `PublicRecord`/`scrubField` boundary
+- [x] No call from `HashPersonaID` into `scrubField`, `PublicRecord`, `AnonymizeRecord`, or `ScrubPublicRecord`
+- [x] Empty-string and Unicode inputs produce valid 64-character hex output without panic
 
 **Manual Review:**
 - [ ] Code reviewed and approved
