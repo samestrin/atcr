@@ -663,6 +663,11 @@ func TestReviewCmd_SyncCloud_PushesAfterRunOnFailure(t *testing.T) {
 	require.Equal(t, 1, code, "all agents failed → exit 1; a successful push preserves it")
 	require.True(t, got, "review --sync-cloud must push even when the run failed")
 	require.Contains(t, string(body), `"run_outcome":"failure"`)
+	// Privacy allowlist: CloudSyncRecord must never carry raw reviewer identities
+	// or source file paths — those are hashed/omitted at the boundary.
+	assert.NotContains(t, string(body), `"reviewer"`)
+	assert.NotContains(t, string(body), `"file"`)
+	assert.NotContains(t, string(body), `"path"`)
 }
 
 // TestReviewCmd_SyncCloud_AuthRejectionOverridesExit covers AC 04-04 on the
