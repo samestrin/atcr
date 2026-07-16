@@ -5,16 +5,24 @@ import (
 	"encoding/hex"
 )
 
-// HashPersonaID returns the lowercase hex SHA-256 digest of raw.
+// HashPersonaID returns the lowercase hex SHA-256 digest of raw, pseudonymizing a
+// raw Persona ID for the separate telemetry / cloud-sync Persona Leaderboard schema.
 //
 // It is deliberately NOT part of the Epic 10.0 PublicRecord allowlist / scrubField
 // export path: it lives here (not in export.go) and never calls, wraps, or
-// references PublicRecord, scrubField, AnonymizeRecord, or ScrubPublicRecord. The
-// one-way hash — not text scrubbing — is the non-reversibility guarantee for the
-// separate telemetry / cloud-sync Persona Leaderboard schema. It performs no
-// normalization (no case-folding, no trimming) and no validation: hashing is
-// total over every Go string, including the empty string, returns no error, and
-// cannot panic.
+// references PublicRecord, scrubField, AnonymizeRecord, or ScrubPublicRecord. It
+// performs no normalization (no case-folding, no trimming) and no validation:
+// hashing is total over every Go string, including the empty string, returns no
+// error, and cannot panic.
+//
+// Guarantee and its bound: SHA-256 is a one-way (preimage-resistant) hash, so a
+// digest is not directly reversible. But Persona IDs are a small, enumerable,
+// often publicly-known set (community-registry persona names), so this UNSALTED
+// digest does not defend against a dictionary/rainbow attack that pre-hashes known
+// persona names — it pseudonymizes identities for aggregation, it is not a secret.
+// Hardening to a keyed HMAC-SHA256 with an application pepper is deferred (see the
+// sprint's tech-debt-captured.md TD-007): it needs a provisioned secret and would
+// change the AC-pinned digest values, so it is scoped with the real-endpoint decision.
 func HashPersonaID(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
