@@ -62,6 +62,30 @@ func TestTelemetryEnabledFromEnv(t *testing.T) {
 // TestTelemetryEnabled_FourWayMatrix locks the strict OR-disables truth table:
 // telemetry is enabled ONLY when BOTH surfaces agree; a nil config field is
 // neutral and can never out-rank a disabling env var (AC 02-03 EC1/EC2).
+// TestTelemetryEnabledFromEnv_UnparseableWarns proves that an unrecognized
+// ATCR_TELEMETRY value still fails open to enabled (the AC-mandated default)
+// but emits a one-time stderr warning so a misspelled opt-out is visible.
+func TestTelemetryEnabledFromEnv_UnparseableWarns(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TELEMETRY", "maybe")
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	defer func() { os.Stderr = oldStderr }()
+
+	got := telemetryEnabledFromEnv()
+	assert.True(t, got, "unparseable value must still default to enabled")
+
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	stderr := string(out)
+	assert.Contains(t, stderr, "ATCR_TELEMETRY")
+	assert.Contains(t, stderr, "unrecognized")
+}
+
 func TestTelemetryEnabled_FourWayMatrix(t *testing.T) {
 	cases := []struct {
 		name       string
