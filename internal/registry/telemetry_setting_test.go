@@ -127,4 +127,17 @@ func TestSetTelemetrySetting(t *testing.T) {
 		err := SetTelemetrySetting(t.TempDir(), false)
 		require.Error(t, err, "config set must not silently create a config; a missing file is an I/O error")
 	})
+	t.Run("empty existing config gets a mapping", func(t *testing.T) {
+		dir := writeConfigDir(t, "")
+		require.NoError(t, SetTelemetrySetting(dir, false), "an empty (0-byte) config must accept an opt-out")
+		got, err := LoadTelemetrySetting(dir)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.False(t, *got)
+	})
+	t.Run("non-mapping config is rejected", func(t *testing.T) {
+		dir := writeConfigDir(t, "- a\n- b\n")
+		err := SetTelemetrySetting(dir, false)
+		require.Error(t, err, "a key cannot be set on a YAML list root")
+	})
 }

@@ -62,19 +62,60 @@ func SetTelemetrySetting(root string, enabled bool) error {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return fmt.Errorf("parse %s: %w", filepath.Base(path), err)
 	}
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
-		return fmt.Errorf("%s: not a valid config mapping", filepath.Base(path))
+	mapping, err := configMapping(&doc, filepath.Base(path))
+	if err != nil {
+		return err
 	}
-	setMappingBool(doc.Content[0], "telemetry", enabled)
+	setMappingBool(mapping, "telemetry", enabled)
 
 	out, err := yaml.Marshal(&doc)
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", filepath.Base(path), err)
 	}
-	if err := os.WriteFile(path, out, info.Mode().Perm()); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+	// Atomic replace (temp + rename) so a crash or full disk mid-write can never
+	// truncate the whole config — roster and every other key — into a state the
+	// strict loader rejects. Mirrors the trust-store write (trust.go).
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create %s temp: %w", filepath.Base(path), err)
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod %s temp: %w", filepath.Base(path), err)
+	}
+	if _, err := tmp.Write(out); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write %s temp: %w", filepath.Base(path), err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close %s temp: %w", filepath.Base(path), err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil
+}
+
+// configMapping returns the top-level mapping node to mutate, tolerating an
+// empty/whitespace-only config file by synthesizing an empty document + mapping
+// in place (so `config set` can record an opt-out on a stub config). A document
+// whose root is a non-mapping (e.g. a YAML list) is rejected — a key cannot be
+// set on it.
+func configMapping(doc *yaml.Node, name string) (*yaml.Node, error) {
+	if doc.Kind == 0 || len(doc.Content) == 0 {
+		// Empty document: build `{}` so the key can be appended.
+		mapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		doc.Kind = yaml.DocumentNode
+		doc.Content = []*yaml.Node{mapping}
+		return mapping, nil
+	}
+	if doc.Kind != yaml.DocumentNode || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("%s: not a valid config mapping", name)
+	}
+	return doc.Content[0], nil
 }
 
 // setMappingBool sets key to a boolean value on a YAML mapping node, updating an
