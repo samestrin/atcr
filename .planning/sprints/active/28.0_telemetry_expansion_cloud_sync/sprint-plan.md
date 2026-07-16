@@ -383,7 +383,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
 
 **Story:** [02 - Telemetry Opt-Out](plan/user-stories/02-telemetry-opt-out.md) | **ACs:** [02-01](plan/acceptance-criteria/02-01-env-var-disables-telemetry.md), [02-02](plan/acceptance-criteria/02-02-config-set-telemetry-persists.md), [02-03](plan/acceptance-criteria/02-03-opt-out-surfaces-or-not-override.md), [02-04](plan/acceptance-criteria/02-04-docs-and-flag-coverage.md)
 
-### 3.1 [ ] **[Telemetry Opt-Out - RED](plan/user-stories/02-telemetry-opt-out.md)**
+### 3.1 [x] **[Telemetry Opt-Out - RED](plan/user-stories/02-telemetry-opt-out.md)**
    Write comprehensive failing tests, verify they fail correctly:
    - `TestTelemetryEnabledFromEnv_ZeroDisables` — `ATCR_TELEMETRY=0` (and falsy equivalents `false`/`f`/`F`/`False`/`FALSE`) parsed via `strconv.ParseBool` disables; unset/unparseable defaults to enabled (02-01)
    - `TestReview_WithEnvVarDisabled_ZeroHTTPRequests` — `review`/`reconcile` against a mock telemetry endpoint results in zero HTTP requests when `ATCR_TELEMETRY=0` (02-01)
@@ -394,7 +394,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
    - `TestDocsAudit_ATCRTelemetryEnvVarCoverage` / `TestDocsAudit_ConfigSetTelemetryFlagCoverage` — `docs_audit_test.go` coverage extension for the new env var/command (02-04). In Phase 3 these assert the `atcr config set` `Long`/`--help` text (real this phase); the `docs/telemetry.md` content fact-check they author is **validated in Phase 5 (AC 05-03)** once Story 5 creates the doc. Do NOT create `docs/telemetry.md` in Phase 3 — it is owned solely by Story 5 (task 5.2).
    **Files:** `cmd/atcr/main_test.go`, `cmd/atcr/config_test.go` (new), `internal/registry/project_test.go`, `cmd/atcr/docs_audit_test.go` | **Duration:** 1 day
 
-### 3.2 [ ] **[Telemetry Opt-Out - GREEN](plan/user-stories/02-telemetry-opt-out.md)**
+### 3.2 [x] **[Telemetry Opt-Out - GREEN](plan/user-stories/02-telemetry-opt-out.md)**
    Minimal code, one test at a time (T1), verify all (T2), COMMIT:
    - `cmd/atcr/main.go` — add `telemetryEnabledFromEnv() bool` beside `logLevelFromEnv` (~line 216-217), read once at root-command construction time; `ATCR_TELEMETRY` names the enabled state directly (0/false disables, 1/true/unset enables) — inverse boolean direction of `ATCR_DISABLE_AST_GROUPING`, documented explicitly in the doc comment
    - `cmd/atcr/config.go` (new) — `newConfigCmd()` (`Use: "config"`, `RunE: cmd.Help`) modeled on `cmd/atcr/debt.go:newDebtCmd`; child `newConfigSetCmd()` (`Use: "set"`, `Args: usageArgs(cobra.ExactArgs(2))`) validating the key is exactly `telemetry` (else `usageError`) and the value parses as bool; registered in `newRootCmd`'s `AddCommand` list (~line 185-208)
@@ -403,7 +403,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
    COMMIT: `git commit -m "feat(telemetry): strict OR opt-out via env var + persisted config (green)"`
    **Files:** `cmd/atcr/main.go`, `cmd/atcr/config.go`, `internal/registry/project.go`, `internal/telemetry/client.go` | **Duration:** 1.5 days
 
-### 3.2.A [ ] **[Telemetry Opt-Out - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-telemetry-opt-out.md)**
+### 3.2.A [x] **[Telemetry Opt-Out - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-telemetry-opt-out.md)**
    **Changed Files:** `cmd/atcr/main.go`, `cmd/atcr/config.go`, `internal/registry/project.go`, `internal/telemetry/client.go`, `cmd/atcr/main_test.go`, `cmd/atcr/config_test.go`, `internal/registry/project_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -421,25 +421,24 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh general-purpose subagent, no CRITICAL/HIGH):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | cmd/atcr/main.go:250 | Asymmetric opt-out failure: unparseable `ATCR_TELEMETRY` fails OPEN (enabled) while malformed config fails SAFE (disabled); a misspelled env opt-out (`off`/`no`/`disabled`) silently still tracks. | AC-pinned — AC 02-01 EC2 mandates env "unparseable defaults to enabled". Deferred → **TD-010** (keep default, add stderr warning on unrecognized value; direction change needs AC revision). Zero live exposure (empty endpoint, TD-003). |
+   | MEDIUM | internal/registry/telemetry_setting.go:74 | `SetTelemetrySetting` rewrites the whole config with a non-atomic `os.WriteFile` (truncate-in-place); a crash/full-disk mid-write corrupts the entire config, not just `telemetry`. `trust.go` has an atomic temp+rename precedent. | Fixed inline in 3.3: atomic temp-file + `os.Rename`, preserving file mode. |
+   | LOW | internal/registry/telemetry_setting.go:65 | An existing 0-byte config is rejected ("not a valid config mapping"), so `config set` cannot record an opt-out on a stub config. | Fixed inline in 3.3: synthesize an empty document/mapping and append the key. |
+   | LOW | cmd/atcr/review.go:397 | Review-path gate/Send has no end-to-end counting-send test (only reconcile does); a future divergence in the review path would go uncaught. | Deferred → **TD-011** (`runReview` is heavy to drive; gate is shared, unit-tested, and reconcile-e2e-proven). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH — proceed. The atomic-write MEDIUM and the empty-config LOW are genuine, bounded robustness fixes with an existing repo precedent, so they are fixed inline in 3.3 (resolved > deferred). The env-asymmetry MEDIUM is AC-pinned (AC 02-01 EC2) and the review-path e2e LOW is heavy to build now → **TD-010 / TD-011**.
 
-### 3.3 [ ] **[Telemetry Opt-Out - REFACTOR](plan/user-stories/02-telemetry-opt-out.md)**
+### 3.3 [x] **[Telemetry Opt-Out - REFACTOR](plan/user-stories/02-telemetry-opt-out.md)**
    1. Fix CRITICAL/HIGH issues from 3.2.A (if any)
    2. Improve code quality (T1); confirm the OR gate has no precedence/override chain
    3. Validate all tests still pass (T3)
    4. COMMIT: `git commit -m "refactor(telemetry): address review + clean up opt-out gate"`
    **Duration:** 0.5 day
 
-### 3.4 [ ] **Phase 3 — DoD Validation**
+### 3.4 [x] **Phase 3 — DoD Validation**
    - `go test ./cmd/atcr/... ./internal/registry/... ./internal/telemetry/...` (T3 scoped) — all passing
    - `go build ./...` clean; `go vet ./...` clean; `golangci-lint run` 0 errors
    - Coverage: `cmd/atcr`, `internal/registry`, `internal/telemetry` all ≥80%

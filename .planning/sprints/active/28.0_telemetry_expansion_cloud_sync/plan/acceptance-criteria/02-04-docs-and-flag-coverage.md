@@ -2,6 +2,8 @@
 
 **Related User Story:** [02: Telemetry Opt-Out](../user-stories/02-telemetry-opt-out.md)
 
+> **Refinement note (2026-07-15, /refine-sprint):** `docs/telemetry.md` and its `docs/README.md` index link are created **solely by Story 5 (AC 05-01) in Phase 5** — this AC does NOT create the file. Story 2's Phase-3 deliverables here are (a) the `atcr config set` `Long` help text documenting `ATCR_TELEMETRY` semantics and the single `telemetry` key, and (b) authoring the `docs_audit_test.go` fact-check plus the Opt-Out content requirements the Story 5 doc must satisfy. The fact-check assertions that read `docs/telemetry.md` are **validated in Phase 5 (AC 05-03)** once Story 5 creates the doc — do not attempt to make them pass, or create the doc, in Phase 3.
+
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -10,10 +12,10 @@
 | Key Dependencies | None new | Reuses `canonicalFlags()`, `auditedMarkdown(t)` helpers already in `docs_audit_test.go` |
 
 ### Related Files (from codebase-discovery.json)
-- `docs/telemetry.md` - create: documents `ATCR_TELEMETRY` (exact accepted values, inverse boolean direction vs. `ATCR_DISABLE_AST_GROUPING`) and `atcr config set telemetry <true|false>` (exact command, key restriction, persistence target).
+- `docs/telemetry.md` - content requirement (file **created solely by Story 5 / AC 05-01** in Phase 5, not by this AC): its Opt-Out section must document `ATCR_TELEMETRY` (exact accepted values, inverse boolean direction vs. `ATCR_DISABLE_AST_GROUPING`) and `atcr config set telemetry <true|false>` (exact command, key restriction, persistence target). Story 2 authors the `docs_audit_test.go` fact-check below (validated in Phase 5 once the doc exists).
 - `cmd/atcr/docs_audit_test.go` - modify: add a fact-check (following `TestArchitectureDocDescribesReconciler`'s `facts` table pattern, `cmd/atcr/docs_audit_test.go:555-559`) asserting `docs/telemetry.md` contains the literal string `ATCR_TELEMETRY`, and extend/add coverage so `atcr config set` is recognized as a real, documented command (following `TestDocsClaimedFlagsAreReal`'s `canonicalFlags()` cross-check pattern, `cmd/atcr/docs_audit_test.go:587-598`, or an equivalent command-existence check).
 - `cmd/atcr/config.go` - modify: `Long` help text on `newConfigSetCmd()` states the exact accepted boolean values and that `telemetry` is currently the only supported key, per the story's third Potential Risk (confusable inverse-direction env vars).
-- `docs/README.md` - modify: add `telemetry.md` to the linked-docs index (the audit test's `linked`/`expected` map, per the pattern visible around `cmd/atcr/docs_audit_test.go:520-526`, requires every doc under `docs/` to be linked from `docs/README.md`).
+- `docs/README.md` - reference only (the `telemetry.md` index link is added by AC 05-01, not this AC): the audit test's `linked`/`expected` map (per the pattern visible around `cmd/atcr/docs_audit_test.go:520-526`) requires every doc under `docs/` to be linked from `docs/README.md`; this AC's fact-check runs in Phase 5 after that link exists.
 
 ## Happy Path Scenarios
 **Scenario 1: doc exists and states the env var**
@@ -84,15 +86,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `docs/telemetry.md` created, documents `ATCR_TELEMETRY` exact accepted values and `atcr config set telemetry <true|false>` exact command
-- [ ] Doc explicitly states the inverse boolean direction vs. `ATCR_DISABLE_AST_GROUPING`
-- [ ] `docs/README.md` links `docs/telemetry.md`
-- [ ] New/extended `docs_audit_test.go` fact-check asserts `ATCR_TELEMETRY` and the `atcr config set telemetry` command are present in the doc, following the `ATCR_DISABLE_AST_GROUPING` precedent
+- [x] `atcr config set`'s `Long` help text documents `ATCR_TELEMETRY` semantics and the single supported `telemetry` key (Phase-3 deliverable)
+- [ ] `docs/telemetry.md` (created by Story 5 / AC 05-01) documents `ATCR_TELEMETRY` exact accepted values, `atcr config set telemetry <true|false>` exact command, and the inverse boolean direction vs. `ATCR_DISABLE_AST_GROUPING` — this AC contributes those Opt-Out content requirements
+- [ ] `docs/README.md` links `docs/telemetry.md` (added by AC 05-01)
+- [ ] New/extended `docs_audit_test.go` fact-check asserts `ATCR_TELEMETRY` and the `atcr config set telemetry` command are present in the doc, following the `ATCR_DISABLE_AST_GROUPING` precedent (authored in Phase 3, validated in Phase 5 / AC 05-03)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

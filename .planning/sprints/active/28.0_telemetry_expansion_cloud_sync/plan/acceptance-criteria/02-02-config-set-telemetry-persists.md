@@ -47,6 +47,11 @@
 - **When** `atcr config set telemetry false` runs again
 - **Then** the file is rewritten with the same value and no error occurs (no "already set" failure)
 
+**Edge Case 4: hand-edited non-boolean `telemetry` value on the load path**
+- **Given** `.atcr/config.yaml` contains a manually-edited non-boolean `telemetry` value (e.g. `telemetry: maybe`) that cannot unmarshal into `*bool`
+- **When** `ProjectConfig` is loaded on a subsequent `review`/`reconcile` invocation (not via `config set`)
+- **Then** the load surfaces a wrapped config-parse error (e.g. `parse .atcr/config.yaml: telemetry must be a boolean`), consistent with how other malformed `ProjectConfig` fields fail — it does NOT silently fall open to enabled, so a corrupt value can never re-enable telemetry a user intended to disable, and the malformed value never reaches the telemetry gate
+
 ## Error Conditions
 **Error Scenario 1: unknown config key**
 - **Given** `atcr config set foo bar` is run (any key other than `telemetry`)
@@ -91,15 +96,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `cmd/atcr/config.go` created with `newConfigCmd()`/`newConfigSetCmd()` following the `debt.go` subcommand-group pattern, registered in `newRootCmd`
-- [ ] `ProjectConfig.Telemetry *bool` field added to `internal/registry/project.go` with `omitempty` YAML tag
-- [ ] `atcr config set telemetry false` persists to `.atcr/config.yaml` and a subsequent invocation with no env var makes zero telemetry HTTP requests
-- [ ] `atcr config set telemetry true` re-enables; invalid key and invalid value both return `usageError` (exit 2)
+- [x] `cmd/atcr/config.go` created with `newConfigCmd()`/`newConfigSetCmd()` following the `debt.go` subcommand-group pattern, registered in `newRootCmd`
+- [x] `ProjectConfig.Telemetry *bool` field added to `internal/registry/project.go` with `omitempty` YAML tag
+- [x] `atcr config set telemetry false` persists to `.atcr/config.yaml` and a subsequent invocation with no env var makes zero telemetry HTTP requests
+- [x] `atcr config set telemetry true` re-enables; invalid key and invalid value both return `usageError` (exit 2)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

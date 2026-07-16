@@ -70,15 +70,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A single combining function resolves the final enabled/disabled state from both surfaces, called once per invocation
-- [ ] All four combinations of `{env unset/0} x {config true/false}` are covered by a table test, asserting disabled wins whenever either source says disabled
-- [ ] The "config=true overrides env=0" regression scenario is explicitly tested and asserted to NOT re-enable telemetry
-- [ ] `nil`/absent config field does not accidentally count as an "enabled" vote that could out-rank a disabling env var (it is simply neutral)
+- [x] A single combining function resolves the final enabled/disabled state from both surfaces, called once per invocation
+- [x] All four combinations of `{env unset/0} x {config true/false}` are covered by a table test, asserting disabled wins whenever either source says disabled
+- [x] The "config=true overrides env=0" regression scenario is explicitly tested and asserted to NOT re-enable telemetry
+- [x] `nil`/absent config field does not accidentally count as an "enabled" vote that could out-rank a disabling env var (it is simply neutral)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

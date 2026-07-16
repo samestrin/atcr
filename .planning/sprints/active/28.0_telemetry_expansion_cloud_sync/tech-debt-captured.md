@@ -67,3 +67,17 @@ Read by `/execute-code-review` (pre-seeded into the adversarial TD stream, tagge
 **Issue:** `reconcileTelemetryEvent("success")` is hardcoded and fires before the `--require-verified` / `--fail-on` gate evaluation that sets the exit code, so a reconcile that trips the threshold (exit 1) still reports `status:"success"`. Unlike `runReview` (which derives status from `err`), the reconcile `status` field carries no gate signal and its `"failure"` branch is effectively dead — a Phase-4 analytics consumer of `{event,status}` cannot distinguish gate-passed from gate-failed reconciles.
 **Why accepted:** Non-blocking; telemetry is a no-op this sprint (empty endpoint). The current contract "success = the reconcile computation completed" is coherent, just narrower than review's.
 **Fix in:** A later pass — move the Send below the gate evaluation (thread the gate outcome into the event) so reconcile status mirrors review's success/failure contract, or document in `event.go`/`telemetry.go` that reconcile status intentionally means "computation completed", not "gate passed".
+
+## TD-010 — ATCR_TELEMETRY env opt-out fails open while config opt-out fails safe (MEDIUM)
+**Origin:** Phase 3, task 3.2.A adversarial review, 2026-07-15
+**File:** cmd/atcr/main.go:250 (telemetryEnabledFromEnv)
+**Issue:** An unparseable `ATCR_TELEMETRY` value fails OPEN to enabled, while a malformed persisted config value fails SAFE to disabled — asymmetric failure directions for the same logical opt-out. A user who opts out with a common-but-unrecognized spelling (`ATCR_TELEMETRY=off` / `no` / `disabled`) is silently still tracked, on the surface most reach for first.
+**Why accepted:** AC 02-01 Edge Case 2 explicitly pins "unset or unparseable defaults to enabled (fails open toward the documented default)"; reversing the env direction would contradict the AC. The `strconv.ParseBool` falsy set (`0/false/f/F/False/FALSE`) is fully honored per spec, and telemetry is a hard no-op this sprint (empty `defaultTelemetryEndpoint`, TD-003), so there is zero live exposure.
+**Fix in:** A later pass paired with the Story 5 docs — keep the AC-mandated enabled default but emit a one-time stderr warning on an unrecognized `ATCR_TELEMETRY` value so a misspelled opt-out is visible rather than silent. Any change to the default direction requires an AC 02-01 revision.
+
+## TD-011 — Review-path telemetry gate has no end-to-end test (LOW)
+**Origin:** Phase 3, task 3.2.A adversarial review, 2026-07-15
+**File:** cmd/atcr/review.go:397
+**Issue:** Only the reconcile call site has a counting-send end-to-end test (`TestReconcile_TelemetryGate_EndToEnd`). The review call site shares the same `telemetryGate()` function and is guarded identically, but a future divergence in the review path (e.g. building the event outside the `if` gate) would go uncaught.
+**Why accepted:** Non-blocking; the gate is a single shared function, exhaustively unit-tested (env matrix, 4-way OR matrix, malformed) and proven end-to-end on the reconcile path. `runReview` is heavy to drive to completion in a unit test (real git range + roster + fanout engine), which is why the e2e proof lives on the lighter reconcile path.
+**Fix in:** A later pass — add a review-path end-to-end test mirroring the reconcile one once a lightweight `runReview` harness (stubbed fanout) exists, or lift the gate check into a shared helper both call sites invoke so one test covers both.

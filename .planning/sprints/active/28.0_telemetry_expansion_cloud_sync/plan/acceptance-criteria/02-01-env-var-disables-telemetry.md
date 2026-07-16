@@ -55,7 +55,7 @@
 ## Performance Requirements
 - **Response Time:** The env var read and bool parse add no measurable latency (single `os.Getenv` + `strconv.ParseBool` call, O(1)); must not introduce a per-command retry or blocking I/O.
 - **Throughput:** N/A — this AC only gates whether a telemetry goroutine is scheduled; it does not affect review/reconcile throughput.
-- **Strictness requirement:** When disabled, no goroutine is spawned and no HTTP payload is allocated — verified by a test asserting absence of allocation/goroutine scheduling, not merely absence of an observed network call (per the story's first Potential Risk).
+- **Strictness requirement:** When disabled, no goroutine is spawned and no HTTP payload is allocated — verified by injecting a counting send-hook (the package-level send-step function variable seam from AC 01-03's Test Implementation Guidance) and asserting its invocation count is exactly zero, rather than relying on `runtime.NumGoroutine` (which is racy and unreliable). This proves the disabled client short-circuits at construction/dispatch entry, not merely that no network call was observed (per the story's first Potential Risk).
 
 ## Security Considerations
 - **Authentication/Authorization:** N/A — this is a local, unauthenticated boolean gate; no credentials are involved.
@@ -68,15 +68,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `telemetryEnabledFromEnv()` exists in `cmd/atcr/main.go`, read once in `newRootCmd`
-- [ ] `ATCR_TELEMETRY=0` (and `false`/`f`/`F`/`False`/`FALSE`) results in zero HTTP requests during `review` and `reconcile`, verified via mock endpoint
-- [ ] Unset or unparseable values default to enabled (`true`)
-- [ ] No goroutine is spawned and no HTTP payload allocated when disabled (construction-time short-circuit, not post-hoc suppression)
+- [x] `telemetryEnabledFromEnv()` exists in `cmd/atcr/main.go`, read once in `newRootCmd`
+- [x] `ATCR_TELEMETRY=0` (and `false`/`f`/`F`/`False`/`FALSE`) results in zero HTTP requests during `review` and `reconcile`, verified via mock endpoint
+- [x] Unset or unparseable values default to enabled (`true`)
+- [x] No goroutine is spawned and no HTTP payload allocated when disabled (construction-time short-circuit, not post-hoc suppression)
 
 **Manual Review:**
 - [ ] Code reviewed and approved
