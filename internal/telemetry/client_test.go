@@ -81,13 +81,8 @@ func TestClient_Send_BoundedTimeout_UnblocksOnHangOrUnreachable(t *testing.T) {
 	defer ts.Close()
 	defer close(release)
 
-	// Shrink the bounded timeout so the goroutine's own deadline fires quickly;
-	// mirrors the gracefulShutdownTimeout package-var test seam in cmd/atcr.
-	orig := requestTimeout
-	requestTimeout = 50 * time.Millisecond
-	defer func() { requestTimeout = orig }()
-
 	c := newTestClient(ts)
+	c.requestTimeout = 50 * time.Millisecond
 
 	start := time.Now()
 	c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
@@ -334,4 +329,20 @@ func TestClient_Send_ConcurrentSendsNoRace(t *testing.T) {
 	if n := atomic.LoadInt32(&hits); n != 25 {
 		t.Fatalf("expected 25 telemetry requests, got %d", n)
 	}
+}
+
+// TestClient_RequestTimeout_Race verifies no data race occurs on requestTimeout.
+func TestClient_RequestTimeout_Race(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	c := newTestClient(ts)
+	c.requestTimeout = 10 * time.Millisecond
+
+	for i := 0; i < 10; i++ {
+		c.Send(context.Background(), Event{Event: "race_test"})
+	}
+	c.Wait()
 }
