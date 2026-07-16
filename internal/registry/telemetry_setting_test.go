@@ -1,9 +1,11 @@
 package registry
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -180,4 +182,45 @@ func TestSetTelemetrySetting_PreservesValueInlineComment(t *testing.T) {
 	data, err := os.ReadFile(DefaultProjectConfigPath(dir))
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "forced on by CI", "the value node's inline comment must survive the surgical edit")
+}
+
+// TestSetTelemetrySetting_LocksRMW verifies SetTelemetrySetting acquires a
+// mkdir-based lock under .atcr/ to serialize concurrent reads-modify-writes.
+func TestSetTelemetrySetting_LocksRMW(t *testing.T) {
+	dir := writeConfigDir(t, "agents: [bruce]\ntelemetry: true\n")
+	lockDir := filepath.Join(dir, ".atcr", "config.lock")
+
+	// Manually acquire the lock directory
+	require.NoError(t, os.MkdirAll(lockDir, 0o755))
+
+	// Write a dummy owner file
+	ownerFile := filepath.Join(lockDir, "owner.txt")
+	epoch := time.Now().Unix()
+	require.NoError(t, os.WriteFile(ownerFile, []byte(fmt.Sprintf("session=test-holder|epoch=%d", epoch)), 0o644))
+
+	lockReleased := make(chan struct{})
+	go func() {
+		// Hold the lock for 200ms, then release it
+		time.Sleep(200 * time.Millisecond)
+		_ = os.RemoveAll(lockDir)
+		close(lockReleased)
+	}()
+
+	// This call should block until the background goroutine releases the lock, then succeed.
+	start := time.Now()
+	err := SetTelemetrySetting(dir, false)
+	require.NoError(t, err)
+	elapsed := time.Since(start)
+
+	// Verify that it actually blocked and waited for the lock
+	assert.GreaterOrEqual(t, elapsed, 150*time.Millisecond, "SetTelemetrySetting should have waited for the lock to be released")
+
+	// Verify the telemetry was successfully updated
+	got, err := LoadTelemetrySetting(dir)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.False(t, *got)
+
+	// Make sure the background goroutine finished
+	<-lockReleased
 }
