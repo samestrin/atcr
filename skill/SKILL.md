@@ -77,6 +77,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr debt` | Query and report on technical debt; `atcr debt resolve` lists and marks-resolved the public `.atcr/`-scoped local store, and the debt-resolve route autonomously fixes its items — see `debt-resolve/SKILL.md` |
 | `atcr history` | Show finding history over time as a markdown table |
 | `atcr audit-report` | Render a one-page compliance report for a PR's review runs |
+| `atcr config` | Read/update project config; `atcr config set telemetry <true\|false>` toggles the anonymous usage-ping opt-out |
 | `atcr version` | Print the atcr version |
 
 <!-- Convention: one line per command, mirroring newRootCmd (cmd/atcr/main.go).

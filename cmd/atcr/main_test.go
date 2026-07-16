@@ -43,9 +43,9 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
 	}
 }
 
-func TestRootCmd_HasExactlyTwentyTwoSubcommands(t *testing.T) {
-	// The twenty-one prior commands plus `models`, the model-binding/drift
-	// namespace over the resolved-slug locks (Epic 19.7).
+func TestRootCmd_HasExactlyTwentyThreeSubcommands(t *testing.T) {
+	// The twenty-two prior commands plus `config`, the project-config mutation
+	// namespace whose only key today is the telemetry opt-out (Sprint 28.0).
 	root := newRootCmd()
 	names := map[string]bool{}
 	for _, c := range root.Commands() {
@@ -54,8 +54,8 @@ func TestRootCmd_HasExactlyTwentyTwoSubcommands(t *testing.T) {
 		}
 		names[c.Name()] = true
 	}
-	assert.Len(t, names, 22)
-	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "models", "debt", "history", "audit-report", "version"} {
+	assert.Len(t, names, 23)
+	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "models", "debt", "history", "audit-report", "version", "config"} {
 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
 	}
 }
@@ -108,12 +108,24 @@ func TestExitCode(t *testing.T) {
 		{"wrapped coded error", fmt.Errorf("context: %w", coded), 2},
 		{"joined coded error", errors.Join(plain, coded), 2},
 		{"explicit zero code", &codedError{code: 0, err: plain}, 0},
+		{"coded auth error", authError(plain), 3},
+		{"wrapped coded auth error", fmt.Errorf("context: %w", authError(plain)), 3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, exitCode(tt.err))
 		})
 	}
+}
+
+// TestExitAuth_ResolvesToThree covers AC 04-03: the dedicated auth exit code is 3
+// and is distinct from exitUsage (2) and exitFailure (1).
+func TestExitAuth_ResolvesToThree(t *testing.T) {
+	err := authError(errors.New("ATCR_API_KEY is not set"))
+	assert.Equal(t, 3, exitCode(err))
+	assert.Equal(t, exitAuth, exitCode(err))
+	assert.NotEqual(t, exitUsage, exitCode(err))
+	assert.NotEqual(t, exitFailure, exitCode(err))
 }
 
 func TestFlagRelationships(t *testing.T) {

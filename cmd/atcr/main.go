@@ -10,11 +10,13 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/spf13/cobra"
 )
 
@@ -79,10 +81,13 @@ func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Wri
 }
 
 // Exit-code semantics, centralized: 0 success, 1 failure (including
-// --fail-on threshold violations), 2 usage or configuration errors.
+// --fail-on threshold violations), 2 usage or configuration errors, 3 a
+// --sync-cloud authentication failure (missing/empty key or a remote 401/403),
+// distinct from exitUsage so scripts/CI can detect an auth failure specifically.
 const (
 	exitFailure = 1
 	exitUsage   = 2
+	exitAuth    = 3
 )
 
 // codedError carries an explicit process exit code through the error chain.
@@ -98,6 +103,14 @@ func (e *codedError) ExitCode() int { return e.code }
 // usageError marks err as a usage/configuration error (exit 2).
 func usageError(err error) error {
 	return &codedError{code: exitUsage, err: err}
+}
+
+// authError marks err as a --sync-cloud authentication failure (exit 3), the
+// dedicated code distinct from exitUsage/exitFailure so scripts can detect a
+// missing/invalid ATCR_API_KEY specifically. Resolved through the same errors.As
+// dispatch in exitCode as every other coded error.
+func authError(err error) error {
+	return &codedError{code: exitAuth, err: err}
 }
 
 // exitCode maps an error returned by a subcommand to a process exit code.
@@ -126,6 +139,13 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 // newRootCmd constructs the atcr command tree. All subcommands use RunE so
 // errors bubble up to main() for centralized exit-code mapping.
 func newRootCmd() *cobra.Command {
+	// A single opt-in telemetry client, constructed once here and injected into
+	// every subcommand's context via PersistentPreRunE (deliberately not a
+	// package-level singleton). The compiled-in endpoint is empty until a real
+	// ingestion backend lands, so Send is a no-op in dev, CI, and production for
+	// now (see defaultTelemetryEndpoint).
+	telemetryClient := telemetry.New(defaultTelemetryEndpoint)
+
 	root := &cobra.Command{
 		Use:   "atcr",
 		Short: "Agent Team Code Review — a review panel, not a reviewer",
@@ -165,7 +185,14 @@ func newRootCmd() *cobra.Command {
 		// paths. All consumers must use log.FromContext, which falls back to a
 		// shared discard logger on a miss — never assert logger presence directly.
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			return setupLogger(cmd)
+			if err := setupLogger(cmd); err != nil {
+				return err
+			}
+			// Inject the single process telemetry client into the command context
+			// alongside the logger, so runReview/runReconcile retrieve it via
+			// telemetry.FromContext without a signature change.
+			cmd.SetContext(telemetry.NewContext(cmd.Context(), telemetryClient))
+			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
@@ -204,6 +231,7 @@ func newRootCmd() *cobra.Command {
 		newDebtCmd(),
 		newHistoryCmd(),
 		newAuditReportCmd(),
+		newConfigCmd(),
 		newVersionCmd(),
 	)
 	return root
@@ -218,6 +246,34 @@ func logLevelFromEnv() string {
 		return v
 	}
 	return "info"
+}
+
+// telemetryEnabledFromEnv reports whether the ATCR_TELEMETRY env var permits the
+// anonymous usage ping. Read once per emitting run (via telemetryGate); the
+// value is process-stable so every subcommand resolves it identically.
+//
+// IMPORTANT — inverse boolean direction: ATCR_TELEMETRY names the ENABLED state
+// directly, the opposite of ATCR_DISABLE_AST_GROUPING (which names a DISABLE
+// flag). A recognized falsy value (0, false, f, F, False, FALSE) disables the
+// ping; unset, blank, or any unparseable value fails OPEN to enabled — matching
+// the documented default-on posture. Parsing is strict via strconv.ParseBool and
+// never errors: an invalid value is the "default enabled" case, not a usage
+// error. This footgun is called out in `atcr config set`'s help and docs/telemetry.md.
+func telemetryEnabledFromEnv() bool {
+	v := strings.TrimSpace(os.Getenv("ATCR_TELEMETRY"))
+	if v == "" {
+		return true
+	}
+	enabled, err := strconv.ParseBool(v)
+	if err != nil {
+		// Unparseable values fail open to the documented default (enabled), but
+		// warn once so a misspelled opt-out (e.g. "flase") is visible rather than
+		// silently ignored. This function is read once per run via telemetryGate,
+		// so the warning is inherently one-time.
+		_, _ = fmt.Fprintf(os.Stderr, "warning: unrecognized ATCR_TELEMETRY value %q; treating as enabled\n", v)
+		return true
+	}
+	return enabled
 }
 
 // setupLogger constructs the single root logger from LOG_LEVEL and --log-format

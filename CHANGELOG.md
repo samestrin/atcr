@@ -1,3 +1,22 @@
+## [28.0.0] - 2026-07-16
+
+Introduce opt-in, lightweight telemetry to measure real-world adoption, gather anonymous data for a crowdsourced Persona Leaderboard, and add a `--sync-cloud` mechanism to push local scorecard data toward the upcoming `atcr.dev/dashboard`.
+
+### Added
+
+- Fire-and-forget, panic-safe usage telemetry ping (`internal/telemetry`) on `review`/`reconcile` completion — bounded timeout, fails open, currently a wired no-op pending a live endpoint.
+- `ATCR_TELEMETRY=0` env var and `atcr config set telemetry <bool>` persisted opt-out, strict-OR'd across both surfaces (disabled always wins).
+- Deterministic SHA-256 Persona ID hashing for the Persona Leaderboard, isolated from the existing `PublicRecord`/`scrubField` export path — the leaderboard `--export` output remains byte-for-byte unchanged.
+- `--sync-cloud` / `--cloud-endpoint` flags on `review`/`reconcile`: authenticated `Bearer <ATCR_API_KEY>` push of an anonymized, allowlisted scorecard payload, with a dedicated `exitAuth` exit code on a missing or rejected key.
+- `docs/telemetry.md` documenting the telemetry/opt-out/cloud-sync data paths, linked from `docs/README.md`, with a cross-reference from `docs/scorecard.md`'s Privacy Model section.
+
+### Fixed
+
+- Cloud-sync client now blocks redirect-following so the `Bearer` API key is never forwarded to a redirect target, and redacts endpoint userinfo credentials from transport-error messages.
+- A deferred `--sync-cloud` push no longer fires on (or masks the exit code of) an in-process reconcile/verify/debate infra failure — auth-rejection overrides now only ever supersede a success or a plain findings-gate failure.
+
+*Shipped via /execute-sprint + /resolve-td (sprint 28.0)*
+
 ## [27.0.0] - 2026-07-15
 
 Ship a "zero data egress" persona pack for privacy-conscious teams that refuse to send proprietary code to any external API. Three reviewer personas tuned for a local Ollama/llama.cpp/vLLM endpoint join the community library — the review runs entirely on your own hardware, with no external network calls once your registry points at `localhost`.
