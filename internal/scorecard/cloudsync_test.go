@@ -202,6 +202,9 @@ func TestNewCloudSyncRecord_PersonasFromRealReviewers(t *testing.T) {
 	if rec.RunOutcome != "success" {
 		t.Fatalf("RunOutcome = %q", rec.RunOutcome)
 	}
+	if !rec.MetricsAvailable {
+		t.Fatal("MetricsAvailable = false, want true when pool summary is readable")
+	}
 	if len(rec.Personas) != 2 {
 		t.Fatalf("Personas len = %d, want 2", len(rec.Personas))
 	}
