@@ -33,6 +33,17 @@ var doRequest = func(client *http.Client, req *http.Request) (*http.Response, er
 	return client.Do(req)
 }
 
+// SetDoRequestForTest overrides the outbound-request seam and returns a restore
+// func. It exists so tests in OTHER packages (e.g. cmd/atcr's opt-out gate
+// end-to-end tests) can count or intercept sends across the package boundary
+// without real networking; in-package tests mutate doRequest directly.
+// Production code never calls this.
+func SetDoRequestForTest(fn func(*http.Client, *http.Request) (*http.Response, error)) func() {
+	prev := doRequest
+	doRequest = fn
+	return func() { doRequest = prev }
+}
+
 // Client sends anonymous usage events to a configured HTTPS endpoint. Construct
 // one per process via New and inject it (it is deliberately not a package-level
 // singleton); a nil Client or an empty/non-HTTPS endpoint makes Send a no-op.

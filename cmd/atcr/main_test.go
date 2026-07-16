@@ -43,9 +43,9 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
 	}
 }
 
-func TestRootCmd_HasExactlyTwentyTwoSubcommands(t *testing.T) {
-	// The twenty-one prior commands plus `models`, the model-binding/drift
-	// namespace over the resolved-slug locks (Epic 19.7).
+func TestRootCmd_HasExactlyTwentyThreeSubcommands(t *testing.T) {
+	// The twenty-two prior commands plus `config`, the project-config mutation
+	// namespace whose only key today is the telemetry opt-out (Sprint 28.0).
 	root := newRootCmd()
 	names := map[string]bool{}
 	for _, c := range root.Commands() {
@@ -54,8 +54,8 @@ func TestRootCmd_HasExactlyTwentyTwoSubcommands(t *testing.T) {
 		}
 		names[c.Name()] = true
 	}
-	assert.Len(t, names, 22)
-	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "models", "debt", "history", "audit-report", "version"} {
+	assert.Len(t, names, 23)
+	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "models", "debt", "history", "audit-report", "version", "config"} {
 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
 	}
 }

@@ -392,12 +392,15 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		// Fire the anonymous usage ping on run completion — success or
 		// all-agents-failed — as a fire-and-forget side effect alongside the
 		// audit/history writes below. It never blocks or changes this command's
-		// outcome (Story 1); a nil/opt-out client no-ops.
-		status := "success"
-		if err != nil {
-			status = "failure"
+		// outcome (Story 1). The opt-out gate (Story 2) is checked BEFORE Send so a
+		// disabled run spawns no goroutine and builds no payload; a nil client no-ops.
+		if telemetryGate() {
+			status := "success"
+			if err != nil {
+				status = "failure"
+			}
+			telemetry.FromContext(ctx).Send(ctx, reviewTelemetryEvent(prep, status))
 		}
-		telemetry.FromContext(ctx).Send(ctx, reviewTelemetryEvent(prep, status))
 	}
 	if err != nil {
 		return err // all-agents-failed → exit 1, artifacts preserved

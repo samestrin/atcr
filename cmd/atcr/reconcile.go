@@ -159,8 +159,11 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 
 	// Fire the anonymous usage ping on reconcile completion — a fire-and-forget
 	// side effect alongside the scorecard/local-debt writes above, never blocking
-	// or changing this command's outcome (Story 1). A nil/opt-out client no-ops.
-	telemetry.FromContext(cmd.Context()).Send(cmd.Context(), reconcileTelemetryEvent("success"))
+	// or changing this command's outcome (Story 1). The opt-out gate (Story 2) is
+	// checked BEFORE Send so a disabled run spawns no goroutine; a nil client no-ops.
+	if telemetryGate() {
+		telemetry.FromContext(cmd.Context()).Send(cmd.Context(), reconcileTelemetryEvent("success"))
+	}
 
 	// TD-004: warn when verify never ran — the gate would trivially pass
 	// everything. Routed through the context logger so it honors LOG_LEVEL and is

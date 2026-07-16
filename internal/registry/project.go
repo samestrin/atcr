@@ -87,6 +87,12 @@ type ProjectConfig struct {
 	// the config-derived pieces inherit their defaults; it never enables the flow
 	// on its own (validateAutoFixBackend gates that).
 	AutoFix *AutoFixConfig `yaml:"auto_fix,omitempty"`
+	// Telemetry persists the opt-out state for the anonymous usage ping (Sprint
+	// 28.0). A pointer so an explicit false survives default application (the
+	// Sandbox/AutoFix/MaxParallel idiom); nil means "unset", treated as the
+	// default-enabled posture. It is OR'd with the ATCR_TELEMETRY env var: either
+	// surface disabling is sufficient and final (see cmd/atcr telemetryGate).
+	Telemetry *bool `yaml:"telemetry,omitempty"`
 }
 
 // DefaultProjectConfigPath returns .atcr/config.yaml under root.

@@ -6,6 +6,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/telemetry"
 )
 
@@ -15,6 +16,46 @@ import (
 // (zero network in dev, CI, and production alike). When a real endpoint is wired
 // it MUST be an https:// URL — telemetry.Client refuses plaintext http.
 const defaultTelemetryEndpoint = ""
+
+// telemetryEnabled is the strict OR-disables combining function (Story 2): the
+// anonymous usage ping runs ONLY when BOTH surfaces agree it should — the env
+// var permits it AND the persisted config does not disable it. It is total and
+// pure (no I/O), so the four-combination truth table is exhaustively testable
+// and the client itself carries no precedence logic to get wrong.
+//
+//	envEnabled | cfgTelemetry | result
+//	  true     |   nil        | enabled   (nothing disables)
+//	  true     |   &true      | enabled
+//	  true     |   &false     | disabled  (config opt-out)
+//	  false    |   nil        | disabled  (env opt-out)
+//	  false    |   &true      | disabled  (env wins — config NEVER overrides an env opt-out)
+//	  false    |   &false     | disabled
+//
+// A nil config field is neutral: it contributes nothing to the OR and can never
+// out-rank a disabling env var.
+func telemetryEnabled(envEnabled bool, cfgTelemetry *bool) bool {
+	return envEnabled && (cfgTelemetry == nil || *cfgTelemetry)
+}
+
+// telemetryGate resolves the final enabled/disabled state for one emitting run
+// by combining the live ATCR_TELEMETRY env var with the persisted
+// .atcr/config.yaml opt-out (resolved cwd-relative, matching how every other
+// command locates project config). It is called once per review/reconcile run,
+// guarding the Send call site so a disabled state short-circuits BEFORE any
+// goroutine spawns or payload is built — not merely before the HTTP call.
+//
+// A malformed persisted telemetry value fails SAFE to disabled: a corrupt value
+// can never re-enable a ping the user may have intended to disable. (On the
+// review path the same corruption also surfaces loudly via the strict
+// LoadProjectConfig roster load, aborting before Send is ever reached.)
+func telemetryGate() bool {
+	env := telemetryEnabledFromEnv()
+	cfg, err := registry.LoadTelemetrySetting(".")
+	if err != nil {
+		return false
+	}
+	return telemetryEnabled(env, cfg)
+}
 
 // reviewTelemetryEvent builds the anonymous usage Event for a completed review
 // from already-computed grounding data only: a changed-line count and a

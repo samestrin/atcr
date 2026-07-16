@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -219,6 +220,7 @@ func newRootCmd() *cobra.Command {
 		newDebtCmd(),
 		newHistoryCmd(),
 		newAuditReportCmd(),
+		newConfigCmd(),
 		newVersionCmd(),
 	)
 	return root
@@ -233,6 +235,29 @@ func logLevelFromEnv() string {
 		return v
 	}
 	return "info"
+}
+
+// telemetryEnabledFromEnv reports whether the ATCR_TELEMETRY env var permits the
+// anonymous usage ping. Read once per emitting run (via telemetryGate); the
+// value is process-stable so every subcommand resolves it identically.
+//
+// IMPORTANT — inverse boolean direction: ATCR_TELEMETRY names the ENABLED state
+// directly, the opposite of ATCR_DISABLE_AST_GROUPING (which names a DISABLE
+// flag). A recognized falsy value (0, false, f, F, False, FALSE) disables the
+// ping; unset, blank, or any unparseable value fails OPEN to enabled — matching
+// the documented default-on posture. Parsing is strict via strconv.ParseBool and
+// never errors: an invalid value is the "default enabled" case, not a usage
+// error. This footgun is called out in `atcr config set`'s help and docs/telemetry.md.
+func telemetryEnabledFromEnv() bool {
+	v := strings.TrimSpace(os.Getenv("ATCR_TELEMETRY"))
+	if v == "" {
+		return true
+	}
+	enabled, err := strconv.ParseBool(v)
+	if err != nil {
+		return true // unparseable fails open to the documented default (enabled)
+	}
+	return enabled
 }
 
 // setupLogger constructs the single root logger from LOG_LEVEL and --log-format
