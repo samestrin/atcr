@@ -74,8 +74,14 @@ func resolveSyncCloudOutcome(runErr, syncErr error) error {
 	if syncErr == nil {
 		return runErr
 	}
-	var coded *codedError
-	if runErr == nil || !errors.As(runErr, &coded) {
+	// Only an auth rejection (exit 3) is allowed to override the run outcome;
+	// any other sync error is treated as non-fatal and the run outcome is preserved.
+	var syncCoded *codedError
+	if !errors.As(syncErr, &syncCoded) || syncCoded.code != exitAuth {
+		return runErr
+	}
+	var runCoded *codedError
+	if runErr == nil || !errors.As(runErr, &runCoded) {
 		return syncErr
 	}
 	return runErr // preserve an already-coded (usage/config/infra) failure
