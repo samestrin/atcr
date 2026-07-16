@@ -51,7 +51,7 @@ func TestTelemetryEnabledFromEnv(t *testing.T) {
 			if tc.set {
 				t.Setenv("ATCR_TELEMETRY", tc.val)
 			} else {
-				os.Unsetenv("ATCR_TELEMETRY")
+				_ = os.Unsetenv("ATCR_TELEMETRY")
 			}
 			assert.Equal(t, tc.want, telemetryEnabledFromEnv())
 		})
@@ -97,7 +97,7 @@ func writeAtcrConfig(t *testing.T, content string) {
 func TestTelemetryGate_EnvAndConfig(t *testing.T) {
 	t.Run("no env, no config -> enabled", func(t *testing.T) {
 		isolate(t)
-		os.Unsetenv("ATCR_TELEMETRY")
+		_ = os.Unsetenv("ATCR_TELEMETRY")
 		assert.True(t, telemetryGate())
 	})
 	t.Run("env=0 alone disables", func(t *testing.T) {
@@ -107,7 +107,7 @@ func TestTelemetryGate_EnvAndConfig(t *testing.T) {
 	})
 	t.Run("config false alone disables (no env)", func(t *testing.T) {
 		isolate(t)
-		os.Unsetenv("ATCR_TELEMETRY")
+		_ = os.Unsetenv("ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\n")
 		assert.False(t, telemetryGate())
 	})
@@ -125,7 +125,7 @@ func TestTelemetryGate_EnvAndConfig(t *testing.T) {
 	})
 	t.Run("malformed config value fails safe to disabled", func(t *testing.T) {
 		isolate(t)
-		os.Unsetenv("ATCR_TELEMETRY")
+		_ = os.Unsetenv("ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: maybe\n")
 		assert.False(t, telemetryGate(), "a corrupt telemetry value must never re-enable telemetry")
 	})
@@ -181,7 +181,7 @@ func TestReconcile_TelemetryGate_EndToEnd(t *testing.T) {
 
 	t.Run("config telemetry:false -> zero requests (no env)", func(t *testing.T) {
 		isolate(t)
-		os.Unsetenv("ATCR_TELEMETRY")
+		_ = os.Unsetenv("ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\n")
 		fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 		hits := countingDoRequest(t)
