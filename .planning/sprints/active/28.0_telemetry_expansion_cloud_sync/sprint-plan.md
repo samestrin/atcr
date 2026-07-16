@@ -450,7 +450,7 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      Manual Review: [ ] Code reviewed
      ```
 
-### 3.LAST [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+### 3.LAST [x] **Phase 3 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -469,11 +469,14 @@ None — [plan/documentation/source.md](plan/documentation/source.md) confirms n
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh general-purpose integration reviewer — no CRITICAL/HIGH):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | cmd/atcr/telemetry.go:51 | PHASE-EXIT: nothing warned Phase 4 against reusing `telemetryGate()` to suppress `--sync-cloud` — an explicit user-invoked push must NOT be gated by the passive-ping opt-out (wrong consent model), and the two already share plumbing. | Fixed inline: added a SCOPE doc-comment on `telemetryGate` stating it governs the passive ping ONLY and MUST NOT gate explicit cloud sync; Phase 4 gets its own opt-in (API key + flag). |
+   | MEDIUM | internal/registry/project.go (DefaultProjectConfigYAML) | CONFIG SURFACE: the `atcr init` template self-documents every other knob but omits `telemetry`, so the opt-out is undiscoverable from the generated config. Default (nil=enabled) + back-compat correct. | Deferred → **TD-012** (Phase 5 docs scope; add a commented `telemetry:` line to the template). |
+   | LOW | cmd/atcr/main.go:251 | Env fail-open asymmetry vs. config fail-safe (a disable-intent env typo silently enables). | Duplicate of **TD-010** (already captured at 3.2.A); AC 02-01 EC2-pinned. |
+
+   **Phase gate passed.** Build/vet/tests green across `cmd/atcr`, `internal/registry`, `internal/telemetry`; `git diff main --stat` empty for `export.go`/`leaderboard.go` (AC 03-03 boundary intact). Contracts stable for Phase 4/5: `ProjectConfig.Telemetry *bool` (nil=enabled, back-compat), `telemetryEnabled`/`telemetryGate`/`LoadTelemetrySetting` public shapes fixed; `atcr config` group registered with no command collision (23 subcommands); the passive-ping gate is now explicitly scoped OUT of `--sync-cloud` so Phase 4 builds its own consent surface. Only MEDIUM #1 fixed inline; MEDIUM #2 → TD-012; LOW dup of TD-010.
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
