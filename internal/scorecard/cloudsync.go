@@ -59,13 +59,14 @@ type CloudSyncPersona struct {
 // un-hashed reviewer/persona identifiers, preserving the PublicRecord privacy
 // boundary while feeding the Persona Leaderboard.
 type CloudSyncRecord struct {
-	SchemaVersion int                `json:"schema_version"`
-	RunOutcome    string             `json:"run_outcome"`
-	CostUSD       float64            `json:"cost_usd"`
-	TokensIn      int                `json:"tokens_in"`
-	TokensOut     int                `json:"tokens_out"`
-	LatencyMS     int64              `json:"latency_ms"`
-	Personas      []CloudSyncPersona `json:"personas"`
+	SchemaVersion    int                `json:"schema_version"`
+	RunOutcome       string             `json:"run_outcome"`
+	MetricsAvailable bool               `json:"metrics_available"`
+	CostUSD          float64            `json:"cost_usd"`
+	TokensIn         int                `json:"tokens_in"`
+	TokensOut        int                `json:"tokens_out"`
+	LatencyMS        int64              `json:"latency_ms"`
+	Personas         []CloudSyncPersona `json:"personas"`
 }
 
 // NewCloudSyncRecord builds a CloudSyncRecord for the finalized run at reviewDir
@@ -81,8 +82,10 @@ func NewCloudSyncRecord(reviewDir, outcome string) CloudSyncRecord {
 	rec := CloudSyncRecord{SchemaVersion: CloudSyncSchemaVersion, RunOutcome: outcome}
 	ps, err := fanout.ReadPoolSummary(reviewDir)
 	if err != nil {
+		rec.MetricsAvailable = false
 		return rec
 	}
+	rec.MetricsAvailable = true
 	for _, a := range ps.Agents {
 		if strings.TrimSpace(a.Agent) == "" {
 			continue
