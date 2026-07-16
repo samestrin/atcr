@@ -35,7 +35,17 @@ var cloudRequestTimeout = 5 * time.Second
 
 // cloudHTTPClient is a dedicated client so cloud-sync's connection pool and
 // Transport are isolated from the rest of the process (matching telemetry.Client).
-var cloudHTTPClient = &http.Client{}
+// CheckRedirect blocks redirect following: ValidateCloudEndpoint vets only the
+// INITIAL URL, so a validated https:// endpoint that 3xx-redirects to a same-host
+// http:// target (a scheme downgrade) would otherwise make Go forward the
+// Authorization: Bearer <ATCR_API_KEY> header in the clear. Mirrors the noRedirect
+// convention in internal/llmclient and internal/registry.
+var cloudHTTPClient = &http.Client{CheckRedirect: noRedirect}
+
+// noRedirect halts redirect following so the Authorization: Bearer API key is never
+// re-sent to a redirect target. Returning ErrUseLastResponse surfaces the 3xx
+// response itself, which Push then treats as a generic non-2xx failure.
+func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // CloudSyncPersona is one per-reviewer identity+metrics entry in a cloud-sync
 // push. PersonaIDHash is a one-way HashPersonaID digest (pseudonymous, not
