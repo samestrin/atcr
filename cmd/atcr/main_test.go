@@ -108,12 +108,24 @@ func TestExitCode(t *testing.T) {
 		{"wrapped coded error", fmt.Errorf("context: %w", coded), 2},
 		{"joined coded error", errors.Join(plain, coded), 2},
 		{"explicit zero code", &codedError{code: 0, err: plain}, 0},
+		{"coded auth error", authError(plain), 3},
+		{"wrapped coded auth error", fmt.Errorf("context: %w", authError(plain)), 3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, exitCode(tt.err))
 		})
 	}
+}
+
+// TestExitAuth_ResolvesToThree covers AC 04-03: the dedicated auth exit code is 3
+// and is distinct from exitUsage (2) and exitFailure (1).
+func TestExitAuth_ResolvesToThree(t *testing.T) {
+	err := authError(errors.New("ATCR_API_KEY is not set"))
+	assert.Equal(t, 3, exitCode(err))
+	assert.Equal(t, exitAuth, exitCode(err))
+	assert.NotEqual(t, exitUsage, exitCode(err))
+	assert.NotEqual(t, exitFailure, exitCode(err))
 }
 
 func TestFlagRelationships(t *testing.T) {

@@ -81,10 +81,13 @@ func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Wri
 }
 
 // Exit-code semantics, centralized: 0 success, 1 failure (including
-// --fail-on threshold violations), 2 usage or configuration errors.
+// --fail-on threshold violations), 2 usage or configuration errors, 3 a
+// --sync-cloud authentication failure (missing/empty key or a remote 401/403),
+// distinct from exitUsage so scripts/CI can detect an auth failure specifically.
 const (
 	exitFailure = 1
 	exitUsage   = 2
+	exitAuth    = 3
 )
 
 // codedError carries an explicit process exit code through the error chain.
@@ -100,6 +103,14 @@ func (e *codedError) ExitCode() int { return e.code }
 // usageError marks err as a usage/configuration error (exit 2).
 func usageError(err error) error {
 	return &codedError{code: exitUsage, err: err}
+}
+
+// authError marks err as a --sync-cloud authentication failure (exit 3), the
+// dedicated code distinct from exitUsage/exitFailure so scripts can detect a
+// missing/invalid ATCR_API_KEY specifically. Resolved through the same errors.As
+// dispatch in exitCode as every other coded error.
+func authError(err error) error {
+	return &codedError{code: exitAuth, err: err}
 }
 
 // exitCode maps an error returned by a subcommand to a process exit code.

@@ -47,6 +47,7 @@ falsy, unparseable, or unset value keeps AST grouping on.`,
 	cmd.Flags().StringSlice("sources", nil, "restrict reconcile to these source directories (default: all)")
 	cmd.Flags().Bool("no-scorecard", false, "skip writing scorecard records to the local store")
 	cmd.Flags().Bool("no-local-debt", false, "skip writing reconciled findings to the local TD store")
+	addSyncCloudFlags(cmd)
 	return cmd
 }
 
@@ -75,6 +76,14 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// logger was wired (no reliance on slog.Default). User-facing summary output
 	// still goes to stdout (OutOrStdout) unchanged.
 	logger := log.FromContext(cmd.Context())
+
+	// Resolve --sync-cloud preconditions FIRST so a missing/empty ATCR_API_KEY
+	// (exit 3) or a bad --cloud-endpoint (exit 2) fails fast — before any reconcile
+	// I/O and before any network call (Story 4, AC 04-02/04-03).
+	syncPlan, err := resolveSyncCloud(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Resolve the gate threshold (validated against the closed enum) BEFORE any
 	// I/O so a bad value fails fast as a usage error (exit 2). The --fail-on flag
@@ -174,7 +183,22 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	return gateFindings(res, threshold, requireVerified)
+	gateErr := gateFindings(res, threshold, requireVerified)
+
+	// --sync-cloud push (Story 4): an explicit, user-invoked action fired AFTER the
+	// reconcile outcome is finalized. An auth rejection overrides the outcome with
+	// exit 3 (AC 04-04); any other push failure is a non-fatal warning that
+	// preserves the gate's own exit code (AC 04-02).
+	if syncPlan.enabled {
+		outcome := "success"
+		if gateErr != nil {
+			outcome = "failure"
+		}
+		if syncErr := runSyncCloud(cmd.Context(), cmd.ErrOrStderr(), syncPlan, reviewDir, outcome); syncErr != nil {
+			return syncErr
+		}
+	}
+	return gateErr
 }
 
 // persistLocalDebt appends the run's reconciled findings to the .atcr/-scoped

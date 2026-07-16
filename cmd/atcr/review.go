@@ -79,6 +79,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
 	addRangeFlags(cmd)
 	addAutoFixFlags(cmd)
+	addSyncCloudFlags(cmd)
 	return cmd
 }
 
@@ -182,6 +183,16 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		}
 		anchor, _ := cmd.Flags().GetString("resume")
 		return runResume(cmd, anchor)
+	}
+
+	// Resolve --sync-cloud preconditions before any review work so a missing/empty
+	// ATCR_API_KEY (exit 3) or a bad --cloud-endpoint (exit 2) fails fast — before
+	// gitrange resolution, config load, and any paid agent call (Story 4). Placed
+	// after the --resume short-circuit: --sync-cloud is not wired into the resume
+	// recovery flow this sprint.
+	syncPlan, err := resolveSyncCloud(cmd)
+	if err != nil {
+		return err
 	}
 
 	ctx := cmd.Context()
@@ -400,6 +411,22 @@ func runReview(cmd *cobra.Command, _ []string) error {
 				status = "failure"
 			}
 			telemetry.FromContext(ctx).Send(ctx, reviewTelemetryEvent(prep, status))
+		}
+
+		// --sync-cloud push (Story 4): an explicit, user-invoked action fired once
+		// the review fan-out's outcome is finalized (success or all-agents-failed).
+		// It reads the pool-summary metrics + hashed persona ids from result.Dir. An
+		// auth rejection returns exit 3 (overriding the run outcome, AC 04-04); any
+		// other push failure is a non-fatal warning that preserves the run's exit
+		// code (AC 04-02). Gated only by the explicit flag + key, never telemetryGate.
+		if syncPlan.enabled {
+			outcome := "success"
+			if err != nil {
+				outcome = "failure"
+			}
+			if syncErr := runSyncCloud(ctx, cmd.ErrOrStderr(), syncPlan, result.Dir, outcome); syncErr != nil {
+				return syncErr
+			}
 		}
 	}
 	if err != nil {

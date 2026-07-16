@@ -616,3 +616,21 @@ func TestRunReview_AllAgentsFailedAppendsNoAudit(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, recs, "an all-agents-failed review must append no audit record")
 }
+
+// TestReviewCmd_SyncCloud_MissingKey_FailFast covers AC 04-03: `review
+// --sync-cloud` with an unset ATCR_API_KEY exits exitAuth (3) — and fails fast,
+// before any review work, so the check needs no git range or roster.
+func TestReviewCmd_SyncCloud_MissingKey_FailFast(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_API_KEY", "")
+	require.Equal(t, exitAuth, execCmd(t, "review", "--sync-cloud"))
+}
+
+// TestReviewCmd_SyncCloud_InvalidEndpoint_ExitsUsage covers AC 04-02 EC4: a
+// non-URL --cloud-endpoint with --sync-cloud set is a usage error (2), before any
+// request or review work.
+func TestReviewCmd_SyncCloud_InvalidEndpoint_ExitsUsage(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_API_KEY", "valid-key")
+	require.Equal(t, exitUsage, execCmd(t, "review", "--sync-cloud", "--cloud-endpoint", "not-a-url"))
+}
