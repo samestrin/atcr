@@ -1,9 +1,9 @@
 {
-  "skill": "sprint-complete",
+  "skill": "finalize-sprint",
   "args": "@.planning/sprints/active/28.0_telemetry_expansion_cloud_sync/",
-  "invocation": "/sprint-complete @.planning/sprints/active/28.0_telemetry_expansion_cloud_sync/",
+  "invocation": "/finalize-sprint @.planning/sprints/active/28.0_telemetry_expansion_cloud_sync/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
   "session_id": "d2fe5da1-3fce-422f-80e5-ee12dd6d206d",
-  "timestamp": "2026-07-16T22:47:23.296Z"
+  "timestamp": "2026-07-16T22:54:00.778Z"
 }
