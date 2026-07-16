@@ -237,6 +237,29 @@ func TestNewCloudSyncRecord_MissingPoolSummary(t *testing.T) {
 	}
 }
 
+// TestNewCloudSyncRecord_MissingPoolSummary_SignalsUnavailableMetrics covers AC
+// 04-05: when the pool summary cannot be read the record must explicitly signal
+// that metrics are unavailable so the backend can distinguish "no data" from
+// "zero cost / zero reviewers".
+func TestNewCloudSyncRecord_MissingPoolSummary_SignalsUnavailableMetrics(t *testing.T) {
+	rec := NewCloudSyncRecord(t.TempDir(), "failure")
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	got, ok := m["metrics_available"]
+	if !ok {
+		t.Fatal("metrics_available field missing from cloud-sync record")
+	}
+	if got != false {
+		t.Fatalf("metrics_available = %v, want false", got)
+	}
+}
+
 // TestCloudSyncRecord_NotSupersetOfPublicRecord covers the plan's risk mitigation:
 // CloudSyncRecord shares no field NAME with PublicRecord's leaderboard allowlist
 // beyond the innocuous "model" identity, so it cannot silently become a superset.
