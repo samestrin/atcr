@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -177,6 +178,40 @@ func TestClient_Send_EmptyEndpointNoOps(t *testing.T) {
 func TestClient_Send_NilReceiverNoOps(t *testing.T) {
 	var c *Client
 	c.Send(context.Background(), Event{Event: "review_run"}) // must not panic
+	c.Wait()
+}
+
+// TestClient_Send_SetDoRequestForTest_NoRace exercises concurrent sends and
+// concurrent mutation of the doRequest seam via SetDoRequestForTest. Under -race
+// this reproduces the data race between the detached send goroutine reading the
+// package global and another goroutine swapping it (TD-015).
+func TestClient_Send_SetDoRequestForTest_NoRace(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Slow enough to keep sends in flight while the seam is mutated.
+		time.Sleep(10 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	c := newTestClient(ts)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
+		}()
+		go func() {
+			defer wg.Done()
+			restore := SetDoRequestForTest(func(_ *http.Client, _ *http.Request) (*http.Response, error) {
+				return nil, errors.New("intercepted")
+			})
+			time.Sleep(time.Millisecond)
+			restore()
+		}()
+	}
+	wg.Wait()
 	c.Wait()
 }
 
