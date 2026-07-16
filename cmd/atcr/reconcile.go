@@ -16,6 +16,7 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/scorecard"
+	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/spf13/cobra"
 )
 
@@ -155,6 +156,11 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// reconcile gate's exit code. --no-local-debt suppresses this for the run.
 	noLocalDebt, _ := cmd.Flags().GetBool("no-local-debt")
 	persistLocalDebt(reviewDir, res, noLocalDebt, cmd.ErrOrStderr())
+
+	// Fire the anonymous usage ping on reconcile completion — a fire-and-forget
+	// side effect alongside the scorecard/local-debt writes above, never blocking
+	// or changing this command's outcome (Story 1). A nil/opt-out client no-ops.
+	telemetry.FromContext(cmd.Context()).Send(cmd.Context(), reconcileTelemetryEvent("success"))
 
 	// TD-004: warn when verify never ran — the gate would trivially pass
 	// everything. Routed through the context logger so it honors LOG_LEVEL and is

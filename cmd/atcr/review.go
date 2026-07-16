@@ -22,6 +22,7 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/sandbox"
+	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/samestrin/atcr/internal/validation"
 	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
@@ -387,6 +388,16 @@ func runReview(cmd *cobra.Command, _ []string) error {
 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
 		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now))
+
+		// Fire the anonymous usage ping on run completion — success or
+		// all-agents-failed — as a fire-and-forget side effect alongside the
+		// audit/history writes below. It never blocks or changes this command's
+		// outcome (Story 1); a nil/opt-out client no-ops.
+		status := "success"
+		if err != nil {
+			status = "failure"
+		}
+		telemetry.FromContext(ctx).Send(ctx, reviewTelemetryEvent(prep, status))
 	}
 	if err != nil {
 		return err // all-agents-failed → exit 1, artifacts preserved

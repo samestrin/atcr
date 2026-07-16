@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/spf13/cobra"
 )
 
@@ -126,6 +127,13 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 // newRootCmd constructs the atcr command tree. All subcommands use RunE so
 // errors bubble up to main() for centralized exit-code mapping.
 func newRootCmd() *cobra.Command {
+	// A single opt-in telemetry client, constructed once here and injected into
+	// every subcommand's context via PersistentPreRunE (deliberately not a
+	// package-level singleton). The compiled-in endpoint is empty until a real
+	// ingestion backend lands, so Send is a no-op in dev, CI, and production for
+	// now (see defaultTelemetryEndpoint).
+	telemetryClient := telemetry.New(defaultTelemetryEndpoint)
+
 	root := &cobra.Command{
 		Use:   "atcr",
 		Short: "Agent Team Code Review — a review panel, not a reviewer",
@@ -165,7 +173,14 @@ func newRootCmd() *cobra.Command {
 		// paths. All consumers must use log.FromContext, which falls back to a
 		// shared discard logger on a miss — never assert logger presence directly.
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			return setupLogger(cmd)
+			if err := setupLogger(cmd); err != nil {
+				return err
+			}
+			// Inject the single process telemetry client into the command context
+			// alongside the logger, so runReview/runReconcile retrieve it via
+			// telemetry.FromContext without a signature change.
+			cmd.SetContext(telemetry.NewContext(cmd.Context(), telemetryClient))
+			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
