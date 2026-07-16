@@ -43,7 +43,12 @@ func HashPersonaID(raw string) string {
 // RunID, cost, or token fields. Consumed by the Story 4 --sync-cloud payload.
 type TelemetryPersonaRecord struct {
 	PersonaIDHash string `json:"persona_id_hash"`
-	Model         string `json:"model"`
+	// Model is the bound provider+model slug that answered this review, carried
+	// unhashed. Per the project's model-binding contract (see internal/registry
+	// and internal/personas), a model identifier is a non-PII, publicly-known
+	// catalog slug (e.g. "claude-sonnet-4-6"), never user-supplied free text, so it
+	// carries no personal data to protect and is intentionally not hashed.
+	Model string `json:"model"`
 }
 
 // NewTelemetryPersonaRecord builds a TelemetryPersonaRecord from a scorecard
