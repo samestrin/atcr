@@ -21,11 +21,9 @@ import (
 	"github.com/samestrin/atcr/internal/log"
 )
 
-// requestTimeout bounds the background telemetry request's own lifetime — never
-// the caller's, which returns as soon as the goroutine is dispatched. A package
-// var only so tests can shrink it, mirroring the gracefulShutdownTimeout seam in
-// cmd/atcr/main.go.
-var requestTimeout = 3 * time.Second
+// defaultRequestTimeout bounds the background telemetry request's own lifetime — never
+// the caller's, which returns as soon as the goroutine is dispatched.
+const defaultRequestTimeout = 3 * time.Second
 
 // doRequest performs the outbound POST. Stored in an atomic.Value so tests can
 // force a panic inside the goroutine body and assert the deferred recover
@@ -60,9 +58,10 @@ func SetDoRequestForTest(fn func(*http.Client, *http.Request) (*http.Response, e
 // one per process via New and inject it (it is deliberately not a package-level
 // singleton); a nil Client or an empty/non-HTTPS endpoint makes Send a no-op.
 type Client struct {
-	endpoint   string
-	httpClient *http.Client
-	wg         sync.WaitGroup
+	endpoint       string
+	httpClient     *http.Client
+	wg             sync.WaitGroup
+	requestTimeout time.Duration
 }
 
 // New returns a Client that POSTs events to endpoint. An empty endpoint yields a
@@ -72,7 +71,11 @@ type Client struct {
 func New(endpoint string) *Client {
 	// A dedicated client (not http.DefaultClient) so telemetry's connection pool
 	// and Transport are isolated from the rest of the process.
-	return &Client{endpoint: endpoint, httpClient: &http.Client{}}
+	return &Client{
+		endpoint:       endpoint,
+		httpClient:     &http.Client{},
+		requestTimeout: defaultRequestTimeout,
+	}
 }
 
 // isHTTPS reports whether endpoint is a well-formed https URL (case-insensitive
@@ -111,7 +114,11 @@ func (c *Client) send(ctx context.Context, ev Event) {
 		return
 	}
 
-	reqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), requestTimeout)
+	timeout := c.requestTimeout
+	if timeout == 0 {
+		timeout = defaultRequestTimeout
+	}
+	reqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint, bytes.NewReader(body))
