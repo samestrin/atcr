@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -222,6 +223,32 @@ func TestReconcile_TelemetryGate_EndToEnd(t *testing.T) {
 		runReconcileGated(t, telemetry.New(endpoint), "r")
 		assert.Equal(t, int32(1), atomic.LoadInt32(hits), "enabled: exactly one telemetry request fires")
 	})
+}
+
+// TestReconcile_TelemetryStatus_ReflectsGateOutcome proves the reconcile telemetry
+// event's status mirrors the gate outcome, not a hardcoded "success" (TD-009).
+func TestReconcile_TelemetryStatus_ReflectsGateOutcome(t *testing.T) {
+	const endpoint = "https://telemetry.test/ingest"
+
+	isolate(t)
+	t.Setenv("ATCR_TELEMETRY", "1")
+	fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
+
+	var captured []telemetry.Event
+	restore := telemetry.SetDoRequestForTest(func(_ *http.Client, req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		var ev telemetry.Event
+		_ = json.Unmarshal(body, &ev)
+		captured = append(captured, ev)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	defer restore()
+
+	runReconcileGated(t, telemetry.New(endpoint), "r", "--fail-on", "LOW")
+
+	require.Len(t, captured, 1)
+	assert.Equal(t, "reconcile_run", captured[0].Event)
+	assert.Equal(t, "failure", captured[0].Status, "telemetry status must reflect gate failure, not hardcoded success")
 }
 
 // TestDominantLang_TieBreakIsDeterministic covers the map-iteration tie-break
