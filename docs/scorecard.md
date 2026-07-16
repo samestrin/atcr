@@ -322,6 +322,25 @@ can diff it before sharing.
 > `internal/scorecard/export.go`. Any discrepancy is treated as a documentation
 > bug — fix the doc (or the code) so they agree.
 
+### Telemetry & Cloud Sync
+
+The `--export` allowlist above applies **only** to the local-store leaderboard
+export. `atcr` has two other, **separate and additive** data paths, each with its
+own schema — neither weakens, replaces, or is governed by the `--export`
+guarantee above:
+
+- The **anonymous usage ping** — a background, fail-open `{event, lang, lines,
+  status}` event wired to emit on `review`/`reconcile` completion, on by default
+  and disabled from either of two OR'd opt-out surfaces (the ingestion endpoint
+  is currently empty, so the ping is an inactive no-op; see telemetry.md).
+- The **`--sync-cloud` push** — an explicit, opt-in upload of an anonymized
+  scorecard payload (a hashed Persona ID plus raw run metrics), authenticated
+  with `ATCR_API_KEY`, that you request per run.
+
+These use a different schema from the `--export` record and are documented in
+full — including the exact fields, the opt-out mechanics, the Persona ID hashing
+guarantee, and the auth exit code — in **[docs/telemetry.md](telemetry.md)**.
+
 ---
 
 ## Schema versioning

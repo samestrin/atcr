@@ -596,3 +596,50 @@ func TestDocsClaimedFlagsAreReal(t *testing.T) {
 		}
 	}
 }
+
+// configSetLong walks the compiled command tree to the `config set` subcommand
+// and returns its Long help text, so the coverage checks below assert on the
+// real, self-documenting CLI surface rather than a hardcoded copy.
+func configSetLong(t *testing.T) string {
+	t.Helper()
+	for _, c := range newRootCmd().Commands() {
+		if c.Name() != "config" {
+			continue
+		}
+		for _, sub := range c.Commands() {
+			if sub.Name() == "set" {
+				return sub.Long
+			}
+		}
+		t.Fatal("`atcr config` has no `set` subcommand")
+	}
+	t.Fatal("`atcr config` command is not registered")
+	return ""
+}
+
+// TestDocsAudit_ATCRTelemetryEnvVarCoverage asserts the `atcr config set` Long
+// help text states the load-bearing ATCR_TELEMETRY fact — its name, that it
+// names the ENABLED state directly, and the inverse-direction warning vs.
+// ATCR_DISABLE_AST_GROUPING — so the CLI itself is a source of truth for the
+// opt-out (AC 02-04, Phase-3 deliverable; the docs/telemetry.md fact-check is
+// validated in Phase 5 / AC 05-03 once Story 5 creates that doc).
+func TestDocsAudit_ATCRTelemetryEnvVarCoverage(t *testing.T) {
+	long := configSetLong(t)
+	for _, want := range []string{"ATCR_TELEMETRY", "ATCR_DISABLE_AST_GROUPING"} {
+		if !strings.Contains(long, want) {
+			t.Errorf("`atcr config set` Long text omits %q; it must document the env var and its inverse-direction footgun", want)
+		}
+	}
+}
+
+// TestDocsAudit_ConfigSetTelemetryFlagCoverage asserts the `atcr config set`
+// Long help text documents the single supported `telemetry` key and its
+// accepted boolean values, per AC 02-04 Edge Case 3 (self-documenting help).
+func TestDocsAudit_ConfigSetTelemetryFlagCoverage(t *testing.T) {
+	long := configSetLong(t)
+	for _, want := range []string{"telemetry", "true", "false"} {
+		if !strings.Contains(long, want) {
+			t.Errorf("`atcr config set` Long text omits %q; it must document the only supported key and its accepted values", want)
+		}
+	}
+}

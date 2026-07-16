@@ -66,6 +66,18 @@ func TestDefaultProjectConfigYAML_DocumentsAutoFix(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestDefaultProjectConfigYAML_DocumentsTelemetry(t *testing.T) {
+	out := DefaultProjectConfigYAML([]string{"bruce"})
+	// Every other project-config knob ships self-documented in the `atcr init`
+	// template; telemetry must too, so an operator knows the knob exists and how
+	// to opt out (anonymous usage ping; set false or ATCR_TELEMETRY=0 to disable).
+	assert.Contains(t, out, "telemetry:")
+
+	// The rendered config (commented telemetry line included) must still load cleanly.
+	_, err := LoadProjectConfig(writeProject(t, out))
+	require.NoError(t, err)
+}
+
 func TestProjectConfig_MinimalRoster(t *testing.T) {
 	cfg, err := LoadProjectConfig(writeProject(t, `
 agents: [bruce]

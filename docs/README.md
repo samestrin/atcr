@@ -63,4 +63,6 @@ single source of truth the website build consumes, so it links every doc in
   public leaderboard.
 - [Scorecard](scorecard.md) — the per-reviewer scorecard for a reconcile run.
 - [Metrics](metrics.md) — the metrics atcr records.
+- [Telemetry](telemetry.md) — the opt-out usage ping and the `--sync-cloud` push,
+  and the privacy model for both.
 - [Logging](logging.md) — log levels and output formats.

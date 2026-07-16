@@ -1,6 +1,8 @@
 package scorecard
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math"
@@ -578,4 +580,40 @@ func TestClampRate_RejectsNonFinite(t *testing.T) {
 	assert.Equal(t, 1.0, clampRate(math.Inf(1)), "+Inf must clamp to 1")
 	assert.Equal(t, 0.0, clampRate(math.Inf(-1)), "-Inf must clamp to 0")
 	assert.Equal(t, 0.5, clampRate(0.5), "finite [0,1] passes through")
+}
+
+// TestRunLeaderboardExport_ByteForByteRegression is the AC 03-03 safety net: it
+// pins scorecard.Export's output (via a SHA-256 checksum) for a fixed,
+// representative fixture — multi-(persona,model) aggregation and sort, plus a
+// verification-block record — so Story 3's new hashing path cannot weaken,
+// bypass, or extend the Epic 10.0 public leaderboard export. The checksum must
+// stay identical before and after telemetry.go lands.
+func TestRunLeaderboardExport_ByteForByteRegression(t *testing.T) {
+	carol := exportRec("carol", "claude-opus-4-6", 1)
+	fv, fr := 3, 1
+	ssr := 0.75
+	carol.FindingsVerified = &fv
+	carol.FindingsRefuted = &fr
+	carol.SurvivedSkepticRate = &ssr
+
+	recs := []Record{
+		exportRec("bruce", "claude-sonnet-4-6", 1),
+		exportRec("alice", "gpt-4o", 2),
+		exportRec("bruce", "claude-sonnet-4-6", 3), // same group as row 1: aggregates
+		carol,
+	}
+	data, err := Export(recs, FilterOpts{Since: "365d"}, fixedExportNow)
+	require.NoError(t, err)
+
+	got := hex.EncodeToString(func() []byte { s := sha256.Sum256(data); return s[:] }())
+	const wantExportChecksum = "96231aeede4bec24132992b35bcf0a5c069619248ad720f319372517ee39625a"
+	assert.Equal(t, wantExportChecksum, got,
+		"scorecard.Export output changed — Epic 10.0 leaderboard export must remain byte-for-byte unchanged (AC 03-03)")
+
+	// No new key (e.g. persona_id_hash) has leaked onto the public schema.
+	assert.NotContains(t, string(data), "persona_id_hash")
+
+	// Empty input still returns ErrNoExportRecords with the same identity.
+	_, eerr := Export(nil, FilterOpts{Since: "365d"}, fixedExportNow)
+	assert.ErrorIs(t, eerr, ErrNoExportRecords)
 }

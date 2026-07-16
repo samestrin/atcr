@@ -87,6 +87,12 @@ type ProjectConfig struct {
 	// the config-derived pieces inherit their defaults; it never enables the flow
 	// on its own (validateAutoFixBackend gates that).
 	AutoFix *AutoFixConfig `yaml:"auto_fix,omitempty"`
+	// Telemetry persists the opt-out state for the anonymous usage ping (Sprint
+	// 28.0). A pointer so an explicit false survives default application (the
+	// Sandbox/AutoFix/MaxParallel idiom); nil means "unset", treated as the
+	// default-enabled posture. It is OR'd with the ATCR_TELEMETRY env var: either
+	// surface disabling is sufficient and final (see cmd/atcr telemetryGate).
+	Telemetry *bool `yaml:"telemetry,omitempty"`
 }
 
 // DefaultProjectConfigPath returns .atcr/config.yaml under root.
@@ -131,6 +137,9 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   recognized but their dispatch prerequisites may not yet be shipped.\n")
 	fmt.Fprintf(&b, "on_overflow: %s\n", DefaultOnOverflow)
 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
+	b.WriteString("# telemetry: anonymous usage ping. Default enabled; set false (or export\n")
+	b.WriteString("#   ATCR_TELEMETRY=0) to opt out. Either surface disabling is sufficient.\n")
+	b.WriteString("# telemetry: true\n")
 	b.WriteString("# auto_fix: opt-in remediation for `atcr review --auto-fix`. Off unless the flag\n")
 	b.WriteString("#   is passed; leave this stanza commented to keep the default review path.\n")
 	b.WriteString("#   apply_target: working-tree dir the patch applies to (default: repo root).\n")

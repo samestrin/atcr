@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -731,4 +733,118 @@ func TestReconcileCmd_RepoFlagNonexistentFails(t *testing.T) {
 
 	require.Equal(t, 2, execCmd(t, "reconcile", "r", "--repo", "/nonexistent/path"),
 		"a nonexistent --repo must fail loudly with exit 2")
+}
+
+// --- Cloud sync (--sync-cloud) end-to-end -----------------------------------
+
+// writePoolSummary writes a valid sources/pool/summary.json under the fixture
+// review so scorecard.NewCloudSyncRecord can source per-persona metadata. It is
+// written directly (NOT via fixtureReview, which prepends a findings header that
+// would corrupt the JSON).
+func writePoolSummary(t *testing.T, id string) {
+	t.Helper()
+	poolDir := filepath.Join(".atcr", "reviews", id, "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	summary := `{"agents":[{"agent":"host","model":"m","tokens_in":200,"tokens_out":60,"duration_ms":1200}],"total":1,"succeeded":1}`
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "summary.json"), []byte(summary), 0o644))
+}
+
+// TestReconcileCmd_SyncCloud_SuccessfulPush covers AC 04-02 Scenario 2: a
+// reconcile with --sync-cloud POSTs a Bearer-authed, allowlisted body to the
+// (loopback) endpoint and exits 0.
+func TestReconcileCmd_SyncCloud_SuccessfulPush(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|boom|fix|security|10|ev|host\n",
+	})
+	writePoolSummary(t, "r")
+
+	got := false
+	auth := ""
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = true
+		auth = r.Header.Get("Authorization")
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	t.Setenv("ATCR_API_KEY", "valid-key")
+	require.Equal(t, 0, execCmd(t, "reconcile", "--sync-cloud", "--cloud-endpoint", srv.URL, "r"))
+	require.True(t, got, "the cloud endpoint received no request")
+	require.Equal(t, "Bearer valid-key", auth)
+	require.Contains(t, string(body), "persona_id_hash")
+	require.NotContains(t, string(body), "valid-key", "the API key must never appear in the body")
+	require.NotContains(t, string(body), "\"reviewer\"", "raw reviewer identifier must not be in the payload")
+}
+
+// TestReconcileCmd_SyncCloud_FlagOmitted_ZeroNetwork covers AC 04-02 EC1.
+func TestReconcileCmd_SyncCloud_FlagOmitted_ZeroNetwork(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|boom|fix|security|10|ev|host\n",
+	})
+	writePoolSummary(t, "r")
+
+	got := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got = true }))
+	defer srv.Close()
+
+	t.Setenv("ATCR_API_KEY", "valid-key")
+	require.Equal(t, 0, execCmd(t, "reconcile", "--cloud-endpoint", srv.URL, "r"))
+	require.False(t, got, "no --sync-cloud → zero cloud network calls")
+}
+
+// TestReconcileCmd_SyncCloud_InvalidKey_ExitsAuth covers AC 04-04: a 401 or 403
+// from the endpoint maps to exitAuth (3).
+func TestReconcileCmd_SyncCloud_InvalidKey_ExitsAuth(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		isolate(t)
+		fixtureReview(t, "r", map[string]string{
+			"sources/host/findings.txt": "HIGH|a.go:1|boom|fix|security|10|ev|host\n",
+		})
+		writePoolSummary(t, "r")
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+		}))
+		t.Setenv("ATCR_API_KEY", "bad-key")
+		code := execCmd(t, "reconcile", "--sync-cloud", "--cloud-endpoint", srv.URL, "r")
+		srv.Close()
+		require.Equal(t, exitAuth, code, "status %d must exit exitAuth", status)
+	}
+}
+
+// TestReconcileCmd_SyncCloud_ServerError_NonFatal covers AC 04-02 ErrScenario2 /
+// AC 04-04 ErrScenario3: a 500 is a non-fatal cloud-sync failure — the
+// reconcile's own exit code (0, no gate) is preserved, NOT exitAuth.
+func TestReconcileCmd_SyncCloud_ServerError_NonFatal(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|boom|fix|security|10|ev|host\n",
+	})
+	writePoolSummary(t, "r")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	t.Setenv("ATCR_API_KEY", "valid-key")
+	require.Equal(t, 0, execCmd(t, "reconcile", "--sync-cloud", "--cloud-endpoint", srv.URL, "r"))
+}
+
+// TestReconcileCmd_SyncCloud_MissingKey_FailFast covers AC 04-03: a missing key
+// exits exitAuth with zero network (fail fast, before the push).
+func TestReconcileCmd_SyncCloud_MissingKey_FailFast(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|boom|fix|security|10|ev|host\n",
+	})
+	got := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got = true }))
+	defer srv.Close()
+
+	t.Setenv("ATCR_API_KEY", "")
+	require.Equal(t, exitAuth, execCmd(t, "reconcile", "--sync-cloud", "--cloud-endpoint", srv.URL, "r"))
+	require.False(t, got, "a missing key must fail fast with zero network")
 }
