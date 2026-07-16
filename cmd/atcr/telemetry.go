@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/fanout"
@@ -102,7 +103,15 @@ func changedLineCount(changed payload.ChangedLines) int {
 // the content it was derived from.
 func dominantLang(changed payload.ChangedLines) string {
 	best, bestN := "", 0
-	for path, fc := range changed {
+	// Iterate sorted paths so ties are broken deterministically by the
+	// lexicographically smallest path (and therefore its extension).
+	paths := make([]string, 0, len(changed))
+	for path := range changed {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		fc := changed[path]
 		if n := len(fc.ChangedText); n > bestN {
 			best = strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
 			bestN = n
