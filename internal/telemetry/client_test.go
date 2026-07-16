@@ -111,11 +111,10 @@ func TestClient_Send_RecoversFromInternalPanic(t *testing.T) {
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer ts.Close()
 
-	orig := doRequest
-	doRequest = func(_ *http.Client, _ *http.Request) (*http.Response, error) {
+	restore := SetDoRequestForTest(func(_ *http.Client, _ *http.Request) (*http.Response, error) {
 		panic("forced telemetry panic")
-	}
-	defer func() { doRequest = orig }()
+	})
+	defer restore()
 
 	c := newTestClient(ts)
 	c.Send(context.Background(), Event{Event: "review_run", Status: "failure"})
@@ -157,12 +156,12 @@ func TestClient_Send_PayloadHasExactlyFourAllowlistedKeys(t *testing.T) {
 // opt-out mode reuses (AC 01-01 Edge Case 1).
 func TestClient_Send_EmptyEndpointNoOps(t *testing.T) {
 	var calls int32
-	orig := doRequest
-	doRequest = func(client *http.Client, req *http.Request) (*http.Response, error) {
+	orig := currentDoRequest()
+	doRequest.Store(doRequestFunc(func(client *http.Client, req *http.Request) (*http.Response, error) {
 		atomic.AddInt32(&calls, 1)
 		return orig(client, req)
-	}
-	defer func() { doRequest = orig }()
+	}))
+	defer func() { doRequest.Store(orig) }()
 
 	c := New("") // empty endpoint
 	c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
@@ -186,6 +185,11 @@ func TestClient_Send_NilReceiverNoOps(t *testing.T) {
 // this reproduces the data race between the detached send goroutine reading the
 // package global and another goroutine swapping it (TD-015).
 func TestClient_Send_SetDoRequestForTest_NoRace(t *testing.T) {
+	// Capture the production seam so we can restore it deterministically after
+	// the concurrent mutation exercises below.
+	orig := currentDoRequest()
+	defer func() { doRequest.Store(orig) }()
+
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Slow enough to keep sends in flight while the seam is mutated.
 		time.Sleep(10 * time.Millisecond)

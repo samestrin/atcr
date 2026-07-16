@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/samestrin/atcr/internal/log"
@@ -26,11 +27,22 @@ import (
 // cmd/atcr/main.go.
 var requestTimeout = 3 * time.Second
 
-// doRequest performs the outbound POST. A package var so tests can force a panic
-// inside the goroutine body and assert the deferred recover swallows it
-// (AC 01-03); production always uses the real client.Do.
-var doRequest = func(client *http.Client, req *http.Request) (*http.Response, error) {
-	return client.Do(req)
+// doRequest performs the outbound POST. Stored in an atomic.Value so tests can
+// force a panic inside the goroutine body and assert the deferred recover
+// swallows it (AC 01-03) without racing the detached send goroutine.
+// Production always uses the real client.Do.
+type doRequestFunc func(*http.Client, *http.Request) (*http.Response, error)
+
+var doRequest atomic.Value
+
+func init() {
+	doRequest.Store(doRequestFunc(func(client *http.Client, req *http.Request) (*http.Response, error) {
+		return client.Do(req)
+	}))
+}
+
+func currentDoRequest() doRequestFunc {
+	return doRequest.Load().(doRequestFunc)
 }
 
 // SetDoRequestForTest overrides the outbound-request seam and returns a restore
@@ -39,9 +51,9 @@ var doRequest = func(client *http.Client, req *http.Request) (*http.Response, er
 // without real networking; in-package tests mutate doRequest directly.
 // Production code never calls this.
 func SetDoRequestForTest(fn func(*http.Client, *http.Request) (*http.Response, error)) func() {
-	prev := doRequest
-	doRequest = fn
-	return func() { doRequest = prev }
+	prev := currentDoRequest()
+	doRequest.Store(doRequestFunc(fn))
+	return func() { doRequest.Store(prev) }
 }
 
 // Client sends anonymous usage events to a configured HTTPS endpoint. Construct
@@ -109,7 +121,7 @@ func (c *Client) send(ctx context.Context, ev Event) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := doRequest(c.httpClient, req)
+	resp, err := currentDoRequest()(c.httpClient, req)
 	if err != nil {
 		log.FromContext(ctx).Debug("telemetry: send failed", "error", err)
 		return
