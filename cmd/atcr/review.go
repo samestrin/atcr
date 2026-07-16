@@ -438,6 +438,16 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// nothing. Gated only by the explicit flag + key, never telemetryGate.
 		if syncPlan.enabled {
 			defer func() {
+				// Only push for a finalized review outcome (success or a plain exit-1
+				// findings-gate / all-agents-failed error). An already-coded exit-2 infra
+				// failure (a usageError from the in-process reconcile/verify/debate paths)
+				// means the tooling broke: pushing would make a needless network call and
+				// send a misleading CloudSyncRecord(outcome="failure"). This matches
+				// reconcile.go, which returns before its push on the same I/O-failure path
+				// (TD review.go:428).
+				if !cloudSyncPushable(err) {
+					return
+				}
 				outcome := "success"
 				if err != nil {
 					outcome = "failure"

@@ -63,9 +63,16 @@ func runSyncCloud(ctx context.Context, w io.Writer, plan syncCloudPlan, reviewDi
 }
 
 // cloudSyncPushable reports whether a run reached a finalized review outcome that a
-// --sync-cloud record should describe. STUB (RED): always true.
+// --sync-cloud record should describe. It is true for a success (nil) or a plain,
+// non-coded exit-1 error (a findings-gate failure or all-agents-failed review) — both
+// are real review outcomes worth reporting. It is false for an already-coded failure
+// (a usage/config/infra exit-2 error, or an exit-3 auth error): the tooling broke, so
+// pushing a CloudSyncRecord(outcome="failure") would make a needless network call and
+// send the backend a misleading record. Mirrors reconcile.go, which returns before its
+// push block on the same I/O-failure path (the asymmetry TD review.go:428 flags).
 func cloudSyncPushable(err error) bool {
-	return true
+	var coded *codedError
+	return !errors.As(err, &coded)
 }
 
 // resolveSyncCloudOutcome combines the run's own outcome (runErr) with the result
