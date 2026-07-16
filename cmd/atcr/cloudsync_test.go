@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/scorecard"
@@ -78,6 +79,13 @@ func TestResolveSyncCloud_EndpointTrimmedOnce(t *testing.T) {
 func TestFinishCloudSync_AuthRejectedMapsToExitAuth(t *testing.T) {
 	var buf bytes.Buffer
 	err := finishCloudSync(&buf, scorecard.ErrCloudAuthRejected)
+	require.Error(t, err)
+	assert.Equal(t, exitAuth, exitCode(err))
+}
+
+func TestFinishCloudSync_WrappedAuthRejectedMapsToExitAuth(t *testing.T) {
+	var buf bytes.Buffer
+	err := finishCloudSync(&buf, fmt.Errorf("wrap: %w", scorecard.ErrCloudAuthRejected))
 	require.Error(t, err)
 	assert.Equal(t, exitAuth, exitCode(err))
 }
