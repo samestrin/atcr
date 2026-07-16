@@ -11,10 +11,15 @@ This document is the complete privacy model for those two paths. It is a
 described in [scorecard.md](scorecard.md) — the two use different schemas and
 different guarantees; nothing here changes what `--export` does.
 
-The usage ping fires silently as a byproduct of a completed run. It is
-**fail-open**: if the network is down, slow, or the endpoint is unreachable, the
-ping is dropped and the CLI exits exactly as it would have anyway. It never
-blocks, delays, or crashes the command.
+The usage ping is wired to fire silently as a byproduct of a completed run, and
+it is **fail-open**: if the network is down, slow, or the endpoint is
+unreachable, the ping is dropped and the CLI exits exactly as it would have
+anyway. It never blocks, delays, or crashes the command.
+
+> **Currently inactive.** The compiled-in ingestion endpoint is empty in this
+> build, so the ping is a wired **no-op** — nothing is transmitted until a real
+> backend endpoint is configured. The schema below describes the payload that
+> *would* be sent; the opt-out surfaces already suppress it regardless.
 
 ---
 
@@ -22,15 +27,20 @@ blocks, delays, or crashes the command.
 
 The ping carries exactly four allowlisted fields and nothing else:
 
-| Field    | Type   | Example        | Meaning                                  |
-|----------|--------|----------------|------------------------------------------|
-| `event`  | string | `review_run`   | Which command completed.                 |
-| `lang`   | string | `go`           | Primary language of the reviewed code.   |
-| `lines`  | int    | `450`          | Approximate line count of the change.    |
-| `status` | string | `success`      | Run outcome.                             |
+| Field    | Type   | Example                    | Meaning                                  |
+|----------|--------|----------------------------|------------------------------------------|
+| `event`  | string | `review_run`/`reconcile_run` | Which command completed.               |
+| `lang`   | string | `go`                       | Primary language of the reviewed code.   |
+| `lines`  | int    | `450`                      | Approximate line count of the change.    |
+| `status` | string | `success`                  | Run outcome.                             |
 
 That is the whole payload. A field that is not in this allowlist cannot leak,
 because it is never placed into the event in the first place.
+
+The `event` value is `review_run` or `reconcile_run`. A `reconcile_run` event
+carries an empty `lang` and `lines` of `0` — a reconcile spans multiple sources
+with no single language or change size — so those two fields are populated only
+for `review_run`.
 
 **Preserved (allowlist):**
 
