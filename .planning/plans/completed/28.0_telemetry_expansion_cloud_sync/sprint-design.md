@@ -45,7 +45,7 @@ Cobra config subcommand persistence pattern
 
 - **Architecture:** 2/3 - Codebase has zero prior art for a background/fire-and-forget HTTP client (`internal/telemetry` is a wholly new package and pattern) and zero prior `atcr config` subcommand group; both are new patterns built from stdlib and modeled on existing idioms (`logLevelFromEnv`, `debt.go`'s subcommand-group shape), not a major architectural overhaul.
 - **Integration:** 3/3 - Touches 4 internal components (`internal/telemetry` new, `internal/scorecard`, `internal/registry`, `cmd/atcr`) plus a genuine external system (`atcr.dev/dashboard`) whose API contract is owned outside this plan ("requires coordination with whoever owns the `atcr.dev/dashboard` backend endpoint" — plan.md Resource Requirements) — complex multi-system integration.
-- **Story/Task & Test:** 3/3 - 5 stories, 19 acceptance criteria, 6 ACs marked High complexity, spanning unit + integration coverage including a byte-for-byte regression test on a privacy-critical export path (03-03).
+- **Story/Task & Test:** 3/3 - 5 stories, 19 acceptance criteria, with Stories 3 and 4 marked High complexity, spanning unit + integration coverage including a byte-for-byte regression test on a privacy-critical export path (03-03).
 - **Risk/Unknowns:** 3/3 - The cloud-sync endpoint's real auth/response contract is undefined and explicitly out of this plan's scope; the plan carries a documented, high-impact architectural risk (accidentally weakening the Epic 10.0 `scrubField`/`PublicRecord` privacy guarantee); goroutine panic-safety/fail-open correctness is safety-critical and cannot be fully exercised against the real network.
 
 **Time Formula:** Research spike (1d) + Story 1 RGR (2d) + Story 3 RGR (2d) + Story 2 RGR (2d) + Story 4 RGR (3d) + Story 5 docs (1d) + Integration & Validation (2d)
@@ -79,7 +79,7 @@ Validate the `internal/telemetry` client's construction shape (goroutine + bound
 
 ### Phase 4: Advanced — Cloud Sync Push (3 days)
 **Items:** User Story 4 (`--sync-cloud` Authenticated Push)
-**Focus:** Depends on Phase 2's Story 1 (HTTP send pattern) and Story 3 (hashed Persona ID field). Adds `addSyncCloudFlags` (flags.go), the new `exitAuth` exit code + `codedError` path (main.go), and a new cloud-sync allowlist schema in `internal/scorecard/export.go` that is NOT a superset of `PublicRecord`. Highest-risk phase — concentrates 3 of the plan's 6 High-complexity ACs (04-02, 04-04, plus the shared 03-03 regression it depends on).
+**Focus:** Depends on Phase 2's Story 1 (HTTP send pattern) and Story 3 (hashed Persona ID field). Adds `addSyncCloudFlags` (flags.go), the new `exitAuth` exit code + `codedError` path (main.go), and a new cloud-sync allowlist schema in `internal/scorecard/export.go` that is NOT a superset of `PublicRecord`. Highest-risk phase — concentrates several high-complexity ACs (04-02, 04-04, plus the shared 03-03 regression it depends on).
 
 ### Phase 5: Documentation (1 day)
 **Items:** User Story 5 (Telemetry Privacy Documentation)
@@ -121,7 +121,7 @@ Validate the `internal/telemetry` client's construction shape (goroutine + bound
 
 **Unit/Integration/E2E:**
 - **Unit (18 of 19 ACs):** Table-driven `go test`, `httptest.NewServer` to mock the telemetry/cloud endpoints for timeout, panic-injection, and payload-shape assertions. No new test framework — reuses `go test ./...` (`internal/registry/config.yaml`'s `testing.cmd`).
-- **Integration (6 ACs: 02-01, 02-02, 02-03, 03-03, 04-02, 04-04):** Cobra command execution against `httptest` mock servers for opt-out precedence and cloud-sync auth; the leaderboard-export regression (03-03) runs the existing `runLeaderboardExport` path and diffs output byte-for-byte against its pre-change golden output.
+- **Integration (6 ACs: 02-01, 02-02, 02-03, 03-03, 04-02, 04-04):** Cobra command execution against `httptest` mock servers for opt-out precedence and cloud-sync auth; the leaderboard-export regression (03-03) runs the existing `runLeaderboardExport` path and diffs output byte-for-byte against its pre-change golden output. The integration-heavy ACs are concentrated in the High-complexity Stories 3 and 4.
 - **E2E:** None required — CLI/library-level plan with no UI surface (confirmed by `test-planning-matrix.md`).
 
 **Test Environment Status:**

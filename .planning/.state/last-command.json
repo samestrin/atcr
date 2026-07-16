@@ -1,9 +1,9 @@
 {
-  "skill": "design-sprint",
-  "args": "@.planning/plans/active/28.0_telemetry_expansion_cloud_sync/",
-  "invocation": "/design-sprint @.planning/plans/active/28.0_telemetry_expansion_cloud_sync/",
+  "skill": "create-sprint",
+  "args": "@.planning/plans/active/28.0_telemetry_expansion_cloud_sync/ --gated",
+  "invocation": "/create-sprint @.planning/plans/active/28.0_telemetry_expansion_cloud_sync/ --gated",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "07040c0c-40fb-49e3-86c7-1f691caf47cd",
-  "timestamp": "2026-07-16T00:11:22.812Z"
+  "session_id": "d10e8ff5-e6fd-4d6f-a1cc-ec6616fbf07b",
+  "timestamp": "2026-07-16T00:20:05.352Z"
 }
