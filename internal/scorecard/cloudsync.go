@@ -148,6 +148,18 @@ func ValidateCloudEndpoint(endpoint string) error {
 	}
 }
 
+// redactEndpoint returns endpoint with any embedded userinfo password masked, for
+// safe inclusion in an error surfaced to stderr/logs. A --cloud-endpoint of the form
+// https://user:pass@host would otherwise echo the password verbatim; url.Redacted()
+// replaces it with "xxxxx". An unparseable endpoint reveals nothing.
+func redactEndpoint(endpoint string) string {
+	u, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return ""
+	}
+	return u.Redacted()
+}
+
 // isLoopbackHost reports whether host is localhost or a loopback IP literal.
 func isLoopbackHost(host string) bool {
 	if strings.EqualFold(host, "localhost") {
@@ -185,7 +197,7 @@ func Push(ctx context.Context, endpoint, apiKey string, rec CloudSyncRecord) err
 
 	resp, err := cloudHTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("cloud sync failed: request to %s failed: %w", endpoint, err)
+		return fmt.Errorf("cloud sync failed: request to %s failed: %w", redactEndpoint(endpoint), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	// Drain (bounded) so the keep-alive connection can be reused.
