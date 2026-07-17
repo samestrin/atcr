@@ -477,7 +477,7 @@ Use the Agent tool:
 
 ---
 
-### 2.2 [ ] **[Opt-In Gate Truth Table — GREEN](plan/user-stories/02-quality-signal-opt-in-gate.md)**
+### 2.2 [x] **[Opt-In Gate Truth Table — GREEN](plan/user-stories/02-quality-signal-opt-in-gate.md)**
 
 1. Create `cmd/atcr/qualitysignal.go`
 2. Implement `qualitySignalEnabled(envEnabled bool, cfgQualitySignal *bool) bool = envEnabled || (cfgQualitySignal != nil && *cfgQualitySignal)` — pure, total, opt-in shape
@@ -489,7 +489,7 @@ Use the Agent tool:
 
 ---
 
-### 2.2.A [ ] **[Opt-In Gate Truth Table — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-quality-signal-opt-in-gate.md)**
+### 2.2.A [x] **[Opt-In Gate Truth Table — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-quality-signal-opt-in-gate.md)**
 
 **Changed Files:** `cmd/atcr/qualitysignal.go`, `cmd/atcr/qualitysignal_test.go`
 
@@ -508,20 +508,17 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
-| Severity | File:Line | Issue | Fix |
+**Subagent findings (fresh general-purpose agent, no CRITICAL/HIGH; gate logic + independence + fail-safe all verified correct):**
+| Severity | File:Line | Issue | Disposition |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| MEDIUM | qualitysignal_test.go | No gate-level malformed-config regression test — only the env path covers fail-safe; the privacy release-gate "corrupt `quality_signal` value → disabled" case was unguarded | Fixed in 2.3 (added `TestQualitySignalGate_MalformedConfigFailsSafeToDisabled`) |
+| LOW | qualitysignal.go:37 | "read once per run" doc comment over-promises given the gate is re-evaluated per call | Fixed in 2.3 (comment softened) |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 2.3, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** No CRITICAL/HIGH → adversarial review passed. The two MEDIUM/LOW findings are a privacy-release-gate test-coverage gap and a doc-comment nit — both cheap and strengthening (not behavior changes), addressed inline in 2.3 REFACTOR rather than deferred, matching the AC 02-03 release-gate coverage the sprint mandates.
 
 ---
 
-### 2.3 [ ] **[Opt-In Gate Truth Table — REFACTOR](plan/user-stories/02-quality-signal-opt-in-gate.md)**
+### 2.3 [x] **[Opt-In Gate Truth Table — REFACTOR](plan/user-stories/02-quality-signal-opt-in-gate.md)**
 
 1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
 2. Confirm zero shared boolean/precedence table with `telemetryGate`/`resolveSyncCloud` (structural, not just behavioral, independence)

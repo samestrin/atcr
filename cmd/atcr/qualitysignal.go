@@ -34,8 +34,9 @@ func qualitySignalEnabled(envEnabled bool, cfgQualitySignal *bool) bool {
 // names the ENABLED state directly and defaults OFF: unset, blank, or any
 // unparseable value resolves to disabled — the privacy-preserving fail-safe, the
 // inverse of ATCR_TELEMETRY's fail-OPEN-to-enabled posture. An unparseable value
-// warns once (this is read once per run via qualitySignalGate) so a misspelled
-// opt-in (e.g. "ture") is visible rather than silently ignored.
+// warns to stderr (in production it is read via a single per-run qualitySignalGate
+// check) so a misspelled opt-in (e.g. "ture") is visible rather than silently
+// ignored.
 func qualitySignalEnabledFromEnv() bool {
 	v := strings.TrimSpace(os.Getenv("ATCR_QUALITY_SIGNAL"))
 	if v == "" {

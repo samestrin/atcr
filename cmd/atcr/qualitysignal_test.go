@@ -120,6 +120,27 @@ func TestQualitySignalGate_IndependentFromSyncCloud(t *testing.T) {
 	assert.False(t, qualitySignalGate(), "a valid ATCR_API_KEY must not enable the quality-signal gate")
 }
 
+// TestQualitySignalGate_MalformedConfigFailsSafeToDisabled is a privacy release
+// gate: a corrupt persisted quality_signal value (e.g. a hand-edited
+// `quality_signal: maybe`) must resolve the gate to DISABLED, never be silently
+// coerced to consent — even when an env opt-in is present, a malformed config
+// still fails safe because LoadQualitySignalSetting surfaces the parse error and
+// the gate maps any load error to disabled.
+func TestQualitySignalGate_MalformedConfigFailsSafeToDisabled(t *testing.T) {
+	t.Run("malformed config, no env -> disabled", func(t *testing.T) {
+		isolate(t)
+		_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+		writeAtcrConfig(t, "agents: [bruce]\nquality_signal: maybe\n")
+		assert.False(t, qualitySignalGate(), "a corrupt quality_signal value must never be interpreted as consent to transmit")
+	})
+	t.Run("malformed config overrides an env opt-in -> disabled", func(t *testing.T) {
+		isolate(t)
+		t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+		writeAtcrConfig(t, "agents: [bruce]\nquality_signal: maybe\n")
+		assert.False(t, qualitySignalGate(), "a corrupt config must fail safe to disabled even with an env opt-in present")
+	})
+}
+
 // TestQualitySignalGate_ReEvaluatedFreshPerInvocation proves there is no stale
 // in-process cache: the gate re-reads env + config every call, so a change to
 // either surface between calls flips the result.
