@@ -459,7 +459,7 @@ Use the Agent tool:
 
 ---
 
-### 2.1 [ ] **[Opt-In Gate Truth Table — RED](plan/user-stories/02-quality-signal-opt-in-gate.md)**
+### 2.1 [x] **[Opt-In Gate Truth Table — RED](plan/user-stories/02-quality-signal-opt-in-gate.md)**
 
 **AC:** 02-01, 02-02
 
