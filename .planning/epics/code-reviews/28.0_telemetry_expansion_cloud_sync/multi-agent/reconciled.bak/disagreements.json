@@ -1,0 +1,165 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "severity_split",
+      "file": "cmd/atcr/config.go",
+      "line": 41,
+      "severity": "HIGH",
+      "problem": "(newConfigSetCmd) No tests for runConfigSet error branches (unsupported key, invalid bool, repoRoot, SetTelemetrySetting) and success path",
+      "score": 4,
+      "spread": 2,
+      "independence": 2,
+      "reviewers": [
+        "dax",
+        "otto"
+      ],
+      "disagreement": "LOW vs HIGH"
+    },
+    {
+      "kind": "severity_split",
+      "file": "internal/scorecard/telemetry.go",
+      "line": 12,
+      "severity": "HIGH",
+      "problem": "HashPersonaID claims pseudonymization but unsalted SHA-256 over a small enumerable set is dictionary-reversible; the privacy contract is misleading and the Leaderboard cannot claim anonymized aggregation",
+      "score": 4,
+      "spread": 1,
+      "independence": 4,
+      "reviewers": [
+        "dax",
+        "kai",
+        "mira",
+        "pace"
+      ],
+      "disagreement": "MEDIUM vs HIGH"
+    },
+    {
+      "kind": "severity_split",
+      "file": "internal/scorecard/telemetry.go",
+      "line": 31,
+      "severity": "MEDIUM",
+      "problem": "(HashPersonaID) HashPersonaID uses unsafe.StringData/unsafe.Slice to avoid a negligible allocation, trading memory safety guarantees for no meaningful performance gain on small strings",
+      "score": 4,
+      "spread": 1,
+      "independence": 4,
+      "reviewers": [
+        "brad",
+        "kai",
+        "mira",
+        "otto"
+      ],
+      "disagreement": "LOW vs MEDIUM"
+    },
+    {
+      "kind": "severity_split",
+      "file": "internal/scorecard/telemetry.go",
+      "line": 12,
+      "severity": "HIGH",
+      "problem": "Empty string input to HashPersonaID not tested despite unsafe.StringData edge case",
+      "score": 3,
+      "spread": 1,
+      "independence": 3,
+      "reviewers": [
+        "dax",
+        "mira",
+        "pace"
+      ],
+      "disagreement": "MEDIUM vs HIGH"
+    },
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/config.go",
+      "line": 30,
+      "severity": "MEDIUM",
+      "problem": "Long help text warns about ATCR_DISABLE_AST_GROUPING direction but does not document what exit code an I/O failure (missing config file) produces",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "cmd/atcr/flags.go",
+      "line": 61,
+      "severity": "MEDIUM",
+      "problem": "Warning check uses exact string equality after TrimSpace, so a trailing slash on --cloud-endpoint bypasses the placeholder warning and triggers a redirect-block failure",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "greta"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "greta",
+          "severity": "MEDIUM",
+          "problem": "Warning check uses exact string equality after TrimSpace, so a trailing slash on --cloud-endpoint bypasses the placeholder warning and triggers a redirect-block failure"
+        }
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/flags_test.go",
+      "line": 28,
+      "severity": "MEDIUM",
+      "problem": "(TestAddSyncCloudFlags_RegisteredOnReviewAndReconcile) No test verifies placeholder warning absent when --sync-cloud not set or endpoint overridden",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/scorecard/export_test.go",
+      "line": 592,
+      "severity": "MEDIUM",
+      "problem": "(TestRunLeaderboardExport_ByteForByteRegression) Byte-for-byte SHA-256 checksum pins the entire serialized output, making the test fail on any formatting, ordering, or whitespace change and obscuring the actual semantic contract",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "kai"
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "cmd/atcr/main_test.go",
+      "line": 113,
+      "severity": "LOW",
+      "problem": "TestExitCode does not test authError wrapping a usageError",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "bruce"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "bruce",
+          "severity": "LOW",
+          "problem": "TestExitCode does not test authError wrapping a usageError"
+        }
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/telemetry/event.go",
+      "line": 1,
+      "severity": "LOW",
+      "problem": "Event struct has no test for exact JSON field allowlist (privacy regression guard)",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    }
+  ]
+}

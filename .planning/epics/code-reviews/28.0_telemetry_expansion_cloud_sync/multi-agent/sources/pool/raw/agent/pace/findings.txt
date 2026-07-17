@@ -1,0 +1,3 @@
+# atcr-findings/v1
+MEDIUM|internal/scorecard/telemetry.go:57|Repeated computation of SHA-256 hash for the same reviewer ID across multiple records (same reviewer, different models) in the scorecard export for telemetry/cloud sync|Cache the hash result per reviewer ID for the duration of the export (e.g., using a map[string]string)|performance|15|HashPersonaID(r.Reviewer) is called for every Record in the scorecard, leading to redundant hash computations when the same reviewer appears multiple times (e.g., reviewing multiple models). For a pool of R reviewers and M models per reviewer, this does R*M hash computations instead of R.|pace
+MEDIUM|internal/scorecard/telemetry.go:57|Repeated computation of SHA-256|||0||pace

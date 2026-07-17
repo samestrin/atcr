@@ -412,19 +412,6 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
 		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now))
 
-		// Fire the anonymous usage ping on run completion — success or
-		// all-agents-failed — as a fire-and-forget side effect alongside the
-		// audit/history writes below. It never blocks or changes this command's
-		// outcome (Story 1). The opt-out gate (Story 2) is checked BEFORE Send so a
-		// disabled run spawns no goroutine and builds no payload; a nil client no-ops.
-		if telemetryGate() {
-			status := "success"
-			if err != nil {
-				status = "failure"
-			}
-			telemetry.FromContext(ctx).Send(ctx, reviewTelemetryEvent(prep, status))
-		}
-
 		// --sync-cloud push (Story 4): an explicit, user-invoked action, DEFERRED so
 		// it fires once runReview's full outcome is finalized — the history/audit
 		// ledgers below and the one-shot reconcile/verify/debate/gate all run first.
@@ -458,6 +445,28 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 				err = resolveSyncCloudOutcome(err, runSyncCloud(ctx, cmd.ErrOrStderr(), syncPlan, result.Dir, outcome))
 			}()
 		}
+
+		// Fire the anonymous usage ping on run completion as a DEFERRED side effect so
+		// its status reflects the FINALIZED outcome — including the
+		// --fail-on/--verify/--debate gate below: a run whose agents all succeed but
+		// whose findings survive the gate exits 1 and must then report "failure",
+		// mirroring reconcile.go's post-gate Send (TD-009). A pre-gate Send (computing
+		// status from the fanout error alone) misreported that case as "success".
+		// Registered AFTER the --sync-cloud defer above so LIFO runs THIS one FIRST,
+		// reading the review's own findings outcome — never a cloud-sync auth override
+		// the sync defer may layer onto err (matching reconcile.go, which sends from the
+		// findings gateErr, not the auth-overridden return). The opt-out gate (Story 2)
+		// is checked at fire time so a disabled run spawns no goroutine; a nil client
+		// no-ops. It never blocks or changes this command's outcome (Story 1).
+		defer func() {
+			if telemetryGate() {
+				status := "success"
+				if err != nil {
+					status = "failure"
+				}
+				telemetry.FromContext(ctx).Send(ctx, reviewTelemetryEvent(prep, status))
+			}
+		}()
 	}
 	if err != nil {
 		return err // all-agents-failed → exit 1, artifacts preserved
