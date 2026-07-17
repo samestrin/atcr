@@ -1185,7 +1185,7 @@ Use the Agent tool:
 
 ---
 
-### 6.2 [ ] **📝 Documentation — REFACTOR**
+### 6.2 [x] **📝 Documentation — REFACTOR**
 
 1. Fix CRITICAL/HIGH issues from 6.1.A (if any)
 2. Final field-by-field diff against the shipped struct and allowlist test; confirm zero discrepancies in either direction
@@ -1195,7 +1195,7 @@ Use the Agent tool:
 
 ---
 
-### 6.3 [ ] **Phase 6 DoD Verification**
+### 6.3 [x] **Phase 6 DoD Verification**
 
 ```
 Story-5 DoD Complete
@@ -1203,15 +1203,15 @@ Auto: 3/3 | Story-Specific: 3/3 ACs
 Manual Review: [ ] Code reviewed (adversarial 6.1.A, REFACTOR 6.2)
 ```
 
-- [ ] Markdown renders without syntax errors (tables, headers, links); no broken internal links
-- [ ] `go build ./...` and `go test ./...` still pass (no source changed by this phase)
-- [ ] AC 05-01: field-allowlist table matches shipped struct exactly ✓
-- [ ] AC 05-02: opt-in mechanism + `--preview` behavior documented and matching shipped code ✓
-- [ ] AC 05-03: standalone no-code/no-finding-content guarantee + restated persona-hash caveat, consistent with existing docs ✓
+- [x] Markdown renders without syntax errors (tables, headers, links); no broken internal links — anchor `#persona-leaderboard-data` resolves, all tables balanced
+- [x] `go build ./...` and `go test ./...` still pass (no source changed by this phase) — build clean, 42 pkgs pass
+- [x] AC 05-01: field-allowlist table matches shipped struct exactly ✓
+- [x] AC 05-02: opt-in mechanism + `--preview` behavior documented and matching shipped code ✓
+- [x] AC 05-03: standalone no-code/no-finding-content guarantee + restated persona-hash caveat, consistent with existing docs ✓
 
 ---
 
-### 6.4 [ ] **Phase 6 — GATE: Integration & Exit Review (subagent)**
+### 6.4 [x] **Phase 6 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 6 (integration-level, not TDD cadence)
 
@@ -1231,16 +1231,13 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Gate findings (fresh subagent, hostile integrator — no findings; CONTRACT-EXIT (doc matches shipped Phases 1-5) / CONFIG-SURFACE (no key beyond `quality_signal`) / INTEGRATION (no contradiction with usage-ping or cloud-sync sections) / PHASE-EXIT / REGRESSION (edit purely additive — existing sections unchanged) all PASS):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| None | — | Doc accurately reflects shipped struct (4 no-omitempty fields), six-cell truth table, `ATCR_QUALITY_SIGNAL` fail-safe, `quality_signal` config key only, `--preview` byte-identity + not-sent marker, and fail-open; edit is purely additive; existing usage-ping/opt-out/persona-hash/cloud-sync sections unchanged | — |
 
-**Action Required:**
-- CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-- MEDIUM/LOW found → Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-- None found → Note "Phase gate passed" and proceed to phase stop
+**Action Taken:** No CRITICAL/HIGH/MEDIUM/LOW → **Phase gate passed.** Phase 6 is the FINAL numbered phase (only the non-numbered "Final Phase: Validation" follows), so gated mode does NOT stop — falling through to final validation.
+
 **Duration:** 15-30 min
 
 ---
@@ -1248,14 +1245,14 @@ Use the Agent tool:
 ## Final Phase: Validation
 
 ### Validation Checklist
-- [ ] All tests passing (T3): `go test ./...`
-- [ ] Coverage meets threshold: `go test -coverprofile=coverage.out ./...` ≥80%
-- [ ] Lint/format clean: `golangci-lint run` (0 issues), `go vet ./...` (clean), `goimports` applied
-- [ ] Build succeeds: `go build ./...`
-- [ ] All 21 acceptance criteria across 6 user stories verified against shipped code
-- [ ] `docs/telemetry.md` cross-checked against the shipped `quality_signal.go` struct and its allowlist test for zero discrepancy in either direction
-- [ ] End-to-end walkthrough: `--preview` output byte-identical to a real send's marshaled body; gate resolves disabled with no env/config; a corrupted `quality_signal` config value fails safe
-- [ ] Confirm no accidental coupling between the new `qualitySignalGate()` and `telemetryGate`/`resolveSyncCloud`
+- [x] All tests passing (T3): `go test ./...` — 42 packages green
+- [x] Coverage meets threshold: `go test -coverprofile=coverage.out ./...` ≥80% — localdebt 85.1%, telemetry 89.1%, cmd/atcr 86.0%, registry 89.8%
+- [x] Lint/format clean: `golangci-lint run` (0 issues), `go vet ./...` (clean), `goimports` applied
+- [x] Build succeeds: `go build ./...`
+- [x] All 21 acceptance criteria across 6 user stories verified against shipped code (Phases 1-6 DoD + adversarial/gate reviews)
+- [x] `docs/telemetry.md` cross-checked against the shipped `quality_signal.go` struct and its allowlist test for zero discrepancy in either direction — confirmed by 6.1.A adversarial + 6.4 gate reviews
+- [x] End-to-end walkthrough: `--preview` output byte-identical to a real send's marshaled body; gate resolves disabled with no env/config; a corrupted `quality_signal` config value fails safe — locked by Phase 3/5 tests (byte-identity, gate-disabled zero-request, malformed-config fail-safe)
+- [x] Confirm no accidental coupling between the new `qualitySignalGate()` and `telemetryGate`/`resolveSyncCloud` — locked by `TestQualitySignalGate_IndependentFromTelemetrySetting`/`_IndependentFromSyncCloud`
 
 ### Optional: Targeted Mutation Testing
 
@@ -1264,7 +1261,7 @@ Mutation testing tool unavailable in this environment (no `stryker-mutator` in p
 ### Drift Analysis
 
 Compare final implementation against `plan/original-requirements.md`:
-- [ ] AC1 (opt-in, aggregate, content-free, preview, nothing sent by default) — delivered by Phases 1-3, 5
-- [ ] AC2 (signal surfaced to maintainer, closes loop to 19.8/19.9) — delivered by Phase 4
-- [ ] AC3 (`go test ./...` passes; docs document the exact contract) — delivered by Phase 6 + this Final Phase
-- [ ] No scope creep: the submit flow/curation (19.9), the dismissal signal source (24.0), the telemetry transport itself (28.0), and the hermes drafting agent (19.8) remain untouched — this sprint only consumes them
+- [x] AC1 (opt-in, aggregate, content-free, preview, nothing sent by default) — delivered by Phases 1-3, 5
+- [x] AC2 (signal surfaced to maintainer, closes loop to 19.8/19.9) — delivered by Phase 4
+- [x] AC3 (`go test ./...` passes; docs document the exact contract) — delivered by Phase 6 + this Final Phase
+- [x] No scope creep: the submit flow/curation (19.9), the dismissal signal source (24.0), the telemetry transport itself (28.0), and the hermes drafting agent (19.8) remain untouched — this sprint only consumes them
