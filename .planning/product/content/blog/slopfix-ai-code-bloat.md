@@ -35,5 +35,5 @@
 
 ## 5. The Call to Action
 - **The Pitch:** Stop paying $10k/week or burning your senior engineers' time to clean up AI slop. Let AI clean up after itself.
-- **The Action:** "Install ATCR today and run `atcr review --persona simon` on your next PR."
+- **The Action:** "Try it in seconds with zero setup — `atcr personas test simon` runs Simon against a built-in slop fixture with no API key. Ready for your own PRs? `atcr personas install simon`, then wire Simon into your CI review."
 - Link to the GitHub repo and the Quickstart guide.

@@ -128,5 +128,15 @@
     "model": "local/llama3.3-70b",
     "tasks": ["invariant-review"],
     "tags": ["invariant", "consistency", "llama", "local", "tier-64gb-heavyweight"]
+  },
+  {
+    "name": "simon",
+    "version": "1.0.0",
+    "description": "Claude Sonnet anti-slop reviewer targeting AI-generated code bloat and over-engineering (balanced fast lens)",
+    "path": "simon.yaml",
+    "provider": "openrouter",
+    "model": "anthropic/claude-sonnet-5",
+    "tasks": ["bloat-review"],
+    "tags": ["bloat", "slop", "claude", "frontier-vendor"]
   }
 ]

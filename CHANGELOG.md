@@ -1,3 +1,19 @@
+## [29.0.0] - 2026-07-17
+
+Ship a new community persona, `simon`, hyper-focused on hunting down AI-generated code bloat, backed by a passing fixture test and a refreshed marketing blog outline.
+
+### Added
+
+- `simon` community persona targeting AI-generated code bloat — tautological comments, unnecessary design patterns, defensive-programming overkill, and dead/hallucinated code paths (`personas/community/simon.yaml`, `personas/community/simon.md`).
+- Synthetic slop fixture and `simon` roster/index registration, closing out the 14-persona test-gate suite (`personas/community/testdata/simon_fixture.patch`, `personas/community_test.go`, `personas/community/index.json`).
+
+### Fixed
+
+- Replaced the invalid `atcr review --persona simon` CLI reference in the Slopfix blog outline with the working `atcr personas install simon` / `atcr personas test simon` commands (`.planning/product/content/blog/slopfix-ai-code-bloat.md`).
+- Corrected `simon`'s registry metadata: normalized `index.json` tag arity to the 4-tag cloud-persona schema, added the missing description lens descriptor, fixed the fixture's hunk-header formatting, and planted the `bloat` category word in the fixture.
+
+*Shipped via /execute-sprint + /resolve-td (sprint 29.0)*
+
 ## [Technical Debt] - 2026-07-16
 
 ### Fixed
