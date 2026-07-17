@@ -172,11 +172,13 @@ func prFromGitHubRef(ref string) int {
 // is a plain failure (exit 1) with the artifacts preserved on disk.
 func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// --preview renders the outbound quality-signal payload locally and sends
-	// nothing (Story 3). It short-circuits FIRST — before the --resume branch, the
-	// --sync-cloud precondition, the opt-in gate, and any transport/credential
-	// resolution — so it works for an undecided user with no ATCR_API_KEY and never
-	// runs a review (AC 03-01/03-02). Its output is the marshal of the shared
-	// buildQualitySignalPayload, identical to what a real send would transmit.
+	// nothing (Story 3). It short-circuits at the top of RunE — before the --resume
+	// branch, the --sync-cloud precondition, the opt-in gate, and any
+	// transport/credential resolution — so it works for an undecided user with no
+	// ATCR_API_KEY and never runs a review (AC 03-01/03-02). (Cobra's pure
+	// range-flag PreRunE still validates flag combinations before RunE, but does no
+	// I/O, network, gate, or credential access.) Its output is the marshal of the
+	// shared buildQualitySignalPayload, identical to what a real send would transmit.
 	if handled, perr := maybePreviewQualitySignal(cmd); handled {
 		return perr
 	}

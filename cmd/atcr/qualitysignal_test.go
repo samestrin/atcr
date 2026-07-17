@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -241,6 +243,68 @@ func splitPreview(out string) (jsonPart, marker string) {
 		return out, ""
 	}
 	return out[:idx], out[idx:]
+}
+
+// runRootPreview drives the FULL command tree through cobra ExecuteContext — root
+// PersistentPreRunE, the host command's chained PreRunE (range/sync-cloud/preview),
+// then RunE — capturing stdout and returning the resolved exit code. Unlike
+// runPreview (which calls RunE directly), this exercises the real invocation path,
+// so a PreRunE-ordering regression is caught.
+func runRootPreview(t *testing.T, args ...string) (string, int) {
+	t.Helper()
+	root := newRootCmd()
+	var out bytes.Buffer
+	root.SetArgs(args)
+	root.SetOut(&out)
+	root.SetErr(new(bytes.Buffer))
+	err := root.ExecuteContext(context.Background())
+	return out.String(), exitCode(err)
+}
+
+// TestPreview_EndToEndThroughExecute proves --preview works through the real
+// PreRunE→RunE path (not just a direct RunE call): review and reconcile each host
+// it, and --preview + --sync-cloud with no ATCR_API_KEY still exits 0 rather than
+// the exit-3 a real sync-cloud precondition would raise (AC 03-01 EC2, AC 03-02).
+func TestPreview_EndToEndThroughExecute(t *testing.T) {
+	t.Run("review --preview alone exits 0 with payload", func(t *testing.T) {
+		isolate(t)
+		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+		out, code := runRootPreview(t, "review", "--preview")
+		require.Equal(t, 0, code, "review --preview must pass PreRunE and exit 0")
+		assert.Contains(t, out, "persona_id_hash")
+		assert.Contains(t, out, "nothing was transmitted")
+	})
+	t.Run("reconcile --preview alone exits 0 with payload", func(t *testing.T) {
+		isolate(t)
+		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+		out, code := runRootPreview(t, "reconcile", "--preview")
+		require.Equal(t, 0, code, "reconcile --preview must short-circuit before review-dir resolution and exit 0")
+		assert.Contains(t, out, "persona_id_hash")
+	})
+	t.Run("review --preview --sync-cloud with no key exits 0 through the full PreRunE path", func(t *testing.T) {
+		isolate(t)
+		_ = os.Unsetenv("ATCR_API_KEY")
+		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+		out, code := runRootPreview(t, "review", "--preview", "--sync-cloud")
+		require.Equal(t, 0, code, "--preview must take precedence over --sync-cloud even through the real Execute() path")
+		assert.Contains(t, out, "persona_id_hash")
+	})
+}
+
+// TestPreview_PayloadHashesPersonaIndependently anchors the privacy guarantee
+// without re-using the production constructor: it computes the expected SHA-256 of
+// the persona name directly (crypto/sha256) and asserts the preview carries that
+// digest and never the raw name — breaking the near-tautology of the equivalence
+// tests that build their expectation via the same helper under review.
+func TestPreview_PayloadHashesPersonaIndependently(t *testing.T) {
+	isolate(t)
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+	out, err := runPreview(t, newReviewCmd(), nil, "--preview")
+	require.NoError(t, err)
+	sum := sha256.Sum256([]byte("bruce"))
+	wantHash := hex.EncodeToString(sum[:])
+	assert.Contains(t, out, wantHash, "persona must be SHA-256 hashed (verified independently of NewQualitySignal)")
+	assert.NotContains(t, out, "bruce", "the raw persona name must never appear in the payload")
 }
 
 // TestPreview_PrintsAllowlistedJSONPayload proves `--preview` prints pretty JSON

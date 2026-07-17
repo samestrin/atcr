@@ -124,18 +124,24 @@ func renderQualitySignalPreview(w io.Writer, payload []telemetry.QualitySignal) 
 // maybePreviewQualitySignal implements the --preview short-circuit for the host
 // commands (review, reconcile). When --preview is set it builds the payload from
 // the local debt store and renders it (pretty JSON + not-sent marker), returning
-// handled=true so the caller returns BEFORE any opt-in gate check, transport or
-// HTTP client construction, or credential resolution (AC 03-02), and before the
-// --sync-cloud precondition — so --preview never reads or requires ATCR_API_KEY
-// and works identically whether or not the user has opted in (AC 03-01 EC2). When
-// --preview is unset it returns handled=false and the caller proceeds normally.
+// handled=true so the caller returns from RunE BEFORE any opt-in gate check,
+// transport or HTTP client construction, credential resolution, or --sync-cloud
+// network precondition (AC 03-02) — so --preview never reads or requires
+// ATCR_API_KEY and never sends, whether or not the user has opted in (AC 03-01
+// EC2). It does NOT bypass cobra's pure flag-relationship validation (the range
+// flags' PreRunE), which runs before RunE under Execute() but performs no I/O,
+// network, gate, or credential access — so an invalid range-flag COMBINATION still
+// fails as a usage error, while the AC-relevant guarantees (no send, no gate, no
+// key) are unaffected. When --preview is unset it returns handled=false and the
+// caller proceeds normally. A non-ENOENT local-debt read failure is surfaced as a
+// usage error (exit 2), matching the host commands' config/range error convention.
 func maybePreviewQualitySignal(cmd *cobra.Command) (handled bool, err error) {
 	if !boolFlag(cmd, "preview") {
 		return false, nil
 	}
 	payload, err := buildQualitySignalPayload(".")
 	if err != nil {
-		return true, err
+		return true, usageError(fmt.Errorf("reading local debt store for --preview: %w", err))
 	}
 	return true, renderQualitySignalPreview(cmd.OutOrStdout(), payload)
 }

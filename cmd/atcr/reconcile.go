@@ -79,11 +79,13 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	logger := log.FromContext(cmd.Context())
 
 	// --preview renders the outbound quality-signal payload locally and sends
-	// nothing (Story 3). It short-circuits FIRST — before the --sync-cloud
-	// precondition, the opt-in gate, review-dir resolution, and any
+	// nothing (Story 3). It short-circuits at the top of RunE — before the
+	// --sync-cloud precondition, the opt-in gate, review-dir resolution, and any
 	// transport/credential resolution — so it works for an undecided user with no
-	// ATCR_API_KEY and never runs a reconcile (AC 03-01/03-02). Its output is the
-	// marshal of the shared buildQualitySignalPayload, identical to a real send.
+	// ATCR_API_KEY and never runs a reconcile (AC 03-01/03-02). (Cobra's pure
+	// flag-relationship PreRunE still runs before RunE but does no I/O, network,
+	// gate, or credential access.) Its output is the marshal of the shared
+	// buildQualitySignalPayload, identical to a real send.
 	if handled, perr := maybePreviewQualitySignal(cmd); handled {
 		return perr
 	}
