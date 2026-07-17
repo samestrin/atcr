@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/samestrin/atcr/internal/localdebt"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/spf13/cobra"
@@ -142,6 +143,16 @@ var buildQualitySignalPayloadFn = buildQualitySignalPayload
 // non-2xx/DNS/timeout, or a panic inside the send path — is swallowed here or by
 // the transport: the send never changes the run's exit code or stdout (AC 06-03).
 func maybeSendQualitySignal(ctx context.Context) {
+	// Fail-open absolute (AC 06-03): a panic anywhere on this best-effort path — the
+	// synchronous aggregation build or the transport dispatch — is recovered here so
+	// it can never alter the review/reconcile run's exit code or stdout. The transport
+	// goroutine has its own recover; this guards the synchronous portion at the inline
+	// call site, which is not itself deferred on the reconcile path.
+	defer func() {
+		if r := recover(); r != nil {
+			log.FromContext(ctx).Debug("quality-signal: recovered from panic", "value", r)
+		}
+	}()
 	// Gate FIRST: a disabled opt-in short-circuits before any payload is built,
 	// proving the privacy line at the constructor, not merely at the network seam.
 	if !qualitySignalGate() {
