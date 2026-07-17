@@ -1004,7 +1004,7 @@ Use the Agent tool:
 
 ---
 
-### 5.4 [ ] **[Send + Fail-Open — RED](plan/user-stories/06-gated-quality-signal-transmission.md)**
+### 5.4 [x] **[Send + Fail-Open — RED](plan/user-stories/06-gated-quality-signal-transmission.md)**
 
 **AC:** 06-02, 06-03
 
@@ -1027,7 +1027,7 @@ Use the Agent tool:
 
 ---
 
-### 5.5 [ ] **[Send + Fail-Open — GREEN](plan/user-stories/06-gated-quality-signal-transmission.md)**
+### 5.5 [x] **[Send + Fail-Open — GREEN](plan/user-stories/06-gated-quality-signal-transmission.md)**
 
 1. Add a sibling `Send`-style method on `internal/telemetry.Client` for the `QualitySignal` payload type (per sprint-design's resolved fork: sibling, never an extension of `CloudSyncRecord`), preserving the detached-goroutine, HTTPS-only, nil/empty-endpoint-no-op, panic-safe contract
 2. In the enabled branch of the Phase 5.2 call sites, build the payload via the same shared constructor `--preview` uses, then invoke the sibling `Send`

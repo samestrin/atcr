@@ -165,7 +165,11 @@ func maybeSendQualitySignal(ctx context.Context) {
 	if len(payload) == 0 {
 		return // nothing to transmit — no empty/partial body is ever sent
 	}
-	_ = ctx // enabled-branch send wired in task 5.5
+	// Hand the payload to the fail-open transport on its detached goroutine. The
+	// same buildQualitySignalPayloadFn output feeds --preview, and SendQualitySignal
+	// marshals it with the identical indentation the preview renders, so the sent
+	// bytes are byte-identical to the preview (AC 06-02). A nil client no-ops.
+	telemetry.FromContext(ctx).SendQualitySignal(ctx, payload)
 }
 
 // maybePreviewQualitySignal implements the --preview short-circuit for the host

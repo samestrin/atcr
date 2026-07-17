@@ -102,8 +102,29 @@ func isHTTPS(endpoint string) bool {
 // not HTTPS. Every failure mode — non-2xx, network error, marshal error, or an
 // internal panic — is logged at debug level (never a level that alarms an end
 // user about an opt-in background feature) and swallowed: Send has no error
-// return and never affects the caller's outcome or exit code.
+// return and never affects the caller's outcome or exit code. The usage Event is
+// marshaled compactly, preserving its existing wire format.
 func (c *Client) Send(ctx context.Context, ev Event) {
+	c.dispatch(ctx, func() ([]byte, error) { return json.Marshal(ev) })
+}
+
+// SendQualitySignal fires the community prompt quality-signal payload (Sprint 30.0)
+// on the SAME detached, fail-open, HTTPS-only, nil/empty-endpoint-no-op, panic-safe
+// path as Send — it is a sibling for the allowlisted []QualitySignal payload, never
+// an extension of Event. The payload is marshaled with the SAME indentation the
+// `atcr … --preview` surface renders (json.MarshalIndent with a two-space indent),
+// so the transmitted bytes are byte-identical to the preview for the same data
+// (AC 06-02); a byte-for-byte equivalence test locks the two paths together.
+func (c *Client) SendQualitySignal(ctx context.Context, payload []QualitySignal) {
+	c.dispatch(ctx, func() ([]byte, error) { return json.MarshalIndent(payload, "", "  ") })
+}
+
+// dispatch is the shared fail-open send core: it no-ops on a nil client or a
+// non-HTTPS/empty endpoint, bounds concurrent goroutines via the in-flight
+// semaphore, and hands the marshal closure to the detached send goroutine. Both
+// Send and SendQualitySignal funnel through it so the goroutine/timeout/recover
+// contract has a single implementation; only the marshaling differs per payload.
+func (c *Client) dispatch(ctx context.Context, marshal func() ([]byte, error)) {
 	if c == nil || !isHTTPS(c.endpoint) {
 		return
 	}
@@ -116,19 +137,19 @@ func (c *Client) Send(ctx context.Context, ev Event) {
 		return
 	}
 	c.wg.Add(1)
-	go c.send(ctx, ev)
+	go c.send(ctx, marshal)
 }
 
-func (c *Client) send(ctx context.Context, ev Event) {
+func (c *Client) send(ctx context.Context, marshal func() ([]byte, error)) {
 	defer c.wg.Done()
-	defer func() { <-c.sem }() // release the in-flight slot acquired in Send
+	defer func() { <-c.sem }() // release the in-flight slot acquired in dispatch
 	defer func() {
 		if r := recover(); r != nil {
 			log.FromContext(ctx).Debug("telemetry: recovered from panic", "value", r)
 		}
 	}()
 
-	body, err := json.Marshal(ev)
+	body, err := marshal()
 	if err != nil {
 		log.FromContext(ctx).Debug("telemetry: marshal failed", "error", err)
 		return
