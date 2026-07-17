@@ -1,12 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
 
+	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/telemetry"
+	"github.com/spf13/cobra"
 )
 
 // qualitySignalEnabled is the opt-IN OR-enables combining function (Story 2): the
@@ -72,4 +77,65 @@ func qualitySignalGate() bool {
 		return false
 	}
 	return qualitySignalEnabled(env, cfg)
+}
+
+// qualitySignalNotSentMarker is the human-readable line printed after the
+// --preview JSON. It is a DISTINCT line (never embedded in the payload) so a
+// maintainer cannot mistake the preview for confirmation that data was sent — the
+// epic's flagged "false sense of completion" risk (Story 3, AC 03-01 Scenario 2).
+const qualitySignalNotSentMarker = "Preview only — nothing was transmitted. The quality signal is sent only after you explicitly opt in."
+
+// buildQualitySignalPayload is the SINGLE source of the outbound quality-signal
+// payload. It reads the append-only local-debt store under root, folds and
+// aggregates it into per-(persona, model) rows (Story 1), and maps each row to an
+// allowlisted telemetry.QualitySignal — hashing the persona at the payload
+// boundary via NewQualitySignal so no raw name ever reaches the wire. Both the
+// --preview branch (Story 3) and the real transport send (Story 6) build their
+// payload here, so the preview can never drift from what is actually transmitted
+// (AC 03-03). A missing store is not an error: ReadAll returns no records and the
+// payload is a non-nil empty slice (marshals to []), so --preview on a fresh
+// checkout prints an empty payload rather than failing (AC 03-01 EC1).
+func buildQualitySignalPayload(root string) ([]telemetry.QualitySignal, error) {
+	records, err := localdebt.ReadAll(localdebt.DefaultDir(root), localdebt.ReadOpts{Writer: io.Discard})
+	if err != nil {
+		return nil, err
+	}
+	rows := localdebt.AggregateQualitySignal(records)
+	payload := make([]telemetry.QualitySignal, 0, len(rows))
+	for _, r := range rows {
+		payload = append(payload, telemetry.NewQualitySignal(r.Persona, r.Model, r.DismissedCount, r.ConfirmedCount))
+	}
+	return payload, nil
+}
+
+// renderQualitySignalPreview writes the pretty-printed payload JSON followed by
+// the not-sent marker on its own line, to w. It is the presentation half of
+// --preview; the payload itself comes from the shared buildQualitySignalPayload,
+// so the printed JSON is exactly the marshal of what a real send would transmit.
+func renderQualitySignalPreview(w io.Writer, payload []telemetry.QualitySignal) error {
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "%s\n%s\n", b, qualitySignalNotSentMarker)
+	return err
+}
+
+// maybePreviewQualitySignal implements the --preview short-circuit for the host
+// commands (review, reconcile). When --preview is set it builds the payload from
+// the local debt store and renders it (pretty JSON + not-sent marker), returning
+// handled=true so the caller returns BEFORE any opt-in gate check, transport or
+// HTTP client construction, or credential resolution (AC 03-02), and before the
+// --sync-cloud precondition — so --preview never reads or requires ATCR_API_KEY
+// and works identically whether or not the user has opted in (AC 03-01 EC2). When
+// --preview is unset it returns handled=false and the caller proceeds normally.
+func maybePreviewQualitySignal(cmd *cobra.Command) (handled bool, err error) {
+	if !boolFlag(cmd, "preview") {
+		return false, nil
+	}
+	payload, err := buildQualitySignalPayload(".")
+	if err != nil {
+		return true, err
+	}
+	return true, renderQualitySignalPreview(cmd.OutOrStdout(), payload)
 }

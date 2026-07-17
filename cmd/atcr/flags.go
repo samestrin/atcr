@@ -75,6 +75,27 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 	}
 }
 
+// addQualitySignalFlags declares the --preview flag on cmd (the review and
+// reconcile host commands — Story 6's two Send call sites). --preview renders the
+// exact content-free quality-signal payload locally and sends nothing (Story 3);
+// its run-path short-circuit lives in maybePreviewQualitySignal, invoked before any
+// opt-in gate or transport work. The PreRunE is chained prev-first (not assigned),
+// matching addRangeFlags/addSyncCloudFlags, so the range/sync-cloud hooks installed
+// earlier are never silently overwritten and a future --preview precondition can
+// slot in without clobbering them.
+func addQualitySignalFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("preview", false, "print the exact content-free quality-signal payload that would be transmitted, then exit without sending anything (needs no opt-in and makes no network call)")
+	prev := cmd.PreRunE
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		if prev != nil {
+			if err := prev(cmd, args); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
 // validateRangeFlags checks the declared relationships between --base,
 // --head, and --merge-commit.
 func validateRangeFlags(cmd *cobra.Command) error {

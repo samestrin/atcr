@@ -80,6 +80,7 @@ func newReviewCmd() *cobra.Command {
 	addRangeFlags(cmd)
 	addAutoFixFlags(cmd)
 	addSyncCloudFlags(cmd)
+	addQualitySignalFlags(cmd)
 	return cmd
 }
 
@@ -170,6 +171,16 @@ func prFromGitHubRef(ref string) int {
 // Range/config problems are usage errors (exit 2); an all-agents-failed review
 // is a plain failure (exit 1) with the artifacts preserved on disk.
 func runReview(cmd *cobra.Command, _ []string) (err error) {
+	// --preview renders the outbound quality-signal payload locally and sends
+	// nothing (Story 3). It short-circuits FIRST — before the --resume branch, the
+	// --sync-cloud precondition, the opt-in gate, and any transport/credential
+	// resolution — so it works for an undecided user with no ATCR_API_KEY and never
+	// runs a review (AC 03-01/03-02). Its output is the marshal of the shared
+	// buildQualitySignalPayload, identical to what a real send would transmit.
+	if handled, perr := maybePreviewQualitySignal(cmd); handled {
+		return perr
+	}
+
 	// --resume targets an existing review directory and runs only its pending
 	// agents (epic 4.1.1); it is a distinct flow from a fresh review, so branch
 	// before any new-review flag handling.

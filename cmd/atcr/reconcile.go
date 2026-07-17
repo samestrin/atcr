@@ -48,6 +48,7 @@ falsy, unparseable, or unset value keeps AST grouping on.`,
 	cmd.Flags().Bool("no-scorecard", false, "skip writing scorecard records to the local store")
 	cmd.Flags().Bool("no-local-debt", false, "skip writing reconciled findings to the local TD store")
 	addSyncCloudFlags(cmd)
+	addQualitySignalFlags(cmd)
 	return cmd
 }
 
@@ -76,6 +77,16 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// logger was wired (no reliance on slog.Default). User-facing summary output
 	// still goes to stdout (OutOrStdout) unchanged.
 	logger := log.FromContext(cmd.Context())
+
+	// --preview renders the outbound quality-signal payload locally and sends
+	// nothing (Story 3). It short-circuits FIRST — before the --sync-cloud
+	// precondition, the opt-in gate, review-dir resolution, and any
+	// transport/credential resolution — so it works for an undecided user with no
+	// ATCR_API_KEY and never runs a reconcile (AC 03-01/03-02). Its output is the
+	// marshal of the shared buildQualitySignalPayload, identical to a real send.
+	if handled, perr := maybePreviewQualitySignal(cmd); handled {
+		return perr
+	}
 
 	// Resolve --sync-cloud preconditions FIRST so a missing/empty ATCR_API_KEY
 	// (exit 3) or a bad --cloud-endpoint (exit 2) fails fast — before any reconcile
