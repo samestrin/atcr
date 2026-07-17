@@ -131,7 +131,7 @@ func TestSkill_NoAbsoluteOrClaudePaths(t *testing.T) {
 // from newRootCmd, update this list so the routing-table test catches drift
 // rather than letting the routing table silently diverge (AC 01-01, Edge Case 1).
 var dispatcherCommands = []string{
-	"review", "reconcile", "verify", "debate", "report", "github",
+	"review", "reconcile", "verify", "debate", "report", "quality-report", "github",
 	"range", "status", "init", "quickstart", "serve", "doctor",
 	"trust", "scorecard", "leaderboard", "benchmark", "personas",
 	"models", "debt", "history", "audit-report", "version",

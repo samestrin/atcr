@@ -873,7 +873,7 @@ Use the Agent tool:
 
 ---
 
-### 4.4 [ ] **Phase 4 DoD Verification**
+### 4.4 [x] **Phase 4 DoD Verification**
 
 ```
 Story-4 DoD Complete
@@ -881,19 +881,19 @@ Auto: 5/5 | Story-Specific: 4/4 ACs
 Manual Review: [ ] Code reviewed (adversarial 4.2.A, REFACTOR 4.3)
 ```
 
-- [ ] T3: `go test ./cmd/atcr/...` — all passing
-- [ ] Coverage ≥80%
-- [ ] `golangci-lint run` — no errors
-- [ ] `go vet ./...` — clean
-- [ ] Build: `go build ./...` — succeeds
-- [ ] AC 04-01: ranked by dismissal rate descending, md+json parity, deterministic tie-break ✓
-- [ ] AC 04-02: renders only allowlisted fields; static import test blocks `internal/reconcile` ✓
-- [ ] AC 04-03: empty aggregation → clean "no data" (exit 0), never conflated with read failure (exit 1) ✓
-- [ ] AC 04-04: distinct subcommand, `atcr report` unchanged, no name collision ✓
+- [x] T3: `go test ./cmd/atcr/...` — all passing (full `go test ./...` also green)
+- [x] Coverage ≥80% — `cmd/atcr` 86.0%
+- [x] `golangci-lint run` — 0 issues
+- [x] `go vet ./...` — clean
+- [x] Build: `go build ./...` — succeeds
+- [x] AC 04-01: ranked by dismissal rate descending, md+json parity, deterministic tie-break ✓
+- [x] AC 04-02: renders only allowlisted fields; static import test blocks `internal/reconcile` ✓
+- [x] AC 04-03: empty aggregation → clean "no data" (exit 0), never conflated with read failure (exit 1) ✓
+- [x] AC 04-04: distinct subcommand, `atcr report` unchanged, no name collision ✓
 
 ---
 
-### 4.5 [ ] **Phase 4 — GATE: Integration & Exit Review (subagent)**
+### 4.5 [x] **Phase 4 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 4 (integration-level, not TDD cadence)
 
@@ -913,16 +913,14 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
-| Severity | File:Line | Issue | Fix |
+**Gate findings (fresh subagent, hostile integrator — no CRITICAL/HIGH; CONTRACT-EXIT / CONFIG-SURFACE (no new key) / INTEGRATION (24 commands, no collision, content-free source enforced by import test) / PHASE-EXIT / REGRESSION (`atcr report` untouched, Short asserted byte-identical) all PASS):**
+| Severity | File:Line | Issue | Disposition |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| LOW | skill/skill_test.go:133 | `atcr quality-report` routing row added to SKILL.md but not to `dispatcherCommands`, despite the SKILL.md convention (lines 84-87) requiring both be updated together | FIXED before boundary: added `"quality-report"` to `dispatcherCommands`; skill routing tests green |
+| LOW | skill/SKILL.md:3 | Frontmatter `description` enumeration omits `quality-report` (and pre-existing `config`) — outside the documented drift-invariant (routing row + dispatcherCommands only) | Deferred → TD-009 |
 
-**Action Required:**
-- CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-- MEDIUM/LOW found → Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-- None found → Note "Phase gate passed" and proceed to phase stop
+**Action Taken:** No CRITICAL/HIGH → **Phase gate passed.** The one LOW that violated a documented same-file update invariant (dispatcherCommands) was fixed before the phase boundary and the skill routing tests re-run green; the frontmatter-prose LOW (outside that invariant, with a pre-existing `config` omission) is deferred to `tech-debt-captured.md` (TD-009).
+
 **Duration:** 15-30 min
 
 ---
