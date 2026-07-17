@@ -38,6 +38,11 @@ func addRangeFlags(cmd *cobra.Command) {
 // permitted for that; see scorecard.ValidateCloudEndpoint). When a user invokes
 // --sync-cloud without overriding the default, a warning is emitted so the
 // placeholder default is visible rather than silently POSTing to an inactive URL.
+//
+// Migration path: the URL is deliberately a compiled-in constant — if the
+// backend endpoint ever moves, update this constant and cut a release; already
+// deployed binaries can be redirected to the new destination without a rebuild
+// via the --cloud-endpoint flag.
 const defaultCloudEndpoint = "https://atcr.dev/dashboard"
 
 // addSyncCloudFlags declares the --sync-cloud opt-in and its --cloud-endpoint
