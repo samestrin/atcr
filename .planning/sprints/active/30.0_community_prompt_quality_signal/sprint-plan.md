@@ -933,7 +933,7 @@ Use the Agent tool:
 
 ---
 
-### 5.1 [ ] **[Gate-Disabled Short-Circuit — RED](plan/user-stories/06-gated-quality-signal-transmission.md)**
+### 5.1 [x] **[Gate-Disabled Short-Circuit — RED](plan/user-stories/06-gated-quality-signal-transmission.md)**
 
 **AC:** 06-01
 
@@ -953,7 +953,7 @@ Use the Agent tool:
 
 ---
 
-### 5.2 [ ] **[Gate-Disabled Short-Circuit — GREEN](plan/user-stories/06-gated-quality-signal-transmission.md)**
+### 5.2 [x] **[Gate-Disabled Short-Circuit — GREEN](plan/user-stories/06-gated-quality-signal-transmission.md)**
 
 1. Add the quality-signal call site adjacent to the passive-ping emission in `cmd/atcr/review.go` (`:462-467`) and `cmd/atcr/reconcile.go` (`:186-191`): `if qualitySignalGate() { ... }`, resolved fresh per run, checked before any payload construction or goroutine spawn
 2. Wire the `--preview` branch (Phase 3) to remain evaluated first, unconditionally

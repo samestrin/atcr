@@ -204,6 +204,14 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		telemetry.FromContext(cmd.Context()).Send(cmd.Context(), reconcileTelemetryEvent(status))
 	}
 
+	// Fire the gated, content-free community prompt quality signal (Story 6) adjacent
+	// to the passive ping above. Its own independent opt-in gate is resolved fresh
+	// inside — short-circuiting before any payload construction when disabled — and
+	// it is fail-open: a transport failure never changes this command's outcome.
+	// --preview (Story 3) short-circuits at the top of runReconcile, so it is never
+	// reached on the preview path.
+	maybeSendQualitySignal(cmd.Context())
+
 	// --sync-cloud push (Story 4): an explicit, user-invoked action fired AFTER the
 	// reconcile outcome is finalized. An auth rejection overrides the outcome with
 	// exit 3 (AC 04-04); any other push failure is a non-fatal warning that

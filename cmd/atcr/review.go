@@ -480,6 +480,14 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 				telemetry.FromContext(ctx).Send(ctx, reviewTelemetryEvent(prep, status))
 			}
 		}()
+
+		// Fire the gated, content-free community prompt quality signal (Story 6)
+		// adjacent to the passive ping above, DEFERRED so it fires at run completion.
+		// Its own independent opt-in gate is resolved fresh inside — short-circuiting
+		// before any payload construction when disabled — and it is fail-open: a
+		// transport failure never changes this command's outcome. --preview (Story 3)
+		// short-circuits at the top of runReview, so it is never reached on that path.
+		defer maybeSendQualitySignal(ctx)
 	}
 	if err != nil {
 		return err // all-agents-failed → exit 1, artifacts preserved

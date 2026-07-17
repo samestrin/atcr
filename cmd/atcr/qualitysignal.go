@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -119,6 +120,41 @@ func renderQualitySignalPreview(w io.Writer, payload []telemetry.QualitySignal) 
 	}
 	_, err = fmt.Fprintf(w, "%s\n%s\n", b, qualitySignalNotSentMarker)
 	return err
+}
+
+// buildQualitySignalPayloadFn is the payload-constructor seam for the gated send
+// call site (Story 6). The send path builds its payload THROUGH this var so a test
+// can wrap it and assert the disabled opt-in gate short-circuits BEFORE any payload
+// is constructed (AC 06-01) — the privacy line proven at the constructor, not merely
+// inferred from the absence of a request. Production always uses the real
+// buildQualitySignalPayload; only tests reassign it.
+var buildQualitySignalPayloadFn = buildQualitySignalPayload
+
+// maybeSendQualitySignal is the gated, fail-open send call site for the community
+// prompt quality signal, invoked at review/reconcile completion adjacent to the
+// passive-ping emission. It resolves the independent opt-in gate FRESH per run and
+// short-circuits — before any payload construction, goroutine spawn, or client
+// work — when disabled, so a non-opted-in run allocates nothing and transmits
+// nothing (AC 06-01). When enabled it builds the payload via the SAME constructor
+// --preview renders and, when the aggregation is non-empty, hands it to the
+// fail-open transport (task 5.5). A zero-row aggregation transmits nothing (AC
+// 06-02 EC1). Every failure — a debt-store read error, a marshal error, a
+// non-2xx/DNS/timeout, or a panic inside the send path — is swallowed here or by
+// the transport: the send never changes the run's exit code or stdout (AC 06-03).
+func maybeSendQualitySignal(ctx context.Context) {
+	// Gate FIRST: a disabled opt-in short-circuits before any payload is built,
+	// proving the privacy line at the constructor, not merely at the network seam.
+	if !qualitySignalGate() {
+		return
+	}
+	payload, err := buildQualitySignalPayloadFn(".")
+	if err != nil {
+		return // fail-open: a read error never surfaces on the send path
+	}
+	if len(payload) == 0 {
+		return // nothing to transmit — no empty/partial body is ever sent
+	}
+	_ = ctx // enabled-branch send wired in task 5.5
 }
 
 // maybePreviewQualitySignal implements the --preview short-circuit for the host
