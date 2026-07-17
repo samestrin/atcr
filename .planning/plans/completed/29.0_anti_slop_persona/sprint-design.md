@@ -172,7 +172,7 @@ This plan's raw complexity (4/12) sits under the adversarial complexity threshol
 
 | Area | Scope | Attack Vectors | Defensive Measures |
 |------|-------|-----------------|---------------------|
-| `simon.md` prompt template | Untrusted-tier community persona prompt fed verbatim to the LLM | Template-injection via a disallowed Go template action (`range`/`with`/`template`/`define`/pipeline/field-chain) smuggled into the rendered prompt | `ValidateFetchedPersonaPrompt` allow-list gate (`internal/registry/persona_test.go:305`) rejects any non-bare-token action before the prompt reaches a model |
+| `simon.md` prompt template | Untrusted-tier community persona prompt fed verbatim to the LLM | Template-injection via a disallowed Go template action (`range`/`with`/`template`/`define`/pipeline/field-chain) smuggled into the rendered prompt | `ValidateFetchedPersonaPrompt` allow-list gate (`internal/registry/persona_test.go:266`) rejects any non-bare-token action before the prompt reaches a model |
 | `personas/community/index.json` `path` field | Local manifest entry consumed by search/install tooling | Path traversal via a `..`-escaping or absolute `path` value | `verifyCommunityIndex` (`internal/personas/search_test.go:30`) rejects an absolute `Path` or a `..`-escaping join relative to `personasRoot` |
 
 ### Performance-Critical Paths

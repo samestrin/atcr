@@ -1,9 +1,9 @@
 {
-  "skill": "design-sprint",
-  "args": "@.planning/plans/active/29.0_anti_slop_persona/",
-  "invocation": "/design-sprint @.planning/plans/active/29.0_anti_slop_persona/",
+  "skill": "create-sprint",
+  "args": "@.planning/plans/active/29.0_anti_slop_persona/ --adversarial",
+  "invocation": "/create-sprint @.planning/plans/active/29.0_anti_slop_persona/ --adversarial",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "995716b2-31bd-4f51-ac1d-286cb73b3777",
-  "timestamp": "2026-07-17T04:50:57.034Z"
+  "session_id": "0a7d2a4c-f37c-4884-a29c-1c15232afe75",
+  "timestamp": "2026-07-17T05:04:07.747Z"
 }
