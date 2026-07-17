@@ -1138,7 +1138,7 @@ Use the Agent tool:
 
 ---
 
-### 6.1 [ ] **📝 Document the Quality-Signal Telemetry Contract**
+### 6.1 [x] **📝 Document the Quality-Signal Telemetry Contract**
 
 **Task:** Add a new "Community prompt quality signal" section to `docs/telemetry.md`, re-reading the actually-shipped `internal/telemetry/quality_signal.go` struct, its allowlist regression test, `cmd/atcr/qualitysignal.go`'s gate, and the `--preview` flag's real output immediately before writing — never from plan-stage placeholder names.
 
@@ -1157,7 +1157,7 @@ Use the Agent tool:
 
 ---
 
-### 6.1.A [ ] **📝 Document the Quality-Signal Telemetry Contract — ADVERSARIAL REVIEW (subagent)**
+### 6.1.A [x] **📝 Document the Quality-Signal Telemetry Contract — ADVERSARIAL REVIEW (subagent)**
 
 **Changed Files:** `docs/telemetry.md`
 
@@ -1176,16 +1176,12 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings (fresh general-purpose agent, doc-accuracy — no findings):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| None | — | Field table, six-cell truth table, env var / config key / `--preview` flag names, exact not-sent marker text, and the "pseudonymous, not anonymous" HashPersonaID caveat all verified byte/field-accurate against shipped code; "no code, no finding content" statement is standalone | — |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 6.2, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** No CRITICAL/HIGH → **Adversarial review passed.** Proceed to 6.2.
 
 ---
 
