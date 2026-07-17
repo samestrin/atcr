@@ -203,7 +203,10 @@ func Push(ctx context.Context, endpoint, apiKey string, rec CloudSyncRecord) err
 		return fmt.Errorf("cloud sync failed: request to %s failed: %w", redactEndpoint(endpoint), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	// Drain (bounded) so the keep-alive connection can be reused.
+	// Drain (bounded) so the keep-alive connection can be reused when the
+	// server's ack body fits under the 64KB cap; a larger body leaves bytes
+	// unread, so Go closes the connection instead of returning it to the
+	// pool. The cap is a DoS guard sized well above the expected small ack.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
 
 	switch {
