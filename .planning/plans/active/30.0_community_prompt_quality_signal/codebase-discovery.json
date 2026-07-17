@@ -1,0 +1,305 @@
+{
+  "generated": "2026-07-17",
+  "refined": "2026-07-17",
+  "discovery_method": "semantic",
+  "queries": [
+    "telemetry opt-in preview flag",
+    "dismissed confirmed finding signal",
+    "persona model reviewer aggregate counters",
+    "cloud sync transport telemetry send",
+    "maintainer report CLI subcommand"
+  ],
+  "match_count": 15,
+  "build_from": {
+    "primary_file": "internal/telemetry/event.go",
+    "reason": "Epic 28.0 (completed) established the content-free telemetry contract as a hard-locked, exactly-4-field `Event` struct with no omitempty tags, guarded by a dedicated allowlist test. This epic's quality-signal payload (per-persona+model counters and identifiers) must follow the identical allowlist pattern — a new, equally strict struct — never extend or embed the existing Event or any scorecard type.",
+    "suggested_approach": "Add a new allowlisted payload type (e.g. `telemetry.QualitySignal` or similar) in `internal/telemetry/` alongside `event.go`, aggregate `dismissed`/`confirmed` counts per persona+model from the Epic 24.0 debt/dismissal records (`internal/localdebt` — `wontfix`/`resolved` terminal status on the append-only JSONL records in the `.atcr/debt/` store; NOT `internal/registry`, which holds only config), gate transmission behind an explicit new opt-in (separate from the existing passive-ping `ATCR_TELEMETRY` gate and the existing `--sync-cloud` opt-in), and add a `--preview` surface that renders the exact outbound payload without sending it."
+  },
+  "existing_patterns": [
+    {
+      "name": "Allowlisted telemetry payload",
+      "description": "`internal/telemetry/event.go`'s `Event` struct has exactly 4 fields, no `omitempty`, and a dedicated test (`TestClient_Send_PayloadHasExactlyFourAllowlistedKeys`) that fails if a field is added — the mechanism that makes \"content-free\" enforceable rather than just documented.",
+      "files": ["internal/telemetry/event.go", "internal/telemetry/client_test.go"],
+      "follow_for": "Any new outbound payload type this epic introduces for persona+model quality counters."
+    },
+    {
+      "name": "Cloud-sync allowlist payload keyed by persona_id_hash + model (Epic 28.0)",
+      "description": "`internal/scorecard/cloudsync.go`'s `CloudSyncRecord` carries a `Personas []CloudSyncPersona` list whose entries ALREADY carry `persona_id_hash` + `model` (plus cost/token/latency metrics) — directly answering plan.md's open question. `Push` POSTs it with an `Authorization: Bearer` header, fail-open except auth rejection. `internal/scorecard/telemetry.go`'s `HashPersonaID` (unsalted SHA-256, documented dictionary-attack caveat TD-007) is the pseudonymization primitive. This is the transport and keying shape the quality signal rides.",
+      "files": ["internal/scorecard/cloudsync.go", "internal/scorecard/telemetry.go", "internal/scorecard/cloudsync_test.go"],
+      "follow_for": "Deciding (design-sprint) whether the new dismissed/confirmed counters EXTEND the existing `CloudSyncPersona`/`CloudSyncRecord` shape or ship as a sibling allowlisted payload over the same `Push` transport; reusing `HashPersonaID` for persona identifiers in either case."
+    },
+    {
+      "name": "Independent opt-in surfaces, OR-combined, never silently overridden",
+      "description": "`cmd/atcr/telemetry.go`'s `telemetryEnabled`/`telemetryGate` implement a documented truth table combining an env var and a persisted config flag, and explicitly note that the passive-ping gate must NOT gate the separate `--sync-cloud` explicit-action opt-in — each transmission mechanism gets its own consent surface. `cmd/atcr/cloudsync.go`'s `resolveSyncCloud` is the second example: flag + `ATCR_API_KEY` presence, deliberately NOT gated by telemetryGate.",
+      "files": ["cmd/atcr/telemetry.go", "internal/registry/telemetry_setting.go", "cmd/atcr/cloudsync.go"],
+      "follow_for": "Wiring this epic's new opt-in flag/config key as a THIRD independent surface, without accidentally coupling it to the existing passive-ping or --sync-cloud gates."
+    },
+    {
+      "name": "wontfix/resolved terminal status on localdebt records (Epic 24.0)",
+      "description": "`atcr debt resolve --status wontfix --reason ...` (cmd/atcr/debt_resolve.go) records a finding's dismissal by folding it into the same terminal-status lifecycle as `resolved`, with `wontfix` outranking `resolved` when both are present (`closedStatusRank`). The records live in the append-only JSONL store at `.atcr/debt/` whose schema is `internal/localdebt/record.go`. CONFIRMED attribution state: each record carries `Reviewers []string` (raw persona names — persona attribution PRESENT) but NO model field; model is recoverable only indirectly via the record's `RunID` → the run's pool summary (`fanout.ReadPoolSummary`, `internal/fanout/status.go` `AgentStatus.Model`).",
+      "files": ["cmd/atcr/debt_resolve.go", "internal/localdebt/record.go"],
+      "follow_for": "Reading the raw per-finding dismissal signal to aggregate into per-persona+model counters. Design-sprint must decide whether model attribution is derived via RunID→pool-summary join or added as an explicit field on new localdebt records (schema_version bump)."
+    },
+    {
+      "name": "Per-(reviewer, model) aggregation idiom",
+      "description": "`internal/scorecard/aggregate.go`'s `Aggregate()` groups per-reviewer records by a `(reviewer, model)` key and sums them into leaderboard rows — the existing in-repo idiom for exactly the grouping dimension this epic needs.",
+      "files": ["internal/scorecard/aggregate.go"],
+      "follow_for": "Structuring the dismissed/confirmed counter aggregation per persona+model."
+    },
+    {
+      "name": "Cobra subcommand + render pattern",
+      "description": "`cmd/atcr/report.go` (`newReportCmd`/`runReport`) is the existing pattern for a maintainer-facing rendering subcommand with format flags.",
+      "files": ["cmd/atcr/report.go"],
+      "follow_for": "Structuring the new maintainer-facing report surface (AC2) and the `--preview` flag (AC1) as a thin Cobra subcommand, consistent with the dispatcher conventions."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/telemetry/client.go",
+      "relevance": "high",
+      "purpose": "Background, fail-open HTTP client that sends telemetry.Event payloads; one of the two candidate transports this epic rides per Epic 28.0.",
+      "likely_modification": "reference-only, or extend cautiously if a new send path is needed for the aggregate signal"
+    },
+    {
+      "path": "internal/telemetry/event.go",
+      "relevance": "high",
+      "purpose": "Defines the sole allowlisted telemetry payload today (4 fields: event, lang, lines, status).",
+      "likely_modification": "extend with a new sibling allowlisted type, not by modifying Event itself"
+    },
+    {
+      "path": "internal/scorecard/cloudsync.go",
+      "relevance": "high",
+      "purpose": "Epic 28.0 cloud-sync transport: `CloudSyncRecord`/`CloudSyncPersona` allowlist payload (personas entries already carry `persona_id_hash` + `model`), `NewCloudSyncRecord` builder, `Push` authenticated POST, `ValidateCloudEndpoint`. The transport the plan says this signal rides.",
+      "likely_modification": "extend with dismissed/confirmed counters (if the extend-payload decision wins) or reference-only (if a sibling payload type is created)"
+    },
+    {
+      "path": "internal/scorecard/telemetry.go",
+      "relevance": "high",
+      "purpose": "`HashPersonaID` (one-way SHA-256 persona pseudonymization) and `TelemetryPersonaRecord` — the identifier-hashing primitive the quality signal must reuse so raw persona names never leave the machine.",
+      "likely_modification": "reference-only (reuse HashPersonaID as-is)"
+    },
+    {
+      "path": "cmd/atcr/cloudsync.go",
+      "relevance": "high",
+      "purpose": "CLI wiring for `--sync-cloud`: `resolveSyncCloud` (fail-fast precondition check), `runSyncCloud`, `syncCloudPlan`, and the exit-code mapping (`usageError`/`authError`) that keeps a push failure from corrupting the run outcome.",
+      "likely_modification": "reference-pattern for wiring the new opt-in transmission into review/reconcile flows, or extend if the signal piggybacks on the sync-cloud push"
+    },
+    {
+      "path": "cmd/atcr/telemetry.go",
+      "relevance": "high",
+      "purpose": "Opt-in gating logic (telemetryEnabled/telemetryGate) and event-building helpers for the existing passive ping.",
+      "likely_modification": "extend with a parallel, independent opt-in gate for the quality-signal transmission"
+    },
+    {
+      "path": "internal/registry/telemetry_setting.go",
+      "relevance": "high",
+      "purpose": "Loads/persists the `.atcr/config.yaml` telemetry opt-out setting used by telemetryGate (LoadTelemetrySetting/SetTelemetrySetting, atomic config write under config.lock).",
+      "likely_modification": "extend or add a sibling setting for the new opt-in"
+    },
+    {
+      "path": "cmd/atcr/config.go",
+      "relevance": "medium",
+      "purpose": "`atcr config set` surface — today its settable-key allowlist is exactly `telemetry`; persisting a new opt-in key (e.g. `quality_signal`) requires extending this allowlist.",
+      "likely_modification": "extend the settable-key allowlist and help text for the new opt-in key"
+    },
+    {
+      "path": "internal/localdebt/record.go",
+      "relevance": "high",
+      "purpose": "Schema of the `.atcr/debt/` append-only JSONL dismissal store: `Record` carries `Reviewers []string` (persona attribution) plus `Status`/`ResolvedAt` terminal fields, but NO model field. SchemaVersion=1 governs evolution.",
+      "likely_modification": "reference-only for aggregation; extend schema (with version bump) only if the design-sprint chooses stored model attribution over RunID-derived attribution"
+    },
+    {
+      "path": "cmd/atcr/debt_resolve.go",
+      "relevance": "high",
+      "purpose": "Implements `atcr debt resolve --status wontfix|resolved` — the write path of the raw dismissed/confirmed events this epic aggregates per Epic 24.0.",
+      "likely_modification": "reference-only unless persona/model attribution needs to be added to the debt record schema"
+    },
+    {
+      "path": "internal/scorecard/aggregate.go",
+      "relevance": "medium",
+      "purpose": "`Aggregate()` groups scorecard records by (reviewer, model) — the existing per-persona+model grouping idiom.",
+      "likely_modification": "reference-only pattern for the counter aggregation"
+    },
+    {
+      "path": "internal/fanout/status.go",
+      "relevance": "medium",
+      "purpose": "`AgentStatus` (per-agent `Model` field) read via `fanout.ReadPoolSummary` (`internal/fanout/artifacts.go:180`) — the indirect model-attribution source for localdebt records, joined by `RunID`.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "cmd/atcr/report.go",
+      "relevance": "medium",
+      "purpose": "Existing maintainer-facing report rendering subcommand pattern.",
+      "likely_modification": "reference-only pattern for the new report/preview surface"
+    },
+    {
+      "path": "docs/telemetry.md",
+      "relevance": "high",
+      "purpose": "Documents the existing content-free telemetry contract (event schema, opt-out mechanism).",
+      "likely_modification": "extend with the new quality-signal contract (fields, opt-in mechanism, preview behavior, no-code/no-finding-content line) per AC3"
+    },
+    {
+      "path": "personas/community/anthony.yaml",
+      "relevance": "medium",
+      "purpose": "Community persona definitions (one *.yaml per persona under personas/community/, plus index.json; fields: name, model, provider — e.g. `anthony.yaml`: provider openrouter, model anthropic/claude-opus-4.8) — the keying dimension (persona+model) for the aggregated counters.",
+      "likely_modification": "reference-only"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "cmd/atcr/debt_resolve.go:markDebtResolved (wontfix/resolved status write path)",
+      "type": "event-source",
+      "description": "Point where a finding's terminal dismissal/confirmation status is recorded; this epic's aggregation reads from here (directly or via a derived event) to build per-persona+model counters."
+    },
+    {
+      "location": "internal/localdebt/record.go:Record (`.atcr/debt/` JSONL store)",
+      "type": "event-source",
+      "description": "The actual persisted dismissal data: append-only records with `Reviewers []string` (persona) and terminal `Status`. Model attribution requires a RunID→pool-summary join (`fanout.ReadPoolSummary`) or a schema extension."
+    },
+    {
+      "location": "internal/telemetry/client.go:Send",
+      "type": "transport",
+      "description": "Existing fail-open HTTP send path (Epic 28.0) that this epic's opt-in aggregate payload can reuse rather than building a new transport."
+    },
+    {
+      "location": "internal/scorecard/cloudsync.go:Push",
+      "type": "transport",
+      "description": "The Epic 28.0 `--sync-cloud` authenticated push and its persona-keyed payload — the primary transport candidate the plan names. Design-sprint decides extend-existing-payload vs. sibling-payload over this same Push path."
+    },
+    {
+      "location": "cmd/atcr/cloudsync.go:resolveSyncCloud/runSyncCloud",
+      "type": "hook",
+      "description": "Where an explicit, user-invoked transmission is validated and fired after run finalization — the wiring template if the quality signal sends on the review/reconcile path."
+    },
+    {
+      "location": "cmd/atcr/telemetry.go:telemetryGate",
+      "type": "hook",
+      "description": "Pattern for a dedicated, independent opt-in gate — this epic needs its own gate function analogous to telemetryGate, not reuse of the passive-ping gate."
+    },
+    {
+      "location": "internal/fanout/artifacts.go:ReadPoolSummary",
+      "type": "attribution-source",
+      "description": "Per-agent `Model` values for a run; joined to localdebt records via `RunID` when model attribution is derived rather than stored."
+    }
+  ],
+  "integration_gaps": [
+    {
+      "gap": "Dismissal records carry no model attribution",
+      "location": "internal/localdebt/record.go:Record",
+      "impact": "The epic's keying dimension is persona+model, but the `.atcr/debt/` store records only `Reviewers []string`; per-persona+model counters cannot be computed from the store alone.",
+      "recommendation": "Design-sprint picks one: derive model via each record's `RunID` → `fanout.ReadPoolSummary` `AgentStatus.Model` join (no schema change), or add a model field to new localdebt records with a schema_version bump (only future dismissals attributable)."
+    },
+    {
+      "gap": "`atcr config set` allowlist admits only the `telemetry` key",
+      "location": "cmd/atcr/config.go",
+      "impact": "The new independent opt-in cannot be persisted as a config setting without extending the settable-key allowlist and its help text.",
+      "recommendation": "Extend cmd/atcr/config.go to accept the new quality-signal opt-in key, mirroring the telemetry key's validation and SetTelemetrySetting-style persistence."
+    },
+    {
+      "gap": "Payload shape for the counters is an unresolved fork",
+      "location": "internal/scorecard/cloudsync.go vs internal/telemetry/",
+      "impact": "Plan.md defers to design-sprint whether dismissed/confirmed counters extend the existing CloudSyncPersona shape (persona_id_hash+model already present) or ship as a sibling allowlisted payload; files_to_create/modify cannot be finalized until then.",
+      "recommendation": "Resolve at design-sprint; either way the payload must be a fixed-field allowlisted struct with its own locking regression test, and persona identifiers must go through scorecard.HashPersonaID."
+    },
+    {
+      "gap": "No existing preview/dry-run surface for outbound payloads",
+      "location": "cmd/atcr/flags.go",
+      "impact": "AC1's `--preview` requirement (render the exact outbound payload locally, send nothing) has no existing mechanism to reuse; neither the passive ping nor --sync-cloud has a dry-run today.",
+      "recommendation": "Add a --preview flag (addSyncCloudFlags-style registration) that json.Marshal's the exact payload struct and prints it, short-circuiting before any send."
+    }
+  ],
+  "semantic_matches": [
+    {
+      "file": "internal/scorecard/aggregate.go",
+      "symbol": "Aggregate",
+      "type": "function",
+      "line": 122,
+      "score": 0.9,
+      "query": "aggregate dismissal counters per persona",
+      "relevance": "Existing (reviewer, model) grouping idiom — the exact accumulation shape the per-persona+model dismissed/confirmed counters need."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "telemetry.Client",
+      "path": "internal/telemetry/client.go",
+      "can_extend": true,
+      "usage_example": "Reuse the existing fail-open HTTP client for sending the new aggregate quality-signal payload once opted in."
+    },
+    {
+      "name": "registry telemetry setting persistence",
+      "path": "internal/registry/telemetry_setting.go",
+      "can_extend": true,
+      "usage_example": "Mirror this file's load/persist pattern for a new, independent quality-signal opt-in setting in `.atcr/config.yaml`."
+    },
+    {
+      "name": "scorecard.HashPersonaID",
+      "path": "internal/scorecard/telemetry.go",
+      "can_extend": false,
+      "usage_example": "Reuse as-is to hash persona identifiers in the quality-signal payload so raw persona names never leave the machine; inherits the documented unsalted-SHA-256 dictionary caveat (TD-007)."
+    },
+    {
+      "name": "scorecard (reviewer, model) grouping idiom",
+      "path": "internal/scorecard/aggregate.go",
+      "can_extend": false,
+      "usage_example": "Copy the map-keyed-by-(persona, model) accumulation pattern for the dismissed/confirmed counters."
+    }
+  ],
+  "architecture_notes": [
+    "The privacy line (\"zero code and zero finding content ever leaves the machine\") is currently enforced structurally, not just documented: Event has exactly 4 allowlisted fields with a dedicated regression test. The new quality-signal type must adopt the same enforcement pattern (fixed field set, no omitempty, an allowlist test) so it is falsifiable, not just claimed.",
+    "Existing telemetry opt-in surfaces are deliberately independent and non-overriding (passive ping vs. --sync-cloud). This epic's opt-in must be a third, independent surface — do not fold it into telemetryGate or the --sync-cloud gate.",
+    "CONFIRMED (was an open question): Epic 24.0 dismissal records live in `internal/localdebt` (append-only JSONL at `.atcr/debt/`, schema_version 1), NOT in `internal/registry` and NOT in `internal/debt` (that is the separate, private `.planning/technical-debt/` pipeline). Persona attribution IS present (`Reviewers []string`); model attribution is NOT stored — it must be derived via `RunID` → `fanout.ReadPoolSummary` `AgentStatus.Model`, or added to the record schema with a version bump. Design-sprint must pick one.",
+    "CONFIRMED (was an open question): `--sync-cloud`'s `CloudSyncPersona` entries already carry `persona_id_hash` + `model`, so the dismissed/confirmed counters can either extend that existing shape or ship as a sibling allowlisted payload over the same `Push` transport — plan.md explicitly defers this choice to design-sprint.",
+    "Persona identifiers in the new payload should be hashed with the existing `scorecard.HashPersonaID` (unsalted SHA-256). That function carries a documented dictionary-attack caveat over the small enumerable persona-name set (TD-007, HMAC hardening deferred to endpoint activation); the quality signal inherits the same caveat and should be documented as such in docs/telemetry.md."
+  ],
+  "files_to_modify": [
+    {
+      "path": "cmd/atcr/telemetry.go",
+      "reason": "Add the new independent opt-in gate for the quality-signal transmission, following the telemetryEnabled/telemetryGate pattern.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/registry/telemetry_setting.go",
+      "reason": "Add persistence for the new quality-signal opt-in setting.",
+      "scope": "minor"
+    },
+    {
+      "path": "cmd/atcr/config.go",
+      "reason": "Extend the `atcr config set` settable-key allowlist (today exactly `telemetry`) and help text so the new opt-in is user-persistable.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/scorecard/cloudsync.go",
+      "reason": "Only if design-sprint chooses to extend the existing CloudSyncRecord/CloudSyncPersona payload with dismissed/confirmed counters (vs. a sibling payload type over the same Push transport).",
+      "scope": "minor"
+    },
+    {
+      "path": "docs/telemetry.md",
+      "reason": "Document the new content-free quality-signal contract per AC3.",
+      "scope": "minor"
+    },
+    {
+      "path": "cmd/atcr/flags.go",
+      "reason": "Register the new --preview flag for the local preview surface (per /refine-epic's flagged missing file), following the addSyncCloudFlags pattern.",
+      "scope": "trivial"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "internal/telemetry/quality_signal.go",
+      "purpose": "New allowlisted payload type for per-persona+model dismissed/confirmed aggregate counters, mirroring event.go's strict-schema pattern.",
+      "based_on": "internal/telemetry/event.go"
+    },
+    {
+      "path": "cmd/atcr/telemetry_report.go (or similar maintainer-facing subcommand file)",
+      "purpose": "New maintainer-facing surface identifying over/under-reporting personas+models, plus the --preview rendering of exactly what would be sent (AC1, AC2).",
+      "based_on": "cmd/atcr/report.go"
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test",
+    "test_location": "co-located _test.go files",
+    "naming_convention": "*_test.go",
+    "example_test": "internal/telemetry/client_test.go"
+  }
+}

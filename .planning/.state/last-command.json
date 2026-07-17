@@ -1,9 +1,9 @@
 {
-  "skill": "finalize-td",
-  "args": "",
-  "invocation": "/finalize-td",
+  "skill": "create-user-stories",
+  "args": "@.planning/plans/active/30.0_community_prompt_quality_signal/",
+  "invocation": "/create-user-stories @.planning/plans/active/30.0_community_prompt_quality_signal/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "813e5254-5ef1-44ee-9fb0-5f8d276d3492",
-  "timestamp": "2026-07-17T14:01:15.478Z"
+  "session_id": "f34d6e72-245f-4873-a2e2-a0c020f7cc93",
+  "timestamp": "2026-07-17T16:00:19.858Z"
 }
