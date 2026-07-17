@@ -65,7 +65,11 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 				return err
 			}
 		}
-		if boolFlag(cmd, "sync-cloud") {
+		// --preview is a pure, side-effect-free local render that pushes nothing, so
+		// the --sync-cloud placeholder warning is misleading noise on that path
+		// (the preview short-circuit in RunE bypasses sync entirely). Suppress it
+		// when --preview is set — preview overrides sync-cloud (AC 03-01 EC2).
+		if boolFlag(cmd, "sync-cloud") && !previewFlagSet(cmd) {
 			endpoint, _ := cmd.Flags().GetString("cloud-endpoint")
 			if strings.TrimSpace(endpoint) == defaultCloudEndpoint {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: --cloud-endpoint default %q is a placeholder; --sync-cloud will not work until a real endpoint and ATCR_API_KEY are configured\n", defaultCloudEndpoint)
@@ -73,6 +77,18 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 		}
 		return nil
 	}
+}
+
+// previewFlagSet reports whether the --preview flag is registered on cmd AND set.
+// It uses a nil-safe Lookup (not boolFlag) because addSyncCloudFlags may in
+// principle be installed on a command that does not register --preview, and this
+// runs in a PreRunE where a panic would abort an unrelated invocation.
+func previewFlagSet(cmd *cobra.Command) bool {
+	if cmd.Flags().Lookup("preview") == nil {
+		return false
+	}
+	v, _ := cmd.Flags().GetBool("preview")
+	return v
 }
 
 // addQualitySignalFlags declares the --preview flag on cmd (the review and

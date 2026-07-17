@@ -250,26 +250,29 @@ func splitPreview(out string) (jsonPart, marker string) {
 // then RunE — capturing stdout and returning the resolved exit code. Unlike
 // runPreview (which calls RunE directly), this exercises the real invocation path,
 // so a PreRunE-ordering regression is caught.
-func runRootPreview(t *testing.T, args ...string) (string, int) {
+func runRootPreview(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	root := newRootCmd()
-	var out bytes.Buffer
+	var out, errBuf bytes.Buffer
 	root.SetArgs(args)
 	root.SetOut(&out)
-	root.SetErr(new(bytes.Buffer))
+	root.SetErr(&errBuf)
 	err := root.ExecuteContext(context.Background())
-	return out.String(), exitCode(err)
+	return out.String(), errBuf.String(), exitCode(err)
 }
 
 // TestPreview_EndToEndThroughExecute proves --preview works through the real
 // PreRunE→RunE path (not just a direct RunE call): review and reconcile each host
 // it, and --preview + --sync-cloud with no ATCR_API_KEY still exits 0 rather than
 // the exit-3 a real sync-cloud precondition would raise (AC 03-01 EC2, AC 03-02).
+// It also proves the sync-cloud placeholder warning is suppressed on the preview
+// path — preview is a pure, side-effect-free render that pushes nothing (Phase 3
+// gate finding).
 func TestPreview_EndToEndThroughExecute(t *testing.T) {
 	t.Run("review --preview alone exits 0 with payload", func(t *testing.T) {
 		isolate(t)
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
-		out, code := runRootPreview(t, "review", "--preview")
+		out, _, code := runRootPreview(t, "review", "--preview")
 		require.Equal(t, 0, code, "review --preview must pass PreRunE and exit 0")
 		assert.Contains(t, out, "persona_id_hash")
 		assert.Contains(t, out, "nothing was transmitted")
@@ -277,17 +280,27 @@ func TestPreview_EndToEndThroughExecute(t *testing.T) {
 	t.Run("reconcile --preview alone exits 0 with payload", func(t *testing.T) {
 		isolate(t)
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
-		out, code := runRootPreview(t, "reconcile", "--preview")
+		out, _, code := runRootPreview(t, "reconcile", "--preview")
 		require.Equal(t, 0, code, "reconcile --preview must short-circuit before review-dir resolution and exit 0")
 		assert.Contains(t, out, "persona_id_hash")
 	})
-	t.Run("review --preview --sync-cloud with no key exits 0 through the full PreRunE path", func(t *testing.T) {
+	t.Run("review --preview --sync-cloud with no key exits 0, no sync warning", func(t *testing.T) {
 		isolate(t)
 		_ = os.Unsetenv("ATCR_API_KEY")
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
-		out, code := runRootPreview(t, "review", "--preview", "--sync-cloud")
+		out, errOut, code := runRootPreview(t, "review", "--preview", "--sync-cloud")
 		require.Equal(t, 0, code, "--preview must take precedence over --sync-cloud even through the real Execute() path")
 		assert.Contains(t, out, "persona_id_hash")
+		assert.NotContains(t, errOut, "placeholder", "the sync-cloud placeholder warning must be suppressed on the preview path")
+	})
+	t.Run("reconcile --preview --sync-cloud with no key exits 0, no sync warning", func(t *testing.T) {
+		isolate(t)
+		_ = os.Unsetenv("ATCR_API_KEY")
+		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+		out, errOut, code := runRootPreview(t, "reconcile", "--preview", "--sync-cloud")
+		require.Equal(t, 0, code, "reconcile --preview must take precedence over --sync-cloud through the real Execute() path")
+		assert.Contains(t, out, "persona_id_hash")
+		assert.NotContains(t, errOut, "placeholder", "the sync-cloud placeholder warning must be suppressed on the preview path")
 	})
 }
 
