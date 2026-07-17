@@ -543,6 +543,66 @@ func TestPersistLocalDebt_PopulatesModelFromAgentStatus(t *testing.T) {
 	assert.Equal(t, 2, recs[0].SchemaVersion, "the persisted record is stamped schema v2")
 }
 
+// TestResolveRecordModel covers Sprint 30.0 AC 01-02/01-03 and the Phase 1 gate
+// fix: a single Record.Model can only be attributed when unambiguous. A
+// single-reviewer or same-model merge resolves to that model; a cross-model
+// merged finding (reviewers on 2+ distinct models) resolves to "" —
+// attribution-incomplete — so the aggregation excludes it rather than
+// mis-crediting one persona's model to another persona that never ran it.
+func TestResolveRecordModel(t *testing.T) {
+	byRev := map[string]string{
+		"security-reviewer": "claude-sonnet-4-6",
+		"perf-reviewer":     "gpt-5.1",
+		"style-reviewer":    "claude-sonnet-4-6",
+	}
+	cases := []struct {
+		name      string
+		reviewers []string
+		want      string
+	}{
+		{"single reviewer", []string{"security-reviewer"}, "claude-sonnet-4-6"},
+		{"two reviewers same model", []string{"security-reviewer", "style-reviewer"}, "claude-sonnet-4-6"},
+		{"two reviewers different models excluded", []string{"security-reviewer", "perf-reviewer"}, ""},
+		{"reviewer absent from map", []string{"unknown-reviewer"}, ""},
+		{"empty reviewers", nil, ""},
+		{"known + unknown resolves to known", []string{"unknown-reviewer", "perf-reviewer"}, "gpt-5.1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, resolveRecordModel(tc.reviewers, byRev))
+		})
+	}
+}
+
+// TestPersistLocalDebt_CrossModelMergeExcludedFromModelAttribution covers the
+// Phase 1 gate fix end-to-end: a finding flagged by two personas that ran on
+// different models (a merged consensus finding) persists with an empty Model, so
+// it is attribution-incomplete and excluded from per-(persona, model) rows rather
+// than corrupting a group with a model a persona never ran on.
+func TestPersistLocalDebt_CrossModelMergeExcludedFromModelAttribution(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	// Two personas independently flag the identical file:line:problem, so reconcile
+	// merges them into one record with Reviewers=[bruce, greta].
+	fixtureReview(t, "r", map[string]string{
+		"sources/pool/raw/agent/bruce/findings.txt": "HIGH|a.go:1|same issue here|fix|security|10|ev|bruce\n",
+		"sources/pool/raw/agent/greta/findings.txt": "HIGH|a.go:1|same issue here|fix|security|10|ev|greta\n",
+	})
+	// bruce and greta ran on DIFFERENT models.
+	poolDir := filepath.Join(".atcr", "reviews", "r", "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	summary := `{"agents":[{"agent":"bruce","model":"claude-sonnet-4-6"},{"agent":"greta","model":"gpt-5.1"}],"total":2,"succeeded":2}`
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "summary.json"), []byte(summary), 0o644))
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1, "the two personas' identical finding merges to one record")
+	assert.Len(t, recs[0].Reviewers, 2, "the merged record unions both reviewers")
+	assert.Equal(t, "", recs[0].Model,
+		"a cross-model merge is attribution-incomplete: Model is empty, not one reviewer's model")
+}
+
 // TestRunReconcile_LocalDebtDedupsSameFinding covers AC 02-03 Scenario 2:
 // re-running reconcile on the same review dir with unchanged findings does not
 // duplicate records (write-time dedup by FindingID over full-history ReadAll).

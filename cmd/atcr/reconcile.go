@@ -321,20 +321,32 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 	}
 }
 
-// resolveRecordModel picks the model to attribute to a persisted local-debt
-// record from its reviewers and the fan-out's reviewer->model map (Sprint 30.0,
-// schema v2). It returns the first non-empty model among the record's reviewers
-// in listed order, so a single-model run is unambiguous and a multi-reviewer
-// merged finding gets a deterministic model; it returns "" when no reviewer has a
-// resolvable model (attribution-incomplete), which the quality-signal aggregation
-// excludes from per-model rows.
+// resolveRecordModel picks the single model to attribute to a persisted
+// local-debt record from its reviewers and the fan-out's reviewer->model map
+// (Sprint 30.0, schema v2). A record carries one Model field, so a model can only
+// be attributed when it is unambiguous: it returns the shared model when the
+// record's resolvable reviewers all agree on one model (a single reviewer, or a
+// multi-persona merge that ran on the same model). It returns "" —
+// attribution-incomplete, which AggregateQualitySignal excludes from per-model
+// rows — when no reviewer has a resolvable model, OR when reviewers span two or
+// more DISTINCT models (a cross-model merged finding). Returning the first
+// reviewer's model in the cross-model case would mis-credit the other personas'
+// dismissal signal to a model they never ran on, so it is deliberately excluded
+// rather than guessed.
 func resolveRecordModel(reviewers []string, modelByReviewer map[string]string) string {
+	model := ""
 	for _, rev := range reviewers {
-		if m := modelByReviewer[rev]; m != "" {
-			return m
+		m := modelByReviewer[rev]
+		if m == "" {
+			continue
+		}
+		if model == "" {
+			model = m
+		} else if m != model {
+			return "" // reviewers disagree on model → attribution-incomplete
 		}
 	}
-	return ""
+	return model
 }
 
 // gateFlagValue reads the --fail-on flag and trims it, so both threshold

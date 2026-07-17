@@ -26,11 +26,12 @@ const (
 	MsgMalformedSkip = "skipping malformed record"
 )
 
-// Record is one persisted technical-debt finding occurrence (the v1 schema in
-// documentation/local-td-store-schema.md). The required block is always present;
-// the optional block (omitempty) is present only when the reconciled finding
-// carried the corresponding enrichment (Epic 18.3 justification/source_report) or a
-// resolution has been recorded.
+// Record is one persisted technical-debt finding occurrence (the schema in
+// documentation/local-td-store-schema.md; v2 as of Sprint 30.0, which added the
+// optional Model field). The required block is always present; the optional block
+// (omitempty) is present only when the reconciled finding carried the
+// corresponding enrichment (Epic 18.3 justification/source_report), a resolved
+// model attribution, or a recorded resolution.
 type Record struct {
 	SchemaVersion int      `json:"schema_version"`
 	ID            string   `json:"id"`
