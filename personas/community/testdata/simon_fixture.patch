@@ -1,0 +1,26 @@
+diff --git a/internal/greeter/greeter.go b/internal/greeter/greeter.go
+index 1111111..2222222 100644
+--- a/internal/greeter/greeter.go
++++ b/internal/greeter/greeter.go
+@@ -1,2 +1,21 @@ package greeter
+ package greeter
+
++// bloat: interface wraps a single concrete impl with one call site.
++// We define an interface here to allow for future extensibility and to
++// follow best practices around dependency inversion.
++type Greeter interface {
++	Greet(name string) string
++}
++
++// defaultGreeter is the default implementation of the Greeter interface.
++type defaultGreeter struct{}
++
++// NewGreeter returns a new instance of the defaultGreeter as a Greeter.
++func NewGreeter() Greeter {
++	return &defaultGreeter{}
++}
++
++// Greet returns a greeting string for the given name.
++func (g *defaultGreeter) Greet(name string) string {
++	return "Hello, " + name
++}
