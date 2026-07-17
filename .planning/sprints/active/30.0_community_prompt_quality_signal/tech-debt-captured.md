@@ -55,6 +55,13 @@ Phase 1 and pre-seeded into the adversarial TD stream (SOURCE=execute-sprint).
 **Why accepted:** This is intended preview-precedence — `--preview` is a deliberate, side-effect-free inspection override that must never run a review, so honoring it first is correct. The only gap is discoverability (no "flag ignored" notice); no functional or privacy impact. Emitting warnings would be a UX-polish scope addition beyond Story 3's ACs.
 **Fix in:** Post-sprint UX pass — either warn to stderr when `--preview` is combined with an action flag, or document the silent precedence in the `--preview` flag help text.
 
+## TD-010 — Detached quality-signal send is not drained at process exit (LOW)
+**Origin:** Phase 5, task 5.5.A adversarial review, 2026-07-17
+**File:** cmd/atcr/main.go:47
+**Issue:** `main()` calls `os.Exit(code)` immediately after `ExecuteContext` returns and never drains the telemetry client (`Client.Wait()` is test/graceful-shutdown only by design). Both the passive ping and the new `SendQualitySignal` dispatch on a detached goroutine, so once a real ingestion endpoint is configured, an in-flight opted-in quality-signal POST is killed at process exit before it completes — the signal will typically NOT reach the wire. Pre-existing and shared with the passive ping; currently moot because `defaultTelemetryEndpoint` is empty (every dispatch no-ops).
+**Why accepted:** Non-blocking, fire-and-forget delivery is the explicit AC 06-02/06-03 contract ("the run does not await the HTTP round trip"; fail-open absolute). Adding a blocking drain would violate the non-blocking requirement, and the point is moot until a real endpoint lands. Not a regression introduced by this sprint.
+**Fix in:** When a real telemetry endpoint is enabled (a future epic) — add a bounded `telemetryClient.Wait()` with a short cap (or a `PersistentPostRunE` drain) after `ExecuteContext`, applied symmetrically to the passive ping, so best-effort delivery actually reaches the endpoint without unbounding run completion.
+
 ## TD-009 — SKILL.md frontmatter description omits `quality-report` (and `config`) (LOW)
 **Origin:** Phase 4, task 4.5 gate review, 2026-07-17
 **File:** skill/SKILL.md:3

@@ -1039,7 +1039,7 @@ Use the Agent tool:
 
 ---
 
-### 5.5.A [ ] **[Send + Fail-Open — ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-gated-quality-signal-transmission.md)**
+### 5.5.A [x] **[Send + Fail-Open — ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-gated-quality-signal-transmission.md)**
 
 **Changed Files:** `internal/telemetry/client.go`, `cmd/atcr/review.go`, `cmd/atcr/reconcile.go`, `cmd/atcr/qualitysignal_send_test.go`
 
@@ -1058,20 +1058,18 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
-| Severity | File:Line | Issue | Fix |
+**Subagent findings (fresh general-purpose agent, no CRITICAL/HIGH; privacy invariant, byte-identity, fail-open matrix, semaphore bound, and single-send-per-run all verified correct):**
+| Severity | File:Line | Issue | Disposition |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| LOW | cmd/atcr/main.go:47 | `main()` `os.Exit`s without draining the detached send goroutine, so a real in-flight quality-signal POST is killed at process exit (fire-and-usually-lose). Pre-existing (shared with the passive ping); moot while `defaultTelemetryEndpoint` is empty | Deferred → TD-010. Non-blocking fire-and-forget is the explicit AC 06-02/06-03 contract; a blocking drain would violate it, and it is moot until a real endpoint lands. Not a regression. |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 5.6, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Verified correct (no findings):** `QualitySignal` carries exactly the four allowlisted no-`omitempty` fields and does not embed `Event`/`Record`; the persona is SHA-256 hashed at the boundary (raw name never on the wire, test-locked); no failure diagnostic logs the payload body; the shared `dispatch`/`send` refactor preserves the passive ping's compact marshal while the quality signal uses the preview's `MarshalIndent` (byte-identity deterministic via the sorted aggregation); fail-open holds for 500/DNS/timeout/panic; the `maxInFlightSends` semaphore still bounds goroutines; the one-shot review path reconciles via the library, not the cobra handler, so the send fires at most once per run.
+
+**Action Taken:** No CRITICAL/HIGH → adversarial review passed. The single pre-existing LOW is deferred to `tech-debt-captured.md` (TD-010), matching prior phases' handling of pre-existing/mirror findings.
 
 ---
 
-### 5.6 [ ] **[Send + Fail-Open — REFACTOR](plan/user-stories/06-gated-quality-signal-transmission.md)**
+### 5.6 [x] **[Send + Fail-Open — REFACTOR](plan/user-stories/06-gated-quality-signal-transmission.md)**
 
 1. Fix CRITICAL/HIGH issues from 5.5.A (if any)
 2. Confirm no retry, queue, or circuit-breaker state is carried across runs; confirm sent bytes remain byte-identical to `--preview` after any cleanup
