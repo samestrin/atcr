@@ -346,3 +346,43 @@ func TestClient_RequestTimeout_Race(t *testing.T) {
 	}
 	c.Wait()
 }
+
+// TestClient_Send_BoundsInFlightGoroutines covers the client.go:100 TD: Send must
+// bound the number of concurrent background goroutines. A burst far larger than the
+// cap fired against a blocking send seam must never exceed maxInFlightSends
+// simultaneously in flight — excess pings are dropped, not spawned.
+func TestClient_Send_BoundsInFlightGoroutines(t *testing.T) {
+	const burst = 300
+	var cur, maxSeen int32
+	block := make(chan struct{})
+	restore := SetDoRequestForTest(func(_ *http.Client, _ *http.Request) (*http.Response, error) {
+		n := atomic.AddInt32(&cur, 1)
+		for {
+			m := atomic.LoadInt32(&maxSeen)
+			if n <= m || atomic.CompareAndSwapInt32(&maxSeen, m, n) {
+				break
+			}
+		}
+		<-block // hold the slot so concurrency accumulates
+		atomic.AddInt32(&cur, -1)
+		return nil, errors.New("blocked stub")
+	})
+	defer restore()
+
+	c := New("https://telemetry.test/ingest")
+	for i := 0; i < burst; i++ {
+		c.Send(context.Background(), Event{Event: "review_run"})
+	}
+	// Let the spawned goroutines reach the blocking seam before sampling the peak.
+	time.Sleep(150 * time.Millisecond)
+	peak := atomic.LoadInt32(&maxSeen)
+	close(block)
+	c.Wait()
+
+	if peak > int32(maxInFlightSends) {
+		t.Fatalf("peak concurrent in-flight sends = %d, want <= %d (Send must bound goroutines)", peak, maxInFlightSends)
+	}
+	if peak == 0 {
+		t.Fatal("no sends reached the seam — test wiring is broken")
+	}
+}

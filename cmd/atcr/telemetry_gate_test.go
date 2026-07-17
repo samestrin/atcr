@@ -251,6 +251,48 @@ func TestReconcile_TelemetryStatus_ReflectsGateOutcome(t *testing.T) {
 	assert.Equal(t, "failure", captured[0].Status, "telemetry status must reflect gate failure, not hardcoded success")
 }
 
+// TestReview_TelemetryStatus_ReflectsGateOutcome proves the review telemetry event's
+// status mirrors the FINAL --fail-on gate outcome, not the pre-gate fanout result: a
+// run whose agents all succeed but whose findings survive the gate (exit 1) must
+// report status="failure", mirroring the reconcile path (TD-009, review.go:420).
+func TestReview_TelemetryStatus_ReflectsGateOutcome(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TELEMETRY", "1")
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "k")
+	initGitRepoWithChange(t)
+	srv := mockFindingsServer(t) // returns one CRITICAL finding → survives --fail-on LOW
+	writeBackendContractConfig(t, srv.URL)
+
+	var captured []telemetry.Event
+	restore := telemetry.SetDoRequestForTest(func(_ *http.Client, req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		var ev telemetry.Event
+		_ = json.Unmarshal(body, &ev)
+		captured = append(captured, ev)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	defer restore()
+
+	client := telemetry.New("https://telemetry.test/ingest")
+	logger, err := log.New("info", "text", io.Discard)
+	require.NoError(t, err)
+	cmd := newReviewCmd()
+	cmd.SetContext(telemetry.NewContext(log.NewContext(context.Background(), logger), client))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(new(bytes.Buffer))
+	require.NoError(t, cmd.ParseFlags([]string{"--base", "HEAD^", "--head", "HEAD", "--fail-on", "LOW"}))
+
+	gerr := runReview(cmd, cmd.Flags().Args())
+	client.Wait() // drain the fire-and-forget goroutine so the capture is race-free
+
+	require.Error(t, gerr, "a surviving CRITICAL finding under --fail-on LOW must fail the run")
+	require.Equal(t, exitFailure, exitCode(gerr), "findings-gate failure is exit 1")
+	require.Len(t, captured, 1, "exactly one review_run ping fires")
+	assert.Equal(t, "review_run", captured[0].Event)
+	assert.Equal(t, "failure", captured[0].Status,
+		"review telemetry status must reflect the --fail-on gate outcome, not the pre-gate fanout result")
+}
+
 // TestDominantLang_TieBreakIsDeterministic covers the map-iteration tie-break
 // fix: when two files have the same changed-line count, the winner must be the
 // lexicographically smallest path, not whichever map slot Go happens to visit
