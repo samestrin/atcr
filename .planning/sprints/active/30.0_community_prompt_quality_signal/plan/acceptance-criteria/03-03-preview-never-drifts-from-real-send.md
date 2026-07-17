@@ -11,13 +11,13 @@
 
 ## Related Files
 - `internal/telemetry/quality_signal.go` - existing (Story 1): the allowlisted payload struct and its single `json.Marshal`/`json.MarshalIndent` call path
-- `cmd/atcr/review.go` (or the command wiring the Send call site) - modify: ensure a single shared helper builds the payload struct instance, consumed identically by both the `--preview` branch and the real `Send` call
+- `cmd/atcr/review.go` and `cmd/atcr/reconcile.go` (both host commands) - modify: ensure a single shared helper builds the payload struct instance, consumed identically by both the `--preview` branch and the real `Send` call
 - `cmd/atcr/qualitysignal_test.go` - create: round-trip/equivalence test proving `--preview` JSON matches the real-send marshal output byte-for-byte
 - `internal/telemetry/client_test.go` - reference: `TestClient_Send_PayloadHasExactlyFourAllowlistedKeys` as the sibling allowlist-regression pattern (guards field-set drift; this AC guards marshal-path drift)
 
 ### Related Files (from codebase-discovery.json)
 
-- `cmd/atcr/review.go` (or the command wiring the send call site) - update: single shared payload-construction helper consumed by both the `--preview` branch and the real send
+- `cmd/atcr/review.go` and `cmd/atcr/reconcile.go` - update: single shared payload-construction helper consumed by both the `--preview` branch and the real send (both host commands)
 - `cmd/atcr/qualitysignal_test.go` - create: byte-equivalence and golden round-trip tests
 
 ## Happy Path Scenarios
@@ -63,15 +63,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A single shared helper constructs the payload struct, consumed identically by `--preview` and the real send call site
-- [ ] Byte-for-byte JSON equivalence test passes across 3+ fixture payloads
-- [ ] Golden round-trip test (`--preview` output unmarshal → `DeepEqual` original) passes
-- [ ] A fixture proving a hand-copied reconstruction would be caught is present and documented
+- [x] A single shared helper (`buildQualitySignalPayload`) constructs the payload struct; `--preview` consumes it now, and Phase 5's real send call site (Story 6) is wired to the same helper
+- [x] Byte-for-byte JSON equivalence test passes across 3+ fixture payloads (`TestPreview_ByteIdenticalToRealSendMarshal`: empty / single / multi)
+- [x] Golden round-trip test (`--preview` output unmarshal → `DeepEqual` original) passes (`TestPreview_GoldenRoundTrip`)
+- [x] A fixture proving a hand-copied reconstruction would be caught is present and documented (`TestPreview_ByteIdenticalToRealSendMarshal` multi-persona fixture + `TestPreview_PayloadHashesPersonaIndependently` verifies the hash independently of the constructor)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

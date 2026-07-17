@@ -10,14 +10,14 @@
 | Key Dependencies | stdlib `net/http`, `sync/atomic` (test-only) | No new dependency |
 
 ## Related Files
-- `cmd/atcr/review.go` (or wherever the quality-signal Send call site is wired per Story 2) - modify: place the `--preview` short-circuit before the `qualitySignalGate()` check and before any transport/client construction
+- `cmd/atcr/review.go` and `cmd/atcr/reconcile.go` (both host commands) - modify: place the `--preview` short-circuit before the `qualitySignalGate()` check and before any transport/client construction
 - `internal/telemetry/client.go` - existing: the `doRequest` seam (`SetDoRequestForTest`) reused to assert zero HTTP calls
 - `cmd/atcr/qualitysignal_test.go` - create/modify: tests asserting zero network calls under both gate-disabled and gate-enabled states
 - `cmd/atcr/telemetry_gate_test.go` - reference: exhaustive truth-table test style to mirror for gate-state coverage
 
 ### Related Files (from codebase-discovery.json)
 
-- `cmd/atcr/review.go` (or the command hosting the Story 6 call site) - update: `--preview` short-circuit placed before `qualitySignalGate()` and before any `net/http` client construction
+- `cmd/atcr/review.go` and `cmd/atcr/reconcile.go` - update: `--preview` short-circuit placed before `qualitySignalGate()` and before any `net/http` client construction (both host commands)
 - `cmd/atcr/qualitysignal_test.go` - create/update: zero-HTTP-call assertions via the `doRequest` seam (`internal/telemetry/client.go:60` `SetDoRequestForTest`)
 
 ## Happy Path Scenarios
@@ -62,15 +62,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `--preview` branch executes before any `qualitySignalGate()` check and before any HTTP client construction
-- [ ] Zero-HTTP-call test passes with gate disabled (default)
-- [ ] Zero-HTTP-call test passes with gate enabled
-- [ ] `--preview` succeeds with no `ATCR_API_KEY` set
+- [x] `--preview` branch executes before any `qualitySignalGate()` check and before any HTTP client construction (short-circuit at top of `runReview`/`runReconcile`)
+- [x] Zero-HTTP-call test passes with gate disabled (default) (`TestPreview_ZeroHTTPCalls_GateDisabled`)
+- [x] Zero-HTTP-call test passes with gate enabled (`TestPreview_ZeroHTTPCalls_GateEnabled`)
+- [x] `--preview` succeeds with no `ATCR_API_KEY` set (`TestPreview_WorksWithNoAPIKey`, `TestPreview_EndToEndThroughExecute`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

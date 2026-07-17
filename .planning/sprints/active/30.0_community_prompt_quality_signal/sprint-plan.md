@@ -662,7 +662,7 @@ Use the Agent tool:
 
 ---
 
-### 3.1 [ ] **[Local `--preview` Surface — RED](plan/user-stories/03-local-preview-of-outbound-quality-signal-payload.md)**
+### 3.1 [x] **[Local `--preview` Surface — RED](plan/user-stories/03-local-preview-of-outbound-quality-signal-payload.md)**
 
 **AC:** 03-01, 03-02, 03-03
 
@@ -684,7 +684,7 @@ Use the Agent tool:
 
 ---
 
-### 3.2 [ ] **[Local `--preview` Surface — GREEN](plan/user-stories/03-local-preview-of-outbound-quality-signal-payload.md)**
+### 3.2 [x] **[Local `--preview` Surface — GREEN](plan/user-stories/03-local-preview-of-outbound-quality-signal-payload.md)**
 
 1. Add an `addQualitySignalFlags`-style helper in `cmd/atcr/flags.go` registering `--preview` via chained `PreRunE`
 2. In both host commands' run paths (`cmd/atcr/review.go` and `cmd/atcr/reconcile.go` — `--preview` is registered on both, matching Story 6's two call sites), add a single shared payload-construction helper; branch: `--preview` set → `json.MarshalIndent` to stdout + "not sent" marker line, return before any `qualitySignalGate()` check or transport/client construction
@@ -695,7 +695,7 @@ Use the Agent tool:
 
 ---
 
-### 3.2.A [ ] **[Local `--preview` Surface — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-local-preview-of-outbound-quality-signal-payload.md)**
+### 3.2.A [x] **[Local `--preview` Surface — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-local-preview-of-outbound-quality-signal-payload.md)**
 
 **Changed Files:** `cmd/atcr/flags.go`, `cmd/atcr/review.go`, `cmd/atcr/reconcile.go`, `cmd/atcr/qualitysignal_test.go`
 
@@ -714,20 +714,19 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
-| Severity | File:Line | Issue | Fix |
+**Subagent findings (fresh general-purpose agent, no CRITICAL/HIGH; privacy invariant confirmed — 4 allowlisted fields, persona hashed at boundary, no network/gate/key on the preview path, empty store → `[]`):**
+| Severity | File:Line | Issue | Disposition |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| MEDIUM | review.go:174 / flags.go:16-34 | Docstring claims `--preview` runs "before any precondition", but `addRangeFlags`' `PreRunE` (a pure flag-relationship check — no I/O, no network, no credentials) still runs before `RunE` under real `Execute()` | Fixed in 3.3 (reworded docstrings to not overstate; range validation still applies and violates no AC — no network/gate/key) |
+| MEDIUM | qualitysignal_test.go:229 | Every preview test drove `cmd.RunE` directly, bypassing the real `PreRunE`/`Execute()` path | Fixed in 3.3 (`TestPreview_EndToEndThroughExecute` runs `review`/`reconcile --preview` and `--preview --sync-cloud` through the full root `ExecuteContext`) |
+| LOW | qualitysignal_test.go | `expectedQualityPayload` re-derives `buildQualitySignalPayload`, making the equivalence tests near-tautological | Fixed in 3.3 (`TestPreview_PayloadHashesPersonaIndependently` computes the SHA-256 independently via `crypto/sha256` and asserts the raw name never appears) |
+| LOW | qualitysignal.go:136 | A non-ENOENT debt-store read failure surfaces on the preview path as exit 1, not the surrounding exit-2 usage-error convention | Fixed in 3.3 (wrapped with `usageError`) |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 3.3, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** No CRITICAL/HIGH → adversarial review passed. All four MEDIUM/LOW findings are cheap, strengthening (doc accuracy + coverage + exit-code consistency), addressed inline in 3.3 REFACTOR rather than deferred, matching the prior phases' pattern.
 
 ---
 
-### 3.3 [ ] **[Local `--preview` Surface — REFACTOR](plan/user-stories/03-local-preview-of-outbound-quality-signal-payload.md)**
+### 3.3 [x] **[Local `--preview` Surface — REFACTOR](plan/user-stories/03-local-preview-of-outbound-quality-signal-payload.md)**
 
 1. Fix CRITICAL/HIGH issues from 3.2.A (if any)
 2. Confirm the `--preview` branch short-circuits before any `net/http` client construction or DNS resolution, under every gate state
@@ -738,7 +737,7 @@ Use the Agent tool:
 
 ---
 
-### 3.4 [ ] **Phase 3 DoD Verification**
+### 3.4 [x] **Phase 3 DoD Verification**
 
 ```
 Story-3 DoD Complete
@@ -746,18 +745,18 @@ Auto: 5/5 | Story-Specific: 3/3 ACs
 Manual Review: [ ] Code reviewed (adversarial 3.2.A, REFACTOR 3.3)
 ```
 
-- [ ] T3: `go test ./cmd/atcr/...` — all passing
-- [ ] Coverage ≥80%
-- [ ] `golangci-lint run` — no errors
-- [ ] `go vet ./...` — clean
-- [ ] Build: `go build ./...` — succeeds
-- [ ] AC 03-01: `--preview` prints exact allowlisted JSON + "not sent" marker ✓
-- [ ] AC 03-02: zero HTTP calls under gate-disabled and gate-enabled states; no API key needed ✓
-- [ ] AC 03-03: byte-identical to real-send marshal path; golden round-trip passes ✓
+- [x] T3: `go test ./cmd/atcr/...` — all passing (full `go test ./...` also green: 42 pkgs)
+- [x] Coverage ≥80% — `cmd/atcr` 86.3%
+- [x] `golangci-lint run` — 0 issues
+- [x] `go vet ./...` — clean
+- [x] Build: `go build ./...` — succeeds (pre-commit gate passed)
+- [x] AC 03-01: `--preview` prints exact allowlisted JSON + "not sent" marker ✓
+- [x] AC 03-02: zero HTTP calls under gate-disabled and gate-enabled states; no API key needed ✓
+- [x] AC 03-03: byte-identical to real-send marshal path; golden round-trip passes ✓
 
 ---
 
-### 3.5 [ ] **Phase 3 — GATE: Integration & Exit Review (subagent)**
+### 3.5 [x] **Phase 3 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 3 (integration-level, not TDD cadence)
 
@@ -777,16 +776,16 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
-| Severity | File:Line | Issue | Fix |
+**Gate findings (fresh subagent, hostile integrator — no CRITICAL/HIGH; CONTRACT-EXIT / CONFIG-SURFACE (no new key) / INTEGRATION (single-source helper) / REGRESSION (non-preview paths + --sync-cloud scorecard push untouched) all PASS):**
+| Severity | File:Line | Issue | Disposition |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| MEDIUM | flags.go addSyncCloudFlags | `--preview --sync-cloud` still printed the sync-cloud placeholder warning to stderr (PreRunE fires before the RunE preview short-circuit) — misleading noise on a pure, side-effect-free render | FIXED before boundary (commit `9b347904`): warning suppressed when `--preview` is set (`previewFlagSet`); locked by `TestPreview_EndToEndThroughExecute` review+reconcile `--sync-cloud` no-warning subtests |
+| LOW | qualitysignal_test.go | Execute-path coverage tested `review --preview --sync-cloud` but not `reconcile --preview --sync-cloud` | FIXED in same commit (added the reconcile Execute-path subtest) |
+| LOW | flags.go addQualitySignalFlags | Chained PreRunE re-invokes prev and adds no validation — reads like a dead wrapper | No change: the chained-`PreRunE` helper is AC-mandated (AC 03-01 "mirroring `addSyncCloudFlags`"); the existing doc comment documents it as an intentional extension seam |
+| LOW | review.go runReview | `--preview` silently overrides `--resume`/`--force`/`--auto-fix`/positional arg with no diagnostic | Deferred → TD-008 (intended preview-precedence; discoverability-only, no functional/privacy impact) |
 
-**Action Required:**
-- CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-- MEDIUM/LOW found → Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-- None found → Note "Phase gate passed" and proceed to phase stop
+**Action Taken:** No CRITICAL/HIGH → **Phase gate passed.** The one MEDIUM (misleading sync-cloud warning on the pure preview path) was fixed before the phase boundary and the gate re-validated (build/vet/lint/tests green); the accompanying LOW coverage gap was closed in the same commit. The AC-mandated PreRunE wrapper is correct as-is; the preview-precedence discoverability LOW is deferred to `tech-debt-captured.md` (TD-008).
+
 **Duration:** 15-30 min
 
 ---

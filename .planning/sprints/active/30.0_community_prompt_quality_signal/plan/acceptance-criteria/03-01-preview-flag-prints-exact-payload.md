@@ -11,14 +11,14 @@
 
 ## Related Files
 - `cmd/atcr/flags.go` - modify: add an `addQualitySignalFlags`-style helper that registers the `--preview` bool flag on the host command(s), chaining its own `PreRunE` prev-first (mirroring `addRangeFlags`/`addSyncCloudFlags`)
-- `cmd/atcr/review.go` (and/or `cmd/atcr/reconcile.go`, whichever command wires the quality-signal Send call site per Story 2) - modify: build the `quality_signal.go` payload first, then branch on `--preview` before any gate check or transport construction
+- `cmd/atcr/review.go` and `cmd/atcr/reconcile.go` (the `--preview` flag is registered on both `atcr review` and `atcr reconcile`, matching Story 6's two Send call sites) - modify: build the `quality_signal.go` payload first, then branch on `--preview` before any gate check or transport construction
 - `internal/telemetry/quality_signal.go` - existing (Story 1 dependency): the allowlisted payload struct that `--preview` marshals via `json.MarshalIndent`
 - `cmd/atcr/qualitysignal_test.go` (new) - create: tests asserting `--preview` stdout output and exit behavior
 
 ### Related Files (from codebase-discovery.json)
 
 - `cmd/atcr/flags.go` - update: register the `--preview` bool flag via an `addQualitySignalFlags`-style helper, following the existing `addSyncCloudFlags`/`addRangeFlags` chained-`PreRunE` pattern
-- `cmd/atcr/review.go` (and/or `cmd/atcr/reconcile.go`) - update: `--preview` branch in the run path, before the Story 2 gate check and before any transport construction
+- `cmd/atcr/review.go` and `cmd/atcr/reconcile.go` - update: `--preview` branch in the run path (both host commands), before the Story 2 gate check and before any transport construction
 - `cmd/atcr/qualitysignal_test.go` - create: `--preview` stdout/exit-behavior tests
 
 ## Happy Path Scenarios
@@ -63,15 +63,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `--preview` flag is registered via a chained `PreRunE` helper mirroring `addSyncCloudFlags`
-- [ ] Stdout contains pretty-printed JSON with exactly the allowlisted quality-signal fields
-- [ ] Output includes an explicit "not sent" marker distinct from the JSON payload
-- [ ] Empty-aggregation and `--preview`+`--sync-cloud` combinations are covered by tests
+- [x] `--preview` flag is registered via a chained `PreRunE` helper mirroring `addSyncCloudFlags` (`addQualitySignalFlags`)
+- [x] Stdout contains pretty-printed JSON with exactly the allowlisted quality-signal fields (`TestPreview_PrintsAllowlistedJSONPayload`)
+- [x] Output includes an explicit "not sent" marker distinct from the JSON payload (`TestPreview_IncludesNotSentMarker`)
+- [x] Empty-aggregation and `--preview`+`--sync-cloud` combinations are covered by tests (`TestPreview_EmptyAggregationPrintsEmptyPayloadNotError`, `TestPreview_TakesPrecedenceOverSyncCloud`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved
