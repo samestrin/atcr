@@ -15,6 +15,11 @@
 - `internal/reconcile/merge.go` - reference only: `unionReviewers` is the upstream source of multi-persona `Reviewers` lists this attribution rule must handle correctly
 - `internal/localdebt/record.go` - reference only: `Record.Reviewers []string` field this rule reads
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/localdebt/qualitysignal.go` - update (AC 01-01): per-record attribution iterates every `Record.Reviewers` entry (`internal/localdebt/record.go:37`), not `Reviewers[0]`
+- `internal/localdebt/qualitysignal_test.go` - update (AC 01-01): 2+-reviewer, empty-`Reviewers`, and duplicate-entry fixture records
+
 ## Happy Path Scenarios
 **Scenario 1: Single-reviewer record attributes to one persona**
 - **Given** a record with `Reviewers: []string{"security-reviewer"}`, `Model: "claude-sonnet-4-6"`, `Status: "resolved"`

@@ -15,6 +15,12 @@
 - `internal/localdebt/qualitysignal.go` - reference only: `AggregateQualitySignal(records []Record) []QualityRow` (Story 1) is the sole data source this command renders
 - `cmd/atcr/main.go` - modify: register the new subcommand in `root.AddCommand(...)` alongside `newReportCmd()`
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/telemetry_report.go` - create: `newQualityReportCmd()`/`runQualityReport()`, mirroring `cmd/atcr/report.go:18` (`newReportCmd`) and `:31` (`runReport`)
+- `cmd/atcr/telemetry_report_test.go` - create: table-driven render tests
+- `cmd/atcr/main.go` - update: register the subcommand in `root.AddCommand(...)` (`:212-217`)
+
 ## Happy Path Scenarios
 **Scenario 1: Fixture aggregation renders correctly ranked markdown table**
 - **Given** a fixture `[]QualityRow` with three persona+model pairs with known `DismissedCount`/`ConfirmedCount` values (dismissal rate = `Dismissed / (Dismissed + Confirmed)`)

@@ -15,6 +15,11 @@
 - `cmd/atcr/qualitysignal_test.go` - create/modify: tests asserting zero network calls under both gate-disabled and gate-enabled states
 - `cmd/atcr/telemetry_gate_test.go` - reference: exhaustive truth-table test style to mirror for gate-state coverage
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/review.go` (or the command hosting the Story 6 call site) - update: `--preview` short-circuit placed before `qualitySignalGate()` and before any `net/http` client construction
+- `cmd/atcr/qualitysignal_test.go` - create/update: zero-HTTP-call assertions via the `doRequest` seam (`internal/telemetry/client.go:60` `SetDoRequestForTest`)
+
 ## Happy Path Scenarios
 **Scenario 1: `--preview` works with the opt-in gate disabled (default)**
 - **Given** `quality_signal` is unset in `.atcr/config.yaml` and no override env var is set (gate resolves disabled, the default per epic AC1)

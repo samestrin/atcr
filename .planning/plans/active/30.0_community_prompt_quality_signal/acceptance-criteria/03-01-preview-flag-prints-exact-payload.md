@@ -15,6 +15,12 @@
 - `internal/telemetry/quality_signal.go` - existing (Story 1 dependency): the allowlisted payload struct that `--preview` marshals via `json.MarshalIndent`
 - `cmd/atcr/qualitysignal_test.go` (new) - create: tests asserting `--preview` stdout output and exit behavior
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/flags.go` - update: register the `--preview` bool flag via an `addQualitySignalFlags`-style helper, following the existing `addSyncCloudFlags`/`addRangeFlags` chained-`PreRunE` pattern
+- `cmd/atcr/review.go` (and/or `cmd/atcr/reconcile.go`) - update: `--preview` branch in the run path, before the Story 2 gate check and before any transport construction
+- `cmd/atcr/qualitysignal_test.go` - create: `--preview` stdout/exit-behavior tests
+
 ## Happy Path Scenarios
 **Scenario 1: `--preview` prints the allowlisted JSON payload and exits successfully**
 - **Given** quality-signal aggregation (Story 1) has produced at least one `(persona, model)` counter row

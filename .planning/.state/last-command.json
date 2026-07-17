@@ -1,9 +1,9 @@
 {
-  "skill": "create-user-stories",
+  "skill": "design-sprint",
   "args": "@.planning/plans/active/30.0_community_prompt_quality_signal/",
-  "invocation": "/create-user-stories @.planning/plans/active/30.0_community_prompt_quality_signal/",
+  "invocation": "/design-sprint @.planning/plans/active/30.0_community_prompt_quality_signal/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "f34d6e72-245f-4873-a2e2-a0c020f7cc93",
-  "timestamp": "2026-07-17T16:00:19.858Z"
+  "session_id": "59b8a174-2aa2-417c-b78e-097b080c14df",
+  "timestamp": "2026-07-17T18:27:02.777Z"
 }

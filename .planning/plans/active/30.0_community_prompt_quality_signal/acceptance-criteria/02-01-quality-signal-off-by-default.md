@@ -15,6 +15,13 @@
 - `cmd/atcr/qualitysignal_test.go` - create: unit test asserting the gate resolves `false` when `ATCR_QUALITY_SIGNAL` (or equivalent) is unset and no `.atcr/config.yaml` `quality_signal` key is present.
 - `internal/registry/quality_signal_setting_test.go` - create: unit test asserting `LoadQualitySignalSetting` returns `(nil, nil)` for an absent file and for a present file lacking the `quality_signal` key.
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/qualitysignal.go` - create: `qualitySignalEnabled` + `qualitySignalGate`, structurally mirroring `cmd/atcr/telemetry.go:37-66` (opt-IN semantics per Story 02 — not a semantic copy of the opt-out combiner)
+- `internal/registry/quality_signal_setting.go` - create: `LoadQualitySignalSetting`, mirroring `internal/registry/telemetry_setting.go:27` (`LoadTelemetrySetting`)
+- `cmd/atcr/qualitysignal_test.go` - create: default-disabled unit tests
+- `internal/registry/quality_signal_setting_test.go` - create: `(nil, nil)` absent-file/absent-key tests
+
 ## Happy Path Scenarios
 **Scenario 1: no env var, no config file at all — gate resolves disabled**
 - **Given** no quality-signal env var is set in the process environment

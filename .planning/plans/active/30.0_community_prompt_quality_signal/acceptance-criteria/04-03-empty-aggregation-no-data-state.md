@@ -15,6 +15,11 @@
 - `internal/localdebt/qualitysignal.go` - reference only: `AggregateQualitySignal` returns an empty, non-nil slice for empty/no-opt-in input (Story 1 Edge Case 1) — this AC's guard clause consumes that contract directly, no additional nil-check needed
 - `cmd/atcr/report.go` - reference only: contrast case — `runReport`'s absent-`findings.json` path returns a usage error (exit 2); this AC deliberately renders exit 0 instead, since "no quality-signal data yet" is an expected steady state for an opt-in feature, not a misconfiguration
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/telemetry_report.go` - create: `len(rows) == 0` guard rendering the "no data" state for `md` and `json`
+- `cmd/atcr/telemetry_report_test.go` - create: empty-aggregation and corrupt-store branch tests
+
 ## Happy Path Scenarios
 **Scenario 1: No opt-in data collected yet renders a clear message in markdown**
 - **Given** `AggregateQualitySignal` returns an empty `[]QualityRow` (quality-signal collection has never been enabled on this machine, per Epic AC1)

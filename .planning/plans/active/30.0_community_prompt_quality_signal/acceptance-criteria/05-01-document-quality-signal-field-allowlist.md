@@ -15,6 +15,10 @@
 - `internal/telemetry/quality_signal_test.go` (or equivalent allowlist regression test named per Story 1, e.g. mirroring `TestClient_Send_PayloadHasExactlyFourAllowlistedKeys` in `internal/telemetry/client_test.go`) - reference only: cross-check that the test's asserted key set matches the doc table exactly
 - `internal/localdebt/qualitysignal.go` (or wherever Story 1's aggregation type lives) - reference only: confirms the field *meanings* (e.g. what "dismissed_count" counts) documented in the new table are accurate
 
+### Related Files (from codebase-discovery.json)
+
+- `docs/telemetry.md` - update: new "Community prompt quality signal" section with the field-allowlist table mirroring the "Usage ping schema" table (`:26`)
+
 ## Happy Path Scenarios
 **Scenario 1: Field table lists every allowlisted field with correct name and type**
 - **Given** the shipped `QualitySignal` struct in `internal/telemetry/quality_signal.go` has exactly 4 fields (e.g. `persona_id_hash string`, `model string`, `dismissed_count int`, `confirmed_count int`)

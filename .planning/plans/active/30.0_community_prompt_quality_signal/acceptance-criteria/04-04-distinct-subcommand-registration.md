@@ -15,6 +15,12 @@
 - `cmd/atcr/report.go` - reference only: MUST NOT be modified, aliased, or have its output changed by this story (explicit story constraint)
 - `cmd/atcr/main_test.go` (or equivalent existing CLI command-tree test) - modify/extend: assert `atcr report` and the new subcommand both resolve to distinct, independently-invocable commands
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/telemetry_report.go` - create: distinct `Use` name plus cross-referencing `Short`/`Long` help text
+- `cmd/atcr/main.go` - update: add the new command to `root.AddCommand(...)` alongside `newReportCmd()` (`:217`) without altering existing entries
+- `cmd/atcr/main_test.go` (or equivalent CLI command-tree test) - update: distinct-command resolution assertions
+
 ## Happy Path Scenarios
 **Scenario 1: New subcommand is independently invocable and does not alter `atcr report`**
 - **Given** the root Cobra command tree after this story's changes

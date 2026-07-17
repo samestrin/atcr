@@ -32,5 +32,6 @@ Single-developer implementation (Go/Cobra CLI + `internal/telemetry`/`internal/r
 - [Plan](plan.md)
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)
+- [Sprint Design](sprint-design.md)

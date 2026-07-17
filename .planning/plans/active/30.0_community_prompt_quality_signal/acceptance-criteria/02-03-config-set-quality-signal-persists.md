@@ -15,6 +15,13 @@
 - `internal/registry/quality_signal_setting_test.go` - create: round-trip, sibling-key-preservation, malformed-value, missing-file, and symlink-rejection tests mirroring `TestSetTelemetrySetting` and `TestSetTelemetrySetting_SymlinkRejected` (`internal/registry/telemetry_setting_test.go:95-167`).
 - `cmd/atcr/config_test.go` - modify: add `TestConfigSetQualitySignal_*` tests mirroring the existing `TestConfigSetTelemetry_*` tests (lines 47-92), plus a test asserting `atcr config set quality_signal true` leaves an existing `telemetry` key untouched and vice versa.
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/config.go` - update: extend the settable-key allowlist at `:59` (today `key != "telemetry"`) to admit `"quality_signal"`; update `newConfigSetCmd`'s `Long` help text
+- `internal/registry/quality_signal_setting.go` - create: `SetQualitySignalSetting`, mirroring `internal/registry/telemetry_setting.go:53` (`SetTelemetrySetting`) and reusing `withConfigLock` (`:144`), `configMapping` (`:215`), `setMappingBool` (`:233`)
+- `internal/registry/quality_signal_setting_test.go` - create: round-trip, sibling-key-preservation, malformed-value, and symlink-rejection tests
+- `cmd/atcr/config_test.go` - update: `TestConfigSetQualitySignal_*` cases alongside the existing `TestConfigSetTelemetry_*` tests
+
 ## Happy Path Scenarios
 **Scenario 1: `atcr config set quality_signal true` persists the key**
 - **Given** `.atcr/config.yaml` exists with `agents: [bruce]` and no `quality_signal` key

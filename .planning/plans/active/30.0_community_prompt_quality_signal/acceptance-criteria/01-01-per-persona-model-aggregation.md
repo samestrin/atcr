@@ -15,6 +15,11 @@
 - `internal/scorecard/aggregate.go` - reference only: the `Aggregate()` grouping/sort idiom (map-of-key + insertion-order slice + `sort.SliceStable` tie-break) this function must structurally mirror
 - `internal/localdebt/record.go` - reference only: `Record.Reviewers []string`, `Record.Status`, and the new `Model` field (Story 1 AC 01-02) this function reads
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/localdebt/qualitysignal.go` - create: `AggregateQualitySignal(records []Record) []QualityRow`; grouping/sort idiom mirrors `internal/scorecard/aggregate.go:122` (`Aggregate`)
+- `internal/localdebt/qualitysignal_test.go` - create: co-located table-driven tests per the repo's `*_test.go` convention
+
 ## Happy Path Scenarios
 **Scenario 1: Single persona/model pair with mixed statuses**
 - **Given** three schema-v2 debt records for persona `security-reviewer` and model `claude-sonnet-4-6`, two with `Status: "wontfix"` and one with `Status: "resolved"`

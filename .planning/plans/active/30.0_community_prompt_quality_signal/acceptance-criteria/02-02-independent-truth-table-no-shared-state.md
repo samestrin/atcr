@@ -10,16 +10,21 @@
 | Key Dependencies | None new — combines a live env-var read with a persisted config read, structurally independent of `telemetryGate`/`resolveSyncCloud` | |
 
 ## Related Files
-- `cmd/atcr/qualitysignal.go` - create: `qualitySignalEnabled(envEnabled bool, cfgQualitySignal *bool) bool`, a total pure function evaluating the same OR-disables (AND-enables) shape as `telemetryEnabled` (`cmd/atcr/telemetry.go:37-39`), plus `qualitySignalGate() bool` reading `registry.LoadQualitySignalSetting(".")` — neither reads nor calls `telemetryGate()` or `resolveSyncCloud()`.
+- `cmd/atcr/qualitysignal.go` - create: `qualitySignalEnabled(envEnabled bool, cfgQualitySignal *bool) bool`, a total pure function structurally mirroring `telemetryEnabled` (`cmd/atcr/telemetry.go:37-39`) but with opt-IN semantics per Story 02's Assumptions — `envEnabled || (cfgQualitySignal != nil && *cfgQualitySignal)`, NOT a semantic copy of the passive ping's opt-out AND shape — plus `qualitySignalGate() bool` reading `registry.LoadQualitySignalSetting(".")`; neither reads nor calls `telemetryGate()` or `resolveSyncCloud()`.
 - `cmd/atcr/telemetry.go` - reference only (no shared state): `telemetryEnabled`/`telemetryGate` (lines 37-66) are the structural pattern being mirrored, not a dependency to import or branch on.
 - `cmd/atcr/cloudsync.go` - reference only (no shared state): `resolveSyncCloud` (lines 33-49) is the second precedent for an independent, non-overriding opt-in surface; the quality-signal gate must not read `syncCloudPlan` or any of its fields.
-- `cmd/atcr/qualitysignal_test.go` - create: exhaustive four-combination table test plus a cross-feature independence test (`telemetry: false` + `quality_signal: true` must still resolve quality-signal enabled, and vice versa).
+- `cmd/atcr/qualitysignal_test.go` - create: exhaustive six-cell table test plus a cross-feature independence test (`telemetry: false` + `quality_signal: true` must still resolve quality-signal enabled, and vice versa).
+
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/qualitysignal.go` - create: `qualitySignalEnabled` + `qualitySignalGate` (structural mirror of `cmd/atcr/telemetry.go:37-66`, opt-IN semantics per Story 02)
+- `cmd/atcr/qualitysignal_test.go` - create: six-cell truth-table test plus the cross-feature independence test
 
 ## Happy Path Scenarios
-**Scenario 1: full four-way matrix resolves per the OR-disables truth table**
-- **Given** the combinations `{envEnabled: true/false} x {cfgQualitySignal: nil/&true/&false}` (six meaningful cells, matching `telemetryEnabled`'s existing matrix shape)
+**Scenario 1: full six-cell matrix resolves per the opt-in (OR-enables) truth table**
+- **Given** the combinations `{envEnabled: true/false} x {cfgQualitySignal: nil/&true/&false}` (six meaningful cells, the same matrix shape as `telemetryEnabled`'s existing table test)
 - **When** `qualitySignalEnabled` is evaluated for each cell
-- **Then** the results are: `(true, nil)=true`, `(true, &true)=true`, `(true, &false)=false`, `(false, nil)=false`, `(false, &true)=false`, `(false, &false)=false` — enabled only when both the env axis permits it AND the config does not disable it
+- **Then** the results follow Story 02's opt-in truth table exactly: `(false, nil)=false`, `(false, &true)=true`, `(false, &false)=false`, `(true, nil)=true`, `(true, &true)=true`, `(true, &false)=true` — enabled when EITHER the env var explicitly opts in OR the persisted config is `true`; disabled only when neither surface has explicitly opted in (the exact override semantics between the two opt-in surfaces are confirmed at design-sprint per Story 02)
 
 **Scenario 2: quality-signal state is independent of `telemetry`'s persisted value**
 - **Given** `.atcr/config.yaml` has `telemetry: false` and `quality_signal: true`
@@ -39,13 +44,19 @@
 - **When** `qualitySignalEnabled` evaluates
 - **Then** the result is `true` — a `nil` field contributes nothing to the OR and cannot out-rank a permitting env var, matching `telemetryEnabled`'s existing nil-neutrality contract
 
-**Edge Case 2: env-disabled beats config-enabled (env wins, no override)**
-- **Given** `envEnabled` is `false`
+**Edge Case 2: config-enabled alone is sufficient consent**
+- **Given** `envEnabled` is `false` (env var unset or explicitly disabled)
 - **And** `cfgQualitySignal` is `&true`
 - **When** `qualitySignalEnabled` evaluates
-- **Then** the result is `false` — config can never re-enable what an env-var opt-out disabled, mirroring `telemetryEnabled`'s asymmetric precedence
+- **Then** the result is `true` — `atcr config set quality_signal true` alone is sufficient consent under the opt-in semantics (Story 02's Assumptions); this is the exact inverse of the passive ping's opt-out shape and must not be copied from it
 
-**Edge Case 3: the two gates are called via structurally separate code paths, not a shared helper**
+**Edge Case 3: a stale `false` in config never revokes an explicit env opt-in**
+- **Given** `envEnabled` is `true`
+- **And** `cfgQualitySignal` is `&false`
+- **When** `qualitySignalEnabled` evaluates
+- **Then** the result is `true` — once a user has explicitly opted in via env, a stale `false` in config must not silently revoke that consent; revocation requires `atcr config set quality_signal false` plus unsetting the env var (Story 02's Assumptions)
+
+**Edge Case 4: the two gates are called via structurally separate code paths, not a shared helper**
 - **Given** `qualitySignalGate()` and `telemetryGate()` are both present in the same binary
 - **When** the source is inspected (a static/lint-level check, not a runtime scenario)
 - **Then** neither function's implementation calls the other, shares a package-level variable, or funnels through a common precedence table — each is a fully self-contained pure function plus I/O wrapper pair

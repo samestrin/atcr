@@ -16,6 +16,14 @@
 - `internal/localdebt/record_test.go` - modify: add coverage asserting a v1 (no `Model`) record still round-trips through `ReadAll` without error
 - `internal/localdebt/qualitysignal_test.go` - modify (depends on AC 01-01): add fixture records with `SchemaVersion: 1` (no model) mixed with `SchemaVersion: 2` (with model) records
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/localdebt/record.go` - update: bump `SchemaVersion` 1 → 2 (`:9`) and add `Model string` (`json:"model,omitempty"`) to `Record` (`:24-44`)
+- `cmd/atcr/reconcile.go` - update: `persistLocalDebt` (`:228`) populates `rec.Model` at the record-construction site (`:271-286`) from the `fanout.AgentStatus.Model` data already in scope there (read path: `internal/fanout/artifacts.go:180` `ReadPoolSummary`)
+- `internal/localdebt/qualitysignal.go` - update (AC 01-01): exclude empty-`Model` records from per-model rows
+- `internal/localdebt/record_test.go` - update: schema v1→v2 round-trip coverage
+- `internal/localdebt/qualitysignal_test.go` - update (AC 01-01): mixed v1/v2 fixtures
+
 ## Happy Path Scenarios
 **Scenario 1: Schema v2 record carries Model end-to-end**
 - **Given** a fan-out run whose `AgentStatus.Model` is `"claude-sonnet-4-6"` for persona `security-reviewer`

@@ -15,6 +15,11 @@
 - `cmd/atcr/report.go` - reference only: the existing findings-rendering path this story's command must NOT reuse or alias
 - `internal/localdebt/qualitysignal.go` - reference only: `QualityRow`'s field set (Persona, Model, DismissedCount, ConfirmedCount) is the type-level ceiling on what the report can ever display
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/telemetry_report.go` - create: render path typed on `[]localdebt.QualityRow` only
+- `cmd/atcr/telemetry_report_import_test.go` - create: static import-graph regression test (no `internal/reconcile` import, no `readReconciledFindings` call — contrast `cmd/atcr/report.go:181`)
+
 ## Happy Path Scenarios
 **Scenario 1: Rendered output contains only allowlisted fields**
 - **Given** a fixture aggregation with realistic persona names, model identifiers, and counters

@@ -11,9 +11,13 @@
 
 ## Related Files
 - `docs/telemetry.md` - modify: add a subsection documenting the quality-signal opt-in truth table (env var + `atcr config set quality_signal`) and a subsection documenting `--preview`'s exact behavior
-- `cmd/atcr/qualitysignal.go` (Story 2) - reference only: `qualitySignalEnabled`/`qualitySignalGate`'s OR-disables truth table is the source of truth for the doc's truth-table rows
+- `cmd/atcr/qualitysignal.go` (Story 2) - reference only: `qualitySignalEnabled`/`qualitySignalGate`'s opt-in (OR-enables) truth table is the source of truth for the doc's truth-table rows
 - `internal/registry/quality_signal_setting.go` (Story 2) - reference only: `quality_signal` config key semantics (accepted `strconv.ParseBool` vocabulary, fail-safe-to-disabled on malformed values)
 - `cmd/atcr/flags.go` / the command that hosts `--preview` (Story 3) - reference only: confirms the exact flag name, host command(s), and printed output shape (pretty-printed JSON plus an explicit "not sent" marker) the doc must describe
+
+### Related Files (from codebase-discovery.json)
+
+- `docs/telemetry.md` - update: opt-in subsection (env var + `atcr config set quality_signal` truth table, extending the "Opt-out" section's format at `:58`) and `--preview` behavior subsection
 
 ## Happy Path Scenarios
 **Scenario 1: Doc states the opt-in mechanism and its exact env var / config key names**
@@ -21,10 +25,10 @@
 - **When** the new subsection is read
 - **Then** it names both surfaces exactly as shipped, with a runnable example for each (mirroring the existing `ATCR_TELEMETRY` / `atcr config set telemetry` examples' style)
 
-**Scenario 2: Doc documents the two-gate OR'd truth table, matching the shipped `qualitySignalEnabled` matrix**
-- **Given** Story 2's gate resolves enabled only when the env axis permits it AND the config does not disable it (six meaningful cells)
+**Scenario 2: Doc documents the two-surface opt-in truth table, matching the shipped `qualitySignalEnabled` matrix**
+- **Given** Story 2's gate resolves enabled when EITHER the env var explicitly opts in OR the persisted `quality_signal` config is `true`, and disabled only when neither surface has explicitly opted in (six meaningful cells, per Story 02's Assumptions)
 - **When** the new subsection is read
-- **Then** it contains a truth table (mirroring the existing `ATCR_TELEMETRY` / `telemetry` config truth table's format) showing the same enabled/disabled outcomes for every combination, with a sentence stating there is no precedence/override between the two
+- **Then** it contains a truth table (mirroring the existing `ATCR_TELEMETRY` / `telemetry` config truth table's format) showing the same enabled/disabled outcomes for every combination, with a sentence stating there is no precedence/override between the two — and a note that, unlike the opt-OUT usage ping, this gate is opt-IN (either surface opting in is sufficient consent)
 
 **Scenario 3: Doc states the quality-signal gate is independent of the existing `telemetry`/`--sync-cloud` gates**
 - **Given** Story 2's Constraints require the quality-signal gate to share no state with `telemetryGate()`/`resolveSyncCloud()`

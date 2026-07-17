@@ -14,6 +14,11 @@
 - `cmd/atcr/debt_resolve.go` - reference only: `selectOpenDebt`'s fold-by-id pattern (`isClosedStatus`, `closedStatusRank`/`higherClosedStatus` for divergent-terminal-record precedence) that this AC's fold logic must mirror for the terminal (not open) side
 - `internal/localdebt/qualitysignal_test.go` - modify (depends on AC 01-01): add a fixture where the same `ID` appears twice — once as the original open record (`Status: ""`), once as a later terminal record (`Status: "wontfix"`) — asserting the aggregation counts it exactly once, using the terminal record's data
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/localdebt/qualitysignal.go` - update (AC 01-01): fold-by-`ID` pass ahead of grouping, mirroring `cmd/atcr/debt_resolve.go:156` (`selectOpenDebt`), `:129` (`closedStatusRank`), `:144` (`higherClosedStatus`)
+- `internal/localdebt/qualitysignal_test.go` - update (AC 01-01): open+terminal pair, divergent-terminal, and open-only fixture streams
+
 ## Happy Path Scenarios
 **Scenario 1: Open record followed by its terminal resolution counts once**
 - **Given** two records sharing the same `ID`: the original open record (`Status: ""`, no `Model` yet meaningful) written by `persistLocalDebt`, and a later resolution record (`Status: "wontfix"`, `Reviewers`/`Model` carried over from the original) written by `markDebtResolved`

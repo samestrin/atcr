@@ -15,6 +15,10 @@
 - `internal/telemetry/quality_signal.go` (Story 1) - reference only: the struct's fixed 4-field shape is the structural evidence backing the "no code, no finding content, ever" claim (there is no field capable of carrying it)
 - `docs/telemetry.md`'s existing "Persona Leaderboard data" section (same file, lines ~106-128 as of this writing) - reference only: the caveat's original wording and framing, which the new section must be consistent with, not contradict
 
+### Related Files (from codebase-discovery.json)
+
+- `docs/telemetry.md` - update: within the new quality-signal section, the standalone "no code, no finding content, ever" statement and the restated persona-hash caveat (consistent with "Persona Leaderboard data" at `:106-127`)
+
 ## Happy Path Scenarios
 **Scenario 1: Explicit "no code, no finding content, ever" statement is present in the new section itself**
 - **Given** the story's Constraints require the guarantee to be stated in the new section's own text, not only via cross-reference

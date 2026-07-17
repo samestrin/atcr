@@ -15,6 +15,11 @@
 - `cmd/atcr/qualitysignal_test.go` - create: round-trip/equivalence test proving `--preview` JSON matches the real-send marshal output byte-for-byte
 - `internal/telemetry/client_test.go` - reference: `TestClient_Send_PayloadHasExactlyFourAllowlistedKeys` as the sibling allowlist-regression pattern (guards field-set drift; this AC guards marshal-path drift)
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/review.go` (or the command wiring the send call site) - update: single shared payload-construction helper consumed by both the `--preview` branch and the real send
+- `cmd/atcr/qualitysignal_test.go` - create: byte-equivalence and golden round-trip tests
+
 ## Happy Path Scenarios
 **Scenario 1: Preview and real send marshal the identical struct instance**
 - **Given** a constructed quality-signal payload value (from the shared helper)

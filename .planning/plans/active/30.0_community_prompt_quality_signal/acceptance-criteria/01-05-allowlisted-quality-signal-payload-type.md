@@ -16,6 +16,11 @@
 - `internal/scorecard/telemetry.go` - reference only: `HashPersonaID` (pseudonymization) and `TelemetryPersonaRecord`'s split between internal aggregation (raw persona name) and outbound payload construction (hashed) — the model this AC's payload-construction function follows
 - `internal/localdebt/qualitysignal.go` - reference only (depends on AC 01-01): the aggregation function whose output rows are converted into `QualitySignal` payload values
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/telemetry/quality_signal.go` - create: allowlisted `QualitySignal` struct (exactly 4 fixed fields, no `omitempty`), sibling of `internal/telemetry/event.go`'s `Event`; persona identifier hashed via `internal/scorecard/telemetry.go:26` (`HashPersonaID`) at the construction boundary (`:55` `NewTelemetryPersonaRecord` split)
+- `internal/telemetry/quality_signal_test.go` - create: locking allowlist regression test mirroring `internal/telemetry/client_test.go:126` (`TestClient_Send_PayloadHasExactlyFourAllowlistedKeys`)
+
 ## Happy Path Scenarios
 **Scenario 1: Payload struct has exactly 4 allowlisted keys**
 - **Given** a `QualitySignal` value built from an aggregated `(persona, model, dismissed, confirmed)` row
