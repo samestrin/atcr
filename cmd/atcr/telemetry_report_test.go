@@ -193,6 +193,24 @@ func TestQualityReport_SubsequentRunWithDataRendersFullTable(t *testing.T) {
 	assert.Contains(t, out, "| alpha | gpt-4 | 1 | 1 | 50.0% |", "one dismissed + one confirmed → rate 50%")
 }
 
+// TestQualityReport_MarkdownCellsEscapePipeAndNewline locks the 4.2.A defense-in-
+// depth fix: a persona/model carrying a pipe or newline is escaped so it cannot
+// break the markdown table structure (persona/model are content-free, so this is
+// hygiene, not a privacy leak).
+func TestQualityReport_MarkdownCellsEscapePipeAndNewline(t *testing.T) {
+	rows := []localdebt.QualityRow{
+		{Persona: "a|b", Model: "m\n1", DismissedCount: 1, ConfirmedCount: 1},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, renderQualityReport(&buf, rows, "md"))
+	out := buf.String()
+
+	// Exactly one data row (5 columns → the row line has 6 pipes from the template
+	// plus the escaped literal rendered as "\|", which is not a column separator).
+	assert.Contains(t, out, `| a\|b | m 1 | 1 | 1 | 50.0% |`, "pipe escaped, newline flattened to a space")
+	assert.NotContains(t, out, "m\n1", "a raw newline must never reach a table cell")
+}
+
 // corruptDebtStore makes DefaultDir(".") a regular FILE so os.ReadDir fails with a
 // non-ENOENT error, forcing localdebt.ReadAll to return an error (the present-but-
 // unreadable store case). Its parent is created first.

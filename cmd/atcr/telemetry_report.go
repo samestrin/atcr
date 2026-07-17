@@ -150,8 +150,22 @@ func renderQualityReportMarkdown(w io.Writer, rows []qualityReportRow) error {
 	b.WriteString("| --- | --- | --- | --- | --- |\n")
 	for _, r := range rows {
 		fmt.Fprintf(&b, "| %s | %s | %d | %d | %.1f%% |\n",
-			r.Persona, r.Model, r.DismissedCount, r.ConfirmedCount, r.DismissalRate*100)
+			escapeMarkdownCell(r.Persona), escapeMarkdownCell(r.Model),
+			r.DismissedCount, r.ConfirmedCount, r.DismissalRate*100)
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// escapeMarkdownCell makes a persona/model identifier safe to interpolate into a
+// markdown table cell: a literal pipe would break the column structure and a
+// newline would break the row. Persona and model are catalog-controlled slugs
+// today (so this is unreachable defense-in-depth), but the render layer holds the
+// same "enforced structurally, not left to input hygiene" line the aggregation
+// does rather than trusting the input.
+func escapeMarkdownCell(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return strings.ReplaceAll(s, "|", "\\|")
 }

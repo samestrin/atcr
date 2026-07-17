@@ -834,7 +834,7 @@ Use the Agent tool:
 
 ---
 
-### 4.2.A [ ] **[Maintainer-Facing Report — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-maintainer-facing-prompt-quality-report.md)**
+### 4.2.A [x] **[Maintainer-Facing Report — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-maintainer-facing-prompt-quality-report.md)**
 
 **Changed Files:** `cmd/atcr/telemetry_report.go`, `cmd/atcr/main.go`, `cmd/atcr/telemetry_report_test.go`, `cmd/atcr/telemetry_report_import_test.go`, `cmd/atcr/main_test.go`
 
@@ -853,20 +853,16 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
-| Severity | File:Line | Issue | Fix |
+**Subagent findings (fresh general-purpose agent, no CRITICAL/HIGH; content-free invariant confirmed — render imports only encoding/json/fmt/io/sort/strings/localdebt/cobra, no internal/reconcile/readReconciledFindings, QualityRow reads only Reviewers/Model/Status; exit-code classes, empty-vs-read-failure, divide-by-zero guard, and tie-break determinism all verified correct):**
+| Severity | File:Line | Issue | Disposition |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| LOW | telemetry_report.go:152 | Markdown table cells interpolate persona/model via raw `%s` with no `\|`/newline escaping — a slug containing a pipe or newline would break table structure. Not a privacy leak (persona/model are allowlisted, content-free) and unreachable today (catalog-controlled slugs), but the render layer does not hold the aggregate's "enforced structurally, not left to input hygiene" line | Fixed in 4.3 (escape `\|`/newline in md cells + lock test), matching prior phases' inline-strengthening pattern |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 4.3, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** No CRITICAL/HIGH → adversarial review passed. The single LOW is a cheap, privacy-adjacent defense-in-depth strengthening on the markdown render layer, addressed inline in 4.3 REFACTOR (consistent with 1.9/2.3/2.6/3.3) rather than deferred.
 
 ---
 
-### 4.3 [ ] **[Maintainer-Facing Report — REFACTOR](plan/user-stories/04-maintainer-facing-prompt-quality-report.md)**
+### 4.3 [x] **[Maintainer-Facing Report — REFACTOR](plan/user-stories/04-maintainer-facing-prompt-quality-report.md)**
 
 1. Fix CRITICAL/HIGH issues from 4.2.A (if any)
 2. Confirm `atcr report`'s output and behavior are byte-for-byte unchanged after this story
