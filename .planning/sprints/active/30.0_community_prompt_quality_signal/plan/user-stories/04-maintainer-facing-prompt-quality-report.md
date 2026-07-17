@@ -24,7 +24,7 @@
 
 ## Success Criteria (SMART Format)
 
-- **Specific:** A new maintainer-facing CLI subcommand (e.g. `cmd/atcr/telemetry_report.go`, following the `newReportCmd`/`runReport` shape) renders the per-persona+model dismissed/confirmed counters from Story 1's aggregation, ranked so the maintainer can immediately identify the highest-dismissal-rate (over-reporting) and lowest-confirmation (under-reporting) persona+model pairs.
+- **Specific:** A new maintainer-facing CLI subcommand (e.g. `cmd/atcr/telemetry_report.go`, following the `newReportCmd`/`runReport` shape) renders the per-persona+model dismissed/confirmed counters from Story 1's aggregation, ranked by dismissal rate descending so the maintainer can immediately identify the highest-dismissal-rate (over-reporting candidate) pairs at the top and the best-calibrated (lowest-dismissal / highest-confirmation) pairs at the bottom. **True under-reporting — a prompt that misses real bugs — is structurally unobservable from dismissal counts of findings that were raised, and is out of scope for this content-free signal** (see AC 04-01's scope note); the report surfaces the observable dismissal-rate spectrum, not an invented under-reporting metric.
 - **Measurable:** Given a fixture aggregation with known per-persona+model dismissed/confirmed counts, the rendered report's ranking order and displayed counters exactly match hand-computed expected values in a table-driven test; given an empty aggregation, the command exits cleanly with a "no data" message (no panic, no non-zero unexpected exit code).
 - **Achievable:** Reuses the existing `cmd/atcr/report.go` subcommand skeleton and `internal/scorecard/aggregate.go` `Aggregate()` grouping/sorting idiom — no new CLI framework or aggregation algorithm is introduced.
 - **Relevant:** Directly satisfies epic AC2 ("surfaced to the maintainer in a form that identifies over/under-reporting prompts, closing the loop to 19.8's drafting and 19.9's submissions").
@@ -41,7 +41,7 @@
 
 ## Original Criteria Overview
 
-1. A new CLI subcommand renders the per-persona+model dismissed/confirmed counters (from Story 1's aggregation) ranked by dismissal rate, clearly surfacing the highest over-reporting and lowest under-reporting persona+model pairs.
+1. A new CLI subcommand renders the per-persona+model dismissed/confirmed counters (from Story 1's aggregation) ranked by dismissal rate descending, clearly surfacing the highest over-reporting candidates at the top and the best-calibrated (lowest-dismissal) pairs at the bottom. True under-reporting (missed bugs) is structurally unobservable from this content-free signal and is out of scope (see AC 04-01).
 2. The report's output is limited to aggregate counters and persona+model identifiers only — never finding text, file paths, or code — verified by a test asserting the rendering path has no access to `reconcile`/`findings.json` content.
 3. An empty aggregation (no opted-in data collected yet) renders a clear "no data" state rather than erroring, panicking, or displaying a misleading empty table.
 
@@ -49,7 +49,7 @@
 
 - **Implementation Notes:** Add a new subcommand file (e.g. `cmd/atcr/telemetry_report.go`) mirroring `newReportCmd`/`runReport` in `cmd/atcr/report.go`: a Cobra command with a `--format` flag (at minimum `md` and `json`, matching existing report conventions) that reads Story 1's aggregated counters, ranks rows by dismissal rate descending, and renders a table (md) or structured payload (json). Reuse `internal/scorecard/aggregate.go`'s `Aggregate()` grouping-by-`(reviewer, model)` idiom as the pattern for the new per-persona+model grouping rather than writing a new algorithm from scratch.
 - **Integration Points:** Consumes Story 1's aggregation struct/function directly (in-process call, not a file round-trip if avoidable); does not touch `cmd/atcr/report.go`, `internal/reconcile`, or `internal/report`'s existing findings-rendering path. Registers alongside existing subcommands in the root Cobra command tree the same way `newReportCmd` does today.
-- **Data Requirements:** Input is Story 1's per-persona+model `{persona, model, dismissed_count, confirmed_count}`-shaped aggregation (exact field names TBD by Story 1's AC). Output fields are limited to persona identifier, model, dismissed count, confirmed count, and a derived dismissal rate — no other fields are added to the render path.
+- **Data Requirements:** Input is Story 1's per-persona+model aggregation with the pinned payload keys `persona_id_hash`, `model`, `dismissed_count`, `confirmed_count` (see AC 01-05). Output fields are limited to persona identifier, model, dismissed count, confirmed count, and a derived dismissal rate — no other fields are added to the render path.
 
 ## Potential Risks
 

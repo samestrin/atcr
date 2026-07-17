@@ -35,13 +35,15 @@
 **Scenario 3: Highest-dismissal and lowest-confirmation rows are visually distinguishable**
 - **Given** a fixture with one persona+model pair at 90% dismissal rate and another at 5%
 - **When** the report is rendered in either format
-- **Then** the 90%-dismissal row appears first (over-reporting candidate) and the report's heading/column labeling makes clear that descending dismissal rate is the ranking basis (no unexplained ordering)
+- **Then** the 90%-dismissal row appears first (over-reporting candidate) and the 5%-dismissal row appears last (well-calibrated / high-confirmation tail) and the report's heading/column labeling makes clear that descending dismissal rate is the ranking basis (no unexplained ordering)
+
+**Scope note (epic AC2 — "over/under-reporting"):** This signal identifies **over-reporting** directly (a high dismissal rate = a prompt flagging findings maintainers reject). The two tails of the same descending ranking give the maintainer both ends of the spectrum: the top surfaces over-reporting candidates; the bottom (lowest dismissal / highest confirmation) surfaces the best-calibrated prompts. **True under-reporting — a prompt that misses real bugs it should have raised — is structurally unobservable from dismissal/confirmation counts of findings that *were* raised, and is therefore out of scope for this content-free signal** (there is no content-free counter for a finding that never existed). The report does not invent an under-reporting metric; it ranks the observable dismissal-rate spectrum and labels the ranking basis so the maintainer's read of "which prompts need tuning" stays transparent.
 
 ## Edge Cases
 **Edge Case 1: Single persona+model pair**
 - **Given** an aggregation with exactly one `QualityRow`
 - **When** the report renders
-- **Then** it renders that one row without error, with a dismissal rate computed from its own counts (no divide-by-zero when `DismissedCount + ConfirmedCount == 0`, which defers to AC 04-03's "no data" handling only when the row set itself is empty)
+- **Then** it renders that one row without error, with a dismissal rate computed from its own counts. A `QualityRow` is only emitted when a persona+model pair has at least one terminal outcome (Story 1 AC 01-01 excludes rows with no dismissed/confirmed contribution), so `DismissedCount + ConfirmedCount >= 1` always holds and the denominator is never zero in practice. The rate computation still guards defensively: if `DismissedCount + ConfirmedCount == 0` were ever reached, the displayed rate is `0.0` (never a divide-by-zero panic or `NaN`). The empty-row-set case is AC 04-03's "no data" state, distinct from this single-row case.
 
 **Edge Case 2: Tied dismissal rates across multiple pairs**
 - **Given** two or more `QualityRow` entries with identical dismissal rates

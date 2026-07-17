@@ -5,22 +5,20 @@
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
-| Component Type | Go package (CLI run-path wiring + transport) | `cmd/atcr`, `internal/telemetry` (or `internal/scorecard` per the design-sprint fork) |
+| Component Type | Go package (CLI run-path wiring + transport) | `cmd/atcr`, `internal/telemetry` (sibling-payload transport over `telemetry.Client`, resolved in sprint-design) |
 | Test Framework | `go test` (standard library `testing`), `testify` `assert`/`require` | Mirrors `internal/telemetry/client_test.go` conventions |
 | Key Dependencies | `net/http/httptest` (capture server), `encoding/json` | No new third-party dependency |
 
 ## Related Files
 - `cmd/atcr/review.go` / `cmd/atcr/reconcile.go` - modify: enabled-branch send invocation at the Story 6 call sites.
 - `internal/telemetry/quality_signal.go` - reference: Story 1's allowlisted payload type and its locking regression test (AC 01-05).
-- `internal/telemetry/client.go` - modify (sibling-payload fork only): add a send method for the new payload type, preserving the detached-goroutine, HTTPS-only, nil/empty-endpoint-no-op contract.
-- `internal/scorecard/cloudsync.go` - modify (extend-payload fork only): carry the counters on the existing `Push` payload per the design-sprint decision.
+- `internal/telemetry/client.go` - modify: add a sibling send method for the new payload type, preserving the detached-goroutine, HTTPS-only, nil/empty-endpoint-no-op contract. (Sprint-design resolved the transport as the sibling-payload path over `telemetry.Client` — never an extension of `internal/scorecard`'s `Push`/`CloudSyncRecord`.)
 - `cmd/atcr/qualitysignal_send_test.go` - create: capture-server tests asserting exactly-one send, allowlisted body, and preview/send byte equality.
 
 ### Related Files (from codebase-discovery.json)
 
 - `cmd/atcr/review.go` / `cmd/atcr/reconcile.go` - update: enabled-branch send at the Story 6 call sites (`:462-467` / `:186-191`)
-- `internal/telemetry/client.go` - update (sibling-payload fork only): send method for the new payload type, preserving the `New` (`:81`) / `isHTTPS` (`:95`) / detached-`Send` (`:106`) contract
-- `internal/scorecard/cloudsync.go` - update (extend-payload fork only): counters ride the existing `Push` payload
+- `internal/telemetry/client.go` - update: sibling send method for the new payload type, preserving the `New` (`:81`) / `isHTTPS` (`:95`) / detached-`Send` (`:106`) contract
 - `cmd/atcr/qualitysignal_send_test.go` - create: capture-server tests (exactly-one send, allowlisted body, preview/send byte equality)
 
 ## Happy Path Scenarios
@@ -47,7 +45,7 @@
 **Edge Case 1: empty aggregation (no debt records, or none with model attribution)**
 - **Given** the gate is enabled but Story 1's aggregation yields zero rows
 - **When** a run completes
-- **Then** the behavior is one defined choice — either no send, or a send of a payload with an explicitly empty rows list — documented in `docs/telemetry.md` (Story 5) and locked by this test; it must not error, and must not send a partial/malformed body
+- **Then** no send fires — a zero-row aggregation is treated as "nothing to transmit," so the enabled branch short-circuits after aggregation and makes no network call (consistent with the epic's minimal-transmission posture); it must not error, and must not send an empty or partial/malformed body. This behavior is documented in `docs/telemetry.md` (Story 5) and locked by this test.
 
 **Edge Case 2: plaintext or empty endpoint**
 - **Given** the gate is enabled but the configured endpoint is empty or non-HTTPS
@@ -57,7 +55,7 @@
 **Edge Case 3: review and reconcile in the same session**
 - **Given** the gate is enabled and a session runs both commands
 - **When** both complete
-- **Then** each run sends the deterministic aggregate of the same underlying records — idempotent and detectable rather than corrupting; per-run vs per-session semantics are pinned at design-sprint and asserted here once decided
+- **Then** send semantics are **per-run**: each `review` and each `reconcile` invocation independently sends once at its own completion (no cross-command deduplication within a session). Because every send is a deterministic aggregate of the same underlying `.atcr/debt/` records, the resulting duplicate is idempotent and detectable rather than corrupting.
 
 ## Error Conditions
 **Error Scenario 1: capture server answers 500 — run still succeeds**
@@ -72,9 +70,9 @@
 - **Strictness requirement:** Payload construction happens at most once per run and is shared with the `--preview` render path (single source of marshaling).
 
 ## Security Considerations
-- **Authentication/Authorization:** Inherits the chosen transport's existing mechanism (telemetry endpoint configuration, or `Authorization: Bearer` via `ATCR_API_KEY` for the `Push` fork) — this AC adds no new credential surface.
+- **Authentication/Authorization:** Inherits the `telemetry.Client` transport's existing endpoint-configuration mechanism — this AC adds no new credential surface.
 - **Input Validation:** The payload originates from Story 1's typed constructor — no user-supplied free text reaches the body.
-- **Privacy Guarantee:** The transmitted field set is exactly Story 1's allowlist (persona identifier — hashed per the design-sprint decision via `scorecard.HashPersonaID` — model, dismissed count, confirmed count): zero code, zero finding content, zero file paths. Any future field addition fails AC 01-05's locking test before it can reach this send path.
+- **Privacy Guarantee:** The transmitted field set is exactly Story 1's allowlist (persona identifier hashed via `scorecard.HashPersonaID`, model, dismissed count, confirmed count): zero code, zero finding content, zero file paths. Any future field addition fails AC 01-05's locking test before it can reach this send path.
 
 ## Test Implementation Guidance
 **Test Type:** UNIT + INTEGRATION (in-process CLI run against a capture server)
@@ -92,7 +90,8 @@
 - [ ] Transmitted bytes are byte-identical to the `--preview` rendering for the same fixture data
 - [ ] Body contains no field outside Story 1's allowlisted set
 - [ ] Plaintext/empty endpoint → no transmission
-- [ ] Empty aggregation behavior is defined, tested, and matches the Story 5 documentation
+- [ ] Empty aggregation (zero rows) → no send fires; behavior tested and matches the Story 5 documentation
+- [ ] Send semantics are per-run (each `review`/`reconcile` sends once at its own completion)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

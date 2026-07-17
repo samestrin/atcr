@@ -5,19 +5,18 @@
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
-| Component Type | Go package (CLI run-path wiring + transport) | `cmd/atcr`, `internal/telemetry` (or `internal/scorecard` per the design-sprint fork) |
+| Component Type | Go package (CLI run-path wiring + transport) | `cmd/atcr`, `internal/telemetry` (sibling-payload transport over `telemetry.Client`, resolved in sprint-design) |
 | Test Framework | `go test` (standard library `testing`), `testify` `assert`/`require` | Mirrors `internal/telemetry/client_test.go` fail-open tests |
 | Key Dependencies | `net/http/httptest` (controllable failure server) | No new third-party dependency |
 
 ## Related Files
 - `internal/telemetry/client.go` - reference: documented fail-open contract ("a non-2xx response, or an internal panic never blocks, crashes, or" alters the run — `:3-5`), detached send (`:100-106`).
-- `cmd/atcr/cloudsync.go` - reference: `resolveSyncCloudOutcome` (`:86`) exit-code mapping that keeps a push failure from corrupting the run outcome (extend-payload fork).
 - `cmd/atcr/review.go` / `cmd/atcr/reconcile.go` - modify: Story 6's call sites must inherit this fail-open behavior.
 - `cmd/atcr/qualitysignal_send_test.go` - create: failure-matrix tests (non-2xx, DNS failure, timeout, panic) asserting run-outcome invariance.
 
 ### Related Files (from codebase-discovery.json)
 
-- `cmd/atcr/review.go` / `cmd/atcr/reconcile.go` - update: Story 6 call sites inherit the fail-open contract (`internal/telemetry/client.go:3-5`, `:106`; `cmd/atcr/cloudsync.go:86` `resolveSyncCloudOutcome` for the `Push` fork)
+- `cmd/atcr/review.go` / `cmd/atcr/reconcile.go` - update: Story 6 call sites inherit the fail-open contract (`internal/telemetry/client.go:3-5`, `:106`)
 - `cmd/atcr/qualitysignal_send_test.go` - create: failure-matrix tests (500, DNS failure, timeout, panic)
 
 ## Happy Path Scenarios
@@ -42,10 +41,10 @@
 - **When** a run completes
 - **Then** the panic is contained per `client.go`'s documented contract — the run's outcome is unaffected (mirroring the existing client panic-safety test pattern)
 
-**Edge Case 2: auth rejection on the `Push` fork**
-- **Given** the design-sprint fork resolved to the cloud-sync transport, the gate is enabled, and the endpoint answers 401/403
+**Edge Case 2: auth rejection (401/403) from the endpoint**
+- **Given** the gate is enabled and the `telemetry.Client` endpoint answers 401/403
 - **When** a run completes
-- **Then** the rejection surfaces only through the existing `resolveSyncCloudOutcome` mapping (a visible sync error, never a corrupted run outcome) — no new error-mapping logic is introduced by this epic
+- **Then** the rejection is absorbed by the same fail-open path as any other non-2xx response — the send is dropped, the run's exit code and stdout match the gate-disabled baseline, and no new error-mapping logic is introduced by this epic (401/403 is just another non-2xx on the detached, fail-open `telemetry.Client.Send` path)
 
 **Edge Case 3: failure on one run does not suppress or duplicate the next run's send**
 - **Given** a first run whose send fails (500) and a second run against a healthy endpoint

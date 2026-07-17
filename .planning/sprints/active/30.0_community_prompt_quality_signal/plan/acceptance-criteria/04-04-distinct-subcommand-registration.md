@@ -10,7 +10,7 @@
 | Key Dependencies | `spf13/cobra` | No new dependency |
 
 ## Related Files
-- `cmd/atcr/telemetry_report.go` - create: new Cobra command with a distinct `Use` name (e.g. `quality-report`) and `Short`/`Long` help text cross-referencing `atcr report` so the two are not confused
+- `cmd/atcr/telemetry_report.go` - create: new Cobra command with the distinct `Use` name `quality-report` and `Short`/`Long` help text cross-referencing `atcr report` so the two are not confused
 - `cmd/atcr/main.go` - modify: add the new command to `root.AddCommand(...)` (alongside `newReportCmd()` at line 217) without altering the existing `newReportCmd()` entry or its position
 - `cmd/atcr/report.go` - reference only: MUST NOT be modified, aliased, or have its output changed by this story (explicit story constraint)
 - `cmd/atcr/main_test.go` (or equivalent existing CLI command-tree test) - modify/extend: assert `atcr report` and the new subcommand both resolve to distinct, independently-invocable commands
@@ -30,7 +30,7 @@
 **Scenario 2: New subcommand has a distinct, self-explanatory name**
 - **Given** `atcr --help`
 - **When** the help output is inspected
-- **Then** the new subcommand appears under a name distinct from `report` (e.g. `quality-report`) with `Short` help text that clearly differentiates it from `atcr report` (e.g. "Render the aggregate persona+model dismissed/confirmed quality signal" vs. "Render md, json, checklist, or sarif views over reconciled findings")
+- **Then** the new subcommand appears as `quality-report` (a name distinct from `report`) with `Short` help text that clearly differentiates it from `atcr report` (e.g. "Render the aggregate persona+model dismissed/confirmed quality signal" vs. "Render md, json, checklist, or sarif views over reconciled findings")
 
 ## Edge Cases
 **Edge Case 1: Command name collision check**

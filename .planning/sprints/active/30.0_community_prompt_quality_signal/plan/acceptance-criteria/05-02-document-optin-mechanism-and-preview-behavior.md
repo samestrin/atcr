@@ -21,7 +21,7 @@
 
 ## Happy Path Scenarios
 **Scenario 1: Doc states the opt-in mechanism and its exact env var / config key names**
-- **Given** Story 2 ships an env var (e.g. `ATCR_QUALITY_SIGNAL`) and an `atcr config set quality_signal <bool>` config key
+- **Given** Story 2 ships the `ATCR_QUALITY_SIGNAL` env var and the `atcr config set quality_signal <bool>` config key
 - **When** the new subsection is read
 - **Then** it names both surfaces exactly as shipped, with a runnable example for each (mirroring the existing `ATCR_TELEMETRY` / `atcr config set telemetry` examples' style)
 
@@ -38,7 +38,7 @@
 **Scenario 4: Doc documents `--preview`'s exact behavior**
 - **Given** Story 3 ships a `--preview` flag that prints pretty-printed JSON of the payload plus a human-readable "not sent" marker, and never performs network I/O or requires `ATCR_API_KEY`
 - **When** the new subsection is read
-- **Then** it states: the exact flag name and host command(s); that it prints the allowlisted JSON payload; that it includes an explicit "nothing was transmitted" statement; and that it works without any opt-in or credential, so an undecided user can inspect the payload before ever enabling transmission
+- **Then** it states: the exact flag name (`--preview`) and host commands (`atcr review` and `atcr reconcile`); that it prints the allowlisted JSON payload; that it includes an explicit "nothing was transmitted" statement; and that it works without any opt-in or credential, so an undecided user can inspect the payload before ever enabling transmission
 
 ## Edge Cases
 **Edge Case 1: `--preview` combined with `--sync-cloud`**

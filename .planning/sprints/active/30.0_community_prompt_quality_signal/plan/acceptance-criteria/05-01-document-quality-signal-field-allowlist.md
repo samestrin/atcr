@@ -13,7 +13,7 @@
 - `docs/telemetry.md` - modify: add a new "Community prompt quality signal" section (or equivalently named, placed after "Persona Leaderboard data" / before or after "Cloud sync (`--sync-cloud`)") containing a field table mirroring the existing "Usage ping schema" table's format (`Field | Type | Example | Meaning`)
 - `internal/telemetry/quality_signal.go` - reference only: the shipped `QualitySignal` struct (Story 1) is the sole source of truth for field names/types/count — the doc table must list exactly these fields, no more, no fewer
 - `internal/telemetry/quality_signal_test.go` (or equivalent allowlist regression test named per Story 1, e.g. mirroring `TestClient_Send_PayloadHasExactlyFourAllowlistedKeys` in `internal/telemetry/client_test.go`) - reference only: cross-check that the test's asserted key set matches the doc table exactly
-- `internal/localdebt/qualitysignal.go` (or wherever Story 1's aggregation type lives) - reference only: confirms the field *meanings* (e.g. what "dismissed_count" counts) documented in the new table are accurate
+- `internal/localdebt/qualitysignal.go` - reference only: Story 1's aggregation type (`AggregateQualitySignal`/`QualityRow`) confirms the field *meanings* (e.g. what "dismissed_count" counts) documented in the new table are accurate
 
 ### Related Files (from codebase-discovery.json)
 
@@ -36,10 +36,10 @@
 - **Then** it contains an explicit sentence stating the quality-signal payload is a separately-defined, separately-tested struct — distinct from (not layered on top of) the usage-ping `Event` schema
 
 ## Edge Cases
-**Edge Case 1: A field is renamed during Stories 1-4 implementation after this story is drafted**
-- **Given** the plan-stage design used placeholder names (e.g. `persona_id_hash`) that may change during implementation
+**Edge Case 1: A field name differs from the pinned design after implementation**
+- **Given** the design pins the four JSON keys as `persona_id_hash`, `model`, `dismissed_count`, `confirmed_count`, but implementation could still diverge
 - **When** the doc is finalized
-- **Then** the doc author re-reads the actual shipped `internal/telemetry/quality_signal.go` and its allowlist test immediately before finalizing, and uses the real shipped names — not the plan-stage placeholder — if they differ
+- **Then** the doc author re-reads the actual shipped `internal/telemetry/quality_signal.go` and its allowlist test immediately before finalizing, and uses the real shipped names if they differ from the pinned design — the shipped struct + its allowlist test are always the source of truth over any planning document
 
 **Edge Case 2: Zero-value counts must be documented as always-present, not omitted**
 - **Given** Story 1's AC states zero-value counts serialize as `0` rather than being dropped (no `omitempty`)
