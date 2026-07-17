@@ -1080,7 +1080,7 @@ Use the Agent tool:
 
 ---
 
-### 5.7 [ ] **Phase 5 DoD Verification**
+### 5.7 [x] **Phase 5 DoD Verification**
 
 ```
 Story-6 DoD Complete
@@ -1088,18 +1088,18 @@ Auto: 5/5 | Story-Specific: 3/3 ACs
 Manual Review: [ ] Code reviewed (adversarial 5.2.A + 5.5.A, REFACTOR 5.3 + 5.6)
 ```
 
-- [ ] T3: `go test ./internal/telemetry/... ./cmd/atcr/...` — all passing
-- [ ] Coverage ≥80%
-- [ ] `golangci-lint run` — no errors
-- [ ] `go vet ./...` — clean
-- [ ] Build: `go build ./...` — succeeds
-- [ ] AC 06-01: gate disabled → zero requests, zero payload construction, on both review and reconcile ✓
-- [ ] AC 06-02: gate enabled → exactly one request, correct counts, byte-identical to `--preview` ✓
-- [ ] AC 06-03: 500 / DNS / timeout / panic all leave run outcome identical to gate-disabled baseline ✓
+- [x] T3: `go test ./...` — all 42 packages passing
+- [x] Coverage ≥80% — `internal/telemetry` 89.1%, `cmd/atcr` 86.0%, `internal/localdebt` 85.1%
+- [x] `golangci-lint run` — 0 issues
+- [x] `go vet ./...` — clean
+- [x] Build: `go build ./...` — succeeds
+- [x] AC 06-01: gate disabled → zero requests, zero payload construction (via constructor seam), on both review and reconcile ✓
+- [x] AC 06-02: gate enabled (env or config) → exactly one request, hand-computed counts, allowlisted keys only, byte-identical to `--preview` ✓
+- [x] AC 06-03: 500 / DNS / timeout / panic all leave run outcome identical to gate-disabled baseline; no carried failure state; diagnostics never include the payload body ✓
 
 ---
 
-### 5.8 [ ] **Phase 5 — GATE: Integration & Exit Review (subagent)**
+### 5.8 [x] **Phase 5 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 5 (integration-level, not TDD cadence)
 
@@ -1119,16 +1119,13 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
-| Severity | File:Line | Issue | Fix |
+**Gate findings (fresh subagent, hostile integrator — no findings; CONTRACT-EXIT / CONFIG-SURFACE (no new key) / INTEGRATION (gate-first, no coupling to telemetryGate/resolveSyncCloud) / PHASE-EXIT (struct + gate/preview/send behavior final, Phase 6 docs need no code change) / REGRESSION (passive ping + --sync-cloud unchanged, --preview still short-circuits first, sent bytes byte-identical to preview) all PASS):**
+| Severity | File:Line | Issue | Disposition |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| None | — | Build/vet clean; Phase-5 send suite + full `internal/telemetry` suite green; no integration, contract, config, regression, or privacy-leak defect found | — |
 
-**Action Required:**
-- CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-- MEDIUM/LOW found → Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-- None found → Note "Phase gate passed" and proceed to phase stop
+**Action Taken:** No CRITICAL/HIGH/MEDIUM/LOW → **Phase gate passed.** The shared `dispatch`/`send` refactor preserves the passive ping's compact wire format and fail-open guarantees; the quality-signal path is gate-first, independent, fail-open, and byte-identical to `--preview`. Phase 5 complete.
+
 **Duration:** 15-30 min
 
 ---
