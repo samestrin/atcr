@@ -206,6 +206,26 @@ func TestPush_TransportError_RedactsEndpointUserinfo(t *testing.T) {
 	}
 }
 
+// TestPush_EmptyAPIKey_FailsClosed covers the cloudsync.go:179 TD: Push must
+// validate the API key is non-empty and fail closed BEFORE any request, mirroring
+// the defensive endpoint re-validation — a caller passing an empty key must not
+// send an "Authorization: Bearer " header (trailing space) and waste a round-trip.
+func TestPush_EmptyAPIKey_FailsClosed(t *testing.T) {
+	for _, key := range []string{"", "   "} {
+		srv, got, _, _ := cloudsyncServer(t, http.StatusOK)
+		err := Push(context.Background(), srv.URL, key, sampleCloudRecord())
+		if err == nil {
+			t.Fatalf("key %q: expected an error for a missing API key", key)
+		}
+		if errors.Is(err, ErrCloudAuthRejected) {
+			t.Fatalf("key %q: a missing-key guard must not masquerade as a server auth rejection", key)
+		}
+		if *got {
+			t.Fatalf("key %q: Push made a network request despite the missing key — must fail closed", key)
+		}
+	}
+}
+
 // TestValidateCloudEndpoint_Cases covers AC 04-02 EC4 and the HTTPS-with-loopback
 // exemption.
 func TestValidateCloudEndpoint_Cases(t *testing.T) {
