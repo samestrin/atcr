@@ -281,6 +281,33 @@ func TestNewCloudSyncRecord_PersonasFromRealReviewers(t *testing.T) {
 	}
 }
 
+// TestNewCloudSyncRecord_TrimsAgentNameBeforeHashing covers the cloudsync.go:102
+// TD: the empty-agent gate trims (strings.TrimSpace), so the hash must hash the
+// SAME trimmed value — otherwise a whitespace-padded reviewer name hashes to a
+// different digest than its clean form and fragments the Persona Leaderboard into
+// two buckets for one identity.
+func TestNewCloudSyncRecord_TrimsAgentNameBeforeHashing(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	if err := os.MkdirAll(poolDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	summary := `{"agents":[` +
+		`{"agent":"  greta  ","model":"gpt-x","tokens_in":200,"tokens_out":60,"duration_ms":1500}` +
+		`],"total":1,"succeeded":1}`
+	if err := os.WriteFile(filepath.Join(poolDir, "summary.json"), []byte(summary), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := NewCloudSyncRecord(dir, "success")
+	if len(rec.Personas) != 1 {
+		t.Fatalf("Personas len = %d, want 1", len(rec.Personas))
+	}
+	if got := rec.Personas[0].PersonaIDHash; got != HashPersonaID("greta") {
+		t.Fatalf("padded agent hashed to %q, want the trimmed digest HashPersonaID(%q)", got, "greta")
+	}
+}
+
 // TestNewCloudSyncRecord_MissingPoolSummary covers the best-effort degrade: an
 // unreadable pool summary still yields an outcome-carrying record (no panic).
 func TestNewCloudSyncRecord_MissingPoolSummary(t *testing.T) {
