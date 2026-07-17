@@ -470,6 +470,28 @@ func TestCommunityFixtures_HunkSectionContext(t *testing.T) {
 	}
 }
 
+// TestCommunityFixtures_PlantCategoryWord enforces the fixture-integrity
+// contract documented on communityPersona (docs/personas-authoring.md): each
+// fixture plants its persona's category word verbatim (sonny's "logic", liam's
+// "invariant"), keeping the fixture's self-documenting link to its category.
+// celeste and glenna are documented pre-existing omissions; any NEW omission
+// (the simon "bloat" drift) fails here instead of drifting invisibly.
+func TestCommunityFixtures_PlantCategoryWord(t *testing.T) {
+	exempt := map[string]bool{"celeste": true, "glenna": true} // pre-existing omissions, out of scope
+	for _, p := range communityPersonas {
+		if exempt[p.Slug] {
+			continue
+		}
+		t.Run(p.Slug, func(t *testing.T) {
+			raw, err := os.ReadFile(communityPath("testdata", p.Slug+"_fixture.patch"))
+			require.NoErrorf(t, err, "read fixture for %q", p.Slug)
+			wordRe := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(p.Category) + `\b`)
+			require.Truef(t, wordRe.Match(raw),
+				"persona %q fixture must plant its category word %q verbatim", p.Slug, p.Category)
+		})
+	}
+}
+
 // TestCommunityPersonas_PromptStructure enforces the AC 04-03 source-text
 // contract on every persona template (Scenarios 2, 3, 5): all required template
 // tokens are literally present (a render can't catch an omitted token), the
