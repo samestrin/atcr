@@ -1,0 +1,2 @@
+# atcr-findings/v1
+MEDIUM|cmd/atcr/flags.go:61|Warning check uses exact string equality after TrimSpace, so a trailing slash on --cloud-endpoint bypasses the placeholder warning and triggers a redirect-block failure|Use strings.TrimRight(endpoint, "/") or url.Parse to normalize before comparison|correctness|5|strings.TrimSpace(endpoint) == defaultCloudEndpoint misses "https://atcr.dev/dashboard/"|greta

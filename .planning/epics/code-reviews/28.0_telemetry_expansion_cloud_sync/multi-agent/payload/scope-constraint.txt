@@ -1,3 +1,7 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
 # Epic Plan 28.0: Telemetry Expansion & Cloud Sync
 
 - **Estimated time**: TBD
@@ -79,3 +83,5 @@ This section records findings from `/refine-epic` run on 2026-07-15. It is addit
 - Deep discovery queries: telemetry, background, ping, scorecard, export, payload, cloud sync, dashboard, upload, persona leaderboard, ID hashing
 - Deep discovery match count: 5
 - Deep discovery snapshot: /Users/samestrin/Documents/GitHub/atcr/.planning/.temp/refine-epic/codebase-discovery.json (temp-only — not committed)
+----- END SPRINT PLAN -----
+

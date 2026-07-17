@@ -1,0 +1,7 @@
+
+
+Looking at the diff focusing on the Epic 28.0 implementation changes.
+
+I see one genuine correctness issue:
+
+LOW|cmd/atcr/main_test.go:113|TestExitCode does not test authError wrapping a usageError|Add test case: {"auth error wrapping usage error", authError(usageError(errors.New("bad"))), 3}|correctness|10|authError(usageError(...)) should yield 3, not 2 — auth rejection must override exit-2 per AC 04-04 EC2

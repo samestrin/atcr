@@ -1,0 +1,50 @@
+[
+  {
+    "id": "amb-0ca7bbec26e925146af3f0c589e57bf2",
+    "file": "cmd/atcr/flags.go",
+    "line": 61,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "cmd/atcr/flags.go",
+        "Line": 61,
+        "Problem": "Warning check uses exact string equality after TrimSpace, so a trailing slash on --cloud-endpoint bypasses the placeholder warning and triggers a redirect-block failure",
+        "Fix": "Use strings.TrimRight(endpoint, \"/\") or url.Parse to normalize before comparison",
+        "Category": "correctness",
+        "EstMinutes": 5,
+        "Evidence": "strings.TrimSpace(endpoint) == defaultCloudEndpoint misses \"https://atcr.dev/dashboard/\"",
+        "Reviewer": "greta",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-76c25240caa269e22eb4d62f0d316a44",
+    "file": "cmd/atcr/main_test.go",
+    "line": 113,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "cmd/atcr/main_test.go",
+        "Line": 113,
+        "Problem": "TestExitCode does not test authError wrapping a usageError",
+        "Fix": "Add test case: {\"auth error wrapping usage error\", authError(usageError(errors.New(\"bad\"))), 3}",
+        "Category": "correctness",
+        "EstMinutes": 10,
+        "Evidence": "authError(usageError(...)) should yield 3, not 2 — auth rejection must override exit-2 per AC 04-04 EC2",
+        "Reviewer": "bruce",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  }
+]

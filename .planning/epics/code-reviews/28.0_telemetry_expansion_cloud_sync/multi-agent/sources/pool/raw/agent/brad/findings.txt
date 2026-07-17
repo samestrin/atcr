@@ -1,0 +1,2 @@
+# atcr-findings/v1
+MEDIUM|internal/scorecard/telemetry.go:32|unsafe.StringData on empty string is undefined behavior per Go spec, risking panics or corruption on future runtimes despite len==0 slice guard|Replace with []byte(raw) or add explicit empty-string guard|correctness|5|unsafe.StringData(raw) used when raw == "" violates Go spec; sha256.Sum256 copies anyway so zero-copy is illusory|brad
