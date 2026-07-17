@@ -529,7 +529,7 @@ Use the Agent tool:
 
 ---
 
-### 2.4 [ ] **[Config Persistence — RED](plan/user-stories/02-quality-signal-opt-in-gate.md)**
+### 2.4 [x] **[Config Persistence — RED](plan/user-stories/02-quality-signal-opt-in-gate.md)**
 
 **AC:** 02-03
 

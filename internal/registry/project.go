@@ -93,6 +93,15 @@ type ProjectConfig struct {
 	// default-enabled posture. It is OR'd with the ATCR_TELEMETRY env var: either
 	// surface disabling is sufficient and final (see cmd/atcr telemetryGate).
 	Telemetry *bool `yaml:"telemetry,omitempty"`
+	// QualitySignal persists the opt-IN state for the community prompt quality
+	// signal (Sprint 30.0). A pointer so an explicit false survives default
+	// application (the Telemetry idiom); nil means "unset", treated as the
+	// default-DISABLED posture — the exact inverse of Telemetry's default-enabled
+	// opt-out. It is declared here so a persisted quality_signal key passes the
+	// strict KnownFields roster load; the opt-in gate reads it via the permissive
+	// LoadQualitySignalSetting, never coupling to telemetry (see cmd/atcr
+	// qualitySignalGate).
+	QualitySignal *bool `yaml:"quality_signal,omitempty"`
 }
 
 // DefaultProjectConfigPath returns .atcr/config.yaml under root.

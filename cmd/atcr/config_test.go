@@ -152,3 +152,93 @@ func TestConfigSetTelemetry_ResolvesRepoRoot(t *testing.T) {
 	require.NotNil(t, got)
 	assert.False(t, *got, "telemetry must be persisted at the discovered repo root")
 }
+
+// TestConfigSetQualitySignal_PersistsTrueFalse covers AC 02-03 Scenarios 1-2: the
+// allowlist admits quality_signal and both true and false round-trip through
+// LoadQualitySignalSetting.
+func TestConfigSetQualitySignal_PersistsTrueFalse(t *testing.T) {
+	isolate(t)
+	writeAtcrConfig(t, "agents: [bruce]\n")
+
+	out, code, _ := execConfig(t, "config", "set", "quality_signal", "true")
+	require.Equal(t, 0, code, "config set quality_signal true must succeed: %s", out)
+	got, err := registry.LoadQualitySignalSetting(".")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, *got, "config set quality_signal true must persist quality_signal: true")
+
+	_, code, _ = execConfig(t, "config", "set", "quality_signal", "false")
+	require.Equal(t, 0, code)
+	got, err = registry.LoadQualitySignalSetting(".")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.False(t, *got, "config set quality_signal false must persist quality_signal: false")
+}
+
+// TestConfigSetQualitySignal_SiblingKeyUntouched covers AC 02-03 Scenarios 3-4:
+// the allowlist extension does not regress single-key behavior — setting one key
+// leaves the other untouched in either direction.
+func TestConfigSetQualitySignal_SiblingKeyUntouched(t *testing.T) {
+	isolate(t)
+	writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\npayload_mode: blocks\n")
+
+	_, code, _ := execConfig(t, "config", "set", "quality_signal", "true")
+	require.Equal(t, 0, code)
+	tel, err := registry.LoadTelemetrySetting(".")
+	require.NoError(t, err)
+	require.NotNil(t, tel)
+	assert.False(t, *tel, "telemetry must survive a quality_signal set")
+
+	_, code, _ = execConfig(t, "config", "set", "telemetry", "true")
+	require.Equal(t, 0, code)
+	qs, err := registry.LoadQualitySignalSetting(".")
+	require.NoError(t, err)
+	require.NotNil(t, qs)
+	assert.True(t, *qs, "quality_signal must survive a telemetry set")
+}
+
+// TestConfigSetQualitySignal_UnknownKeyStillRejected proves the allowlist is an
+// explicit two-entry set, not a loosened match: an unknown key is still a usage
+// error (exit 2) after the extension.
+func TestConfigSetQualitySignal_UnknownKeyStillRejected(t *testing.T) {
+	isolate(t)
+	writeAtcrConfig(t, "agents: [bruce]\n")
+
+	_, code, err := execConfig(t, "config", "set", "foo", "bar")
+	assert.Equal(t, 2, code, "an unknown config key is still a usage error (exit 2)")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unsupported config key "foo"`)
+}
+
+// TestConfigSetQualitySignal_NonBooleanValueRejected covers AC 02-03 Error
+// Scenario 2: a non-boolean value for quality_signal is a usage error (exit 2)
+// with a key-specific message.
+func TestConfigSetQualitySignal_NonBooleanValueRejected(t *testing.T) {
+	isolate(t)
+	writeAtcrConfig(t, "agents: [bruce]\n")
+
+	_, code, err := execConfig(t, "config", "set", "quality_signal", "maybe")
+	assert.Equal(t, 2, code, "a non-boolean value is a usage error (exit 2)")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid value "maybe" for quality_signal`)
+}
+
+// TestConfigSetQualitySignal_ResolvesRepoRoot covers AC 02-03 EC2: config set
+// quality_signal works from a repo subdirectory, persisting at the discovered root.
+func TestConfigSetQualitySignal_ResolvesRepoRoot(t *testing.T) {
+	isolate(t)
+	repo := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".atcr", "config.yaml"), []byte("agents: [bruce]\n"), 0o644))
+	subdir := filepath.Join(repo, "subdir")
+	require.NoError(t, os.MkdirAll(subdir, 0o755))
+	t.Chdir(subdir)
+
+	_, code, _ := execConfig(t, "config", "set", "quality_signal", "true")
+	require.Equal(t, 0, code, "config set from a repo subdirectory must succeed")
+
+	got, err := registry.LoadQualitySignalSetting(repo)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, *got, "quality_signal must be persisted at the discovered repo root")
+}
