@@ -133,7 +133,10 @@ func (c *Client) send(ctx context.Context, ev Event) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		log.FromContext(ctx).Debug("telemetry: non-2xx response", "status", resp.StatusCode)
 	}
-	// Drain (bounded) so the keep-alive connection can be reused.
+	// Drain up to 64KB so the keep-alive connection is reused for the small
+	// acks telemetry receives; a body larger than the cap is only partially
+	// read and the connection is NOT reused — the cap intentionally trades
+	// reuse on oversized bodies for a bounded read.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
 }
 
