@@ -33,13 +33,16 @@ var ErrCloudAuthRejected = errors.New("cloud sync rejected: API key was not acce
 // only so tests can shrink it, mirroring internal/telemetry's requestTimeout seam.
 var cloudRequestTimeout = 5 * time.Second
 
-// cloudHTTPClient is a dedicated client so cloud-sync's connection pool and
-// Transport are isolated from the rest of the process (matching telemetry.Client).
-// CheckRedirect blocks redirect following: ValidateCloudEndpoint vets only the
-// INITIAL URL, so a validated https:// endpoint that 3xx-redirects to a same-host
-// http:// target (a scheme downgrade) would otherwise make Go forward the
-// Authorization: Bearer <ATCR_API_KEY> header in the clear. Mirrors the noRedirect
-// convention in internal/llmclient and internal/registry.
+// cloudHTTPClient is a dedicated client instance (not http.DefaultClient) so the
+// no-redirect policy below is isolated from the rest of the process; its nil
+// Transport reuses the shared http.DefaultTransport connection pool (same as
+// telemetry.Client and llmclient's default client) — only redirect policy is
+// isolated, not the connection pool. CheckRedirect blocks redirect following:
+// ValidateCloudEndpoint vets only the INITIAL URL, so a validated https://
+// endpoint that 3xx-redirects to a same-host http:// target (a scheme downgrade)
+// would otherwise make Go forward the Authorization: Bearer <ATCR_API_KEY>
+// header in the clear. Mirrors the noRedirect convention in internal/llmclient
+// and internal/registry.
 var cloudHTTPClient = &http.Client{CheckRedirect: noRedirect}
 
 // noRedirect halts redirect following so the Authorization: Bearer API key is never
