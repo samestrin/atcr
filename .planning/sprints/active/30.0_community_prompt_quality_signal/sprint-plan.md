@@ -551,7 +551,7 @@ Use the Agent tool:
 
 ---
 
-### 2.5 [ ] **[Config Persistence — GREEN](plan/user-stories/02-quality-signal-opt-in-gate.md)**
+### 2.5 [x] **[Config Persistence — GREEN](plan/user-stories/02-quality-signal-opt-in-gate.md)**
 
 1. Create `internal/registry/quality_signal_setting.go`: `LoadQualitySignalSetting(root string) (*bool, error)` / `SetQualitySignalSetting(root string, enabled bool) error`, reusing `withConfigLock`/`configMapping`/`setMappingBool` verbatim (same atomic mkdir-lock write path, symlink rejection)
 2. Extend `cmd/atcr/config.go`'s `runConfigSet` key allowlist from the single `"telemetry"` literal to an explicit two-key switch (`"telemetry"`, `"quality_signal"`); update `newConfigSetCmd`'s `Long` help text
@@ -562,7 +562,7 @@ Use the Agent tool:
 
 ---
 
-### 2.5.A [ ] **[Config Persistence — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-quality-signal-opt-in-gate.md)**
+### 2.5.A [x] **[Config Persistence — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-quality-signal-opt-in-gate.md)**
 
 **Changed Files:** `internal/registry/quality_signal_setting.go`, `cmd/atcr/config.go`, `internal/registry/quality_signal_setting_test.go`, `cmd/atcr/config_test.go`
 
@@ -581,20 +581,18 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
-| Severity | File:Line | Issue | Fix |
+**Subagent findings (fresh general-purpose agent, no CRITICAL/HIGH; faithful mirror of SetTelemetrySetting confirmed — verbatim shared helpers, exact-match allowlist, shared lock, malformed→disabled):**
+| Severity | File:Line | Issue | Disposition |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| MEDIUM | quality_signal_setting_test.go | The documented missing-file I/O-error contract for `SetQualitySignalSetting` is untested (only telemetry's is) | Fixed in 2.6 (added `TestSetQualitySignalSetting_MissingFileIsError`) |
+| LOW | quality_signal_setting_test.go | `Set`-side empty-config synthesize path uncovered for quality_signal | Fixed in 2.6 (added empty-config subtest to round-trip) |
+| LOW | config.go:65-97 | Two independent `switch key` blocks can drift — a future key added to the allowlist but not the dispatch would silently persist nothing | Fixed in 2.6 (added `default` panic-guard to dispatch switch so drift fails loudly) |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 2.6, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** No CRITICAL/HIGH → adversarial review passed. All three findings are cheap, strengthening improvements (two coverage additions on documented contracts + a latent-trap guard), addressed inline in 2.6 REFACTOR under the step's "clean up" remit.
 
 ---
 
-### 2.6 [ ] **[Config Persistence — REFACTOR](plan/user-stories/02-quality-signal-opt-in-gate.md)**
+### 2.6 [x] **[Config Persistence — REFACTOR](plan/user-stories/02-quality-signal-opt-in-gate.md)**
 
 1. Fix CRITICAL/HIGH issues from 2.5.A (if any)
 2. Confirm the malformed-value path fails safe to disabled and surfaces a loud error, never a silent re-enable

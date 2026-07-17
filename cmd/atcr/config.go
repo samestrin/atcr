@@ -94,6 +94,11 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		if err := registry.SetQualitySignalSetting(root, enabled); err != nil {
 			return err
 		}
+	default:
+		// Unreachable: the allowlist switch above already rejected any other key.
+		// Kept as a loud guard so a future key added to the allowlist but not here
+		// fails instead of silently reporting success while persisting nothing.
+		return fmt.Errorf("unsupported config key %q: no persister registered", key)
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "set %s = %t in .atcr/config.yaml\n", key, enabled)
 	return nil

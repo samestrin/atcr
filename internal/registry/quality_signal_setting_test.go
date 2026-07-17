@@ -49,6 +49,29 @@ func TestSetQualitySignalSetting_RoundTrip(t *testing.T) {
 	assert.False(t, *got)
 }
 
+// TestSetQualitySignalSetting_EmptyConfigGetsMapping covers the Set-side of the
+// configMapping empty-document synthesize path: a 0-byte config accepts the new
+// key rather than erroring.
+func TestSetQualitySignalSetting_EmptyConfigGetsMapping(t *testing.T) {
+	dir := writeConfigDir(t, "")
+	require.NoError(t, SetQualitySignalSetting(dir, true), "an empty (0-byte) config must accept a quality_signal opt-in")
+	got, err := LoadQualitySignalSetting(dir)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, *got)
+}
+
+// TestSetQualitySignalSetting_MissingFileIsError covers the documented I/O
+// contract: config set never silently creates the file — a missing
+// .atcr/config.yaml is an environment error, and no file is written.
+func TestSetQualitySignalSetting_MissingFileIsError(t *testing.T) {
+	dir := t.TempDir()
+	err := SetQualitySignalSetting(dir, true)
+	require.Error(t, err, "a missing config file must be an I/O error, not a silent create")
+	_, statErr := os.Stat(DefaultProjectConfigPath(dir))
+	assert.True(t, os.IsNotExist(statErr), "config set must not create the file on the missing-file path")
+}
+
 // TestSetQualitySignalSetting_SiblingKeyPreserved proves the two keys are fully
 // independent at the persistence layer: setting quality_signal leaves telemetry
 // (and every other key) untouched, and setting telemetry leaves quality_signal
