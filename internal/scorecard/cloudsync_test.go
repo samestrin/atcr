@@ -206,6 +206,26 @@ func TestPush_TransportError_RedactsEndpointUserinfo(t *testing.T) {
 	}
 }
 
+// TestPush_EmptyAPIKey_FailsClosed covers the cloudsync.go:179 TD: Push must
+// validate the API key is non-empty and fail closed BEFORE any request, mirroring
+// the defensive endpoint re-validation — a caller passing an empty key must not
+// send an "Authorization: Bearer " header (trailing space) and waste a round-trip.
+func TestPush_EmptyAPIKey_FailsClosed(t *testing.T) {
+	for _, key := range []string{"", "   "} {
+		srv, got, _, _ := cloudsyncServer(t, http.StatusOK)
+		err := Push(context.Background(), srv.URL, key, sampleCloudRecord())
+		if err == nil {
+			t.Fatalf("key %q: expected an error for a missing API key", key)
+		}
+		if errors.Is(err, ErrCloudAuthRejected) {
+			t.Fatalf("key %q: a missing-key guard must not masquerade as a server auth rejection", key)
+		}
+		if *got {
+			t.Fatalf("key %q: Push made a network request despite the missing key — must fail closed", key)
+		}
+	}
+}
+
 // TestValidateCloudEndpoint_Cases covers AC 04-02 EC4 and the HTTPS-with-loopback
 // exemption.
 func TestValidateCloudEndpoint_Cases(t *testing.T) {
@@ -278,6 +298,33 @@ func TestNewCloudSyncRecord_PersonasFromRealReviewers(t *testing.T) {
 	}
 	if rec.LatencyMS != 1500 {
 		t.Fatalf("LatencyMS = %d, want 1500 (slowest agent)", rec.LatencyMS)
+	}
+}
+
+// TestNewCloudSyncRecord_TrimsAgentNameBeforeHashing covers the cloudsync.go:102
+// TD: the empty-agent gate trims (strings.TrimSpace), so the hash must hash the
+// SAME trimmed value — otherwise a whitespace-padded reviewer name hashes to a
+// different digest than its clean form and fragments the Persona Leaderboard into
+// two buckets for one identity.
+func TestNewCloudSyncRecord_TrimsAgentNameBeforeHashing(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	if err := os.MkdirAll(poolDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	summary := `{"agents":[` +
+		`{"agent":"  greta  ","model":"gpt-x","tokens_in":200,"tokens_out":60,"duration_ms":1500}` +
+		`],"total":1,"succeeded":1}`
+	if err := os.WriteFile(filepath.Join(poolDir, "summary.json"), []byte(summary), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := NewCloudSyncRecord(dir, "success")
+	if len(rec.Personas) != 1 {
+		t.Fatalf("Personas len = %d, want 1", len(rec.Personas))
+	}
+	if got := rec.Personas[0].PersonaIDHash; got != HashPersonaID("greta") {
+		t.Fatalf("padded agent hashed to %q, want the trimmed digest HashPersonaID(%q)", got, "greta")
 	}
 }
 

@@ -224,3 +224,25 @@ func TestSetTelemetrySetting_LocksRMW(t *testing.T) {
 	// Make sure the background goroutine finished
 	<-lockReleased
 }
+
+// TestSetTelemetrySetting_ReclaimsStaleLock verifies a crashed holder's stale lock
+// (owner epoch older than configLockStaleAge) is reclaimed via the atomic rename-CAS
+// so config set still succeeds — the withConfigLock hardening. Guards the reclaim
+// path against regression; the concurrent double-reclaim race it closes is not
+// deterministically unit-testable, so it is covered by inspection + -race.
+func TestSetTelemetrySetting_ReclaimsStaleLock(t *testing.T) {
+	dir := writeConfigDir(t, "agents: [bruce]\ntelemetry: true\n")
+	lockDir := filepath.Join(dir, ".atcr", "config.lock")
+	require.NoError(t, os.MkdirAll(lockDir, 0o755))
+	// An owner epoch well past the stale threshold marks a crashed holder.
+	staleEpoch := time.Now().Add(-(configLockStaleAge + time.Minute)).Unix()
+	require.NoError(t, os.WriteFile(filepath.Join(lockDir, "owner.txt"),
+		[]byte(fmt.Sprintf("session=crashed|epoch=%d", staleEpoch)), 0o644))
+
+	require.NoError(t, SetTelemetrySetting(dir, false), "a stale lock must be reclaimed so config set succeeds")
+
+	got, err := LoadTelemetrySetting(dir)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.False(t, *got, "the opt-out must persist after reclaiming the stale lock")
+}

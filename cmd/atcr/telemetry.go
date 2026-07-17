@@ -98,9 +98,11 @@ func changedLineCount(changed payload.ChangedLines) int {
 }
 
 // dominantLang returns the file-extension label (e.g. "go") of the file with the
-// most changed lines, or "" when no file is present or has an extension. The
-// output is an aggregate language classification — it leaks neither the path nor
-// the content it was derived from.
+// most changed lines. The label is "" whenever that single dominant file has no
+// extension (e.g. a Makefile or Dockerfile dominates the change set) — even when
+// other changed files do carry extensions — as well as when no file is present
+// at all. The output is an aggregate language classification — it leaks neither
+// the path nor the content it was derived from.
 func dominantLang(changed payload.ChangedLines) string {
 	best, bestN := "", 0
 	// Iterate sorted paths so ties are broken deterministically by the

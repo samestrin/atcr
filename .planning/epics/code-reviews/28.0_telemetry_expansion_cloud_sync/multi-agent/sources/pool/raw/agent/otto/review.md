@@ -1,0 +1,5 @@
+LOW|internal/scorecard/telemetry.go:34|Use of `unsafe` for string-to-byte conversion is premature optimization|Use `[]byte(raw)` for readability; the allocation is negligible for persona IDs|style|5|`unsafe.Slice(unsafe.StringData(raw), len(raw))`
+
+LOW|cmd/atcr/config.go:41|`RunE` returns `cmd.Help()` which is not an error|Change to return `nil` and call `cmd.Help()` or use a dedicated help command|idiom|5|`RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }`
+
+LOW|cmd/atcr/flags.go:46|`PreRunE` uses `fmt.Fprintf` to `ErrOrStderr` for a warning|Use a dedicated logger or `cmd.PrintErrln` for consistency with Cobra patterns|style|2|`_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: ...")`

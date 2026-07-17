@@ -1,0 +1,216 @@
+[
+  {
+    "severity": "HIGH",
+    "file": "cmd/atcr/config.go",
+    "line": 41,
+    "problem": "(newConfigSetCmd) No tests for runConfigSet error branches (unsupported key, invalid bool, repoRoot, SetTelemetrySetting) and success path",
+    "fix": "Change to return `nil` and call `cmd.Help()` or use a dedicated help command",
+    "category": "idiom",
+    "est_minutes": 45,
+    "evidence": "[otto] `RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }` / [dax] runConfigSet has four error returns and one success output; no config_test.go in diff",
+    "reviewers": [
+      "dax",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "LOW vs HIGH",
+    "path_valid": true,
+    "justification": "LOW|cmd/atcr/config.go:41|`RunE` returns `cmd.Help()` which is not an error|Change to return `nil` and call `cmd.Help()` or use a dedicated help command|idiom|5|`RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }`",
+    "source_report": {
+      "path": "sources/pool/raw/agent/otto/review.md",
+      "line": 3
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "internal/scorecard/telemetry.go",
+    "line": 12,
+    "problem": "Empty string input to HashPersonaID not tested despite unsafe.StringData edge case",
+    "fix": "Validate input or use standard []byte(raw) conversion; the allocation savings are not worth the panic surface in a hash function called on untrusted scorecard data",
+    "category": "boundary",
+    "est_minutes": 15,
+    "evidence": "[dax] Comment claims safety for empty string but no test confirms / [mira] unsafe.Slice(unsafe.StringData(raw), len(raw)) panics if raw is nil string",
+    "reviewers": [
+      "dax",
+      "mira",
+      "pace"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "MEDIUM vs HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "mira": "minimax-m2.7"
+    },
+    "justification": "HIGH|cmd/atcr/config.go:49|No tests for runConfigSet error branches (unsupported key, invalid bool, repoRoot, SetTelemetrySetting) and success path|Add config_test.go with table-driven tests covering each branch|testing|45|runConfigSet has four error returns and one success output; no config_test.go in diff\nHIGH|internal/scorecard/telemetry.go:12|HashPersonaID and NewTelemetryPersonaRecord have zero unit tests; determinism, uniqueness, empty string boundary untested|Add telemetry_test.go with known-answer, empty string, and record construction tests|testing|30|HashPersonaID is a pure function with no tests; NewTelemetryPersonaRecord untested\nMEDIUM|internal/scorecard/telemetry.go:12|Empty string input to HashPersonaID not tested despite unsafe.StringData edge case|Add test case for empty string to verify SHA-256(\"\") digest|boundary|10|Comment claims safety for empty string but no test confirms\nMEDIUM|cmd/atcr/flags_test.go:28|No test verifies placeholder warning absent when --sync-clou…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 2
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "internal/scorecard/telemetry.go",
+    "line": 12,
+    "problem": "HashPersonaID claims pseudonymization but unsalted SHA-256 over a small enumerable set is dictionary-reversible; the privacy contract is misleading and the Leaderboard cannot claim anonymized aggregation",
+    "fix": "Add HMAC-SHA256 with a provisioned, rotatable application secret (server-side keyed hash acceptable per KB entry); add TD-007 tracking label to the function",
+    "category": "cryptography",
+    "est_minutes": 120,
+    "evidence": "[dax] HashPersonaID is a pure function with no tests; NewTelemetryPersonaRecord untested / [mira] SHA-256 without salt or HMAC over enumerable input set (persona names); digest is trivially reversible with a precomputed table / [kai] small, enumerable, often publicly-known set... UNSALTED digest does not defend against a dictionary/rainbow attack / [pace] HashPersonaID(r.Reviewer) is called for every Record in the scorecard, leading to redundant hash computations when the same reviewer appears multiple times (e.g., reviewing multiple models). For a pool of R reviewers and M models per reviewer, this does R*M hash computations instead of R.",
+    "reviewers": [
+      "dax",
+      "kai",
+      "mira",
+      "pace"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "MEDIUM vs HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "kai": "kimi-k2.6",
+      "mira": "minimax-m2.7"
+    },
+    "justification": "HIGH|cmd/atcr/config.go:49|No tests for runConfigSet error branches (unsupported key, invalid bool, repoRoot, SetTelemetrySetting) and success path|Add config_test.go with table-driven tests covering each branch|testing|45|runConfigSet has four error returns and one success output; no config_test.go in diff\nHIGH|internal/scorecard/telemetry.go:12|HashPersonaID and NewTelemetryPersonaRecord have zero unit tests; determinism, uniqueness, empty string boundary untested|Add telemetry_test.go with known-answer, empty string, and record construction tests|testing|30|HashPersonaID is a pure function with no tests; NewTelemetryPersonaRecord untested\nMEDIUM|internal/scorecard/telemetry.go:12|Empty string input to HashPersonaID not tested despite unsafe.StringData edge case|Add test case for empty string to verify SHA-256(\"\") digest|boundary|10|Comment claims safety for empty string but no test confirms\nMEDIUM|cmd/atcr/flags_test.go:28|No test verifies placeholder warning absent when --sync-clou…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 2
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/config.go",
+    "line": 30,
+    "problem": "Long help text warns about ATCR_DISABLE_AST_GROUPING direction but does not document what exit code an I/O failure (missing config file) produces",
+    "fix": "Add exit-code expectation to the Long doc: \"on I/O failure (missing/unwritable .atcr/config.yaml) returns exit 1\"",
+    "category": "observability",
+    "est_minutes": 10,
+    "evidence": "docs_audit_test.go already audits the Long text for env-var coverage; adding exit-code documentation closes the observability gap",
+    "reviewers": [
+      "mira"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "mira": "minimax-m2.7"
+    },
+    "justification": "MEDIUM|cmd/atcr/config.go:30|Long help text warns about ATCR_DISABLE_AST_GROUPING direction but does not document what exit code an I/O failure (missing config file) produces|Add exit-code expectation to the Long doc: \"on I/O failure (missing/unwritable .atcr/config.yaml) returns exit 1\"|Observability|10|docs_audit_test.go already audits the Long text for env-var coverage; adding exit-code documentation closes the observability gap",
+    "source_report": {
+      "path": "sources/pool/raw/agent/mira/review.md",
+      "line": 10
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "cmd/atcr/flags_test.go",
+    "line": 28,
+    "problem": "(TestAddSyncCloudFlags_RegisteredOnReviewAndReconcile) No test verifies placeholder warning absent when --sync-cloud not set or endpoint overridden",
+    "fix": "Add test cases for warning absence to prevent false positive warnings",
+    "category": "testing",
+    "est_minutes": 15,
+    "evidence": "TestAddSyncCloudFlags_DefaultEndpointWarns only checks positive case",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "justification": "HIGH|cmd/atcr/config.go:49|No tests for runConfigSet error branches (unsupported key, invalid bool, repoRoot, SetTelemetrySetting) and success path|Add config_test.go with table-driven tests covering each branch|testing|45|runConfigSet has four error returns and one success output; no config_test.go in diff\nHIGH|internal/scorecard/telemetry.go:12|HashPersonaID and NewTelemetryPersonaRecord have zero unit tests; determinism, uniqueness, empty string boundary untested|Add telemetry_test.go with known-answer, empty string, and record construction tests|testing|30|HashPersonaID is a pure function with no tests; NewTelemetryPersonaRecord untested\nMEDIUM|internal/scorecard/telemetry.go:12|Empty string input to HashPersonaID not tested despite unsafe.StringData edge case|Add test case for empty string to verify SHA-256(\"\") digest|boundary|10|Comment claims safety for empty string but no test confirms\nMEDIUM|cmd/atcr/flags_test.go:28|No test verifies placeholder warning absent when --sync-clou…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 4
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/scorecard/export_test.go",
+    "line": 592,
+    "problem": "(TestRunLeaderboardExport_ByteForByteRegression) Byte-for-byte SHA-256 checksum pins the entire serialized output, making the test fail on any formatting, ordering, or whitespace change and obscuring the actual semantic contract",
+    "fix": "Replace checksum with structured assertions against parsed JSON fields",
+    "category": "extensibility",
+    "est_minutes": 30,
+    "evidence": "wantExportChecksum = \"96231aeede4bec24132992b35bcf0a5c069619248ad720f319372517ee39625a\"",
+    "reviewers": [
+      "kai"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "kai": "kimi-k2.6"
+    },
+    "justification": "- FILE:LINE: `internal/scorecard/export_test.go:592` (the test function line) or line 600 (the const). Let's use line 592 (func line).",
+    "source_report": {
+      "path": "sources/pool/raw/agent/kai/review.md",
+      "line": 109
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "internal/scorecard/telemetry.go",
+    "line": 31,
+    "problem": "(HashPersonaID) HashPersonaID uses unsafe.StringData/unsafe.Slice to avoid a negligible allocation, trading memory safety guarantees for no meaningful performance gain on small strings",
+    "fix": "Use `[]byte(raw)` for readability; the allocation is negligible for persona IDs",
+    "category": "correctness",
+    "est_minutes": 10,
+    "evidence": "[kai] unsafe.Slice(unsafe.StringData(raw), len(raw)) / [brad] unsafe.StringData(raw) used when raw == \"\" violates Go spec; sha256.Sum256 copies anyway so zero-copy is illusory / [mira] Comment notes HMAC hardening is deferred; no TD label in source for reconciler to act on / [otto] `unsafe.Slice(unsafe.StringData(raw), len(raw))`",
+    "reviewers": [
+      "brad",
+      "kai",
+      "mira",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "LOW vs MEDIUM",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "kai": "kimi-k2.6",
+      "mira": "minimax-m2.7"
+    },
+    "justification": "- FILE:LINE: `internal/scorecard/telemetry.go:31` (the unsafe.Slice line) or maybe line 25 (the function). Let's pick line 31.",
+    "source_report": {
+      "path": "sources/pool/raw/agent/kai/review.md",
+      "line": 100
+    }
+  },
+  {
+    "severity": "LOW",
+    "file": "cmd/atcr/flags.go",
+    "line": 39,
+    "problem": "Hardcoded production endpoint URL in binary is a maintenance hazard if the backend migrates",
+    "fix": "Make the default configurable via build-time ldflags or a well-documented constant; document the migration path in the inline comment",
+    "category": "configuration",
+    "est_minutes": 15,
+    "evidence": "[mira] const defaultCloudEndpoint = \"https://atcr.dev/dashboard\" / [otto] `_, _ = fmt.Fprintf(cmd.ErrOrStderr(), \"warning: ...\")`",
+    "reviewers": [
+      "mira",
+      "otto"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "mira": "minimax-m2.7"
+    },
+    "justification": "LOW|cmd/atcr/flags.go:39|Hardcoded production endpoint URL in binary is a maintenance hazard if the backend migrates|Make the default configurable via build-time ldflags or a well-documented constant; document the migration path in the inline comment|Configuration|15|const defaultCloudEndpoint = \"https://atcr.dev/dashboard\"",
+    "source_report": {
+      "path": "sources/pool/raw/agent/mira/review.md",
+      "line": 8
+    }
+  },
+  {
+    "severity": "LOW",
+    "file": "internal/telemetry/event.go",
+    "line": 1,
+    "problem": "Event struct has no test for exact JSON field allowlist (privacy regression guard)",
+    "fix": "Add test marshaling Event and asserting keys are exactly [event,lang,lines,status]",
+    "category": "testing",
+    "est_minutes": 10,
+    "evidence": "Comment references TestClient_Send_PayloadHasExactlyFourAllowlistedKeys but no such test in diff",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "justification": "HIGH|cmd/atcr/config.go:49|No tests for runConfigSet error branches (unsupported key, invalid bool, repoRoot, SetTelemetrySetting) and success path|Add config_test.go with table-driven tests covering each branch|testing|45|runConfigSet has four error returns and one success output; no config_test.go in diff\nHIGH|internal/scorecard/telemetry.go:12|HashPersonaID and NewTelemetryPersonaRecord have zero unit tests; determinism, uniqueness, empty string boundary untested|Add telemetry_test.go with known-answer, empty string, and record construction tests|testing|30|HashPersonaID is a pure function with no tests; NewTelemetryPersonaRecord untested\nMEDIUM|internal/scorecard/telemetry.go:12|Empty string input to HashPersonaID not tested despite unsafe.StringData edge case|Add test case for empty string to verify SHA-256(\"\") digest|boundary|10|Comment claims safety for empty string but no test confirms\nMEDIUM|cmd/atcr/flags_test.go:28|No test verifies placeholder warning absent when --sync-clou…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 5
+    }
+  }
+]

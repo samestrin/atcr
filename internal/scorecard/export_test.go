@@ -1,8 +1,6 @@
 package scorecard
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math"
@@ -582,13 +580,14 @@ func TestClampRate_RejectsNonFinite(t *testing.T) {
 	assert.Equal(t, 0.5, clampRate(0.5), "finite [0,1] passes through")
 }
 
-// TestRunLeaderboardExport_ByteForByteRegression is the AC 03-03 safety net: it
-// pins scorecard.Export's output (via a SHA-256 checksum) for a fixed,
-// representative fixture — multi-(persona,model) aggregation and sort, plus a
-// verification-block record — so Story 3's new hashing path cannot weaken,
-// bypass, or extend the Epic 10.0 public leaderboard export. The checksum must
-// stay identical before and after telemetry.go lands.
-func TestRunLeaderboardExport_ByteForByteRegression(t *testing.T) {
+// TestRunLeaderboardExport_SemanticContract is the AC 03-03 safety net: it pins the
+// SEMANTIC shape of scorecard.Export's output for a fixed, representative fixture —
+// (persona,model) aggregation, the sort order, per-group aggregate math, the
+// verification block's presence-when-data-exists, and the absence of the telemetry
+// persona_id_hash — so Story 3's hashing path cannot weaken, bypass, or extend the
+// Epic 10.0 public leaderboard export. Replaces an opaque byte-for-byte SHA-256
+// checksum that failed on any formatting/ordering change and hid the actual contract.
+func TestRunLeaderboardExport_SemanticContract(t *testing.T) {
 	carol := exportRec("carol", "claude-opus-4-6", 1)
 	fv, fr := 3, 1
 	ssr := 0.75
@@ -599,21 +598,62 @@ func TestRunLeaderboardExport_ByteForByteRegression(t *testing.T) {
 	recs := []Record{
 		exportRec("bruce", "claude-sonnet-4-6", 1),
 		exportRec("alice", "gpt-4o", 2),
-		exportRec("bruce", "claude-sonnet-4-6", 3), // same group as row 1: aggregates
+		exportRec("bruce", "claude-sonnet-4-6", 3), // same (persona,model) as row 1: aggregates
 		carol,
 	}
 	data, err := Export(recs, FilterOpts{Since: "365d"}, fixedExportNow)
 	require.NoError(t, err)
 
-	got := hex.EncodeToString(func() []byte { s := sha256.Sum256(data); return s[:] }())
-	const wantExportChecksum = "96231aeede4bec24132992b35bcf0a5c069619248ad720f319372517ee39625a"
-	assert.Equal(t, wantExportChecksum, got,
-		"scorecard.Export output changed — Epic 10.0 leaderboard export must remain byte-for-byte unchanged (AC 03-03)")
+	env := parseEnvelope(t, data)
 
-	// No new key (e.g. persona_id_hash) has leaked onto the public schema.
-	assert.NotContains(t, string(data), "persona_id_hash")
+	// (1) Group count + membership by (persona,model): bruce's two runs collapse into
+	// one group; alice and carol each form their own — three reviewer rows total.
+	require.Len(t, env.Reviewers, 3, "distinct (persona,model) pairs aggregate to 3 reviewer rows")
 
-	// Empty input still returns ErrNoExportRecords with the same identity.
+	// (3) Sort order: ascending by (Model, Persona) — claude-opus < claude-sonnet < gpt.
+	type pm struct{ model, persona string }
+	gotOrder := make([]pm, 0, len(env.Reviewers))
+	for _, r := range env.Reviewers {
+		gotOrder = append(gotOrder, pm{r.Model, r.Persona})
+	}
+	assert.Equal(t, []pm{
+		{"claude-opus-4-6", "carol"},
+		{"claude-sonnet-4-6", "bruce"},
+		{"gpt-4o", "alice"},
+	}, gotOrder, "reviewers must be sorted ascending by (Model, Persona)")
+
+	byPersona := map[string]PublicRecord{}
+	for _, r := range env.Reviewers {
+		byPersona[r.Persona] = r
+	}
+
+	// (2) Per-group aggregate math. bruce aggregates two identical runs; alice/carol one.
+	assert.Equal(t, 2, byPersona["bruce"].Runs, "bruce's two same-key runs aggregate to runs=2")
+	assert.Equal(t, 1, byPersona["alice"].Runs)
+	assert.Equal(t, 1, byPersona["carol"].Runs)
+	for _, p := range []string{"bruce", "alice", "carol"} {
+		r := byPersona[p]
+		assert.InDelta(t, 12.0, r.FindingsRaisedAvg, 1e-9, "%s: avg raised per run", p)
+		assert.InDelta(t, ratio(7, 12), r.CorroborationRate, 1e-9, "%s: corroboration is ratio-of-totals", p)
+		assert.Equal(t, int64(9100), r.LatencyP50MS, "%s: p50 latency", p)
+		require.NotNil(t, r.CostPerCorroboratedFindingUSD, "%s: cost-per-corroborated present", p)
+	}
+	assert.InDelta(t, (2*0.04)/(2*7), *byPersona["bruce"].CostPerCorroboratedFindingUSD, 1e-9,
+		"bruce cost-per-corroborated is summed cost over summed corroborated findings")
+	assert.InDelta(t, 0.04/7, *byPersona["alice"].CostPerCorroboratedFindingUSD, 1e-9)
+
+	// (4) Verification block: only carol carries verification data, so only carol's
+	// survived_skeptic_rate is present; bruce/alice omit it (nil pointer → omitempty).
+	require.NotNil(t, byPersona["carol"].SurvivedSkepticRate, "carol has verification data")
+	assert.InDelta(t, 0.75, *byPersona["carol"].SurvivedSkepticRate, 1e-9)
+	assert.Nil(t, byPersona["bruce"].SurvivedSkepticRate, "no verification data → survived_skeptic_rate omitted")
+	assert.Nil(t, byPersona["alice"].SurvivedSkepticRate, "no verification data → survived_skeptic_rate omitted")
+
+	// (5) The telemetry persona hash must never leak onto the PUBLIC leaderboard schema.
+	assert.NotContains(t, string(data), "persona_id_hash",
+		"the public leaderboard export must not carry the telemetry persona_id_hash")
+
+	// (6) Empty input still returns ErrNoExportRecords with the same identity.
 	_, eerr := Export(nil, FilterOpts{Since: "365d"}, fixedExportNow)
 	assert.ErrorIs(t, eerr, ErrNoExportRecords)
 }

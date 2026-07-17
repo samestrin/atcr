@@ -93,6 +93,11 @@ func resolveSyncCloudOutcome(runErr, syncErr error) error {
 	if !errors.As(syncErr, &syncCoded) || syncCoded.code != exitAuth {
 		return runErr
 	}
+	// Defensive backstop: unreachable from both current callers — review.go gates
+	// the push behind cloudSyncPushable so only a non-coded err arrives here, and
+	// reconcile.go passes only nil or the plain exit-1 gateErr — but kept (and
+	// covered by TestResolveSyncCloudOutcome) so a future caller that hands an
+	// already-coded failure to this function is never masked by an auth override.
 	var runCoded *codedError
 	if runErr == nil || !errors.As(runErr, &runCoded) {
 		return syncErr
