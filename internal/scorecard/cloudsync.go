@@ -184,6 +184,12 @@ func Push(ctx context.Context, endpoint, apiKey string, rec CloudSyncRecord) err
 	if err := ValidateCloudEndpoint(endpoint); err != nil {
 		return err
 	}
+	// Fail closed on a missing credential, symmetric with the defensive endpoint
+	// re-validation above: an empty key would otherwise send "Authorization: Bearer "
+	// (trailing space) and waste a round-trip / read as anonymous server-side.
+	if strings.TrimSpace(apiKey) == "" {
+		return errors.New("cloud sync failed: missing API key")
+	}
 	body, err := json.Marshal(rec)
 	if err != nil {
 		return fmt.Errorf("cloud sync failed: %w", err)
