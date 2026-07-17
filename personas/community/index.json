@@ -137,6 +137,6 @@
     "provider": "openrouter",
     "model": "anthropic/claude-sonnet-5",
     "tasks": ["bloat-review"],
-    "tags": ["bloat", "slop", "over-engineering", "claude", "frontier-vendor"]
+    "tags": ["bloat", "slop", "claude", "frontier-vendor"]
   }
 ]
