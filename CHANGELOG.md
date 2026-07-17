@@ -1,3 +1,21 @@
+## [Technical Debt] - 2026-07-16
+
+### Fixed
+
+- Fired review telemetry from a deferred post-gate `Send` so its status reflects the `--fail-on` gate outcome instead of the pre-gate fanout result (`cmd/atcr/review.go`).
+- Hardened `withConfigLock` with atomic stale-lock reclaim (CAS rename), a deadline past the stale threshold, an owner-write error abort, and a symlink TOCTOU check inside the lock (`internal/registry/telemetry_setting.go`).
+- Bounded in-flight telemetry `Send` goroutines with a drop-on-full semaphore (`internal/telemetry/client.go`).
+- Made cloud-sync `Push` fail closed on a missing API key (`internal/scorecard/cloudsync.go`).
+- Trimmed the agent name once before hashing in `NewCloudSyncRecord` (`internal/scorecard/cloudsync.go`).
+- Standardized `PreRunE` chain ordering to prev-first in `addRangeFlags` (`cmd/atcr/flags.go`).
+- Replaced an `unsafe.Slice` conversion with a plain conversion in `HashPersonaID` (`internal/scorecard/telemetry.go`).
+- Resolved a dead `requestTimeout == 0` guard in `send()` (`internal/telemetry/client.go`).
+- Corrected misleading or outdated comments across the telemetry and cloud-sync code paths (drain keep-alive claims, `trust.go` crash-safety note, `cloudHTTPClient` isolation, a dead `coded-runErr` branch, the `defaultCloudEndpoint` migration path, `dominantLang`'s empty-label contract, and the `config set` I/O failure exit code).
+- Replaced the byte-for-byte leaderboard export checksum test with structured semantic assertions covering aggregation, sort order, the verification block, and absence of a `persona_id_hash` leak.
+- Added placeholder-warning absence tests for `--sync-cloud` (`cmd/atcr/flags_test.go`).
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [28.0.0] - 2026-07-16
 
 Introduce opt-in, lightweight telemetry to measure real-world adoption, gather anonymous data for a crowdsourced Persona Leaderboard, and add a `--sync-cloud` mechanism to push local scorecard data toward the upcoming `atcr.dev/dashboard`.

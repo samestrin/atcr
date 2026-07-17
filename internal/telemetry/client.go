@@ -25,6 +25,15 @@ import (
 // the caller's, which returns as soon as the goroutine is dispatched.
 const defaultRequestTimeout = 3 * time.Second
 
+// maxInFlightSends caps the number of concurrent background send goroutines. Client
+// is an exported reusable type; a future caller invoking Send in a tight loop against
+// a slow/hung endpoint (each send lives up to requestTimeout) would otherwise
+// accumulate unbounded goroutines. The cap is well above any realistic legitimate
+// burst (review + reconcile fire a handful), so it never drops in normal use; it only
+// bounds a pathological caller. Excess sends are dropped — the ping is best-effort —
+// never queued or blocked, so Send stays non-blocking.
+const maxInFlightSends = 64
+
 // doRequest performs the outbound POST. Stored in an atomic.Value so tests can
 // force a panic inside the goroutine body and assert the deferred recover
 // swallows it (AC 01-03) without racing the detached send goroutine.
@@ -61,6 +70,7 @@ type Client struct {
 	endpoint       string
 	httpClient     *http.Client
 	wg             sync.WaitGroup
+	sem            chan struct{} // bounds concurrent send goroutines (see maxInFlightSends)
 	requestTimeout time.Duration
 }
 
@@ -74,6 +84,7 @@ func New(endpoint string) *Client {
 	return &Client{
 		endpoint:       endpoint,
 		httpClient:     &http.Client{},
+		sem:            make(chan struct{}, maxInFlightSends),
 		requestTimeout: defaultRequestTimeout,
 	}
 }
@@ -96,12 +107,21 @@ func (c *Client) Send(ctx context.Context, ev Event) {
 	if c == nil || !isHTTPS(c.endpoint) {
 		return
 	}
+	// Non-blocking acquire: if maxInFlightSends are already running, drop this ping
+	// (best-effort) rather than block the caller or spawn an unbounded goroutine.
+	select {
+	case c.sem <- struct{}{}:
+	default:
+		log.FromContext(ctx).Debug("telemetry: send dropped (in-flight cap reached)")
+		return
+	}
 	c.wg.Add(1)
 	go c.send(ctx, ev)
 }
 
 func (c *Client) send(ctx context.Context, ev Event) {
 	defer c.wg.Done()
+	defer func() { <-c.sem }() // release the in-flight slot acquired in Send
 	defer func() {
 		if r := recover(); r != nil {
 			log.FromContext(ctx).Debug("telemetry: recovered from panic", "value", r)
@@ -114,11 +134,7 @@ func (c *Client) send(ctx context.Context, ev Event) {
 		return
 	}
 
-	timeout := c.requestTimeout
-	if timeout == 0 {
-		timeout = defaultRequestTimeout
-	}
-	reqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	reqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.requestTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint, bytes.NewReader(body))
@@ -137,7 +153,10 @@ func (c *Client) send(ctx context.Context, ev Event) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		log.FromContext(ctx).Debug("telemetry: non-2xx response", "status", resp.StatusCode)
 	}
-	// Drain (bounded) so the keep-alive connection can be reused.
+	// Drain up to 64KB so the keep-alive connection is reused for the small
+	// acks telemetry receives; a body larger than the cap is only partially
+	// read and the connection is NOT reused — the cap intentionally trades
+	// reuse on oversized bodies for a bounded read.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
 }
 

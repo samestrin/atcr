@@ -52,13 +52,6 @@ func LoadTelemetrySetting(root string) (*bool, error) {
 // environment failure, not a usage mistake); this never creates the file.
 func SetTelemetrySetting(root string, enabled bool) error {
 	path := DefaultProjectConfigPath(root)
-	// A symlinked config would be silently severed: Stat/ReadFile follow the
-	// link while the atomic Rename replaces the link itself with a regular file,
-	// writing to the wrong logical location. Reject up front.
-	if li, err := os.Lstat(path); err == nil && li.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("config %s: symlinked configs are unsupported — rename would sever the link; use a regular file", path)
-	}
-
 	dir := filepath.Dir(path)
 	return withConfigLock(dir, "set-telemetry", func() error {
 		info, err := os.Stat(path)
@@ -89,7 +82,8 @@ func SetTelemetrySetting(root string, enabled bool) error {
 		// flips the name atomically. Rename alone only atomizes the name swap — fsync
 		// of the temp's data and the parent dir is what makes the write durable across
 		// a crash; without it a crash can leave the renamed file's blocks un-persisted.
-		// Mirrors the trust-store write (trust.go).
+		// This write hardens beyond the trust-store write (trust.go Save), which is
+		// Chmod/Write/Close/Rename only — no temp fsync, no dir fsync.
 		tmp, err := os.CreateTemp(dir, ".config-*.tmp")
 		if err != nil {
 			return fmt.Errorf("create %s temp: %w", filepath.Base(path), err)
@@ -113,6 +107,19 @@ func SetTelemetrySetting(root string, enabled bool) error {
 		if err := tmp.Close(); err != nil {
 			return fmt.Errorf("close %s temp: %w", filepath.Base(path), err)
 		}
+		// Re-check for a symlink INSIDE the lock, immediately before the atomic rename,
+		// to close the TOCTOU: Stat/ReadFile above follow a link, but Rename replaces the
+		// link itself with a regular file, writing to the wrong logical location. A
+		// non-ErrNotExist Lstat error is a hard failure (never a silent skip — the old
+		// `err == nil` gate let a transient error bypass the guard). ErrNotExist is fine:
+		// the file was removed after we read it and the rename simply recreates it.
+		if li, lerr := os.Lstat(path); lerr != nil {
+			if !errors.Is(lerr, os.ErrNotExist) {
+				return fmt.Errorf("stat %s before replace: %w", path, lerr)
+			}
+		} else if li.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("config %s: symlinked configs are unsupported — rename would sever the link; use a regular file", path)
+		}
 		if err := os.Rename(tmpName, path); err != nil {
 			return fmt.Errorf("replace %s: %w", path, err)
 		}
@@ -125,6 +132,13 @@ func SetTelemetrySetting(root string, enabled bool) error {
 	})
 }
 
+// configLockStaleAge is how long a held lock may sit before a waiter treats its
+// owner as crashed and reclaims it. The acquisition deadline below is deliberately
+// LONGER than this so any lock old enough to exhaust the wait is also old enough to
+// reclaim — closing the 61-299s dead-zone where a crashed holder could be neither
+// waited out (old timeout: 60s) nor reclaimed (stale threshold: 300s).
+const configLockStaleAge = 300 * time.Second
+
 // withConfigLock acquires a mkdir-based advisory lock under the config directory
 // to serialize concurrent reads-modify-writes to config.yaml.
 func withConfigLock(dir, session string, fn func() error) error {
@@ -136,13 +150,18 @@ func withConfigLock(dir, session string, fn func() error) error {
 		return fmt.Errorf("create config lock parent directories: %w", err)
 	}
 
-	deadline := time.Now().Add(60 * time.Second)
+	deadline := time.Now().Add(configLockStaleAge + 30*time.Second)
 	for {
 		err := os.Mkdir(lockDir, 0o755)
 		if err == nil {
-			// Acquired. Write owner metadata and ensure cleanup.
+			// Acquired. Record owner metadata; if that write fails the lock would be
+			// held with no epoch (unreclaimable by any waiter — its staleness can never
+			// be judged), so release it and fail rather than proceed metadata-less.
 			epoch := time.Now().Unix()
-			_ = os.WriteFile(ownerFile, []byte(fmt.Sprintf("session=%s|epoch=%d", session, epoch)), 0o644)
+			if werr := os.WriteFile(ownerFile, []byte(fmt.Sprintf("session=%s|epoch=%d", session, epoch)), 0o644); werr != nil {
+				_ = os.RemoveAll(lockDir)
+				return fmt.Errorf("write config lock owner metadata: %w", werr)
+			}
 			defer func() { _ = os.RemoveAll(lockDir) }()
 			return fn()
 		}
@@ -150,13 +169,20 @@ func withConfigLock(dir, session string, fn func() error) error {
 			return fmt.Errorf("acquire config lock: %w", err)
 		}
 
-		// Lock is held. Check for stale owner before waiting.
-		if data, err := os.ReadFile(ownerFile); err == nil {
-			if e := parseConfigOwnerEpoch(data); e > 0 {
-				if time.Since(time.Unix(e, 0)) > 300*time.Second {
-					_ = os.RemoveAll(lockDir)
-					continue
+		// Lock is held. Reclaim it only if the owner looks crashed (stale epoch), and
+		// do so ATOMICALLY: rename the stale dir to a unique name and only proceed if
+		// WE won the rename. An unconditional RemoveAll would race a second reclaimer
+		// that has already Mkdir'd a fresh lock — deleting a valid lock and letting two
+		// writers run fn() concurrently (last-writer-wins corruption of config.yaml).
+		if data, rerr := os.ReadFile(ownerFile); rerr == nil {
+			if e := parseConfigOwnerEpoch(data); e > 0 && time.Since(time.Unix(e, 0)) > configLockStaleAge {
+				staleName := fmt.Sprintf("%s.stale-%d", lockDir, time.Now().UnixNano())
+				// Only the racer whose Rename succeeds owns the stale dir; the loser's
+				// Rename fails (source already gone) and it simply retries the acquire.
+				if os.Rename(lockDir, staleName) == nil {
+					_ = os.RemoveAll(staleName)
 				}
+				continue
 			}
 		}
 

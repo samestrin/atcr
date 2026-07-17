@@ -47,7 +47,8 @@ func newConfigSetCmd() *cobra.Command {
 			"disabled.\n\n" +
 			"Note the inverse boolean direction versus ATCR_DISABLE_AST_GROUPING:\n" +
 			"ATCR_TELEMETRY names the ENABLED state directly, so `ATCR_TELEMETRY=0`\n" +
-			"(not `=1`) disables telemetry. Setting `telemetry true` here re-enables it.",
+			"(not `=1`) disables telemetry. Setting `telemetry true` here re-enables it.\n\n" +
+			"On I/O failure (missing/unwritable .atcr/config.yaml) the command returns exit 1.",
 		Args: usageArgs(cobra.ExactArgs(2)),
 		RunE: runConfigSet,
 	}
