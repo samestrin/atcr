@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 6 | 0 |
-| MEDIUM | 0 | 24 | 0 |
-| LOW | 0 | 40 | 0 |
+| MEDIUM | 0 | 25 | 1 |
+| LOW | 0 | 40 | 3 |
 
 
-**Last Modified:** 2026-07-16 | **Open Items:** 0 | **Deferred Items:** 70 | **Resolved Items:** 0 | **Total Items:** 70
+**Last Modified:** 2026-07-17 | **Open Items:** 0 | **Deferred Items:** 71 | **Resolved Items:** 4 | **Total Items:** 75
 
 ## Directory Structure
 
@@ -63,6 +63,16 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards �
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-17] From Sprint: 29.0_anti_slop_persona
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| 1 | [x] | MEDIUM | personas/community/index.json:140 | simon carries 5 tags [bloat, slop, over-engineering, claude, frontier-vendor] but all 10 openrouter (cloud) personas carry exactly 4 tags in the schema [primary, secondary, vendor-token, pool-class]; only the 3 local personas add a 5th hardware-tier tag. simon inserted a third descriptive synonym (over-engineering). No test guards tag arity, so this off-schema entry ships silently and muddies tag discovery. | Drop over-engineering so the entry is [bloat, slop, claude, frontier-vendor], matching the 4-tag cloud-persona schema. Verify by diffing tag arity against every other frontier-vendor/open-model entry (all 4). Optionally add a roster test asserting non-local personas carry exactly 4 tags. | maintainability | 15 | code-review | claude | MEDIUM |
+| 1 | [/] | MEDIUM | personas/community/simon.md:50 | The `## Output Format` block constrains CATEGORY to "one lowercase word" (the shared house style across all 13 personas) rather than pinning it to `bloat` (deferred per sprint-plan TD-001; sprint's own 1.2.A adversarial review already captured this exact gap as accepted debt — see tech-debt-captured.md) (Deferred: won't-fix now — pinning CATEGORY is a roster-wide convention decision for a dedicated persona-authoring polish sprint; editing simon.md alone would break the byte-for-byte 7-column contract per AC 01-02 Scenario 1) | decide house-wide whether single-lens personas should pin their output CATEGORY column, and apply uniformly across the roster rather than to simon in isolation. | correctness | 10 | execute-sprint | execute-sprint, brad | HIGH |
+| 1 | [x] | LOW | personas/community/simon.yaml:3 | 12 of 14 persona descriptions end with a parenthetical lens descriptor (balanced fast lens, deep-reasoning lens, large-context lens); simon's description omits it (only the pre-existing gene entry also omits). Because the roster test enforces byte-equality between simon.yaml and index.json, the omission is mirrored in both. Minor drift from the dominant curated house style. | Append a lens descriptor consistent with the sonnet tier, e.g. ...over-engineering (balanced fast lens), and update index.json description to the identical string (the parity test requires it). Verify TestCommunityIndex_Registration still passes. | maintainability | 5 | code-review | claude | MEDIUM |
+| 1 | [x] | LOW | personas/community/testdata/simon_fixture.patch:5 | simon's hunk header @@ -1,3 +1,20 @@ is the ONLY fixture lacking trailing section context — verified all 13 peers include it (e.g. @@ -3,6 +3,13 @@ package order). Line counts are also wrong: the body has 2 context + 19 additions = 21 new lines not the declared +1,20, and -1,3 claims 3 original lines while only 2 are present. NOTE: the sprint's own 2.2.A adversarial adjudication dismissed this as repo convention, but that adjudication is factually incorrect (peers are NOT uniformly bare). The patch will not git apply cleanly; it is only read as payload text so runtime impact is low. (deferred per sprint-plan §2.2.A) | Hand-correct to @@ -1,2 +1,21 @@ package greeter so counts and package context match the peer format, or regenerate via a real git diff. Verify with git apply --check personas/community/testdata/simon_fixture.patch. | maintainability | 15 | code-review | claude, brad | HIGH |
+| 1 | [x] | LOW | personas/community/testdata/simon_fixture.patch:8 | The roster contract (community_test.go:105-106) documents that each fixture plants its category word, and most peer fixtures contain their category verbatim (logic, race, leak, invariant). simon's fixture demonstrates bloat conceptually (single-impl interface + tautological comments) but never contains the literal word bloat, so the fixture's self-documenting link to its persona category is missing. No test enforces this so the drift is invisible in CI. | Add the word bloat to one planted comment in the fixture (e.g. // bloat: interface wraps a single concrete impl with one call site), mirroring how sonny's fixture labels its planted defect. Verify with grep -i bloat personas/community/testdata/simon_fixture.patch. | testing | 15 | code-review | claude | MEDIUM |
 
 ### [2026-07-16] From Sprint: 28.0_telemetry_expansion_cloud_sync
 

@@ -213,3 +213,5 @@
 {"ts":"2026-07-16T16:44:23.231263-07:00","package":"internal/scorecard","severity":"LOW","id":"7859bb56e66c13bc","file":"internal/scorecard/telemetry.go","category":"style"}
 {"ts":"2026-07-16T16:44:23.231263-07:00","package":"cmd/atcr","severity":"LOW","id":"375ca4ae21cfdcbc","file":"cmd/atcr/config.go","category":"idiom"}
 {"ts":"2026-07-16T16:44:23.231263-07:00","package":"cmd/atcr","severity":"LOW","id":"6c247be338f7c6dd","file":"cmd/atcr/flags.go","category":"style"}
+{"ts":"2026-07-17T05:13:46.282788-07:00","package":"personas/community","severity":"MEDIUM","id":"65cc4c7caf776795","file":"personas/community/simon.md","category":"security"}
+{"ts":"2026-07-17T05:13:46.282788-07:00","package":"personas/community/testdata","severity":"LOW","id":"dce15b0c98864371","file":"personas/community/testdata/simon_fixture.patch","category":"reliability"}
