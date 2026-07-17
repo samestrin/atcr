@@ -141,20 +141,20 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 > RED state is implicit: `simon` does not yet exist, so no `CommunityNames()` entry, no roster row. GREEN is reached when `simon.yaml` strict-decodes and `simon.md` passes `ValidateFetchedPersonaPrompt`, with `## Focus` hyper-focused on the four anti-slop targets and a new, unclaimed category word (e.g. `bloat`) embedded verbatim. **Expected, documented gap:** `TestCommunityAccessors` and `TestTemplateFixtureRunner_CommunityPersonasPass` go red the moment `simon.md` lands (auto-discovered via `go:embed`) until Phase 2's registration closes the loop — this is intentional per AC 01-03, not a regression. Stories 1 and 2 merge to `main` as a single unit.
 
-### 1.1 [ ] **[Author the `simon` Persona Unit - RED](plan/user-stories/01-author-the-simon-persona-unit.md)**
+### 1.1 [x] **[Author the `simon` Persona Unit - RED](plan/user-stories/01-author-the-simon-persona-unit.md)**
    **Mode:** Moderate | **AC:** [01-01](plan/acceptance-criteria/01-01-simon-yaml-schema-binding.md), [01-02](plan/acceptance-criteria/01-02-simon-md-template-structure-focus.md), [01-03](plan/acceptance-criteria/01-03-simon-authoring-contract-consistency.md)
    1. Confirm the RED baseline: `simon` slug not present anywhere in `personas/community/`; grep the 13 claimed category words (coupling, logic, contract, validation, race, leak, complexity, type, dependency, observability, secret, duplication, invariant) to confirm `bloat` (or chosen alternative) is unclaimed.
    2. No new `*_test.go` files are authored (existing table-driven suites in `internal/personas/`, `internal/registry/` auto-iterate `personas.CommunityNames()` once `simon.md` exists) — verify this auto-discovery mechanism by reading `personas/community.go` and `internal/registry/persona_test.go`.
    3. Run `go test ./internal/personas/... ./internal/registry/...` and confirm it is green pre-change (baseline for later comparison).
    **Files:** `personas/community.go` (read-only), `internal/registry/persona_test.go` (read-only) | **Duration:** ~1 hr
 
-### 1.2 [ ] **[Author the `simon` Persona Unit - GREEN](plan/user-stories/01-author-the-simon-persona-unit.md)**
+### 1.2 [x] **[Author the `simon` Persona Unit - GREEN](plan/user-stories/01-author-the-simon-persona-unit.md)**
    Copy `personas/community/sonny.yaml` → `personas/community/simon.yaml`: set `name: simon`, fresh `description`, `provider: openrouter`, a concrete existing-catalog `model`, `persona: simon`, `role: reviewer`. Copy `personas/community/sonny.md` → `personas/community/simon.md`: replace the vendor-guidance citation with anti-bloat/conciseness prompting guidance; rewrite `## Role` framing Simon as the panel's anti-slop lens; write `## Focus` as a numbered list covering (1) tautological/apologetic AI comments, (2) unnecessary design patterns (factories, interfaces) over simple logic, (3) defensive-programming overkill (redundant null/nil checks where type safety already guarantees non-nil), (4) dead or hallucinated code paths — embedding the chosen category word verbatim. Keep every template token bare and the single `{{if .ToolsEnabled}}...{{end}}` block untouched in position.
    Run `go test ./internal/personas/... ./internal/registry/...` (T1) — confirm `simon.yaml`/`simon.md` pass strict-schema and prompt-structure checks in isolation. **Expected red:** `TestCommunityAccessors` / `TestTemplateFixtureRunner_CommunityPersonasPass` in `personas/` (documented gap, closes in Phase 2).
    COMMIT: `git commit -m "feat(personas): author simon anti-slop persona unit (green)"`
    **Files:** `personas/community/simon.yaml`, `personas/community/simon.md` | **Duration:** ~3 hrs
 
-### 1.2.A [ ] **[Author the `simon` Persona Unit - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-author-the-simon-persona-unit.md)**
+### 1.2.A [x] **[Author the `simon` Persona Unit - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-author-the-simon-persona-unit.md)**
    **Changed Files:** `personas/community/simon.yaml`, `personas/community/simon.md`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -172,16 +172,14 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context review):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | simon.md:50 | Output CATEGORY constrained to generic "one lowercase word", not pinned to `bloat`; model could emit a colliding claimed word at runtime | Pin CATEGORY to `bloat` (deferred — deviates from 13-persona house style) → **TD-001** |
+   | MEDIUM | simon.yaml:5 | `anthropic/claude-sonnet-5` flagged as possibly-nonexistent model id | **No action** — repo's own forward-dated catalog id, reused verbatim from `sonny.yaml`; AC 01-01 Scenario 2 sanctions it; `NoPlaceholderModel/simon` passes |
+   | LOW | simon.md:5-6 | "balanced fast tier" phrasing | **No action** — copied verbatim from the `sonny.md` skeleton being modeled on; intentional consistency |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 1.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Taken:** No CRITICAL/HIGH found. One MEDIUM deferred to `tech-debt-captured.md` (TD-001). The other two findings are false positives relative to repo convention / the modeled skeleton (documented above). Adversarial review passed — proceeding to 1.3.
 
 ### 1.3 [ ] **[Author the `simon` Persona Unit - REFACTOR](plan/user-stories/01-author-the-simon-persona-unit.md)**
    1. Fix CRITICAL/HIGH issues from 1.2.A (if any)
