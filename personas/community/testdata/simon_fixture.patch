@@ -5,7 +5,7 @@ index 1111111..2222222 100644
 @@ -1,2 +1,21 @@ package greeter
  package greeter
 
-+// Greeter is an interface that defines the contract for greeting.
++// bloat: interface wraps a single concrete impl with one call site.
 +// We define an interface here to allow for future extensibility and to
 +// follow best practices around dependency inversion.
 +type Greeter interface {
