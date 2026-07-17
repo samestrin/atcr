@@ -151,6 +151,21 @@ func TestAggregateQualitySignal_ExcludesEmptyModelRecords(t *testing.T) {
 	assert.Equal(t, want, got, "empty-model records are excluded, never an empty-model bucket")
 }
 
+// TestAggregateQualitySignal_WhitespaceModelAndPersonaExcluded locks the task
+// 1.9 refactor (adversarial 1.8.A): a whitespace-only Model is excluded like an
+// empty one, and a whitespace-only persona entry is skipped like an empty one —
+// neither forms a spurious group.
+func TestAggregateQualitySignal_WhitespaceModelAndPersonaExcluded(t *testing.T) {
+	recs := []Record{
+		term("a", "security-reviewer", "   ", "wontfix"), // whitespace model → excluded
+		{ID: "b", RunID: "b", Timestamp: "2026-07-01T00:00:00Z",
+			Reviewers: []string{"  ", "security-reviewer"}, Model: "m", Status: "wontfix"},
+	}
+	got := AggregateQualitySignal(recs)
+	want := []QualityRow{{Persona: "security-reviewer", Model: "m", DismissedCount: 1}}
+	assert.Equal(t, want, got, "whitespace model excluded; whitespace persona skipped")
+}
+
 // TestAggregateQualitySignal_MultiReviewerAttributesToEveryPersona locks AC
 // 01-03 Scenario 2: a multi-reviewer merged record attributes its outcome to
 // every listed persona's (persona, model) group, not just Reviewers[0].

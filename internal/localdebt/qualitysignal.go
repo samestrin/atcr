@@ -70,7 +70,13 @@ func AggregateQualitySignal(records []Record) []QualityRow {
 	order := []key{}
 
 	for _, rec := range foldTerminalByID(records) {
-		if rec.Model == "" {
+		// Trim attribution fields the same way Status is normalized below, so a
+		// whitespace-only model or persona is treated as empty/excluded rather than
+		// forming its own spurious group (adversarial 1.8.A). Model slugs and persona
+		// names are catalog-controlled today, but the exclusion contract is enforced
+		// structurally, not left to input hygiene.
+		model := strings.TrimSpace(rec.Model)
+		if model == "" {
 			continue // attribution-incomplete: excluded from per-model rows
 		}
 		var dismissed, confirmed int
@@ -84,15 +90,16 @@ func AggregateQualitySignal(records []Record) []QualityRow {
 		}
 
 		seen := map[string]bool{}
-		for _, persona := range rec.Reviewers {
+		for _, raw := range rec.Reviewers {
+			persona := strings.TrimSpace(raw)
 			if persona == "" || seen[persona] {
 				continue
 			}
 			seen[persona] = true
-			k := key{persona, rec.Model}
+			k := key{persona, model}
 			row, ok := groups[k]
 			if !ok {
-				row = &QualityRow{Persona: persona, Model: rec.Model}
+				row = &QualityRow{Persona: persona, Model: model}
 				groups[k] = row
 				order = append(order, k)
 			}
