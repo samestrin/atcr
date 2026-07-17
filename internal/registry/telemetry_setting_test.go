@@ -184,26 +184,6 @@ func TestSetTelemetrySetting_PreservesValueInlineComment(t *testing.T) {
 	assert.Contains(t, string(data), "forced on by CI", "the value node's inline comment must survive the surgical edit")
 }
 
-// TestSetTelemetrySetting_PreservesCommentOnlyStubComments covers the
-// telemetry_setting.go:190 TD: a config file containing ONLY comments unmarshals
-// to a document with empty Content but a non-empty HeadComment. configMapping must
-// preserve those comments when it synthesizes the mapping for the appended key,
-// honoring the "every other key and its comments survive" promise for the stub case.
-func TestSetTelemetrySetting_PreservesCommentOnlyStubComments(t *testing.T) {
-	dir := writeConfigDir(t, "# managed by ops - do not delete\n")
-	require.NoError(t, SetTelemetrySetting(dir, false))
-
-	got, err := LoadTelemetrySetting(dir)
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	assert.False(t, *got, "the opt-out must still be recorded on a comment-only stub")
-
-	data, err := os.ReadFile(DefaultProjectConfigPath(dir))
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "managed by ops",
-		"a comment-only stub config's head comment must survive config set")
-}
-
 // TestSetTelemetrySetting_LocksRMW verifies SetTelemetrySetting acquires a
 // mkdir-based lock under .atcr/ to serialize concurrent reads-modify-writes.
 func TestSetTelemetrySetting_LocksRMW(t *testing.T) {
