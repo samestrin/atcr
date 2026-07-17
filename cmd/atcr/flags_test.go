@@ -57,6 +57,35 @@ func TestAddSyncCloudFlags_PreservesPriorPreRunE(t *testing.T) {
 	assert.Equal(t, exitUsage, exitCode(err))
 }
 
+// TestAddSyncCloudFlags_NoWarningWhenSyncCloudUnset pins the negative case for
+// the placeholder warning (TD-015): without --sync-cloud the endpoint default is
+// irrelevant, so an ordinary run must not emit a false-positive warning.
+func TestAddSyncCloudFlags_NoWarningWhenSyncCloudUnset(t *testing.T) {
+	cmd := newReviewCmd()
+	var buf bytes.Buffer
+	cmd.SetErr(&buf)
+	require.NoError(t, cmd.ParseFlags(nil))
+	require.NotNil(t, cmd.PreRunE)
+
+	require.NoError(t, cmd.PreRunE(cmd, nil))
+	assert.NotContains(t, buf.String(), "placeholder")
+}
+
+// TestAddSyncCloudFlags_NoWarningWhenEndpointOverridden pins the second negative
+// case: with --sync-cloud set but --cloud-endpoint pointed at a real destination,
+// the placeholder warning must not fire — it exists only for the compiled-in
+// placeholder default.
+func TestAddSyncCloudFlags_NoWarningWhenEndpointOverridden(t *testing.T) {
+	cmd := newReviewCmd()
+	var buf bytes.Buffer
+	cmd.SetErr(&buf)
+	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", "https://ingest.example.com"}))
+	require.NotNil(t, cmd.PreRunE)
+
+	require.NoError(t, cmd.PreRunE(cmd, nil))
+	assert.NotContains(t, buf.String(), "placeholder")
+}
+
 // TestAddRangeFlags_ChainOrderPrevFirst pins the chain-order invariant shared
 // with addSyncCloudFlags: a previously-installed PreRunE runs BEFORE
 // addRangeFlags' own validation (prev-first — hooks run in installation order),
