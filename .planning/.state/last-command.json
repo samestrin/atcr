@@ -1,9 +1,9 @@
 {
-  "skill": "finalize-td",
-  "args": "",
-  "invocation": "/finalize-td",
+  "skill": "create-user-stories",
+  "args": "@.planning/plans/active/29.0_anti_slop_persona/",
+  "invocation": "/create-user-stories @.planning/plans/active/29.0_anti_slop_persona/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "8b3699b0-1fd6-4cbe-bd7b-094ab8f4fdcf",
-  "timestamp": "2026-07-17T02:09:17.167Z"
+  "session_id": "460138e8-b65e-4177-9452-419feb86f18c",
+  "timestamp": "2026-07-17T04:15:22.730Z"
 }

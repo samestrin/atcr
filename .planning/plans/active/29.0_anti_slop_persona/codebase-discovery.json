@@ -1,0 +1,267 @@
+{
+  "generated": "2026-07-16",
+  "discovery_method": "semantic",
+  "queries": [
+    "persona registry YAML loading",
+    "human-named persona system prompt",
+    "community persona test fixture",
+    "review command persona flag",
+    "patch based fixture test"
+  ],
+  "match_count": 15,
+  "refinements": [
+    {
+      "date": "2026-07-16",
+      "mode": "deep",
+      "method": "semantic + manual path/flag verification",
+      "summary": "Corrected runtime-resolution claims (atcr review has no --persona flag; atcr personas list shows built-ins + installed community only, not the embedded library). Added the embedded-set test gates (internal/personas, internal/registry) that auto-cover every embedded community persona with no roster entry. Added the conditional docs/personas-install.md gate that fires only if simon binds provider=local. Flagged the blog outline's invalid CTA command as confirmed drift for Theme 3."
+    }
+  ],
+  "build_from": {
+    "primary_file": "docs/personas-authoring.md",
+    "reason": "This is the complete, source-free reference for authoring a persona (YAML, prompt template, fixture, index entry, contribution checklist). Every structural rule the `simon` persona must satisfy is documented here and mechanically enforced by personas/community_test.go plus the embedded-set gates in internal/personas/ and internal/registry/.",
+    "suggested_approach": "Copy personas/community/sonny.yaml + sonny.md as the structural template (closest analog: single-model correctness lens), retarget the Role/Focus/Output Format content to slop-detection categories, then wire the new persona into the four places every existing community persona touches: the persona unit, the fixture, the index entry, and the community_test.go roster."
+  },
+  "existing_patterns": [
+    {
+      "name": "Community persona 3-file unit",
+      "description": "Every community persona ships as a matched triple: personas/community/<slug>.yaml (agent binding: provider/model/persona/role, optional language), personas/community/<slug>.md (prompt template with mandatory ## Role, ## Focus, ## Scope, ## Severity Rubric, ## Output Format sections and required {{.AgentName}}/{{.ScopeRule}}/{{.FileCount}}/{{.BaseRef}}/{{.HeadRef}}/{{.PayloadMode}}/{{.Payload}} template tokens), and personas/community/testdata/<slug>_fixture.patch (synthetic unified-diff proving the persona fires).",
+      "files": ["personas/community/sonny.yaml", "personas/community/sonny.md", "docs/personas-authoring.md"],
+      "follow_for": "Authoring simon.yaml, simon.md, and simon_fixture.patch — mirror this exact triple."
+    },
+    {
+      "name": "Community index registration",
+      "description": "personas/community/index.json carries one PersonaIndexEntry per persona (name, version, description, path, provider, model, tasks, tags). A go test gate (TestCommunityIndex_Registration) asserts provider/model/description exactly match the source YAML, and that provider is restricted to the sanctioned routing keys \"openrouter\" or \"local\" — with the coupling that provider=local REQUIRES a local/ model prefix and any non-local provider FORBIDS it. A second, independent gate (verifyCommunityIndex in internal/personas/search_test.go, run against the real repo index) re-asserts provider/model equality per entry.",
+      "files": ["personas/community/index.json", "internal/personas/search.go", "internal/personas/search_test.go"],
+      "follow_for": "Adding simon's index entry once simon.yaml exists — provider/model/description must byte-match the YAML, path must be exactly \"simon.yaml\", and tasks[0] (the primary task tag) must be distinct from every existing entry's tasks[0]."
+    },
+    {
+      "name": "Go test-enforced authoring contract (personas/community_test.go)",
+      "description": "A hand-maintained Go slice `communityPersonas` (personas/community_test.go:117) is the authoritative roster the per-persona gate tests iterate over: fixture presence + category-word-in-template, slug consistency, Role+Focus Jaccard differentiation (<=0.85 threshold vs all other personas), distinct finding-category words across the whole roster, distinct primary index task tags, prompt structural contract (7-column output format, required template tokens, exactly one vendor-guidance citation), required-values rendering, and dual-tools-state rendering. Note (corrected 2026-07-16): the omission is NOT fully silent — TestCommunityAccessors (personas/community_test.go:175) asserts len(CommunityNames()) == len(communityPersonas), so dropping simon.md without a roster entry fails red with a 14-vs-13 length mismatch, and the embedded-set gates in internal/personas + internal/registry (see the 'Embedded-set gates' pattern) cover the files regardless of the roster. What the roster omission WOULD silently skip are exactly the differentiation, distinct-category, distinct-task-scoping, and index-registration gates — the ones that prove simon is a genuinely new lens.",
+      "files": ["personas/community_test.go"],
+      "follow_for": "simon MUST be appended to the `communityPersonas` slice (Slug: \"simon\", VendorToken: <substring of chosen model id>, Category: <distinct lowercase word, e.g. \"bloat\">). VendorToken mechanics: it only needs to be a case-insensitive substring of the bound model id, and reuse across personas is permitted (gene+milo both \"gpt\", quinn+orson both \"qwen\"); the token list in the communityPersona type comment (claude|gpt|gemini|deepseek|qwen|kimi|glm) is stale — gerald uses \"gemma\" and liam uses \"llama\"."
+    },
+    {
+      "name": "Embedded-set gates auto-cover every community persona (no roster needed)",
+      "description": "A second layer of tests iterates personas.CommunityNames() — the embedded directory listing, independent of the Go roster — so simon is covered the moment its files are dropped in: internal/personas/community_fixture_test.go (TestTemplateFixtureRunner_CommunityPersonasPass: the fixture runner must report exactly 1 passing case per persona), internal/personas/test_test.go (TestRunFixture_CommunityAssertsBoundModel: fixture passes AND the YAML binds a non-empty model), internal/personas/community_schema_test.go (TestCommunityPersonas_StrictSchema: the YAML passes registry.ValidateCommunityPersonaYAML's strict KnownFields decode — unknown keys are rejected; TestCommunityPersonas_NoPlaceholderModel; TestCommunityPersonas_HumanNames: slug must match ^[a-z]+$ and not be on the retired-role denylist; TestPinnedModelIsLockZeroMigration), and internal/registry/persona_test.go:305 (TestValidateFetchedPersonaPrompt_AllEmbeddedCommunityPersonasPass: the .md passes the fetched-prompt guardrail — MaxPersonaPromptLen length cap and the template-action gate that rejects actions like {{range}}).",
+      "files": ["internal/personas/community_fixture_test.go", "internal/personas/test_test.go", "internal/personas/community_schema_test.go", "internal/registry/persona_test.go", "internal/personas/test.go"],
+      "follow_for": "Authoring constraints these gates impose on simon: keep the YAML to recognized keys only; bind a concrete non-placeholder provider/model; keep simon.md under the prompt length cap and use only the sanctioned template tokens (no control-flow actions). \"simon\" itself already passes the human-name regex and is not on the retired-role denylist."
+    },
+    {
+      "name": "Runtime resolution is embed-directory-driven, not roster-driven",
+      "description": "personas/community.go embeds community/*.md, community/*.yaml, and community/testdata/*.patch via go:embed and lists/resolves personas straight off the embedded filesystem. CommunityNames() returns the sorted .md basenames found by ReadDir — it does not consult the Go test roster.",
+      "files": ["personas/community.go"],
+      "follow_for": "Dropping the 3 simon files into the right paths makes the embedded accessors resolve simon immediately — which is what powers `atcr personas test simon` (no LLM, no network, no install step; TemplateFixtureRunner falls back to the embedded copy when no installed unit exists). It does NOT by itself make simon appear in `atcr personas list` (that command renders built-ins + personas INSTALLED under the user personas dir via commpersonas.ListTiers) or usable in a review — review-time use goes through `atcr personas install simon` plus a `persona: simon` reference in the reviewer config. `atcr review` has no --persona flag."
+    },
+    {
+      "name": "Existing categories already claimed (must not collide)",
+      "description": "13 community personas already claim these lowercase category words: coupling, logic, contract, validation, race, leak, complexity, type, dependency, observability, secret, duplication, invariant. TestCommunityPersonas_DistinctCategories fails the whole suite if a 14th persona reuses one.",
+      "files": ["personas/community_test.go"],
+      "follow_for": "simon's category word must be new and distinct, e.g. \"bloat\" or \"verbosity\" — and that exact word must also appear in simon.md's prompt text (case-insensitive) per the category-word-in-prompt gate (TestCommunityPersonas_FixtureAndPromptCategory, personas/community_test.go:202)."
+    },
+    {
+      "name": "Existing primary index task tags already claimed (must not collide)",
+      "description": "TestCommunityPersonas_DistinctTaskScoping asserts each persona's tasks[0] in index.json is unique. Already claimed: architecture-review, correctness-review, api-review, validation-review, concurrency-review, resource-review, performance-review, type-safety-review, dependency-review, observability-review, secrets-review, duplication-review, invariant-review.",
+      "files": ["personas/community/index.json", "personas/community_test.go"],
+      "follow_for": "simon's index entry needs a fresh primary task tag, e.g. \"bloat-review\" or \"slop-review\"; secondary tags are free-form but must be non-empty."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "personas/community/sonny.yaml",
+      "relevance": "high",
+      "purpose": "Structural template for the new simon.yaml (provider/model/persona/role fields).",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "personas/community/sonny.md",
+      "relevance": "high",
+      "purpose": "Structural template for the new simon.md prompt (Role/Focus/Scope/Severity Rubric/Output Format sections, vendor-guidance comment, template tokens).",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "personas/community_test.go",
+      "relevance": "high",
+      "purpose": "Authoritative test roster (communityPersonas slice) plus every roster-driven structural/fixture/index gate for community personas.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "personas/community/index.json",
+      "relevance": "high",
+      "purpose": "Community persona index consumed by `atcr personas search`; two go test gates cross-check every entry against its source YAML (TestCommunityIndex_Registration and verifyCommunityIndex).",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "personas/community.go",
+      "relevance": "medium",
+      "purpose": "go:embed accessors (CommunityNames/CommunityGet/CommunityFixture/CommunityModel) that make the persona resolvable by the embedded-set gates and `atcr personas test` once its 3 files are dropped in the right embedded paths.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/personas/test.go",
+      "relevance": "high",
+      "purpose": "TemplateFixtureRunner.RunFixture — the no-LLM fixture harness behind `atcr personas test <name>` and the embedded-set fixture gates. renderFixture passes iff the template renders with no error AND the AgentName value is interpolated (exactly one passing case expected per community persona).",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/personas/community_fixture_test.go",
+      "relevance": "high",
+      "purpose": "TestTemplateFixtureRunner_CommunityPersonasPass — auto-covers simon via CommunityNames(); asserts HasFixture and exactly 1/1 passing fixture case.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/personas/community_schema_test.go",
+      "relevance": "high",
+      "purpose": "Strict-YAML / no-placeholder-model / human-name / pinned-model-lock gates over every embedded community persona — auto-covers simon. Defines the recognized-keys constraint for simon.yaml.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/registry/persona_test.go",
+      "relevance": "medium",
+      "purpose": "TestValidateFetchedPersonaPrompt_AllEmbeddedCommunityPersonasPass (line 305) — simon.md must pass the fetched-prompt guardrail (length cap + template-action gate).",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/personas/search_test.go",
+      "relevance": "medium",
+      "purpose": "verifyCommunityIndex (line 30) — the AC 02-02 provider/model equality gate run against the real repo index.json; simon's entry must match simon.yaml.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "docs/personas-authoring.md",
+      "relevance": "high",
+      "purpose": "Complete authoring reference: YAML schema, prompt template contract, fixture location/naming rules, index entry shape, contribution checklist.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "docs/registry.md",
+      "relevance": "medium",
+      "purpose": "Documents the six-level review-time persona resolution chain (§ Persona resolution chain) — the authoritative reference for how an installed persona reaches a reviewer at `atcr review` time.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "docs/personas-install.md",
+      "relevance": "medium",
+      "purpose": "Install/CLI reference. CONDITIONALLY MODIFIED: if simon binds provider=local, this file must gain simon's `ollama pull <derived-tag>` line (enforced by TestLocalPersonasDocumentOllamaPullTag) and a row in the local-personas table; docs/providers.md's local-persona name list (gerald/orson/liam) would also need simon added. No changes needed if simon binds provider=openrouter.",
+      "likely_modification": "conditional (local binding only)"
+    },
+    {
+      "path": ".planning/product/content/blog/slopfix-ai-code-bloat.md",
+      "relevance": "high",
+      "purpose": "A marketing outline titled 'Killing AI Code Bloat with ATCR' already exists at the exact path the epic's Task 3 requests. It already covers the Slopfix $10k/week hook, the simon persona pitch, a before/after code-example section, and a call to action — committed under Sprint 19.6 (commit 15b938a4), predating this epic. CONFIRMED DRIFT (2026-07-16): the CTA's `atcr review --persona simon` is not valid CLI syntax — the review command has no --persona flag.",
+      "likely_modification": "refresh (fix the invalid CTA command; verify category word and framing against the shipped persona)"
+    },
+    {
+      "path": "personas/community/gene.yaml",
+      "relevance": "low",
+      "purpose": "A second GPT-vendor persona example showing VendorToken reuse across personas is permitted (gene and milo both use \"gpt\") — useful precedent if simon's chosen model shares a vendor token with an existing persona.",
+      "likely_modification": "reference-only"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "personas/community_test.go:117 (communityPersonas slice)",
+      "type": "test-registration",
+      "description": "Append {Slug: \"simon\", VendorToken: \"<vendor-substring-of-model>\", Category: \"bloat\"} (or an equally distinct category word) so simon is covered by every roster-driven community-persona gate test (differentiation, distinct categories, distinct task scoping, index registration, fixture/category contract)."
+    },
+    {
+      "location": "personas/community/index.json",
+      "type": "index-entry",
+      "description": "Append a PersonaIndexEntry with name/path/provider/model/description exactly matching simon.yaml, plus non-empty tasks and tags, with tasks[0] distinct from all 13 claimed primary task tags (required by TestCommunityPersonas_DistinctTaskScoping)."
+    },
+    {
+      "location": "personas/community/ (embed root)",
+      "type": "runtime-resolution",
+      "description": "simon.yaml + simon.md dropped here become immediately resolvable through the go:embed accessors — powering `atcr personas test simon` (the no-LLM, no-network fixture proof) and all embedded-set gates with zero further wiring. Review-time use is a separate step: `atcr review` has NO --persona flag — the flow is `atcr personas install simon`, then reference `persona: simon` in the reviewer config (docs/registry.md § Persona resolution chain). `atcr personas list` only shows built-ins + installed personas, so simon appears there only after install."
+    },
+    {
+      "location": "personas/community/testdata/ (embed root)",
+      "type": "fixture-resolution",
+      "description": "simon_fixture.patch dropped here (NOT personas/testdata/, which is the built-in-only location) is resolvable via CommunityFixture(\"simon\") and is what both the roster-driven fixture gate and the embedded-set TemplateFixtureRunner gate read. The runner's pass condition: template renders cleanly AND interpolates AgentName — the fixture's job is to be a realistic synthetic payload, while the category-word contract is asserted on the TEMPLATE text."
+    },
+    {
+      "location": "internal/personas + internal/registry embedded-set gates",
+      "type": "auto-covered-constraints",
+      "description": "No registration step needed — simon is automatically enumerated by CommunityNames()-driven gates: fixture-runner pass (internal/personas/community_fixture_test.go, test_test.go), strict YAML schema / no-placeholder model / human-name ^[a-z]+$ (internal/personas/community_schema_test.go), fetched-prompt guardrail (internal/registry/persona_test.go:305), and real-index provider/model equality (internal/personas/search_test.go). These constrain HOW simon is authored rather than adding a wiring step."
+    },
+    {
+      "location": "docs/personas-install.md (+ docs/providers.md)",
+      "type": "conditional-doc-gate",
+      "description": "FIRES ONLY IF simon binds provider=local: TestLocalPersonasDocumentOllamaPullTag (personas/community_test.go:528) derives the ollama tag from the local/ model id (first hyphen → colon) and requires `ollama pull <tag>` to be documented in docs/personas-install.md; the local-personas table (~line 294) and docs/providers.md's shipped-local-persona list (line 27) should gain simon too. Binding provider=openrouter avoids this gate entirely — relevant to the model choice at task-decomposition time."
+    },
+    {
+      "location": ".planning/product/content/blog/slopfix-ai-code-bloat.md:38",
+      "type": "doc-refresh",
+      "description": "The existing CTA says `atcr review --persona simon`, which is invalid CLI syntax (verified against cmd/atcr/review.go flag set — no --persona flag exists). Theme 3's refresh must replace it with the real flow, e.g. `atcr personas install simon` (+ reviewer config) and/or `atcr personas test simon` for the zero-setup fixture demo."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "sonny.yaml / sonny.md 3-file pattern",
+      "path": "personas/community/sonny.yaml",
+      "can_extend": true,
+      "usage_example": "Copy the sonny.yaml + personas/community/sonny.md structure verbatim, replace Role/Focus content with slop-detection targets (tautological comments, unnecessary factories/interfaces for single structs, defensive-programming overkill, dead/hallucinated code paths per the epic's Proposed Solution), keep the mandatory ## Role/## Output Format headings and the exact 7-column SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE contract."
+    },
+    {
+      "name": "TemplateFixtureRunner (no-LLM persona verification)",
+      "path": "internal/personas/test.go",
+      "can_extend": false,
+      "usage_example": "After authoring, run `go test ./internal/personas/... ./personas/...` (both gate layers) and `atcr personas test simon` (or `go run ./cmd/atcr personas test simon` from a source checkout) for the zero-cost end-to-end fixture proof — no API key or network required."
+    },
+    {
+      "name": "Existing blog outline scaffolding",
+      "path": ".planning/product/content/blog/build-without-the-build-cost.md",
+      "can_extend": true,
+      "usage_example": "Reference-only formatting example for other blog outlines in this directory (H1 title, Hook/Problem/Solution/Conclusion sections) — NOT needed for this epic since slopfix-ai-code-bloat.md already exists fully authored."
+    }
+  ],
+  "architecture_notes": [
+    "A community persona requires provider+model per the registry schema even though simon's detection target (AI-generated bloat) is not inherently model-specific. The plan should pin simon to a single concrete model (convention: reuse an existing vendor's fast/cheap tier is reasonable for a high-volume CI lint-style persona) and record that choice at the task-decomposition stage, not in this plan.",
+    "Provider choice has a docs-side blast radius: provider=openrouter touches only the 2 registration points; provider=local additionally fires the docs/personas-install.md ollama-pull-tag gate (TestLocalPersonasDocumentOllamaPullTag) and should update the local-persona table there and the name list in docs/providers.md. Unless there is a product reason for simon to be local, openrouter is the lower-friction binding.",
+    "The `personas/testdata/` path cited in the epic's Proposed Solution (`personas/testdata/simon_fixture.patch`) is the BUILT-IN persona fixture location, not the community one. This plan corrects it to `personas/community/testdata/simon_fixture.patch` per docs/personas-authoring.md's location table and the community_test.go fixture reader.",
+    "The epic's 3 stated tasks (persona, fixture, blog) undercount the actual integration surface: a 4th, easy-to-miss task is registering simon in the personas/community_test.go Go roster and personas/community/index.json — without both, the persona is runtime-functional but uncovered by the roster-driven differentiation/category/index gates. (The omission does surface loudly via TestCommunityAccessors' 14-vs-13 length assertion, so CI would not stay green — but the roster append is still a mandatory explicit task, not a sub-step.)",
+    "The blog outline's CTA (`atcr review --persona simon`) cites a flag that does not exist on the review command — confirmed drift that Theme 3 must fix; the verifiable zero-setup command is `atcr personas test simon`, and the production flow is install-then-reference in reviewer config.",
+    "VendorToken reuse is permitted and the token list in the communityPersona type comment is stale (actual tokens in use: claude, gpt, gemini, deepseek, qwen, kimi, glm, gemma, llama); the only hard rule is VendorToken ⊆ model id (case-insensitive)."
+  ],
+  "files_to_modify": [
+    {
+      "path": "personas/community_test.go",
+      "reason": "Append simon to the communityPersonas roster slice so all roster-driven community-persona gate tests cover it.",
+      "scope": "minor"
+    },
+    {
+      "path": "personas/community/index.json",
+      "reason": "Register simon's discoverable index entry (provider/model/description must match simon.yaml exactly; tasks[0] must be a fresh primary task tag).",
+      "scope": "minor"
+    },
+    {
+      "path": ".planning/product/content/blog/slopfix-ai-code-bloat.md",
+      "reason": "Refresh only what has drifted: replace the invalid `atcr review --persona simon` CTA with the real invocation flow, and align the category word/framing with the shipped persona.",
+      "scope": "minor"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "personas/community/simon.yaml",
+      "purpose": "Agent binding metadata (provider, model, persona, role) for the anti-slop persona.",
+      "based_on": "personas/community/sonny.yaml"
+    },
+    {
+      "path": "personas/community/simon.md",
+      "purpose": "Prompt template hyper-focused on tautological AI comments, unnecessary design-pattern abstractions, defensive-programming overkill, and dead/hallucinated code paths.",
+      "based_on": "personas/community/sonny.md"
+    },
+    {
+      "path": "personas/community/testdata/simon_fixture.patch",
+      "purpose": "Synthetic unified-diff fixture planting a known instance of AI-generated bloat (e.g. a tautological comment plus an unnecessary single-implementation interface) for the fixture gate to detect.",
+      "based_on": "personas/community/testdata/anthony_fixture.patch (or any existing community fixture, as a naming/format template)"
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test (testing + testify/require)",
+    "test_location": "personas/community_test.go (roster-driven gates) + internal/personas/community_fixture_test.go, community_schema_test.go, test_test.go, search_test.go + internal/registry/persona_test.go (embedded-set gates)",
+    "naming_convention": "TestCommunityPersonas_<Aspect>, table-driven over the communityPersonas roster via t.Run(p.Slug, ...); embedded-set gates iterate builtins.CommunityNames() with t.Run(name, ...)",
+    "example_test": "personas/community_test.go:202 (TestCommunityPersonas_FixtureAndPromptCategory)",
+    "verification_commands": "go test ./personas/... ./internal/personas/... ./internal/registry/... ; manual no-LLM proof: atcr personas test simon"
+  }
+}
