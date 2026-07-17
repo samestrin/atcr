@@ -65,15 +65,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/localdebt/...`)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./internal/localdebt/...`)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] An open+terminal pair sharing one `ID` counts exactly once, using the terminal record
-- [ ] Divergent terminal records for one id resolve to the higher-precedence status deterministically
-- [ ] An id with no terminal record contributes zero counts
-- [ ] Fold-by-id complexity stays O(n) (no per-id linear scan of the whole stream)
+- [x] An open+terminal pair sharing one `ID` counts exactly once, using the terminal record
+- [x] Divergent terminal records for one id resolve to the higher-precedence status deterministically
+- [x] An id with no terminal record contributes zero counts
+- [x] Fold-by-id complexity stays O(n) (no per-id linear scan of the whole stream)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

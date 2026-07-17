@@ -10,7 +10,7 @@
 | Key Dependencies | `internal/scorecard.HashPersonaID` | Reused pseudonymization primitive at the payload-construction boundary |
 
 ## Related Files
-- `internal/telemetry/quality_signal.go` - create: new `QualitySignal` struct with exactly 4 fixed fields (persona identifier, model, dismissed count, confirmed count), no `omitempty` on any field, following `Event`'s exact no-omitempty pattern
+- `internal/telemetry/quality_signal.go` - create: new `QualitySignal` struct with exactly 4 fixed fields — `persona_id_hash`, `model`, `dismissed_count`, `confirmed_count` (persona identifier, model, dismissed count, confirmed count) — no `omitempty` on any field, following `Event`'s exact no-omitempty pattern
 - `internal/telemetry/quality_signal_test.go` - create: `TestQualitySignal_PayloadHasExactlyFourAllowlistedKeys` mirroring `client_test.go`'s locking regression test structure (marshal, unmarshal to `map[string]any`, assert `len(m) == 4` and exact key set)
 - `internal/telemetry/event.go` - reference only: the exact no-`omitempty`, fixed-field-count pattern this new type must replicate
 - `internal/scorecard/telemetry.go` - reference only: `HashPersonaID` (pseudonymization) and `TelemetryPersonaRecord`'s split between internal aggregation (raw persona name) and outbound payload construction (hashed) — the model this AC's payload-construction function follows
@@ -25,7 +25,7 @@
 **Scenario 1: Payload struct has exactly 4 allowlisted keys**
 - **Given** a `QualitySignal` value built from an aggregated `(persona, model, dismissed, confirmed)` row
 - **When** it is marshaled to JSON and unmarshaled into a generic `map[string]any`
-- **Then** the map has exactly 4 keys, and every key is one of the allowlisted set (e.g. `persona_id_hash`, `model`, `dismissed_count`, `confirmed_count` — exact names confirmed at design-sprint)
+- **Then** the map has exactly 4 keys, and every key is one of the allowlisted set: `persona_id_hash`, `model`, `dismissed_count`, `confirmed_count` (snake_case JSON tags, matching the `Event` payload's existing key convention)
 
 **Scenario 2: Zero-value struct still serializes all 4 keys**
 - **Given** a zero-value `QualitySignal{}`
@@ -67,15 +67,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/telemetry/...`)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./internal/telemetry/...`)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `QualitySignal` has exactly 4 fields, all without `omitempty`
-- [ ] `TestQualitySignal_PayloadHasExactlyFourAllowlistedKeys` fails if a 5th field is ever added
-- [ ] The persona-identifier field is populated via `HashPersonaID`, never a raw persona name
-- [ ] Zero-value counts serialize as `0`, not omitted
+- [x] `QualitySignal` has exactly 4 fields, all without `omitempty`
+- [x] `TestQualitySignal_PayloadHasExactlyFourAllowlistedKeys` fails if a 5th field is ever added
+- [x] The persona-identifier field is populated via `HashPersonaID`, never a raw persona name
+- [x] Zero-value counts serialize as `0`, not omitted
 
 **Manual Review:**
 - [ ] Code reviewed and approved

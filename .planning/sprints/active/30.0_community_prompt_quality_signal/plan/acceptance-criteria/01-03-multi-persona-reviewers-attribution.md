@@ -66,14 +66,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/localdebt/...`)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./internal/localdebt/...`)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A record with 2+ `Reviewers` increments every listed persona's group, not just `Reviewers[0]`
-- [ ] An empty `Reviewers` slice contributes to no group
-- [ ] Duplicate/empty entries within one record's `Reviewers` are deduplicated per-record (no double-count)
+- [x] A record with 2+ `Reviewers` increments every listed persona's group, not just `Reviewers[0]`
+- [x] An empty `Reviewers` slice contributes to no group
+- [x] Duplicate/empty entries within one record's `Reviewers` are deduplicated per-record (no double-count)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

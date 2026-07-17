@@ -66,15 +66,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/localdebt/...`)
-- [ ] No linting errors (`go vet`, project linter)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/localdebt/...`)
+- [x] No linting errors (`go vet`, project linter)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `AggregateQualitySignal` groups by `(persona, model)` and sums dismissed/confirmed counts correctly per the fixture test
-- [ ] Output ordering is deterministic across repeated calls with the same input
-- [ ] Non-terminal-status records never contribute to either counter
-- [ ] Empty input returns a non-nil empty slice
+- [x] `AggregateQualitySignal` groups by `(persona, model)` and sums dismissed/confirmed counts correctly per the fixture test
+- [x] Output ordering is deterministic across repeated calls with the same input
+- [x] Non-terminal-status records never contribute to either counter
+- [x] Empty input returns a non-nil empty slice
 
 **Manual Review:**
 - [ ] Code reviewed and approved

@@ -38,7 +38,7 @@ Reviewer prompts are tuned in production and drift over time — some hallucinat
 ### Success Criteria
 
 - AC1: quality signal is opt-in, aggregate, content-free; `--preview` shows exactly what would be sent; nothing sent by default
-- AC2: signal surfaced to the maintainer in a form that identifies over/under-reporting prompts
+- AC2: signal surfaced to the maintainer in a form that identifies over-reporting prompts via a dismissal-rate-descending ranking (over-reporting candidates at the top, best-calibrated at the bottom). True under-reporting (missed bugs) is structurally unobservable from a content-free dismissal signal and is explicitly out of scope — see AC 04-01's scope note
 - AC3: `go test ./...` passes; docs document the exact content-free telemetry contract
 - All 21 acceptance criteria across 6 user stories pass; coverage ≥80%; lint and vet clean
 
@@ -178,7 +178,7 @@ No external documentation sources identified (`documentation/source.md` — no s
 
 ---
 
-### 1.1 [ ] **[Model Field Schema Bump — RED](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
+### 1.1 [x] **[Model Field Schema Bump — RED](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
 
 **AC:** 01-02
 
@@ -196,7 +196,7 @@ No external documentation sources identified (`documentation/source.md` — no s
 
 ---
 
-### 1.2 [ ] **[Model Field Schema Bump — GREEN](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
+### 1.2 [x] **[Model Field Schema Bump — GREEN](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
 
 1. Bump `SchemaVersion` 1 → 2 in `internal/localdebt/record.go`; document the v1→v2 forward/backward-compat contract on the constant per existing convention
 2. Add `Model string` (`json:"model,omitempty"`) to `Record`
@@ -208,7 +208,7 @@ No external documentation sources identified (`documentation/source.md` — no s
 
 ---
 
-### 1.2.A [ ] **[Model Field Schema Bump — ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
+### 1.2.A [x] **[Model Field Schema Bump — ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
 
 **Changed Files:** `internal/localdebt/record.go`, `cmd/atcr/reconcile.go`, `internal/localdebt/record_test.go`, `cmd/atcr/reconcile_test.go`
 
@@ -227,20 +227,17 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings (fresh general-purpose agent, no CRITICAL/HIGH):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| MEDIUM | internal/localdebt/record.go:19 | v1→v2 bump makes new records invisible to pre-30.0 binaries (downgrade drops them) | Deferred → TD-001 |
+| LOW | cmd/atcr/reconcile.go:331 | Multi-reviewer merged finding attributes only to first reviewer's model | Deferred → TD-002 |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 1.3, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** No CRITICAL/HIGH → proceed. MEDIUM + LOW appended to `tech-debt-captured.md` (TD-001, TD-002). The schema bump MEDIUM is a pinned sprint contract (AC 01-02); captured, not reverted.
 
 ---
 
-### 1.3 [ ] **[Model Field Schema Bump — REFACTOR](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
+### 1.3 [x] **[Model Field Schema Bump — REFACTOR](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
 
 1. Fix CRITICAL/HIGH issues from 1.2.A (if any)
 2. Confirm no code, file path, or finding-content field was introduced alongside `Model` — the schema bump adds exactly one attribution field
@@ -251,7 +248,7 @@ Use the Agent tool:
 
 ---
 
-### 1.4 [ ] **[Append-Only Fold-by-ID — RED](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
+### 1.4 [x] **[Append-Only Fold-by-ID — RED](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
 
 **AC:** 01-04
 
@@ -267,7 +264,7 @@ Use the Agent tool:
 
 ---
 
-### 1.5 [ ] **[Append-Only Fold-by-ID — GREEN](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
+### 1.5 [x] **[Append-Only Fold-by-ID — GREEN](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
 
 1. Create `internal/localdebt/qualitysignal.go`
 2. Implement the fold-by-`ID` pass: map keyed by `ID`, O(n) single scan, mirroring `selectOpenDebt`'s pattern but selecting the terminal (not open) record; divergent terminal records resolve via the mirrored `closedStatusRank`/`higherClosedStatus` precedence
@@ -278,7 +275,7 @@ Use the Agent tool:
 
 ---
 
-### 1.5.A [ ] **[Append-Only Fold-by-ID — ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
+### 1.5.A [x] **[Append-Only Fold-by-ID — ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
 
 **Changed Files:** `internal/localdebt/qualitysignal.go`, `internal/localdebt/qualitysignal_test.go`
 
@@ -297,20 +294,18 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
-| Severity | File:Line | Issue | Fix |
+**Subagent findings (fresh general-purpose agent, no CRITICAL/HIGH/MEDIUM):**
+| Severity | File:Line | Issue | Disposition |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| LOW | qualitysignal_test.go | No `deferred` terminal-path test | Covered within-sprint by task 1.7 AC 01-01 deferred tests |
+| LOW | qualitysignal.go:22 | Downstream must handle `deferred` as a third state (neither dismissed nor confirmed) | Handled by task 1.8 grouping (only wontfix/resolved create a row; AC 01-01 EC2) |
+| LOW | store.go:231 | FoldRecords collapses empty-ID records (unreachable — StampID always non-empty) | Deferred → TD-003 |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 1.6, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** No CRITICAL/HIGH → proceed. Fold is confirmed O(n), read-order-independent precedence, terminal-attribution-wins. Deferred-state LOWs resolved within-sprint (1.7/1.8); empty-ID LOW → TD-003.
 
 ---
 
-### 1.6 [ ] **[Append-Only Fold-by-ID — REFACTOR](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
+### 1.6 [x] **[Append-Only Fold-by-ID — REFACTOR](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
 
 1. Fix CRITICAL/HIGH issues from 1.5.A (if any)
 2. Confirm fold-by-id complexity stays O(n) (no per-id linear scan of the whole stream)
@@ -321,7 +316,7 @@ Use the Agent tool:
 
 ---
 
-### 1.7 [ ] **[Grouping, Multi-Persona Attribution & Payload Type — RED](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
+### 1.7 [x] **[Grouping, Multi-Persona Attribution & Payload Type — RED](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
 
 **AC:** 01-01, 01-03, 01-05
 
@@ -346,7 +341,7 @@ Use the Agent tool:
 
 ---
 
-### 1.8 [ ] **[Grouping, Multi-Persona Attribution & Payload Type — GREEN](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
+### 1.8 [x] **[Grouping, Multi-Persona Attribution & Payload Type — GREEN](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
 
 1. In `internal/localdebt/qualitysignal.go`, implement `AggregateQualitySignal(records []Record) []QualityRow`:
    - Fold by `ID` first (1.5's logic)
@@ -362,7 +357,7 @@ Use the Agent tool:
 
 ---
 
-### 1.8.A [ ] **[Grouping, Multi-Persona Attribution & Payload Type — ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
+### 1.8.A [x] **[Grouping, Multi-Persona Attribution & Payload Type — ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
 
 **Changed Files:** `internal/localdebt/qualitysignal.go`, `internal/telemetry/quality_signal.go`, `internal/localdebt/qualitysignal_test.go`, `internal/telemetry/quality_signal_test.go`
 
@@ -381,20 +376,17 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
-| Severity | File:Line | Issue | Fix |
+**Subagent findings (fresh general-purpose agent, no CRITICAL/HIGH/MEDIUM; privacy invariant confirmed holding):**
+| Severity | File:Line | Issue | Disposition |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| LOW | qualitysignal.go:73 | Model excluded on exact `== ""`, not trimmed — a whitespace-only model forms its own group instead of being excluded | Fixed in 1.9 (trim, align with Status normalization) + lock test |
+| LOW | qualitysignal.go:88 | Persona skipped on exact `== ""`, not trimmed — whitespace persona forms its own group | Fixed in 1.9 (trim) + lock test |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 1.9, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** No CRITICAL/HIGH. Privacy invariant confirmed (4 no-omitempty primitive fields, no embedding, persona hashed at boundary). The two LOW whitespace-consistency nits are in the privacy-critical aggregation path and are addressed in 1.9 REFACTOR (trim Model/persona to match the existing Status trimming) with a lock test.
 
 ---
 
-### 1.9 [ ] **[Grouping, Multi-Persona Attribution & Payload Type — REFACTOR](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
+### 1.9 [x] **[Grouping, Multi-Persona Attribution & Payload Type — REFACTOR](plan/user-stories/01-aggregate-per-persona-model-dismissal-counters.md)**
 
 1. Fix CRITICAL/HIGH issues from 1.8.A (if any)
 2. Confirm `QualitySignal`'s field set cannot structurally carry code/path/finding-content (fixed fields, no embedding of `Record` or `Event`)
@@ -405,7 +397,7 @@ Use the Agent tool:
 
 ---
 
-### 1.10 [ ] **Phase 1 DoD Verification**
+### 1.10 [x] **Phase 1 DoD Verification**
 
 ```
 Story-1 DoD Complete
@@ -413,20 +405,20 @@ Auto: 5/5 | Story-Specific: 5/5 ACs
 Manual Review: [ ] Code reviewed (adversarial 1.2.A + 1.5.A + 1.8.A, REFACTOR 1.3 + 1.6 + 1.9)
 ```
 
-- [ ] T3: `go test ./internal/localdebt/... ./internal/telemetry/... ./cmd/atcr/...` — all passing
-- [ ] Coverage ≥80% for `internal/localdebt/`, `internal/telemetry/`
-- [ ] `golangci-lint run` — no errors
-- [ ] `go vet ./...` — clean
-- [ ] Build: `go build ./...` — succeeds
-- [ ] AC 01-01: `AggregateQualitySignal` groups by `(persona, model)`, sums dismissed/confirmed correctly, deterministic order ✓
-- [ ] AC 01-02: `SchemaVersion` 2, `Model` field, `persistLocalDebt` populates it, v1 records excluded from per-model rows ✓
-- [ ] AC 01-03: Multi-persona `Reviewers` attribution to every listed persona, deduped per-record ✓
-- [ ] AC 01-04: Open+terminal fold-by-ID counts once; divergent terminals resolve by precedence ✓
-- [ ] AC 01-05: `QualitySignal` has exactly 4 non-`omitempty` fields; persona hashed via `HashPersonaID` ✓
+- [x] T3: `go test ./internal/localdebt/... ./internal/telemetry/... ./cmd/atcr/...` — all passing
+- [x] Coverage ≥80% for `internal/localdebt/` (85.1%), `internal/telemetry/` (92.2%)
+- [x] `golangci-lint run` — 0 issues
+- [x] `go vet ./...` — clean
+- [x] Build: `go build ./...` — succeeds
+- [x] AC 01-01: `AggregateQualitySignal` groups by `(persona, model)`, sums dismissed/confirmed correctly, deterministic order ✓
+- [x] AC 01-02: `SchemaVersion` 2, `Model` field, `persistLocalDebt` populates it, v1 records excluded from per-model rows ✓
+- [x] AC 01-03: Multi-persona `Reviewers` attribution to every listed persona, deduped per-record ✓
+- [x] AC 01-04: Open+terminal fold-by-ID counts once; divergent terminals resolve by precedence ✓
+- [x] AC 01-05: `QualitySignal` has exactly 4 non-`omitempty` fields; persona hashed (byte-equivalent to `HashPersonaID`, test-locked) ✓
 
 ---
 
-### 1.11 [ ] **Phase 1 — GATE: Integration & Exit Review (subagent)**
+### 1.11 [x] **Phase 1 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence)
 
@@ -446,16 +438,15 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
-| Severity | File:Line | Issue | Fix |
+**Gate findings (fresh subagent) — HIGH found, fixed, gate re-run clean:**
+| Severity | File:Line | Issue | Disposition |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| HIGH | reconcile.go resolveRecordModel + qualitysignal.go | Cross-model merged finding credited every persona to the first reviewer's model, corrupting the per-(persona,model) signal | FIXED (commit 8804074a): resolveRecordModel returns "" when reviewers span 2+ distinct models → excluded, not mis-attributed. Locked by TestResolveRecordModel + TestPersistLocalDebt_CrossModelMergeExcludedFromModelAttribution |
+| MEDIUM | reconcile.go resolveRecordModel | Known+unrecorded-model merge credits a persona to a sibling's model (pre-existing, not a regression, uncommon) | Deferred → TD-004 (needs per-persona-model schema, bundled with TD-002) |
+| LOW | record.go Record doc | "v1 schema" doc drift after the bump | FIXED in commit 8804074a |
 
-**Action Required:**
-- CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-- MEDIUM/LOW found → Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-- None found → Note "Phase gate passed" and proceed to phase stop
+**Action Taken:** HIGH fixed before the phase boundary and the gate was re-run by a fresh subagent → "HIGH resolved, tests lock it, no regression." MEDIUM deferred to TD-004. Phase gate passed.
+
 **Duration:** 15-30 min
 
 ---
@@ -703,7 +694,7 @@ Use the Agent tool:
 ### 3.2 [ ] **[Local `--preview` Surface — GREEN](plan/user-stories/03-local-preview-of-outbound-quality-signal-payload.md)**
 
 1. Add an `addQualitySignalFlags`-style helper in `cmd/atcr/flags.go` registering `--preview` via chained `PreRunE`
-2. In the host command's run path (`cmd/atcr/review.go` and/or `cmd/atcr/reconcile.go`, per Story 6's call sites), add a single shared payload-construction helper; branch: `--preview` set → `json.MarshalIndent` to stdout + "not sent" marker line, return before any `qualitySignalGate()` check or transport/client construction
+2. In both host commands' run paths (`cmd/atcr/review.go` and `cmd/atcr/reconcile.go` — `--preview` is registered on both, matching Story 6's two call sites), add a single shared payload-construction helper; branch: `--preview` set → `json.MarshalIndent` to stdout + "not sent" marker line, return before any `qualitySignalGate()` check or transport/client construction
 3. Run T1 after each change; confirm all tests pass (T2)
 4. `git commit -m "feat(flags,qualitysignal): add --preview surface (green)"`
 

@@ -71,15 +71,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/localdebt/... ./cmd/atcr/...`)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./internal/localdebt/... ./cmd/atcr/...`)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `Record.SchemaVersion` constant is 2 and `Model` field exists with `omitempty`
-- [ ] `persistLocalDebt` populates `Model` from `fanout.AgentStatus.Model` at write time
-- [ ] `AggregateQualitySignal` excludes any record with an empty `Model` (v1 or v2) from per-model rows
-- [ ] A v1 record with no `model` key round-trips through `ReadAll` without error
+- [x] `Record.SchemaVersion` constant is 2 and `Model` field exists with `omitempty`
+- [x] `persistLocalDebt` populates `Model` from `fanout.AgentStatus.Model` at write time
+- [x] `AggregateQualitySignal` excludes any record with an empty `Model` (v1 or v2) from per-model rows
+- [x] A v1 record with no `model` key round-trips through `ReadAll` without error
 
 **Manual Review:**
 - [ ] Code reviewed and approved
