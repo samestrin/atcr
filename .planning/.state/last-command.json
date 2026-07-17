@@ -1,9 +1,9 @@
 {
-  "skill": "create-user-stories",
+  "skill": "create-acceptance-criteria",
   "args": "@.planning/plans/active/29.0_anti_slop_persona/",
-  "invocation": "/create-user-stories @.planning/plans/active/29.0_anti_slop_persona/",
+  "invocation": "/create-acceptance-criteria @.planning/plans/active/29.0_anti_slop_persona/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "460138e8-b65e-4177-9452-419feb86f18c",
-  "timestamp": "2026-07-17T04:15:22.730Z"
+  "session_id": "6749bff3-043a-45a3-80ff-15361dc3733c",
+  "timestamp": "2026-07-17T04:21:48.865Z"
 }

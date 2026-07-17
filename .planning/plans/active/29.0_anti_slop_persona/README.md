@@ -6,7 +6,7 @@ Ship a new community persona, `simon`, purpose-built to detect AI-generated code
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/29.0_anti_slop_persona/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/29.0_anti_slop_persona/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/29.0_anti_slop_persona/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/29.0_anti_slop_persona/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/29.0_anti_slop_persona/`
 

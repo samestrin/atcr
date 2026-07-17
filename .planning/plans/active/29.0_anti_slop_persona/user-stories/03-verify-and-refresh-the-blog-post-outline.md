@@ -30,13 +30,18 @@
 - **Relevant:** Closes the loop between the shipped persona (Stories 1–2) and the marketing asset that pitches it — an invalid CTA in a top-of-funnel post directly undermines the epic's growth objective by breaking the reader's first hands-on interaction with ATCR.
 - **Time-bound:** Completed as the final story of this plan, after Stories 1 and 2 land, within the same sprint.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-cta-command-fix.md) | CTA Command Fix | Integration |
+| [03-02](../acceptance-criteria/03-02-category-word-framing-alignment.md) | Category Word & Framing Alignment | Integration |
+
+## Original Criteria Overview
 
 1. The invalid `atcr review --persona simon` CTA is replaced with the verified `atcr personas install simon` (and/or `atcr personas test simon` for the no-setup demo path), matching the command surface in `cmd/atcr/personas.go` and the documented usage pattern in `docs/personas-install.md`.
 2. Every category-word reference in the outline (e.g. "bloat"-flavored language in sections 1, 3, and 4) is checked against `simon.md`'s shipped `## Focus` section and updated if it drifted from the word Story 1 actually committed.
 3. All other sections of the outline that already accurately reflect the shipped persona (the Slopfix hook, the cost narrative, the before/after code-example framing) are left unchanged — the diff is confined to the corrected CTA and any confirmed word-level drift, with no wholesale rewrite.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/29.0_anti_slop_persona/`_
 
 ## Technical Considerations
 

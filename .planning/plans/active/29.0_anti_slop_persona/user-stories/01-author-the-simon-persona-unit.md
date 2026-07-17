@@ -30,7 +30,15 @@
 - **Relevant:** This is the foundational artifact for the whole plan — the fixture test (Story 2) and the blog post's "install this persona" narrative (Story 3) both depend on `simon` existing and being schema-valid first.
 - **Time-bound:** Completed within this sprint's first work session, ahead of Story 2's fixture authoring.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-simon-yaml-schema-binding.md) | `simon.yaml` Strict Schema and Concrete Provider/Model Binding | Unit |
+| [01-02](../acceptance-criteria/01-02-simon-md-template-structure-focus.md) | `simon.md` Canonical Section Order, Template-Token Contract, and Anti-Slop Focus | Unit |
+| [01-03](../acceptance-criteria/01-03-simon-authoring-contract-consistency.md) | `simon` Unit is Self-Consistent with the Authoring Contract and Auto-Discovered by the Registry Test Suite | Integration |
+
+## Original Criteria Overview
 
 1. `personas/community/simon.yaml` decodes cleanly under strict schema validation, with a concrete non-placeholder `provider`/`model` binding and slug `simon` matching `^[a-z]+$`.
 2. `personas/community/simon.md` follows the canonical section order and template-token contract, includes the required vendor-guidance citation, and its `## Focus` section is hyper-focused on the four named anti-slop detection targets using a new, non-colliding category word.

@@ -38,7 +38,15 @@
 - **Relevant:** Without this registration, `simon` would be discoverable at runtime but structurally invisible to every automated test gate that proves community personas work, which would silently defeat the epic's own fixture-test acceptance criterion.
 - **Time-bound:** Completed within this story's execution window as the direct dependent step following Story 1's persona authoring, before the blog post story (Story 3) requires no code dependency but should not ship claiming a "tested" persona until this lands.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-fixture-patch-authoring.md) | Fixture Patch Authoring | Unit |
+| [02-02](../acceptance-criteria/02-02-community-roster-registration.md) | Community Roster Registration (`communityPersonas`) | Unit |
+| [02-03](../acceptance-criteria/02-03-index-registration-and-test-gate.md) | `index.json` Registration and Full Test-Gate Pass | Integration |
+
+## Original Criteria Overview
 
 1. `personas/community/testdata/simon_fixture.patch` is a valid unified diff sized to trigger `simon`'s slop-detection prompt without resembling legitimate business logic, following the format/naming convention of an existing fixture such as `anthony_fixture.patch`.
 2. `personas/community_test.go`'s `communityPersonas` roster contains a `simon` row with a `VendorToken` that is a case-insensitive substring of `simon.yaml`'s bound model id, and a `Category` value that is both unclaimed by any other roster entry and verbatim-present in `simon.md`.
@@ -65,4 +73,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/29.0_anti_slo
 ---
 
 **Created:** July 16, 2026 09:15:34PM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Defined
