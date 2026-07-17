@@ -6,7 +6,7 @@ Close the persona living-library flywheel by aggregating an opt-in, content-free
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/30.0_community_prompt_quality_signal/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/30.0_community_prompt_quality_signal/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/30.0_community_prompt_quality_signal/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/30.0_community_prompt_quality_signal/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/30.0_community_prompt_quality_signal/`
 

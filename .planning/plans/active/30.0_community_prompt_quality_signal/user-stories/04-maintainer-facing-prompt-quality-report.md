@@ -30,13 +30,20 @@
 - **Relevant:** Directly satisfies epic AC2 ("surfaced to the maintainer in a form that identifies over/under-reporting prompts, closing the loop to 19.8's drafting and 19.9's submissions").
 - **Time-bound:** Deliverable within the current sprint alongside the other four plan.md user story themes, gated only on Story 1's aggregation output existing.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-ranked-quality-report-rendering.md) | Ranked Per-Persona+Model Quality Report Rendering | Unit |
+| [04-02](../acceptance-criteria/04-02-content-free-privacy-guarantee.md) | Content-Free Privacy Guarantee on the Report Render Path | Unit |
+| [04-03](../acceptance-criteria/04-03-empty-aggregation-no-data-state.md) | Empty-Aggregation "No Data" State | Unit |
+| [04-04](../acceptance-criteria/04-04-distinct-subcommand-registration.md) | Distinct Subcommand Registration Alongside Existing `atcr report` | Unit |
+
+## Original Criteria Overview
 
 1. A new CLI subcommand renders the per-persona+model dismissed/confirmed counters (from Story 1's aggregation) ranked by dismissal rate, clearly surfacing the highest over-reporting and lowest under-reporting persona+model pairs.
 2. The report's output is limited to aggregate counters and persona+model identifiers only — never finding text, file paths, or code — verified by a test asserting the rendering path has no access to `reconcile`/`findings.json` content.
 3. An empty aggregation (no opted-in data collected yet) renders a clear "no data" state rather than erroring, panicking, or displaying a misleading empty table.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/30.0_community_prompt_quality_signal/`_
 
 ## Technical Considerations
 

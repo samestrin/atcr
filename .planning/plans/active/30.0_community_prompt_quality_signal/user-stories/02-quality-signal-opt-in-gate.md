@@ -30,13 +30,19 @@
 - **Relevant:** This is the consent mechanism the epic's AC1 depends on — without an independent, off-by-default gate, no downstream story (aggregation, preview, report) can be safely wired to a transmission path.
 - **Time-bound:** Completable within a single sprint phase alongside the other Theme stories, ahead of any story that wires an actual Send call site to this gate.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-quality-signal-off-by-default.md) | Quality Signal Resolves Disabled With No Env Var and No Persisted Config | Unit |
+| [02-02](../acceptance-criteria/02-02-independent-truth-table-no-shared-state.md) | Pure Four-Combination Gate, Independent of `telemetryGate`/`resolveSyncCloud` | Unit |
+| [02-03](../acceptance-criteria/02-03-config-set-quality-signal-persists.md) | `atcr config set quality_signal <bool>` Persists Atomically, Fails Safe on Corruption | Unit/Integration |
+
+## Original Criteria Overview
 
 1. With no `ATCR_QUALITY_SIGNAL` (or equivalent) env var set and no persisted `.atcr/config.yaml` `quality_signal` key, the gate resolves to disabled — quality-signal transmission never fires by default.
 2. The gate is implemented as a pure, total combining function with an exhaustive four-combination truth table (env enabled/disabled x config unset/true/false), unit-tested independently of `telemetryEnabled`'s existing tests, and never reads or is short-circuited by `telemetryGate()` or `resolveSyncCloud()` state.
 3. `atcr config set quality_signal <true|false>` persists the key to `.atcr/config.yaml` via the existing atomic mkdir-lock write path, leaving the `telemetry` key and all other config keys untouched; a malformed persisted value fails safe to disabled and surfaces as a loud error, never a silent re-enable.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/30.0_community_prompt_quality_signal/`_
 
 ## Technical Considerations
 

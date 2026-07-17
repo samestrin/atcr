@@ -33,13 +33,22 @@
 - **Relevant:** This aggregation is the sole data source every other story in this plan (opt-in gate wiring, preview, maintainer report) depends on; without a correct, deterministic per-persona+model counter set, none of those surfaces has anything trustworthy to gate, preview, or report.
 - **Time-bound:** Deliverable first within the sprint, ahead of Stories 3 and 4 which structurally depend on this story's aggregation output and payload type existing.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-per-persona-model-aggregation.md) | Per-(Persona, Model) Dismissed/Confirmed Aggregation | Unit |
+| [01-02](../acceptance-criteria/01-02-model-field-schema-bump-and-exclusion.md) | `Model` Field Schema Bump and Attribution-Incomplete Exclusion | Unit/Integration |
+| [01-03](../acceptance-criteria/01-03-multi-persona-reviewers-attribution.md) | Multi-Persona `Reviewers` Attribution Rule | Unit |
+| [01-04](../acceptance-criteria/01-04-append-only-record-fold-by-id.md) | Append-Only Record Fold by ID Before Aggregation | Unit |
+| [01-05](../acceptance-criteria/01-05-allowlisted-quality-signal-payload-type.md) | Allowlisted `quality_signal.go` Payload Type with Locking Regression Test | Unit |
+
+## Original Criteria Overview
 
 1. Given a set of local debt records with `wontfix`/`resolved` terminal statuses across multiple personas and models, the aggregation produces exactly one summed row per `(persona, model)` pair with correct dismissed and confirmed counts, sorted deterministically.
 2. Records lacking a resolvable model (schema v1, or any record where model attribution cannot be established) are excluded from per-model rows rather than corrupting counts with an empty/guessed model value, and a multi-persona `Reviewers` record attributes its outcome to every listed persona per a single documented rule.
 3. The new `internal/telemetry/quality_signal.go` payload type carries only an allowlisted, fixed field set (persona identifier, model, dismissed count, confirmed count) with a locking regression test — no code, file path, or finding-content field can be added without failing that test.
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/30.0_community_prompt_quality_signal/`_
 
 ## Technical Considerations
 

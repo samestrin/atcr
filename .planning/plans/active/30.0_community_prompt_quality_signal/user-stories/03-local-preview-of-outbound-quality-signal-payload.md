@@ -37,13 +37,19 @@
 - **Relevant:** Directly satisfies epic AC1's requirement for "a local preview [that] shows exactly what would be sent" — the trust mechanism the whole opt-in design depends on.
 - **Time-bound:** Completed within this sprint cycle alongside Stories 1 and 2, before the maintainer-facing report (Story 4) is implemented.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-preview-flag-prints-exact-payload.md) | `--preview` Flag Renders the Exact Outbound JSON Payload | Integration |
+| [03-02](../acceptance-criteria/03-02-preview-bypasses-network-and-optin-gate.md) | `--preview` Never Sends — No Network Call, Independent of Opt-In Gate State | Unit |
+| [03-03](../acceptance-criteria/03-03-preview-never-drifts-from-real-send.md) | Regression Test Locks `--preview` Output to the Real Send's Marshal Path | Unit |
+
+## Original Criteria Overview
 
 1. `--preview` is available on the command(s) that would otherwise transmit the quality signal, and prints the exact allowlisted JSON payload without sending it.
 2. `--preview` never opens a network connection or requires the opt-in gate to be enabled — it works identically whether opted in or not.
 3. A regression test proves the preview output is byte-for-byte the same shape (same struct, same marshal path) as what a real send would transmit, so the preview can never silently drift from reality.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/30.0_community_prompt_quality_signal/`_
 
 ## Technical Considerations
 

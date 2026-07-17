@@ -30,13 +30,21 @@
 - **Relevant:** Directly satisfies epic AC3's documentation requirement ("docs document the exact content-free telemetry contract... fields transmitted, opt-in mechanism, preview behavior, and the absolute no-code/no-finding-content line") and is the artifact a privacy-conscious maintainer or contributor reads before deciding to opt in.
 - **Time-bound:** Completable within the same sprint phase as, and immediately after, Stories 1-3 land (so the documented contract reflects shipped behavior, not a plan), ahead of `/sprint-complete`.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-document-quality-signal-field-allowlist.md) | Document the Quality-Signal Payload's Exact Field Allowlist | Manual (doc review) |
+| [05-02](../acceptance-criteria/05-02-document-optin-mechanism-and-preview-behavior.md) | Document the Independent Opt-In Mechanism and `--preview` Behavior | Manual (doc review) |
+| [05-03](../acceptance-criteria/05-03-document-privacy-guarantee-and-persona-hash-caveat.md) | State the Absolute No-Code/No-Finding-Content Guarantee and Restate the Persona-Hash Caveat | Manual (doc review) |
+
+## Original Criteria Overview
 
 1. `docs/telemetry.md` documents the exact allowlisted field set of the quality-signal payload (field name, type, meaning), matching `internal/telemetry/quality_signal.go` and its allowlist regression test with no discrepancy in either direction.
 2. `docs/telemetry.md` documents the independent opt-in mechanism (env var / `atcr config set` key from Story 2) as non-overriding with the existing `telemetry` and `--sync-cloud` gates, and documents the `--preview` flag's exact local-only rendering behavior from Story 3.
 3. `docs/telemetry.md` states the absolute no-code/no-finding-content guarantee for this payload explicitly (not only by cross-reference) and restates the `HashPersonaID` unsalted-hash/dictionary-attack caveat (TD-007) in the context of this payload's persona identifiers.
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/30.0_community_prompt_quality_signal/`_
+
 
 ## Technical Considerations
 
