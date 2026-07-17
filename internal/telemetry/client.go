@@ -70,6 +70,7 @@ type Client struct {
 	endpoint       string
 	httpClient     *http.Client
 	wg             sync.WaitGroup
+	sem            chan struct{} // bounds concurrent send goroutines (see maxInFlightSends)
 	requestTimeout time.Duration
 }
 
@@ -83,6 +84,7 @@ func New(endpoint string) *Client {
 	return &Client{
 		endpoint:       endpoint,
 		httpClient:     &http.Client{},
+		sem:            make(chan struct{}, maxInFlightSends),
 		requestTimeout: defaultRequestTimeout,
 	}
 }
@@ -105,12 +107,21 @@ func (c *Client) Send(ctx context.Context, ev Event) {
 	if c == nil || !isHTTPS(c.endpoint) {
 		return
 	}
+	// Non-blocking acquire: if maxInFlightSends are already running, drop this ping
+	// (best-effort) rather than block the caller or spawn an unbounded goroutine.
+	select {
+	case c.sem <- struct{}{}:
+	default:
+		log.FromContext(ctx).Debug("telemetry: send dropped (in-flight cap reached)")
+		return
+	}
 	c.wg.Add(1)
 	go c.send(ctx, ev)
 }
 
 func (c *Client) send(ctx context.Context, ev Event) {
 	defer c.wg.Done()
+	defer func() { <-c.sem }() // release the in-flight slot acquired in Send
 	defer func() {
 		if r := recover(); r != nil {
 			log.FromContext(ctx).Debug("telemetry: recovered from panic", "value", r)
