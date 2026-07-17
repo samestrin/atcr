@@ -1,6 +1,6 @@
 name: simon
 version: 1.0.0
-description: Claude Sonnet anti-slop reviewer targeting AI-generated code bloat and over-engineering
+description: Claude Sonnet anti-slop reviewer targeting AI-generated code bloat and over-engineering (balanced fast lens)
 provider: openrouter
 model: anthropic/claude-sonnet-5
 persona: simon
