@@ -74,14 +74,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] `go test ./internal/personas/... ./internal/registry/...` passes for `TestCommunityPersonas_StrictSchema/simon`, `TestCommunityPersonas_NoPlaceholderModel/simon`, `TestCommunityPersonas_HumanNames/simon`
-- [ ] No linting errors (`gofmt`/`go vet` clean on the new file's neighbors — YAML has no Go lint surface itself, but the embed and test files remain untouched and green)
-- [ ] Build succeeds (`go build ./...`) — `go:embed community/*.yaml` picks up the new file with no code change required
+- [x] `go test ./internal/personas/... ./internal/registry/...` passes for `TestCommunityPersonas_StrictSchema/simon`, `TestCommunityPersonas_NoPlaceholderModel/simon`, `TestCommunityPersonas_HumanNames/simon`
+- [x] No linting errors (`gofmt`/`go vet` clean on the new file's neighbors — YAML has no Go lint surface itself, but the embed and test files remain untouched and green)
+- [x] Build succeeds (`go build ./...`) — `go:embed community/*.yaml` picks up the new file with no code change required
 
 **Story-Specific:**
-- [ ] `personas/community/simon.yaml` contains exactly the allowed key set with no unknown fields
-- [ ] `provider: openrouter` and a concrete, non-placeholder `model` value are set
-- [ ] `name: simon` / file slug `simon` satisfies `^[a-z]+$` and is absent from `retiredRoleSlugs`
+- [x] `personas/community/simon.yaml` contains exactly the allowed key set with no unknown fields
+- [x] `provider: openrouter` and a concrete, non-placeholder `model` value are set
+- [x] `name: simon` / file slug `simon` satisfies `^[a-z]+$` and is absent from `retiredRoleSlugs`
 
 **Manual Review:**
 - [ ] Code reviewed and approved

@@ -83,15 +83,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] `go test ./internal/registry/...` passes `TestValidateFetchedPersonaPrompt_AllEmbeddedCommunityPersonasPass/simon` (subtest name derives from `t.Run` over `personas.CommunityNames()`, which now includes `simon`)
-- [ ] No linting errors (`gofmt`/`go vet` clean on unmodified Go test files; Markdown has no Go lint surface)
-- [ ] Build succeeds (`go build ./...`) — `go:embed community/*.md` picks up the new file automatically
+- [x] `go test ./internal/registry/...` passes `TestValidateFetchedPersonaPrompt_AllEmbeddedCommunityPersonasPass/simon` (subtest name derives from `t.Run` over `personas.CommunityNames()`, which now includes `simon`)
+- [x] No linting errors (`gofmt`/`go vet` clean on unmodified Go test files; Markdown has no Go lint surface)
+- [x] Build succeeds (`go build ./...`) — `go:embed community/*.md` picks up the new file automatically
 
 **Story-Specific:**
-- [ ] All six mandatory section headings present in canonical order, with the exact 7-column `## Output Format` contract
-- [ ] Only allow-listed bare template tokens plus one `{{if .ToolsEnabled}}...{{end}}` block are used; no range/with/template/define/pipeline/field-chain
-- [ ] `## Focus` numbered list covers all four named anti-slop targets and contains the verbatim word `bloat`, not colliding with any of the 13 already-claimed category words
-- [ ] Exactly one `<!-- vendor-guidance: ... -->` citation line, and rendered length stays well under 8192 bytes
+- [x] All six mandatory section headings present in canonical order, with the exact 7-column `## Output Format` contract
+- [x] Only allow-listed bare template tokens plus one `{{if .ToolsEnabled}}...{{end}}` block are used; no range/with/template/define/pipeline/field-chain
+- [x] `## Focus` numbered list covers all four named anti-slop targets and contains the verbatim word `bloat`, not colliding with any of the 13 already-claimed category words
+- [x] Exactly one `<!-- vendor-guidance: ... -->` citation line, and rendered length stays well under 8192 bytes
 
 **Manual Review:**
 - [ ] Code reviewed and approved

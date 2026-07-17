@@ -72,15 +72,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (N/A directly — this story adds no Go tests; confirms `go test ./personas/...` from Stories 1-2 is already green before this story starts)
-- [ ] No linting errors (markdown renders correctly; no broken code-fence syntax)
-- [ ] Build succeeds (no build step applies to a Markdown-only change)
+- [x] All tests passing (N/A directly — this story adds no Go tests; confirms `go test ./personas/...` from Stories 1-2 is already green before this story starts)
+- [x] No linting errors (markdown renders correctly; no broken code-fence syntax)
+- [x] Build succeeds (no build step applies to a Markdown-only change)
 
 **Story-Specific:**
-- [ ] The category word used in outline sections 1, 3, and 4 matches `simon.md`'s shipped `## Focus` section verbatim
-- [ ] Section 3's description of `simon`'s behavior does not contradict the shipped `## Focus`/`## Scope` content
-- [ ] A diff of the outline file shows changes confined to the CTA (AC 03-01) and any confirmed word-level drift — sections 1's hook, 2, and 4's example scaffold are otherwise unchanged
-- [ ] Stories 1 and 2 are confirmed complete (persona files exist, roster/index registration green) before this AC is executed
+- [x] The category word used in outline sections 1, 3, and 4 matches `simon.md`'s shipped `## Focus` section verbatim
+- [x] Section 3's description of `simon`'s behavior does not contradict the shipped `## Focus`/`## Scope` content
+- [x] A diff of the outline file shows changes confined to the CTA (AC 03-01) and any confirmed word-level drift — sections 1's hook, 2, and 4's example scaffold are otherwise unchanged
+- [x] Stories 1 and 2 are confirmed complete (persona files exist, roster/index registration green) before this AC is executed
 
 **Manual Review:**
 - [ ] Code reviewed and approved

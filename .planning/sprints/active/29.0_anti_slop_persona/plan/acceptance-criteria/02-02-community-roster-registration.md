@@ -85,15 +85,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `communityPersonas` in `personas/community_test.go` contains exactly one `simon` row with `Slug: "simon"`
-- [ ] `Category` value is unclaimed by any of the other 13 roster entries and appears verbatim (case-insensitive) in `personas/community/simon.md`
-- [ ] `VendorToken` value is a lowercase, case-insensitive substring of `simon.yaml`'s `model` field
-- [ ] `TestCommunityAccessors`, `TestCommunityPersonas_FixtureAndPromptCategory`, and `TestCommunityPersonas_DistinctCategories` all pass with `simon` included
+- [x] `communityPersonas` in `personas/community_test.go` contains exactly one `simon` row with `Slug: "simon"`
+- [x] `Category` value is unclaimed by any of the other 13 roster entries and appears verbatim (case-insensitive) in `personas/community/simon.md`
+- [x] `VendorToken` value is a lowercase, case-insensitive substring of `simon.yaml`'s `model` field
+- [x] `TestCommunityAccessors`, `TestCommunityPersonas_FixtureAndPromptCategory`, and `TestCommunityPersonas_DistinctCategories` all pass with `simon` included
 
 **Manual Review:**
 - [ ] Code reviewed and approved

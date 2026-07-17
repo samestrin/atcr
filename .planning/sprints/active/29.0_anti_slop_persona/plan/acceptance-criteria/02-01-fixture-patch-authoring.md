@@ -73,15 +73,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `personas/community/testdata/simon_fixture.patch` exists and is a syntactically valid unified diff
-- [ ] The diff plants exactly one unambiguous anti-slop violation (unnecessary single-implementation interface, or tautological/apologetic comment) distinct from all 13 existing fixture categories
-- [ ] `TestTemplateFixtureRunner_CommunityPersonasPass` reports `HasFixture: true` and `Total == Passed == 1` for `simon`
-- [ ] `TestCommunityPersonas_FixtureAndPromptCategory` renders `simon`'s prompt against this fixture with no leftover `{{`/`}}` actions
+- [x] `personas/community/testdata/simon_fixture.patch` exists and is a syntactically valid unified diff
+- [x] The diff plants exactly one unambiguous anti-slop violation (unnecessary single-implementation interface, or tautological/apologetic comment) distinct from all 13 existing fixture categories
+- [x] `TestTemplateFixtureRunner_CommunityPersonasPass` reports `HasFixture: true` and `Total == Passed == 1` for `simon`
+- [x] `TestCommunityPersonas_FixtureAndPromptCategory` renders `simon`'s prompt against this fixture with no leftover `{{`/`}}` actions
 
 **Manual Review:**
 - [ ] Code reviewed and approved

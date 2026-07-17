@@ -263,7 +263,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 > Read-only verification pass against the Phase 1-2 shipped artifacts, followed by a scoped corrective edit: replace the invalid `atcr review --persona simon` CTA with the verified `atcr personas install simon` / `atcr personas test simon` commands, and reconcile any category-word or persona-behavior drift in sections 1, 3, and 4. No new authorship; sections 2 and the already-accurate hook/pitch/example structure are left untouched. No automated Go test coverage applies (content-only file) — verification is manual + scripted grep, per `plan/test-planning-matrix.md`.
 
-### 3.1 [ ] **[Verify and Refresh the Blog Post Outline - Verify & Edit](plan/user-stories/03-verify-and-refresh-the-blog-post-outline.md)**
+### 3.1 [x] **[Verify and Refresh the Blog Post Outline - Verify & Edit](plan/user-stories/03-verify-and-refresh-the-blog-post-outline.md)**
    **Task:** Review `.planning/product/content/blog/slopfix-ai-code-bloat.md` against the final shipped `simon.yaml`/`simon.md` (Phase 1) and registered fixture/roster/index (Phase 2); correct any drift.
    **Priority:** Medium | **Effort:** S | **AC:** [03-01](plan/acceptance-criteria/03-01-cta-command-fix.md), [03-02](plan/acceptance-criteria/03-02-category-word-framing-alignment.md)
    1. `grep -n '\-\-persona simon\|review --persona' .planning/product/content/blog/slopfix-ai-code-bloat.md` — confirm the invalid CTA location (approx. line 38).
@@ -274,7 +274,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    **Success Criteria:** Zero `--persona simon` references; ≥1 `atcr personas install/test simon` reference; category word matches `simon.md` verbatim.
    **Files:** `.planning/product/content/blog/slopfix-ai-code-bloat.md` | **Duration:** ~2 hrs
 
-### 3.1.A [ ] **[Verify and Refresh the Blog Post Outline - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-verify-and-refresh-the-blog-post-outline.md)**
+### 3.1.A [x] **[Verify and Refresh the Blog Post Outline - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-verify-and-refresh-the-blog-post-outline.md)**
    **Changed Files:** `.planning/product/content/blog/slopfix-ai-code-bloat.md`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.1 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -292,24 +292,17 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (fresh-context review):** None. All four dimensions verified against the shipped implementation — both CTA commands exist and resolve (`install simon` fetches `personas/community/simon.yaml`; `test simon` runs the embedded no-LLM fixture gate), category word `bloat` matches `simon.md`'s Focus/Role and `index.json` verbatim, no residual `--persona`/`atcr review` reference, framing (test=zero-setup demo, install=production/CI) consistent. Scope confined to the CTA.
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.2, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Taken:** Adversarial review passed — no CRITICAL/HIGH/MEDIUM/LOW. Proceeding to 3.2.
 
-### 3.2 [ ] **[Verify and Refresh the Blog Post Outline - Finalize](plan/user-stories/03-verify-and-refresh-the-blog-post-outline.md)**
+### 3.2 [x] **[Verify and Refresh the Blog Post Outline - Finalize](plan/user-stories/03-verify-and-refresh-the-blog-post-outline.md)**
    1. Fix CRITICAL/HIGH issues from 3.1.A (if any)
    2. Re-run the grep verification commands from 3.1 step 4 to confirm they still pass after any fixes
    3. COMMIT: `git commit -m "docs(content): address review findings in slopfix outline"` (only if changes were made)
    **Duration:** ~30 min
 
-### 3.3 [ ] **Phase 3 - Definition of Done**
+### 3.3 [x] **Phase 3 - Definition of Done**
    1. Zero `--persona simon` / `review --persona` references in the outline
    2. At least one `atcr personas install simon` or `atcr personas test simon` reference present
    3. Category-word framing matches `simon.md`'s shipped `## Focus` section
@@ -324,28 +317,28 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 > Run the complete 14-persona suite, manually smoke-check the CLI, re-verify the Jaccard differentiation ceiling, and confirm the blog outline's grep-verifiable claims.
 
-### 4.1 [ ] **Full Test-Suite Regression**
+### 4.1 [x] **Full Test-Suite Regression**
    1. Run `go test ./personas/... ./internal/personas/... ./internal/registry/...` — confirm the complete 14-persona suite is green (all roster, index, fixture, differentiation, category, and task-scoping gates).
    2. Run `go vet ./...` and `golangci-lint run` — confirm clean.
    3. Run `go build ./...` — confirm the build succeeds.
    **Duration:** ~1 hr
 
-### 4.2 [ ] **Cross-File Consistency & Differentiation Re-Check**
+### 4.2 [x] **Cross-File Consistency & Differentiation Re-Check**
    1. Manually run `atcr personas test simon` — confirm the no-LLM structural smoke check passes against `simon_fixture.patch`.
    2. Re-verify `simon`'s `## Role`+`## Focus` Jaccard similarity stays under the 0.85 ceiling against all 13 existing personas (`TestCommunityPersonas_Differentiation`).
    3. Confirm `simon.yaml`/`simon.md`/`index.json`/roster field parity holds with no drift introduced during Phases 1-3.
    **Duration:** ~1 hr
 
-### 4.3 [ ] **Blog Outline Claim Verification**
+### 4.3 [x] **Blog Outline Claim Verification**
    1. `grep -c '\-\-persona' .planning/product/content/blog/slopfix-ai-code-bloat.md` → expect 0.
    2. `grep -c 'atcr personas install simon\|atcr personas test simon' .planning/product/content/blog/slopfix-ai-code-bloat.md` → expect ≥1.
    **Duration:** ~15 min
 
 ### Validation Checklist
-- [ ] All tests passing (T3): `go test ./personas/... ./internal/personas/... ./internal/registry/...`
-- [ ] Coverage meets threshold (≥80% project baseline, per `.planning/.config/config.yaml`)
-- [ ] Lint/format clean (`golangci-lint run`, `go vet ./...`, `go fmt`/`goimports`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (T3): `go test ./personas/... ./internal/personas/... ./internal/registry/...`
+- [x] Coverage meets threshold (≥80% project baseline, per `.planning/.config/config.yaml`)
+- [x] Lint/format clean (`golangci-lint run`, `go vet ./...`, `go fmt`/`goimports`)
+- [x] Build succeeds (`go build ./...`)
 
 ### Optional: Targeted Mutation Testing
 

@@ -71,15 +71,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (N/A for this content-only story — no Go tests are added or modified; `go test ./personas/...` from Stories 1-2 remains green and untouched)
-- [ ] No linting errors (markdown renders correctly; no broken code-fence syntax)
-- [ ] Build succeeds (no build step applies to a Markdown-only change)
+- [x] All tests passing (N/A for this content-only story — no Go tests are added or modified; `go test ./personas/...` from Stories 1-2 remains green and untouched)
+- [x] No linting errors (markdown renders correctly; no broken code-fence syntax)
+- [x] Build succeeds (no build step applies to a Markdown-only change)
 
 **Story-Specific:**
-- [ ] `grep -- '--persona simon'` (and `review --persona`) over `slopfix-ai-code-bloat.md` returns zero matches
-- [ ] `grep 'atcr personas install simon\|atcr personas test simon'` over `slopfix-ai-code-bloat.md` returns at least one match
-- [ ] The corrected command form matches the pattern used in `docs/personas-install.md`'s worked examples
-- [ ] No other CTA content (link to GitHub repo, Quickstart guide reference) was altered
+- [x] `grep -- '--persona simon'` (and `review --persona`) over `slopfix-ai-code-bloat.md` returns zero matches
+- [x] `grep 'atcr personas install simon\|atcr personas test simon'` over `slopfix-ai-code-bloat.md` returns at least one match
+- [x] The corrected command form matches the pattern used in `docs/personas-install.md`'s worked examples
+- [x] No other CTA content (link to GitHub repo, Quickstart guide reference) was altered
 
 **Manual Review:**
 - [ ] Code reviewed and approved

@@ -90,15 +90,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `personas/community/index.json` contains exactly one `simon` entry with `name`/`path`/`provider`/`model`/`description` byte-matching `simon.yaml`, and non-empty `tasks`/`tags`
-- [ ] `tasks[0]` is a fresh primary task tag not among the 13 already-claimed values (e.g. `bloat-review`)
-- [ ] `go test ./personas/... ./internal/personas/... ./internal/registry/...` passes with zero failures
-- [ ] `atcr personas test simon` succeeds manually as a no-LLM structural proof
+- [x] `personas/community/index.json` contains exactly one `simon` entry with `name`/`path`/`provider`/`model`/`description` byte-matching `simon.yaml`, and non-empty `tasks`/`tags`
+- [x] `tasks[0]` is a fresh primary task tag not among the 13 already-claimed values (e.g. `bloat-review`)
+- [x] `go test ./personas/... ./internal/personas/... ./internal/registry/...` passes with zero failures
+- [x] `atcr personas test simon` succeeds manually as a no-LLM structural proof
 
 **Manual Review:**
 - [ ] Code reviewed and approved

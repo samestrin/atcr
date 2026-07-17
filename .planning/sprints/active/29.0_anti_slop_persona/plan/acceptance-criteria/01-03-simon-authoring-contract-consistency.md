@@ -79,14 +79,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] `go test ./internal/personas/... ./internal/registry/...` run in full; the specific `simon` subtests of `TestCommunityPersonas_StrictSchema`, `TestCommunityPersonas_NoPlaceholderModel`, `TestCommunityPersonas_HumanNames`, `TestPinnedModelIsLockZeroMigration`, `TestValidateFetchedPersonaPrompt_AllEmbeddedCommunityPersonasPass` pass
-- [ ] No linting errors (`gofmt`/`go vet` clean — no Go source is added or modified by this story)
-- [ ] Build succeeds (`go build ./...`)
+- [x] `go test ./internal/personas/... ./internal/registry/...` run in full; the specific `simon` subtests of `TestCommunityPersonas_StrictSchema`, `TestCommunityPersonas_NoPlaceholderModel`, `TestCommunityPersonas_HumanNames`, `TestPinnedModelIsLockZeroMigration`, `TestValidateFetchedPersonaPrompt_AllEmbeddedCommunityPersonasPass` pass
+- [x] No linting errors (`gofmt`/`go vet` clean — no Go source is added or modified by this story)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `personas.CommunityNames()` includes `"simon"` with zero edits to `community.go`, `community_test.go`, or `index.json`
-- [ ] `simon.yaml` and `simon.md` resolve as a matched pair via `CommunityGet("simon")` / `CommunityModel("simon")`
-- [ ] The two fixture-dependent subtests (`TestTemplateFixtureRunner_CommunityPersonasPass/simon`, `TestRunFixture_CommunityAssertsBoundModel/simon`) are confirmed to fail for the expected reason (missing fixture) and this gap is explicitly logged as deferred to Story 2, not silently ignored
+- [x] `personas.CommunityNames()` includes `"simon"` with zero edits to `community.go`, `community_test.go`, or `index.json`
+- [x] `simon.yaml` and `simon.md` resolve as a matched pair via `CommunityGet("simon")` / `CommunityModel("simon")`
+- [x] The two fixture-dependent subtests (`TestTemplateFixtureRunner_CommunityPersonasPass/simon`, `TestRunFixture_CommunityAssertsBoundModel/simon`) are confirmed to fail for the expected reason (missing fixture) and this gap is explicitly logged as deferred to Story 2, not silently ignored
 
 **Manual Review:**
 - [ ] Code reviewed and approved
