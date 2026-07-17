@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,9 +45,10 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
 	}
 }
 
-func TestRootCmd_HasExactlyTwentyThreeSubcommands(t *testing.T) {
+func TestRootCmd_HasExactlyTwentyFourSubcommands(t *testing.T) {
 	// The twenty-two prior commands plus `config`, the project-config mutation
-	// namespace whose only key today is the telemetry opt-out (Sprint 28.0).
+	// namespace (Sprint 28.0), plus `quality-report`, the maintainer-facing
+	// community prompt quality signal (Sprint 30.0).
 	root := newRootCmd()
 	names := map[string]bool{}
 	for _, c := range root.Commands() {
@@ -54,8 +57,8 @@ func TestRootCmd_HasExactlyTwentyThreeSubcommands(t *testing.T) {
 		}
 		names[c.Name()] = true
 	}
-	assert.Len(t, names, 23)
-	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "models", "debt", "history", "audit-report", "version", "config"} {
+	assert.Len(t, names, 24)
+	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "quality-report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "models", "debt", "history", "audit-report", "version", "config"} {
 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
 	}
 }
@@ -306,6 +309,47 @@ func TestHandleSignals_ForceExitsAfterGracePeriod(t *testing.T) {
 	require.Eventually(t, func() bool { return atomic.LoadInt32(code) == 1 }, time.Second, 5*time.Millisecond)
 	assert.Equal(t, int32(1), atomic.LoadInt32(code), "AC7: force-exit code 1 after grace period")
 	assert.Contains(t, buf.String(), "forcing exit", "AC7: timeout notice printed")
+}
+
+// TestCommandTree_QualityReportDistinctFromReport covers AC 04-04: the new
+// quality-report subcommand is a structurally independent command registered
+// alongside `atcr report`, with a distinct name and its own RunE (not a wrapper or
+// alias of newReportCmd/runReport), and its help cross-references `atcr report` so
+// the two are not confused. `atcr report`'s own definition is left untouched (its
+// Short is byte-identical to before this story — the story's explicit
+// MUST-NOT-modify constraint on report.go).
+func TestCommandTree_QualityReportDistinctFromReport(t *testing.T) {
+	root := newRootCmd()
+	var reportCmd, qualityCmd *cobra.Command
+	for _, c := range root.Commands() {
+		switch c.Name() {
+		case "report":
+			reportCmd = c
+		case "quality-report":
+			qualityCmd = c
+		}
+	}
+	require.NotNil(t, reportCmd, "report must remain registered")
+	require.NotNil(t, qualityCmd, "quality-report must be registered")
+
+	assert.NotSame(t, reportCmd, qualityCmd, "distinct *cobra.Command instances")
+	assert.NotEqual(t, reportCmd.Name(), qualityCmd.Name(), "distinct Use names, no collision")
+	require.NotNil(t, qualityCmd.RunE, "quality-report must define its own RunE")
+
+	// report.go MUST NOT be modified: its Short stays byte-identical.
+	assert.Equal(t, "Render md, json, checklist, or sarif views over reconciled findings", reportCmd.Short,
+		"atcr report's Short must be unchanged by this story")
+
+	// The new command's help cross-references `atcr report` to prevent confusion.
+	qualityHelp := strings.ToLower(qualityCmd.Short + " " + qualityCmd.Long)
+	assert.Contains(t, qualityHelp, "report", "quality-report help must reference atcr report")
+
+	// No name collision with any existing registered subcommand.
+	seen := map[string]int{}
+	for _, c := range root.Commands() {
+		seen[c.Name()]++
+	}
+	assert.Equal(t, 1, seen["quality-report"], "quality-report name must not collide")
 }
 
 func TestRootCmd_SubcommandsUseRunE(t *testing.T) {

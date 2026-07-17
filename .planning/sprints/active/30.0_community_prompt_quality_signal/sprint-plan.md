@@ -798,7 +798,7 @@ Use the Agent tool:
 
 ---
 
-### 4.1 [ ] **[Maintainer-Facing Report — RED](plan/user-stories/04-maintainer-facing-prompt-quality-report.md)**
+### 4.1 [x] **[Maintainer-Facing Report — RED](plan/user-stories/04-maintainer-facing-prompt-quality-report.md)**
 
 **AC:** 04-01, 04-02, 04-03, 04-04
 
@@ -823,7 +823,7 @@ Use the Agent tool:
 
 ---
 
-### 4.2 [ ] **[Maintainer-Facing Report — GREEN](plan/user-stories/04-maintainer-facing-prompt-quality-report.md)**
+### 4.2 [x] **[Maintainer-Facing Report — GREEN](plan/user-stories/04-maintainer-facing-prompt-quality-report.md)**
 
 1. Create `cmd/atcr/telemetry_report.go`: `newQualityReportCmd()`/`runQualityReport()` — `localdebt.ReadAll` + `AggregateQualitySignal`, rank by dismissal rate (`Dismissed / (Dismissed + Confirmed)`) descending, tie-break persona then model ascending; `--format md|json`; `len(rows) == 0` guard renders a clear "no data" message (exit 0) in both formats, distinct from a genuine read error (exit 1)
 2. Register the new subcommand in `cmd/atcr/main.go`'s `root.AddCommand(...)` alongside `newReportCmd()`, with cross-referencing `Short`/`Long` help text

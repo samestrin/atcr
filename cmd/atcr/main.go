@@ -215,6 +215,7 @@ func newRootCmd() *cobra.Command {
 		newVerifyCmd(),
 		newDebateCmd(),
 		newReportCmd(),
+		newQualityReportCmd(),
 		newGithubCmd(),
 		newRangeCmd(),
 		newStatusCmd(),
