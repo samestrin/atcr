@@ -409,6 +409,21 @@ func TestCommunityIndex_Registration(t *testing.T) {
 	}
 }
 
+// TestCommunityIndex_CloudPersonaTagArity guards the roster tag schema: cloud
+// (openrouter) personas carry exactly 4 tags — [primary, secondary, vendor-token,
+// pool-class] — while only local personas add a 5th hardware-tier tag. Without
+// this guard an off-schema 5-tag cloud entry ships silently and muddies tag
+// discovery (the simon "over-engineering" drift).
+func TestCommunityIndex_CloudPersonaTagArity(t *testing.T) {
+	for _, e := range readCommunityIndex(t) {
+		if e.Provider == "local" {
+			continue
+		}
+		require.Lenf(t, e.Tags, 4,
+			"cloud persona %q must carry exactly 4 tags [primary, secondary, vendor-token, pool-class], got %v", e.Name, e.Tags)
+	}
+}
+
 // TestCommunityPersonas_PromptStructure enforces the AC 04-03 source-text
 // contract on every persona template (Scenarios 2, 3, 5): all required template
 // tokens are literally present (a render can't catch an omitted token), the
