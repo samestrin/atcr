@@ -441,6 +441,35 @@ func TestCommunityIndex_DescriptionLensDescriptor(t *testing.T) {
 	}
 }
 
+// hunkHeaderRe parses a unified-diff hunk header, capturing the optional
+// trailing section context (the function/package name git emits after the
+// second @@).
+var hunkHeaderRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@\s*(.*)$`)
+
+// TestCommunityFixtures_HunkSectionContext enforces the fixture house style:
+// every hunk header carries trailing section context (e.g. "@@ -3,6 +3,13 @@
+// package order") so the planted diff reads like a real git diff. simon's
+// fixture shipped a bare "@@ -1,3 +1,20 @@" — the only header without it.
+func TestCommunityFixtures_HunkSectionContext(t *testing.T) {
+	for _, p := range communityPersonas {
+		t.Run(p.Slug, func(t *testing.T) {
+			raw, err := os.ReadFile(communityPath("testdata", p.Slug+"_fixture.patch"))
+			require.NoErrorf(t, err, "read fixture for %q", p.Slug)
+			var hunks int
+			for _, line := range strings.Split(string(raw), "\n") {
+				m := hunkHeaderRe.FindStringSubmatch(line)
+				if m == nil {
+					continue
+				}
+				hunks++
+				require.NotEmptyf(t, strings.TrimSpace(m[1]),
+					"persona %q fixture hunk header must carry trailing section context: %q", p.Slug, line)
+			}
+			require.NotZerof(t, hunks, "persona %q fixture must contain at least one hunk header", p.Slug)
+		})
+	}
+}
+
 // TestCommunityPersonas_PromptStructure enforces the AC 04-03 source-text
 // contract on every persona template (Scenarios 2, 3, 5): all required template
 // tokens are literally present (a render can't catch an omitted token), the
