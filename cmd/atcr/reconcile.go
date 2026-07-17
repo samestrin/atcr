@@ -252,6 +252,22 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 	// provenance line up across the two ledgers; the ts is the same reconcile
 	// timestamp (deterministic, no second clock read).
 	runID := res.Summary.ReconciledAt + "-" + filepath.Base(reviewDir)
+
+	// Resolve each finding's model from the fan-out pool summary's per-agent
+	// AgentStatus.Model (schema v2, Sprint 30.0), mirroring EmitForReconcile's
+	// reviewer->model mapping. Best-effort: a missing/unreadable summary leaves the
+	// map empty and records persist with Model == "" (attribution-incomplete), which
+	// the quality-signal aggregation excludes from per-model rows rather than
+	// mis-bucketing under an empty model.
+	modelByReviewer := map[string]string{}
+	if ps, err := fanout.ReadPoolSummary(reviewDir); err == nil {
+		for _, a := range ps.Agents {
+			if a.Model != "" {
+				modelByReviewer[a.Agent] = a.Model
+			}
+		}
+	}
+
 	for _, f := range findings {
 		// Apply the same exclusions the gate uses (internal/reconcile/gate.go
 		// IsFailing): out-of-scope findings and refuted verdicts never persist,
@@ -282,6 +298,7 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 			Evidence:      f.Evidence,
 			Reviewers:     f.Reviewers,
 			Confidence:    f.Confidence,
+			Model:         resolveRecordModel(f.Reviewers, modelByReviewer),
 			Justification: f.Justification,
 		}
 		if f.SourceReport != nil {
@@ -302,6 +319,22 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 			_, _ = fmt.Fprintf(diag, "localdebt: append failed: %v\n", err)
 		}
 	}
+}
+
+// resolveRecordModel picks the model to attribute to a persisted local-debt
+// record from its reviewers and the fan-out's reviewer->model map (Sprint 30.0,
+// schema v2). It returns the first non-empty model among the record's reviewers
+// in listed order, so a single-model run is unambiguous and a multi-reviewer
+// merged finding gets a deterministic model; it returns "" when no reviewer has a
+// resolvable model (attribution-incomplete), which the quality-signal aggregation
+// excludes from per-model rows.
+func resolveRecordModel(reviewers []string, modelByReviewer map[string]string) string {
+	for _, rev := range reviewers {
+		if m := modelByReviewer[rev]; m != "" {
+			return m
+		}
+	}
+	return ""
 }
 
 // gateFlagValue reads the --fail-on flag and trims it, so both threshold

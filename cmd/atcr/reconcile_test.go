@@ -515,6 +515,34 @@ func TestRunReconcile_LocalDebtAccumulatesAcrossRuns(t *testing.T) {
 		"second run accumulates additively (2 + 3), not overwrites")
 }
 
+// TestPersistLocalDebt_PopulatesModelFromAgentStatus covers Sprint 30.0 AC
+// 01-02 Scenario 1: persistLocalDebt copies the model bound to a finding's
+// reviewer (from the fan-out pool summary's AgentStatus.Model) onto the persisted
+// record, and stamps it schema v2. The reviewer "host" is bound to
+// "claude-sonnet-4-6" in the pool summary, so the record's Model must carry it.
+func TestPersistLocalDebt_PopulatesModelFromAgentStatus(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
+	})
+	// Bind reviewer "host" to a concrete model in the pool summary. Written
+	// directly (not via fixtureReview, which prepends a findings header that would
+	// corrupt the JSON), mirroring writePoolSummary.
+	poolDir := filepath.Join(".atcr", "reviews", "r", "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	summary := `{"agents":[{"agent":"host","model":"claude-sonnet-4-6","tokens_in":200,"tokens_out":60,"duration_ms":1200}],"total":1,"succeeded":1}`
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "summary.json"), []byte(summary), 0o644))
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "claude-sonnet-4-6", recs[0].Model,
+		"persistLocalDebt must populate Model from the pool summary's AgentStatus.Model")
+	assert.Equal(t, 2, recs[0].SchemaVersion, "the persisted record is stamped schema v2")
+}
+
 // TestRunReconcile_LocalDebtDedupsSameFinding covers AC 02-03 Scenario 2:
 // re-running reconcile on the same review dir with unchanged findings does not
 // duplicate records (write-time dedup by FindingID over full-history ReadAll).

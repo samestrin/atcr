@@ -1,12 +1,22 @@
 package localdebt
 
-import "github.com/samestrin/atcr/internal/history"
+import (
+	"strings"
+
+	"github.com/samestrin/atcr/internal/history"
+)
 
 // SchemaVersion is the local TD record schema version. It is emitted as an integer
 // on every record so the format can evolve independently; a future
 // backward-incompatible change increments this and older records stay readable
 // while forward-incompatible (newer) records are skipped on read.
-const SchemaVersion = 1
+//
+// v1 -> v2 (Sprint 30.0): adds the optional Model attribution field. The bump is
+// backward-compatible on read — a v1 record has no "model" key and decodes with
+// Model == "" — and forward-compatible in the established sense: this reader
+// accepts v1 and v2 (r.SchemaVersion <= SchemaVersion), while v3+ records stay
+// forward-incompatible and are skipped with a warning (store.go decodeRecord).
+const SchemaVersion = 2
 
 // Diagnostic message substrings emitted on the read path, exported so tests assert
 // against the same literal the producer emits: a reword updates this one constant
@@ -37,6 +47,17 @@ type Record struct {
 	Reviewers     []string `json:"reviewers"`
 	Confidence    string   `json:"confidence"`
 
+	// Model is the provider+model slug (e.g. "claude-sonnet-4-6") that produced
+	// this finding, added in schema v2 for per-(persona, model) quality-signal
+	// aggregation (Sprint 30.0). It is populated at write time by persistLocalDebt
+	// from the fan-out pool summary's AgentStatus.Model. omitempty keeps it absent
+	// from v1 records and from v2 records whose model attribution could not be
+	// resolved; such attribution-incomplete records are excluded from per-model
+	// aggregation rows rather than bucketed under an empty model. A model slug is a
+	// non-PII, publicly-known catalog identifier (see internal/scorecard/telemetry.go),
+	// never code/path/finding content.
+	Model string `json:"model,omitempty"`
+
 	Justification string        `json:"justification,omitempty"`
 	SourceReport  *SourceReport `json:"source_report,omitempty"`
 	Status        string        `json:"status,omitempty"`
@@ -60,4 +81,38 @@ type SourceReport struct {
 // empty problem string.
 func (r *Record) StampID() {
 	r.ID = history.FindingID(r.File, r.Line, r.Problem)
+}
+
+// IsClosedStatus reports whether a record's status takes an item out of the open
+// backlog. Both resolved and wontfix/deferred terminal statuses are closed.
+func IsClosedStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "resolved", "deferred", "wontfix":
+		return true
+	default:
+		return false
+	}
+}
+
+// ClosedStatusRank orders terminal statuses so a deterministic effective status can
+// be chosen when divergent terminal records exist for one id.
+func ClosedStatusRank(status string) int {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "wontfix":
+		return 3
+	case "resolved":
+		return 2
+	case "deferred":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// HigherClosedStatus returns whichever of the two terminal statuses ranks higher.
+func HigherClosedStatus(current, candidate string) string {
+	if ClosedStatusRank(candidate) > ClosedStatusRank(current) {
+		return candidate
+	}
+	return current
 }
