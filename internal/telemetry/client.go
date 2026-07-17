@@ -114,11 +114,7 @@ func (c *Client) send(ctx context.Context, ev Event) {
 		return
 	}
 
-	timeout := c.requestTimeout
-	if timeout == 0 {
-		timeout = defaultRequestTimeout
-	}
-	reqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	reqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.requestTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint, bytes.NewReader(body))
