@@ -424,6 +424,23 @@ func TestCommunityIndex_CloudPersonaTagArity(t *testing.T) {
 	}
 }
 
+// TestCommunityIndex_DescriptionLensDescriptor enforces the curated house style:
+// persona descriptions end with a parenthetical lens descriptor — "(balanced fast
+// lens)", "(deep-reasoning lens)", etc. gene is the one documented pre-existing
+// exemption; any NEW omission (the simon drift) fails here instead of shipping
+// silently. The yaml↔index parity gate in TestCommunityIndex_Registration covers
+// the mirrored copy, so asserting the index side is sufficient.
+func TestCommunityIndex_DescriptionLensDescriptor(t *testing.T) {
+	exempt := map[string]bool{"gene": true} // pre-existing omission, out of scope
+	for _, e := range readCommunityIndex(t) {
+		if exempt[e.Name] {
+			continue
+		}
+		require.Truef(t, strings.HasSuffix(e.Description, " lens)"),
+			"persona %q description must end with a parenthetical lens descriptor, got %q", e.Name, e.Description)
+	}
+}
+
 // TestCommunityPersonas_PromptStructure enforces the AC 04-03 source-text
 // contract on every persona template (Scenarios 2, 3, 5): all required template
 // tokens are literally present (a render can't catch an omitted token), the
