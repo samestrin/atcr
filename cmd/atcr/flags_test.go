@@ -56,3 +56,25 @@ func TestAddSyncCloudFlags_PreservesPriorPreRunE(t *testing.T) {
 	require.Error(t, err, "addRangeFlags PreRunE must survive addSyncCloudFlags")
 	assert.Equal(t, exitUsage, exitCode(err))
 }
+
+// TestAddRangeFlags_ChainOrderPrevFirst pins the chain-order invariant shared
+// with addSyncCloudFlags: a previously-installed PreRunE runs BEFORE
+// addRangeFlags' own validation (prev-first — hooks run in installation order),
+// so a command installing both helpers sees one deterministic order instead of
+// the opposite orderings the two helpers used historically.
+func TestAddRangeFlags_ChainOrderPrevFirst(t *testing.T) {
+	cmd := &cobra.Command{Use: "probe"}
+	ran := false
+	cmd.PreRunE = func(_ *cobra.Command, _ []string) error {
+		ran = true
+		return nil
+	}
+	addRangeFlags(cmd)
+	require.NoError(t, cmd.ParseFlags([]string{"--head", "x"})) // invalid: --head requires --base
+	require.NotNil(t, cmd.PreRunE)
+
+	err := cmd.PreRunE(cmd, nil)
+	require.Error(t, err, "range validation must still fire after the prev hook")
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.True(t, ran, "prev hook must run before addRangeFlags' own validation (prev-first invariant)")
+}
