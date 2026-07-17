@@ -89,7 +89,8 @@ func SetTelemetrySetting(root string, enabled bool) error {
 		// flips the name atomically. Rename alone only atomizes the name swap — fsync
 		// of the temp's data and the parent dir is what makes the write durable across
 		// a crash; without it a crash can leave the renamed file's blocks un-persisted.
-		// Mirrors the trust-store write (trust.go).
+		// This write hardens beyond the trust-store write (trust.go Save), which is
+		// Chmod/Write/Close/Rename only — no temp fsync, no dir fsync.
 		tmp, err := os.CreateTemp(dir, ".config-*.tmp")
 		if err != nil {
 			return fmt.Errorf("create %s temp: %w", filepath.Base(path), err)
