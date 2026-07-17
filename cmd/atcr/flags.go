@@ -18,16 +18,18 @@ func addRangeFlags(cmd *cobra.Command) {
 	cmd.Flags().String("head", "", "head ref for the review range")
 	cmd.Flags().String("merge-commit", "", "merge commit SHA (base = SHA^ first parent, head = SHA)")
 	// Chain rather than assign: a later phase may install its own PreRunE,
-	// and neither hook may silently vanish.
+	// and neither hook may silently vanish. The invariant is prev-first —
+	// a previously-installed hook runs before this helper's own validation,
+	// matching addSyncCloudFlags, so a command that installs both helpers
+	// sees hooks fire in installation order (earlier-installed first).
 	prev := cmd.PreRunE
 	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
-		if err := validateRangeFlags(cmd); err != nil {
-			return err
-		}
 		if prev != nil {
-			return prev(cmd, args)
+			if err := prev(cmd, args); err != nil {
+				return err
+			}
 		}
-		return nil
+		return validateRangeFlags(cmd)
 	}
 }
 
@@ -49,8 +51,9 @@ const defaultCloudEndpoint = "https://atcr.dev/dashboard"
 // override (Story 4) on cmd. --cloud-endpoint's well-formedness and the presence
 // of ATCR_API_KEY are validated at run time (resolveSyncCloud), not at flag-parse
 // time, to keep this helper narrowly scoped to wiring (AC 04-01). The PreRunE is
-// chained (not assigned), matching addRangeFlags, so a prior hook (review and
-// reconcile both also register range flags) is never silently overwritten and a
+// chained prev-first (not assigned), matching addRangeFlags, so a prior hook
+// (review and reconcile both also register range flags) is never silently
+// overwritten, hooks fire in installation order (earlier-installed first), and a
 // future --sync-cloud precondition can slot in without clobbering it.
 func addSyncCloudFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("sync-cloud", false, "after the run, push the anonymized scorecard to the cloud dashboard (requires ATCR_API_KEY)")
