@@ -128,6 +128,7 @@ var communityPersonas = []communityPersona{
 	{Slug: "gerald", VendorToken: "gemma", Category: "secret"},
 	{Slug: "orson", VendorToken: "qwen", Category: "duplication"},
 	{Slug: "liam", VendorToken: "llama", Category: "invariant"},
+	{Slug: "simon", VendorToken: "claude", Category: "bloat"},
 }
 
 const communityDir = "community"
@@ -404,6 +405,89 @@ func TestCommunityIndex_Registration(t *testing.T) {
 				}
 			}
 			require.Truef(t, found, "persona %q must be discoverable via its model vendor token %q", p.Slug, p.VendorToken)
+		})
+	}
+}
+
+// TestCommunityIndex_CloudPersonaTagArity guards the roster tag schema: cloud
+// (openrouter) personas carry exactly 4 tags — [primary, secondary, vendor-token,
+// pool-class] — while only local personas add a 5th hardware-tier tag. Without
+// this guard an off-schema 5-tag cloud entry ships silently and muddies tag
+// discovery (the simon "over-engineering" drift).
+func TestCommunityIndex_CloudPersonaTagArity(t *testing.T) {
+	for _, e := range readCommunityIndex(t) {
+		if e.Provider == "local" {
+			continue
+		}
+		require.Lenf(t, e.Tags, 4,
+			"cloud persona %q must carry exactly 4 tags [primary, secondary, vendor-token, pool-class], got %v", e.Name, e.Tags)
+	}
+}
+
+// TestCommunityIndex_DescriptionLensDescriptor enforces the curated house style:
+// persona descriptions end with a parenthetical lens descriptor — "(balanced fast
+// lens)", "(deep-reasoning lens)", etc. gene is the one documented pre-existing
+// exemption; any NEW omission (the simon drift) fails here instead of shipping
+// silently. The yaml↔index parity gate in TestCommunityIndex_Registration covers
+// the mirrored copy, so asserting the index side is sufficient.
+func TestCommunityIndex_DescriptionLensDescriptor(t *testing.T) {
+	exempt := map[string]bool{"gene": true} // pre-existing omission, out of scope
+	for _, e := range readCommunityIndex(t) {
+		if exempt[e.Name] {
+			continue
+		}
+		require.Truef(t, strings.HasSuffix(e.Description, " lens)"),
+			"persona %q description must end with a parenthetical lens descriptor, got %q", e.Name, e.Description)
+	}
+}
+
+// hunkHeaderRe parses a unified-diff hunk header, capturing the optional
+// trailing section context (the function/package name git emits after the
+// second @@).
+var hunkHeaderRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@\s*(.*)$`)
+
+// TestCommunityFixtures_HunkSectionContext enforces the fixture house style:
+// every hunk header carries trailing section context (e.g. "@@ -3,6 +3,13 @@
+// package order") so the planted diff reads like a real git diff. simon's
+// fixture shipped a bare "@@ -1,3 +1,20 @@" — the only header without it.
+func TestCommunityFixtures_HunkSectionContext(t *testing.T) {
+	for _, p := range communityPersonas {
+		t.Run(p.Slug, func(t *testing.T) {
+			raw, err := os.ReadFile(communityPath("testdata", p.Slug+"_fixture.patch"))
+			require.NoErrorf(t, err, "read fixture for %q", p.Slug)
+			var hunks int
+			for _, line := range strings.Split(string(raw), "\n") {
+				m := hunkHeaderRe.FindStringSubmatch(line)
+				if m == nil {
+					continue
+				}
+				hunks++
+				require.NotEmptyf(t, strings.TrimSpace(m[1]),
+					"persona %q fixture hunk header must carry trailing section context: %q", p.Slug, line)
+			}
+			require.NotZerof(t, hunks, "persona %q fixture must contain at least one hunk header", p.Slug)
+		})
+	}
+}
+
+// TestCommunityFixtures_PlantCategoryWord enforces the fixture-integrity
+// contract documented on communityPersona (docs/personas-authoring.md): each
+// fixture plants its persona's category word verbatim (sonny's "logic", liam's
+// "invariant"), keeping the fixture's self-documenting link to its category.
+// celeste and glenna are documented pre-existing omissions; any NEW omission
+// (the simon "bloat" drift) fails here instead of drifting invisibly.
+func TestCommunityFixtures_PlantCategoryWord(t *testing.T) {
+	exempt := map[string]bool{"celeste": true, "glenna": true} // pre-existing omissions, out of scope
+	for _, p := range communityPersonas {
+		if exempt[p.Slug] {
+			continue
+		}
+		t.Run(p.Slug, func(t *testing.T) {
+			raw, err := os.ReadFile(communityPath("testdata", p.Slug+"_fixture.patch"))
+			require.NoErrorf(t, err, "read fixture for %q", p.Slug)
+			wordRe := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(p.Category) + `\b`)
+			require.Truef(t, wordRe.Match(raw),
+				"persona %q fixture must plant its category word %q verbatim", p.Slug, p.Category)
 		})
 	}
 }
