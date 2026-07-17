@@ -65,29 +65,31 @@ func isNilPointer(w io.Writer) bool {
 // (Portability caveat for non-POSIX append semantics: the accepted TD-004 won't-fix
 // stance shared with the other five append-only ledgers.)
 func Append(dir string, rec Record) error {
-	month, err := monthFromRunID(rec.RunID)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating localdebt dir: %w", basePathErr(err))
-	}
-	line, err := json.Marshal(rec)
-	if err != nil {
-		return fmt.Errorf("marshaling localdebt record: %w", err)
-	}
-	line = append(line, '\n')
+	return withLock(dir, "append", func() error {
+		month, err := monthFromRunID(rec.RunID)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("creating localdebt dir: %w", basePathErr(err))
+		}
+		line, err := json.Marshal(rec)
+		if err != nil {
+			return fmt.Errorf("marshaling localdebt record: %w", err)
+		}
+		line = append(line, '\n')
 
-	path := filepath.Join(dir, month+".jsonl")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return fmt.Errorf("opening localdebt file: %w", basePathErr(err))
-	}
-	defer func() { _ = f.Close() }()
-	if _, err := f.Write(line); err != nil {
-		return fmt.Errorf("appending localdebt record: %w", basePathErr(err))
-	}
-	return nil
+		path := filepath.Join(dir, month+".jsonl")
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return fmt.Errorf("opening localdebt file: %w", basePathErr(err))
+		}
+		defer func() { _ = f.Close() }()
+		if _, err := f.Write(line); err != nil {
+			return fmt.Errorf("appending localdebt record: %w", basePathErr(err))
+		}
+		return nil
+	})
 }
 
 // ReadRecords stream-parses a month JSONL file line-by-line. A malformed line is
@@ -217,4 +219,147 @@ func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 		all = append(all, recs...)
 	}
 	return all, nil
+}
+
+// FoldRecords folds a stream of records by ID to their effective state.
+func FoldRecords(recs []Record) []Record {
+	order := []string{}
+	seen := map[string]bool{}
+
+	byID := map[string][]Record{}
+	for _, r := range recs {
+		if !seen[r.ID] {
+			seen[r.ID] = true
+			order = append(order, r.ID)
+		}
+		byID[r.ID] = append(byID[r.ID], r)
+	}
+
+	var folded []Record
+	for _, id := range order {
+		group := byID[id]
+
+		var openRecs []Record
+		var termRecs []Record
+		for _, r := range group {
+			if IsClosedStatus(r.Status) {
+				termRecs = append(termRecs, r)
+			} else {
+				openRecs = append(openRecs, r)
+			}
+		}
+
+		if len(termRecs) > 0 {
+			best := termRecs[0]
+			for _, r := range termRecs[1:] {
+				if ClosedStatusRank(r.Status) > ClosedStatusRank(best.Status) {
+					best = r
+				} else if ClosedStatusRank(r.Status) == ClosedStatusRank(best.Status) {
+					if r.Timestamp >= best.Timestamp {
+						best = r
+					}
+				}
+			}
+			folded = append(folded, best)
+		} else if len(openRecs) > 0 {
+			best := openRecs[len(openRecs)-1]
+			folded = append(folded, best)
+		}
+	}
+	return folded
+}
+
+// Compact reads all records in dir, folds them by ID to keep only the effective
+// records (dropping superseded ones), and rewrites the sharded monthly JSONL
+// files atomically. Shards that no longer have any active records are deleted.
+// Compact runs within a cross-process lock to prevent races with concurrent Appends.
+func Compact(dir string, opts ReadOpts) error {
+	return withLock(dir, "compact", func() error {
+		recs, err := ReadAll(dir, opts)
+		if err != nil {
+			return err
+		}
+		if len(recs) == 0 {
+			return nil
+		}
+
+		folded := FoldRecords(recs)
+
+		byMonth := map[string][]Record{}
+		for _, r := range folded {
+			month, err := monthFromRunID(r.RunID)
+			if err != nil {
+				return err
+			}
+			byMonth[month] = append(byMonth[month], r)
+		}
+
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return fmt.Errorf("reading localdebt dir for compaction: %w", basePathErr(err))
+		}
+		existingMonths := map[string]bool{}
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+				month := strings.TrimSuffix(e.Name(), ".jsonl")
+				if monthRe.MatchString(month) {
+					existingMonths[month] = true
+				}
+			}
+		}
+
+		for month, monthRecs := range byMonth {
+			var buf bytes.Buffer
+			for _, r := range monthRecs {
+				line, err := json.Marshal(r)
+				if err != nil {
+					return fmt.Errorf("marshaling localdebt record: %w", err)
+				}
+				buf.Write(line)
+				buf.WriteByte('\n')
+			}
+
+			path := filepath.Join(dir, month+".jsonl")
+
+			tmp, err := os.CreateTemp(dir, "."+month+".jsonl.tmp-*")
+			if err != nil {
+				return fmt.Errorf("creating temp file for compaction: %w", basePathErr(err))
+			}
+			tmpName := tmp.Name()
+			cleanup := true
+			defer func() {
+				if cleanup {
+					_ = os.Remove(tmpName)
+				}
+			}()
+
+			if _, err := tmp.Write(buf.Bytes()); err != nil {
+				_ = tmp.Close()
+				return fmt.Errorf("writing compacted records: %w", basePathErr(err))
+			}
+			if err := tmp.Chmod(0o600); err != nil {
+				_ = tmp.Close()
+				return fmt.Errorf("setting compacted file permissions: %w", basePathErr(err))
+			}
+			if err := tmp.Close(); err != nil {
+				return fmt.Errorf("closing compacted temp file: %w", basePathErr(err))
+			}
+
+			if err := os.Rename(tmpName, path); err != nil {
+				return fmt.Errorf("renaming compacted file: %w", basePathErr(err))
+			}
+			cleanup = false
+
+			delete(existingMonths, month)
+		}
+
+		for month := range existingMonths {
+			path := filepath.Join(dir, month+".jsonl")
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("removing empty shard file %s: %w", path, basePathErr(err))
+			}
+		}
+
+		return nil
+	})
 }

@@ -113,39 +113,15 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 // wontfix (Epic 24.0) folds a finding out exactly like resolved — it marks a
 // false-positive/accepted pattern that agents must stop re-surfacing.
 func isClosedStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "resolved", "deferred", "wontfix":
-		return true
-	default:
-		return false
-	}
+	return localdebt.IsClosedStatus(status)
 }
 
-// closedStatusRank orders terminal statuses so a deterministic effective status can
-// be chosen when divergent terminal records exist for one id (the no-lock TD-004
-// concurrency window in markDebtResolved). A permanent dismissal (wontfix) outranks a
-// resolved or deferred record, so the audit trail reports the strongest terminal
-// claim regardless of shard read order. An unknown/empty status ranks lowest.
 func closedStatusRank(status string) int {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "wontfix":
-		return 3
-	case "resolved":
-		return 2
-	case "deferred":
-		return 1
-	default:
-		return 0
-	}
+	return localdebt.ClosedStatusRank(status)
 }
 
-// higherClosedStatus returns whichever of the two terminal statuses ranks higher (see
-// closedStatusRank). An empty incumbent is always replaced by any real status.
 func higherClosedStatus(current, candidate string) string {
-	if closedStatusRank(candidate) > closedStatusRank(current) {
-		return candidate
-	}
-	return current
+	return localdebt.HigherClosedStatus(current, candidate)
 }
 
 // selectOpenDebt folds the append-only record stream by id into the open backlog.
