@@ -102,12 +102,13 @@ func NewCloudSyncRecord(reviewDir, outcome string) CloudSyncRecord {
 	}
 	rec.MetricsAvailable = true
 	for _, a := range ps.Agents {
-		if strings.TrimSpace(a.Agent) == "" {
+		name := strings.TrimSpace(a.Agent)
+		if name == "" {
 			continue
 		}
 		cost := llmclient.ComputeCostUSD(a.Model, a.TokensIn, a.TokensOut)
 		rec.Personas = append(rec.Personas, CloudSyncPersona{
-			PersonaIDHash: HashPersonaID(a.Agent),
+			PersonaIDHash: HashPersonaID(name),
 			Model:         a.Model,
 			CostUSD:       cost,
 			TokensIn:      a.TokensIn,
