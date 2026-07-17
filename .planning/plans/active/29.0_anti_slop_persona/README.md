@@ -7,7 +7,7 @@ Ship a new community persona, `simon`, purpose-built to detect AI-generated code
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/29.0_anti_slop_persona/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/29.0_anti_slop_persona/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/29.0_anti_slop_persona/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/29.0_anti_slop_persona/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/29.0_anti_slop_persona/`
 
 ## Timeline & Milestones
@@ -35,5 +35,6 @@ See [documentation/README.md](documentation/README.md) for the full index.
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
 - [Documentation](documentation/)
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)
+- [Sprint Design](sprint-design.md)

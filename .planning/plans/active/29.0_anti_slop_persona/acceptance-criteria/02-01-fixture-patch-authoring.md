@@ -15,6 +15,13 @@
 - `personas/community_test.go` - consumer: `TestCommunityPersonas_FixtureAndPromptCategory` (line ~202) loads this file via `communityPath("testdata", p.Slug+"_fixture.patch")` and renders it through `RenderPrompt`
 - `internal/personas/community_fixture_test.go` - consumer: `TestTemplateFixtureRunner_CommunityPersonasPass` asserts `RunFixture("simon")` returns `HasFixture: true` and exactly one passing case
 
+### Related Files (from codebase-discovery.json)
+- `personas/community/testdata/simon_fixture.patch` - create (`files_to_create`): synthetic unified-diff fixture planting a known instance of AI-generated bloat, based on `personas/community/testdata/anthony_fixture.patch` as naming/format template
+- `internal/personas/community_fixture_test.go` - test, reference only (`related_files`, high relevance): `TestTemplateFixtureRunner_CommunityPersonasPass` auto-covers simon via `CommunityNames()`; asserts `HasFixture` and exactly 1/1 passing fixture case
+- `internal/personas/test.go` - reference only (`related_files`, high relevance): `TemplateFixtureRunner.RunFixture` — the no-LLM fixture harness; render passes iff the template renders with no error AND the `AgentName` value is interpolated
+- `internal/personas/test_test.go` - test, reference only (`related_files` via embedded-set gates): `TestRunFixture_CommunityAssertsBoundModel` — fixture passes AND the YAML binds a non-empty model
+- `personas/community_test.go:202` - consumer (`related_files`, high relevance): `TestCommunityPersonas_FixtureAndPromptCategory` roster-driven fixture + category-word gate
+
 ## Happy Path Scenarios
 **Scenario 1: Fixture file exists at the correct community path**
 - **Given** Story 1 has authored `personas/community/simon.yaml` and `personas/community/simon.md`

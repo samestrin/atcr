@@ -12,8 +12,14 @@
 ## Related Files
 - `.planning/product/content/blog/slopfix-ai-code-bloat.md` - modify: reconcile any category-word or persona-behavior phrasing in sections 1, 3, and 4 against the shipped persona; leave sections 2 and 5 (cost narrative, CTA scope) and the already-accurate hook/pitch/example structure unchanged.
 - `personas/community/simon.md` - reference: source of truth for the exact category word and `## Focus` framing (Story 1 deliverable; anticipated word is `bloat` per `plan.md`, but the shipped file governs).
-- `personas/community/simon.yaml` - reference: confirms the persona's `Category` field, which must match the word used in `simon.md`'s prompt text per the plan's authoring contract.
+- `personas/community/simon.yaml` - reference: confirms the persona's shipped metadata (`name`/`provider`/`model`). Note: the `Category` value does NOT live in the YAML — it lives in the `communityPersonas` roster row (`personas/community_test.go:117`, registered by Story 2) and must match the word used verbatim in `simon.md`'s prompt text per `TestCommunityPersonas_FixtureAndPromptCategory` (`personas/community_test.go:202`).
 - `.planning/plans/active/29.0_anti_slop_persona/plan.md` - reference: documents the anticipated category word (`bloat`) and the list of already-claimed category words it must stay distinct from.
+
+### Related Files (from codebase-discovery.json)
+- `.planning/product/content/blog/slopfix-ai-code-bloat.md` - modify (`files_to_modify`, minor scope): refresh only what has drifted — align the category word/framing with the shipped persona (the CTA fix itself is AC 03-01's scope)
+- `personas/community/simon.md` - reference (`files_to_create`, Story 1): source of truth for the shipped category word in the `## Focus` prose
+- `personas/community/simon.yaml` - reference (`files_to_create`, Story 1): shipped persona metadata
+- `personas/community_test.go:117` - reference (`files_to_modify`, Story 2): the roster row holding the formal `Category` value that `simon.md`'s prompt text must contain
 
 ## Happy Path Scenarios
 **Scenario 1: Category word matches the shipped persona exactly**
@@ -67,7 +73,7 @@
 ## Definition of Done
 **Auto-Verified:**
 - [ ] All tests passing (N/A directly — this story adds no Go tests; confirms `go test ./personas/...` from Stories 1-2 is already green before this story starts)
-- [ ] No linting errors (markdown renders correctly)
+- [ ] No linting errors (markdown renders correctly; no broken code-fence syntax)
 - [ ] Build succeeds (no build step applies to a Markdown-only change)
 
 **Story-Specific:**

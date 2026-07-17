@@ -15,6 +15,13 @@
 - `internal/personas/community_schema_test.go` - test (unmodified): `TestCommunityPersonas_StrictSchema`, `TestCommunityPersonas_NoPlaceholderModel`, `TestCommunityPersonas_HumanNames` auto-iterate the new file via `builtins.CommunityNames()`
 - `personas/community.go` - reference only: `CommunityNames()` derives its list from `go:embed community/*.yaml` + `community/*.md`, so `simon.yaml` is auto-discovered at build time with no roster edit
 
+### Related Files (from codebase-discovery.json)
+- `personas/community/simon.yaml` - create (`files_to_create`): agent binding metadata (provider, model, persona, role), based on `personas/community/sonny.yaml`
+- `personas/community/sonny.yaml` - reference only (`related_files`, high relevance): structural template for the new simon.yaml (provider/model/persona/role fields)
+- `internal/personas/community_schema_test.go:41` - test, reference only (`related_files`, high relevance): strict-YAML / no-placeholder-model / human-name gates iterating `builtins.CommunityNames()`; defines the recognized-keys constraint for simon.yaml
+- `personas/community.go:38` - reference only (`related_files`, medium relevance): go:embed accessors (`CommunityNames`/`CommunityGet`/`CommunityModel`) that make the persona resolvable once its files are dropped in
+- `docs/personas-authoring.md` - reference only (`build_from.primary_file`): YAML schema and recognized-key contract to copy
+
 ## Happy Path Scenarios
 **Scenario 1: Strict decode accepts the authored YAML**
 - **Given** `personas/community/simon.yaml` exists with only recognized keys (`name`, `version`, `description`, `provider`, `model`, `persona`, `role`)

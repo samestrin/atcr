@@ -15,6 +15,11 @@
 - `cmd/atcr/personas.go` - reference: `newPersonasInstallCmd` (line 162) and `newPersonasTestCmd` (line 343) define the real `atcr personas install <name>` and `atcr personas test <name>` command surface the corrected CTA must cite.
 - `docs/personas-install.md` - reference: canonical worked examples (`atcr personas install delia`, `atcr personas test delia`) the corrected CTA should mirror in form.
 
+### Related Files (from codebase-discovery.json)
+- `.planning/product/content/blog/slopfix-ai-code-bloat.md:38` - modify (`files_to_modify`, minor scope; `integration_points` doc-refresh): replace the invalid `atcr review --persona simon` CTA with the real flow — `atcr personas install simon` (+ reviewer config) and/or `atcr personas test simon` for the zero-setup fixture demo
+- `docs/personas-install.md` - reference only (`related_files`, medium relevance): install/CLI reference whose worked examples the corrected CTA mirrors
+- `docs/registry.md` - reference only (`related_files`, medium relevance): § Persona resolution chain — the authoritative reference for how an installed persona reaches a reviewer at `atcr review` time (the production flow the CTA points at)
+
 ## Happy Path Scenarios
 **Scenario 1: Invalid CTA replaced with a verified production-install command**
 - **Given** section 5 of `slopfix-ai-code-bloat.md` currently reads `atcr review --persona simon`

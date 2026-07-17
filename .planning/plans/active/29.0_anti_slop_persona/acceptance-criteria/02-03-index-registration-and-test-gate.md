@@ -15,6 +15,12 @@
 - `internal/personas/search_test.go` - consumer: `verifyCommunityIndex` (line ~30) re-asserts provider/model non-empty and equal to `simon.yaml`, independent of the roster
 - `cmd/atcr/personas_test.go` - consumer: exercises the `personas test <slug>` subcommand path (line ~643 pattern) that `atcr personas test simon` invokes manually
 
+### Related Files (from codebase-discovery.json)
+- `personas/community/index.json` - modify (`files_to_modify`, minor scope): append simon's `PersonaIndexEntry`; provider/model/description must match simon.yaml exactly, `path` must be exactly `"simon.yaml"`, and `tasks[0]` must be distinct from every existing entry's `tasks[0]`
+- `personas/community_test.go:332` - consumer (`related_files`, high relevance): `TestCommunityIndex_Registration` asserts provider/model/description byte-match the source YAML and restricts provider to the sanctioned routing keys `openrouter`/`local` (provider=local requires a `local/` model prefix; any non-local provider forbids it)
+- `internal/personas/search_test.go:30` - consumer (`related_files`, medium relevance): `verifyCommunityIndex` re-asserts provider/model equality per entry against the real repo index, independent of the roster
+- `internal/personas/test.go` - reference only (`related_files`, high relevance): `TemplateFixtureRunner.RunFixture` powers the manual `atcr personas test simon` no-LLM proof (exactly one passing case expected)
+
 ## Happy Path Scenarios
 **Scenario 1: index.json entry mirrors simon.yaml exactly**
 - **Given** `personas/community/simon.yaml` has `name: simon`, a `provider` (either `openrouter` or `local`), a `model`, and a `description`

@@ -1,9 +1,9 @@
 {
-  "skill": "create-acceptance-criteria",
+  "skill": "design-sprint",
   "args": "@.planning/plans/active/29.0_anti_slop_persona/",
-  "invocation": "/create-acceptance-criteria @.planning/plans/active/29.0_anti_slop_persona/",
+  "invocation": "/design-sprint @.planning/plans/active/29.0_anti_slop_persona/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "6749bff3-043a-45a3-80ff-15361dc3733c",
-  "timestamp": "2026-07-17T04:21:48.865Z"
+  "session_id": "995716b2-31bd-4f51-ac1d-286cb73b3777",
+  "timestamp": "2026-07-17T04:50:57.034Z"
 }

@@ -18,6 +18,15 @@
 - `internal/registry/persona_test.go` - test (unmodified): `TestValidateFetchedPersonaPrompt_AllEmbeddedCommunityPersonasPass` auto-covers `simon` and is expected to PASS (covered individually by AC 01-02)
 - `docs/personas-authoring.md` - reference only: the full authoring contract this AC verifies `simon` against end-to-end (not modified by this story)
 
+### Related Files (from codebase-discovery.json)
+- `personas/community/simon.yaml` - reference (`files_to_create`, created by AC 01-01): agent binding half of the matched pair
+- `personas/community/simon.md` - reference (`files_to_create`, created by AC 01-02): prompt half of the matched pair
+- `personas/community.go:38` - reference only (`related_files`, medium relevance): go:embed accessors (`CommunityNames`/`CommunityGet`/`CommunityFixture`/`CommunityModel`) that auto-discover simon with no roster or index edit
+- `internal/personas/community_fixture_test.go` - test, reference only (`related_files`, high relevance): embedded-set fixture gate with the documented expected-fail gap until Story 2's fixture lands
+- `internal/personas/community_schema_test.go` - test, reference only (`related_files`, high relevance): strict-schema / no-placeholder / human-name gates expected to PASS for simon
+- `internal/registry/persona_test.go:305` - test, reference only (`related_files`, medium relevance): fetched-prompt guardrail gate expected to PASS for simon
+- `docs/personas-authoring.md` - reference only (`build_from.primary_file`): the end-to-end authoring contract
+
 ## Happy Path Scenarios
 **Scenario 1: `simon` is auto-discovered with no roster or registration edit**
 - **Given** `personas/community/simon.yaml` and `personas/community/simon.md` exist on disk
@@ -57,7 +66,7 @@
 
 ## Performance Requirements
 - **Response Time:** N/A — build-time embed resolution only, no runtime request path introduced by this AC
-- **Throughput:** N/A — single persona pair added to an existing embedded set of 10 community personas
+- **Throughput:** N/A — single persona pair added to an existing embedded set of 13 community personas
 
 ## Security Considerations
 - **Authentication/Authorization:** N/A — no new auth surface; consistent with the existing community-persona trust model (untrusted Registry tier, guarded by `ValidateFetchedPersonaPrompt` per AC 01-02)

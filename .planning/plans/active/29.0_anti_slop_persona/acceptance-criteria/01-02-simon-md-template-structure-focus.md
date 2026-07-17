@@ -15,6 +15,12 @@
 - `internal/registry/persona_test.go:305` - test (unmodified): `TestValidateFetchedPersonaPrompt_AllEmbeddedCommunityPersonasPass` iterates `personas.CommunityNames()` and runs `ValidateFetchedPersonaPrompt` against each embedded `.md`
 - `docs/personas-authoring.md` - reference only: §2 "The prompt template" is the authoritative structural contract (lines 71-119)
 
+### Related Files (from codebase-discovery.json)
+- `personas/community/simon.md` - create (`files_to_create`): prompt template hyper-focused on tautological AI comments, unnecessary design-pattern abstractions, defensive-programming overkill, and dead/hallucinated code paths, based on `personas/community/sonny.md`
+- `personas/community/sonny.md` - reference only (`related_files`, high relevance): structural skeleton for the prompt (Role/Focus/Scope/Severity Rubric/Output Format sections, vendor-guidance comment, template tokens)
+- `internal/registry/persona_test.go:305` - test, reference only (`related_files`, medium relevance): `TestValidateFetchedPersonaPrompt_AllEmbeddedCommunityPersonasPass` — simon.md must pass the fetched-prompt guardrail (length cap + template-action gate)
+- `docs/personas-authoring.md` - reference only (`build_from.primary_file`): prompt template contract (mandatory sections, required tokens, 7-column output contract)
+
 ## Happy Path Scenarios
 **Scenario 1: Canonical section order and required headings**
 - **Given** `simon.md` contains, in order, `## Role`, `## Focus`, `## Scope`, `## Severity Rubric`, `## Output Format`, `## Payload` (mirroring `sonny.md`'s structure)
@@ -46,6 +52,11 @@
 - **Given** `registry.MaxPersonaPromptLen = 8192` caps a fetched/pinned community persona prompt (`internal/registry/config.go:93`, enforced at `internal/registry/persona.go:166`)
 - **When** `simon.md`'s full rendered byte length is measured
 - **Then** it is well under 8192 bytes (the `sonny.md` template this AC copies is ~2KB; a comparable Focus-section expansion keeps `simon.md` in the same order of magnitude)
+
+**Edge Case 4: Role+Focus language must stay under the 0.85 Jaccard differentiation threshold**
+- **Given** `TestCommunityPersonas_Differentiation` (`personas/community_test.go:272`, `const threshold = 0.85` at line 282) compares the combined `## Role` + `## Focus` token-set of every community roster pair and fails on `Jaccard(Role+Focus) > 0.85`
+- **When** `simon.md`'s Role/Focus prose is authored with generic code-quality wording instead of AI-authorship-specific artifacts, it risks drifting above the threshold against an existing community lens (e.g. `sonny`'s correctness/logic focus)
+- **Then** this must be avoided by construction — ground every Role/Focus sentence in the four named anti-slop targets (tautological comments, unnecessary abstractions, defensive-programming overkill, dead/hallucinated code paths) so the pairwise similarity stays `<= 0.85` against all 13 existing personas; the gate itself is roster-driven and fires in Story 2, but the language constraint is fixed here at authoring time
 
 ## Error Conditions
 **Error Scenario 1: A disallowed template action would fail the fetched-prompt guardrail**

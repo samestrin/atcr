@@ -14,6 +14,12 @@
 - `personas/community/simon.md` - dependency (from Story 1): the prompt template that must literally contain the same `Category` word chosen in the roster row
 - `personas/community/simon.yaml` - dependency (from Story 1): source of the bound model id from which `VendorToken` is derived as a case-insensitive substring
 
+### Related Files (from codebase-discovery.json)
+- `personas/community_test.go:117` - modify (`files_to_modify`, minor scope): append `{Slug: "simon", VendorToken: "<vendor-substring-of-model>", Category: "<distinct word>"}` to the `communityPersonas` roster slice so all roster-driven gate tests cover it
+- `personas/community/simon.yaml` - dependency (`files_to_create`, Story 1): bound model id the `VendorToken` is derived from
+- `personas/community/simon.md` - dependency (`files_to_create`, Story 1): prompt text that must contain the roster row's `Category` word verbatim (case-insensitive)
+- `personas/community/gene.yaml` - reference only (`related_files`, low relevance): precedent that VendorToken reuse across personas is permitted (gene and milo both use `gpt`)
+
 ## Happy Path Scenarios
 **Scenario 1: Roster row added with unclaimed Category and matching VendorToken**
 - **Given** `simon.yaml`'s `model` field contains a vendor-identifying substring (e.g. `anthropic/claude-...` contains `claude`) and `simon.md` contains a chosen category word not among the 13 claimed values (coupling, logic, contract, validation, race, leak, complexity, type, dependency, observability, secret, duplication, invariant)
