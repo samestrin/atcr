@@ -25,6 +25,15 @@ import (
 // the caller's, which returns as soon as the goroutine is dispatched.
 const defaultRequestTimeout = 3 * time.Second
 
+// maxInFlightSends caps the number of concurrent background send goroutines. Client
+// is an exported reusable type; a future caller invoking Send in a tight loop against
+// a slow/hung endpoint (each send lives up to requestTimeout) would otherwise
+// accumulate unbounded goroutines. The cap is well above any realistic legitimate
+// burst (review + reconcile fire a handful), so it never drops in normal use; it only
+// bounds a pathological caller. Excess sends are dropped — the ping is best-effort —
+// never queued or blocked, so Send stays non-blocking.
+const maxInFlightSends = 64
+
 // doRequest performs the outbound POST. Stored in an atomic.Value so tests can
 // force a panic inside the goroutine body and assert the deferred recover
 // swallows it (AC 01-03) without racing the detached send goroutine.
