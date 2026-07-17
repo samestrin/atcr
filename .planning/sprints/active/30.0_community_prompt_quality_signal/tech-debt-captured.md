@@ -33,3 +33,17 @@ Phase 1 and pre-seeded into the adversarial TD stream (SOURCE=execute-sprint).
 **Issue:** FoldRecords (reused by foldTerminalByID) keys its fold on Record.ID; distinct records that both carry ID=="" would collapse into one group and silently lose all but one. Not reachable today because StampID always yields a non-empty content hash, but neither FoldRecords nor foldTerminalByID guards against a hand-written/legacy empty-ID record.
 **Why accepted:** Unreachable via the normal write path (every persisted record is StampID'd to a non-empty hash); adding a guard now would be speculative hardening against an input the pipeline never produces.
 **Fix in:** Post-sprint robustness pass — skip or warn on r.ID=="" before folding in FoldRecords, or document the always-stamped invariant on the fold contract.
+
+## TD-005 — `atcr init` template does not surface the quality_signal opt-in key (LOW)
+**Origin:** Phase 2, task 2.8 gate review, 2026-07-17
+**File:** internal/registry/project.go:DefaultProjectConfigYAML
+**Issue:** The `atcr init` config template renders a documented commented telemetry stanza but emits no quality_signal line or comment, so an operator who runs `atcr init` sees the telemetry knob but cannot discover quality_signal exists from the generated config — discoverability parity with the sibling opt-out key is broken.
+**Why accepted:** Discoverability only; the key is fully functional and documented via `atcr config set --help` (shipped this phase) and docs/telemetry.md (Phase 6). Adding an init-template stanza is outside every Phase 2 task's file scope and would be speculative to fold in mid-phase.
+**Fix in:** Post-sprint or a docs-phase follow-up — add a parallel commented `# quality_signal: false` stanza to DefaultProjectConfigYAML and extend the template's documentation test to assert it.
+
+## TD-006 — quality-signal gate reads config cwd-relative while config-set writes repo-root (LOW)
+**Origin:** Phase 2, task 2.8 gate review, 2026-07-17
+**File:** cmd/atcr/qualitysignal.go:qualitySignalGate
+**Issue:** `qualitySignalGate()` reads `LoadQualitySignalSetting(".")` (cwd-relative) while `runConfigSet` persists via `repoRoot()`. A user who runs `atcr config set quality_signal true` from a subdirectory writes to `<root>/.atcr/config.yaml`, but a later `atcr review` from that same subdir has the gate read `<subdir>/.atcr/config.yaml`, miss the opt-in, and resolve disabled.
+**Why accepted:** This is a faithful mirror of the pre-existing `telemetryGate` cwd-relative asymmetry (not a regression introduced here), and for the OPT-IN signal it fails to the safe/OFF direction — a missed opt-in never transmits. Structural independence from telemetry (the phase's core contract) is preserved.
+**Fix in:** Post-sprint consistency pass — resolve the gate's config root via repo-root discovery (matching config-set and the roster loader), applied symmetrically to `telemetryGate` so both gates and their write paths agree on config location.

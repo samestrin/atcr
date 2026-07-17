@@ -603,7 +603,7 @@ Use the Agent tool:
 
 ---
 
-### 2.7 [ ] **Phase 2 DoD Verification**
+### 2.7 [x] **Phase 2 DoD Verification**
 
 ```
 Story-2 DoD Complete
@@ -611,18 +611,18 @@ Auto: 5/5 | Story-Specific: 3/3 ACs
 Manual Review: [ ] Code reviewed (adversarial 2.2.A + 2.5.A, REFACTOR 2.3 + 2.6)
 ```
 
-- [ ] T3: `go test ./cmd/atcr/... ./internal/registry/...` — all passing
-- [ ] Coverage ≥80%
-- [ ] `golangci-lint run` — no errors
-- [ ] `go vet ./...` — clean
-- [ ] Build: `go build ./...` — succeeds
-- [ ] AC 02-01: gate resolves `false` with no env var and no persisted config key ✓
-- [ ] AC 02-02: six-cell truth table correct; independence from `telemetryGate`/`resolveSyncCloud` proven ✓
-- [ ] AC 02-03: `atcr config set quality_signal <bool>` persists atomically, sibling keys untouched, malformed value fails safe ✓
+- [x] T3: `go test ./cmd/atcr/... ./internal/registry/...` — all passing
+- [x] Coverage ≥80% — `cmd/atcr` 85.8%, `internal/registry` 89.8%
+- [x] `golangci-lint run ./...` — 0 issues
+- [x] `go vet ./...` — clean
+- [x] Build: `go build ./...` — succeeds
+- [x] AC 02-01: gate resolves `false` with no env var and no persisted config key ✓
+- [x] AC 02-02: six-cell truth table correct; independence from `telemetryGate`/`resolveSyncCloud` proven ✓
+- [x] AC 02-03: `atcr config set quality_signal <bool>` persists atomically, sibling keys untouched, malformed value fails safe ✓
 
 ---
 
-### 2.8 [ ] **Phase 2 — GATE: Integration & Exit Review (subagent)**
+### 2.8 [x] **Phase 2 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 2 (integration-level, not TDD cadence)
 
@@ -642,16 +642,14 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
-| Severity | File:Line | Issue | Fix |
+**Gate findings (fresh subagent, hostile integrator — no CRITICAL/HIGH/MEDIUM; CONTRACT-EXIT / CONFIG-SURFACE back-compat / INTEGRATION / INDEPENDENCE / FAIL-SAFE / REGRESSION all PASS):**
+| Severity | File:Line | Issue | Disposition |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| LOW | project.go DefaultProjectConfigYAML | `atcr init` template surfaces telemetry but not the quality_signal key (discoverability parity) | Deferred → TD-005 |
+| LOW | qualitysignal.go qualitySignalGate | Gate reads config cwd-relative while config-set writes repo-root — a faithful mirror of the pre-existing telemetryGate asymmetry; fails safe to OFF for the opt-in | Deferred → TD-006 |
 
-**Action Required:**
-- CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-- MEDIUM/LOW found → Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-- None found → Note "Phase gate passed" and proceed to phase stop
+**Action Taken:** No CRITICAL/HIGH/MEDIUM → **Phase gate passed.** Adding `QualitySignal *bool` to the strict ProjectConfig is the necessary forward-compat fix (a persisted `quality_signal` key now passes `KnownFields(true)` roster load instead of erroring); absent key → nil → default-DISABLED; no existing config carried the key, so no load regression. Existing `config set telemetry` tests untouched and green. Two LOW findings deferred to `tech-debt-captured.md` (TD-005, TD-006).
+
 **Duration:** 15-30 min
 
 ---

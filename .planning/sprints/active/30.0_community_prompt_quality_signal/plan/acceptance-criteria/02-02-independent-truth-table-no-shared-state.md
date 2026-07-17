@@ -24,7 +24,7 @@
 **Scenario 1: full six-cell matrix resolves per the opt-in (OR-enables) truth table**
 - **Given** the combinations `{envEnabled: true/false} x {cfgQualitySignal: nil/&true/&false}` (six meaningful cells, the same matrix shape as `telemetryEnabled`'s existing table test)
 - **When** `qualitySignalEnabled` is evaluated for each cell
-- **Then** the results follow Story 02's opt-in truth table exactly: `(false, nil)=false`, `(false, &true)=true`, `(false, &false)=false`, `(true, nil)=true`, `(true, &true)=true`, `(true, &false)=true` — enabled when EITHER the env var explicitly opts in OR the persisted config is `true`; disabled only when neither surface has explicitly opted in (the exact override semantics between the two opt-in surfaces are confirmed at design-sprint per Story 02)
+- **Then** the results follow Story 02's opt-in truth table exactly: `(false, nil)=false`, `(false, &true)=true`, `(false, &false)=false`, `(true, nil)=true`, `(true, &true)=true`, `(true, &false)=true` — enabled when EITHER the env var explicitly opts in OR the persisted config is `true`; disabled only when neither surface has explicitly opted in. Override semantics are fixed by this table: an explicit env opt-in (`envEnabled == true`) always resolves enabled regardless of a stale `false` in config, and a config `true` alone is sufficient consent when the env var is unset — the two surfaces OR together, with no precedence beyond the OR.
 
 **Scenario 2: quality-signal state is independent of `telemetry`'s persisted value**
 - **Given** `.atcr/config.yaml` has `telemetry: false` and `quality_signal: true`
@@ -83,14 +83,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `qualitySignalEnabled` is a pure, total function with all six matrix cells covered by a table test
-- [ ] A test proves `telemetry: false` + `quality_signal: true` resolves quality-signal enabled (and the converse), demonstrating independence
-- [ ] Neither `qualitySignalGate()` nor `qualitySignalEnabled` calls, imports as a dependency, or shares state with `telemetryGate()`/`telemetryEnabled()`/`resolveSyncCloud()`
+- [x] `qualitySignalEnabled` is a pure, total function with all six matrix cells covered by a table test (`TestQualitySignalEnabled_SixCellMatrix`)
+- [x] A test proves `telemetry: false` + `quality_signal: true` resolves quality-signal enabled (and the converse), demonstrating independence (`TestQualitySignalGate_IndependentFromTelemetrySetting`)
+- [x] Neither `qualitySignalGate()` nor `qualitySignalEnabled` calls, imports as a dependency, or shares state with `telemetryGate()`/`telemetryEnabled()`/`resolveSyncCloud()` — each has its own probe struct + combining function (verified by adversarial review 2.2.A)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

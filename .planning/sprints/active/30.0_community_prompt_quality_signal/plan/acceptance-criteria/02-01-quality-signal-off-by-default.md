@@ -12,7 +12,7 @@
 ## Related Files
 - `cmd/atcr/qualitysignal.go` - create: `qualitySignalEnabled(envEnabled bool, cfgQualitySignal *bool) bool` pure combining function plus `qualitySignalGate() bool` I/O wrapper, structurally mirroring `telemetryEnabled`/`telemetryGate` in `cmd/atcr/telemetry.go:37-66`.
 - `internal/registry/quality_signal_setting.go` - create: `LoadQualitySignalSetting(root string) (*bool, error)` mirroring `LoadTelemetrySetting` in `internal/registry/telemetry_setting.go:27-46` — permissive decode of only the `quality_signal` key, `(nil, nil)` when file absent or key absent.
-- `cmd/atcr/qualitysignal_test.go` - create: unit test asserting the gate resolves `false` when `ATCR_QUALITY_SIGNAL` (or equivalent) is unset and no `.atcr/config.yaml` `quality_signal` key is present.
+- `cmd/atcr/qualitysignal_test.go` - create: unit test asserting the gate resolves `false` when `ATCR_QUALITY_SIGNAL` is unset and no `.atcr/config.yaml` `quality_signal` key is present. (Env var name is `ATCR_QUALITY_SIGNAL`, matching the existing `ATCR_TELEMETRY` naming convention.)
 - `internal/registry/quality_signal_setting_test.go` - create: unit test asserting `LoadQualitySignalSetting` returns `(nil, nil)` for an absent file and for a present file lacking the `quality_signal` key.
 
 ### Related Files (from codebase-discovery.json)
@@ -78,14 +78,14 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `qualitySignalGate()` returns `false` when no env var is set and no `.atcr/config.yaml` `quality_signal` key exists
-- [ ] `LoadQualitySignalSetting` returns `(nil, nil)` for an absent file, an empty file, and a file lacking the key
-- [ ] No goroutine, HTTP client, or payload allocation occurs on the disabled path
+- [x] `qualitySignalGate()` returns `false` when no env var is set and no `.atcr/config.yaml` `quality_signal` key exists
+- [x] `LoadQualitySignalSetting` returns `(nil, nil)` for an absent file, an empty file, and a file lacking the key
+- [x] No goroutine, HTTP client, or payload allocation occurs on the disabled path — the gate is a pure env read + a permissive config read that returns before any client/payload/goroutine (the call site itself lands in Phase 5)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

@@ -112,15 +112,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `atcr config set quality_signal <true|false>` is accepted, persists via the atomic mkdir-lock write path, and round-trips through `LoadQualitySignalSetting`
-- [ ] Setting `quality_signal` leaves `telemetry` (and all other keys) untouched, and vice versa
-- [ ] An unknown key is still rejected as a usage error (exit 2) after the allowlist extension to two entries
-- [ ] A malformed persisted `quality_signal` value fails safe to disabled (never silently re-enables) and surfaces a loud error from `LoadQualitySignalSetting`
+- [x] `atcr config set quality_signal <true|false>` is accepted, persists via the atomic mkdir-lock write path, and round-trips through `LoadQualitySignalSetting`
+- [x] Setting `quality_signal` leaves `telemetry` (and all other keys) untouched, and vice versa
+- [x] An unknown key is still rejected as a usage error (exit 2) after the allowlist extension to two entries
+- [x] A malformed persisted `quality_signal` value fails safe to disabled (never silently re-enables) and surfaces a loud error from `LoadQualitySignalSetting`
 
 **Manual Review:**
 - [ ] Code reviewed and approved
