@@ -31,6 +31,18 @@ var gracefulShutdownTimeout = 10 * time.Second
 // binary actually exiting.
 var forceExit = os.Exit
 
+// drainTelemetry is a RED-stage stub: it does nothing yet, so
+// TestDrainTelemetry_FlushesInFlightSend fails until the GREEN commit implements
+// the bounded drain.
+func drainTelemetry(_ *telemetry.Client, _ time.Duration) {}
+
+// newRootCmdWithClient is a RED-stage stub: it ignores the supplied client, so
+// TestNewRootCmdWithClient_InjectsProvidedClient fails until the GREEN commit
+// wires the client through.
+func newRootCmdWithClient(_ *telemetry.Client) *cobra.Command {
+	return newRootCmd()
+}
+
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -363,4 +365,75 @@ func TestRootCmd_SubcommandsUseRunE(t *testing.T) {
 		assert.Nil(t, c.Run, "%s must not use Run", c.Name())
 		assert.NotNil(t, c.RunE, "%s must define RunE", c.Name())
 	}
+}
+
+// --- Telemetry drain on process exit ---------------------------------------
+
+// TestDrainTelemetry_FlushesInFlightSend covers the TD fix: main() must give
+// in-flight telemetry sends a bounded window to complete before os.Exit —
+// otherwise the fire-and-forget goroutine is stranded and the ping never
+// reaches the endpoint.
+func TestDrainTelemetry_FlushesInFlightSend(t *testing.T) {
+	sent := make(chan struct{})
+	restore := telemetry.SetDoRequestForTest(func(_ *http.Client, _ *http.Request) (*http.Response, error) {
+		close(sent)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	defer restore()
+
+	client := telemetry.New("https://telemetry.test/ingest")
+	client.Send(context.Background(), telemetry.Event{Event: "review_run", Lang: "go", Lines: 1, Status: "success"})
+
+	drainTelemetry(client, 2*time.Second)
+
+	select {
+	case <-sent:
+	default:
+		t.Fatal("drainTelemetry returned before the in-flight send reached the endpoint")
+	}
+}
+
+// TestDrainTelemetry_BoundedWhenSendHangs proves the drain is capped: a hung
+// endpoint must never unbound run completion, so drainTelemetry returns at its
+// timeout even though the send goroutine is still blocked.
+func TestDrainTelemetry_BoundedWhenSendHangs(t *testing.T) {
+	release := make(chan struct{})
+	restore := telemetry.SetDoRequestForTest(func(_ *http.Client, _ *http.Request) (*http.Response, error) {
+		<-release // hang until the test lets the send finish
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	defer func() {
+		close(release) // unblock the stranded send goroutine before restoring the seam
+		restore()
+	}()
+
+	client := telemetry.New("https://telemetry.test/ingest")
+	client.Send(context.Background(), telemetry.Event{Event: "reconcile_run", Lang: "go", Lines: 1, Status: "success"})
+
+	start := time.Now()
+	drainTelemetry(client, 50*time.Millisecond)
+	elapsed := time.Since(start)
+
+	assert.Less(t, elapsed, 2*time.Second, "a hung send must not unbound the drain")
+}
+
+// TestDrainTelemetry_NilClient pins fail-open symmetry with telemetry's own
+// contract (a nil Client's Send/Wait are no-ops): the drain must not panic.
+func TestDrainTelemetry_NilClient(t *testing.T) {
+	drainTelemetry(nil, time.Second) // must return, not panic
+}
+
+// TestNewRootCmdWithClient_InjectsProvidedClient proves main() drains the SAME
+// client the subcommands send through: newRootCmdWithClient must inject exactly
+// the caller-supplied client into the command context via PersistentPreRunE.
+func TestNewRootCmdWithClient_InjectsProvidedClient(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "info")
+	client := telemetry.New("")
+	root := newRootCmdWithClient(client)
+	root.SetContext(context.Background())
+	root.SetErr(io.Discard)
+
+	require.NoError(t, root.PersistentPreRunE(root, nil))
+	assert.Same(t, client, telemetry.FromContext(root.Context()),
+		"main's drain target must be the client subcommands send through")
 }
