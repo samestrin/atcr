@@ -590,6 +590,34 @@ func TestRenderAXI_VerificationEvidenceRoundTrip(t *testing.T) {
 	assert.Contains(t, out, `"true"`, "a reserved-token-looking Category value must be quoted")
 }
 
+// TestRenderAXI_DisagreementAndChallengeSurvived closes the two lossy-subset gaps
+// the 1.5.A adversarial review found: the severity `disagreement` annotation and
+// `verification.challenge_survived` are both populated JSON signals that must
+// survive into the axi payload for it to be a true superset of the JSON form (not
+// just the 9-column text stream). A disagreement column appears only when a
+// finding carries one; challenge_survived rides the verification block.
+func TestRenderAXI_DisagreementAndChallengeSurvived(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "MEDIUM", File: "a.go", Line: 1, Problem: "p", Confidence: "MEDIUM",
+			Disagreement: "LOW vs MEDIUM",
+			Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "judge", ChallengeSurvived: true}},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	header := axiHeaderFields(t, out)
+	assert.Contains(t, header, "disagreement", "a severity disagreement must surface as an additive column")
+	assert.Contains(t, header, "verification.challenge_survived", "the judge-upheld signal must not be dropped")
+	assert.Contains(t, out, "LOW vs MEDIUM", "the disagreement value must be carried into the row")
+	// challenge_survived is a bare TOON boolean.
+	assert.Contains(t, out, string(axiDelim)+"true\n", "challenge_survived=true emitted as a bare boolean at row end")
+	// A no-disagreement payload must NOT declare the column (omitempty discipline).
+	var b2 strings.Builder
+	require.NoError(t, Render(&b2, sample(), FormatAXI))
+	assert.NotContains(t, axiHeaderFields(t, b2.String()), "disagreement",
+		"a payload with no disagreement must not declare the column")
+}
+
 // TestRenderAXI_FieldCountInvariant is AC 01-02 Error Scenario 1: every emitted
 // data row must carry exactly as many columns as the header declares — including a
 // mixed payload where only some findings carry a verification/evidence block, so

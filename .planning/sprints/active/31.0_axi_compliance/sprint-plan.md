@@ -193,7 +193,7 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    Extend `renderAXI`'s header to declare the pipe delimiter (`findings[N|]{...}:`) converging with `atcr-findings/v1`'s grammar; encode `Verification` and `EvidenceExec` as additive nested/sub-object fields when present; quote reserved-token-like values (`"true"`, `"42"`) per TOON's must-quote rule. Record the axi.md Principle 2 (full-width fields retained) and Principle 4 (aggregates via header `N` + run metadata) decisions inline as a code comment. Cross-reference `docs/findings-format.md` with the AXI schema mapping. T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `internal/report/render.go`, `docs/findings-format.md` | **Duration:** 4h
 
-### 1.5.A [ ] **[AXI Schema TOON/findings-v1 Compatibility - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 1.5.A [x] **[AXI Schema TOON/findings-v1 Compatibility - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-axi-token-dense-output-mode.md)**
    **Changed Files:** `internal/report/render.go`, `internal/report/render_test.go`, `docs/findings-format.md`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.5 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -212,18 +212,21 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | render.go axiRow (evidence cell) | `f.Disagreement` (JSON `disagreement`; v1 folds it into EVIDENCE at emit.go:368) is dropped by AXI — falsifies the "superset, never lossy vs JSON" claim in the render.go comment and docs/findings-format.md. Input: two reviewers at LOW vs MEDIUM → `Disagreement:"LOW vs MEDIUM"` survives in JSON/v1 text, not in AXI. | Add an additive `disagreement` column (omitempty-style) so AXI stays a JSON superset. |
+   | MEDIUM | render.go axiRow (verification append) | `verification.*` omits `challenge_survived` (reconcile/verification.go:21) — the field the md renderer uses to relabel the verdict "Judge". An AXI consumer cannot tell a judge-upheld finding from an ordinary skeptic-confirmed one → lossy vs JSON. | Add `verification.challenge_survived` column. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 1.6, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** MEDIUM found. Rubric routes MEDIUM→TD, but both findings
+   directly contradict the "superset — never a lossy subset of the JSON form"
+   guarantee shipped in the render.go comment AND docs/findings-format.md, and AC
+   01-02's Story-Specific DoD is literally "no field silently dropped". Deferring a
+   false shipped guarantee is worse than the cheap fix, so both are RESOLVED in 1.6
+   (add `disagreement` + `verification.challenge_survived` additive columns) rather
+   than filed to TD.
 
-### 1.6 [ ] **[AXI Schema TOON/findings-v1 Compatibility - REFACTOR](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 1.6 [x] **[AXI Schema TOON/findings-v1 Compatibility - REFACTOR](plan/user-stories/01-axi-token-dense-output-mode.md)**
    1. Fix CRITICAL/HIGH issues from 1.5.A (if any)
    2. Improve code and tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(report): reconcile AXI schema with findings/v1"`
    **Duration:** 1h

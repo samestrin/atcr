@@ -129,12 +129,14 @@ const axiDelim = '|'
 //     pagination caps it) plus the run metadata carried on the review path
 //     (AC 01-03) — not a separate aggregation pass here.
 //
-// The optional Verification and EvidenceExec blocks are surfaced as additive
-// columns (verification.*, evidence_exec.*) only when at least one finding
+// The optional per-finding signals — a severity Disagreement annotation and the
+// Verification / EvidenceExec blocks — are surfaced as additive columns
+// (disagreement, verification.*, evidence_exec.*) only when at least one finding
 // carries them, so a plain findings list stays at the 9-column width and
 // byte-identical to the pre-verification form — the same omitempty discipline the
-// JSON contract uses. When present, findings lacking a block get empty cells so
-// every row keeps the header's declared width.
+// JSON contract uses. When present, findings lacking a signal get empty cells so
+// every row keeps the header's declared width. This keeps the axi payload a
+// superset — never a lossy subset — of the JSON form.
 func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 	var b bytes.Buffer
 	if len(findings) == 0 {
@@ -144,8 +146,11 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 		_, err := w.Write(b.Bytes())
 		return err
 	}
-	hasVerification, hasEvidence := false, false
+	hasDisagreement, hasVerification, hasEvidence := false, false, false
 	for _, f := range findings {
+		if f.Disagreement != "" {
+			hasDisagreement = true
+		}
 		if f.Verification != nil {
 			hasVerification = true
 		}
@@ -154,8 +159,11 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 		}
 	}
 	header := []string{"severity", "file:line", "problem", "fix", "category", "est_minutes", "evidence", "reviewers", "confidence"}
+	if hasDisagreement {
+		header = append(header, "disagreement")
+	}
 	if hasVerification {
-		header = append(header, "verification.verdict", "verification.skeptic", "verification.notes")
+		header = append(header, "verification.verdict", "verification.skeptic", "verification.notes", "verification.challenge_survived")
 	}
 	if hasEvidence {
 		header = append(header, "evidence_exec.command", "evidence_exec.exit_code", "evidence_exec.output_excerpt")
@@ -166,7 +174,7 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 	}
 	fmt.Fprintf(&b, "findings[%d%c]{%s}:\n", len(findings), axiDelim, strings.Join(quotedHeader, string(axiDelim)))
 	for _, f := range findings {
-		row := axiRow(f, hasVerification, hasEvidence)
+		row := axiRow(f, hasDisagreement, hasVerification, hasEvidence)
 		// Defensive invariant (AC 01-02 Error Scenario 1): a row must carry exactly
 		// as many columns as the header declares. A mismatch is an internal encoder
 		// bug, never user input — fail deterministically rather than emit a
@@ -183,13 +191,14 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 }
 
 // axiRow encodes one finding into a TOON row: the base 9 columns mirroring the
-// atcr-findings/v1 reconciled column order, plus the additive verification.* and
-// evidence_exec.* columns when the payload declares them. FILE:LINE is one
-// combined column (as in v1); est_minutes and exit_code are emitted as bare
-// numbers; every free-text field is routed through toonQuote. A finding missing a
-// declared block contributes empty cells (an empty exit_code cell, never a
-// misleading 0) so the row keeps the header width.
-func axiRow(f reconcile.JSONFinding, hasVerification, hasEvidence bool) []string {
+// atcr-findings/v1 reconciled column order, plus the additive disagreement,
+// verification.* and evidence_exec.* columns when the payload declares them.
+// FILE:LINE is one combined column (as in v1); est_minutes, exit_code and
+// challenge_survived are emitted as bare numbers/booleans; every free-text field
+// is routed through toonQuote. A finding missing a declared signal contributes
+// empty cells (an empty exit_code cell, never a misleading 0) so the row keeps the
+// header width.
+func axiRow(f reconcile.JSONFinding, hasDisagreement, hasVerification, hasEvidence bool) []string {
 	row := []string{
 		toonQuote(f.Severity),
 		toonQuote(fmt.Sprintf("%s:%d", f.File, f.Line)),
@@ -201,11 +210,18 @@ func axiRow(f reconcile.JSONFinding, hasVerification, hasEvidence bool) []string
 		toonQuote(strings.Join(f.Reviewers, ",")),
 		toonQuote(f.Confidence),
 	}
+	if hasDisagreement {
+		row = append(row, toonQuote(f.Disagreement))
+	}
 	if hasVerification {
 		if f.Verification != nil {
-			row = append(row, toonQuote(f.Verification.Verdict), toonQuote(f.Verification.Skeptic), toonQuote(f.Verification.Notes))
+			// challenge_survived is emitted as a bare TOON boolean; an absent block
+			// gets an empty cell (distinct from a real false) so the additive block
+			// stays a faithful superset of the JSON verification object.
+			row = append(row, toonQuote(f.Verification.Verdict), toonQuote(f.Verification.Skeptic),
+				toonQuote(f.Verification.Notes), strconv.FormatBool(f.Verification.ChallengeSurvived))
 		} else {
-			row = append(row, toonQuote(""), toonQuote(""), toonQuote(""))
+			row = append(row, toonQuote(""), toonQuote(""), toonQuote(""), toonQuote(""))
 		}
 	}
 	if hasEvidence {

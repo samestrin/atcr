@@ -76,7 +76,7 @@ findings[N|]{severity|"file:line"|problem|fix|category|est_minutes|evidence|revi
 - **Delimiter:** the pipe (`[N|]{…}:`) is declared in the header so a row is structurally adjacent to the `SEVERITY|FILE:LINE|…` grammar above.
 - **`N`:** the array header carries the true total finding count (independent of the emitted row count once the `--axi` line cap truncates — see [ci-integration.md](ci-integration.md)).
 - **Escaping is faithful, not lossy:** unlike the per-source stream's `|`→`/` neutralization, AXI quotes any field containing the delimiter, a colon, a reserved token (`true`/`false`/`null`), a number-like value, or a control character, using only TOON's five escapes (`\\ \" \n \r \t`). Control/ANSI bytes have no TOON escape and are stripped, so `--axi` stdout is structurally free of escape sequences.
-- **Additive blocks:** a finding's optional `verification` and `evidence_exec` JSON blocks (below) surface as additive `verification.*` / `evidence_exec.*` columns when any finding in the payload carries them, so AXI is a superset — never a lossy subset — of the JSON form.
+- **Additive signals:** a finding's optional severity `disagreement` annotation and its `verification` / `evidence_exec` JSON blocks (below) surface as additive `disagreement` / `verification.*` / `evidence_exec.*` columns when any finding in the payload carries them, so AXI is a superset — never a lossy subset — of the JSON form.
 - **MCP:** `axi` is a CLI-only format and is intentionally excluded from the MCP `atcr_report` format enum.
 
 ## Parsing rules
