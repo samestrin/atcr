@@ -220,3 +220,43 @@ func corruptDebtStore(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(debtDir), 0o755))
 	require.NoError(t, os.WriteFile(debtDir, []byte("not a directory"), 0o644))
 }
+
+// TestQualityReport_DirFlagReadsExplicitStoreWithoutChdir pins the --dir parity
+// with `debt resolve`/`debt compact` (TD cmd/atcr/telemetry_report.go:62):
+// quality-report must accept --dir pointing at an explicit fixture store so
+// md/json parity tests (and scripts driving all three commands) need no chdir.
+// The isolated CWD store stays empty, so rendered rows can only come from --dir.
+func TestQualityReport_DirFlagReadsExplicitStoreWithoutChdir(t *testing.T) {
+	isolate(t)
+
+	dir := filepath.Join(t.TempDir(), "debt")
+	seedQualityRecordAt(t, dir, "alpha", "gpt-4", "wontfix", "a.go")
+	seedQualityRecordAt(t, dir, "alpha", "gpt-4", "resolved", "b.go")
+
+	out, err := runQualityReportCmd(t, "--dir", dir, "--format", "md")
+	require.NoError(t, err)
+	assert.Contains(t, out, "| alpha | gpt-4 | 1 | 1 | 50.0% |",
+		"--dir must point the report at the explicit fixture store, not DefaultDir(\".\")")
+}
+
+// seedQualityRecordAt is seedQualityRecord's explicit-dir counterpart: it appends
+// one terminal local-debt record to the given store dir so --dir tests can seed a
+// fixture store outside the chdir'd DefaultDir("."). Distinct files per call keep
+// StampID distinct (records sharing an ID would fold together and undercount).
+func seedQualityRecordAt(t *testing.T, dir, persona, model, status, file string) {
+	t.Helper()
+	rec := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion,
+		RunID:         "2026-07-01T10:00:00Z-seed",
+		Timestamp:     "2026-07-01T10:00:00Z",
+		Severity:      "LOW",
+		File:          file,
+		Line:          1,
+		Problem:       "problem-" + file,
+		Reviewers:     []string{persona},
+		Model:         model,
+		Status:        status,
+	}
+	rec.StampID()
+	require.NoError(t, localdebt.Append(dir, rec))
+}
