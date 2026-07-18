@@ -53,8 +53,18 @@ func newReviewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "review",
 		Short: "Fan a code change out to the reviewer pool",
-		Args:  usageArgs(cobra.NoArgs),
-		RunE:  runReview,
+		// --preview short-circuits at the very top of runReview (see the comment
+		// there), above the --resume/--force mutual-exclusion check and the
+		// --auto-fix handling — document that silent precedence here, in the
+		// command's Long help, since the flag's own usage string lives in the
+		// shared addQualitySignalFlags registration.
+		Long: "Fan a code change out to the reviewer pool.\n\n" +
+			"--preview prints the content-free quality-signal payload and exits before any\n" +
+			"review work begins. It takes precedence over every action flag: when --preview\n" +
+			"is set, flags such as --auto-fix, --resume, and --force are ignored (no resume,\n" +
+			"no overwrite, no fixes — the preview renders and the command exits).",
+		Args: usageArgs(cobra.NoArgs),
+		RunE: runReview,
 	}
 	cmd.Flags().String("id", "", "review id (default: <YYYY-MM-DD>_<branch-slug>)")
 	cmd.Flags().String("output-dir", "", "write the review tree to this path instead of .atcr/reviews/<id>/ (mutually exclusive with --id; does not update .atcr/latest)")
