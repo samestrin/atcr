@@ -423,3 +423,32 @@ func TestCompact(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, finalRecs)
 }
+
+// TestCompact_SweepsStaleTempFiles locks the crash-reaping contract: temp files
+// (.<month>.jsonl.tmp-*) leaked by a Compact killed between CreateTemp and rename
+// are removed at the start of the next Compact, while non-matching files are left
+// untouched.
+func TestCompact_SweepsStaleTempFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	rec := sampleRecord("2026-06-14T10:00:00Z-a")
+	require.NoError(t, Append(dir, rec))
+
+	// Pre-seed leaked temps exactly as a SIGKILLed Compact leaves them (CreateTemp
+	// pattern: "."+month+".jsonl.tmp-*"), plus a lookalike the sweep must not touch.
+	stale1 := filepath.Join(dir, ".2026-06.jsonl.tmp-111")
+	stale2 := filepath.Join(dir, ".2026-07.jsonl.tmp-222")
+	keepFile := filepath.Join(dir, "2026-08.jsonl.tmp-333") // no leading dot: not a compaction temp
+	for _, p := range []string{stale1, stale2, keepFile} {
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
+	}
+
+	require.NoError(t, Compact(dir, ReadOpts{}))
+
+	for _, p := range []string{stale1, stale2} {
+		_, err := os.Stat(p)
+		assert.True(t, os.IsNotExist(err), "stale compaction temp must be swept: %s", filepath.Base(p))
+	}
+	_, err := os.Stat(keepFile)
+	assert.NoError(t, err, "non-matching file must survive the sweep")
+}
