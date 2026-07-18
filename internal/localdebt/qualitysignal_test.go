@@ -7,6 +7,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestAggregateQualitySignal_RecoversModelWhenFoldedTerminalIsModelless locks the
+// read-time fold/exclusion interaction: one id has an earlier resolved terminal
+// carrying a real Model and a later wontfix terminal with an empty Model. FoldRecords
+// keeps the higher-precedence wontfix (empty Model); excluding it on the empty Model
+// would silently drop a real dismissed outcome that DID have model attribution. The
+// signal must recover the same-id model and still emit a dismissed row under it.
+func TestAggregateQualitySignal_RecoversModelWhenFoldedTerminalIsModelless(t *testing.T) {
+	resolved := Record{ID: "y", RunID: "r1", Timestamp: "2026-07-01T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6", Status: "resolved"}
+	wontfix := Record{ID: "y", RunID: "r2", Timestamp: "2026-07-02T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "", Status: "wontfix"}
+
+	rows := AggregateQualitySignal([]Record{resolved, wontfix})
+
+	var found *QualityRow
+	for i := range rows {
+		if rows[i].Persona == "claude" && rows[i].Model == "claude-sonnet-4-6" {
+			found = &rows[i]
+		}
+	}
+	require.NotNil(t, found, "a dismissed row must be emitted under the recovered model, not dropped")
+	assert.Equal(t, 1, found.DismissedCount, "the effective (wontfix) outcome is a dismissal")
+	assert.Equal(t, 0, found.ConfirmedCount, "the earlier resolved outcome is superseded by wontfix")
+}
+
 // --- Sprint 30.0 Story 1: fold-by-ID before aggregation (AC 01-04) ---------
 
 // TestFoldByID_OpenPlusTerminalCountsOnce locks AC 01-04 Scenario 1: an open
