@@ -1,9 +1,9 @@
 {
-  "skill": "create-acceptance-criteria",
-  "args": "@.planning/plans/active/31.0_axi_compliance/",
-  "invocation": "/create-acceptance-criteria @.planning/plans/active/31.0_axi_compliance/",
+  "skill": "create-sprint",
+  "args": "@.planning/plans/active/31.0_axi_compliance/ --gated",
+  "invocation": "/create-sprint @.planning/plans/active/31.0_axi_compliance/ --gated",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "95e58e20-50a1-4a87-a86d-87487b84cb29",
-  "timestamp": "2026-07-18T16:17:19.181Z"
+  "session_id": "da5b5858-73c7-4635-b300-368e4115a82e",
+  "timestamp": "2026-07-18T18:12:01.034Z"
 }

@@ -176,7 +176,7 @@ Testable elements:
 **Module Boundaries:**
 - `internal/report` — owns the `FormatAXI` renderer (schema encoding) and the pagination/truncation wrapper; both are pure functions over already-collected findings data, no new I/O
 - `cmd/atcr` — owns context injection (`main.go`), flag/env registration (`--axi` persistent flag, `axiMaxLinesFromEnv()`), and gating of existing human-oriented stdout writes in `review.go`/`resume.go`/`review_summary.go`
-- `internal/mcp` — owns the deliberate include/exclude decision for `FormatAXI` propagating into the `atcr_report` tool's JSON Schema enum
+- `internal/mcp` — owns the resolved exclusion of `FormatAXI` from the `atcr_report` tool's JSON Schema enum (Design Decision #3): filtered out of the MCP-facing enum derivation with an inline code comment; `report.ValidFormat()` backstop unchanged for the remaining formats
 
 **External Dependencies:** None new. Go standard library only (`bytes`, `strings`, `unicode/utf8`, `strconv`, `os`, `context`) — consistent with plan.md's "hand-rolled formatters over third-party dependencies" stance; the third-party Go TOON implementation referenced in `documentation/toon-format-reference.md` is evaluated, not adopted by default.
 
