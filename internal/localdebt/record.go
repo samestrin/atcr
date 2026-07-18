@@ -16,6 +16,13 @@ import (
 // Model == "" — and forward-compatible in the established sense: this reader
 // accepts v1 and v2 (r.SchemaVersion <= SchemaVersion), while v3+ records stay
 // forward-incompatible and are skipped with a warning (store.go decodeRecord).
+//
+// Downgrade visibility (accepted loss): a pre-30.0 binary (SchemaVersion == 1)
+// reads v2 records as forward-incompatible and skips them, so v2 findings are
+// intentionally invisible to older binaries. An old reader would structurally
+// decode a v2 record and ignore the unknown model key, but the
+// forward-incompat-skip model treats every newer version uniformly rather than
+// special-casing additive bumps.
 const SchemaVersion = 2
 
 // Diagnostic message substrings emitted on the read path, exported so tests assert
