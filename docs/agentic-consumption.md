@@ -147,6 +147,74 @@ Capture the two streams separately so diagnostics never contaminate the payload:
 atcr report --format axi > findings.toon 2> report.log
 ```
 
+## Worked example: an autonomous sweeper
+
+The scenario AXI mode is built for: an autonomous agent (a "sweeper") reviews a
+change set it just produced, consumes the findings programmatically, and reacts.
+The script below is near-runnable — every flag, env var, field, and exit code in
+it is real. Adapt the "fix" step to your agent.
+
+```bash
+#!/usr/bin/env bash
+# Autonomous sweeper: review the current change set, consume the findings as a
+# token-dense AXI payload, and branch on the exit code. No credentials appear in
+# this script — atcr reads its provider key from the environment (e.g. OPENROUTER_API_KEY).
+set -u
+
+# Bound the findings payload so a large PR cannot blow the agent's context window.
+export ATCR_AXI_MAX_LINES=2000
+
+# 1. Run the review as a subprocess. stdout = payload, stderr = diagnostics.
+#    --fail-on gates the exit code on surviving findings; --axi keeps stdout clean.
+atcr review --axi --fail-on high > run.toon 2> review.log
+status=$?
+
+# 2. Branch on the reconciled exit code — the same 0/1/2/3 contract as non-axi.
+case $status in
+  0)
+    echo "clean: no findings at or above the threshold; proceeding"
+    ;;
+  1)
+    # Findings survived the gate. Read them as an AXI payload (stdout only).
+    if ! atcr report --format axi > findings.toon 2> report.log; then
+      echo "report rendering failed (exit 1); see report.log" >&2
+      exit 1
+    fi
+
+    # 3. Trust the payload only after checking the truncation flag. If truncated,
+    #    the array header's N is the TRUE total but not every row is present —
+    #    re-run with a higher cap rather than assuming the list is complete.
+    if grep -qx 'truncated: true' findings.toon; then
+      echo "findings truncated; re-running with a higher cap" >&2
+      ATCR_AXI_MAX_LINES=20000 atcr report --format axi > findings.toon 2> report.log
+    fi
+
+    # 4. Iterate the finding rows. Data rows are pipe-delimited and indented; the
+    #    header (findings[N|]{...}:) and the trailing truncated: line are skipped.
+    #    Free-text cells follow TOON quoting rules — a production consumer should
+    #    parse with a TOON library rather than a bare split.
+    grep -E '^  [A-Z]+\|' findings.toon | while IFS='|' read -r severity file_line problem fix _rest; do
+      printf 'FIX %s at %s: %s\n' "${severity#  }" "$file_line" "$fix"
+      # ... hand each finding to the agent's fixer here ...
+    done
+    ;;
+  2)
+    echo "usage/config error: fix the invocation, do not retry as-is (see review.log)" >&2
+    exit 2
+    ;;
+  3)
+    echo "auth error: fix credentials (e.g. ATCR_API_KEY) before retrying" >&2
+    exit 3
+    ;;
+esac
+```
+
+Two invariants the example relies on, both guaranteed by AXI mode: `review.log`
+and `report.log` capture *all* diagnostics because stderr is the only diagnostic
+sink, so `run.toon`/`findings.toon` are byte-clean payloads; and the exit code is
+authoritative, so the sweeper never has to parse stdout to decide whether the run
+failed.
+
 ## See also
 
 - [CI Integration](ci-integration.md) — the exit-semantics contract AXI reuses,
