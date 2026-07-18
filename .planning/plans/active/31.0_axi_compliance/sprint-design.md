@@ -52,7 +52,7 @@ stdout stderr isolation for agent-facing tooling
 - **Architecture:** 2/3 - Introduces a genuinely new cross-cutting concept (an axi-mode value threaded through command context, alongside the existing logger/telemetry client) and a new pagination/truncation layer (`internal/report/pagination.go`), but both build directly on established atcr patterns (format-enum dispatch, `PersistentPreRunE` context injection) rather than overhauling them.
 - **Integration:** 2/3 - Touches 3+ internal integration points that must stay in sync: `internal/report` (renderer + pagination), `cmd/atcr` (context injection, `review.go`/`resume.go` gating, `main.go` flag/env registration), and `internal/mcp` (format-enum propagation decision), plus a documentation cross-reference into `docs/ci-integration.md`.
 - **Story/Task & Test:** 3/3 - 5 user stories, 18 acceptance criteria, spanning golden-file unit tests, table-driven env-var/exit-code tests, cobra-level integration tests capturing stdout, and an escape-sequence pinning test — test-planning-matrix.md rates 4 of the 18 ACs "High" complexity.
-- **Risk/Unknowns:** 2/3 - Several concrete design decisions remain open for this sprint to resolve (TOON vs. compact JSON, full-width vs. subset schema fields, MCP include/exclude for `FormatAXI`, whether `--axi`-mode structured errors ride stdout or stderr) — each is well-scoped by the plan's documentation but still requires a judgment call recorded in code/docs, not a known quantity.
+- **Risk/Unknowns:** 2/3 - The four open design forks (TOON vs. compact JSON, full-width vs. subset schema fields, MCP include/exclude for `FormatAXI`, stdout vs. stderr for `--axi`-mode structured errors) have since been resolved via explicit sign-off — see [Design Decisions (Resolved)](#design-decisions-resolved) — which removes the judgment-call risk but not the implementation risk of executing four cross-cutting changes correctly; score retained at 2/3 rather than reduced, since resolving *what* to build doesn't reduce the *breadth* of what must be built and tested correctly.
 
 **Time Formula:** COMPLEX (7-9/12) → 8-12 day range; sum of phase estimates below
 **Calculation:** Phase 1 (2.5d) + Phase 2 (2.5d) + Phase 3 (2d) + Phase 4 (2d) + Phase 5 (1d) = 10 days
@@ -70,15 +70,30 @@ Thresholds: adversarial triggered by complexity >= 6/12 or phases >= 3; gated tr
 
 ---
 
+## Design Decisions (Resolved)
+
+Four decisions the initial design left open have been reviewed and signed off before `/create-sprint`, so implementation does not have to improvise them mid-sprint:
+
+| # | Decision | Resolution | Rationale |
+|---|----------|------------|-----------|
+| 1 | Payload encoding | **TOON**, not compact JSON | The epic's own reference source (axi.md Principle 1) mandates TOON by name for its ~40% token-density advantage over JSON; a JSON fallback would be a deviation from the epic's stated reference, not a coequal option. |
+| 2 | Findings schema width | **Full-width** (8-9 columns), not a slim 3-4-field default + `--fields` widen flag | Matches `atcr-findings/v1` field-for-field, avoiding a second machine-format surface to maintain; pipe-delimited rows are already token-lean, softening axi.md Principle 2's rationale for trimming fields. |
+| 3 | MCP `FormatAXI` enum propagation | **Excluded** from `internal/mcp/tools.go`'s `atcr_report` enum (filtered out of `report.FormatList()`'s MCP-facing consumption, not a raw pass-through) | AXI's value proposition is avoiding MCP's token overhead in the first place — axi.md's own benchmark shows MCP costs 2.3x-12x more tokens than CLI. An axi-encoded string nested inside an MCP JSON-RPC envelope doesn't deliver that saving, so surfacing it there would be misleading. AC 01-05's "explicit decision, documented inline" requirement is satisfied by this exclusion + a code comment explaining why. |
+| 4 | `--axi`-mode structured errors: stdout or stderr | **Stderr** (atcr's existing convention), not stdout (axi.md Principle 6) | Preserves the simplest possible client contract: `--axi` stdout contains ONLY the findings payload, always; exit code (0/1/2/3, unchanged) is the deterministic success/failure signal agents branch on, so they never need to parse stdout for an error case. This is also the smaller deviation from atcr's existing stderr-only diagnostics invariant (Story 4). |
+
+These resolutions should be treated as sprint constraints, not merely defaults: AC 01-02, 01-05, and 02-03's "document the reconciliation decision" requirements are satisfied by recording rationale #3 and #4 inline in code comments/docs during implementation, per each AC's Definition of Done.
+
+---
+
 ## Phase Structure
 
 ### Phase 1: Foundation — AXI Schema & Render Dispatch (2.5 days)
 **Items:** Story 1 (AC 01-01, 01-02)
-**Focus:** Design and land the `FormatAXI` schema decision (TOON vs. compact JSON, full-width vs. subset fields, pipe-delimiter convergence with `atcr-findings/v1`) and implement the `internal/report` render-dispatch extension with its golden-file fixture. This is the foundational payload every later phase wraps (pagination), gates (stdout isolation), or documents (Story 5) — it must land first and be schema-stable before Phases 2-4 build on it.
+**Focus:** Implement the `FormatAXI` schema per the resolved decisions above (TOON encoding, full-width fields, pipe-delimiter convergence with `atcr-findings/v1`) and the `internal/report` render-dispatch extension with its golden-file fixture. This is the foundational payload every later phase wraps (pagination), gates (stdout isolation), or documents (Story 5) — it must land first and be schema-stable before Phases 2-4 build on it.
 
-### Phase 2: Core Integration — Review/Resume Gating, MCP Decision, Exit-Code Reconciliation (2.5 days)
+### Phase 2: Core Integration — Review/Resume Gating, MCP Exclusion, Exit-Code Reconciliation (2.5 days)
 **Items:** Story 1 (AC 01-03, 01-04, 01-05), Story 2 (AC 02-01, 02-02, 02-03)
-**Focus:** Thread the axi-mode value through `PersistentPreRunE` context injection (mirroring the logger/telemetry precedent); gate `atcr review`'s and `atcr resume`'s human-oriented `cmd.OutOrStdout()` writes behind it; decide and document MCP `FormatAXI` enum propagation; and reconcile/document the exit-code contract (confirming `--axi` introduces no second exit-code mechanism and no repurposing of code `2`). These two threads (output gating, exit-code reconciliation) are independent of each other but both depend on Phase 1's flag/context plumbing existing.
+**Focus:** Thread the axi-mode value through `PersistentPreRunE` context injection (mirroring the logger/telemetry precedent); gate `atcr review`'s and `atcr resume`'s human-oriented `cmd.OutOrStdout()` writes behind it; implement and document the MCP exclusion decided above (filter `FormatAXI` out of the `atcr_report` enum with an inline comment explaining why); and reconcile/document the exit-code contract, including the decided errors-on-stderr resolution (confirming `--axi` introduces no second exit-code mechanism, no repurposing of code `2`, and no divergence from stderr-only diagnostics). These threads are independent of each other but both depend on Phase 1's flag/context plumbing existing.
 
 ### Phase 3: Pagination & Truncation Guarantees (2 days)
 **Items:** Story 3 (AC 03-01, 03-02, 03-03, 03-04)
@@ -179,7 +194,7 @@ Testable elements:
 |------|-------|-----------------|---------------------|
 | Escape-sequence injection via untrusted finding text | AXI payload encoding (`renderAXI`), review-summary payload | A reviewer-agent-controlled or repo-content-controlled string (finding `Problem`/`Fix`/`Evidence` fields) contains a raw `\x1b[`/`\x1b]` CSI/OSC sequence | TOON's 5-escape-only rule structurally rejects raw control bytes (must quote/escape); pinning test (AC 04-02) with `osc8()` as a positive-control fixture; reuse `sanitizeDisplay`-style stripping if the encoder path doesn't already reject them |
 | `ATCR_AXI_MAX_LINES` env-var parsing | `axiMaxLinesFromEnv()` in `cmd/atcr/main.go` | Malformed, blank, zero, negative, or extremely large values | Fail-open to default 500 with exactly one stderr warning, never a fatal error/panic; `strconv.Atoi` bounds-checks overflow |
-| MCP format-enum exposure | `internal/mcp/tools.go`/`handlers.go` | `FormatAXI` auto-propagates into `atcr_report`'s JSON Schema enum via `report.FormatList()` unless explicitly filtered | Explicit include/exclude decision recorded in code comments (AC 01-05); double-layer defense (JSON Schema enum + `report.ValidFormat()` backstop) unchanged |
+| MCP format-enum exposure | `internal/mcp/tools.go`/`handlers.go` | `FormatAXI` would auto-propagate into `atcr_report`'s JSON Schema enum via `report.FormatList()` if not explicitly filtered | **Resolved: excluded.** Filter `FormatAXI` out of the MCP-facing enum derivation with an inline comment explaining why (AC 01-05); double-layer defense (JSON Schema enum + `report.ValidFormat()` backstop) unchanged for the remaining formats |
 
 ### Performance-Critical Paths
 
