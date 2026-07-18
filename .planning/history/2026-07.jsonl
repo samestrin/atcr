@@ -215,3 +215,17 @@
 {"ts":"2026-07-16T16:44:23.231263-07:00","package":"cmd/atcr","severity":"LOW","id":"6c247be338f7c6dd","file":"cmd/atcr/flags.go","category":"style"}
 {"ts":"2026-07-17T05:13:46.282788-07:00","package":"personas/community","severity":"MEDIUM","id":"65cc4c7caf776795","file":"personas/community/simon.md","category":"security"}
 {"ts":"2026-07-17T05:13:46.282788-07:00","package":"personas/community/testdata","severity":"LOW","id":"dce15b0c98864371","file":"personas/community/testdata/simon_fixture.patch","category":"reliability"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"internal/localdebt","severity":"HIGH","id":"fb81be0d1e28607f","file":"internal/localdebt/lock.go","category":"correctness"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"2dae137879f06919","file":"cmd/atcr/telemetry_report_import_test.go","category":"correctness"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"cmd/atcr","severity":"CRITICAL","id":"9c272d0f4aaceb7f","file":"cmd/atcr/debt_compact.go","category":"resource-exhaustion"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"internal/localdebt","severity":"HIGH","id":"8882b5f1bc61da8d","file":"internal/localdebt/lock.go","category":"resource-exhaustion"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"8085f9b9577c9dda","file":"cmd/atcr/debt_compact.go","category":"observability"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"9fc652b946611cca","file":"cmd/atcr/debt_compact.go","category":"observability"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"internal/localdebt","severity":"LOW","id":"99c6d0ce915b4d09","file":"internal/localdebt/lock.go","category":"observability"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"internal/localdebt","severity":"CRITICAL","id":"ad3a907e1562c14b","file":"internal/localdebt/lock.go","category":"testing"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"internal/localdebt","severity":"MEDIUM","id":"8db594cc9966f16a","file":"internal/localdebt/lock.go","category":"concurrency"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"internal/telemetry","severity":"MEDIUM","id":"e4cdf12bdfd3f922","file":"internal/telemetry/quality_signal.go","category":"security"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"internal/localdebt","severity":"LOW","id":"49d3c6f35e1f0b8a","file":"internal/localdebt/lock.go","category":"concurrency"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"142fc3af1cc7374f","file":"cmd/atcr/debt_compact.go","category":"state"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"cmd/atcr","severity":"LOW","id":"5a1bab33c18a40bf","file":"cmd/atcr/debt_compact.go","category":"style"}
+{"ts":"2026-07-17T16:49:30.591297-07:00","package":"internal/localdebt","severity":"LOW","id":"036b96fbfc863506","file":"internal/localdebt/lock.go","category":"structure"}

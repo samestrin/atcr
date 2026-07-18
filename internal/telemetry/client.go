@@ -102,8 +102,35 @@ func isHTTPS(endpoint string) bool {
 // not HTTPS. Every failure mode — non-2xx, network error, marshal error, or an
 // internal panic — is logged at debug level (never a level that alarms an end
 // user about an opt-in background feature) and swallowed: Send has no error
-// return and never affects the caller's outcome or exit code.
+// return and never affects the caller's outcome or exit code. The usage Event is
+// marshaled compactly, preserving its existing wire format.
 func (c *Client) Send(ctx context.Context, ev Event) {
+	c.dispatch(ctx, func() ([]byte, error) { return json.Marshal(ev) })
+}
+
+// SendQualitySignal fires the community prompt quality-signal payload (Sprint 30.0)
+// on the SAME detached, fail-open, HTTPS-only, nil/empty-endpoint-no-op, panic-safe
+// path as Send — it is a sibling for the allowlisted []QualitySignal payload, never
+// an extension of Event. The payload is marshaled with the SAME indentation the
+// `atcr … --preview` surface renders (json.MarshalIndent with a two-space indent),
+// so the transmitted bytes are byte-identical to the preview for the same data
+// (AC 06-02); a byte-for-byte equivalence test locks the two paths together.
+// A nil or empty payload is a no-op short-circuit BEFORE dispatch: the exported
+// API is self-defending (no semaphore slot, goroutine, or contentless beacon)
+// rather than depending on every caller pre-checking len(payload)==0.
+func (c *Client) SendQualitySignal(ctx context.Context, payload []QualitySignal) {
+	if len(payload) == 0 {
+		return
+	}
+	c.dispatch(ctx, func() ([]byte, error) { return json.MarshalIndent(payload, "", "  ") })
+}
+
+// dispatch is the shared fail-open send core: it no-ops on a nil client or a
+// non-HTTPS/empty endpoint, bounds concurrent goroutines via the in-flight
+// semaphore, and hands the marshal closure to the detached send goroutine. Both
+// Send and SendQualitySignal funnel through it so the goroutine/timeout/recover
+// contract has a single implementation; only the marshaling differs per payload.
+func (c *Client) dispatch(ctx context.Context, marshal func() ([]byte, error)) {
 	if c == nil || !isHTTPS(c.endpoint) {
 		return
 	}
@@ -116,19 +143,19 @@ func (c *Client) Send(ctx context.Context, ev Event) {
 		return
 	}
 	c.wg.Add(1)
-	go c.send(ctx, ev)
+	go c.send(ctx, marshal)
 }
 
-func (c *Client) send(ctx context.Context, ev Event) {
+func (c *Client) send(ctx context.Context, marshal func() ([]byte, error)) {
 	defer c.wg.Done()
-	defer func() { <-c.sem }() // release the in-flight slot acquired in Send
+	defer func() { <-c.sem }() // release the in-flight slot acquired in dispatch
 	defer func() {
 		if r := recover(); r != nil {
 			log.FromContext(ctx).Debug("telemetry: recovered from panic", "value", r)
 		}
 	}()
 
-	body, err := json.Marshal(ev)
+	body, err := marshal()
 	if err != nil {
 		log.FromContext(ctx).Debug("telemetry: marshal failed", "error", err)
 		return
@@ -163,6 +190,12 @@ func (c *Client) send(ctx context.Context, ev Event) {
 // Wait blocks until all in-flight sends complete. Intended for deterministic
 // tests and graceful-shutdown drain; production callers fire-and-forget and
 // never call it. Safe on a nil Client.
+//
+// Wait is safe ONLY after the caller has quiesced dispatch — no concurrent
+// Send/SendQualitySignal may be in flight. sync.WaitGroup forbids an Add that
+// races a Wait when the counter is zero: Wait can return before the
+// just-dispatched send is counted, dropping the very ping the drain was meant
+// to flush. A graceful shutdown must stop new dispatches first, then Wait.
 func (c *Client) Wait() {
 	if c == nil {
 		return

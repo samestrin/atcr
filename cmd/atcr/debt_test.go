@@ -140,6 +140,37 @@ func TestDebtList_SyncRegeneratesFromREADME(t *testing.T) {
 	assert.Contains(t, out, "pkg/x.go:1")
 }
 
+func TestDebtList_SanitizesCellWhitespace(t *testing.T) {
+	dir := t.TempDir()
+	items := filepath.Join(dir, "items")
+	shards := []tdmigrate.Shard{
+		{
+			Date: "2026-07-01", SourceType: tdmigrate.SourceTypeReview, Label: "evil",
+			Items: []tdmigrate.Item{
+				// Severity/Status are schema-validated by the shard loader, so the
+				// whitespace attack arrives via the free-text fields instead.
+				{Group: "1\n2", Status: "open", Severity: "HIGH", File: "pkg/x.go:1\npkg/y.go:2",
+					Problem: "boom\tkaboom", Fix: "fix", Category: "cor\trectness", EstMinutes: 15, Source: "code-review"},
+			},
+		},
+	}
+	_, err := tdmigrate.WriteShards(items, shards)
+	require.NoError(t, err)
+
+	out, err := runDebt(t, "list", "--items", items)
+	require.NoError(t, err)
+
+	// Header plus exactly one data row: a literal newline or tab in any cell
+	// must not tear the row into extra lines or split its columns.
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	require.Len(t, lines, 2, "each record must render as a single table row; got:\n%s", out)
+	assert.Contains(t, lines[1], "HIGH")
+	assert.Contains(t, lines[1], "1 2")
+	assert.Contains(t, lines[1], "pkg/x.go:1 pkg/y.go:2")
+	assert.Contains(t, lines[1], "cor rectness")
+	assert.Contains(t, lines[1], "boom kaboom")
+}
+
 func TestTruncate_GuardNonPositiveN(t *testing.T) {
 	assert.Equal(t, "", truncate("abc", 0), "n==0 must not panic")
 	assert.Equal(t, "", truncate("abc", -1), "negative n must not panic")

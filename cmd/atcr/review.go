@@ -53,8 +53,18 @@ func newReviewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "review",
 		Short: "Fan a code change out to the reviewer pool",
-		Args:  usageArgs(cobra.NoArgs),
-		RunE:  runReview,
+		// --preview short-circuits at the very top of runReview (see the comment
+		// there), above the --resume/--force mutual-exclusion check and the
+		// --auto-fix handling — document that silent precedence here, in the
+		// command's Long help, since the flag's own usage string lives in the
+		// shared addQualitySignalFlags registration.
+		Long: "Fan a code change out to the reviewer pool.\n\n" +
+			"--preview prints the content-free quality-signal payload and exits before any\n" +
+			"review work begins. It takes precedence over every action flag: when --preview\n" +
+			"is set, flags such as --auto-fix, --resume, and --force are ignored (no resume,\n" +
+			"no overwrite, no fixes — the preview renders and the command exits).",
+		Args: usageArgs(cobra.NoArgs),
+		RunE: runReview,
 	}
 	cmd.Flags().String("id", "", "review id (default: <YYYY-MM-DD>_<branch-slug>)")
 	cmd.Flags().String("output-dir", "", "write the review tree to this path instead of .atcr/reviews/<id>/ (mutually exclusive with --id; does not update .atcr/latest)")
@@ -80,6 +90,7 @@ func newReviewCmd() *cobra.Command {
 	addRangeFlags(cmd)
 	addAutoFixFlags(cmd)
 	addSyncCloudFlags(cmd)
+	addQualitySignalFlags(cmd)
 	return cmd
 }
 
@@ -170,6 +181,18 @@ func prFromGitHubRef(ref string) int {
 // Range/config problems are usage errors (exit 2); an all-agents-failed review
 // is a plain failure (exit 1) with the artifacts preserved on disk.
 func runReview(cmd *cobra.Command, _ []string) (err error) {
+	// --preview renders the outbound quality-signal payload locally and sends
+	// nothing (Story 3). It short-circuits at the top of RunE — before the --resume
+	// branch, the --sync-cloud precondition, the opt-in gate, and any
+	// transport/credential resolution — so it works for an undecided user with no
+	// ATCR_API_KEY and never runs a review (AC 03-01/03-02). (Cobra's pure
+	// range-flag PreRunE still validates flag combinations before RunE, but does no
+	// I/O, network, gate, or credential access.) Its output is the marshal of the
+	// shared buildQualitySignalPayload, identical to what a real send would transmit.
+	if handled, perr := maybePreviewQualitySignal(cmd); handled {
+		return perr
+	}
+
 	// --resume targets an existing review directory and runs only its pending
 	// agents (epic 4.1.1); it is a distinct flow from a fresh review, so branch
 	// before any new-review flag handling.
@@ -467,6 +490,15 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 				telemetry.FromContext(ctx).Send(ctx, reviewTelemetryEvent(prep, status))
 			}
 		}()
+
+		// Fire the gated, content-free community prompt quality signal (Story 6)
+		// adjacent to the passive ping above, DEFERRED so it fires at run completion.
+		// Its own independent opt-in gate is resolved fresh inside — short-circuiting
+		// before any payload construction when disabled — and it is fail-open: a
+		// transport failure never changes this command's outcome. --preview (Story 3)
+		// short-circuits at the top of runReview, so it is never reached on that path.
+		// The gate's unrecognized-env-value warning goes to this command's stderr.
+		defer maybeSendQualitySignal(ctx, cmd.ErrOrStderr())
 	}
 	if err != nil {
 		return err // all-agents-failed → exit 1, artifacts preserved
