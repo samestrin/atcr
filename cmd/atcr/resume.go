@@ -47,6 +47,10 @@ func resolveResumeDir(anchor string) (string, error) {
 // the interrupted marker (AC7), exiting 1 with the same notice as a fresh review.
 func runResume(cmd *cobra.Command, anchor string) error {
 	ctx := cmd.Context()
+	// --axi gates resume's human-oriented stdout writes and swaps the summary block
+	// for the shared token-dense payload, read from the same context value review.go
+	// uses so review/resume stay in lockstep with one flag parse (AC 01-04).
+	axiMode := axiFromContext(ctx)
 
 	// --resume targets an existing review; --id and --output-dir only make sense
 	// when creating a new one, so reject the combination up front (exit 2).
@@ -150,7 +154,9 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// so a review that was interrupted-but-actually-complete reports completed
 	// rather than interrupted (AC6).
 	if info.AllComplete() {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "All configured agents already completed. Re-running reconciliation...")
+		if !axiMode { // gated under --axi (AC 01-04 Edge Case 1): stdout stays payload-only
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "All configured agents already completed. Re-running reconciliation...")
+		}
 		if err := fanout.ClearInterrupted(dir); err != nil {
 			return usageError(fmt.Errorf("resume failed: %w", err))
 		}
@@ -167,8 +173,10 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		return err // no pending slot can authenticate → exit 2 before any provider call
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "resuming review %s: %d completed, %d pending (%s)\n",
-		prep.ID, len(info.Completed), len(info.Pending), strings.Join(info.Pending, ", "))
+	if !axiMode { // gated under --axi: stdout stays payload-only
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "resuming review %s: %d completed, %d pending (%s)\n",
+			prep.ID, len(info.Completed), len(info.Pending), strings.Join(info.Pending, ", "))
+	}
 
 	// Snapshot the summary counters before the resumed fan-out so the end-of-review
 	// summary reports only this resume's contribution, mirroring runReview.
@@ -185,14 +193,22 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	}
 
 	if result != nil {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
-			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
 		// End-of-review metrics summary (Epic 4.4 AC3), mirroring runReview: emitted
-		// before the all-agents-failed error guard so a fully-failed resume still prints
-		// the breakdown. elapsed is measured from req.StartedAt (set just before
-		// PrepareResume), the resume's wall-clock start.
+		// before the all-agents-failed error guard so a fully-failed resume still
+		// reports the breakdown. Under --axi the human outcome + summary lines are
+		// replaced by the one shared token-dense payload, byte-identical to
+		// review --axi for equivalent data (AC 01-04); a write fault stays unwrapped
+		// (exitFailure, AC 02-02 Error Scenario 3).
 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
-		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(req.StartedAt))
+		if axiMode {
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), result.ID, result.Dir, summaryDelta); werr != nil {
+				return fmt.Errorf("axi output rendering failed: %w", werr)
+			}
+		} else {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
+				result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
+			writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(req.StartedAt))
+		}
 	}
 	if err != nil {
 		// An empty union is a usage/state error (exit 2), consistent with the
@@ -256,6 +272,10 @@ func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir string) error 
 	if err != nil {
 		return usageError(fmt.Errorf("resume failed: %w", err))
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
+	// Shared by the AllComplete and pending paths; gated under --axi (read from the
+	// same context value) so both resume routes keep stdout payload-only (AC 01-04).
+	if !axiFromContext(ctx) {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
+	}
 	return nil
 }
