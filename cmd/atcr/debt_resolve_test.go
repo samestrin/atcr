@@ -131,6 +131,29 @@ func TestDebtResolve_JSONEmptyStoreIsEmptyArray(t *testing.T) {
 	assert.Empty(t, items, "empty store yields an empty JSON array, not null or a stack trace")
 }
 
+func TestSelectOpenDebt_AgreesWithFoldRecordsOnReRaisedID(t *testing.T) {
+	// The same File/Line/Problem re-raised across two runs yields two OPEN records
+	// under one stable id with divergent Severity. selectOpenDebt must display the
+	// SAME occurrence FoldRecords keeps (the last), so the resolve list never
+	// disagrees with the quality signal (which folds via FoldRecords) about the item.
+	first := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	second := first
+	second.RunID = "2026-07-02T10:00:00Z-b"
+	second.Timestamp = second.RunID
+	second.Severity = "LOW"
+	require.Equal(t, first.ID, second.ID, "identical File/Line/Problem must share a stable id")
+
+	recs := []localdebt.Record{first, second}
+	got := selectOpenDebt(recs, "", 0)
+	require.Len(t, got, 1, "the two occurrences fold to one open item")
+
+	folded := localdebt.FoldRecords(recs)
+	require.Len(t, folded, 1)
+	assert.Equal(t, folded[0].Severity, got[0].Severity,
+		"selectOpenDebt must display the occurrence FoldRecords keeps (last), not the first")
+	assert.Equal(t, "LOW", got[0].Severity, "the most recent open occurrence wins")
+}
+
 func TestDebtResolve_SelectionSortsSeverityThenAge(t *testing.T) {
 	// Written newest-first and lowest-severity-first to prove the command re-sorts:
 	// severity DESC (HIGH before LOW), then ts ASC (oldest first) within a severity.
