@@ -305,6 +305,19 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 			continue
 		}
 
+		// Narrow the record's attribution to the reviewers the resolved model
+		// actually covers: AggregateQualitySignal credits every persona in
+		// Reviewers under the record's single Model, so a persona with no
+		// recorded model must not be stamped alongside a sibling whose model
+		// resolved — it would be credited under a model it never ran on. When
+		// no model resolves (none recorded, or a cross-model merge) the full
+		// reviewer list is kept: an empty Model excludes the record from
+		// per-model rows regardless.
+		model := resolveRecordModel(f.Reviewers, modelByReviewer)
+		reviewers := f.Reviewers
+		if model != "" {
+			reviewers = attributableReviewers(f.Reviewers, modelByReviewer, model)
+		}
 		rec := localdebt.Record{
 			SchemaVersion: localdebt.SchemaVersion,
 			RunID:         runID,
@@ -317,9 +330,9 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 			Category:      f.Category,
 			EstMinutes:    f.EstMinutes,
 			Evidence:      f.Evidence,
-			Reviewers:     f.Reviewers,
+			Reviewers:     reviewers,
 			Confidence:    f.Confidence,
-			Model:         resolveRecordModel(f.Reviewers, modelByReviewer),
+			Model:         model,
 			Justification: f.Justification,
 		}
 		if f.SourceReport != nil {
@@ -368,6 +381,25 @@ func resolveRecordModel(reviewers []string, modelByReviewer map[string]string) s
 		}
 	}
 	return model
+}
+
+// attributableReviewers returns the subset of reviewers whose recorded pool
+// model IS the record's resolved model, preserving reviewer order. It is the
+// narrowing half of record attribution: AggregateQualitySignal credits every
+// persona in a record's Reviewers under the record's single Model, so when one
+// reviewer's model resolved and a sibling's is unrecorded, the sibling is
+// dropped from the record rather than mis-credited under a model it never ran
+// on. Callers invoke it only with a resolved (non-empty) model, so every
+// reviewer with an unrecorded model fails the equality and is excluded; a
+// reviewer that ran on the resolved model is kept.
+func attributableReviewers(reviewers []string, modelByReviewer map[string]string, model string) []string {
+	out := make([]string, 0, len(reviewers))
+	for _, rev := range reviewers {
+		if modelByReviewer[rev] == model {
+			out = append(out, rev)
+		}
+	}
+	return out
 }
 
 // gateFlagValue reads the --fail-on flag and trims it, so both threshold
