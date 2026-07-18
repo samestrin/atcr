@@ -143,45 +143,26 @@ func higherClosedStatus(current, candidate string) string {
 }
 
 // selectOpenDebt folds the append-only record stream by id into the open backlog.
-// An id is open unless any record for it carries a terminal status; the displayed
-// record is the first open (non-terminal) occurrence, so a later resolution record
-// folds the item out. Results are sorted severity DESC then ts ASC (oldest first)
-// and capped at max — the deterministic selection rule the skill route documents.
+// An id is open unless its effective record carries a terminal status; the displayed
+// record is the effective open occurrence FoldRecords keeps (the LAST open record for
+// the id). It reuses localdebt.FoldRecords so this resolve list, Compact, and
+// AggregateQualitySignal share ONE precedence rule — a finding re-raised across runs
+// under the same id can no longer rank/filter on the first occurrence here while the
+// quality signal aggregates the last. Records whose effective occurrence has no File
+// are skipped (nothing to display/act on). Results are sorted severity DESC then ts
+// ASC (oldest first) and capped at max — the deterministic selection rule the skill
+// route documents.
 func selectOpenDebt(recs []localdebt.Record, severity string, limit int) []localdebt.Record {
-	type agg struct {
-		rec      localdebt.Record
-		resolved bool
-		hasRec   bool
-	}
-	order := make([]string, 0, len(recs))
-	m := make(map[string]*agg, len(recs))
-	for _, r := range recs {
-		a := m[r.ID]
-		if a == nil {
-			a = &agg{}
-			m[r.ID] = a
-			order = append(order, r.ID)
-		}
-		if isClosedStatus(r.Status) {
-			a.resolved = true
+	folded := localdebt.FoldRecords(recs)
+	open := make([]localdebt.Record, 0, len(folded))
+	for _, r := range folded {
+		if isClosedStatus(r.Status) || r.File == "" {
 			continue
 		}
-		if !a.hasRec && r.File != "" {
-			a.rec = r
-			a.hasRec = true
-		}
-	}
-
-	open := make([]localdebt.Record, 0, len(order))
-	for _, id := range order {
-		a := m[id]
-		if a.resolved || !a.hasRec {
+		if severity != "" && strings.ToUpper(r.Severity) != severity {
 			continue
 		}
-		if severity != "" && strings.ToUpper(a.rec.Severity) != severity {
-			continue
-		}
-		open = append(open, a.rec)
+		open = append(open, r)
 	}
 
 	sort.SliceStable(open, func(i, j int) bool {
