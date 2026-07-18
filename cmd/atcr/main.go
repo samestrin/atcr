@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/spf13/cobra"
 )
@@ -339,6 +340,35 @@ func telemetryEnabledFromEnv() bool {
 		return true
 	}
 	return enabled
+}
+
+// axiMaxLinesFromEnv resolves the --axi line cap from ATCR_AXI_MAX_LINES,
+// mirroring logLevelFromEnv/telemetryEnabledFromEnv's read-once, fail-open shape
+// (AC 03-03). It must be called once per run and the resolved value threaded into
+// every AXI emission point, so the warning below is inherently one-time.
+//
+//   - unset            -> report.AXIMaxLinesDefault, no warning (Scenario 1)
+//   - valid positive N -> N, no warning (Scenario 2; a huge value is the
+//     operator's explicit choice to disable practical truncation)
+//   - set-but-blank / non-numeric / zero / negative -> default + exactly one
+//     stderr warning (Edge Cases 1-3)
+//
+// A malformed value is NEVER a fatal error or usageError — this is the reconciled
+// Story-2 decision (AC 02-02 Edge Case 1): the cap fails open, the run continues,
+// exit code unaffected. LookupEnv distinguishes unset (silent) from set-but-blank
+// (warned), the one behavioral split from telemetryEnabledFromEnv.
+func axiMaxLinesFromEnv() int {
+	raw, ok := os.LookupEnv("ATCR_AXI_MAX_LINES")
+	if !ok {
+		return report.AXIMaxLinesDefault
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && n > 0 {
+		return n
+	}
+	// Blank, non-numeric, zero, or negative: fail open to the default and warn
+	// once so a misconfigured value is visible rather than silently ignored.
+	_, _ = fmt.Fprintf(os.Stderr, "warning: unrecognized ATCR_AXI_MAX_LINES value %q; using default %d\n", raw, report.AXIMaxLinesDefault)
+	return report.AXIMaxLinesDefault
 }
 
 // setupLogger constructs the single root logger from LOG_LEVEL and --log-format

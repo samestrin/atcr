@@ -193,6 +193,92 @@ func TestRootCmd_LogLevelEnvEmptyDefaultsToInfo(t *testing.T) {
 	assert.Equal(t, "info", logLevelFromEnv(), "whitespace-only LOG_LEVEL is treated as unset")
 }
 
+// captureStderrDuring redirects os.Stderr to a pipe for the duration of fn and
+// returns everything fn wrote (mirrors the telemetry_gate_test capture pattern).
+func captureStderrDuring(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	defer func() { os.Stderr = oldStderr }()
+	fn()
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(out)
+}
+
+// unsetEnvForTest removes key for the duration of the test, restoring the prior
+// state on cleanup (t.Setenv cannot express "unset").
+func unsetEnvForTest(t *testing.T, key string) {
+	t.Helper()
+	orig, had := os.LookupEnv(key)
+	require.NoError(t, os.Unsetenv(key))
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv(key, orig)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
+}
+
+// TestAXIMaxLinesFromEnv is AC 03-03: ATCR_AXI_MAX_LINES resolution mirrors the
+// logLevelFromEnv/telemetryEnabledFromEnv fail-open structure — unset uses the
+// default silently; a valid positive integer overrides; blank/whitespace/
+// non-numeric/zero/negative fall open to the default with exactly one stderr
+// warning and never a fatal error.
+func TestAXIMaxLinesFromEnv(t *testing.T) {
+	cases := []struct {
+		name     string
+		set      bool
+		val      string
+		want     int
+		wantWarn bool
+	}{
+		{"unset uses default, no warning", false, "", report.AXIMaxLinesDefault, false},
+		{"valid override", true, "50", 50, false},
+		{"large valid override accepted", true, "999999999", 999999999, false},
+		{"blank falls open with warning", true, "", report.AXIMaxLinesDefault, true},
+		{"whitespace falls open with warning", true, "   ", report.AXIMaxLinesDefault, true},
+		{"non-numeric falls open with warning", true, "notanumber", report.AXIMaxLinesDefault, true},
+		{"zero falls open with warning", true, "0", report.AXIMaxLinesDefault, true},
+		{"negative falls open with warning", true, "-10", report.AXIMaxLinesDefault, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.set {
+				t.Setenv("ATCR_AXI_MAX_LINES", tc.val)
+			} else {
+				unsetEnvForTest(t, "ATCR_AXI_MAX_LINES")
+			}
+			var got int
+			stderr := captureStderrDuring(t, func() { got = axiMaxLinesFromEnv() })
+			assert.Equal(t, tc.want, got, "resolved cap")
+			if tc.wantWarn {
+				assert.Contains(t, stderr, "ATCR_AXI_MAX_LINES", "warning names the env var")
+				assert.Contains(t, stderr, "using default", "warning states the fallback")
+				assert.Equalf(t, 1, strings.Count(stderr, "\n"), "exactly one warning line, got: %q", stderr)
+			} else {
+				assert.Emptyf(t, strings.TrimSpace(stderr), "no warning expected, got: %q", stderr)
+			}
+		})
+	}
+}
+
+// TestAXIMaxLinesFromEnv_InvalidNeverFatal is AC 03-03 Error Scenario 1: a
+// malformed value must never produce a fatal error/panic — the function returns
+// the default and the run continues (exit 0 semantics preserved).
+func TestAXIMaxLinesFromEnv_InvalidNeverFatal(t *testing.T) {
+	t.Setenv("ATCR_AXI_MAX_LINES", "garbage")
+	require.NotPanics(t, func() {
+		_ = captureStderrDuring(t, func() {
+			assert.Equal(t, report.AXIMaxLinesDefault, axiMaxLinesFromEnv())
+		})
+	})
+}
+
 // TestSetupLogger_RedactsSecrets verifies the root logger constructed in
 // setupLogger scrubs secret-shaped tokens (AC5) at the single construction point,
 // so EVERY command (CLI, serve, MCP) inherits one already-redacted logger.
