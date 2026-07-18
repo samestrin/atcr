@@ -235,6 +235,14 @@ func newRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			// alongside the logger, so runReview/runReconcile retrieve it via
 			// telemetry.FromContext without a signature change.
 			cmd.SetContext(telemetry.NewContext(cmd.Context(), telemetryClient))
+			// Propagate the --axi output mode once, at this single flag-parse point,
+			// so review.go/resume.go read it via axiFromContext rather than re-parsing
+			// the flag at each stdout call site (AC 01-04). The flag lives only on
+			// `atcr review`; the Lookup guard leaves every other command unaffected.
+			if cmd.Flags().Lookup("axi") != nil {
+				axi, _ := cmd.Flags().GetBool("axi")
+				cmd.SetContext(newAXIContext(cmd.Context(), axi))
+			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {

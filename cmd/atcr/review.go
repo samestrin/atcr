@@ -87,6 +87,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("no-ignore", false, "review files matched by the repo-root .gitignore/.atcrignore that are normally filtered out of the payload")
 	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
 	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
+	cmd.Flags().Bool("axi", false, "emit a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption; diagnostics and progress stay on stderr (Agent eXperience Interface)")
 	addRangeFlags(cmd)
 	addAutoFixFlags(cmd)
 	addSyncCloudFlags(cmd)
@@ -231,6 +232,10 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	}
 
 	ctx := cmd.Context()
+	// --axi gates every human-oriented stdout write below behind a single mode
+	// value propagated by the root PersistentPreRunE (AC 01-03). Read once here; the
+	// individual write sites consult axiMode rather than re-parsing the flag.
+	axiMode := axiFromContext(ctx)
 	base, _ := cmd.Flags().GetString("base")
 	head, _ := cmd.Flags().GetString("head")
 	mergeCommit, _ := cmd.Flags().GetString("merge-commit")
@@ -305,6 +310,16 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// resolved backend forward to the post-reconcile orchestration.
 	autoFix := boolFlag(cmd, "auto-fix")
 	var afBackend autoFixBackend
+
+	// --axi and --auto-fix are mutually exclusive (exit 2): --auto-fix drives an
+	// interactive write-back/PR flow whose stdout handoff (orchestrateAutoFix) is
+	// not a consumable findings payload, so rather than silently leak human text
+	// onto the axi payload stream the combination is rejected up front — the
+	// unsupported-combination case of the exit-code contract (AC 01-03 Edge Case 3,
+	// AC 02-02 Error Scenario 2).
+	if axiMode && autoFix {
+		return usageError(errors.New("--axi and --auto-fix are mutually exclusive: --auto-fix drives an interactive write-back/PR flow, not a consumable findings payload"))
+	}
 
 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
 	if err != nil {
@@ -430,10 +445,21 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// engine-level (starts inside fanout.ExecuteReview). The two values measure
 	// slightly different spans and will rarely agree exactly — this is intentional.
 	if result != nil {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
-			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
-		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now))
+		// --axi replaces the one-line outcome + the four human summary lines with a
+		// single token-dense TOON run-summary payload on stdout; the human lines are
+		// gated off entirely (AC 01-03). An axi render fault is left unwrapped so it
+		// defaults to exitFailure (1), never a usageError — an internal serialization
+		// fault is not operator-fixable (AC 02-02 Error Scenario 3).
+		if axiMode {
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), result.ID, result.Dir, summaryDelta); werr != nil {
+				return fmt.Errorf("axi output rendering failed: %w", werr)
+			}
+		} else {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
+				result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
+			writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now))
+		}
 
 		// --sync-cloud push (Story 4): an explicit, user-invoked action, DEFERRED so
 		// it fires once runReview's full outcome is finalized — the history/audit
@@ -548,7 +574,9 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		if rerr != nil {
 			return usageError(fmt.Errorf("review failed: %w", rerr))
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
+		if !axiMode { // gated: the axi run-summary payload already carries the counts
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
+		}
 
 		// --verify chains the adversarial verify stage after the single reconcile
 		// (AC 04-02). --debate then chains the cross-examination stage. Both mutate
@@ -570,10 +598,12 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 			if verr != nil {
 				return verifyFailureError(verr)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-				"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable\n",
-				vres.FindingsProcessed, vres.VerdictCounts.Confirmed, vres.VerdictCounts.Refuted,
-				vres.VerdictCounts.Unverifiable)
+			if !axiMode { // gated under --axi: stdout stays payload-only
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable\n",
+					vres.FindingsProcessed, vres.VerdictCounts.Confirmed, vres.VerdictCounts.Refuted,
+					vres.VerdictCounts.Unverifiable)
+			}
 		}
 		// A debate failure here intentionally leaves the verify findings already
 		// written to disk: they are valid artifacts the operator can still inspect,
@@ -588,9 +618,11 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 			if derr != nil {
 				return debateFailureError(derr)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-				"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow)\n",
-				dres.Selected, dres.Upheld, dres.Overturned, dres.Split, dres.Unresolved, dres.Overflow)
+			if !axiMode { // gated under --axi: stdout stays payload-only
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow)\n",
+					dres.Selected, dres.Upheld, dres.Overturned, dres.Split, dres.Unresolved, dres.Overflow)
+			}
 		}
 
 		// --auto-fix consumes the reconciled (and, when chained, verified/debated)

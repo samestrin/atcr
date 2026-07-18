@@ -234,6 +234,64 @@ func axiRow(f reconcile.JSONFinding, hasDisagreement, hasVerification, hasEviden
 	return row
 }
 
+// ReviewSummaryAXI is the run-level metadata carried by the --axi review/resume
+// summary payload: review identity plus per-attempt agent counts and a findings
+// total — the token-dense analogue of the human end-of-review summary block
+// (cmd/atcr/review_summary.go). It is deliberately distinct from the findings
+// table renderAXI emits: a bare `atcr review --axi` runs no reconcile stage, so it
+// has a run summary but no findings list. The two payloads share this package's one
+// TOON encoder (toonQuote/axiDelim) rather than a second, divergent serializer
+// (AC 01-03; sprint-design Architecture).
+type ReviewSummaryAXI struct {
+	ID              string
+	Dir             string
+	AgentsSucceeded int64
+	AgentsTotal     int64
+	AgentsFailed    int64
+	AgentsTimedOut  int64
+	APICalls        int64
+	FindingsTotal   int64
+}
+
+// reviewSummaryAXIHeader is the fixed column order of the review-summary payload.
+// Kept as one slice so the header line and the row are guaranteed the same width
+// and order (the same defensive invariant renderAXI enforces for findings).
+var reviewSummaryAXIHeader = []string{
+	"id", "dir", "agents_succeeded", "agents_total",
+	"agents_failed", "agents_timed_out", "api_calls", "findings_total",
+}
+
+// RenderReviewSummaryAXI writes s as a single-row TOON tabular array
+// (review_summary[1|]{...}:) reusing the axi findings encoder's pipe delimiter,
+// must-quote rules and control-byte stripping (toonQuote), so the review-summary
+// payload carries the same no-ANSI / no-Markdown structural guarantee as
+// renderAXI and stays byte-identical between `atcr review --axi` and
+// `atcr resume --axi` for equivalent data (AC 01-03/01-04). Free-text identity
+// fields are quoted; counts are emitted as bare TOON integers.
+func RenderReviewSummaryAXI(w io.Writer, s ReviewSummaryAXI) error {
+	var b bytes.Buffer
+	quotedHeader := make([]string, len(reviewSummaryAXIHeader))
+	for i, h := range reviewSummaryAXIHeader {
+		quotedHeader[i] = toonQuote(h)
+	}
+	fmt.Fprintf(&b, "review_summary[1%c]{%s}:\n", axiDelim, strings.Join(quotedHeader, string(axiDelim)))
+	row := []string{
+		toonQuote(s.ID),
+		toonQuote(s.Dir),
+		strconv.FormatInt(s.AgentsSucceeded, 10),
+		strconv.FormatInt(s.AgentsTotal, 10),
+		strconv.FormatInt(s.AgentsFailed, 10),
+		strconv.FormatInt(s.AgentsTimedOut, 10),
+		strconv.FormatInt(s.APICalls, 10),
+		strconv.FormatInt(s.FindingsTotal, 10),
+	}
+	b.WriteString("  ")
+	b.WriteString(strings.Join(row, string(axiDelim)))
+	b.WriteByte('\n')
+	_, err := w.Write(b.Bytes())
+	return err
+}
+
 // toonQuote returns s formatted per TOON's must-quote rules. A string is quoted
 // (with the five valid TOON escapes applied, all other control bytes stripped)
 // when it is empty, has leading/trailing whitespace, equals a reserved token

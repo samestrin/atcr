@@ -9,6 +9,7 @@ Deferred findings surfaced during `/execute-sprint`. Read by `/execute-code-revi
 **Issue:** Phase 1 added `axi` to `report.FormatList()`/`ValidFormat`, so `atcr report --format axi` works and the invalid-format error (report.go:36, via `report.Formats()`) now lists `axi`. But the command's `Short` (report.go:21) and `--format` flag help (report.go:25) are hardcoded to "md, json, checklist, or sarif" and were left stale — a self-contradicting CLI surface (error advertises axi, --help denies it, --format axi silently works).
 **Why accepted:** The clean fix must also update the pinned `reportCmd.Short` assertion in cmd/atcr/main_test.go:342 (a guard owned by the unrelated quality-report story). report.go is modified in Phase 2 (task 2.2 registers the `--axi` flag there), which is the natural, non-cross-coupling place to reconcile the help text and the pinned test together.
 **Fix in:** Sprint 31.0 Phase 2 (task 2.2 GREEN) — derive the `--format` help + `Short` from `report.Formats()` (mirroring the MCP `descReport`/`tools.go` dynamic pattern) so it can never drift again, and update main_test.go:342 accordingly.
+**Resolved:** 2026-07-18 — report.go `Short` + `--format` help now derived from `report.Formats()`; pinned main_test.go assertion updated to match.
 
 ## TD-002 — AXI additive-block columns mix bare and quoted-empty cell types (LOW)
 **Origin:** Phase 1, task 1.8 GATE, 2026-07-18

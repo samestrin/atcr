@@ -13,16 +13,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newReportCmd builds `atcr report`: render md, json, checklist, or sarif views
+// newReportCmd builds `atcr report`: render the supported views (report.Formats())
 // over the reconciled findings.json.
 func newReportCmd() *cobra.Command {
+	// Derive the Short + --format help from report.Formats() — the single source of
+	// truth the enum/validation already use — so adding a format (e.g. axi in Sprint
+	// 31.0) can never leave the help text advertising a stale subset that the
+	// invalid-format error and --format validation contradict (TD-001; mirrors the
+	// MCP descReport/tools.go dynamic pattern).
 	cmd := &cobra.Command{
 		Use:   "report [id-or-path]",
-		Short: "Render md, json, checklist, or sarif views over reconciled findings",
+		Short: "Render " + report.Formats() + " views over reconciled findings",
 		Args:  usageArgs(cobra.MaximumNArgs(1)),
 		RunE:  runReport,
 	}
-	cmd.Flags().String("format", "md", "output format: md, json, checklist, or sarif")
+	cmd.Flags().String("format", "md", "output format: "+report.Formats())
 	cmd.Flags().String("output", "", "write to a file instead of stdout")
 	cmd.Flags().Bool("disagreements", false, "render the disagreement radar: a ranked view of the highest-tension spots (severity splits, solo findings, gray-zone clusters) instead of the standard report")
 	return cmd

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/metrics"
+	"github.com/samestrin/atcr/internal/report"
 )
 
 // severityOrder is the high-to-low display order for the findings breakdown.
@@ -85,6 +86,28 @@ func writeReviewSummary(w io.Writer, m summarySnapshot, elapsed time.Duration) {
 		m.agentsSucceeded, m.agentsTotal, m.agentsFailed, m.agentsTimedOut)
 	_, _ = fmt.Fprintf(w, "API calls: %d\n", m.apiCalls)
 	_, _ = fmt.Fprintf(w, "Findings: %d%s\n", m.findingsTotal, severityBreakdown(m))
+}
+
+// writeReviewSummaryAXI is the --axi analogue of writeReviewSummary: instead of
+// the four human lines it emits one token-dense TOON run-summary payload carrying
+// the review identity (id, dir) and the same per-attempt agent/finding deltas m
+// holds. review.go and resume.go both call it so their --axi stdout is
+// byte-identical for equivalent data (AC 01-04). The encoder lives in the report
+// package so the review-summary payload and the report --axi findings payload
+// share one TOON serializer. Elapsed is intentionally omitted — the AC enumerates
+// id/dir/agent-counts/findings-counts, and dropping the wall-clock value keeps the
+// payload deterministic for a given run.
+func writeReviewSummaryAXI(w io.Writer, id, dir string, m summarySnapshot) error {
+	return report.RenderReviewSummaryAXI(w, report.ReviewSummaryAXI{
+		ID:              id,
+		Dir:             dir,
+		AgentsSucceeded: m.agentsSucceeded,
+		AgentsTotal:     m.agentsTotal,
+		AgentsFailed:    m.agentsFailed,
+		AgentsTimedOut:  m.agentsTimedOut,
+		APICalls:        m.apiCalls,
+		FindingsTotal:   m.findingsTotal,
+	})
 }
 
 // severityBreakdown renders " (2 HIGH, 3 MEDIUM)" for the non-zero severities in

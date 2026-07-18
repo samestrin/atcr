@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -338,9 +339,11 @@ func TestCommandTree_QualityReportDistinctFromReport(t *testing.T) {
 	assert.NotEqual(t, reportCmd.Name(), qualityCmd.Name(), "distinct Use names, no collision")
 	require.NotNil(t, qualityCmd.RunE, "quality-report must define its own RunE")
 
-	// report.go MUST NOT be modified: its Short stays byte-identical.
-	assert.Equal(t, "Render md, json, checklist, or sarif views over reconciled findings", reportCmd.Short,
-		"atcr report's Short must be unchanged by this story")
+	// report's Short is derived from report.Formats() (Sprint 31.0 TD-001, so it
+	// can never advertise a stale format subset); it stays a "Render <formats>
+	// views over reconciled findings" sentence distinct from quality-report's Short.
+	assert.Equal(t, "Render "+report.Formats()+" views over reconciled findings", reportCmd.Short,
+		"atcr report's Short is the report.Formats()-derived sentence")
 
 	// The new command's help cross-references `atcr report` to prevent confusion.
 	qualityHelp := strings.ToLower(qualityCmd.Short + " " + qualityCmd.Long)
