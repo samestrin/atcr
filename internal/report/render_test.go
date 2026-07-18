@@ -499,3 +499,36 @@ func TestRenderAXI_NoANSINoMarkdown(t *testing.T) {
 	assert.NotContains(t, out, "# ", "no markdown heading")
 	assert.Contains(t, out, "red", "the visible text survives; only the control bytes are stripped")
 }
+
+// TestRenderAXI_ReservedAndNumericQuoted pins the remaining TOON must-quote
+// conditions (toon-format-reference.md): a field value that equals a reserved
+// token (true/false/null), looks like a number, or starts with '-' must be quoted
+// so a conforming TOON parser reads it back as the original string rather than a
+// bool/null/number — the round-trip guarantee renderAXI promises. (Surfaced by
+// the 1.2.A adversarial review; leading-'-' is common in diff-style Fix text.)
+func TestRenderAXI_ReservedAndNumericQuoted(t *testing.T) {
+	cases := []struct{ name, val, wantQuoted string }{
+		{"number", "42", `"42"`},
+		{"leading-zero-number", "05", `"05"`},
+		{"float-and-dash", "-3.14", `"-3.14"`},
+		{"bool-true", "true", `"true"`},
+		{"bool-false", "false", `"false"`},
+		{"null", "null", `"null"`},
+		{"leading-dash-text", "- drop the call", `"- drop the call"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			findings := []reconcile.JSONFinding{
+				{Severity: "HIGH", File: "a.go", Line: 1, Confidence: "MEDIUM", Category: c.val, Fix: c.val},
+			}
+			var b strings.Builder
+			require.NoError(t, Render(&b, findings, FormatAXI))
+			out := b.String()
+			assert.Contains(t, out, c.wantQuoted, "%s value must be quoted so it round-trips as a string", c.name)
+			// The bare token must never appear as an unquoted column value (which a
+			// TOON parser would misread as a non-string type).
+			bare := string(axiDelim) + c.val + string(axiDelim)
+			assert.NotContains(t, out, bare, "%s must not appear as a bare column value", c.name)
+		})
+	}
+}

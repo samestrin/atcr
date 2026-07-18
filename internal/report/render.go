@@ -163,10 +163,11 @@ func axiRow(f reconcile.JSONFinding) []string {
 
 // toonQuote returns s formatted per TOON's must-quote rules. A string is quoted
 // (with the five valid TOON escapes applied, all other control bytes stripped)
-// when it is empty, has leading/trailing whitespace, contains a TOON special
-// character (: " \ [ ] { }), contains a control character, or contains the active
-// delimiter. Otherwise it is returned verbatim — unicode and emoji are safe
-// unquoted.
+// when it is empty, has leading/trailing whitespace, equals a reserved token
+// (true/false/null), looks like a number, equals or starts with '-', contains a
+// TOON special character (: " \ [ ] { }), contains a control character, or
+// contains the active delimiter. Otherwise it is returned verbatim — unicode and
+// emoji are safe unquoted.
 func toonQuote(s string) string {
 	if toonMustQuote(s) {
 		return toonEscape(s)
@@ -174,12 +175,29 @@ func toonQuote(s string) string {
 	return s
 }
 
-// toonMustQuote reports whether s must be quoted under the axi delimiter.
+// toonMustQuote reports whether s must be quoted under the axi delimiter, per the
+// full TOON must-quote set (toon-format-reference.md). Quoting a value that
+// equals a reserved token, looks like a number, or starts with '-' is what keeps
+// the axi payload a faithful re-encoding of the findings: without it a conforming
+// TOON parser would read a string field back as a bool/null/number and break the
+// round-trip contract renderAXI promises.
 func toonMustQuote(s string) bool {
 	if s == "" {
 		return true
 	}
 	if strings.TrimSpace(s) != s {
+		return true
+	}
+	// Reserved tokens (case-sensitive) and number-like strings would be read back
+	// as a non-string type unless quoted.
+	switch s {
+	case "true", "false", "null":
+		return true
+	}
+	if strings.HasPrefix(s, "-") { // equals or starts with '-'
+		return true
+	}
+	if looksLikeNumber(s) {
 		return true
 	}
 	if strings.ContainsRune(s, axiDelim) {
@@ -197,6 +215,14 @@ func toonMustQuote(s string) bool {
 		return true
 	}
 	return false
+}
+
+// looksLikeNumber reports whether s would be parsed as a number by a conforming
+// TOON reader (e.g. "42", "-3.14", "1e-6", "05"), in which case a string field
+// holding that value must be quoted to survive the round-trip.
+func looksLikeNumber(s string) bool {
+	_, err := strconv.ParseFloat(s, 64)
+	return err == nil
 }
 
 // isTOONControl reports whether r is a control/separator character that TOON

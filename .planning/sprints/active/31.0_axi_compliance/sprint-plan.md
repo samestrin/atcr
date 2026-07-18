@@ -142,11 +142,11 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    3. Verify tests fail correctly (missing `FormatAXI`/`renderAXI`)
    **Files:** `internal/report/render_test.go` | **Duration:** 3h
 
-### 1.2 [ ] **[FormatAXI Render Dispatch - GREEN](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 1.2 [x] **[FormatAXI Render Dispatch - GREEN](plan/user-stories/01-axi-token-dense-output-mode.md)**
    Add `FormatAXI = "axi"` to the format-enum block, a `case FormatAXI:` branch in `Render()` dispatching to a new `renderAXI` function, and add it to `ValidFormat`/`FormatList`. Implement `renderAXI` as a TOON tabular-array encoder over the same field set as `renderJSON` (severity, file:line, problem, fix, category, est_minutes, evidence, reviewers, confidence), quoting free-text fields per TOON's must-quote rules. Generate the `report.axi` golden fixture via `go test ./internal/report -update`. Run T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `internal/report/render.go`, `internal/report/testdata/report.axi` | **Duration:** 5h
 
-### 1.2.A [ ] **[FormatAXI Render Dispatch - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 1.2.A [x] **[FormatAXI Render Dispatch - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-axi-token-dense-output-mode.md)**
    **Changed Files:** `internal/report/render.go`, `internal/report/render_test.go`, `internal/report/testdata/report.axi`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -165,18 +165,20 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | render.go:178 (`toonMustQuote`) | Omits three TOON must-quote conditions (number-like strings, `true`/`false`/`null` literals, leading-`-`) required by toon-format-reference.md:41. Bare-token emission → conforming TOON parser deserializes wrong type → breaks the round-trip contract. Failing inputs: `Fix:"42"`, `Problem:"null"`, `Fix:"- drop the call"`. | Extend `toonMustQuote` with number/reserved-token/leading-dash conditions. |
+   | MEDIUM | render_test.go:456-501 | No AXI test feeds number-like / `true`/`false`/`null` / leading-`-` values, and none parses the payload back — the gap passes CI unnoticed. | Add reserved-token quoting + round-trip assertions. |
+   | LOW | render.go:164-200 | `toonQuote`/`toonMustQuote` doc comments enumerate must-quote conditions but omit the missing ones — docs assert compliance the code lacks. | Update comments to match. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 1.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** HIGH found → fixed in 1.3 (below). This is the same
+   reserved-token/number quoting AC 01-02 (task 1.5) scheduled; pulled forward per
+   the gate rubric so the branch never carries a known round-trip defect. MEDIUM +
+   LOW also resolved in 1.3. Verification/evidence columns + field-count invariant
+   remain 1.4/1.5 scope.
 
-### 1.3 [ ] **[FormatAXI Render Dispatch - REFACTOR](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 1.3 [x] **[FormatAXI Render Dispatch - REFACTOR](plan/user-stories/01-axi-token-dense-output-mode.md)**
    1. Fix CRITICAL/HIGH issues from 1.2.A (if any)
    2. Improve code and tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(report): clean up AXI render dispatch"`
    **Duration:** 1h
