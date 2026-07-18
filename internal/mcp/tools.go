@@ -121,7 +121,7 @@ type DebateResult struct {
 // constrained to a closed enum by reportInputSchema.
 type ReportArgs struct {
 	IDOrPath string `json:"id_or_path,omitempty" jsonschema:"review id to render (review id only; paths are not accepted); defaults to .atcr/latest"`
-	Format   string `json:"format,omitempty" jsonschema:"output format: md (default), json, checklist, or sarif"`
+	Format   string `json:"format,omitempty" jsonschema:"output format (default md); see the format enum for supported values"`
 }
 
 // RangeArgs are the atcr_range tool arguments (all optional).
