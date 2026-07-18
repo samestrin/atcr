@@ -99,9 +99,10 @@ func TestReviewCmd_NonAXIChainedLinesPresent(t *testing.T) {
 	code, stdout, _ := execCmdSplit(t, "review", "--verify", "--debate", "--base", "HEAD^")
 	require.Equal(t, 0, code, "a completed chained review exits 0")
 
-	for _, human := range reviewHumanStdoutStrings {
-		assert.Contains(t, stdout, human, "non-axi chained review must still print human line %q", human)
-	}
+	// Assert every human line is present AND in its original emission order, so a
+	// reorder or an inserted line in the default path is caught, not just a missing
+	// line (AC 04-03 "same order and wording").
+	assertOrderedContains(t, stdout, reviewHumanStdoutStrings...)
 	assert.NotContains(t, stdout, "review_summary", "a non-axi review must not emit the axi payload")
 }
 
@@ -192,6 +193,24 @@ var reviewHumanStdoutStrings = []string{
 	"reconciled",         // review.go:590 one-shot reconcile line
 	"verified ",          // review.go:614 chained --verify line
 	"debated ",           // review.go:634 chained --debate line
+}
+
+// assertOrderedContains fails unless every fragment in frags appears in s in the
+// given order — each found at or after the end of the previous match. It is
+// stronger than a per-fragment Contains: because reviewHumanStdoutStrings /
+// resumeHumanStdoutStrings are listed in emission order, this also catches a
+// reordering or an inserted line that a presence-only check would miss — the
+// AC 04-03 "same order and wording" guard for the default (non-axi) path.
+func assertOrderedContains(t *testing.T, s string, frags ...string) {
+	t.Helper()
+	pos := 0
+	for _, frag := range frags {
+		i := strings.Index(s[pos:], frag)
+		if !assert.GreaterOrEqualf(t, i, 0, "fragment %q must appear after the previous fragment (order preserved)", frag) {
+			return
+		}
+		pos += i + len(frag)
+	}
 }
 
 // TestReviewCmd_AXIGatesChainedAndFindingsLines is the AC 04-01 Scenario 3 gap

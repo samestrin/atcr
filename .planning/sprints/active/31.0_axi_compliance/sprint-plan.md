@@ -1043,17 +1043,25 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    2. Improve tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(cmd): tighten escape-sequence pinning test"`
    **Duration:** 20min
 
-### 4.7 [ ] **[Non-AXI Regression Protection - RED](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+### 4.7 [x] **[Non-AXI Regression Protection - RED](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
    1. Analyze [AC 04-03](plan/acceptance-criteria/04-03-non-axi-regression-protection.md); identify testable units: byte-identical non-`--axi` output for `review`/`resume`, `AllComplete()` branch text unchanged, mixed-flag (`--verify --debate`, no `--axi`) full human output retained
    2. Write/extend explicit stdout-content assertions for every write site listed in AC 04-01, for the non-`--axi` case specifically (fills any pre-existing coverage gap)
    3. Verify tests fail correctly (only if a gap exists) or confirm they pass as a baseline snapshot
    **Files:** `cmd/atcr/review_test.go`, `cmd/atcr/resume_test.go` | **Duration:** 1.5h
 
-### 4.8 [ ] **[Non-AXI Regression Protection - GREEN](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+### 4.8 [x] **[Non-AXI Regression Protection - GREEN](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+   **Confirm (no adjustment needed):** 4.7's baseline-snapshot tests all pass on
+   arrival — the non-`--axi` path is unchanged. The AC 04-01 gating only wraps the
+   pre-existing writes in an `if !axiMode { ... }` / `else` guard whose false (human)
+   branch executes the exact same `Fprintf`/`writeReviewSummary` calls as before; no
+   production code alters non-axi output. Review side covered by
+   `TestReviewCmd_NonAXIChainedLinesPresent` (every write-site string present under
+   `--verify --debate`, no `--axi`); resume side by `TestResume_NonAXIAllHumanStringsPresent`
+   + `TestResume_NonAXIAllCompletePresent`. Test additions only.
    Fix any gating logic (not tests) found to alter non-`--axi` output from 4.7; the non-`--axi`/default branch must execute the exact same write calls that existed before this story. T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `cmd/atcr/review.go`, `cmd/atcr/resume.go` | **Duration:** 1.5h
 
-### 4.8.A [ ] **[Non-AXI Regression Protection - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+### 4.8.A [x] **[Non-AXI Regression Protection - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
    **Changed Files:** `cmd/atcr/review.go`, `cmd/atcr/resume.go`, `cmd/atcr/review_test.go`, `cmd/atcr/resume_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 4.8's implementation. Do NOT review inline.
@@ -1072,18 +1080,23 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):** No production non-axi write path changed;
+   no pre-existing test weakened/deleted; the assertion sets are complete against the
+   actual write sites; the new tests exercise the real default path. No CRITICAL/HIGH.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | review_axi_test.go / resume_axi_test.go non-axi tests | The non-axi regression tests assert `Contains` on isolated fragments while comments imply "byte-for-byte / untouched"; presence does not verify relative ORDER or catch an inserted line, so a reorder/insert regression of the default path could pass. | Add a relative-ordering assertion over the fragments (not just presence) and align the comment wording to what is asserted. |
+   | LOW | resume_axi_test.go:46-47 | `resumeHumanStdoutStrings` doc comment cites `resume.go:163` (the AllComplete announce), but that string is deliberately NOT in the slice (asserted separately by `TestResume_NonAXIAllCompletePresent`) — a misleading citation. | Drop `163` from the comment; note it is covered by the AllComplete tests. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 4.9, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH → **Adversarial review passed.** Both make a
+   test comment overclaim vs what the code asserts — resolved in 4.9 (resolve-not-defer
+   precedent): (1) added an `assertOrderedContains` helper pinning the fragments in
+   their emitted order (catches reorder/inserted-line regressions), applied to the
+   review + resume non-axi regression tests, and aligned comment wording to "in the
+   same order and wording"; (2) corrected the `resumeHumanStdoutStrings` citation to
+   drop the AllComplete line (:163), noting it is covered separately.
 
-### 4.9 [ ] **[Non-AXI Regression Protection - REFACTOR](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+### 4.9 [x] **[Non-AXI Regression Protection - REFACTOR](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
    1. Fix CRITICAL/HIGH issues from 4.8.A (if any)
    2. Improve tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(cmd): non-axi regression coverage cleanup"`
    **Duration:** 20min

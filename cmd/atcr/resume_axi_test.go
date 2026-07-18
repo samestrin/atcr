@@ -42,11 +42,14 @@ func TestResume_AXISuppressesHumanLines(t *testing.T) {
 	assertNoANSIOrMarkdown(t, stdout)
 }
 
-// resumeHumanStdoutStrings is the exhaustive set of human-oriented stdout
-// fragments AC 04-01 enumerates for the resume path (resume.go:163/182/213/215/283).
-// Resume does not support --verify/--debate (rejected up front), so it has no
-// chained verify/debate lines — this is the resume analogue of
-// reviewHumanStdoutStrings. Under --axi every fragment must be absent.
+// resumeHumanStdoutStrings is the set of human-oriented stdout fragments the
+// pending-agent resume path writes, in emission order (resume.go:182 resuming,
+// :213 outcome, :215 shared writeReviewSummary block, :283 reconciled). The
+// AllComplete announce (resume.go:163) is deliberately NOT here — it fires only on
+// the no-pending path and is covered separately by the AllComplete tests. Resume
+// does not support --verify/--debate (rejected up front), so it has no chained
+// verify/debate lines — this is the resume analogue of reviewHumanStdoutStrings.
+// Under --axi every fragment must be absent.
 var resumeHumanStdoutStrings = []string{
 	"resuming review",    // resume.go:182 announce line
 	"agents succeeded (", // resume.go:213 one-line outcome
@@ -127,6 +130,50 @@ func TestResume_AXIAllCompleteGated(t *testing.T) {
 		"AllComplete announce must be gated under --axi")
 	assert.NotContains(t, stdout, "reconciled", "AllComplete re-reconcile line must be gated under --axi")
 	assertNoANSIOrMarkdown(t, stdout)
+}
+
+// TestResume_NonAXIAllHumanStringsPresent is the resume side of AC 04-03: a
+// `review --resume` run WITHOUT --axi must still emit EVERY human-oriented stdout
+// fragment resume.go writes (the complete resumeHumanStdoutStrings set), proving
+// the AC 04-01 gating left the default (human) path untouched. Paired with
+// TestResume_AXIGatesAllHumanStrings (same set, asserted absent under --axi), this
+// makes both tests non-tautological.
+func TestResume_NonAXIAllHumanStringsPresent(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce", "robin")
+	base := gitRevParse(t, "HEAD^")
+	head := gitRevParse(t, "HEAD")
+	writeResumeReviewFixture(t, "2026-06-18_demo", base, head, []string{"bruce", "robin"}, []string{"bruce"})
+
+	code, stdout, _ := execCmdSplit(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code)
+	// Present AND in emission order (AC 04-03 "same order and wording"): a reorder or
+	// an inserted line in the default resume path is caught, not just a missing line.
+	assertOrderedContains(t, stdout, resumeHumanStdoutStrings...)
+	assert.NotContains(t, stdout, "review_summary", "a non-axi resume must not emit the axi payload")
+}
+
+// TestResume_NonAXIAllCompletePresent is AC 04-03 Scenario 3: the AllComplete
+// re-reconcile branch, run WITHOUT --axi, still writes its announce line and the
+// reconcile count exactly as before — the non-axi companion to
+// TestResume_AXIAllCompleteGated (which asserts both are gated under --axi).
+func TestResume_NonAXIAllCompletePresent(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
+
+	code, stdout, _ := execCmdSplit(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, "AllComplete resume exits 0")
+	assert.Contains(t, stdout, "All configured agents already completed",
+		"non-axi AllComplete must still print its announce line")
+	assert.Contains(t, stdout, "reconciled", "non-axi AllComplete must still print the re-reconcile line")
 }
 
 // TestResume_NonAXIRegressionUnchanged pins that resume WITHOUT --axi still prints
