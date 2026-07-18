@@ -278,7 +278,7 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
 
 **Items:** Story 1 (AC 01-03, 01-04, 01-05), Story 2 (AC 02-01, 02-02, 02-03)
 
-### 2.1 [ ] **[`atcr review --axi` Output Gating - RED](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 2.1 [x] **[`atcr review --axi` Output Gating - RED](plan/user-stories/01-axi-token-dense-output-mode.md)**
    1. Analyze [AC 01-03](plan/acceptance-criteria/01-03-review-axi-mode-output-gating.md); identify testable units: axi-mode context injection via `PersistentPreRunE`, gating of the six `review.go` `cmd.OutOrStdout()` sites (433, 436, 551, 573, 591, 602), interrupt-path (`reportInterrupt`) gating
    2. Write tests: cobra command execution against a captured `bytes.Buffer` stdout for `--axi` and non-`--axi`; `--verify --debate` chained-stage assertions; all-agents-failed exit-1 path assertion; interrupt-path assertion
    3. Verify tests fail correctly
@@ -307,29 +307,33 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):** All six fresh-path write sites verified
+   gated/unreachable under `--axi`; interrupt path (`reportInterrupt`) is stderr-only.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | cmd/atcr/resume.go:153,170,188,195,259 | `review --resume --axi` is silently accepted but the resume path is entirely ungated (never calls `writeReviewSummaryAXI`, leaks all human lines). | Gate every resume.go stdout write under `axiFromContext` and emit the axi payload on the result path. |
+   | LOW | cmd/atcr/review.go:577 | Gate comment says the payload "already carries the counts", but `findings_total` is the raw pre-reconcile fanout metric, not the deduplicated reconciled count (reconciled/verify/debate counts are absent from the payload). | Reword to state the reconciled count is intentionally omitted (agent reads it via `atcr report --axi`). |
+   | LOW | cmd/atcr/review.go:454-457 | An axi write error early-returns, bypassing the history/audit ledgers and the `--fail-on` gate; the non-axi branch can't fail, so this is asymmetric. | Acceptable (a broken stdout means the payload can't be delivered anyway, and render-fault→exit-1 satisfies AC 02-02 EC3); document the intent inline. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 2.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL. The HIGH is `--resume` gating — precisely
+   **element 2's scope** (AC 01-04, tasks 2.4–2.6), the immediate next work in this
+   same phase; proceeding to element 2 IS the fix (it lands before the phase gate,
+   never ships). Both LOWs resolved inline in 2.3 (accurate comments) — the write-
+   error asymmetry is deliberately kept (satisfies AC 02-02 EC3) with an explaining
+   comment.
 
-### 2.3 [ ] **[`atcr review --axi` Output Gating - REFACTOR](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 2.3 [x] **[`atcr review --axi` Output Gating - REFACTOR](plan/user-stories/01-axi-token-dense-output-mode.md)**
    1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
    2. Improve code and tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(cmd): clean up review --axi gating"`
    **Duration:** 1h
 
-### 2.4 [ ] **[`atcr resume --axi` Context Propagation - RED](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 2.4 [x] **[`atcr resume --axi` Context Propagation - RED](plan/user-stories/01-axi-token-dense-output-mode.md)**
    1. Analyze [AC 01-04](plan/acceptance-criteria/01-04-resume-context-axi-mode-propagation.md); identify testable units: shared `writeReviewSummary` axi-branch, resume's five gated sites (153, 170, 188, 195, 259), `AllComplete()` short-circuit gating, mixed-mode (review without axi / resume with axi) independence
    2. Write tests: cobra command execution for `resume`, asserting identical payload shape to `review --axi`; `AllComplete()` branch assertion; empty-roster usage-error unaffected-by-axi assertion
    3. Verify tests fail correctly
    **Files:** `cmd/atcr/resume_test.go` | **Duration:** 2h
 
-### 2.5 [ ] **[`atcr resume --axi` Context Propagation - GREEN](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 2.5 [x] **[`atcr resume --axi` Context Propagation - GREEN](plan/user-stories/01-axi-token-dense-output-mode.md)**
    Add the axi-mode branch once inside shared `writeReviewSummary` (or consistently at both call sites) so `review.go:436` and `resume.go:195` behave identically; gate `resume.go`'s remaining sites (153, 170, 188, 259) via the same context accessor from 2.2 — no second flag parse. T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `cmd/atcr/resume.go`, `cmd/atcr/review_summary.go` | **Duration:** 3h
 
@@ -352,29 +356,34 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):** All resume.go stdout writes verified
+   gated (AllComplete announce :158, resuming :177, outcome :208, summary :210,
+   reconciled :278 in shared `resumeReconcile`); payload routing confirmed shared
+   (review.go:461 and resume.go:204 both call `writeReviewSummaryAXI`) → byte-
+   identical shape; flag parsed once, context value survives `correlateAndRedact`.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | cmd/atcr/resume.go:156-170 | AllComplete `resume --axi` gates its human writes but emits NO run-summary payload (no fanout result on this path) → empty stdout on exit 0. | Emit a payload from `prep.ID`/`dir` + `info.Completed` counts + reconciled total. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 2.6, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH → **Adversarial review passed.** The single
+   MEDIUM is deferred to `tech-debt-captured.md` (TD-004) per the gate rubric: AC
+   01-04 EC1 only requires GATING the AllComplete human line (satisfied), no shipped
+   guarantee is contradicted ("byte-identical" is scoped "for equivalent data"), and
+   a meaningful payload needs agent/reconciled counts plumbed onto a metrics-less
+   path. Exit 0 still signals success; findings remain available via `report --axi`.
 
-### 2.6 [ ] **[`atcr resume --axi` Context Propagation - REFACTOR](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 2.6 [x] **[`atcr resume --axi` Context Propagation - REFACTOR](plan/user-stories/01-axi-token-dense-output-mode.md)**
    1. Fix CRITICAL/HIGH issues from 2.5.A (if any)
    2. Improve code and tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(cmd): resume --axi parity cleanup"`
    **Duration:** 1h
 
-### 2.7 [ ] **[MCP `FormatAXI` Enum Decision - RED](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 2.7 [x] **[MCP `FormatAXI` Enum Decision - RED](plan/user-stories/01-axi-token-dense-output-mode.md)**
    1. Analyze [AC 01-05](plan/acceptance-criteria/01-05-mcp-axi-format-enum-decision.md); identify testable units: `reportInputSchema` enum construction test, `descReport` description-text test, `handleReport` defense-in-depth behavior for `format: "axi"`
    2. Write tests per the sprint-design "excluded" decision ([Design Decisions (Resolved) #3](plan/sprint-design.md)): assert `"axi"` is NOT present in the schema enum, assert `handleReport` rejects `format: "axi"` consistent with the double-layer defense pattern
    3. Verify tests fail correctly
    **Files:** `internal/mcp/tools_test.go` | **Duration:** 1.5h
 
-### 2.8 [ ] **[MCP `FormatAXI` Enum Decision - GREEN](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 2.8 [x] **[MCP `FormatAXI` Enum Decision - GREEN](plan/user-stories/01-axi-token-dense-output-mode.md)**
    Filter `FormatAXI` out of the MCP-facing enum derivation in `reportInputSchema` (i.e. build the enum from `report.FormatList()` minus `FormatAXI`, not the raw list) with an inline comment explaining the exclusion rationale (Design Decision #3: AXI's value proposition is avoiding MCP's token overhead, so surfacing it through an MCP JSON-RPC envelope would be misleading). `descReport`'s generated text follows automatically. T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `internal/mcp/tools.go` | **Duration:** 2h
 
@@ -397,29 +406,44 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):** Exclusion documented inline (tools.go
+   helpers, handlers.go reject, render.go const); md/json/checklist/sarif behavior
+   unchanged; CLI still advertises axi (`report.ValidFormat/FormatList/Formats`
+   retain it); no other `internal/mcp` surface leaks the format list. `axi`/`"AXI"`/
+   whitespace all rejected pre-dispatch and in-handler.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | internal/mcp/tools.go (ReportArgs.Format tag) | The struct tag hardcoded a second copy of the format list (already omitted axi, and overwritten by `reportInputSchema` so never served) — dead duplicate doc that could drift. | Reworded to a format-agnostic phrase ("see the format enum"). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 2.9, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH/MEDIUM → **Adversarial review passed.** The
+   single LOW (dead duplicate format list in the struct tag) was cheaper to fix
+   inline than to file — reworded the `ReportArgs.Format` jsonschema tag to be
+   format-agnostic so there is one source of truth. Fixed in 2.9.
 
-### 2.9 [ ] **[MCP `FormatAXI` Enum Decision - REFACTOR](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 2.9 [x] **[MCP `FormatAXI` Enum Decision - REFACTOR](plan/user-stories/01-axi-token-dense-output-mode.md)**
    1. Fix CRITICAL/HIGH issues from 2.8.A (if any)
    2. Improve code and tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(mcp): finalize FormatAXI enum exclusion"`
    **Duration:** 30min
 
-### 2.10 [ ] **[AXI Exit-Code Parity - RED](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+### 2.10 [x] **[AXI Exit-Code Parity - RED](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+   **Note:** Parity tests (`axi_exit_test.go`) pass on arrival — the exit-code
+   contract is already mode-agnostic by construction: `exitCode()` (main.go:156) has
+   no `--axi` branch, codes are resolved before/independently of output formatting,
+   and the only new AXI error paths route through the existing helpers (auto-fix
+   combo → `usageError` exit 2; render fault → unwrapped exitFailure 1). They pin
+   the 0/1/2/3 contract against non-axi rather than driving new production code.
    1. Analyze [AC 02-01](plan/acceptance-criteria/02-01-axi-exit-code-parity.md); identify testable units: clean-run exit 0, gate-failure exit 1, usage-error exit 2, auth-error exit 3 — all under `--axi`, matching non-`--axi` behavior; partial-success-is-not-failure invariant
    2. Write table-driven tests extending `cmd/atcr/main_test.go`'s existing exit-code pattern to cover `--axi` invocations of `review`, `report`, `reconcile --fail-on`
    3. Verify tests fail correctly
    **Files:** `cmd/atcr/main_test.go` | **Duration:** 2h
 
-### 2.11 [ ] **[AXI Exit-Code Parity - GREEN](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+### 2.11 [x] **[AXI Exit-Code Parity - GREEN](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+   **Confirm (no adjustment needed):** `exitCode()` (main.go:156) has no `--axi`
+   branch — generic `errors.As` dispatch + `exitFailure` default. AXI error paths
+   already route correctly: flag-combination error (`--axi`+`--auto-fix`) →
+   `usageError` (exit 2, review.go:321); internal render fault →
+   `fmt.Errorf("axi output rendering failed: %w", ...)` left unwrapped → exitFailure
+   (1, review.go:462 / resume.go:210). Parity verified by `axi_exit_test.go`.
    Confirm/adjust `--axi` flag-parsing and rendering error paths to wrap through the existing `usageError()`/`authError()` helpers rather than falling through unwrapped; no new branch in `exitCode()` (`main.go:156`). T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `cmd/atcr/review.go`, `cmd/atcr/report.go` | **Duration:** 2.5h
 
@@ -442,18 +466,23 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):** No CRITICAL/HIGH. `exitCode()` has no
+   `--axi` branch; render faults unwrapped (exit 1); `--axi`+`--auto-fix` → exit 2;
+   auth (exit 3) resolved before axiMode is read, no miswrap. Two LOWs:
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW→(AC 02-02 EC3) | cmd/atcr/report.go:118-119 | `report --format axi` render fault is wrapped in `usageError` (exit 2), but AC 02-02 EC3 requires an internal AXI render fault via `atcr report --axi` to be exit 1. | Leave AXI render faults unwrapped in report.go (exit 1). |
+   | LOW | cmd/atcr/axi_exit_test.go | No test asserts the NEW AXI render-fault source yields exit 1 (hard to reach — broken stdout / internal encoder bug). | Add a render-fault→exit-1 test via an injected failing writer. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 2.12, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH → **Adversarial review passed.** Both LOWs are
+   directly AC 02-02's scope (error classification) — folded into **element 5**
+   (tasks 2.13/2.14, the immediate next element) rather than TD: 2.14 fixes report.go
+   to classify AXI render faults as exit 1, and 2.13 adds the render-fault→exit-1
+   test via an injected failing writer.
 
-### 2.12 [ ] **[AXI Exit-Code Parity - REFACTOR](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+### 2.12 [x] **[AXI Exit-Code Parity - REFACTOR](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+   No code change — no CRITICAL/HIGH from 2.11.A; the two LOWs are folded into
+   element 5 (AC 02-02) which owns AXI error classification. Parity confirmed green.
    1. Fix CRITICAL/HIGH issues from 2.11.A (if any)
    2. Improve code and tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(cmd): confirm axi exit-code parity"`
    **Duration:** 30min
