@@ -532,3 +532,83 @@ func TestRenderAXI_ReservedAndNumericQuoted(t *testing.T) {
 		})
 	}
 }
+
+// --- AC 01-02: AXI schema reconciled with atcr-findings/v1 + TOON conventions ---
+
+// axiHeaderFields returns the tabular-array header's declared field list (the
+// tokens between `{` and `}` on the first output line), for the field-count
+// invariant checks. Fixtures used with it must not embed the pipe delimiter in a
+// value, so a naive split is exact.
+func axiHeaderFields(t *testing.T, out string) []string {
+	t.Helper()
+	line := strings.SplitN(out, "\n", 2)[0]
+	i := strings.Index(line, "{")
+	j := strings.LastIndex(line, "}")
+	require.Truef(t, i >= 0 && j > i, "axi header must carry a {field} list: %q", line)
+	return strings.Split(line[i+1:j], string(axiDelim))
+}
+
+// TestRenderAXI_PipeHeaderAndV1FieldSet pins AC 01-02 Scenarios 1 & 2: the header
+// declares the pipe delimiter (findings[N|]{...}:) and its field list mirrors the
+// atcr-findings/v1 reconciled 9-column contract field-for-field, so the axi
+// surface converges with the existing machine format instead of fragmenting it.
+func TestRenderAXI_PipeHeaderAndV1FieldSet(t *testing.T) {
+	var b strings.Builder
+	require.NoError(t, Render(&b, sample(), FormatAXI))
+	header := strings.SplitN(b.String(), "\n", 2)[0]
+	assert.True(t, strings.HasPrefix(header, "findings[2|]{"), "header declares count and pipe delimiter: %q", header)
+	assert.Contains(t, header,
+		`severity|"file:line"|problem|fix|category|est_minutes|evidence|reviewers|confidence`,
+		"header field list mirrors the atcr-findings/v1 9-column contract")
+}
+
+// TestRenderAXI_VerificationEvidenceRoundTrip is AC 01-02 Edge Cases 1-3: a
+// finding carrying a Verification block and an EvidenceExec block must surface
+// them as additive columns (no signal dropped vs --format json), and a value that
+// collides with a reserved token ("true") must be quoted.
+func TestRenderAXI_VerificationEvidenceRoundTrip(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "auth.go", Line: 7, Problem: "p", Fix: "f",
+			Category: "true", EstMinutes: 5, Evidence: "e",
+			Reviewers: []string{"greta"}, Confidence: "VERIFIED",
+			Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "reproduced locally"},
+			EvidenceExec: &reconcile.EvidenceExec{Command: "go test ./x", ExitCode: 1, OutputExcerpt: "FAIL"}},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	header := axiHeaderFields(t, out)
+	for _, want := range []string{
+		"verification.verdict", "verification.skeptic", "verification.notes",
+		"evidence_exec.command", "evidence_exec.exit_code", "evidence_exec.output_excerpt",
+	} {
+		assert.Contains(t, header, want, "additive column for the verification/evidence block")
+	}
+	for _, want := range []string{"confirmed", "otto", "reproduced locally", "go test ./x", "FAIL"} {
+		assert.Contains(t, out, want, "verification/evidence value carried into the row")
+	}
+	assert.Contains(t, out, `"true"`, "a reserved-token-looking Category value must be quoted")
+}
+
+// TestRenderAXI_FieldCountInvariant is AC 01-02 Error Scenario 1: every emitted
+// data row must carry exactly as many columns as the header declares — including a
+// mixed payload where only some findings carry a verification/evidence block, so
+// the absent-block padding is proven correct rather than silently short-rowed.
+func TestRenderAXI_FieldCountInvariant(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Confidence: "MEDIUM"},
+		{Severity: "LOW", File: "b.go", Line: 2, Problem: "p2", Confidence: "LOW",
+			Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto"},
+			EvidenceExec: &reconcile.EvidenceExec{Command: "cmd", ExitCode: 2, OutputExcerpt: "out"}},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	want := len(axiHeaderFields(t, out))
+	rows := strings.Split(strings.TrimRight(out, "\n"), "\n")[1:] // drop header line
+	require.Len(t, rows, 2, "one row per finding")
+	for i, r := range rows {
+		got := len(strings.Split(strings.TrimSpace(r), string(axiDelim)))
+		assert.Equalf(t, want, got, "row %d column count must equal header field count", i)
+	}
+}

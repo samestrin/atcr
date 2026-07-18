@@ -183,13 +183,13 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    2. Improve code and tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(report): clean up AXI render dispatch"`
    **Duration:** 1h
 
-### 1.4 [ ] **[AXI Schema TOON/findings-v1 Compatibility - RED](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 1.4 [x] **[AXI Schema TOON/findings-v1 Compatibility - RED](plan/user-stories/01-axi-token-dense-output-mode.md)**
    1. Analyze [AC 01-02](plan/acceptance-criteria/01-02-axi-schema-toon-findings-v1-compatibility.md); identify testable units: tabular-array pipe-delimiter header shape, field-set superset of `atcr-findings/v1`, `Verification`/`EvidenceExec` block round-tripping, reserved-token quoting, header/row field-count invariant
    2. Write tests: table-driven field-mapping test against the 9-column `atcr-findings/v1` contract; fixture with `Verification` block, `EvidenceExec` block, and a `"true"`-looking string value; a defensive test asserting `len(row) == len(header fields)` for every sample
    3. Verify tests fail correctly
    **Files:** `internal/report/render_test.go` | **Duration:** 2h
 
-### 1.5 [ ] **[AXI Schema TOON/findings-v1 Compatibility - GREEN](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 1.5 [x] **[AXI Schema TOON/findings-v1 Compatibility - GREEN](plan/user-stories/01-axi-token-dense-output-mode.md)**
    Extend `renderAXI`'s header to declare the pipe delimiter (`findings[N|]{...}:`) converging with `atcr-findings/v1`'s grammar; encode `Verification` and `EvidenceExec` as additive nested/sub-object fields when present; quote reserved-token-like values (`"true"`, `"42"`) per TOON's must-quote rule. Record the axi.md Principle 2 (full-width fields retained) and Principle 4 (aggregates via header `N` + run metadata) decisions inline as a code comment. Cross-reference `docs/findings-format.md` with the AXI schema mapping. T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `internal/report/render.go`, `docs/findings-format.md` | **Duration:** 4h
 

@@ -107,7 +107,7 @@ const axiDelim = '|'
 
 // renderAXI re-encodes findings as a TOON (Token-Optimized Object Notation)
 // tabular array — the token-dense machine payload for the agent-experience
-// (--axi) mode. The columns mirror the atcr-findings/v1 reconciled 9-column
+// (--axi) mode. The base columns mirror the atcr-findings/v1 reconciled 9-column
 // contract (SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|
 // REVIEWERS|CONFIDENCE) field-for-field, so the axi payload is a re-encoding of
 // the same machine contract a --format json consumer sees, not a new schema.
@@ -118,6 +118,23 @@ const axiDelim = '|'
 // other control byte (ANSI \x1b, U+2028/U+2029, …) is stripped, so a raw escape
 // sequence can never ride the payload — the structural half of the axi no-ANSI
 // guarantee (AC 01-01 Security).
+//
+// axi.md design-tension resolutions (AC 01-02 Scenario 3):
+//   - Principle 2 ("3–4 default fields") is deliberately NOT applied — the full
+//     9-column field set is retained because pipe-delimited TOON rows are already
+//     token-lean, and dropping columns would make axi a lossy subset of the JSON
+//     contract rather than a faithful re-encoding.
+//   - Principle 4 ("pre-computed aggregates") is honored via the array header's
+//     declared true total N (independent of emitted row count once Story 3's
+//     pagination caps it) plus the run metadata carried on the review path
+//     (AC 01-03) — not a separate aggregation pass here.
+//
+// The optional Verification and EvidenceExec blocks are surfaced as additive
+// columns (verification.*, evidence_exec.*) only when at least one finding
+// carries them, so a plain findings list stays at the 9-column width and
+// byte-identical to the pre-verification form — the same omitempty discipline the
+// JSON contract uses. When present, findings lacking a block get empty cells so
+// every row keeps the header's declared width.
 func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 	var b bytes.Buffer
 	if len(findings) == 0 {
@@ -127,14 +144,36 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 		_, err := w.Write(b.Bytes())
 		return err
 	}
+	hasVerification, hasEvidence := false, false
+	for _, f := range findings {
+		if f.Verification != nil {
+			hasVerification = true
+		}
+		if f.EvidenceExec != nil {
+			hasEvidence = true
+		}
+	}
 	header := []string{"severity", "file:line", "problem", "fix", "category", "est_minutes", "evidence", "reviewers", "confidence"}
+	if hasVerification {
+		header = append(header, "verification.verdict", "verification.skeptic", "verification.notes")
+	}
+	if hasEvidence {
+		header = append(header, "evidence_exec.command", "evidence_exec.exit_code", "evidence_exec.output_excerpt")
+	}
 	quotedHeader := make([]string, len(header))
 	for i, h := range header {
 		quotedHeader[i] = toonQuote(h)
 	}
 	fmt.Fprintf(&b, "findings[%d%c]{%s}:\n", len(findings), axiDelim, strings.Join(quotedHeader, string(axiDelim)))
 	for _, f := range findings {
-		row := axiRow(f)
+		row := axiRow(f, hasVerification, hasEvidence)
+		// Defensive invariant (AC 01-02 Error Scenario 1): a row must carry exactly
+		// as many columns as the header declares. A mismatch is an internal encoder
+		// bug, never user input — fail deterministically rather than emit a
+		// structurally malformed payload a consumer would misalign.
+		if len(row) != len(header) {
+			return fmt.Errorf("axi encoder: row has %d columns, header declares %d", len(row), len(header))
+		}
 		b.WriteString("  ")
 		b.WriteString(strings.Join(row, string(axiDelim)))
 		b.WriteByte('\n')
@@ -143,12 +182,15 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 	return err
 }
 
-// axiRow encodes one finding into the base 9-column TOON row, mirroring the
-// atcr-findings/v1 reconciled column order. FILE:LINE is one combined column (as
-// in v1); est_minutes is emitted as a bare number; every free-text field is
-// routed through toonQuote.
-func axiRow(f reconcile.JSONFinding) []string {
-	return []string{
+// axiRow encodes one finding into a TOON row: the base 9 columns mirroring the
+// atcr-findings/v1 reconciled column order, plus the additive verification.* and
+// evidence_exec.* columns when the payload declares them. FILE:LINE is one
+// combined column (as in v1); est_minutes and exit_code are emitted as bare
+// numbers; every free-text field is routed through toonQuote. A finding missing a
+// declared block contributes empty cells (an empty exit_code cell, never a
+// misleading 0) so the row keeps the header width.
+func axiRow(f reconcile.JSONFinding, hasVerification, hasEvidence bool) []string {
+	row := []string{
 		toonQuote(f.Severity),
 		toonQuote(fmt.Sprintf("%s:%d", f.File, f.Line)),
 		toonQuote(f.Problem),
@@ -159,6 +201,21 @@ func axiRow(f reconcile.JSONFinding) []string {
 		toonQuote(strings.Join(f.Reviewers, ",")),
 		toonQuote(f.Confidence),
 	}
+	if hasVerification {
+		if f.Verification != nil {
+			row = append(row, toonQuote(f.Verification.Verdict), toonQuote(f.Verification.Skeptic), toonQuote(f.Verification.Notes))
+		} else {
+			row = append(row, toonQuote(""), toonQuote(""), toonQuote(""))
+		}
+	}
+	if hasEvidence {
+		if f.EvidenceExec != nil {
+			row = append(row, toonQuote(f.EvidenceExec.Command), strconv.Itoa(f.EvidenceExec.ExitCode), toonQuote(f.EvidenceExec.OutputExcerpt))
+		} else {
+			row = append(row, toonQuote(""), toonQuote(""), toonQuote(""))
+		}
+	}
+	return row
 }
 
 // toonQuote returns s formatted per TOON's must-quote rules. A string is quoted
