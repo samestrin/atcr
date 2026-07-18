@@ -235,7 +235,7 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    Run DoD Verification Checklist: T3 (`go test ./internal/report/...`), coverage ≥80% for touched files, `golangci-lint run`, `go build ./...`, docs updated (`docs/findings-format.md` cross-reference).
    Report using the DoD Report Template.
 
-### 1.8 [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+### 1.8 [x] **Phase 1 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence): `internal/report/render.go`, `internal/report/render_test.go`, `internal/report/testdata/report.axi`, `docs/findings-format.md`
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -254,17 +254,23 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Gate findings (run 2026-07-18):** No CRITICAL/HIGH. Verified end-to-end:
+   `report.go:35 ValidFormat("axi")` → `report.Render` → `renderAXI`; renderer
+   signature matches the other renderers; existing md/json/checklist/sarif goldens
+   byte-unchanged (only `report.axi` new); `go test ./...` exit 0; MCP interim
+   inclusion documented + reversible. Downstream Phases 2-5 can build on
+   `renderAXI`'s shape without rework.
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | MEDIUM | cmd/atcr/report.go:21,25 | `--format` flag help + `Short` still say "md, json, checklist, or sarif" while the error message now lists `axi` — self-contradicting CLI. | TD-001 (fix in Phase 2 task 2.2 where report.go + the pinned main_test.go:342 Short guard are already in scope). |
+   | LOW | render.go:222,229 | Additive-block columns mix bare int/bool and quoted-empty cells; round-trip untested vs a real TOON parser. | TD-002 (Phase 4). |
+   | LOW | render.go:210 | `reviewers` cell ambiguous if a reviewer name contains a comma (not force-quoted under the pipe delimiter). | TD-003. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-   - None found → Note "Phase gate passed" and proceed to phase stop
-   **Duration:** 20 min
+   **Action taken:** No CRITICAL/HIGH → **Phase gate passed.** 1 MEDIUM + 2 LOW
+   captured to `tech-debt-captured.md` (TD-001/002/003) per the gate rubric. The
+   MEDIUM is deferred (not fixed inline) because its clean fix must edit the
+   quality-report story's pinned `reportCmd.Short` guard and report.go, both
+   already in Phase 2's scope — fixing now would cross-couple an unrelated story.
 
 ---
 
