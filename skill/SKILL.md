@@ -1,6 +1,6 @@
 ---
 name: atcr
-description: The /atcr <command> dispatcher for atcr, a multi-reviewer code-review engine. Routes a request to a single atcr CLI command — review, reconcile, verify, debate, report, github, range, status, init, quickstart, serve, doctor, trust, scorecard, leaderboard, benchmark, personas, models, debt, history, audit-report, version. The review command fans a git range, branch, or PR out to a reviewer panel, adds a host (+1) review, and reconciles findings into one deduplicated, confidence-scored report. Use when asked to review a branch, PR, or git range, or to run any atcr command.
+description: The /atcr <command> dispatcher for atcr, a multi-reviewer code-review engine. Routes a request to a single atcr CLI command — review, reconcile, verify, debate, report, quality-report, github, range, status, init, quickstart, serve, doctor, trust, scorecard, leaderboard, benchmark, personas, models, debt, history, audit-report, config, version. The review command fans a git range, branch, or PR out to a reviewer panel, adds a host (+1) review, and reconciles findings into one deduplicated, confidence-scored report. Use when asked to review a branch, PR, or git range, or to run any atcr command.
 ---
 
 # atcr — Agent Team Code Review
