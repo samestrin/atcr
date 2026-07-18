@@ -83,6 +83,18 @@ func TestClient_SendQualitySignal_EmptyPayloadNoOps(t *testing.T) {
 	}
 }
 
+// TestNewQualitySignal_EmptyPersonaReturnsZeroSentinel locks the construction-side
+// guard (TD 30.0): an empty persona is an upstream data-quality bug that must NOT
+// be laundered into sha256("")=e3b0c442... — a well-known constant that looks like
+// a real, stable aggregation bucket on the backend. The constructor returns the
+// zero QualitySignal sentinel (empty PersonaIDHash — recognizable and droppable by
+// the caller) instead of a valid-looking hash.
+func TestNewQualitySignal_EmptyPersonaReturnsZeroSentinel(t *testing.T) {
+	if qs := NewQualitySignal("", "claude-sonnet-4-6", 3, 1); qs != (QualitySignal{}) {
+		t.Errorf("empty persona must return the zero QualitySignal sentinel, got %+v", qs)
+	}
+}
+
 // TestQualitySignal_PersonaHashedNotRaw locks AC 01-05 Scenario 3: the
 // construction function hashes the raw persona via HashPersonaID and never
 // carries the raw persona name in cleartext.
