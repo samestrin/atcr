@@ -90,6 +90,15 @@ func setConfigBool(root, session, key string, enabled bool) error {
 	path := DefaultProjectConfigPath(root)
 	dir := filepath.Dir(path)
 	return withConfigLock(dir, session, func() error {
+		// Fail-fast symlink pre-check right after lock acquisition: a symlinked
+		// config is rejected before paying for the read/parse/temp-write below.
+		// The pre-rename Lstat further down remains the authoritative TOCTOU
+		// guard — this early check is a cheap fast path, not a replacement.
+		// ErrNotExist falls through to the Stat below, which reports the missing
+		// file as the documented read error.
+		if li, lerr := os.Lstat(path); lerr == nil && li.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("config %s: symlinked configs are unsupported — rename would sever the link; use a regular file", path)
+		}
 		info, err := os.Stat(path)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", path, err)
