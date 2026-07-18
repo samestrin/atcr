@@ -921,17 +921,27 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
 
 **Items:** Story 4 (AC 04-01, 04-02, 04-03)
 
-### 4.1 [ ] **[Gate Human-Oriented Stdout Writes - RED](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+### 4.1 [x] **[Gate Human-Oriented Stdout Writes - RED](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
    1. Analyze [AC 04-01](plan/acceptance-criteria/04-01-review-resume-stdout-gating.md); identify testable units: confirm the six `review.go` sites and five `resume.go` sites (from Phase 2) contain zero human-text strings under `--axi`, `--verify`/`--debate`/`--auto-fix` chained coverage, all-agents-failed/reconcile-failure error paths
    2. Write captured-stdout assertions for `"agents succeeded"`, `"Total elapsed"`, `"Agents:"`, `"API calls:"`, `"Findings:"`, `"reconciled"`, `"resuming review"` absence under `--axi`, for both fresh-review and resume paths
    3. Verify tests fail correctly (or confirm they already pass if Phase 2 fully covered gating — treat any gap found as the RED signal)
    **Files:** `cmd/atcr/review_test.go`, `cmd/atcr/resume_test.go` | **Duration:** 2.5h
 
-### 4.2 [ ] **[Gate Human-Oriented Stdout Writes - GREEN](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+### 4.2 [x] **[Gate Human-Oriented Stdout Writes - GREEN](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+   **Confirm (no adjustment needed):** 4.1's gap-check found NO gap — Phase 2 already
+   gated all 11 write sites. Verified by code inspection + passing gap-check tests:
+   review.go one-line outcome (:466)/summary (:468)/reconcile (:590)/verify (:614)/
+   debate (:634) all under `!axiMode`; `orchestrateAutoFix` (:646) is unreachable
+   under `--axi` (auto-fix guard at review.go:204 → usageError); `reportInterrupt`
+   (run_helpers.go:40) writes only `cmd.ErrOrStderr()`. resume.go announce (:163)/
+   resuming (:182)/outcome (:213)/summary (:215) and shared `resumeReconcile` (:283)
+   all gated; resume's interrupt path is the same stderr-only `reportInterrupt`. Both
+   `writeReviewSummary` callers gated identically (in the `else` of the shared axi
+   branch). No production change; test additions only.
    Close any gap 4.1 found in Phase 2's gating (e.g. `orchestrateAutoFix`'s output writer at `review.go:602`, or `reportInterrupt`'s stdout path) so every human-oriented write in `review.go`/`resume.go` is confirmed gated, including both `writeReviewSummary` callers consistently. T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `cmd/atcr/review.go`, `cmd/atcr/resume.go` | **Duration:** 3h
 
-### 4.2.A [ ] **[Gate Human-Oriented Stdout Writes - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+### 4.2.A [x] **[Gate Human-Oriented Stdout Writes - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
    **Changed Files:** `cmd/atcr/review.go`, `cmd/atcr/resume.go`, `cmd/atcr/review_test.go`, `cmd/atcr/resume_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 4.2's implementation. Do NOT review inline.
@@ -950,18 +960,24 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):** All 11 write sites verified gated or
+   unreachable under `--axi`; `reportInterrupt`/`interruptedBeforeFanout` are
+   stderr-only and short-circuit before the summary block; error-return paths gate
+   before returning; the enumerated human-string slices are complete. No CRITICAL/HIGH.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | review_axi_test.go:181 | The `--axi --verify --debate` gate test's doc-comment references a companion `TestReviewCmd_NonAXIChainedLinesPresent` that did not yet exist, so its `verified `/`debated `/`reconciled` absence assertions were potentially tautological (would pass even if verify/debate emitted nothing). The resume path is properly paired; the review chained path was not. | Add the referenced non-axi companion test asserting those lines are PRESENT without `--axi`. |
+   | LOW | resume.go:156-164 | `resume --axi` AllComplete path emits no run-summary payload (byte-empty stdout on exit 0). | Already **TD-004** (known deferral). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 4.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH → **Adversarial review passed.** The MEDIUM
+   makes a shipped code-comment false (references a non-existent test) and leaves the
+   review chained-line gate assertions unpaired — per the 1.5.A/2.14.A precedent a
+   false shipped claim is RESOLVED, not deferred: `TestReviewCmd_NonAXIChainedLinesPresent`
+   added in 4.3 (pulled forward from 4.7's AC 04-03 scope, which owns the full non-axi
+   regression set). The LOW is already tracked as **TD-004** (empty AllComplete
+   payload needs agent-count plumbing; out of Phase 4 scope) — no new action.
 
-### 4.3 [ ] **[Gate Human-Oriented Stdout Writes - REFACTOR](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+### 4.3 [x] **[Gate Human-Oriented Stdout Writes - REFACTOR](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
    1. Fix CRITICAL/HIGH issues from 4.2.A (if any)
    2. Improve code and tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(cmd): finalize axi stdout gating"`
    **Duration:** 30min

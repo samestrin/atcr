@@ -42,6 +42,47 @@ func TestResume_AXISuppressesHumanLines(t *testing.T) {
 	assertNoANSIOrMarkdown(t, stdout)
 }
 
+// resumeHumanStdoutStrings is the exhaustive set of human-oriented stdout
+// fragments AC 04-01 enumerates for the resume path (resume.go:163/182/213/215/283).
+// Resume does not support --verify/--debate (rejected up front), so it has no
+// chained verify/debate lines — this is the resume analogue of
+// reviewHumanStdoutStrings. Under --axi every fragment must be absent.
+var resumeHumanStdoutStrings = []string{
+	"resuming review",    // resume.go:182 announce line
+	"agents succeeded (", // resume.go:213 one-line outcome
+	"Total elapsed:",     // review_summary.go (shared writeReviewSummary)
+	"Agents:",            // review_summary.go
+	"API calls:",         // review_summary.go
+	"Findings:",          // review_summary.go
+	"reconciled",         // resumeReconcile resume.go:283
+}
+
+// TestResume_AXIGatesAllHumanStrings is the AC 04-01 resume-path gap check: a full
+// `review --resume --axi` run over a pending-agent fixture must gate every one of
+// the human-oriented stdout fragments resume.go writes, asserted as a complete set
+// (the shared review_summary.go lines plus resume's own announce/outcome/reconcile
+// lines). TestResume_NonAXIRegressionUnchanged proves the same lines otherwise
+// reach stdout without --axi.
+func TestResume_AXIGatesAllHumanStrings(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce", "robin")
+	base := gitRevParse(t, "HEAD^")
+	head := gitRevParse(t, "HEAD")
+	writeResumeReviewFixture(t, "2026-06-18_demo", base, head, []string{"bruce", "robin"}, []string{"bruce"})
+
+	code, stdout, _ := execCmdSplit(t, "review", "--resume", "latest", "--axi", "--base", "HEAD^")
+	require.Equal(t, 0, code, "resume completes -> exit 0")
+
+	for _, human := range resumeHumanStdoutStrings {
+		assert.NotContains(t, stdout, human, "resume human line %q must be gated under --axi", human)
+	}
+	assert.Contains(t, stdout, "review_summary", "resume --axi must emit the run-summary payload")
+	assertNoANSIOrMarkdown(t, stdout)
+}
+
 // TestResume_AXIPayloadShapeMatchesReview locks AC 01-04's headline: `resume --axi`
 // and `review --axi` emit byte-identical payload SHAPE (same TOON header line) for
 // equivalent data, because both render through the one shared writeReviewSummaryAXI.

@@ -81,6 +81,30 @@ func TestReviewCmd_NonAXIRegressionSummaryUnchanged(t *testing.T) {
 	assert.NotContains(t, stdout, "review_summary", "non-axi review must not emit the axi payload")
 }
 
+// TestReviewCmd_NonAXIChainedLinesPresent is the non-axi companion to
+// TestReviewCmd_AXIGatesChainedAndFindingsLines (and the review side of AC 04-03):
+// a `review --verify --debate` run WITHOUT --axi must emit every human-oriented
+// stdout line — including the chained "reconciled"/"verified"/"debated" lines and
+// the writeReviewSummary "Findings:" line. Pairing the two tests proves the gated
+// tests are non-tautological: these lines genuinely reach stdout by default and are
+// suppressed only by the --axi gate, not because the single-persona mock never
+// produces them.
+func TestReviewCmd_NonAXIChainedLinesPresent(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	code, stdout, _ := execCmdSplit(t, "review", "--verify", "--debate", "--base", "HEAD^")
+	require.Equal(t, 0, code, "a completed chained review exits 0")
+
+	for _, human := range reviewHumanStdoutStrings {
+		assert.Contains(t, stdout, human, "non-axi chained review must still print human line %q", human)
+	}
+	assert.NotContains(t, stdout, "review_summary", "a non-axi review must not emit the axi payload")
+}
+
 // TestReviewCmd_AXIFailOnGatesReconcileLine verifies the chained one-shot stage
 // output ("reconciled N finding(s)") is also gated under --axi, not just the
 // top-level summary (AC 01-03 Scenario 2). The mock returns a CRITICAL finding, so
@@ -150,6 +174,49 @@ func TestReviewCmd_AXIAutoFixResumeIsUsageError(t *testing.T) {
 	code, out := execCmdCapture(t, "review", "--resume", "latest", "--axi", "--auto-fix")
 	require.Equal(t, 2, code, "--axi + --auto-fix must be a usage error on the resume path too")
 	require.Contains(t, out, "--axi and --auto-fix are mutually exclusive")
+}
+
+// reviewHumanStdoutStrings is the exhaustive set of human-oriented stdout
+// fragments AC 04-01 enumerates for the fresh-review path (the one-line outcome,
+// the four writeReviewSummary lines, and the three chained one-shot stage lines).
+// Under --axi every one of these must be absent from stdout; without --axi every
+// one must be present (TestReviewCmd_NonAXIChainedLinesPresent). Kept as one slice
+// so the gate and regression tests assert against an identical, complete list and
+// cannot silently drift apart.
+var reviewHumanStdoutStrings = []string{
+	"agents succeeded (", // review.go:466 one-line outcome
+	"Total elapsed:",     // review_summary.go
+	"Agents:",            // review_summary.go
+	"API calls:",         // review_summary.go
+	"Findings:",          // review_summary.go
+	"reconciled",         // review.go:590 one-shot reconcile line
+	"verified ",          // review.go:614 chained --verify line
+	"debated ",           // review.go:634 chained --debate line
+}
+
+// TestReviewCmd_AXIGatesChainedAndFindingsLines is the AC 04-01 Scenario 3 gap
+// check: a full `review --axi --verify --debate` run must gate EVERY human-oriented
+// stdout write in the fresh path — not only the top-level summary already covered
+// by TestReviewCmd_AXISuppressesHumanSummary, but also the chained one-shot stage
+// lines ("Findings:", "reconciled", "verified", "debated"). The equivalent non-axi
+// run (TestReviewCmd_NonAXIChainedLinesPresent) proves these lines otherwise reach
+// stdout, so their absence here is caused by the gating, not by the lines never
+// being produced.
+func TestReviewCmd_AXIGatesChainedAndFindingsLines(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	code, stdout, _ := execCmdSplit(t, "review", "--axi", "--verify", "--debate", "--base", "HEAD^")
+	require.Equal(t, 0, code, "a completed chained review exits 0")
+
+	for _, human := range reviewHumanStdoutStrings {
+		assert.NotContains(t, stdout, human, "chained human line %q must be gated under --axi", human)
+	}
+	assert.Contains(t, stdout, "review_summary", "the run-summary payload is still emitted under --axi")
+	assertNoANSIOrMarkdown(t, stdout)
 }
 
 // TestReviewCmd_AXIRunSummaryUnaffectedByMaxLines is the review side of AC 03-04
