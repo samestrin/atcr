@@ -24,6 +24,17 @@ func TestDebtCompact_RegisteredAndDiscoverable(t *testing.T) {
 	assert.Contains(t, out, "compact", "`atcr debt --help` must list the compact subcommand")
 }
 
+func TestDebtCompact_NoStoreReportsNoOp(t *testing.T) {
+	dir := t.TempDir() // no store directory contents — Compact no-ops
+
+	out, err := runDebt(t, "compact", "--dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, out, "No local TD store to compact.",
+		"a no-op compaction must be distinguishable from a real fold")
+	assert.NotContains(t, out, "Compacted ",
+		"a no-op must not claim records were folded")
+}
+
 func TestDebtCompact_PerformsCompaction(t *testing.T) {
 	dir := t.TempDir()
 
@@ -53,7 +64,8 @@ func TestDebtCompact_PerformsCompaction(t *testing.T) {
 	// Run compact subcommand
 	out, err := runDebt(t, "compact", "--dir", dir)
 	require.NoError(t, err)
-	assert.Contains(t, out, "Compaction complete.")
+	assert.Contains(t, out, "Compacted 5 records into 2 (3 superseded dropped).",
+		"a real fold must report before/after/dropped counts, not a bare success line")
 
 	// Verify count after compaction
 	recsAfter, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
