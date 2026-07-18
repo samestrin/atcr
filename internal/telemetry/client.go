@@ -115,7 +115,13 @@ func (c *Client) Send(ctx context.Context, ev Event) {
 // `atcr … --preview` surface renders (json.MarshalIndent with a two-space indent),
 // so the transmitted bytes are byte-identical to the preview for the same data
 // (AC 06-02); a byte-for-byte equivalence test locks the two paths together.
+// A nil or empty payload is a no-op short-circuit BEFORE dispatch: the exported
+// API is self-defending (no semaphore slot, goroutine, or contentless beacon)
+// rather than depending on every caller pre-checking len(payload)==0.
 func (c *Client) SendQualitySignal(ctx context.Context, payload []QualitySignal) {
+	if len(payload) == 0 {
+		return
+	}
 	c.dispatch(ctx, func() ([]byte, error) { return json.MarshalIndent(payload, "", "  ") })
 }
 
