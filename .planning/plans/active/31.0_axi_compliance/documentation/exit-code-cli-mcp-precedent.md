@@ -52,6 +52,8 @@ This is the direct structural analogue to `atcr_verify`'s dual-surface exposure:
 
 `atcr verify`'s exit-code table (0/1/2 = success/gate-failure/usage-error) matches the existing `review`/`reconcile` contract exactly. The epic's originally proposed AXI contract (0=success, 1=actionable findings, 2=internal/syntax error) diverges specifically at code `2`: existing contract and `atcr verify` both reserve `2` for usage/configuration errors, while the epic proposal would repurpose `2` for internal/syntax errors. This is a direct conflict the AXI plan must resolve explicitly (e.g., by adopting the existing `2`=usage-error meaning and finding a different code or mechanism for internal/syntax errors) rather than silently redefining `2`.
 
+A **third** contract entered with the epic's own reference source: [axi.md](https://axi.md) Principle 6 prescribes "clean exit codes: 0 for success, 1 for errors. Unknown flags must fail loud (exit 2)" — plus structured errors written to **stdout** (not stderr) and never an interactive prompt. Its `2` folds into atcr's existing usage-error code (unknown flags already fail there via Cobra), but its coarse `0`=success/`1`=errors binary has no concept of atcr's gate-failure-as-designed-CI-signal, and its errors-on-stdout rule diverges from atcr's stderr convention. The full mapping and reconciliation notes live in [axi-design-principles.md](axi-design-principles.md): Principle 6; the short version is that the existing atcr contract survives all three sources intact, while the epic's proposed reassignment of `2` aligns with none of them.
+
 ## Code Examples
 
 The following are verbatim from the source document.

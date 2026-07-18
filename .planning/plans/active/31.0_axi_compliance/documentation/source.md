@@ -17,6 +17,7 @@ docs/findings-format.md
 docs/payload-modes.md
 https://toonformat.dev/
 https://toonformat.dev/reference/syntax-cheatsheet.html
+https://axi.md
 <!-- SOURCES:END -->
 
 ---
@@ -34,6 +35,7 @@ https://toonformat.dev/reference/syntax-cheatsheet.html
 | `docs/payload-modes.md` | 6/10 | File | Byte-budget and deterministic-truncation contract (largest-first drops, every drop recorded) behind the `truncated`/`files_dropped` status.json fields whose naming the AXI 500-line cap reuses. Added during `/refine-docs`. |
 | `https://toonformat.dev/` | 6/10 | URL | TOON project home — the epic's named candidate encoding is a real spec-driven format with advertised multi-language implementations including Go; design must evaluate the Go implementation vs. plan.md's hand-rolled-formatter stance. Added during `/refine-docs`. |
 | `https://toonformat.dev/reference/syntax-cheatsheet.html` | 7/10 | URL | Normative JSON→TOON syntax mapping: tabular arrays (the findings shape), declared array lengths, pipe/tab alternative delimiters (convergent with `atcr-findings/v1`'s pipe grammar), must-quote rules, and the five valid escape sequences. Added during `/refine-docs`. |
+| `https://axi.md` | 9/10 | URL | The epic's own cited Reference: the 10 AXI design principles + benchmark evidence. Principle 1 mandates TOON by name (resolving the epic's "TOON or compact JSON" hedge); Principle 6 is a third exit-code contract (0=success/1=errors/2=unknown flags, structured errors to stdout) to reconcile; Principles 2/5 create design tensions (schema width, empty-state) the sprint design must resolve. Added during `/refine-docs`. |
 
 ---
 

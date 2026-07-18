@@ -30,7 +30,17 @@
 - **Relevant:** This is the core deliverable of Epic 31.0 — without a clean token-dense payload, none of the epic's other acceptance criteria (exit codes, pagination, stderr isolation, docs) have a payload to apply to.
 - **Time-bound:** Implementable within a single sprint cycle as the first story in the plan's 5-story sequence; unblocks Stories 2-4 which layer exit-code, pagination, and stderr guarantees onto this payload.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-axi-format-render-dispatch.md) | `FormatAXI` Render Dispatch for `atcr report` | Unit |
+| [01-02](../acceptance-criteria/01-02-axi-schema-toon-findings-v1-compatibility.md) | AXI Schema Design Reconciled with `atcr-findings/v1` and TOON Conventions | Unit |
+| [01-03](../acceptance-criteria/01-03-review-axi-mode-output-gating.md) | `atcr review --axi` Gates Human-Oriented Live Output | Integration |
+| [01-04](../acceptance-criteria/01-04-resume-context-axi-mode-propagation.md) | `atcr resume --axi` Parity via Shared Context-Mode Propagation | Integration |
+| [01-05](../acceptance-criteria/01-05-mcp-axi-format-enum-decision.md) | MCP Format-Enum Propagation Decision for `FormatAXI` | Unit/Integration |
+
+## Original Criteria Overview
 
 1. `atcr report --axi` (or equivalent format flag value, e.g. `--format=axi`) renders findings via a new `FormatAXI` case in `internal/report/render.go`'s existing dispatch, producing TOON/compact-JSON output with no ANSI/Markdown artifacts, and ships with its own golden-file fixture.
 2. `atcr review --axi` suppresses/replaces its existing human-oriented `cmd.OutOrStdout()` progress and summary writes (in `cmd/atcr/review.go` and `cmd/atcr/resume.go`) with the same token-dense payload shape, rather than leaving that code path unaddressed.
@@ -55,4 +65,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/31.0_axi_comp
 ---
 
 **Created:** July 18, 2026 09:03:31AM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Generated

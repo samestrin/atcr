@@ -1,9 +1,9 @@
 {
-  "skill": "create-user-stories",
+  "skill": "create-acceptance-criteria",
   "args": "@.planning/plans/active/31.0_axi_compliance/",
-  "invocation": "/create-user-stories @.planning/plans/active/31.0_axi_compliance/",
+  "invocation": "/create-acceptance-criteria @.planning/plans/active/31.0_axi_compliance/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "b14723e1-c36d-490f-bc23-b8ad5c8bb8a6",
-  "timestamp": "2026-07-18T16:03:22.957Z"
+  "session_id": "95e58e20-50a1-4a87-a86d-87487b84cb29",
+  "timestamp": "2026-07-18T16:17:19.181Z"
 }

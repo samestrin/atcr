@@ -30,7 +30,15 @@
 - **Relevant:** Directly satisfies the epic's explicit acceptance criterion "Stderr is strictly used for progress bars/logs; stdout contains only the final payload," and is the specific gap the plan's refined understanding identified as unaddressed by the pre-existing stderr-diagnostics invariant.
 - **Time-bound:** Deliverable within a single sprint cycle as Story 4 of 5; depends only on Story 1's flag/propagation plumbing, not on Stories 2 or 3.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-review-resume-stdout-gating.md) | Gate Human-Oriented Stdout Writes in review.go and resume.go Under AXI Mode | Unit/Integration |
+| [04-02](../acceptance-criteria/04-02-escape-sequence-pinning-test.md) | Pinning Test Guarantees No ANSI/OSC Escape Sequences Reach `--axi` Stdout | Unit |
+| [04-03](../acceptance-criteria/04-03-non-axi-regression-protection.md) | Non-AXI `review`/`resume` Behavior Remains Unchanged | Unit/Integration |
+
+## Original Criteria Overview
 
 1. Every human-oriented `cmd.OutOrStdout()` write in `cmd/atcr/review.go` (fresh-review path) and `cmd/atcr/resume.go` (resume path), including both call sites of `writeReviewSummary`, is gated behind AXI mode so none of that text reaches stdout when `--axi` is active.
 2. A pinning test (in the style of `TestDriftLine_StripsControlChars` / `TestRenderPersonaSearch_StripsControlChars`) proves that no ANSI/OSC escape sequence can appear in `--axi` stdout output, covering at minimum the `osc8()`-style escape pattern as a regression guard.

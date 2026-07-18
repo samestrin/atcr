@@ -20,6 +20,7 @@
 - [Exit-Code Contract & CLI/MCP Dual-Surface Precedent (Epic 3.0 `atcr verify`)](exit-code-cli-mcp-precedent.md) — **[CRITICAL]**
 - [Existing Agent-Facing Format & Output-Safety Contracts](agentic-format-precedents.md) — **[IMPORTANT]**
 - [MCP Tool Schema & Format-Enum Propagation](mcp-schema-format-propagation.md) — **[IMPORTANT]**
+- [AXI Design Principles (axi.md) — the Epic's Reference Source](axi-design-principles.md) — **[IMPORTANT]**
 - [TOON Format Reference (Token Optimized Object Notation)](toon-format-reference.md) — **[REFERENCE]**
 
 ---
@@ -37,6 +38,7 @@ All documentation is grounded in:
   - `docs/payload-modes.md`
   - [TOON — toonformat.dev](https://toonformat.dev/)
   - [TOON Syntax Cheatsheet](https://toonformat.dev/reference/syntax-cheatsheet.html)
+  - [AXI: Agent eXperience Interface — axi.md](https://axi.md)
 - **Local Plan References:**
   - [`source.md`](./source.md) — generated source-path index for this documentation set
 - **Codebase Discovery:** `.planning/plans/active/31.0_axi_compliance/codebase-discovery.json`

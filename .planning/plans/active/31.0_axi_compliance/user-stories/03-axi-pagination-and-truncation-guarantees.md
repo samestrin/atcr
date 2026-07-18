@@ -30,7 +30,16 @@
 - **Relevant:** Directly satisfies the epic's pagination/truncation requirement and is the specific guarantee that prevents a large PR's findings/diff from silently overflowing a calling agent's context window — the epic's stated primary risk for "other autonomous agents" consuming `atcr` output.
 - **Time-bound:** Implementable within a single sprint cycle once Story 1's AXI renderer exists; delivered as a wrapping truncation step applied uniformly to AXI-mode output rather than a per-command reimplementation.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-default-line-cap-deterministic-truncation.md) | Default Line Cap with Deterministic Truncation | Unit |
+| [03-02](../acceptance-criteria/03-02-truncated-flag-and-true-total-count.md) | `truncated` Flag with Preserved True Total Count | Unit |
+| [03-03](../acceptance-criteria/03-03-axi-max-lines-env-override.md) | `ATCR_AXI_MAX_LINES` Environment Override with Fail-Open Parsing | Unit/Integration |
+| [03-04](../acceptance-criteria/03-04-shared-truncation-wrapper-across-commands.md) | Shared Truncation Wrapper Applied Uniformly Across Both AXI Code Paths | Integration |
+
+## Original Criteria Overview
 
 1. AXI-mode output (both `atcr review --axi` and `atcr report --axi`) enforces a default 500-emitted-line cap, truncating deterministically (fixed, reproducible cut point) rather than arbitrarily when the payload exceeds the cap.
 2. A `truncated` boolean field (reusing the exact field name/semantics from `internal/fanout/status.go`'s `Truncated bool` / `json:"truncated"`) is present in every AXI payload, `true` when capped and `false` otherwise, while the payload's declared total count (e.g. TOON's `key[N]{...}:` header) always reflects the true, uncapped total.

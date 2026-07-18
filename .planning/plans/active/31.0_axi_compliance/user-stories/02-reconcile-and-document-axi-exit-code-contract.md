@@ -38,7 +38,15 @@
 - **Relevant:** This is the exact conflict plan.md flags as the epic's most significant deviation risk; without an explicit, documented reconciliation, `--axi` could ship with silently inconsistent exit semantics that break the CI scripts and agent orchestrators the whole epic exists to serve.
 - **Time-bound:** Completed within this plan's sprint, verified before `atcr review --axi`/`atcr report --axi` are marked feature-complete in Story 1.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-axi-exit-code-parity.md) | AXI Mode Preserves Existing Exit-Code Semantics | Unit/Integration |
+| [02-02](../acceptance-criteria/02-02-new-axi-error-classification.md) | New AXI-Introduced Errors Classify Into the Existing Contract | Unit |
+| [02-03](../acceptance-criteria/02-03-document-exit-code-reconciliation.md) | Document the Exit-Code Reconciliation Decision | Manual |
+
+## Original Criteria Overview
 
 1. `--axi` mode does not change the numeric meaning or trigger conditions of exit codes `0`, `1`, `2`, or `3` for any covered subcommand (`atcr review`, `atcr report`, `atcr reconcile --fail-on`), confirmed against `atcr verify`'s independently-arrived-at identical mapping as cross-validation.
 2. Any new error condition introduced specifically by `--axi` handling (e.g., invalid pagination env var, unsupported format combination) is explicitly classified into the existing contract (`usageError`/exit `2` for operator-fixable config problems, `exitFailure`/exit `1` otherwise) via the existing `codedError` pattern — not a new exit code.

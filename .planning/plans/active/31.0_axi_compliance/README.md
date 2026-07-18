@@ -6,7 +6,7 @@ This plan implements a first-class `--axi` output mode for `atcr` so autonomous 
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/31.0_axi_compliance/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/31.0_axi_compliance/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/31.0_axi_compliance/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/31.0_axi_compliance/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/31.0_axi_compliance/`
 
@@ -30,6 +30,7 @@ Primary risks are (1) inadvertently changing the existing, already-documented ex
 - [Exit-Code Contract & CLI/MCP Dual-Surface Precedent (Epic 3.0 `atcr verify`)](documentation/exit-code-cli-mcp-precedent.md) — **[CRITICAL]**
 - [Existing Agent-Facing Format & Output-Safety Contracts](documentation/agentic-format-precedents.md) — **[IMPORTANT]**
 - [MCP Tool Schema & Format-Enum Propagation](documentation/mcp-schema-format-propagation.md) — **[IMPORTANT]**
+- [AXI Design Principles (axi.md) — the Epic's Reference Source](documentation/axi-design-principles.md) — **[IMPORTANT]**
 - [TOON Format Reference (Token Optimized Object Notation)](documentation/toon-format-reference.md) — **[REFERENCE]**
 
 ## Plan Assets

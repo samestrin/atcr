@@ -27,6 +27,7 @@ Codebase discovery found that two of the epic's four acceptance criteria are alr
 - Stderr isolation (AC2) and exit-code determinism (AC3) are largely pre-existing invariants — implementation effort should focus on verifying they hold under `--axi` rather than building them from scratch.
 - A prior epic (7.2) already consolidated divergent Markdown renderers into one shared renderer in `internal/reconcile` — any new AXI/TOON formatter should follow that shared-renderer precedent instead of adding a third divergent rendering path.
 - An existing lightweight agent-facing format precedent (`# atcr-findings/v1`, used in `.atcr/reviews/<id>/sources/pool/`) is documented in `docs/findings-format.md` (with skill-side copies in `skill/findings-format.md` and `skill/host-review.md`) and worth reviewing before finalizing a new TOON schema.
+- The epic's own Reference source ([axi.md](https://axi.md)) mandates TOON by name as its Principle 1, so the epic's "TOON or compact JSON" phrasing resolves toward TOON unless design explicitly justifies a deviation. The same source's Principle 6 adds a third exit-code contract to reconcile (0=success, 1=errors, 2=unknown-flags, structured errors to stdout), and its Principles 2 (3–4 default fields) and 5 (definitive empty states) create design tensions with the 8–9-column findings schema and TOON's empty-object rule — all mapped in [documentation/axi-design-principles.md](documentation/axi-design-principles.md).
 
 ## Implementation Strategy
 Implement the `--axi` flag as a cross-cutting output-mode value threaded through command context (mirroring how the root logger and telemetry client are already injected in `PersistentPreRunE`), so both `atcr review`'s live summary output and `atcr report`'s findings rendering can consult it. Extend `internal/report/render.go` with a new token-dense format implementation reusing the existing `Render()` dispatch, and gate `atcr review`'s human-oriented `cmd.OutOrStdout()` writes behind the same axi-mode check. Implement pagination/truncation (default 500-line cap, `ATCR_AXI_MAX_LINES` override) as a wrapping writer or post-processing step applied uniformly to axi-mode output. Reconcile the exit-code contract explicitly in code and docs rather than introducing a second scheme. Close with a new `docs/agentic-consumption.md` page and a cross-reference from `docs/ci-integration.md`.
@@ -36,6 +37,7 @@ Implement the `--axi` flag as a cross-cutting output-mode value threaded through
 - [Exit-Code Contract & CLI/MCP Dual-Surface Precedent (Epic 3.0 `atcr verify`)](documentation/exit-code-cli-mcp-precedent.md) — **[CRITICAL]**
 - [Existing Agent-Facing Format & Output-Safety Contracts](documentation/agentic-format-precedents.md) — **[IMPORTANT]**
 - [MCP Tool Schema & Format-Enum Propagation](documentation/mcp-schema-format-propagation.md) — **[IMPORTANT]**
+- [AXI Design Principles (axi.md) — the Epic's Reference Source](documentation/axi-design-principles.md) — **[IMPORTANT]**
 - [TOON Format Reference (Token Optimized Object Notation)](documentation/toon-format-reference.md) — **[REFERENCE]**
 
 ## Recommended Packages

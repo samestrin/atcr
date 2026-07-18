@@ -38,7 +38,15 @@
 - **Relevant:** Directly satisfies the epic's explicit acceptance criterion for an "Agentic Consumption" docs section, and is the deliverable that makes the other four stories' work discoverable and usable by the epic's target audience (agent/orchestration engineers) rather than only visible in code.
 - **Time-bound:** Completed within this plan's sprint, after Stories 1-4 have landed their concrete implementation details, so the doc reflects shipped behavior rather than draft assumptions.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-agentic-consumption-doc-content.md) | Publish Core Content of `docs/agentic-consumption.md` | Integration |
+| [05-02](../acceptance-criteria/05-02-worked-orchestration-example.md) | Worked Orchestration Example (Autonomous Sweeper Scenario) | Integration |
+| [05-03](../acceptance-criteria/05-03-ci-integration-cross-reference.md) | Additive Cross-Reference from `docs/ci-integration.md` | Integration |
+
+## Original Criteria Overview
 
 1. `docs/agentic-consumption.md` is created and covers: `--axi` invocation on `atcr review`/`atcr report`, the reconciled exit-code contract (0/1/2/3), pagination/truncation (500-line default, `ATCR_AXI_MAX_LINES`, `truncated` flag), and the stderr-only-diagnostics/stdout-only-payload guarantee.
 2. The doc includes a worked example modeled on the epic's own motivating scenario — an autonomous sweeper invoking `atcr review --axi` as a subprocess, parsing the resulting payload, and branching on exit code.
