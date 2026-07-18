@@ -102,6 +102,10 @@ func RenderAXIPaginated(w io.Writer, findings []reconcile.JSONFinding, maxLines 
 	if err := renderAXI(&buf, findings); err != nil {
 		return err
 	}
+	// PaginateAXI's third return (the true total) is intentionally discarded here:
+	// it is already emitted on the wire as the array header's N, which is the
+	// authoritative count for consumers. It remains a return value per the
+	// pagination contract and is asserted directly by the unit tests.
 	out, truncated, _ := PaginateAXI(buf.Bytes(), maxLines)
 	if _, err := w.Write(out); err != nil {
 		return err
