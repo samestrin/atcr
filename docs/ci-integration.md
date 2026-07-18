@@ -32,6 +32,8 @@ The `--axi` (Agent eXperience Interface) output mode changes only the *shape* of
 - **The epic's original `2` = "internal/syntax error" proposal was considered and rejected.** Exit `2` is already reserved for usage/configuration errors CI scripts depend on; repurposing it would break them. AXI introduces no new exit code and repurposes none.
 - **`--axi` structured errors go to stderr, not stdout.** Per axi.md Principle 6 an agent-facing CLI *may* emit structured errors on stdout, but atcr keeps them on stderr (its existing convention) so `--axi` stdout is *always* payload-only: an agent running `atcr review --axi > findings.toon` gets a byte-clean payload file and branches on the exit code — it never parses stdout for an error case. (Any future errors-on-stdout payload would remain subject to the `--axi` escape-free stdout guarantee.)
 
+For the full agent-facing picture — `--axi` invocation on `atcr review`/`atcr report`, the TOON payload shapes, pagination/truncation, and a worked autonomous-sweeper example — see [agentic-consumption.md](agentic-consumption.md).
+
 ## Maintained PR Action
 
 For a first-class pull-request surface — a PR **check** with a findings table
