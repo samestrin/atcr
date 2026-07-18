@@ -95,21 +95,13 @@ func previewFlagSet(cmd *cobra.Command) bool {
 // reconcile host commands — Story 6's two Send call sites). --preview renders the
 // exact content-free quality-signal payload locally and sends nothing (Story 3);
 // its run-path short-circuit lives in maybePreviewQualitySignal, invoked before any
-// opt-in gate or transport work. The PreRunE is chained prev-first (not assigned),
-// matching addRangeFlags/addSyncCloudFlags, so the range/sync-cloud hooks installed
-// earlier are never silently overwritten and a future --preview precondition can
-// slot in without clobbering them.
+// opt-in gate or transport work. It installs no PreRunE: --preview has no
+// precondition of its own, so the range/sync-cloud hooks installed earlier on cmd
+// already run untouched. Add chaining here only when a precondition genuinely
+// appears — a pass-through wrapper kept "for a future precondition" is dead
+// indirection.
 func addQualitySignalFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("preview", false, "print the exact content-free quality-signal payload that would be transmitted, then exit without sending anything (needs no opt-in and makes no network call)")
-	prev := cmd.PreRunE
-	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
-		if prev != nil {
-			if err := prev(cmd, args); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
 }
 
 // validateRangeFlags checks the declared relationships between --base,
