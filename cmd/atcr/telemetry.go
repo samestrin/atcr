@@ -40,10 +40,14 @@ func telemetryEnabled(envEnabled bool, cfgTelemetry *bool) bool {
 
 // telemetryGate resolves the final enabled/disabled state for one emitting run
 // by combining the live ATCR_TELEMETRY env var with the persisted
-// .atcr/config.yaml opt-out (resolved cwd-relative, matching how every other
-// command locates project config). It is called once per review/reconcile run,
-// guarding the Send call site so a disabled state short-circuits BEFORE any
-// goroutine spawns or payload is built — not merely before the HTTP call.
+// .atcr/config.yaml opt-out. The config is located via repo-root discovery —
+// the SAME root `atcr config set telemetry` persists to (runConfigSet) — so the
+// gate and the write path agree on config location even when atcr runs from a
+// repo subdirectory. If repo-root discovery itself fails, the gate falls back
+// to the former cwd-relative read rather than breaking. It is called once per
+// review/reconcile run, guarding the Send call site so a disabled state
+// short-circuits BEFORE any goroutine spawns or payload is built — not merely
+// before the HTTP call.
 //
 // A malformed persisted telemetry value fails SAFE to disabled: a corrupt value
 // can never re-enable a ping the user may have intended to disable. (On the
@@ -58,7 +62,15 @@ func telemetryEnabled(envEnabled bool, cfgTelemetry *bool) bool {
 // ATCR_API_KEY plus the explicit flag), independent of telemetryGate.
 func telemetryGate() bool {
 	env := telemetryEnabledFromEnv()
-	cfg, err := registry.LoadTelemetrySetting(".")
+	// Resolve the config via repo-root discovery so the gate reads the same
+	// .atcr/config.yaml `config set` writes, from any subdirectory. On a
+	// discovery failure (os.Getwd), fall back to the former cwd-relative read
+	// rather than breaking the gate.
+	root, rerr := repoRoot()
+	if rerr != nil {
+		root = "."
+	}
+	cfg, err := registry.LoadTelemetrySetting(root)
 	if err != nil {
 		return false
 	}

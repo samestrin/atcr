@@ -65,7 +65,11 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 				return err
 			}
 		}
-		if boolFlag(cmd, "sync-cloud") {
+		// --preview is a pure, side-effect-free local render that pushes nothing, so
+		// the --sync-cloud placeholder warning is misleading noise on that path
+		// (the preview short-circuit in RunE bypasses sync entirely). Suppress it
+		// when --preview is set — preview overrides sync-cloud (AC 03-01 EC2).
+		if boolFlag(cmd, "sync-cloud") && !previewFlagSet(cmd) {
 			endpoint, _ := cmd.Flags().GetString("cloud-endpoint")
 			if strings.TrimSpace(endpoint) == defaultCloudEndpoint {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: --cloud-endpoint default %q is a placeholder; --sync-cloud will not work until a real endpoint and ATCR_API_KEY are configured\n", defaultCloudEndpoint)
@@ -73,6 +77,31 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 		}
 		return nil
 	}
+}
+
+// previewFlagSet reports whether the --preview flag is registered on cmd AND set.
+// It uses a nil-safe Lookup (not boolFlag) because addSyncCloudFlags may in
+// principle be installed on a command that does not register --preview, and this
+// runs in a PreRunE where a panic would abort an unrelated invocation.
+func previewFlagSet(cmd *cobra.Command) bool {
+	if cmd.Flags().Lookup("preview") == nil {
+		return false
+	}
+	v, _ := cmd.Flags().GetBool("preview")
+	return v
+}
+
+// addQualitySignalFlags declares the --preview flag on cmd (the review and
+// reconcile host commands — Story 6's two Send call sites). --preview renders the
+// exact content-free quality-signal payload locally and sends nothing (Story 3);
+// its run-path short-circuit lives in maybePreviewQualitySignal, invoked before any
+// opt-in gate or transport work. It installs no PreRunE: --preview has no
+// precondition of its own, so the range/sync-cloud hooks installed earlier on cmd
+// already run untouched. Add chaining here only when a precondition genuinely
+// appears — a pass-through wrapper kept "for a future precondition" is dead
+// indirection.
+func addQualitySignalFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("preview", false, "print the exact content-free quality-signal payload that would be transmitted, then exit without sending anything (needs no opt-in and makes no network call)")
 }
 
 // validateRangeFlags checks the declared relationships between --base,

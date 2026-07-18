@@ -131,6 +131,29 @@ func TestDebtResolve_JSONEmptyStoreIsEmptyArray(t *testing.T) {
 	assert.Empty(t, items, "empty store yields an empty JSON array, not null or a stack trace")
 }
 
+func TestSelectOpenDebt_AgreesWithFoldRecordsOnReRaisedID(t *testing.T) {
+	// The same File/Line/Problem re-raised across two runs yields two OPEN records
+	// under one stable id with divergent Severity. selectOpenDebt must display the
+	// SAME occurrence FoldRecords keeps (the last), so the resolve list never
+	// disagrees with the quality signal (which folds via FoldRecords) about the item.
+	first := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	second := first
+	second.RunID = "2026-07-02T10:00:00Z-b"
+	second.Timestamp = second.RunID
+	second.Severity = "LOW"
+	require.Equal(t, first.ID, second.ID, "identical File/Line/Problem must share a stable id")
+
+	recs := []localdebt.Record{first, second}
+	got := selectOpenDebt(recs, "", 0)
+	require.Len(t, got, 1, "the two occurrences fold to one open item")
+
+	folded := localdebt.FoldRecords(recs)
+	require.Len(t, folded, 1)
+	assert.Equal(t, folded[0].Severity, got[0].Severity,
+		"selectOpenDebt must display the occurrence FoldRecords keeps (last), not the first")
+	assert.Equal(t, "LOW", got[0].Severity, "the most recent open occurrence wins")
+}
+
 func TestDebtResolve_SelectionSortsSeverityThenAge(t *testing.T) {
 	// Written newest-first and lowest-severity-first to prove the command re-sorts:
 	// severity DESC (HIGH before LOW), then ts ASC (oldest first) within a severity.
@@ -594,4 +617,151 @@ func TestDebtResolve_SelectionWorksWithoutOptionalFields(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &items))
 	require.Len(t, items, 1)
 	assert.Equal(t, "internal/x/a.go", items[0]["file"])
+}
+
+func TestDebtResolve_ListFlagsWithResolveAreUsageError(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	errorLine := func(out string) string {
+		parts := strings.SplitN(out, "\n", 2)
+		return strings.ToLower(strings.TrimSpace(parts[0]))
+	}
+
+	// --json/--severity/--max only affect the list renderer, which the mark branch
+	// never reaches; combined with --resolve they would be silently ignored. They
+	// must be rejected as usage errors, symmetric with --status/--reason without
+	// --resolve. Assert against the first output line only — cobra's usage dump on
+	// error lists every flag name and would false-positive a Contains on full output.
+	cases := []struct {
+		name string
+		args []string
+		want []string // flag names that must appear on the error line
+	}{
+		{"json", []string{"--json"}, []string{"--json"}},
+		{"severity", []string{"--severity", "HIGH"}, []string{"--severity"}},
+		{"max", []string{"--max", "5"}, []string{"--max"}},
+		{"combined", []string{"--json", "--max", "5"}, []string{"--json", "--max"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"resolve", "--dir", dir, "--resolve", rec.ID}, tc.args...)
+			out, err := runDebt(t, args...)
+			require.Error(t, err, "%s with --resolve must be a usage error, not silently ignored", tc.name)
+			assert.Equal(t, exitUsage, exitCode(err), "exit code must be 2 (usage), like --status without --resolve")
+			el := errorLine(out)
+			for _, flag := range tc.want {
+				assert.Contains(t, el, flag, "error must name the rejected list-only flag")
+			}
+			assert.NotContains(t, strings.ToLower(out), "marked", "a rejected invocation must not report a resolution")
+		})
+	}
+
+	// No terminal record may be appended by any of the rejected invocations.
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	for _, r := range recs {
+		assert.False(t, r.ID == rec.ID && r.Status != "", "rejected invocations must not append a terminal record")
+	}
+
+	// A bare --resolve (no list-only flags) still marks the item, unchanged.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err, "a plain --resolve without list-only flags must still succeed")
+}
+
+func TestDebtResolve_ExplicitEmptyResolveIsUsageError(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	// --resolve "" is explicitly changed but empty: routing it to the list path would
+	// silently discard the user's mark intent. It must be a usage error (exit 2),
+	// governed by Changed("resolve"), not by the empty value falling through to list.
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", "")
+	require.Error(t, err, `an explicit --resolve "" must be a usage error, not a silent list`)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, strings.ToLower(out), "--resolve", "error must name the --resolve flag")
+	assert.NotContains(t, out, "internal/x/a.go", "must not fall through to the list view")
+
+	// Omitting --resolve entirely still lists, untouched by the new guard.
+	out, err = runDebt(t, "resolve", "--dir", dir)
+	require.NoError(t, err, "omitting --resolve must still list open items")
+	assert.Contains(t, out, "internal/x/a.go")
+}
+
+func TestDebtResolve_TerminalRecordUnionsReviewersAcrossOpenRecords(t *testing.T) {
+	// The same File/Line/Problem finding raised by two separate reconcile runs yields
+	// two distinct open records under one stable id, each with its own reviewer/model
+	// attribution. AggregateQualitySignal reads only the terminal record
+	// (foldTerminalByID), so stamping just the first open record's Reviewers would
+	// deny the later run's personas their dismissed/confirmed credit.
+	first := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	first.Reviewers = []string{"bruce", "greta"}
+	first.Model = "claude-sonnet-4-6"
+	second := first
+	second.RunID = "2026-07-02T10:00:00Z-b"
+	second.Timestamp = second.RunID
+	second.Reviewers = []string{"ingrid", "bruce"}
+	second.Model = "gpt-5.2"
+	require.Equal(t, first.ID, second.ID, "identical File/Line/Problem must yield the same stable id")
+	dir := writeDebtStore(t, first, second)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", first.ID)
+	require.NoError(t, err)
+
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var terminal *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == first.ID && recs[i].Status == "resolved" {
+			terminal = &recs[i]
+		}
+	}
+	require.NotNil(t, terminal, "a terminal record must be appended")
+	assert.Equal(t, []string{"bruce", "greta", "ingrid"}, terminal.Reviewers,
+		"terminal record must credit every persona that raised the finding (deduped, first-seen order)")
+	assert.Equal(t, "gpt-5.2", terminal.Model,
+		"Model follows the most recent open record's non-empty value so the latest run's model gets the credit")
+
+	// End-to-end: the aggregated signal must confirm every raising persona, bucketed
+	// under the most recent model.
+	confirmed := map[string]int{}
+	for _, row := range localdebt.AggregateQualitySignal(recs) {
+		confirmed[row.Persona+"/"+row.Model] = row.ConfirmedCount
+	}
+	assert.Equal(t, 1, confirmed["bruce/gpt-5.2"], "first-run persona still credited")
+	assert.Equal(t, 1, confirmed["greta/gpt-5.2"], "first-run persona still credited")
+	assert.Equal(t, 1, confirmed["ingrid/gpt-5.2"], "later-run persona must not lose credit")
+	assert.Zero(t, confirmed["bruce/claude-sonnet-4-6"], "the stale earlier model must not split the bucket")
+}
+
+func TestDebtResolve_TerminalRecordModelFallsBackToEarlierNonEmpty(t *testing.T) {
+	// When the most recent open record has no model attribution (v1, or unresolved
+	// attribution), the terminal record must keep an earlier open record's non-empty
+	// Model rather than blanking it — an empty Model is excluded from every
+	// AggregateQualitySignal row, so blanking would silently drop all credit.
+	first := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	first.Reviewers = []string{"bruce"}
+	first.Model = "claude-sonnet-4-6"
+	second := first
+	second.RunID = "2026-07-02T10:00:00Z-b"
+	second.Timestamp = second.RunID
+	second.Reviewers = []string{"ingrid"}
+	second.Model = ""
+	dir := writeDebtStore(t, first, second)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", first.ID)
+	require.NoError(t, err)
+
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var terminal *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == first.ID && recs[i].Status == "resolved" {
+			terminal = &recs[i]
+		}
+	}
+	require.NotNil(t, terminal, "a terminal record must be appended")
+	assert.Equal(t, "claude-sonnet-4-6", terminal.Model,
+		"most recent NON-EMPTY model wins; a later attribution-less record must not blank it")
+	assert.Equal(t, []string{"bruce", "ingrid"}, terminal.Reviewers)
 }

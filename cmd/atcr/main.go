@@ -31,6 +31,36 @@ var gracefulShutdownTimeout = 10 * time.Second
 // binary actually exiting.
 var forceExit = os.Exit
 
+// telemetryDrainTimeout bounds how long main waits for in-flight telemetry
+// sends to flush before exiting. Hardcoded like gracefulShutdownTimeout (no
+// flag — an internal safety bound, not operator surface); a package var only so
+// tests can shrink it.
+var telemetryDrainTimeout = 2 * time.Second
+
+// drainTelemetry waits for the process telemetry client's in-flight sends to
+// complete, bounded by timeout so a slow or hung endpoint can never unbound run
+// completion. Client.Wait has no bounded variant and internal/telemetry stays
+// untouched, so the bound is enforced caller-side: Wait runs on a goroutine and
+// the timeout path abandons the remaining sends — the process is exiting
+// anyway, so the detached goroutines die with it. Nil-safe, matching
+// telemetry's fail-open contract. Callers must invoke it only after dispatch
+// has quiesced (here: after ExecuteContext returns — every send originates
+// inside a subcommand RunE), the only state in which Client.Wait is safe.
+func drainTelemetry(client *telemetry.Client, timeout time.Duration) {
+	if client == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		client.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
+}
+
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -43,8 +73,17 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	handleSignals(sigCh, cancel, os.Stderr)
 
-	root := newRootCmd()
-	if err := root.ExecuteContext(ctx); err != nil {
+	telemetryClient := telemetry.New(defaultTelemetryEndpoint)
+	root := newRootCmdWithClient(telemetryClient)
+	err := root.ExecuteContext(ctx)
+	// Best-effort drain before exit: the passive ping and the quality signal
+	// share this one process client (injected into every subcommand's context
+	// by the root PersistentPreRunE), and their sends are fire-and-forget
+	// goroutines that os.Exit would strand. Draining here — on the success and
+	// error paths alike — lets delivery usually reach the endpoint, bounded so
+	// a hung endpoint can never unbound run completion.
+	drainTelemetry(telemetryClient, telemetryDrainTimeout)
+	if err != nil {
 		code := exitCode(err)
 		if code != 0 {
 			fmt.Fprintln(os.Stderr, "atcr:", err)
@@ -139,13 +178,17 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 // newRootCmd constructs the atcr command tree. All subcommands use RunE so
 // errors bubble up to main() for centralized exit-code mapping.
 func newRootCmd() *cobra.Command {
-	// A single opt-in telemetry client, constructed once here and injected into
-	// every subcommand's context via PersistentPreRunE (deliberately not a
-	// package-level singleton). The compiled-in endpoint is empty until a real
-	// ingestion backend lands, so Send is a no-op in dev, CI, and production for
-	// now (see defaultTelemetryEndpoint).
-	telemetryClient := telemetry.New(defaultTelemetryEndpoint)
+	return newRootCmdWithClient(telemetry.New(defaultTelemetryEndpoint))
+}
 
+// newRootCmdWithClient is newRootCmd with the single opt-in process telemetry
+// client supplied by the caller, so main() keeps a handle on the same client
+// the root PersistentPreRunE injects into every subcommand's context and can
+// drain it before exit. The client is constructed once per process and injected
+// via PersistentPreRunE (deliberately not a package-level singleton). The
+// compiled-in endpoint is empty until a real ingestion backend lands, so Send
+// is a no-op in dev, CI, and production for now (see defaultTelemetryEndpoint).
+func newRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "atcr",
 		Short: "Agent Team Code Review — a review panel, not a reviewer",
@@ -215,6 +258,7 @@ func newRootCmd() *cobra.Command {
 		newVerifyCmd(),
 		newDebateCmd(),
 		newReportCmd(),
+		newQualityReportCmd(),
 		newGithubCmd(),
 		newRangeCmd(),
 		newStatusCmd(),

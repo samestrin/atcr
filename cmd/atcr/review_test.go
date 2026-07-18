@@ -703,3 +703,22 @@ func TestReviewCmd_SyncCloud_AuthRejectionOverridesExit(t *testing.T) {
 	t.Setenv("ATCR_API_KEY", "bad-key")
 	require.Equal(t, exitAuth, execCmd(t, "review", "--base", "HEAD^", "--sync-cloud", "--cloud-endpoint", srv.URL))
 }
+
+// TestReviewHelpDocumentsPreviewPrecedence pins the --preview precedence
+// documentation (TD cmd/atcr/review.go:runReview): --preview short-circuits at
+// the very top of runReview — above the --resume/--force mutual-exclusion check
+// and the --auto-fix handling — so combining it with an action flag silently
+// ignores that flag. The flag's own usage string lives in flags.go (shared with
+// reconcile), so the precedence note must live in the review command's Long help
+// text where a user reading `atcr review --help` will see it.
+func TestReviewHelpDocumentsPreviewPrecedence(t *testing.T) {
+	cmd := newReviewCmd()
+	help := cmd.Long + "\n" + cmd.Example
+
+	assert.Contains(t, help, "--preview", "review help must describe --preview")
+	assert.Contains(t, help, "precedence", "review help must state that --preview takes precedence")
+	for _, action := range []string{"--auto-fix", "--resume", "--force"} {
+		assert.Contains(t, help, action, "review help must name the action flag %s that --preview ignores", action)
+	}
+	assert.Contains(t, help, "ignored", "review help must state the action flags are ignored when --preview is set")
+}

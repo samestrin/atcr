@@ -1,6 +1,6 @@
 ---
 name: atcr
-description: The /atcr <command> dispatcher for atcr, a multi-reviewer code-review engine. Routes a request to a single atcr CLI command — review, reconcile, verify, debate, report, github, range, status, init, quickstart, serve, doctor, trust, scorecard, leaderboard, benchmark, personas, models, debt, history, audit-report, version. The review command fans a git range, branch, or PR out to a reviewer panel, adds a host (+1) review, and reconciles findings into one deduplicated, confidence-scored report. Use when asked to review a branch, PR, or git range, or to run any atcr command.
+description: The /atcr <command> dispatcher for atcr, a multi-reviewer code-review engine. Routes a request to a single atcr CLI command — review, reconcile, verify, debate, report, quality-report, github, range, status, init, quickstart, serve, doctor, trust, scorecard, leaderboard, benchmark, personas, models, debt, history, audit-report, config, version. The review command fans a git range, branch, or PR out to a reviewer panel, adds a host (+1) review, and reconciles findings into one deduplicated, confidence-scored report. Use when asked to review a branch, PR, or git range, or to run any atcr command.
 ---
 
 # atcr — Agent Team Code Review
@@ -61,6 +61,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr verify` | Run adversarial skeptics over reconciled findings |
 | `atcr debate` | Cross-examine disputed findings (proposer/challenger/judge) |
 | `atcr report` | Render md, json, or checklist views over reconciled findings |
+| `atcr quality-report` | Rank persona+model reviewer prompts by dismissal rate from the content-free local quality signal |
 | `atcr github` | Post reconciled findings to a GitHub pull request as a check run |
 | `atcr range` | Resolve the review range and print resolution JSON |
 | `atcr status` | Print a review's fan-out progress as JSON |

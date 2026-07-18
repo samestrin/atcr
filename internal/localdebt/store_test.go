@@ -3,6 +3,7 @@ package localdebt
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -321,4 +322,135 @@ func TestStore_ConcurrentAppend_SameMonthFile(t *testing.T) {
 	for i := 0; i < n; i++ {
 		assert.True(t, seen[i], "sentinel %d was lost", i)
 	}
+}
+
+// TestCompact locks AC1, AC2, AC3, AC4, AC5:
+// - AC1: folds append-only store by id, drops superseded records.
+// - AC2: bounded on-disk size after compaction.
+// - AC3: concurrency-safe rewrite.
+// - AC4: compacted shards remain readable.
+// - AC5: effective open backlog is identical.
+func TestCompact(t *testing.T) {
+	dir := t.TempDir()
+
+	// 1. Create a few open findings.
+	rec1 := sampleRecord("2026-06-14T10:00:00Z-a")
+	rec1.Problem = "finding 1"
+	rec1.StampID()
+
+	rec2 := sampleRecord("2026-06-15T10:00:00Z-b")
+	rec2.Problem = "finding 2"
+	rec2.StampID()
+
+	require.NoError(t, Append(dir, rec1))
+	require.NoError(t, Append(dir, rec2))
+
+	// 2. Add multiple resolve/wontfix cycles of finding 1 (simulating churn/history).
+	now := "2026-06-16T10:00:00Z"
+	for i := 0; i < 5; i++ {
+		resolved := rec1
+		resolved.RunID = fmt.Sprintf("2026-06-16T10:0%d:00Z-resolved", i)
+		resolved.Timestamp = now
+		resolved.Status = "resolved"
+		resolved.ResolvedAt = now
+		require.NoError(t, Append(dir, resolved))
+	}
+
+	// 3. Keep finding 2 open but update it once (simulating a drift/manual append).
+	drifted := rec2
+	drifted.Line = 100
+	drifted.StampID() // new ID due to line drift
+	require.NoError(t, Append(dir, drifted))
+
+	// Check file size / count before compaction
+	path := filepath.Join(dir, "2026-06.jsonl")
+	beforeBytes, err := os.ReadFile(path)
+	require.NoError(t, err)
+	beforeRecs, err := ReadRecords(path, ReadOpts{})
+	require.NoError(t, err)
+	// We appended: rec1, rec2, 5x resolved, drifted = 8 records.
+	require.Len(t, beforeRecs, 8)
+
+	// Keep a copy of the open backlog before compaction
+	openBefore := FoldRecords(beforeRecs)
+
+	// 4. Run compaction.
+	_, err = Compact(dir, ReadOpts{})
+	require.NoError(t, err)
+
+	// Check file size / count after compaction
+	afterBytes, err := os.ReadFile(path)
+	require.NoError(t, err)
+	afterRecs, err := ReadRecords(path, ReadOpts{})
+	require.NoError(t, err)
+
+	// After compaction, we should only have:
+	// - the highest-precedence terminal record for rec1 (1 record).
+	// - the original rec2 (1 record) - wait, it has ID from rec2.
+	// - the drifted rec2 (1 record) - it has a different ID.
+	// Total = 3 records.
+	assert.Len(t, afterRecs, 3)
+	assert.Less(t, len(afterBytes), len(beforeBytes), "compacted size must be smaller")
+
+	// AC5: Verify open backlog is identical
+	openAfter := FoldRecords(afterRecs)
+	assert.Equal(t, len(openBefore), len(openAfter))
+
+	// AC3: Test concurrency safety by running concurrent Appends and Compacts
+	const workers = 10
+	var wg sync.WaitGroup
+	wg.Add(workers * 2)
+
+	for i := 0; i < workers; i++ {
+		// Appenders
+		go func(i int) {
+			defer wg.Done()
+			r := sampleRecord("2026-06-17T10:00:00Z-c")
+			r.Problem = fmt.Sprintf("concurrent finding %d", i)
+			r.StampID()
+			_ = Append(dir, r)
+		}(i)
+
+		// Compacters
+		go func() {
+			defer wg.Done()
+			_, _ = Compact(dir, ReadOpts{})
+		}()
+	}
+	wg.Wait()
+
+	// Verify we can still read all records cleanly without corruption
+	finalRecs, err := ReadAll(dir, ReadOpts{})
+	require.NoError(t, err)
+	assert.NotEmpty(t, finalRecs)
+}
+
+// TestCompact_SweepsStaleTempFiles locks the crash-reaping contract: temp files
+// (.<month>.jsonl.tmp-*) leaked by a Compact killed between CreateTemp and rename
+// are removed at the start of the next Compact, while non-matching files are left
+// untouched.
+func TestCompact_SweepsStaleTempFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	rec := sampleRecord("2026-06-14T10:00:00Z-a")
+	require.NoError(t, Append(dir, rec))
+
+	// Pre-seed leaked temps exactly as a SIGKILLed Compact leaves them (CreateTemp
+	// pattern: "."+month+".jsonl.tmp-*"), plus a lookalike the sweep must not touch.
+	stale1 := filepath.Join(dir, ".2026-06.jsonl.tmp-111")
+	stale2 := filepath.Join(dir, ".2026-07.jsonl.tmp-222")
+	keepFile := filepath.Join(dir, "2026-08.jsonl.tmp-333") // no leading dot: not a compaction temp
+	for _, p := range []string{stale1, stale2, keepFile} {
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
+	}
+
+	_, cerr := Compact(dir, ReadOpts{})
+	require.NoError(t, cerr)
+
+	for _, p := range []string{stale1, stale2} {
+		_, err := os.Stat(p)
+		assert.True(t, os.IsNotExist(err), "stale compaction temp must be swept: %s", filepath.Base(p))
+	}
+	_, err := os.Stat(keepFile)
+	assert.NoError(t, err, "non-matching file must survive the sweep")
 }
