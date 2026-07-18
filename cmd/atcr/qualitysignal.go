@@ -236,8 +236,11 @@ func maybeSendQualitySignal(ctx context.Context) {
 // network, gate, or credential access — so an invalid range-flag COMBINATION still
 // fails as a usage error, while the AC-relevant guarantees (no send, no gate, no
 // key) are unaffected. When --preview is unset it returns handled=false and the
-// caller proceeds normally. A non-ENOENT local-debt read failure is surfaced as a
-// usage error (exit 2), matching the host commands' config/range error convention.
+// caller proceeds normally. A local-debt read failure FAILS OPEN — the send path
+// silently no-ops on the identical error, so a hard failure here would let the
+// two paths diverge exactly when a user inspects the preview (AC 03-03): the
+// preview renders the empty payload (the same "[]" an empty store prints) and
+// notes the read failure on the command's stderr to keep the user informed.
 //
 // The opt-in env var is validated here too: --preview is where users experiment
 // with opting in, so a misspelled ATCR_QUALITY_SIGNAL warns on the command's
@@ -251,7 +254,12 @@ func maybePreviewQualitySignal(cmd *cobra.Command) (handled bool, err error) {
 	_ = qualitySignalEnabledFromEnv(cmd.ErrOrStderr())
 	payload, err := buildQualitySignalPayload(".")
 	if err != nil {
-		return true, usageError(fmt.Errorf("reading local debt store for --preview: %w", err))
+		// Fail open like the send path (which silently no-ops on the identical
+		// error) so the two paths never diverge on a corrupt store — but keep the
+		// user informed, and render the empty payload. The slice must be non-nil:
+		// a nil slice marshals to "null", not the "[]" an empty store prints.
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: reading local debt store for --preview: %v; rendering empty payload\n", err)
+		payload = []telemetry.QualitySignal{}
 	}
 	return true, renderQualitySignalPreview(cmd.OutOrStdout(), payload)
 }
