@@ -12,9 +12,23 @@ import (
 const (
 	lockSubdir = ".lock"
 	lockOwner  = "owner.txt"
-	lockWait   = 10 * time.Second
-	lockStale  = 30 * time.Second
 	lockSleep  = 10 * time.Millisecond
+)
+
+// lockWait and lockStale are vars (not consts) so tests can shrink them to keep
+// lock-contention cases fast; production keeps the invariant below.
+//
+// INVARIANT: lockWait MUST be >= lockStale. A waiter has to be able to wait at least
+// until it could declare a holder's lock stale — otherwise its own deadline fires
+// first and a legitimate critical section running between lockWait and lockStale
+// turns every contending caller into a spurious "timeout acquiring localdebt lock"
+// while the holder is healthy, and the stale-reclaim branch is only ever reachable
+// for locks already stale on arrival. lockWait is set strictly greater than lockStale
+// so the stale-reclaim path stays reachable inside the wait window. Guarded by
+// TestLockWaitAtLeastStale.
+var (
+	lockWait  = 45 * time.Second
+	lockStale = 30 * time.Second
 )
 
 // withLock acquires a cross-process lock directory under dir and executes fn.
