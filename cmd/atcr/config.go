@@ -18,7 +18,7 @@ import (
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
-		Short: "Read and update project configuration (.atcr/config.yaml)",
+		Short: "Update project configuration (.atcr/config.yaml)",
 		Long: "atcr config edits the project-level configuration in .atcr/config.yaml.\n" +
 			"It exposes two mutations — the telemetry opt-out and the quality-signal\n" +
 			"opt-in — via `atcr config set <telemetry|quality_signal> <true|false>`;\n" +
