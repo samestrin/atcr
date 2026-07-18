@@ -227,6 +227,39 @@ func TestQualitySignalSend_GateReEvaluatedFreshPerRun(t *testing.T) {
 		"a freshly persisted opt-in must be observed on the next run — no stale gate cache")
 }
 
+// TestQualitySignalSend_UnrecognizedEnvValueWarnsViaCmdStderr proves the send
+// path's opt-in gate surfaces the unrecognized-value warning on the COMMAND's
+// stderr — where cmd-scoped tests can capture it — not the uncapturable global
+// os.Stderr: with ATCR_QUALITY_SIGNAL misspelled (e.g. "ture"), a reconcile run
+// resolves the gate disabled (the privacy fail-safe), transmits nothing, and
+// the warning lands in the command's stderr buffer, mirroring the --preview
+// path's TestPreview_UnrecognizedEnvValueWarnsViaCmdStderr.
+func TestQualitySignalSend_UnrecognizedEnvValueWarnsViaCmdStderr(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_QUALITY_SIGNAL", "ture")
+	t.Setenv("ATCR_TELEMETRY", "0")
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+	reconcileFixture(t)
+	hits := countingDoRequest(t)
+
+	logger, err := log.New("info", "text", io.Discard)
+	require.NoError(t, err)
+	client := telemetry.New(qsEndpoint)
+	cmd := newReconcileCmd()
+	cmd.SetContext(telemetry.NewContext(log.NewContext(context.Background(), logger), client))
+	cmd.SetOut(io.Discard)
+	var errBuf bytes.Buffer
+	cmd.SetErr(&errBuf)
+	require.NoError(t, cmd.ParseFlags([]string{"r"}))
+	_ = runReconcile(cmd, cmd.Flags().Args())
+	waitQualitySignalInFlight()
+	client.Wait()
+
+	assert.Contains(t, errBuf.String(), `unrecognized ATCR_QUALITY_SIGNAL value "ture"`,
+		"a misspelled opt-in must warn on the command's stderr on the send path, not the uncapturable global os.Stderr")
+	assert.Equal(t, int32(0), atomic.LoadInt32(hits), "an unrecognized value fails safe to disabled: nothing may be sent")
+}
+
 // TestQualitySignalSend_PayloadBuildRunsDetached proves the O(n) debt-store read
 // and aggregation run on the detached goroutine, off the run's critical path:
 // maybeSendQualitySignal must return even while the payload builder is blocked,
