@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -124,6 +125,26 @@ func TestQualitySignalGate_IndependentFromTelemetrySetting(t *testing.T) {
 		assert.False(t, qualitySignalGate(), "quality_signal: false must keep the quality gate disabled")
 		assert.True(t, telemetryGate(), "telemetry: true (no env opt-out) must keep the telemetry gate enabled — independently")
 	})
+}
+
+// TestQualitySignalGate_ResolvesRepoRoot covers the cwd-independence fix: when
+// atcr runs from a repo SUBDIRECTORY, the gate must locate .atcr/config.yaml via
+// repo-root discovery — the same root `atcr config set quality_signal` persists
+// to — rather than reading the config cwd-relative, so the gate and the write
+// path agree on config location. Harness mirrors
+// TestConfigSetTelemetry_ResolvesRepoRoot (config_test.go).
+func TestQualitySignalGate_ResolvesRepoRoot(t *testing.T) {
+	isolate(t)
+	repo := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".atcr", "config.yaml"), []byte("agents: [bruce]\nquality_signal: true\n"), 0o644))
+	subdir := filepath.Join(repo, "subdir")
+	require.NoError(t, os.MkdirAll(subdir, 0o755))
+	t.Chdir(subdir)
+	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+
+	assert.True(t, qualitySignalGate(),
+		"a persisted opt-in at the repo root must be observed from a subdirectory — the gate and `config set` must agree on config location")
 }
 
 // TestQualitySignalGate_IndependentFromSyncCloud proves a valid ATCR_API_KEY (the
