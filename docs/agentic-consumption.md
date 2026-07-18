@@ -47,8 +47,8 @@ review_summary[1|]{id|dir|agents_succeeded|agents_total|agents_failed|agents_tim
 ```
 
 The header names the pipe (`|`) delimiter and the fixed column order; the single
-data row carries the run id, the review directory, six bare-integer counts, and
-`findings_total` (the raw pre-reconcile fan-out count). To act on the reconciled
+data row carries the run id, the review directory, and six bare-integer counts —
+the last, `findings_total`, being the raw pre-reconcile fan-out count. To act on the reconciled
 findings, read `atcr report --format axi` against the same review directory —
 `findings_total` is a fan-out metric, not the deduplicated reconciled count.
 
@@ -104,7 +104,8 @@ none.
 A large PR can produce a findings list big enough to blow an agent's context
 window. `atcr report --format axi` therefore caps its payload deterministically:
 
-- **Default cap: 500 physical lines** of findings.
+- **Default cap: 500 physical lines** — the array header plus up to 499 finding
+  rows (the cap counts total physical lines, header inclusive).
 - **Override:** set `ATCR_AXI_MAX_LINES` to a positive integer to raise or lower
   the cap. A blank, non-numeric, zero, or negative value is ignored — the cap
   fails open to 500 and a single warning is written to **stderr** (never stdout,
