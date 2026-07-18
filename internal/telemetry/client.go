@@ -190,6 +190,12 @@ func (c *Client) send(ctx context.Context, marshal func() ([]byte, error)) {
 // Wait blocks until all in-flight sends complete. Intended for deterministic
 // tests and graceful-shutdown drain; production callers fire-and-forget and
 // never call it. Safe on a nil Client.
+//
+// Wait is safe ONLY after the caller has quiesced dispatch — no concurrent
+// Send/SendQualitySignal may be in flight. sync.WaitGroup forbids an Add that
+// races a Wait when the counter is zero: Wait can return before the
+// just-dispatched send is counted, dropping the very ping the drain was meant
+// to flush. A graceful shutdown must stop new dispatches first, then Wait.
 func (c *Client) Wait() {
 	if c == nil {
 		return

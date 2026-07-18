@@ -93,13 +93,13 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 	if sev != "" && !resolveSeverities[sev] {
 		return usageError(fmt.Errorf("invalid --severity %q: expected CRITICAL|HIGH|MEDIUM|LOW", mustFlag(cmd, "severity")))
 	}
-	max, _ := cmd.Flags().GetInt("max")
+	limit, _ := cmd.Flags().GetInt("max")
 
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to read local debt store: %w", err)
 	}
-	open := selectOpenDebt(recs, sev, max)
+	open := selectOpenDebt(recs, sev, limit)
 
 	if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
 		return renderResolveJSON(cmd.OutOrStdout(), open)
@@ -129,7 +129,7 @@ func higherClosedStatus(current, candidate string) string {
 // record is the first open (non-terminal) occurrence, so a later resolution record
 // folds the item out. Results are sorted severity DESC then ts ASC (oldest first)
 // and capped at max — the deterministic selection rule the skill route documents.
-func selectOpenDebt(recs []localdebt.Record, severity string, max int) []localdebt.Record {
+func selectOpenDebt(recs []localdebt.Record, severity string, limit int) []localdebt.Record {
 	type agg struct {
 		rec      localdebt.Record
 		resolved bool
@@ -173,8 +173,8 @@ func selectOpenDebt(recs []localdebt.Record, severity string, max int) []localde
 		}
 		return open[i].Timestamp < open[j].Timestamp
 	})
-	if max > 0 && len(open) > max {
-		open = open[:max]
+	if limit > 0 && len(open) > limit {
+		open = open[:limit]
 	}
 	return open
 }
