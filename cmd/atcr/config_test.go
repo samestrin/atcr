@@ -140,6 +140,20 @@ func TestConfigSet_MissingConfigFileIsIOError(t *testing.T) {
 	assert.Equal(t, 1, code, "a missing config file is an I/O error (exit 1), not a usage error")
 }
 
+// TestConfigSet_MissingConfigFileHintsInit: for the same missing-file condition
+// LoadProjectConfig returns actionable "run 'atcr init'" guidance; config set
+// must surface the same hint instead of a bare wrapped stat error, while
+// staying a plain exit-1 I/O error.
+func TestConfigSet_MissingConfigFileHintsInit(t *testing.T) {
+	isolate(t) // fresh cwd, no .atcr/ directory
+
+	_, code, err := execConfig(t, "config", "set", "telemetry", "false")
+	assert.Equal(t, 1, code, "a missing config file is still an I/O error (exit 1)")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "atcr init",
+		"a missing config file must hint at `atcr init`, like LoadProjectConfig does")
+}
+
 // TestConfigSetTelemetry_ResolvesRepoRoot covers the cwd-independence fix: when
 // run from a subdirectory of the repo, config set should locate .atcr/config.yaml
 // via the repo root rather than failing with a cwd-relative path.
