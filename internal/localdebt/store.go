@@ -221,7 +221,11 @@ func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 	return all, nil
 }
 
-// FoldRecords folds a stream of records by ID to their effective state.
+// FoldRecords folds a stream of records by ID to their effective state. Callers
+// must supply records with non-empty IDs — an invariant the read path already
+// enforces (decodeRecord rejects empty-id records as malformed, and StampID
+// always yields a non-empty content hash): records sharing an empty ID would
+// collapse into a single fold group and silently lose all but one.
 func FoldRecords(recs []Record) []Record {
 	order := []string{}
 	seen := map[string]bool{}
