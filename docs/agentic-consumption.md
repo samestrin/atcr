@@ -152,7 +152,7 @@ atcr report --format axi > findings.toon 2> report.log
 The scenario AXI mode is built for: an autonomous agent (a "sweeper") reviews a
 change set it just produced, consumes the findings programmatically, and reacts.
 The script below is near-runnable — every flag, env var, field, and exit code in
-it is real. Adapt the "fix" step to your agent.
+it is a real part of atcr's contract. Adapt the "fix" step to your agent.
 
 ```bash
 #!/usr/bin/env bash
@@ -176,9 +176,12 @@ case $status in
     ;;
   1)
     # Findings survived the gate. Read them as an AXI payload (stdout only).
+    # report returns 2 for a usage/config fault (bad anchor, absent findings.json)
+    # and 1 for an internal render fault — propagate whichever actually occurred.
     if ! atcr report --format axi > findings.toon 2> report.log; then
-      echo "report rendering failed (exit 1); see report.log" >&2
-      exit 1
+      rc=$?
+      echo "report failed (exit $rc); see report.log" >&2
+      exit "$rc"
     fi
 
     # 3. Trust the payload only after checking the truncation flag. If truncated,
@@ -203,6 +206,10 @@ case $status in
     exit 2
     ;;
   3)
+    # Exit 3 is the --sync-cloud auth failure specifically (missing/invalid
+    # ATCR_API_KEY or a remote 401/403). It is unreachable for the command above,
+    # which does not push to the cloud — a missing provider key surfaces as exit 2.
+    # Keep this branch as defensive handling for orchestrators that add --sync-cloud.
     echo "auth error: fix credentials (e.g. ATCR_API_KEY) before retrying" >&2
     exit 3
     ;;
