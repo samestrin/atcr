@@ -285,6 +285,14 @@ func RenderReviewSummaryAXI(w io.Writer, s ReviewSummaryAXI) error {
 		strconv.FormatInt(s.APICalls, 10),
 		strconv.FormatInt(s.FindingsTotal, 10),
 	}
+	// Same defensive width invariant renderAXI enforces for findings: the row must
+	// carry exactly as many columns as reviewSummaryAXIHeader declares. It cannot
+	// trip on valid input (both are fixed at 8), but it fails deterministically if a
+	// future edit adds a header column without a matching row cell (or vice versa)
+	// rather than silently emitting a misaligned payload.
+	if len(row) != len(reviewSummaryAXIHeader) {
+		return fmt.Errorf("axi encoder: review summary row has %d columns, header declares %d", len(row), len(reviewSummaryAXIHeader))
+	}
 	b.WriteString("  ")
 	b.WriteString(strings.Join(row, string(axiDelim)))
 	b.WriteByte('\n')

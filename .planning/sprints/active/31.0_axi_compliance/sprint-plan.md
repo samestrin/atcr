@@ -487,13 +487,13 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    2. Improve code and tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(cmd): confirm axi exit-code parity"`
    **Duration:** 30min
 
-### 2.13 [ ] **[New AXI Error Classification - RED](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+### 2.13 [x] **[New AXI Error Classification - RED](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
    1. Analyze [AC 02-02](plan/acceptance-criteria/02-02-new-axi-error-classification.md); identify testable units: unsupported `--axi` flag-combination → exit 2, internal AXI rendering fault → exit 1, malformed `ATCR_AXI_MAX_LINES` → NOT an error (fail-open, owned by 3.7-3.9)
    2. Write table-driven tests enumerating every new AXI-introduced error source and its expected classification
    3. Verify tests fail correctly
    **Files:** `cmd/atcr/main_test.go` | **Duration:** 1.5h
 
-### 2.14 [ ] **[New AXI Error Classification - GREEN](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+### 2.14 [x] **[New AXI Error Classification - GREEN](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
    Wrap `--axi` flag-combination validation via `usageError()` (existing mutually-exclusive-flag pattern); leave internal AXI rendering faults unwrapped so they default to `exitFailure`. T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `cmd/atcr/review.go` | **Duration:** 2h
 
@@ -516,23 +516,27 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):** No CRITICAL/HIGH. Every AXI error source
+   enumerated + correctly classified (auto-fix combo→2, render faults→1 across
+   review/resume/report, `--disagreements --format axi`→2); no new exit code;
+   `ATCR_AXI_MAX_LINES` confirmed genuinely absent (Phase 3).
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | cmd/atcr/review.go:200-209 vs guard | `--axi`+`--auto-fix` guard lived only in the fresh path; `--resume` short-circuits before it, so `review --resume --axi --auto-fix` silently dropped --auto-fix (exit 0), contradicting the shipped mutual-exclusion contract. | Hoist the guard above the --resume dispatch (axi-scoped). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 2.15, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH. The MEDIUM contradicts the just-shipped
+   "--axi + --auto-fix mutually exclusive → exit 2" contract the code + test assert
+   (a false shipped guarantee on the resume variant), so — per the 1.5.A precedent —
+   **RESOLVED in 2.15** rather than deferred: hoisted the guard above the --resume
+   dispatch (axi-scoped, so non-axi `--resume --auto-fix` keeps prior behavior),
+   added `TestReviewCmd_AXIAutoFixResumeIsUsageError`.
 
-### 2.15 [ ] **[New AXI Error Classification - REFACTOR](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+### 2.15 [x] **[New AXI Error Classification - REFACTOR](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
    1. Fix CRITICAL/HIGH issues from 2.14.A (if any)
    2. Improve code and tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(cmd): axi error classification cleanup"`
    **Duration:** 30min
 
-### 2.16 [ ] **[Document Exit-Code Reconciliation](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+### 2.16 [x] **[Document Exit-Code Reconciliation](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
    **Mode:** Pragmatic (documentation, no automated tests) | **AC:** [02-03](plan/acceptance-criteria/02-03-document-exit-code-reconciliation.md)
    1. Draft: extend the exit-code comment block in `cmd/atcr/main.go` (lines ~122-130) stating `--axi` reuses the 0/1/2/3 contract unchanged and that the epic's original `2`=internal-error proposal was considered and rejected, with a cross-reference to `documentation/exit-code-cli-mcp-precedent.md` and `atcr verify`
    2. Write: update `docs/ci-integration.md`'s exit-semantics section with the same statement, plus the Story-2 structured-error stream decision (stderr, not stdout, per axi.md Principle 6 reconciliation)
@@ -558,27 +562,28 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):** **No discrepancies.** Both locations
+   mutually consistent; neither restates the rejected 2=internal-error scheme as
+   adopted; stdout-vs-stderr decision explicit (ci-integration.md); every classified
+   exit code verified against real code (auto-fix combo→2, render faults→1 across
+   review/resume/report, no --axi branch in exitCode, diagnostics on ErrOrStderr).
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | None | — | No discrepancies found. | None required. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 2.17, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** **Adversarial review passed** — no findings. Proceed.
 
-### 2.17 [ ] **[Document Exit-Code Reconciliation - REFACTOR](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+### 2.17 [x] **[Document Exit-Code Reconciliation - REFACTOR](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+   Proofread both locations — consistent, no drift (confirmed by 2.16.A). No change.
    1. Fix CRITICAL/HIGH issues from 2.16.A (if any)
    2. Proofread both locations for consistency, COMMIT: `git commit -m "refactor(docs): tighten exit-code reconciliation notes"`
    **Duration:** 20min
 
-### 2.18 [ ] **Phase 2 - DoD Validation**
+### 2.18 [x] **Phase 2 - DoD Validation**
    Run DoD Verification Checklist: T3 (`go test ./cmd/atcr/... ./internal/mcp/...`), coverage ≥80% for touched files, `golangci-lint run`, `go build ./...`, docs updated (`docs/ci-integration.md`).
    Report using the DoD Report Template.
 
-### 2.19 [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+### 2.19 [x] **Phase 2 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2: `cmd/atcr/review.go`, `cmd/atcr/resume.go`, `cmd/atcr/review_summary.go`, `cmd/atcr/main.go`, `cmd/atcr/report.go`, `internal/mcp/tools.go`, `docs/ci-integration.md`, plus their `_test.go` files
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. No memory of the phase's implementation. Do NOT review inline.
@@ -597,16 +602,21 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Gate findings (run 2026-07-18):** No CRITICAL/HIGH. Verified: `--axi` stdout is
+   a single choke point (`writeReviewSummaryAXI` the only stdout write under axi in
+   both review.go:462 & resume.go:209; all human lines gated; auto-fix unreachable;
+   interrupt/gate paths stderr-only) — Phase 3 pagination can wrap the findings
+   renderer (`renderAXI`/`report --axi`), not this single-row summary. MCP exclusion
+   enforced at all 3 layers. Exit contract 0/1/2/3 untouched. Non-axi byte-identical.
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | LOW | internal/report/render.go RenderReviewSummaryAXI | Comment claimed the renderAXI width invariant but did not enforce it (header/row independent). | **Fixed inline** — added `len(row) != len(header)` guard so a future column edit fails deterministically. |
+   | LOW | cmd/atcr/resume.go AllComplete | `resume --axi` AllComplete emits empty stdout. | Already **TD-004** (known deferral). |
+   | LOW (info) | internal/report/render.go | Two AXI renderers (`RenderReviewSummaryAXI` run-summary vs `renderAXI` findings). | Informational — flagged for Phase 3: pagination wraps `renderAXI`/`report --axi`, not the single-row summary. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Action taken:** No CRITICAL/HIGH → **Phase gate passed.** One LOW (unenforced
+   width-invariant comment) fixed inline (cheap correctness, makes a shipped comment
+   true); the other two are already-tracked (TD-004) / informational (Phase 3 note).
    **Duration:** 30 min
 
 ---
