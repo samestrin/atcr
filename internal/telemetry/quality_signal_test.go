@@ -1,7 +1,11 @@
 package telemetry
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/scorecard"
@@ -53,6 +57,29 @@ func TestQualitySignal_ZeroValueStillSerializesAllFourKeys(t *testing.T) {
 		if _, ok := m[k]; !ok {
 			t.Errorf("zero value dropped key %q: %s", k, raw)
 		}
+	}
+}
+
+// TestClient_SendQualitySignal_EmptyPayloadNoOps locks the transport-side guard
+// (TD 30.0): a nil or empty payload short-circuits inside SendQualitySignal
+// before dispatch — no semaphore slot, no goroutine, no contentless beacon. The
+// exported reusable API must be self-defending rather than relying on every
+// caller pre-checking len(payload)==0 the way maybeSendQualitySignal does.
+func TestClient_SendQualitySignal_EmptyPayloadNoOps(t *testing.T) {
+	var hits int32
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	c := newTestClient(ts)
+	c.SendQualitySignal(context.Background(), nil)
+	c.SendQualitySignal(context.Background(), []QualitySignal{})
+	c.Wait()
+
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Errorf("empty/nil payload must not dispatch a beacon, got %d request(s)", n)
 	}
 }
 
