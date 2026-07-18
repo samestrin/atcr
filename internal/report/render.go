@@ -79,20 +79,15 @@ func Render(w io.Writer, findings []reconcile.JSONFinding, format string) error 
 	case FormatSarif:
 		return renderSarif(w, findings)
 	case FormatAXI:
-		// Wire the pagination post-processor into the FormatAXI dispatch (AC 03-01):
-		// any direct Render(FormatAXI) caller gets a payload bounded to the default
-		// line cap. The cut is deterministic and on a row boundary (PaginateAXI). The
-		// CLI paths (report/review --axi) instead call RenderAXIPaginated, which also
-		// emits the `truncated` flag (AC 03-02) and honors ATCR_AXI_MAX_LINES
-		// (AC 03-03). Under the cap this is byte-identical to renderAXI, so the
-		// report.axi golden and every Phase 1 AXI test are unaffected.
-		var buf bytes.Buffer
-		if err := renderAXI(&buf, findings); err != nil {
-			return err
-		}
-		out, _, _ := PaginateAXI(buf.Bytes(), AXIMaxLinesDefault)
-		_, err := w.Write(out)
-		return err
+		// Base Render(FormatAXI) is the PURE schema encoder: it emits every finding
+		// uncapped and adds no truncated flag, so it stays the byte-stable schema
+		// fixture (the report.axi golden) and never silently drops rows. Pagination
+		// (AC 03-01) and the `truncated` flag (AC 03-02) are the FormatAXI *dispatch
+		// path*'s concern, applied by RenderAXIPaginated — the single shared step the
+		// CLI commands (report/review --axi) route through (AC 03-04, wired in
+		// Phase 3 element 4). Capping here instead would silently truncate any
+		// Render(FormatAXI) caller with no signal (3.5.A adversarial finding).
+		return renderAXI(w, findings)
 	default:
 		return fmt.Errorf("unknown format %q: supported formats are %s", format, Formats())
 	}

@@ -26,10 +26,14 @@ const AXIMaxLinesDefault = 500
 // It returns the (possibly capped) payload, whether truncation occurred, and the
 // true pre-truncation element count. That true total is what the array header's
 // N already declares; it survives capping because the header is line 1 and is
-// never dropped (AC 03-02). The cap is a single O(n) pass with no re-parsing or
-// backtracking, and is a bounded, unconditionally-succeeding transform — it
-// never returns an error and never changes the exit code (AC 03-01 Error
-// Scenario 1); the no-error contract is enforced by the signature itself.
+// never dropped (AC 03-02). The returned total is derived from the pre-truncation
+// physical row count, which equals the header's N by construction (renderAXI
+// emits exactly one line per finding) — it is a convenience for callers/tests,
+// the header N remains the authoritative on-wire count. The cap is a single O(n)
+// pass with no re-parsing or backtracking, and is a bounded,
+// unconditionally-succeeding transform — it never returns an error and never
+// changes the exit code (AC 03-01 Error Scenario 1); the no-error contract is
+// enforced by the signature itself.
 //
 // maxLines should be >= 1; a non-positive value is nonsensical as a cap. Rather
 // than trust the caller (PaginateAXI is exported and could be reached directly),
@@ -75,6 +79,20 @@ func PaginateAXI(rendered []byte, maxLines int) (out []byte, truncated bool, tot
 // The array header's declared N (the true, pre-truncation total) is preserved by
 // PaginateAXI, so a consumer reads the true count from the header and the capped
 // state from `truncated`.
+//
+// CONSUMER CONTRACT: when truncated, this payload is intentionally NOT
+// length-round-trippable — the header declares N (the true total) while fewer
+// than N rows are physically present, and the `truncated` flag is an out-of-band
+// sibling line, not an array row. This is mandated by AC 03-02 Edge Case 1 (the
+// header must reflect the true count, not the emitted row count). A consumer must
+// read `truncated` and the header N as authoritative rather than length-checking
+// the array against its physical rows.
+//
+// The `truncated` field NAME matches internal/fanout/status.go's Truncated bool
+// (json:"truncated") but the SEMANTICS differ: status.go marks byte-budget INPUT
+// truncation (reviewer payload files dropped), whereas this marks OUTPUT row-count
+// capping of the rendered findings — the shared name is a naming precedent, not a
+// shared signal. It is also emitted as a bare TOON boolean, not a JSON quoted key.
 //
 // This deliberately does NOT alter the base Render(FormatAXI)/renderAXI output or
 // the report.axi golden — the un-paginated encoder remains the schema fixture;
