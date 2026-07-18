@@ -284,11 +284,11 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    3. Verify tests fail correctly
    **Files:** `cmd/atcr/review_test.go` | **Duration:** 3h
 
-### 2.2 [ ] **[`atcr review --axi` Output Gating - GREEN](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 2.2 [x] **[`atcr review --axi` Output Gating - GREEN](plan/user-stories/01-axi-token-dense-output-mode.md)**
    Register `--axi` on `atcr review`, thread the mode value through `PersistentPreRunE`'s context injection (mirroring the logger/telemetry client pattern) with an `axi.NewContext`/`axi.FromContext` accessor pair. Gate the six `cmd.OutOrStdout()` writes in `review.go` (433, 436, 551, 573, 591, 602) and the `reportInterrupt` path behind it, replacing them with the `FormatAXI` payload from Phase 1 when active. T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `cmd/atcr/review.go`, `cmd/atcr/main.go` | **Duration:** 5h
 
-### 2.2.A [ ] **[`atcr review --axi` Output Gating - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 2.2.A [x] **[`atcr review --axi` Output Gating - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-axi-token-dense-output-mode.md)**
    **Changed Files:** `cmd/atcr/review.go`, `cmd/atcr/main.go`, `cmd/atcr/review_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 2.2's implementation. Do NOT review inline.
@@ -337,7 +337,7 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    Add the axi-mode branch once inside shared `writeReviewSummary` (or consistently at both call sites) so `review.go:436` and `resume.go:195` behave identically; gate `resume.go`'s remaining sites (153, 170, 188, 259) via the same context accessor from 2.2 — no second flag parse. T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `cmd/atcr/resume.go`, `cmd/atcr/review_summary.go` | **Duration:** 3h
 
-### 2.5.A [ ] **[`atcr resume --axi` Context Propagation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 2.5.A [x] **[`atcr resume --axi` Context Propagation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-axi-token-dense-output-mode.md)**
    **Changed Files:** `cmd/atcr/resume.go`, `cmd/atcr/review_summary.go`, `cmd/atcr/resume_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 2.5's implementation. Do NOT review inline.
@@ -387,7 +387,7 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    Filter `FormatAXI` out of the MCP-facing enum derivation in `reportInputSchema` (i.e. build the enum from `report.FormatList()` minus `FormatAXI`, not the raw list) with an inline comment explaining the exclusion rationale (Design Decision #3: AXI's value proposition is avoiding MCP's token overhead, so surfacing it through an MCP JSON-RPC envelope would be misleading). `descReport`'s generated text follows automatically. T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `internal/mcp/tools.go` | **Duration:** 2h
 
-### 2.8.A [ ] **[MCP `FormatAXI` Enum Decision - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 2.8.A [x] **[MCP `FormatAXI` Enum Decision - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-axi-token-dense-output-mode.md)**
    **Changed Files:** `internal/mcp/tools.go`, `internal/mcp/tools_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 2.8's implementation. Do NOT review inline.
@@ -447,7 +447,7 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    Confirm/adjust `--axi` flag-parsing and rendering error paths to wrap through the existing `usageError()`/`authError()` helpers rather than falling through unwrapped; no new branch in `exitCode()` (`main.go:156`). T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `cmd/atcr/review.go`, `cmd/atcr/report.go` | **Duration:** 2.5h
 
-### 2.11.A [ ] **[AXI Exit-Code Parity - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+### 2.11.A [x] **[AXI Exit-Code Parity - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
    **Changed Files:** `cmd/atcr/review.go`, `cmd/atcr/report.go`, `cmd/atcr/main_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 2.11's implementation. Do NOT review inline.
@@ -497,7 +497,7 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    Wrap `--axi` flag-combination validation via `usageError()` (existing mutually-exclusive-flag pattern); leave internal AXI rendering faults unwrapped so they default to `exitFailure`. T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `cmd/atcr/review.go` | **Duration:** 2h
 
-### 2.14.A [ ] **[New AXI Error Classification - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+### 2.14.A [x] **[New AXI Error Classification - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
    **Changed Files:** `cmd/atcr/review.go`, `cmd/atcr/main_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 2.14's implementation. Do NOT review inline.
@@ -543,7 +543,7 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    3. COMMIT: `git commit -m "docs(cli): document AXI exit-code reconciliation"`
    **Files:** `cmd/atcr/main.go`, `docs/ci-integration.md` | **Duration:** 1.5h
 
-### 2.16.A [ ] **[Document Exit-Code Reconciliation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
+### 2.16.A [x] **[Document Exit-Code Reconciliation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-reconcile-and-document-axi-exit-code-contract.md)**
    **Changed Files:** `cmd/atcr/main.go`, `docs/ci-integration.md`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 2.16's implementation. Do NOT review inline.
