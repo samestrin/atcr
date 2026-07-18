@@ -59,10 +59,14 @@ func qualitySignalEnabledFromEnv() bool {
 
 // qualitySignalGate resolves the final enabled/disabled state for one
 // review/reconcile run by OR-combining the live ATCR_QUALITY_SIGNAL env var with
-// the persisted .atcr/config.yaml quality_signal opt-in (resolved cwd-relative,
-// matching how every other command locates project config). It is re-evaluated
-// fresh per run — no in-process cache — guarding a future send call site so a
-// disabled state short-circuits before any payload is built.
+// the persisted .atcr/config.yaml quality_signal opt-in. The config is located
+// via repo-root discovery — the SAME root `atcr config set quality_signal`
+// persists to (runConfigSet) — so the gate and the write path agree on config
+// location even when atcr runs from a repo subdirectory. If repo-root discovery
+// itself fails, the gate falls back to the cwd-relative read rather than
+// breaking. It is re-evaluated fresh per run — no in-process cache — guarding a
+// future send call site so a disabled state short-circuits before any payload
+// is built.
 //
 // INDEPENDENCE — it shares NO state with telemetryGate/resolveSyncCloud: it
 // neither reads nor calls either, funnels through no common precedence table, and
@@ -74,7 +78,15 @@ func qualitySignalEnabledFromEnv() bool {
 // value can never be interpreted as consent to transmit.
 func qualitySignalGate() bool {
 	env := qualitySignalEnabledFromEnv()
-	cfg, err := registry.LoadQualitySignalSetting(".")
+	// Resolve the config via repo-root discovery so the gate reads the same
+	// .atcr/config.yaml `config set` writes, from any subdirectory. On a
+	// discovery failure (os.Getwd), fall back to the former cwd-relative read
+	// rather than breaking the gate.
+	root, rerr := repoRoot()
+	if rerr != nil {
+		root = "."
+	}
+	cfg, err := registry.LoadQualitySignalSetting(root)
 	if err != nil {
 		return false
 	}
