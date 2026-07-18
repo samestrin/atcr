@@ -116,6 +116,14 @@ func runReport(cmd *cobra.Command, args []string) error {
 		}
 	default:
 		if err := report.Render(&buf, findings, format); err != nil {
+			// An AXI serialization fault is an internal, non-operator-fixable
+			// rendering fault → exit 1 (generic failure), left unwrapped so it defaults
+			// to exitFailure (AC 02-02 Error Scenario 3, which names `atcr report
+			// --axi` specifically). The other formats keep their pre-existing
+			// usage-error classification (out of this story's scope).
+			if format == report.FormatAXI {
+				return fmt.Errorf("axi output rendering failed: %w", err)
+			}
 			return usageError(err)
 		}
 	}

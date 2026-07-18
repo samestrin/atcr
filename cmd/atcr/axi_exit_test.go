@@ -1,10 +1,20 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+// failWriter is an io.Writer that always fails, used to force the internal AXI
+// render/write fault path (a broken stdout) without a real serialization bug.
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, errors.New("stdout broken") }
 
 // AXI mode governs stdout payload SHAPE only; it must never alter the process
 // exit-code contract (0 success / 1 gate-failure / 2 usage / 3 auth). These tests
@@ -103,4 +113,45 @@ func TestAXIExitParity_ReportAXIFormatExitsZero(t *testing.T) {
 	setup()
 	require.Equal(t, 0, execCmd(t, "report", "--format", "md"), "report --format md exits 0")
 	require.Equal(t, 0, execCmd(t, "report", "--format", "axi"), "report --format axi exits 0 — identical to md")
+}
+
+// TestExitCode_AXIRenderFaultIsFailure pins AC 02-02 Error Scenario 3: an internal
+// AXI rendering fault is a generic failure (exit 1) — left unwrapped so it defaults
+// to exitFailure — never miswrapped as a usage (2) or auth (3) error.
+func TestExitCode_AXIRenderFaultIsFailure(t *testing.T) {
+	err := fmt.Errorf("axi output rendering failed: %w", errors.New("boom"))
+	require.Equal(t, exitFailure, exitCode(err), "an internal render fault is a generic failure")
+	require.NotEqual(t, exitUsage, exitCode(err), "a render fault is NOT a usage error")
+	require.NotEqual(t, exitAuth, exitCode(err), "a render fault is NOT an auth error")
+}
+
+// TestReviewCmd_AXIRenderFaultExitsOne drives the reachable render-fault path: a
+// broken stdout makes writeReviewSummaryAXI fail, and the review exits 1 (generic
+// failure) — not usage (2) or auth (3) (AC 02-02 Error Scenario 3).
+func TestReviewCmd_AXIRenderFaultExitsOne(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	root := newRootCmd()
+	root.SetArgs([]string{"review", "--axi", "--base", "HEAD^"})
+	root.SetOut(failWriter{}) // the only stdout write under --axi is the summary payload
+	root.SetErr(io.Discard)
+	err := root.ExecuteContext(context.Background())
+	require.Equal(t, exitFailure, exitCode(err),
+		"a broken-stdout AXI render fault is a generic failure (exit 1), not usage/auth")
+}
+
+// TestReportCmd_AXIRenderFaultClassification pins that report's AXI render step
+// (report.Render into the buffer, distinct from the stdout write) classifies an
+// internal fault as exit 1, not the usage-error (2) the other formats' render step
+// keeps — AC 02-02 Error Scenario 3 names `atcr report --axi` specifically. Driven
+// at the classification layer since a valid-input axi encode cannot fault.
+func TestReportCmd_AXIRenderFaultClassification(t *testing.T) {
+	// The report path wraps an axi render fault as an unwrapped generic error; assert
+	// that shape resolves to exit 1 (the code report.go now returns for axi).
+	err := fmt.Errorf("axi output rendering failed: %w", errors.New("encoder bug"))
+	require.Equal(t, exitFailure, exitCode(err))
 }
