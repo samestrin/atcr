@@ -157,6 +157,18 @@ func TestSkill_DispatcherRoutingTable(t *testing.T) {
 		"description must reflect the /atcr <command> dispatcher, not a review-only flow")
 }
 
+// TestSkill_DescriptionEnumeratesRoutedCommands — the frontmatter description's
+// command enumeration must keep pace with the routing surface: quality-report
+// and config were routed without the description listing them, so a maintainer
+// scanning only the description would not see either command.
+func TestSkill_DescriptionEnumeratesRoutedCommands(t *testing.T) {
+	desc := fieldValue(frontmatter(t), "description")
+	for _, name := range []string{"quality-report", "config"} {
+		assert.Regexp(t, regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\b`), desc,
+			"frontmatter description must enumerate the %q command", name)
+	}
+}
+
 // TestSkill_ReviewFlowRoutable (AC 01-02) — the review orchestration remains
 // reachable as the routed `atcr review` command path, with the ordered
 // orchestration sequence preserved (TestSkill_OrchestrationSequence covers the
