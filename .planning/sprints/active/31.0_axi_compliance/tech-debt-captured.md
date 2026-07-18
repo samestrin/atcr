@@ -18,6 +18,13 @@ Deferred findings surfaced during `/execute-sprint`. Read by `/execute-code-revi
 **Why accepted:** No TOON parser dependency is in-repo, and TOON tabular cells are loosely typed per-cell in the reference; the empty-vs-real distinction is deliberate (an absent exit_code must not read as 0). Round-trip validation against a real parser is better placed with Phase 4's escape/pinning work.
 **Fix in:** Sprint 31.0 Phase 4 (AC 04-02) — if a strict-typed parser is adopted, add a mixed present/absent round-trip test decoding the payload; otherwise document the loose-typing assumption on the additive columns.
 
+## TD-004 — `resume --axi` AllComplete path emits empty stdout (MEDIUM)
+**Origin:** Phase 2, task 2.5.A ADVERSARIAL, 2026-07-18
+**File:** cmd/atcr/resume.go:156-170
+**Issue:** Under `--axi`, the `AllComplete()` re-reconcile branch correctly gates its human writes (announce, reconcile line) but emits NO run-summary payload — `writeReviewSummaryAXI` is never reached because `ExecuteResume`/`result` is never produced on this path (nothing pending). So `atcr review --resume latest --axi` on an already-complete review yields empty stdout (exit 0). An agent cannot obtain the review id/dir/counts from stdout, though exit 0 still signals success and `atcr report --axi` still yields the findings.
+**Why accepted:** AC 01-04 Edge Case 1 only requires GATING the AllComplete human line (satisfied); the "byte-identical payload" guarantee is scoped "for equivalent data" and AllComplete (no fanout result) is not equivalent to a fresh/pending run. axi.md Principle 5 (never zero-byte) is scoped by sprint-design to `review --axi`/`report --axi` against a clean result, not resume-AllComplete. A meaningful payload needs agent counts (`info.Completed`) + the reconciled count plumbed onto a path that never snapshots metrics — non-trivial for a rare path.
+**Fix in:** Sprint 31.0 later or follow-up — in the AllComplete `axiMode` branch, emit a run-summary payload from `prep.ID`/`dir` + `len(info.Completed)` agent counts + the `resumeReconcile` reconciled total, and add a `Contains(stdout, "review_summary")` assertion to `TestResume_AXIAllCompleteGated`.
+
 ## TD-003 — AXI `reviewers` cell is ambiguous if a reviewer name contains a comma (LOW)
 **Origin:** Phase 1, task 1.8 GATE, 2026-07-18
 **File:** internal/report/render.go:210

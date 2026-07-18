@@ -154,7 +154,12 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// so a review that was interrupted-but-actually-complete reports completed
 	// rather than interrupted (AC6).
 	if info.AllComplete() {
-		if !axiMode { // gated under --axi (AC 01-04 Edge Case 1): stdout stays payload-only
+		// Gated under --axi (AC 01-04 Edge Case 1): stdout stays payload-only. This
+		// path produces no fanout result, so it emits no run-summary payload either —
+		// exit 0 still signals success and `atcr report --axi` yields the findings.
+		// Emitting a payload here (from info.Completed + the reconciled total) is
+		// deferred as TD-004.
+		if !axiMode {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "All configured agents already completed. Re-running reconciliation...")
 		}
 		if err := fanout.ClearInterrupted(dir); err != nil {
