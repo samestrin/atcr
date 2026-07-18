@@ -44,6 +44,14 @@ func TestConfig_NoSubcommandPrintsHelp(t *testing.T) {
 	assert.Contains(t, out, "set", "bare `atcr config` help must mention the set subcommand")
 }
 
+// TestConfigCmd_ShortDoesNotAdvertiseRead guards the parent command's help
+// text against overpromising: the only registered child is `set` — there is no
+// get/read subcommand — so the Short must not claim the command reads config.
+func TestConfigCmd_ShortDoesNotAdvertiseRead(t *testing.T) {
+	assert.NotContains(t, newConfigCmd().Short, "Read",
+		"config has no read/get subcommand; the parent Short must not advertise reading")
+}
+
 func TestConfigSetTelemetry_PersistsFalse(t *testing.T) {
 	isolate(t)
 	writeAtcrConfig(t, "agents:\n  - bruce\npayload_mode: blocks\n")
