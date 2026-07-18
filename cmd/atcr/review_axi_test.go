@@ -140,3 +140,14 @@ func TestReviewCmd_AXIAutoFixIsUsageError(t *testing.T) {
 	require.Equal(t, 2, code, "--axi + --auto-fix is a usage error (exit 2)")
 	require.Contains(t, out, "--axi and --auto-fix are mutually exclusive")
 }
+
+// TestReviewCmd_AXIAutoFixResumeIsUsageError verifies the mutual-exclusion holds on
+// the --resume variant too: the guard must fire before --resume short-circuits, so
+// `review --resume --axi --auto-fix` is exit 2 rather than silently dropping
+// --auto-fix (AC 02-02 Error Scenario 2; found by the 2.14.A adversarial review).
+func TestReviewCmd_AXIAutoFixResumeIsUsageError(t *testing.T) {
+	isolate(t)
+	code, out := execCmdCapture(t, "review", "--resume", "latest", "--axi", "--auto-fix")
+	require.Equal(t, 2, code, "--axi + --auto-fix must be a usage error on the resume path too")
+	require.Contains(t, out, "--axi and --auto-fix are mutually exclusive")
+}

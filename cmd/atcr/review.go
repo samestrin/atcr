@@ -194,6 +194,17 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		return perr
 	}
 
+	// --axi and --auto-fix are mutually exclusive (exit 2): --auto-fix drives an
+	// interactive write-back/PR flow whose stdout handoff (orchestrateAutoFix) is not
+	// a consumable findings payload, so the combination is rejected up front rather
+	// than silently leaking human text onto the axi stream (fresh path) or silently
+	// dropping --auto-fix (resume path). Placed ABOVE the --resume dispatch so the
+	// guard fires for `review --resume --axi --auto-fix` too (AC 01-03 Edge Case 3,
+	// AC 02-02 Error Scenario 2). --preview wins over both and short-circuits above.
+	if axiFromContext(cmd.Context()) && boolFlag(cmd, "auto-fix") {
+		return usageError(errors.New("--axi and --auto-fix are mutually exclusive: --auto-fix drives an interactive write-back/PR flow, not a consumable findings payload"))
+	}
+
 	// --resume targets an existing review directory and runs only its pending
 	// agents (epic 4.1.1); it is a distinct flow from a fresh review, so branch
 	// before any new-review flag handling.
@@ -310,16 +321,6 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// resolved backend forward to the post-reconcile orchestration.
 	autoFix := boolFlag(cmd, "auto-fix")
 	var afBackend autoFixBackend
-
-	// --axi and --auto-fix are mutually exclusive (exit 2): --auto-fix drives an
-	// interactive write-back/PR flow whose stdout handoff (orchestrateAutoFix) is
-	// not a consumable findings payload, so rather than silently leak human text
-	// onto the axi payload stream the combination is rejected up front — the
-	// unsupported-combination case of the exit-code contract (AC 01-03 Edge Case 3,
-	// AC 02-02 Error Scenario 2).
-	if axiMode && autoFix {
-		return usageError(errors.New("--axi and --auto-fix are mutually exclusive: --auto-fix drives an interactive write-back/PR flow, not a consumable findings payload"))
-	}
 
 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
 	if err != nil {
