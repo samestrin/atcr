@@ -67,6 +67,12 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 	// would be silently ignored (dropping the user's dismissal intent and skipping
 	// --status validation). Reject that combination rather than fall through to list.
 	if id == "" {
+		// An explicitly changed but empty --resolve (--resolve "") is a mark attempt
+		// with no id, not a list request: reject it rather than silently falling
+		// through to the list view.
+		if cmd.Flags().Changed("resolve") {
+			return usageError(fmt.Errorf("--resolve requires a non-empty id"))
+		}
 		var provided []string
 		if cmd.Flags().Changed("status") {
 			provided = append(provided, "--status")
@@ -82,6 +88,18 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	if id != "" {
+		// --json/--severity/--max only affect the list renderer, which the mark branch
+		// never reaches; combined with --resolve they would be silently ignored. Reject
+		// the combination, symmetric with --status/--reason without --resolve above.
+		var listOnly []string
+		for _, name := range []string{"json", "severity", "max"} {
+			if cmd.Flags().Changed(name) {
+				listOnly = append(listOnly, "--"+name)
+			}
+		}
+		if len(listOnly) > 0 {
+			return usageError(fmt.Errorf("%s cannot be used with --resolve", strings.Join(listOnly, ", ")))
+		}
 		status := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "status")))
 		if !resolveStatuses[status] {
 			return usageError(fmt.Errorf("invalid --status %q: expected resolved|wontfix", status))
