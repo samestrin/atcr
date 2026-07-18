@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -89,8 +91,14 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	// An I/O failure (missing/unwritable file) is an environment error (exit 1),
-	// NOT a usage mistake — config set never silently creates the file.
+	// NOT a usage mistake — config set never silently creates the file. A missing
+	// file is re-wrapped with the same actionable guidance LoadProjectConfig
+	// gives for the same condition, so both entry points hint at `atcr init`.
 	if err := persist(root, enabled); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("no roster found: .atcr/config.yaml not found (looked at %s) — run 'atcr init': %w",
+				registry.DefaultProjectConfigPath(root), err)
+		}
 		return err
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "set %s = %t in .atcr/config.yaml\n", key, enabled)
