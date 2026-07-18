@@ -452,6 +452,12 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// defaults to exitFailure (1), never a usageError — an internal serialization
 		// fault is not operator-fixable (AC 02-02 Error Scenario 3).
 		if axiMode {
+			// A write failure here (only reachable if stdout itself is broken, e.g. a
+			// closed pipe) short-circuits before the history/audit ledgers and the
+			// one-shot gate below. That asymmetry with the non-axi branch is
+			// deliberate: if stdout is broken the payload cannot be delivered at all,
+			// and classifying an unwrapped internal render/write fault as exitFailure
+			// (1) — never a usageError — is the AC 02-02 Error Scenario 3 contract.
 			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), result.ID, result.Dir, summaryDelta); werr != nil {
 				return fmt.Errorf("axi output rendering failed: %w", werr)
 			}
@@ -574,7 +580,12 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		if rerr != nil {
 			return usageError(fmt.Errorf("review failed: %w", rerr))
 		}
-		if !axiMode { // gated: the axi run-summary payload already carries the counts
+		// Gated under --axi. The axi run-summary payload carries findings_total (the
+		// raw per-agent fanout metric, mirroring writeReviewSummary's "Findings:"
+		// line); the deduplicated reconciled count and the verify/debate verdict
+		// counts are intentionally omitted from the summary — an agent that needs the
+		// reconciled findings themselves reads them via `atcr report --axi`.
+		if !axiMode {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
 		}
 
