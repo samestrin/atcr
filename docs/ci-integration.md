@@ -23,6 +23,14 @@ Notes:
 - **Partial success is not failure.** If some agents fail but at least one succeeds, the run completes with `partial: true` recorded in the summary — the gate judges the surviving findings.
 - **Empty range is a hard error**, never a silent zero-findings pass.
 - With roadmap stage 3 (adversarial verification), `--fail-on` counts only non-refuted findings, and `--require-verified` restricts the gate to skeptic-confirmed findings.
+- **A `--sync-cloud` authentication failure exits 3** (missing/empty `ATCR_API_KEY` or a remote 401/403), distinct from the usage/config code (2) so CI can detect an auth failure specifically.
+
+### `--axi` mode reuses this exact contract
+
+The `--axi` (Agent eXperience Interface) output mode changes only the *shape* of stdout (a token-dense TOON payload), never the exit code. `atcr review --axi`, `atcr resume --axi`, and `atcr report --format axi` return **0/1/2/3 identically** to their non-`--axi` counterparts for the same inputs — cross-validated by `atcr verify`'s independently-derived 0/1/2 mapping. New AXI-introduced errors classify into the existing contract: an unsupported `--axi` flag combination (e.g. `--axi --auto-fix`) is a usage error (**2**), and an internal AXI rendering fault is a generic failure (**1**).
+
+- **The epic's original `2` = "internal/syntax error" proposal was considered and rejected.** Exit `2` is already reserved for usage/configuration errors CI scripts depend on; repurposing it would break them. AXI introduces no new exit code and repurposes none.
+- **`--axi` structured errors go to stderr, not stdout.** Per axi.md Principle 6 an agent-facing CLI *may* emit structured errors on stdout, but atcr keeps them on stderr (its existing convention) so `--axi` stdout is *always* payload-only: an agent running `atcr review --axi > findings.toon` gets a byte-clean payload file and branches on the exit code — it never parses stdout for an error case. (Any future errors-on-stdout payload would remain subject to the `--axi` escape-free stdout guarantee.)
 
 ## Maintained PR Action
 

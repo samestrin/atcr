@@ -123,6 +123,19 @@ func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Wri
 // --fail-on threshold violations), 2 usage or configuration errors, 3 a
 // --sync-cloud authentication failure (missing/empty key or a remote 401/403),
 // distinct from exitUsage so scripts/CI can detect an auth failure specifically.
+//
+// --axi (Agent eXperience Interface) mode reuses this exact 0/1/2/3 contract
+// UNCHANGED — it governs stdout payload shape only, never the exit code (there is
+// no --axi branch in exitCode). A new AXI-introduced flag-combination error
+// (--axi + --auto-fix) classifies as 2 (usageError); an internal AXI render fault
+// classifies as 1 (unwrapped generic failure). The epic's original proposal to
+// repurpose 2 as a distinct "internal/syntax error" code was considered and
+// REJECTED: 2 is already reserved for usage/config errors CI depends on, so AXI
+// introduces no new code and repurposes none. --axi structured diagnostics stay
+// on stderr (atcr's convention), NOT stdout (axi.md Principle 6), so --axi stdout
+// is always payload-only and the exit code is the branch signal. Reconciliation
+// documented in docs/ci-integration.md; cross-validated by `atcr verify`'s
+// independently-derived 0/1/2 table.
 const (
 	exitFailure = 1
 	exitUsage   = 2
