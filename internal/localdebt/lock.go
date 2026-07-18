@@ -66,7 +66,10 @@ func withLock(dir, session string, fn func() error) error {
 		}
 
 		if time.Now().After(deadline) {
-			return fmt.Errorf("timeout acquiring localdebt lock at %s", lockDir)
+			// Redact to the base name: an absolute lockDir can embed a username
+			// (/Users/<name>/...), and the package's SECURITY contract (store.go:26-31)
+			// requires surfaced errors carry only the base name, like basePathErr.
+			return fmt.Errorf("timeout acquiring localdebt lock at %s", filepath.Base(lockDir))
 		}
 		time.Sleep(lockSleep)
 	}

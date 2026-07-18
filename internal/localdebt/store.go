@@ -402,7 +402,10 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 		for month := range existingMonths {
 			path := filepath.Join(dir, month+".jsonl")
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("removing empty shard file %s: %w", path, basePathErr(err))
+				// basePathErr only redacts the wrapped *os.PathError; the raw %s of path
+				// would still leak the absolute (username-bearing) shard path, so reduce
+				// it to the base name too (SECURITY contract, store.go:26-31).
+				return fmt.Errorf("removing empty shard file %s: %w", filepath.Base(path), basePathErr(err))
 			}
 		}
 
