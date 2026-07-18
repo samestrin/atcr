@@ -42,7 +42,18 @@ type QualitySignal struct {
 // — e.g. hardening HashPersonaID to a keyed HMAC (TD-007) fails that test until
 // this is updated in lockstep. It takes primitives rather than a localdebt.QualityRow
 // so telemetry never imports localdebt either.
+//
+// A non-empty persona is a caller precondition: an empty persona is an upstream
+// data-quality bug, and hashing it would produce sha256("")=e3b0c442... — a
+// well-known constant that looks like a real, stable aggregation bucket on the
+// backend. The constructor instead returns the zero QualitySignal sentinel
+// (empty PersonaIDHash), recognizable and droppable by the caller. The sole
+// production source (localdebt.AggregateQualitySignal) already excludes empty
+// personas structurally, so this guard only fires for future misuse.
 func NewQualitySignal(persona, model string, dismissed, confirmed int) QualitySignal {
+	if persona == "" {
+		return QualitySignal{}
+	}
 	sum := sha256.Sum256([]byte(persona))
 	return QualitySignal{
 		PersonaIDHash:  hex.EncodeToString(sum[:]),
