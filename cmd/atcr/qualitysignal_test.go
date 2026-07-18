@@ -464,6 +464,23 @@ func TestPreview_UnaffectedByMalformedConfig(t *testing.T) {
 	assert.Equal(t, expectedQualityPayload(t), got)
 }
 
+// TestPreview_UnrecognizedEnvValueWarnsViaCmdStderr covers the --preview
+// opt-in-fiddling surface: a misspelled ATCR_QUALITY_SIGNAL (e.g. "ture") must
+// surface the unrecognized-value warning on the command's stderr — where
+// cmd-scoped tests can capture it — while the preview still renders and exits 0
+// (the env validation never gates the preview).
+func TestPreview_UnrecognizedEnvValueWarnsViaCmdStderr(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_QUALITY_SIGNAL", "ture")
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+
+	out, errOut, code := runRootPreview(t, "review", "--preview")
+	require.Equal(t, 0, code, "an unrecognized env value must not break --preview")
+	assert.Contains(t, out, "persona_id_hash", "the preview must still render the payload")
+	assert.Contains(t, errOut, `unrecognized ATCR_QUALITY_SIGNAL value "ture"`,
+		"a misspelled opt-in must warn on the command's stderr on the --preview path")
+}
+
 // TestPreview_RegisteredOnReconcile proves the flag is hosted on `atcr reconcile`
 // too, and that its short-circuit fires before resolveReviewDir (which would
 // otherwise error with no review present) — the two-host-command contract.
