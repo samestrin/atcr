@@ -79,7 +79,20 @@ func Render(w io.Writer, findings []reconcile.JSONFinding, format string) error 
 	case FormatSarif:
 		return renderSarif(w, findings)
 	case FormatAXI:
-		return renderAXI(w, findings)
+		// Wire the pagination post-processor into the FormatAXI dispatch (AC 03-01):
+		// any direct Render(FormatAXI) caller gets a payload bounded to the default
+		// line cap. The cut is deterministic and on a row boundary (PaginateAXI). The
+		// CLI paths (report/review --axi) instead call RenderAXIPaginated, which also
+		// emits the `truncated` flag (AC 03-02) and honors ATCR_AXI_MAX_LINES
+		// (AC 03-03). Under the cap this is byte-identical to renderAXI, so the
+		// report.axi golden and every Phase 1 AXI test are unaffected.
+		var buf bytes.Buffer
+		if err := renderAXI(&buf, findings); err != nil {
+			return err
+		}
+		out, _, _ := PaginateAXI(buf.Bytes(), AXIMaxLinesDefault)
+		_, err := w.Write(out)
+		return err
 	default:
 		return fmt.Errorf("unknown format %q: supported formats are %s", format, Formats())
 	}
