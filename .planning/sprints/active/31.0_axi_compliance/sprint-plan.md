@@ -1160,160 +1160,157 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
 
 **Items:** Story 5 (AC 05-01, 05-02, 05-03) + cumulative regression sweep
 
-### 5.1 [ ] **[Publish Core Content of docs/agentic-consumption.md](plan/user-stories/05-publish-agentic-consumption-guide.md)**
+### 5.1 [x] **[Publish Core Content of docs/agentic-consumption.md](plan/user-stories/05-publish-agentic-consumption-guide.md)**
    **Mode:** Pragmatic (documentation, no automated tests) | **AC:** [05-01](plan/acceptance-criteria/05-01-agentic-consumption-doc-content.md)
    1. Verify every concrete detail against Phases 1-4's actual shipped implementation (flag name, `ATCR_AXI_MAX_LINES`, `truncated` field, exit codes 0/1/2/3) — not plan.md's draft language
    2. Draft `docs/agentic-consumption.md` covering: `--axi` invocation on `atcr review`/`atcr report`; the reconciled exit-code contract (linking, not duplicating, `docs/ci-integration.md`); pagination/truncation (default, env var, `truncated` flag, how to retrieve the full payload); the stderr-only-diagnostics/stdout-only-payload guarantee (cross-checked against `docs/logging.md`)
    3. COMMIT: `git commit -m "docs: publish agentic-consumption.md"`
    **Files:** `docs/agentic-consumption.md` (new) | **Duration:** 3h
 
-### 5.1.A [ ] **[Publish Core Content - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-publish-agentic-consumption-guide.md)**
+### 5.1.A [x] **[Publish Core Content - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-publish-agentic-consumption-guide.md)**
    **Changed Files:** `docs/agentic-consumption.md`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. No memory of 5.1's drafting. Do NOT review inline.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Adversarial review: 5.1`
-   - prompt: Self-contained brief including:
-     - File to review (absolute path): the file above, plus instruct the subagent to cross-check every named flag/env-var/field/exit-code against the actual shipped code in `cmd/atcr/main.go`, `cmd/atcr/review.go`, `internal/report/pagination.go`, `internal/report/render.go`
-     - Checklist (pass verbatim, documentation-accuracy lens):
-       - FACTUAL ACCURACY: Does every named flag/env var/field/exit code match shipped code exactly?
-       - COMPLETENESS: Are all four required topics covered (invocation, exit codes, pagination, stderr isolation)?
-       - CONSISTENCY: Does the exit-code section match `docs/ci-integration.md` exactly, without restating the epic's rejected scheme?
-       - NO INVENTED BEHAVIOR: Does the doc claim any flag/field/behavior that Stories 1-4 did not actually implement?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):** Fresh general-purpose subagent
+   cross-checked every named flag/env-var/field/exit-code/payload-shape against the
+   shipped code (main.go, review.go, report.go, pagination.go, render.go,
+   ci-integration.md, logging.md). Verified: `review --axi` (bool flag) vs `report
+   --format axi` (enum) distinction correct — no `report --axi` misspelling;
+   `review_summary[1|]{...}` column set exactly matches `reviewSummaryAXIHeader`;
+   `findings[N|]{...}` + `truncated:` line matches `renderAXI`/`RenderAXIPaginated`
+   (incl. `"file:line"` force-quoted); 500 default + `ATCR_AXI_MAX_LINES` fail-open
+   matches `axiMaxLinesFromEnv`; exit 0/1/2/3 links to `ci-integration.md#exit-semantics`
+   without duplicating the table and marks the epic's "2=internal error" scheme
+   rejected; `--axi --auto-fix`→2, render fault→1; no invented exit 4 / sub-flags;
+   `review --axi` correctly emits only the run summary, not findings. All four
+   required topics present; all cross-referenced docs and anchors resolve.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | None | — | No discrepancies found. | None required. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 5.2, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH/MEDIUM/LOW → **Adversarial review passed.** Proceed.
 
-### 5.2 [ ] **[Publish Core Content - REFACTOR](plan/user-stories/05-publish-agentic-consumption-guide.md)**
+### 5.2 [x] **[Publish Core Content - REFACTOR](plan/user-stories/05-publish-agentic-consumption-guide.md)**
+   No CRITICAL/HIGH from 5.1.A; prose already tight. Markdown verified clean (10
+   fenced blocks balanced, no trailing whitespace, invocation table well-formed).
+   No change → no separate commit (same no-change REFACTOR precedent as 2.12/2.17).
    1. Fix CRITICAL/HIGH issues from 5.1.A (if any)
    2. Polish prose, verify Markdown renders cleanly, COMMIT: `git commit -m "refactor(docs): tighten agentic-consumption.md"`
    **Duration:** 30min
 
-### 5.3 [ ] **[Worked Orchestration Example](plan/user-stories/05-publish-agentic-consumption-guide.md)**
+### 5.3 [x] **[Worked Orchestration Example](plan/user-stories/05-publish-agentic-consumption-guide.md)**
    **Mode:** Pragmatic (documentation, no automated tests) | **AC:** [05-02](plan/acceptance-criteria/05-02-worked-orchestration-example.md)
    1. Draft a near-runnable shell/pseudocode example modeled on the epic's autonomous-sweeper scenario: subprocess invocation of `atcr review --axi`, payload parsing (checking `truncated`), exit-code branching (0/1/2/3, real `case $? in ... esac` style), and explicit stderr-vs-stdout capture
    2. Spot-check the shell portion against a built `atcr` binary where feasible
    3. COMMIT: `git commit -m "docs: add worked orchestration example"`
    **Files:** `docs/agentic-consumption.md` | **Duration:** 2h
 
-### 5.3.A [ ] **[Worked Orchestration Example - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-publish-agentic-consumption-guide.md)**
+### 5.3.A [x] **[Worked Orchestration Example - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-publish-agentic-consumption-guide.md)**
    **Changed Files:** `docs/agentic-consumption.md`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 5.3's drafting. Do NOT review inline.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Adversarial review: 5.3`
-   - prompt: Self-contained brief including:
-     - File to review (absolute path): the file above (worked-example section)
-     - Checklist (pass verbatim, documentation-accuracy lens):
-       - FACTUAL ACCURACY: Real command syntax, real env var names, real exit-code patterns — no invented flags/fields/exit codes
-       - COMPLETENESS: Subprocess invocation, payload parsing (including `truncated` handling), exit-code branching, and explicit stderr handling all present
-       - NO SECRETS: No real credentials/tokens/API keys in any snippet
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):** Fresh general-purpose subagent verified
+   the worked example against shipped code (built and probed the binary too). All
+   flags/fields/exit codes/TOON row shapes match: `--axi`, `--fail-on high`
+   (lowercase valid — ParseSeverity uppercases), `report --format axi`, render-fault
+   exit 1, `ATCR_AXI_MAX_LINES` fail-open, `truncated: %t`, two-space-indented rows,
+   quoted `"file:line"`. Parse logic correctly skips header + `truncated:` line. No
+   secrets, no invented flags/fields/exit codes. Two LOWs on exit-code accuracy:
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | agentic-consumption.md case 3 branch | Exit 3 (auth) fires only on a `--sync-cloud` auth failure; the shown command has no `--sync-cloud`, so a missing provider key surfaces as exit 2 (`preflightAPIKeys`→`usageError`), never 3. Doc's "every exit code is real" overstated for this exact invocation. | Note that exit 3 applies only under `--sync-cloud`; keep the branch as defensive handling. |
+   | LOW | agentic-consumption.md report-failure handler | Handler hardcodes `"(exit 1)"`/`exit 1`, but `atcr report --format axi` returns exit 2 for usage/config faults (bad anchor, `--output` validation, absent findings.json). Only an internal render fault yields exit 1. | Capture and echo the real `$?` instead of asserting exit 1. |
+
+   **Action taken:** No CRITICAL/HIGH. Both LOWs **RESOLVED in 5.4** (not deferred) —
+   consistent with the 1.5.A/2.19/Phase-4-gate precedent of fixing inline any LOW
+   that makes a *shipped claim false* when the fix is cheap and in-scope: finding #1
+   directly contradicts the doc's own "every ... exit code in it is real" line, and
+   both are trivial doc-accuracy edits squarely inside 5.4's REFACTOR scope.
 
    **Action Required:**
    - CRITICAL/HIGH found → List issues for 5.4, do NOT proceed until fixed
    - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
    - None found → Note "Adversarial review passed" and proceed
 
-### 5.4 [ ] **[Worked Orchestration Example - REFACTOR](plan/user-stories/05-publish-agentic-consumption-guide.md)**
+### 5.4 [x] **[Worked Orchestration Example - REFACTOR](plan/user-stories/05-publish-agentic-consumption-guide.md)**
+   Both 5.3.A LOWs fixed: (1) added a comment clarifying exit 3 is the `--sync-cloud`
+   auth failure (unreachable for the shown command; a missing provider key → exit 2)
+   and softened the intro to "a real part of atcr's contract"; (2) the report-failure
+   handler now captures `rc=$?` and propagates the real exit (2 for usage/config, 1
+   for render fault) instead of hardcoding exit 1. `bash -n` clean.
    1. Fix CRITICAL/HIGH issues from 5.3.A (if any)
    2. Polish snippet formatting, COMMIT: `git commit -m "refactor(docs): tighten worked orchestration example"`
    **Duration:** 20min
 
-### 5.5 [ ] **[CI-Integration Cross-Reference](plan/user-stories/05-publish-agentic-consumption-guide.md)**
+### 5.5 [x] **[CI-Integration Cross-Reference](plan/user-stories/05-publish-agentic-consumption-guide.md)**
    **Mode:** Pragmatic (documentation, no automated tests) | **AC:** [05-03](plan/acceptance-criteria/05-03-ci-integration-cross-reference.md)
    1. Add a single additive Markdown link from `docs/ci-integration.md` to `docs/agentic-consumption.md` (style precedent: the existing `github-action.md` "see also" link), with anchor text signaling agentic/orchestration relevance
    2. Verify the link target exists (sequenced after 5.1) and no existing table/heading/anchor was reordered or duplicated
    3. COMMIT: `git commit -m "docs(ci): cross-reference agentic-consumption.md"`
    **Files:** `docs/ci-integration.md` | **Duration:** 30min
 
-### 5.5.A [ ] **[CI-Integration Cross-Reference - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-publish-agentic-consumption-guide.md)**
+### 5.5.A [x] **[CI-Integration Cross-Reference - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-publish-agentic-consumption-guide.md)**
    **Changed Files:** `docs/ci-integration.md`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 5.5's edit. Do NOT review inline.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Adversarial review: 5.5`
-   - prompt: Self-contained brief including:
-     - File to review (absolute path): the file above (diff against its pre-edit state)
-     - Checklist (pass verbatim):
-       - SCOPE: Is the diff a single additive link/pointer only, with no reordering, rewriting, or duplication of the existing exit-semantics table?
-       - LINK VALIDITY: Does the link target `docs/agentic-consumption.md` actually exist?
-       - CLARITY: Does the anchor text clearly signal agentic/orchestration relevance, distinct from the existing CI-gate content?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):** Fresh general-purpose subagent inspected
+   the actual `git show HEAD` diff. Single additive pointer only — no reordering,
+   rewriting, or duplication of the exit-semantics table; link target
+   `docs/agentic-consumption.md` exists; anchor text clearly signals agentic/
+   orchestration relevance distinct from the CI-gate content.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | None | — | No discrepancies found. | None required. |
+
+   **Action taken:** No findings → **Adversarial review passed.** Proceed.
 
    **Action Required:**
    - CRITICAL/HIGH found → List issues for 5.6, do NOT proceed until fixed
    - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
    - None found → Note "Adversarial review passed" and proceed
 
-### 5.6 [ ] **[CI-Integration Cross-Reference - REFACTOR](plan/user-stories/05-publish-agentic-consumption-guide.md)**
+### 5.6 [x] **[CI-Integration Cross-Reference - REFACTOR](plan/user-stories/05-publish-agentic-consumption-guide.md)**
+   No CRITICAL/HIGH from 5.5.A; edit is already a minimal additive pointer (no scope
+   creep to trim). No change → no separate commit.
    1. Fix CRITICAL/HIGH issues from 5.5.A (if any)
    2. Trim back to a minimal additive edit if scope crept, COMMIT: `git commit -m "refactor(docs): trim ci-integration cross-reference"`
    **Duration:** 15min
 
-### 5.7 [ ] **Phase 5 - DoD Validation + Cumulative Regression Sweep**
+### 5.7 [x] **Phase 5 - DoD Validation + Cumulative Regression Sweep**
+   **Result (2026-07-18):** `go test ./...` full suite PASS; coverage 89.1% (≥80%);
+   `golangci-lint run` 0 issues; `go vet ./...` + `gofmt -l` clean; `go build ./...`
+   rc=0. Non-`--axi` regression: md/json/checklist/sarif goldens byte-unchanged
+   (only new `report.axi` fixture added, Phase 1's deliverable). DoD 7/7 auto+story.
    Run DoD Verification Checklist: T3 (`go test ./...` — full suite, all phases), coverage ≥80% overall, `golangci-lint run`, `go build ./...`, docs (this phase's own deliverable). Additionally run the full non-`--axi` regression pass and golden-file re-verification across all formats (`md`/`json`/`checklist`/`sarif`/`axi`) per the Phase 5 focus in sprint-design.md.
    Report using the DoD Report Template.
 
-### 5.8 [ ] **Phase 5 - GATE: Integration & Exit Review (subagent)**
-   **Scope:** All files changed during Phase 5: `docs/agentic-consumption.md` (new), `docs/ci-integration.md`
+### 5.8 [x] **Phase 5 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 5: `docs/agentic-consumption.md` (new), `docs/ci-integration.md`, `docs/README.md` (index entry)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. No memory of the phase's implementation. Do NOT review inline.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Phase 5 gate review`
-   - prompt: Self-contained brief including:
-     - Files changed during Phase 5 (absolute paths): the two files above
-     - Checklist (pass verbatim, hostile integrator perspective):
-       - CONTRACT EXIT: Documentation accurately reflects the final shipped Phase 1-4 contracts (no draft/placeholder language remaining)?
-       - CONFIG SURFACE: N/A this phase (docs only)
-       - INTEGRATION: Cross-references between `docs/agentic-consumption.md` and `docs/ci-integration.md`/`docs/findings-format.md`/`docs/logging.md` are correct and non-duplicative?
-       - PHASE-EXIT CONTRACT: Sprint is ready for `/execute-code-review` — all 18 ACs traceable to committed code/docs?
-       - REGRESSION: All prior phases' golden files, tests, and non-`--axi` behavior fully intact per 5.7's full-suite run?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
+   **Gate findings (run 2026-07-18):** No CRITICAL/HIGH. Fresh hostile-integrator
+   subagent built + probed the binary and read the shipped code. Verified: no
+   TODO/placeholder/invented flags/fields/exit codes (CONTRACT EXIT); all
+   cross-references + anchors (`ci-integration.md#exit-semantics`,
+   `findings-format.md`, `logging.md`, self `#pagination-and-truncation`) resolve
+   and the exit table is linked not restated (INTEGRATION); all three Story-5 ACs
+   (05-01/05-02/05-03) traceable to committed docs (PHASE-EXIT); docs-only, no
+   prior-phase disturbance (REGRESSION). Two LOW prose-accuracy corrections:
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | LOW | agentic-consumption.md:50 | `review_summary` row prose implied 7 integer columns; `findings_total` IS the 6th of six counts (reviewSummaryAXIHeader). Example row `…\|3\|3\|0\|0\|9\|2` was already correct — only prose double-counted. | **Fixed inline** — reworded to "six bare-integer counts — the last, `findings_total`, …". |
+   | LOW | agentic-consumption.md:107 | "500 physical lines of findings" overstated by one row: `PaginateAXI` caps TOTAL physical lines incl. the line-1 header, so a default-truncated payload holds ≤499 finding rows. | **Fixed inline** — "500 physical lines — the array header plus up to 499 finding rows (cap counts total physical lines, header inclusive)". |
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
-
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Action taken:** No CRITICAL/HIGH → **Phase gate passed.** Both LOWs fixed inline
+   (not deferred) — same precedent as the Phase 1/2/4 gates fixing doc/comment-accuracy
+   LOWs inline: they corrected a factual overstatement in this phase's own deliverable,
+   the fix was cheap and in-scope, and CONTRACT EXIT literally requires the doc to
+   reflect the shipped contract. Committed `2fc9ae10`; fences balanced, no residual
+   overstatement.
    **Duration:** 20 min
 
 ---
@@ -1321,19 +1318,19 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
 ## Final Phase: Validation
 
 ### Validation Checklist
-- [ ] All tests passing (T3): `go test ./...`
-- [ ] Coverage meets threshold: ≥80% (`config.yaml` `coverage_baseline`)
-- [ ] Lint/format clean: `golangci-lint run`, `go vet ./...`, `gofmt -l .` empty
-- [ ] Build succeeds: `go build ./...`
+- [x] All tests passing (T3): `go test ./...`
+- [x] Coverage meets threshold: ≥80% (`config.yaml` `coverage_baseline`)
+- [x] Lint/format clean: `golangci-lint run`, `go vet ./...`, `gofmt -l .` empty
+- [x] Build succeeds: `go build ./...`
 
 ### Optional: Targeted Mutation Testing
 Mutation testing tooling (`stryker-mutator`/`mutmut`/`cargo-mutants`) is **UNAVAILABLE** in this environment — skip this step. If a Go mutation tool becomes available later, target only `internal/report/render.go`'s `renderAXI` and `internal/report/pagination.go` (the highest-risk new logic), never the full codebase.
 
 ### Drift Analysis
 Compare final implementation against [plan/original-requirements.md](plan/original-requirements.md):
-- [ ] `atcr review --axi` outputs clean, machine-readable (TOON/JSON) payload free of ANSI codes or markdown tables
-- [ ] Stderr strictly used for progress bars/logs; stdout contains only the final payload
-- [ ] Exit codes deterministically reflect the review outcome (0=clean, 1=findings, 2=usage-error, 3=auth-error — reconciled per Story 2, superseding the epic's original 0/1/2 draft)
-- [ ] `atcr` docs include an "Agentic Consumption" section explaining orchestration in larger swarms
-- [ ] Line-cap/truncation guidance (default 500, `ATCR_AXI_MAX_LINES` override) implemented and documented
-- [ ] No extended-scope drift beyond the plan's Components Touched (`internal/cli`/`internal/formatters` mapped onto the real `internal/report`/`cmd/atcr`/`internal/mcp` structure per the epic's Advisory Observations)
+- [x] `atcr review --axi` outputs clean, machine-readable (TOON/JSON) payload free of ANSI codes or markdown tables
+- [x] Stderr strictly used for progress bars/logs; stdout contains only the final payload
+- [x] Exit codes deterministically reflect the review outcome (0=clean, 1=findings, 2=usage-error, 3=auth-error — reconciled per Story 2, superseding the epic's original 0/1/2 draft)
+- [x] `atcr` docs include an "Agentic Consumption" section explaining orchestration in larger swarms
+- [x] Line-cap/truncation guidance (default 500, `ATCR_AXI_MAX_LINES` override) implemented and documented
+- [x] No extended-scope drift beyond the plan's Components Touched (`internal/cli`/`internal/formatters` mapped onto the real `internal/report`/`cmd/atcr`/`internal/mcp` structure per the epic's Advisory Observations)
