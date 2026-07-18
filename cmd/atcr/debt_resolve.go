@@ -251,9 +251,12 @@ func renderResolveList(w io.Writer, recs []localdebt.Record) error {
 const maxReasonBytes = 4 << 10 // 4 KiB
 
 // markDebtResolved records an append-only resolution for id: it copies the item's
-// open record, stamps a terminal status/timestamp, and appends it so the fold in
-// selectOpenDebt drops the item from the open list. The stable id is preserved
-// (never re-stamped) so the resolution lines up with the original finding.
+// first open record, unions the Reviewers attribution of every open record for the
+// id (and picks the most recent non-empty Model) so AggregateQualitySignal credits
+// every persona that raised the finding, stamps a terminal status/timestamp, and
+// appends it so the fold in selectOpenDebt drops the item from the open list. The
+// stable id is preserved (never re-stamped) so the resolution lines up with the
+// original finding.
 func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error {
 	// A --reason is stored verbatim as the record's Justification. The store bounds a
 	// single JSONL line at maxLineBytes (1 MiB) on read and silently drops any line
@@ -273,6 +276,9 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	}
 
 	var orig *localdebt.Record
+	var reviewers []string
+	seenReviewer := make(map[string]bool)
+	var model string
 	var alreadyClosed bool
 	var closedStatus string
 	for i := range recs {
@@ -291,6 +297,27 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		if orig == nil && recs[i].File != "" {
 			r := recs[i]
 			orig = &r
+		}
+		// Union attribution across every open record for the id: the same finding can
+		// be re-raised by later reconcile runs as distinct open records under one
+		// stable id, and AggregateQualitySignal reads only the terminal record
+		// (foldTerminalByID) — stamping just the first open record's Reviewers would
+		// deny the later runs' personas their dismissed/confirmed credit. Dedupe
+		// first-seen so the order is deterministic.
+		for _, rv := range recs[i].Reviewers {
+			if !seenReviewer[rv] {
+				seenReviewer[rv] = true
+				reviewers = append(reviewers, rv)
+			}
+		}
+		// The terminal record carries a single Model, and AggregateQualitySignal
+		// buckets every credited persona by it — so the choice materially affects
+		// attribution. Prefer the most recent open record's non-empty Model (stream
+		// order is append order, so last non-empty wins): it reflects the latest
+		// run's attribution, while a later attribution-less record never blanks an
+		// earlier model (an empty Model is excluded from every signal row).
+		if strings.TrimSpace(recs[i].Model) != "" {
+			model = recs[i].Model
 		}
 	}
 	// Concurrency-tolerant, not lock-protected: a terminal record for this id already
@@ -316,6 +343,10 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	rec := *orig
+	rec.Reviewers = reviewers
+	if model != "" {
+		rec.Model = model
+	}
 	rec.RunID = now + "-" + status
 	rec.Timestamp = now
 	rec.Status = status
