@@ -65,9 +65,16 @@ func newConfigSetCmd() *cobra.Command {
 func runConfigSet(cmd *cobra.Command, args []string) error {
 	key, raw := args[0], args[1]
 	// The settable-key allowlist is an explicit two-entry switch, never a loosened
-	// prefix/fuzzy match — an unrecognized key is always a usage error.
+	// prefix/fuzzy match — an unrecognized key is always a usage error. The same
+	// switch selects the key's persister, so adding a key touches exactly one
+	// place. Each persister mutates only its own key via a surgical yaml-node
+	// edit, so the two settings never interfere.
+	var persist func(root string, enabled bool) error
 	switch key {
-	case "telemetry", "quality_signal":
+	case "telemetry":
+		persist = registry.SetTelemetrySetting
+	case "quality_signal":
+		persist = registry.SetQualitySignalSetting
 	default:
 		return usageError(fmt.Errorf("unsupported config key %q: only \"telemetry\" and \"quality_signal\" are supported", key))
 	}
@@ -81,24 +88,10 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Dispatch to the key-specific persister. Each mutates only its own key via a
-	// surgical yaml-node edit, so the two settings never interfere. An I/O failure
-	// (missing/unwritable file) is an environment error (exit 1), NOT a usage
-	// mistake — config set never silently creates the file.
-	switch key {
-	case "telemetry":
-		if err := registry.SetTelemetrySetting(root, enabled); err != nil {
-			return err
-		}
-	case "quality_signal":
-		if err := registry.SetQualitySignalSetting(root, enabled); err != nil {
-			return err
-		}
-	default:
-		// Unreachable: the allowlist switch above already rejected any other key.
-		// Kept as a loud guard so a future key added to the allowlist but not here
-		// fails instead of silently reporting success while persisting nothing.
-		return fmt.Errorf("unsupported config key %q: no persister registered", key)
+	// An I/O failure (missing/unwritable file) is an environment error (exit 1),
+	// NOT a usage mistake — config set never silently creates the file.
+	if err := persist(root, enabled); err != nil {
+		return err
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "set %s = %t in .atcr/config.yaml\n", key, enabled)
 	return nil
