@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -146,6 +147,118 @@ func TestRenderAXIPaginated_EmitsTruncatedFlag(t *testing.T) {
 	// The content (excluding the trailing flag line) is capped to exactly maxLines.
 	content := strings.TrimSuffix(b2.String(), "truncated: true\n")
 	assert.Equal(t, 10, physLines([]byte(content)), "content capped to exactly maxLines, flag is the closing structure")
+}
+
+// --- AC 03-02: `truncated` flag with preserved true total count ---
+//
+// The truncated flag and header-N preservation are emitted by RenderAXIPaginated,
+// the shared CLI entry point necessarily built in task 3.2 (a shared emitter
+// cannot produce content without committing to its output contract). Per this
+// sprint's 2.10/2.11 precedent, these tests PIN the AC 03-02 contract and pass on
+// arrival — the flag was established by construction in the shared path, not
+// driven by new production code here.
+
+// axiHeaderN parses the array header's declared element count N from
+// `findings[N|]{...}:` or the zero form `findings[0]:`.
+func axiHeaderN(t *testing.T, out string) int {
+	t.Helper()
+	line := strings.SplitN(out, "\n", 2)[0]
+	i := strings.Index(line, "[")
+	require.GreaterOrEqual(t, i, 0, "header must carry an element count: %q", line)
+	rest := line[i+1:]
+	end := strings.IndexAny(rest, "|]")
+	require.GreaterOrEqual(t, end, 0, "header count must terminate in | or ]: %q", line)
+	n, err := strconv.Atoi(rest[:end])
+	require.NoErrorf(t, err, "header count must be an integer: %q", line)
+	return n
+}
+
+// axiEmittedRows counts the physically-emitted data rows (indented lines) in a
+// RenderAXIPaginated payload, excluding the header and the trailing truncated
+// flag line.
+func axiEmittedRows(out string) int {
+	n := 0
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "  ") {
+			n++
+		}
+	}
+	return n
+}
+
+func renderManyAXI(t *testing.T, count, maxLines int) string {
+	t.Helper()
+	findings := make([]reconcile.JSONFinding, count)
+	for i := range findings {
+		findings[i] = reconcile.JSONFinding{Severity: "LOW", File: "a.go", Line: i, Problem: "p", Confidence: "LOW"}
+	}
+	var b strings.Builder
+	require.NoError(t, RenderAXIPaginated(&b, findings, maxLines))
+	return b.String()
+}
+
+// TestAXIPayload_TruncatedFalseUnderCap is AC 03-02 Scenario 1: an under-cap
+// payload reports truncated: false and header N equals the emitted row count.
+func TestAXIPayload_TruncatedFalseUnderCap(t *testing.T) {
+	out := renderManyAXI(t, 120, AXIMaxLinesDefault)
+	assert.Contains(t, out, "truncated: false", "under-cap payload reports truncated: false")
+	assert.Equal(t, 120, axiHeaderN(t, out), "header N is the true total")
+	assert.Equal(t, 120, axiEmittedRows(out), "under cap, header N equals emitted rows")
+}
+
+// TestAXIPayload_TruncatedTrueTrueTotalPreserved is AC 03-02 Scenario 2: an
+// over-cap payload reports truncated: true and the header still declares the true
+// pre-truncation total even though fewer rows are physically present.
+func TestAXIPayload_TruncatedTrueTrueTotalPreserved(t *testing.T) {
+	out := renderManyAXI(t, 1200, AXIMaxLinesDefault)
+	assert.Contains(t, out, "truncated: true", "over-cap payload reports truncated: true")
+	assert.Equal(t, 1200, axiHeaderN(t, out), "header N declares the true pre-truncation total (1200)")
+}
+
+// TestAXIPayload_HeaderNStrictlyGreaterWhenTruncated is AC 03-02 Edge Case 1
+// (Risk 3 regression guard): when truncated, the header N must be strictly
+// greater than the emitted row count — proving N was computed pre-truncation and
+// not clipped alongside the rows.
+func TestAXIPayload_HeaderNStrictlyGreaterWhenTruncated(t *testing.T) {
+	out := renderManyAXI(t, 1200, AXIMaxLinesDefault)
+	n := axiHeaderN(t, out)
+	rows := axiEmittedRows(out)
+	assert.Greater(t, n, rows, "header N (%d) must exceed emitted rows (%d) when truncated", n, rows)
+	assert.Equal(t, AXIMaxLinesDefault-1, rows, "emitted rows = cap minus the one header line")
+}
+
+// TestAXIPayload_BoundaryExactlyAtCapNotTruncated is AC 03-02 Edge Case 2: a
+// payload whose physical line count exactly equals the cap reports
+// truncated: false and header N equals the full emitted row count.
+func TestAXIPayload_BoundaryExactlyAtCapNotTruncated(t *testing.T) {
+	// AXIMaxLinesDefault-1 rows + 1 header = exactly AXIMaxLinesDefault lines.
+	out := renderManyAXI(t, AXIMaxLinesDefault-1, AXIMaxLinesDefault)
+	assert.Contains(t, out, "truncated: false", "exactly-at-cap payload is not truncated")
+	assert.Equal(t, AXIMaxLinesDefault-1, axiHeaderN(t, out))
+	assert.Equal(t, AXIMaxLinesDefault-1, axiEmittedRows(out), "header N equals full emitted rows at the boundary")
+}
+
+// TestAXIPayload_ZeroFindings is AC 03-02 Edge Case 3: an empty payload reports
+// truncated: false and header N is 0.
+func TestAXIPayload_ZeroFindings(t *testing.T) {
+	var b strings.Builder
+	require.NoError(t, RenderAXIPaginated(&b, nil, AXIMaxLinesDefault))
+	out := b.String()
+	assert.Contains(t, out, "truncated: false", "empty payload reports truncated: false")
+	assert.Equal(t, 0, axiHeaderN(t, out), "empty payload declares header N = 0")
+	assert.Equal(t, 0, axiEmittedRows(out))
+}
+
+// TestAXIPayload_TruncatedFieldAlwaysPresent is AC 03-02 Error Scenario 1: the
+// truncated field is present in EVERY payload (never omitted), using the exact
+// `truncated` field name from internal/fanout/status.go's Truncated bool
+// json:"truncated" precedent.
+func TestAXIPayload_TruncatedFieldAlwaysPresent(t *testing.T) {
+	for _, count := range []int{0, 1, 120, 1200} {
+		out := renderManyAXI(t, count, AXIMaxLinesDefault)
+		assert.Regexpf(t, `(?m)^truncated: (true|false)$`, out,
+			"count=%d: payload must carry a `truncated` boolean line", count)
+	}
 }
 
 // TestPaginateAXI_NeverErrorsRegardlessOfSize is AC 03-01 Error Scenario 1: the
