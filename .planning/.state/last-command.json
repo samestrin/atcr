@@ -1,9 +1,9 @@
 {
-  "skill": "create-sprint",
-  "args": "@.planning/plans/active/30.0_community_prompt_quality_signal/ --gated",
-  "invocation": "/create-sprint @.planning/plans/active/30.0_community_prompt_quality_signal/ --gated",
+  "skill": "execute-code-review",
+  "args": ".planning/sprints/active/30.0_community_prompt_quality_signal/ --multi-agent",
+  "invocation": "/execute-code-review .planning/sprints/active/30.0_community_prompt_quality_signal/ --multi-agent",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "6b44ffe4-bbf4-417c-877d-71c33a0cec6c",
-  "timestamp": "2026-07-17T18:49:52.286Z"
+  "session_id": "b45b3c7d-a71b-4763-af16-7ba8369e3f28",
+  "timestamp": "2026-07-17T23:48:54.140Z"
 }
