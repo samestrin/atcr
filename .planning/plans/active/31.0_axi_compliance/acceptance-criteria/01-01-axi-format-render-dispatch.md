@@ -9,7 +9,7 @@
 | Test Framework | `go test` with `testify/assert` + `testify/require`; golden-file byte comparison | Mirrors `TestRender_GoldenFiles` in `internal/report/render_test.go` |
 | Key Dependencies | Go standard library (`bytes`, `strings`, `unicode/utf8`); no third-party TOON library unless `/design-sprint` explicitly adopts one | Plan.md's default stance is hand-rolled formatters over third-party dependencies (see `documentation/toon-format-reference.md`) |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/report/render.go` - modify: add `FormatAXI = "axi"` to the format-enum block (line ~23-28), add a `case FormatAXI:` branch in `Render()`'s switch (line ~57-74) dispatching to a new `renderAXI` function, and add `FormatAXI` to `ValidFormat` and `FormatList`.
 - `cmd/atcr/report.go` - modify: accept `--format axi` (or `--format=axi`) through the existing `report.ValidFormat(format)` check (line 35) with no new flag-parsing branch required, since format validation and dispatch are already format-agnostic.
 - `internal/report/render_test.go` - modify: add `{"axi", FormatAXI, "report.axi", nil}` to the `goldenCases` table (line ~63-73) so `TestRender_GoldenFiles` (line ~80) exercises and byte-pins the new format.

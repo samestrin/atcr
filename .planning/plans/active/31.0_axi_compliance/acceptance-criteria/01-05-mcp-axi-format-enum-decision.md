@@ -9,10 +9,11 @@
 | Test Framework | `go test` with `testify/assert`; JSON Schema validation assertions | Mirrors existing `reportInputSchema` tests |
 | Key Dependencies | `github.com/google/jsonschema-go` (or equivalent) via `jsonschema.For[ReportArgs]` | No new dependency |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/mcp/tools.go` - modify (or explicitly leave unmodified with a documented decision): `descReport` (line 216-218) and `reportInputSchema` (line 224-241) derive the format enum from `report.FormatList()`/`report.Formats()` — if `FormatAXI` is added to `internal/report`'s enum (AC 01-01), it propagates here automatically unless explicitly excluded with a filtered enum list.
 - `internal/mcp/handlers.go` - modify (or confirm unmodified): `handleReport` (line ~370-380) validates `format` via `report.ValidFormat(format)` as defense-in-depth behind the JSON Schema enum; if `FormatAXI` propagates, an MCP client requesting `format: "axi"` must be handled the same way any other format is (findings render to the `content` field of the MCP tool result).
 - `internal/report/render.go` - reference: the `FormatList()`/`Formats()` functions (line 44-53) that both the CLI and MCP consume — this AC does not modify them, only decides/verifies how their output is consumed downstream.
+- `.planning/plans/active/31.0_axi_compliance/documentation/mcp-schema-format-propagation.md` - reference only: documents the `report.FormatList()` → MCP schema enum/description propagation mechanics and the sprint 25.0 (SARIF) CLI/MCP-parity precedent (`.planning/plans/completed/25.0_sarif_output_integration`, AC 01-04) that this include/exclude decision follows.
 
 ## Happy Path Scenarios
 **Scenario 1: `FormatAXI` propagates to the MCP schema enum (if the design decision is "include")**
@@ -39,6 +40,7 @@
 ## Error Conditions
 **Error Scenario 1: Invalid format still rejected identically**
 - **Given** an MCP client requests an unsupported format string (e.g. `"toon"` instead of `"axi"`)
+- **When** the request reaches the `atcr_report` tool
 - **Then** the existing rejection behavior (JSON Schema enum validation, then `handleReport`'s `report.ValidFormat` backstop) is unchanged by this AC's work
 - Error message: `"invalid format: %s; must be one of: %s"` (handlers.go, unchanged format string)
 

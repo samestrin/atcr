@@ -9,7 +9,7 @@
 | Test Framework | N/A (documentation) — verified by manually running (or dry-running) the example against a real `atcr` build | |
 | Key Dependencies | None | Example must reflect Story 1's actual `--axi` payload shape and Story 2's actual exit codes |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `docs/agentic-consumption.md` - create/modify: add a worked example section showing an autonomous sweeper invoking `atcr review --axi` as a subprocess, parsing the payload, and branching on exit code.
 - `docs/ci-integration.md` - reference: existing one-shot pattern (`atcr review --fail-on high`, the `ci-gate.sh` wrapper reference) used as the structural precedent for a runnable example.
 - `docs/findings-format.md` - reference: existing pipe-delimited `atcr-findings/v1` per-source stream example format, used as a style precedent for showing a parsed-payload snippet.

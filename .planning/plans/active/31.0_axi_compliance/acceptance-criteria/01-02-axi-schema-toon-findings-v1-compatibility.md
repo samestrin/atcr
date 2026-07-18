@@ -9,7 +9,7 @@
 | Test Framework | `go test` with `testify/assert`; table-driven field-mapping tests | |
 | Key Dependencies | None beyond the standard library; TOON tabular-array encoding with declared length and pipe delimiter (`documentation/toon-format-reference.md`) | Evaluate but do not require the third-party Go TOON implementation referenced in `documentation/toon-format-reference.md` |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/report/render.go` - modify: the `renderAXI` function (added in AC 01-01) must encode the same field set exposed by `renderJSON`/`atcr-findings/v1` (severity, file:line, problem, fix, category, est_minutes, evidence, reviewers, confidence) so no field is silently dropped from the machine contract.
 - `docs/findings-format.md` - modify (or companion doc create): document the AXI encoding's field-name and delimiter mapping against the existing `atcr-findings/v1` pipe-delimited columns (line 23, 39) so the two "machine format" surfaces are explicitly cross-referenced rather than left to drift independently.
 - `.planning/plans/active/31.0_axi_compliance/documentation/toon-format-reference.md` - reference only: normative source for TOON tabular-array header syntax (`key[N|]{field|name}:`, line 94-98), quoting rules (line 39-45), and escape sequences (line 116-128) that the encoder must implement.
@@ -24,6 +24,11 @@
 - **Given** the TOON spec's alternative-delimiter feature (`key[N|]{field|name}:`, `documentation/toon-format-reference.md` line 33-37, 94-98)
 - **When** the AXI tabular header is emitted
 - **Then** it declares the pipe delimiter (`[N|]{...|...}:`) so the row shape is visually and structurally adjacent to the existing `SEVERITY|FILE:LINE|...` grammar, per the plan's anti-fragmentation risk mitigation (story `Potential Risks` table)
+
+**Scenario 3: axi.md design-tension resolutions are explicitly recorded with the schema**
+- **Given** the schema decision must resolve axi.md Principle 2 (3–4 default fields) against the findings stream's 8–9-column width, and Principle 4 (pre-computed aggregates) against a row-level findings payload (`documentation/axi-design-principles.md`: Principles 2 and 4)
+- **When** the AXI schema is finalized during sprint design
+- **Then** the decision record (sprint design note or schema source comment) explicitly states: (a) the full-width field set is retained because pipe-delimited TOON rows are already token-lean — the Principle 2 deviation justified per the story's Technical Considerations — and (b) Principle 4's aggregate guidance is honored via the array header's declared true total `N` plus run metadata (review id, dir, agent/finding counts) carried in the review-path payload (AC 01-03), rather than a separate aggregation pass
 
 ## Edge Cases
 **Edge Case 1: `verification` block present (VERIFIED confidence, skeptic, notes)**
@@ -70,6 +75,7 @@
 **Story-Specific:**
 - [ ] AXI payload's field set is verified (via test or manual diff) to be a superset of the `atcr-findings/v1` reconciled 9-column contract — no field silently dropped
 - [ ] Pipe delimiter is used for the AXI tabular-array header, matching the `atcr-findings/v1` convergence decision recorded in the story
+- [ ] axi.md Principle 2 (default-field-count) and Principle 4 (pre-computed aggregates) tension resolutions are recorded with the schema decision, per the story's Technical Considerations and `documentation/axi-design-principles.md`
 - [ ] `docs/findings-format.md` (or a sibling doc) cross-references the AXI schema against `atcr-findings/v1` so the two machine-format surfaces do not drift independently
 - [ ] Verification and evidence_exec blocks round-trip into the AXI payload when present
 

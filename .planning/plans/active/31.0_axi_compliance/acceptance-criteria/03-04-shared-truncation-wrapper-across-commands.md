@@ -9,7 +9,7 @@
 | Test Framework | `go test` at both the `internal/report` unit level and `cmd/atcr` integration level | Integration tests exercise the actual command entry points, not just the shared function |
 | Key Dependencies | None new; reuses `internal/report/pagination.go` from AC 03-01 as the single implementation | |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/report/pagination.go` - modify: the single truncation implementation from AC 03-01/03-02/03-03, exported for use by both command entry points (not duplicated)
 - `cmd/atcr/report.go` - modify: `atcr report --axi` command path calls the shared pagination step from `internal/report`
 - `cmd/atcr/review.go` - modify: `atcr review --axi` live-output path calls the same shared pagination step, per Story 1's scope covering both code paths

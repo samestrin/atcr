@@ -32,7 +32,7 @@
 
 ## Success Criteria (SMART Format)
 
-- **Specific:** `docs/agentic-consumption.md` exists, covers all five required topics (invoking `--axi` on `atcr review`/`atcr report`, the reconciled exit-code contract, pagination/truncation detection, stderr/stdout separation, and a worked orchestration example), and `docs/ci-integration.md` contains a cross-reference link to it.
+- **Specific:** `docs/agentic-consumption.md` exists, covers all five required topics (invoking `--axi` on `atcr review`/`atcr report`, the reconciled exit-code contract, pagination/truncation detection including how to retrieve the untruncated payload via `ATCR_AXI_MAX_LINES`, stderr/stdout separation, and a worked orchestration example), and `docs/ci-integration.md` contains a cross-reference link to it.
 - **Measurable:** The doc's exit-code section matches `docs/ci-integration.md`'s exit-semantics table exactly (0/1/2/3, no reintroduction of the epic's rejected internal-error-as-2 scheme); the pagination section names the actual default (500 lines), the actual env var (`ATCR_AXI_MAX_LINES`), and the actual truncation flag (`truncated`) as shipped by Story 3; the worked example is a runnable (or near-runnable) shell/pseudocode snippet showing a subprocess invocation, payload parsing, and exit-code branching.
 - **Achievable:** Purely additive documentation work with no new code paths; all source facts are already established by Stories 1-4's implementations by the time this story is executed.
 - **Relevant:** Directly satisfies the epic's explicit acceptance criterion for an "Agentic Consumption" docs section, and is the deliverable that makes the other four stories' work discoverable and usable by the epic's target audience (agent/orchestration engineers) rather than only visible in code.
@@ -48,7 +48,7 @@
 
 ## Original Criteria Overview
 
-1. `docs/agentic-consumption.md` is created and covers: `--axi` invocation on `atcr review`/`atcr report`, the reconciled exit-code contract (0/1/2/3), pagination/truncation (500-line default, `ATCR_AXI_MAX_LINES`, `truncated` flag), and the stderr-only-diagnostics/stdout-only-payload guarantee.
+1. `docs/agentic-consumption.md` is created and covers: `--axi` invocation on `atcr review`/`atcr report`, the reconciled exit-code contract (0/1/2/3), pagination/truncation (500-line default, `ATCR_AXI_MAX_LINES`, `truncated` flag, and how to retrieve the full untruncated payload), and the stderr-only-diagnostics/stdout-only-payload guarantee.
 2. The doc includes a worked example modeled on the epic's own motivating scenario — an autonomous sweeper invoking `atcr review --axi` as a subprocess, parsing the resulting payload, and branching on exit code.
 3. `docs/ci-integration.md` gains a cross-reference (link or pointer section) to `docs/agentic-consumption.md` for discoverability, without restructuring or duplicating its existing exit-semantics table.
 
@@ -71,4 +71,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/31.0_axi_comp
 ---
 
 **Created:** July 18, 2026 09:03:31AM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Generated

@@ -9,11 +9,11 @@
 | Test Framework | `go test` (standard library `testing`) | Assertions on both the emitted `truncated` field and the TOON array header's declared `N` |
 | Key Dependencies | None new — same TOON/JSON encoding path as Story 1's `FormatAXI` renderer | |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/report/pagination.go` - create: computes and emits the `truncated` boolean alongside the line-cap step from AC 03-01, and preserves the pre-truncation element count for the array header
 - `internal/fanout/status.go` - reference (lines 286-293): naming/semantic precedent for `Truncated bool` / `json:"truncated"` — this AC reuses the exact field name and true/false semantics, not a new flag
 - `internal/report/render.go` - modify: `FormatAXI` computes the TOON array header's `N` from the pre-truncation element count, independent of how many rows are ultimately emitted
-- `documentation/toon-format-reference.md` - reference: TOON's `key[N]{field1,field2}:` header declares the true element count, which composes with `truncated` per this document's "Declared length `N` in every array header" note
+- `.planning/plans/active/31.0_axi_compliance/documentation/toon-format-reference.md` - reference: TOON's `key[N]{field1,field2}:` header declares the true element count, which composes with `truncated` per this document's "Declared length `N` in every array header" note
 
 ## Happy Path Scenarios
 **Scenario 1: Untruncated payload reports `truncated: false`**

@@ -9,7 +9,7 @@
 | Test Framework | N/A (documentation) — verified via manual/CI doc-lint or grep-based consistency check | |
 | Key Dependencies | None | |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `docs/ci-integration.md` - modify: exit-semantics table (lines 11-19) gets an explicit note stating `--axi` reuses this exact 0/1/2/3 contract, and that the epic's originally proposed `2`=internal/syntax-error scheme was considered and rejected in favor of the existing `usageError`/`exitFailure` classification, with reasoning.
 - `cmd/atcr/main.go` - modify: extend the exit-code comment block (currently lines 122-125, immediately above the `exitFailure`/`exitUsage`/`exitAuth` constants) to state that `--axi` mode reuses this contract unchanged, with a one-line cross-reference to `docs/ci-integration.md` and to the rejected `2`=internal-error proposal.
 - `.planning/plans/active/31.0_axi_compliance/documentation/exit-code-cli-mcp-precedent.md` - reference: cited inline in both updated locations as the precedent source for this reconciliation decision (already documents the `atcr verify` cross-validation and the three-contract comparison table).
@@ -24,6 +24,11 @@
 - **Given** a contributor reading the exit-code comment block directly above the `exitFailure`/`exitUsage`/`exitAuth` constants (`main.go:122-130`)
 - **When** they read the comment
 - **Then** they find the same reconciliation statement (AXI reuses this contract, `2`≠internal-error) present at the point in the code future contributors would actually touch when adding exit-code logic
+
+**Scenario 3: Structured-error stream decision (axi.md Principle 6) is documented**
+- **Given** the story's Constraints require an explicit, non-accidental decision — for the `--axi` surface only — on whether structured errors are written to stdout (axi.md Principle 6) or remain on stderr (atcr's existing convention), including the note that errors-on-stdout payloads remain subject to Story 4's escape-free guarantee (`documentation/axi-design-principles.md`: Principle 6; `documentation/exit-code-cli-mcp-precedent.md`: three-contract comparison)
+- **When** `docs/ci-integration.md` is updated per Scenario 1
+- **Then** the same note (or a directly adjacent one) records which stream carries `--axi`-mode structured errors and why, so the choice is visible to orchestration engineers rather than inherited by accident
 
 ## Edge Cases
 **Edge Case 1: Documentation and code comment drift**
@@ -68,6 +73,7 @@
 - [ ] `docs/ci-integration.md` explicitly states the epic's original `2`=internal/syntax-error proposal was considered and rejected, with reasoning
 - [ ] `cmd/atcr/main.go`'s exit-code comment block (lines 122-130 region) contains the equivalent statement at the code site
 - [ ] Both updated locations cross-reference each other and/or `documentation/exit-code-cli-mcp-precedent.md` and `atcr verify`'s exit-code table as precedent
+- [ ] The structured-error stream decision for the `--axi` surface (stdout per axi.md Principle 6 vs. stderr per atcr's existing convention) is explicitly recorded in `docs/ci-integration.md`, per the story's Constraints
 
 **Manual Review:**
 - [ ] Code reviewed and approved

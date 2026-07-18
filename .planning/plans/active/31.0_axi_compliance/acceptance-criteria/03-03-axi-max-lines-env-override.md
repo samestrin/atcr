@@ -9,7 +9,7 @@
 | Test Framework | `go test` with `t.Setenv` for isolated env-var manipulation | Captures `os.Stderr` output to assert exactly-one warning line |
 | Key Dependencies | `strconv.Atoi`, `os.Getenv`, `strings.TrimSpace` (standard library only) | Same idiom as existing `ATCR_*` env parsers |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `cmd/atcr/main.go` - modify: add `axiMaxLinesFromEnv() int` alongside `logLevelFromEnv` (line 288) and `telemetryEnabledFromEnv` (line 306), following their exact read-once-per-run, fail-open structure
 - `cmd/atcr/github.go` - reference (line 66, `envOr`): flag-then-env fallback helper precedent for env-var resolution idiom
 - `internal/report/pagination.go` - modify: accepts the resolved max-lines value from `axiMaxLinesFromEnv()` as the cap parameter (default 500) for the AC 03-01 truncation step
@@ -34,7 +34,7 @@
 **Edge Case 2: Non-numeric value falls open to default with a warning**
 - **Given** `ATCR_AXI_MAX_LINES=notanumber`
 - **When** the cap is resolved
-- **Then** `strconv.Atoi` parsing fails, the cap falls open to 500, exactly one `stderr` warning line is written (e.g. `warning: unrecognized ATCR_AXI_MAX_LINES value "notanumber"; using default 500`), and the run exits 0 (no fatal error)
+- **Then** `strconv.Atoi` parsing fails, the cap falls open to 500, exactly one `stderr` warning line is written (e.g. `warning: unrecognized ATCR_AXI_MAX_LINES value "notanumber"; using default 500`), and the run exits 0 (no fatal error). This fail-open posture is the reconciled decision for the Story-2 overlap: a malformed value is a warning, not a `usageError` (see AC 02-02 Edge Case 1), matching the `telemetryEnabledFromEnv` precedent recorded in `codebase-discovery.json`
 
 **Edge Case 3: Zero or negative value falls open to default with a warning**
 - **Given** `ATCR_AXI_MAX_LINES=0` or `ATCR_AXI_MAX_LINES=-10`

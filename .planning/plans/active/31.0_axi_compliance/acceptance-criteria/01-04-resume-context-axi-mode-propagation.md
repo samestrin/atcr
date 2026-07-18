@@ -9,8 +9,8 @@
 | Test Framework | `go test` with `testify/assert`; cobra command execution | |
 | Key Dependencies | `context` standard library package; existing `log.NewContext`/`telemetry.NewContext` pattern as the precedent to follow for a new (e.g.) `axi.NewContext`/`axi.FromContext` pair | |
 
-## Related Files
-- `cmd/atcr/resume.go` - modify: the duplicate `writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(req.StartedAt))` call at line 195, plus the human `"resuming review %s: %d completed, %d pending..."` line (170) and `"review %s: %d/%d agents succeeded..."` line (188), must all be gated behind the same axi-mode check introduced in AC 01-03 for `review.go` — resume must not drift into a second, unguarded copy of this output logic.
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/resume.go` - modify: the duplicate `writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(req.StartedAt))` call at line 195, plus the human `"resuming review %s: %d completed, %d pending..."` line (170), `"review %s: %d/%d agents succeeded..."` line (188), and the `"reconciled %d finding(s)"` line (259), must all be gated behind the same axi-mode check introduced in AC 01-03 for `review.go` — resume must not drift into a second, unguarded copy of this output logic.
 - `cmd/atcr/main.go` - modify: add the axi-mode value to `PersistentPreRunE`'s context injection (main.go line 230-239) so a single flag parse populates context once and both `review.go` and `resume.go` read it via one accessor, rather than each command re-parsing `--axi` independently.
 - `cmd/atcr/review_summary.go` - reference: `writeReviewSummary` (line 80) is the single shared function both `review.go` (line 436) and `resume.go` (line 195) call — the axi-mode branch belongs here once, not duplicated at each call site.
 
@@ -28,15 +28,18 @@
 ## Edge Cases
 **Edge Case 1: `AllComplete()` short-circuit path**
 - **Given** a resume where all agents already completed (resume.go line 152: `if info.AllComplete()`)
+- **When** `atcr resume --axi` reaches the `AllComplete()` early-return branch
 - **Then** the human line `"All configured agents already completed. Re-running reconciliation..."` (line 153) is also gated by axi mode — this early-return branch must not be missed just because it bypasses the main `writeReviewSummary` call
 
 **Edge Case 2: `--axi` set on `resume` but not on the original `review` invocation (or vice versa)**
 - **Given** a review started without `--axi` and resumed with `--axi` (or the reverse)
+- **When** the resume invocation runs with its own invocation's flag set
 - **Then** each command's output mode is determined independently by its own invocation's flags — axi mode is not persisted into the review's on-disk manifest, so mixing modes across `review`/`resume` invocations is well-defined (each command's own stdout obeys its own flag) rather than producing undefined behavior
 
 ## Error Conditions
 **Error Scenario 1: Empty-union usage error under `--axi`**
 - **Given** `atcr resume --axi` hits the `fanout.ErrEmptyRoster` usage-error path (resume.go line 202-204)
+- **When** the empty-roster usage error is returned
 - **Then** the usage error still surfaces via the existing exit-2 mechanism (stderr), unaffected by axi mode — axi mode governs stdout payload shape only, never the exit-code/stderr diagnostic contract (explicitly out of scope per the story's Constraints section)
 - Error message: unchanged existing wrapped `fanout.ErrEmptyRoster` message
 
@@ -51,7 +54,7 @@
 ## Test Implementation Guidance
 **Test Type:** INTEGRATION (cobra command execution for both `review` and `resume`, asserting identical payload shape)
 **Test Data Requirements:** A fixture review directory with a partially-completed manifest (some agents done, some pending) to drive the `resume` path through `writeReviewSummary`.
-**Mock/Stub Requirements:** Mock/stub `fanout.ExecuteResume` the same way existing resume tests do; assert the axi-mode context value set by `PersistentPreRunE` is correctly read at the `writeReviewSummary` call site without a second flag parse.
+**Mock/Stub Requirements:** Mock/stub `fanout.ExecuteResume` the same way existing resume tests do; assert the value read at the `writeReviewSummary` call site is the axi-mode value set by `PersistentPreRunE` via the shared context accessor, with no second flag parse occurring at the call site.
 
 ## Definition of Done
 **Auto-Verified:**
@@ -63,6 +66,7 @@
 - [ ] `atcr resume --axi` and `atcr review --axi` emit byte-identical payload shapes for equivalent summary data
 - [ ] axi-mode value is propagated via `PersistentPreRunE` context injection, not re-parsed independently in `review.go` and `resume.go`
 - [ ] The `AllComplete()` short-circuit branch in `resume.go` is also axi-gated
+- [ ] The resume-path reconcile-count line (`"reconciled %d finding(s)"`, `cmd/atcr/resume.go` line 259) is also axi-gated
 - [ ] Exit-code/stderr behavior is unchanged by `--axi` (confirmed by an error-path test)
 
 **Manual Review:**

@@ -9,7 +9,7 @@
 | Test Framework | `go test` (standard library `testing`) | Table-driven tests over synthetic multi-line payloads |
 | Key Dependencies | `bufio`/`strings` (line splitting), no third-party dependency added | Consistent with plan.md's "hand-rolled formatters over third-party dependencies" stance |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/report/pagination.go` - create: implements the line-cap wrapping writer/post-processing step (default 500-line cap, deterministic cut point at row index = cap)
 - `internal/report/render.go` - modify: `Render` dispatch wires the pagination step into the `FormatAXI` output path (Story 1's renderer)
 - `cmd/atcr/review.go` - modify: live AXI output path (`atcr review --axi`) applies the same pagination step as the `atcr report --axi` path

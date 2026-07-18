@@ -9,7 +9,7 @@
 | Test Framework | `go test` / `testify` (`assert`, `require`) | Matches existing style in `cmd/atcr/main_test.go` |
 | Key Dependencies | `github.com/spf13/cobra`, standard `errors` package (`errors.As`) | No new dependencies required |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `cmd/atcr/main.go` - modify: no functional change expected to `exitFailure`/`exitUsage`/`exitAuth` constants or `exitCode()` (lines 126-165); AC verifies AXI-mode error paths continue to resolve through this single dispatch function with no `--axi`-specific branch added.
 - `cmd/atcr/review.go` - modify: confirm `--axi` flag parsing/output-rendering error paths wrap errors with the existing `usageError()`/`authError()` helpers (same pattern as existing calls, e.g. `cmd/atcr/review.go:108-123`) rather than returning bare errors that fall through to `exitFailure`.
 - `cmd/atcr/main_test.go` - modify: add/extend exit-code assertions covering `--axi` invocations of `atcr review`, `atcr report`, and `atcr reconcile --fail-on`, following the existing table-driven pattern (e.g. `main_test.go:92-133`).
@@ -63,7 +63,7 @@
 
 ## Security Considerations
 - **Authentication/Authorization:** No change to the auth-error boundary; `--axi` must not create a bypass where an auth failure is misclassified as `exitUsage`/`exitFailure` and silently treated as retryable by an orchestrator.
-- **Input Validation:** `--axi`-mode flag/env-var validation errors must be classified as `usageError` (exit 2), not left to fall through to the generic `exitFailure` (1), consistent with the Potential Risks table in the user story.
+- **Input Validation:** `--axi`-mode flag validation errors must be classified as `usageError` (exit 2), not left to fall through to the generic `exitFailure` (1), consistent with the Potential Risks table in the user story. Exception: `ATCR_AXI_MAX_LINES` is validated fail-open (warning + default 500, exit code unaffected) per AC 03-03 and AC 02-02's reconciled Edge Case 1 — it is not an exit-code event.
 
 ## Test Implementation Guidance
 **Test Type:** UNIT (primary, via `cmd/atcr/main_test.go`) + INTEGRATION (subcommand-level exit-code assertions using the `execute()` test helper already defined at `main_test.go:25-34`)

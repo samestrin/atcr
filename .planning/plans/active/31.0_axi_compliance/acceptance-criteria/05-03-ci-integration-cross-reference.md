@@ -9,7 +9,7 @@
 | Test Framework | N/A (documentation) — verified via manual link-check or a grep-based CI check confirming the link target exists | |
 | Key Dependencies | None | Must land after `docs/agentic-consumption.md` exists (AC 05-01), so the link target is valid |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `docs/ci-integration.md` - modify: add a single additive link/pointer to `docs/agentic-consumption.md`, without restructuring or duplicating the existing exit-semantics table (lines 11-19).
 - `docs/agentic-consumption.md` - reference: the link target created by AC 05-01; this AC depends on that file existing first.
 - `docs/github-action.md` - reference: existing precedent in `docs/ci-integration.md` for how a "see also"-style cross-reference to another doc file is already phrased (`See [github-action.md](github-action.md) for inputs...`), used as the style template for this AC's new link.

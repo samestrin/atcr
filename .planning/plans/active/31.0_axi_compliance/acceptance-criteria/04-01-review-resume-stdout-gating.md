@@ -9,7 +9,7 @@
 | Test Framework | `go test` / `testify` (`assert`, `require`) | Matches existing style in `cmd/atcr/*_test.go` |
 | Key Dependencies | Story 1's AXI-mode flag/command-context propagation mechanism (threaded via `PersistentPreRunE`, same injection point as the root logger/telemetry client) | No new dependency; reuses existing context-injection pattern |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `cmd/atcr/review.go` - modify: gate the human-oriented `cmd.OutOrStdout()` writes at lines 433 (`"review %s: %d/%d agents succeeded (%s)\n"`), 436 (`writeReviewSummary` call), 551 (`"reconciled %d finding(s)\n"`), 573 (`"verified %d finding(s)..."`), 591 (`"debated %d item(s)..."`), and 602 (`orchestrateAutoFix` output writer) behind the AXI-mode value read from command context.
 - `cmd/atcr/resume.go` - modify: gate the human-oriented `cmd.OutOrStdout()` writes at lines 153 (`"All configured agents already completed..."`), 170 (`"resuming review %s: %d completed, %d pending (%s)\n"`), 188 (`"review %s: %d/%d agents succeeded (%s)\n"`), 195 (`writeReviewSummary` call), and 259 (`resumeReconcile`'s `"reconciled %d finding(s)\n"`) behind the same AXI-mode value.
 - `cmd/atcr/review_summary.go` - modify: `writeReviewSummary` (line 80) is shared by both callers (`review.go:436`, `resume.go:195`); apply gating consistently so both invocation paths are covered by a single change rather than two independently-maintained conditionals.
@@ -40,6 +40,7 @@
 
 **Edge Case 2: Interrupted review under `--axi`**
 - **Given** a review or resume is interrupted mid-fan-out (SIGINT/SIGTERM) while `--axi` is active
+- **When** `reportInterrupt` runs on the interrupt path
 - **Then** `reportInterrupt`'s stdout output (if any) is likewise gated — the interrupt-reporting path must not become an unguarded escape hatch that leaks human text under `--axi`
 
 **Edge Case 3: `writeReviewSummary` gated consistently across both callers**

@@ -9,7 +9,7 @@
 | Test Framework | N/A (documentation) — verified via manual/CI doc-lint or grep-based fact-check against shipped flags/env vars/fields | |
 | Key Dependencies | None | Content must trace to Stories 1-4's shipped implementation, not to plan.md draft language |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `docs/agentic-consumption.md` - create: new documentation page covering `--axi` invocation on `atcr review`/`atcr report`, the reconciled exit-code contract, pagination/truncation, and the stderr-only-diagnostics/stdout-only-payload guarantee.
 - `docs/ci-integration.md` - reference: source of truth for the exit-semantics table (lines 11-19); this AC's exit-code section must match it exactly and must not restate it as a competing table.
 - `docs/payload-modes.md` - reference: precedent for structure/tone (Markdown, short prose, fenced examples) and for describing byte-budget/truncation behavior analogous to the pagination section this AC must write.

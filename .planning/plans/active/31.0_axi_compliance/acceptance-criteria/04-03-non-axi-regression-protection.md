@@ -9,7 +9,7 @@
 | Test Framework | `go test` / `testify` (`assert`, `require`) | Reuses/extends existing `cmd/atcr/review_test.go`, `cmd/atcr/resume_test.go` coverage |
 | Key Dependencies | None new — this AC only verifies the pre-existing non-`--axi` contract is undisturbed by AC 04-01's gating changes | |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `cmd/atcr/review.go` - modify (verify, not new behavior): confirm all six gated writes (lines 433, 436, 551, 573, 591, 602) still produce their exact existing text/format when `--axi` is not passed.
 - `cmd/atcr/resume.go` - modify (verify, not new behavior): confirm all five gated writes (lines 153, 170, 188, 195, 259) still produce their exact existing text/format when `--axi` is not passed.
 - `cmd/atcr/review_summary.go` - reference: `writeReviewSummary` (line 80) must retain its exact current output format (`"Total elapsed: %.1fs\n"`, `"Agents: %d/%d succeeded, %d failed, %d timed out\n"`, `"API calls: %d\n"`, `"Findings: %d%s\n"`) for both non-`--axi` callers.
@@ -41,7 +41,7 @@
 **Edge Case 2: Mixed-flag invocation with `--axi` unset but other flags present**
 - **Given** `atcr review --verify --debate` (no `--axi`) is run
 - **When** the review completes
-- **Then** all human-oriented lines (progress, summary, reconcile, verify, debate) are written to stdout exactly as they were before this story, confirming the gating condition correctly defaults to "human mode" when AXI is not requested
+- **Then** all human-oriented lines (progress, summary, reconcile, verify, debate) are written to stdout exactly as they were before this story, confirming the gating condition defaults to "human mode" when AXI is not requested
 
 ## Error Conditions
 **Error Scenario 1: Non-`--axi` all-agents-failed review**

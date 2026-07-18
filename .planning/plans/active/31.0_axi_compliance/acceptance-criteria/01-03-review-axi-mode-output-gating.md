@@ -9,7 +9,7 @@
 | Test Framework | `go test` with `testify/assert`; `cobra` command execution against a captured `bytes.Buffer` stdout | Mirrors existing review-command tests that assert on `cmd.OutOrStdout()` content |
 | Key Dependencies | `github.com/spf13/cobra`; no new dependency | |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `cmd/atcr/review.go` - modify: gate the live human-oriented `cmd.OutOrStdout()` writes at lines 433-434 (`"review %s: %d/%d agents succeeded..."`), 436 (`writeReviewSummary` call), 551 (`"reconciled %d finding(s)"`), 573 (`"verified %d finding(s)..."`), and 591 (`"debated %d item(s)..."`) behind the new `--axi` mode, replacing them with a single token-dense payload write when axi mode is active.
 - `cmd/atcr/review_summary.go` - modify: `writeReviewSummary` (line 80) is the human end-of-review metrics block; either add an axi-aware sibling function or a mode branch so the same `summarySnapshot` data (line 25-33) can render as a TOON/JSON payload instead of the four `fmt.Fprintf` human lines (line 83-87).
 - `internal/report/render.go` - reference: reuses the `FormatAXI` encoder built in AC 01-01/01-02 so the review-summary payload and the `atcr report --axi` payload share one encoding implementation rather than two divergent ones.
@@ -29,19 +29,23 @@
 ## Edge Cases
 **Edge Case 1: All agents fail (exit 1 path)**
 - **Given** every reviewer agent fails during `atcr review --axi`
+- **When** the run completes with all agents failed and the exit-1 path is taken
 - **Then** the axi-mode payload (or its absence, per the exit-code story's stderr-diagnostics contract) still avoids emitting the human `"review %s: %d/%d agents succeeded"` line on stdout — diagnostic detail goes to stderr, consistent with the existing exit-code contract this story explicitly does not alter (see story Constraints: exit-code reconciliation is Story 2's scope, not this AC's)
 
 **Edge Case 2: Graceful interrupt (SIGINT/SIGTERM)**
 - **Given** a running `atcr review --axi` receives an interrupt
+- **When** the interrupt is delivered and the run terminates early via the interrupt path
 - **Then** `reportInterrupt` (review.go line 419) is still invoked, and its output must also honor axi mode — an interrupted run must not fall back to human-formatted text just because it took the interrupt path instead of the normal-completion path
 
 **Edge Case 3: `--auto-fix` terminal path**
 - **Given** `atcr review --axi --auto-fix`
+- **When** the review completes and the auto-fix stage runs
 - **Then** `orchestrateAutoFix` (review.go line 602) — which owns its own stdout handoff — is scoped for axi awareness in this story or explicitly deferred with a follow-up TD note if out of scope; it must not be silently left emitting unguarded human output when `--axi` is set
 
 ## Error Conditions
 **Error Scenario 1: `--axi` combined with an incompatible flag**
 - **Given** a flag combination that is not yet defined as axi-compatible (e.g. `--axi` with an interactive-only quickstart-style flag)
+- **When** the command is invoked with that combination
 - **Then** the command returns a usage error (exit 2) rather than emitting undefined/mixed output
 - Error message: `"--axi is not supported with <flag>"` (exact wording to be finalized during sprint design)
 

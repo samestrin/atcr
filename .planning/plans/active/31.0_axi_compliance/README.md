@@ -7,7 +7,7 @@ This plan implements a first-class `--axi` output mode for `atcr` so autonomous 
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/31.0_axi_compliance/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/31.0_axi_compliance/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/31.0_axi_compliance/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/31.0_axi_compliance/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/31.0_axi_compliance/`
 
 ## Timeline & Milestones
@@ -38,5 +38,6 @@ Primary risks are (1) inadvertently changing the existing, already-documented ex
 - [Plan](plan.md)
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)
+- [Sprint Design](sprint-design.md)

@@ -21,6 +21,8 @@
   - Do not repurpose code `2` for "internal/syntax error" as the epic's literal text proposed; that would break the usage-error meaning CI scripts already depend on.
   - Must not alter the numeric meaning of any existing code (`0`, `1`, `2`, `3`) for non-AXI invocations — this is a documentation/verification story, not a breaking change.
   - `docs/ci-integration.md`'s exit-semantics table is the canonical human-facing reference and must stay in sync with `cmd/atcr/main.go`'s comment block.
+  - The reconciliation must account for the third contract introduced by the epic's own reference source: axi.md Principle 6 (0=success, 1=errors, 2=unknown-flags, structured errors to stdout). Its unknown-flags=2 folds into atcr's existing usage-error=2 (Cobra already fails unknown flags there); gate-failure=1 is kept and framed to agent consumers as the command's defined failure signal (see `documentation/axi-design-principles.md`: Principle 6; `documentation/exit-code-cli-mcp-precedent.md`: three-contract comparison).
+  - Design must explicitly decide and document — for the `--axi` surface only — whether structured errors are written to stdout (axi.md Principle 6) or remain on stderr (atcr's existing convention); the choice must not be inherited by accident (see `documentation/axi-design-principles.md`: Principle 6 reconciliation notes). If errors-on-stdout is adopted, those error payloads remain subject to Story 4's escape-free/clean-stdout guarantee.
 
 ## Story Details
 
@@ -71,4 +73,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/31.0_axi_comp
 ---
 
 **Created:** July 18, 2026 09:03:31AM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Generated

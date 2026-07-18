@@ -9,7 +9,7 @@
 | Test Framework | `go test` / `testify` (`assert`, `require`) + `regexp` for escape-byte matching | No new dependencies |
 | Key Dependencies | `cmd/atcr/models.go`'s `sanitizeDisplay` idiom (line 288-296, `strings.Map` + `unicode.IsControl`) as the pattern precedent, not a shared call site | Reuses the existing sanitization idiom rather than a parallel mechanism |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `cmd/atcr/models_test.go` (or a new `cmd/atcr/axi_escape_test.go`) - create/modify: add a pinning test that asserts captured `--axi` stdout contains no bytes matching an ANSI/OSC escape pattern (`\x1b\[` for CSI, `\x1b\]` for OSC), following the existing `TestDriftLine_StripsControlChars` precedent.
 - `cmd/atcr/quickstart.go` - reference (not modified): `osc8()` (line 456-461) is the known counterexample proving `atcr` can emit raw OSC-8 escapes (`"\x1b]8;;" + url + "\x1b\\" + url + "\x1b]8;;\x1b\\"`) on an interactive path (`quickstart`, invoked from line 194); the pinning test's regex must be shaped to catch this exact byte pattern as a regression guard, even though `osc8()` itself is never called from `atcr review`/`atcr resume`.
 - `cmd/atcr/review.go` - reference: the AXI-payload write path this test exercises (post-Story-1 gating from AC 04-01).
