@@ -31,10 +31,16 @@ const AXIMaxLinesDefault = 500
 // never returns an error and never changes the exit code (AC 03-01 Error
 // Scenario 1); the no-error contract is enforced by the signature itself.
 //
-// maxLines is expected to be >= 1 (the caller's env resolver fails open to
-// AXIMaxLinesDefault for any non-positive value, AC 03-03); PaginateAXI does not
-// re-validate it.
+// maxLines should be >= 1; a non-positive value is nonsensical as a cap. Rather
+// than trust the caller (PaginateAXI is exported and could be reached directly),
+// it clamps any maxLines < 1 to AXIMaxLinesDefault — defense in depth mirroring
+// the cmd-layer env resolver's fail-open (AC 03-03). This keeps the never-error /
+// never-panic contract total for ALL inputs and guarantees the header line
+// (line 1, carrying the true N) is never dropped (AC 03-02).
 func PaginateAXI(rendered []byte, maxLines int) (out []byte, truncated bool, total int) {
+	if maxLines < 1 {
+		maxLines = AXIMaxLinesDefault
+	}
 	// SplitAfter keeps the terminating \n on each piece, so re-joining is exact
 	// and the byte-for-byte passthrough below is guaranteed. renderAXI always
 	// \n-terminates, leaving a trailing empty segment we drop.

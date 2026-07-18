@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -98,6 +99,53 @@ func TestPaginateAXI_EmptyPayloadNoOp(t *testing.T) {
 	assert.False(t, truncated, "empty payload must not truncate")
 	assert.Equal(t, in, out, "empty payload passes through byte-identical")
 	assert.Equal(t, 0, total, "empty payload has zero true elements")
+}
+
+// TestPaginateAXI_NonPositiveMaxLinesClampsToDefault covers the defensive
+// contract (3.2.A adversarial): a non-positive cap must never panic or drop the
+// header — it clamps to AXIMaxLinesDefault (fail-open, mirroring AC 03-03).
+func TestPaginateAXI_NonPositiveMaxLinesClampsToDefault(t *testing.T) {
+	in := synthAXI(1199) // 1200 physical lines, over the default cap
+	for _, cap := range []int{0, -1, -1000} {
+		t.Run(fmt.Sprintf("cap=%d", cap), func(t *testing.T) {
+			require.NotPanics(t, func() {
+				out, truncated, total := PaginateAXI(in, cap)
+				assert.True(t, truncated, "over-default payload truncates under the clamped default")
+				assert.Equal(t, AXIMaxLinesDefault, physLines(out), "clamped to the default cap")
+				assert.Equal(t, 1199, total, "true total preserved regardless of cap")
+				assert.True(t, strings.HasPrefix(string(out), "findings[1199|]{"), "header line never dropped")
+			})
+		})
+	}
+	// A small payload with a non-positive cap must still pass through untouched.
+	small := synthAXI(3)
+	out, truncated, _ := PaginateAXI(small, 0)
+	assert.False(t, truncated)
+	assert.Equal(t, small, out, "under-default payload is byte-identical even with a non-positive cap")
+}
+
+// TestRenderAXIPaginated_EmitsTruncatedFlag covers the shared CLI emission step
+// (3.2.A adversarial): the `truncated: <bool>` closing line is appended in every
+// payload, false when under the cap and true when the content was capped. The
+// full AC 03-02 header-N contract is pinned in the 03-02 suite (task 3.4).
+func TestRenderAXIPaginated_EmitsTruncatedFlag(t *testing.T) {
+	under := sample() // 2 findings, well under any cap
+	var b strings.Builder
+	require.NoError(t, RenderAXIPaginated(&b, under, AXIMaxLinesDefault))
+	assert.True(t, strings.HasSuffix(b.String(), "truncated: false\n"), "under-cap payload ends with truncated: false")
+	assert.Contains(t, b.String(), "findings[2|]{", "findings payload precedes the flag")
+
+	// Over-cap: many findings with a tiny cap forces truncation → truncated: true.
+	many := make([]reconcile.JSONFinding, 50)
+	for i := range many {
+		many[i] = reconcile.JSONFinding{Severity: "LOW", File: "a.go", Line: i, Problem: "p", Confidence: "LOW"}
+	}
+	var b2 strings.Builder
+	require.NoError(t, RenderAXIPaginated(&b2, many, 10))
+	assert.True(t, strings.HasSuffix(b2.String(), "truncated: true\n"), "over-cap payload ends with truncated: true")
+	// The content (excluding the trailing flag line) is capped to exactly maxLines.
+	content := strings.TrimSuffix(b2.String(), "truncated: true\n")
+	assert.Equal(t, 10, physLines([]byte(content)), "content capped to exactly maxLines, flag is the closing structure")
 }
 
 // TestPaginateAXI_NeverErrorsRegardlessOfSize is AC 03-01 Error Scenario 1: the
