@@ -982,17 +982,26 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    2. Improve code and tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(cmd): finalize axi stdout gating"`
    **Duration:** 30min
 
-### 4.4 [ ] **[Escape-Sequence Pinning Test - RED](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+### 4.4 [x] **[Escape-Sequence Pinning Test - RED](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
    1. Analyze [AC 04-02](plan/acceptance-criteria/04-02-escape-sequence-pinning-test.md); identify testable units: zero `\x1b[`/`\x1b]` in captured `--axi` stdout (review + resume), positive-control detection of `osc8()`'s exact byte pattern, crafted-input finding-field escape-injection case
    2. Write the pinning test in the style of `TestDriftLine_StripsControlChars`/`TestRenderPersonaSearch_StripsControlChars`, including the `osc8()` fixture as a known-bad positive control
    3. Verify tests fail correctly (test doesn't yet exist)
    **Files:** `cmd/atcr/axi_escape_test.go` (new) | **Duration:** 2h
 
-### 4.5 [ ] **[Escape-Sequence Pinning Test - GREEN](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+### 4.5 [x] **[Escape-Sequence Pinning Test - GREEN](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+   **Confirm (no production change):** Implemented the escape-detection helper
+   (`axiEscapePattern` regex over CSI `\x1b[` + OSC `\x1b]`, `findEscapeSequence`,
+   `requireNoEscapeSequence` with a byte-offset diagnostic) in the new
+   `cmd/atcr/axi_escape_test.go` and wired it against captured `--axi` stdout for both
+   review and resume. All pass on arrival — the TOON payload is escape-free by
+   construction (toonEscape drops raw control bytes), so this is a regression
+   backstop, no production change (as the AC anticipated). The osc8() positive
+   control proves the detector genuinely fails on a real escape. Element committed at
+   4.6 (single adversarial-reviewed commit, mirroring element 1).
    Implement the escape-detection helper (regex over `\x1b\[`/`\x1b\]`) and wire the pinning test to run against captured `--axi` stdout for both review and resume paths. Since the structurally-escape-free TOON/JSON payload (Phase 1) is the primary guarantee, this test acts as a regression backstop — no production code change expected unless the pinning test surfaces a real gap. T1 after each change, verify all pass (T2), COMMIT.
    **Files:** `cmd/atcr/axi_escape_test.go` | **Duration:** 2h
 
-### 4.5.A [ ] **[Escape-Sequence Pinning Test - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+### 4.5.A [x] **[Escape-Sequence Pinning Test - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
    **Changed Files:** `cmd/atcr/axi_escape_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 4.5's implementation. Do NOT review inline.
@@ -1011,18 +1020,25 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (run 2026-07-18):** Regex correct + non-tautological, osc8
+   positive control matches at offset 0, byte-offset slice cannot panic. No CRITICAL/HIGH.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | axi_escape_test.go:29 | Detector matched only 7-bit ESC CSI (`\x1b[`)/OSC (`\x1b]`), but the file header claims "NO ANSI/OSC escape sequence" — misses 8-bit C1 introducers (`\x9b` CSI, `\x9d` OSC) and bare-ESC forms that `renderAXI`'s `toonEscape`→`unicode.IsControl` actually strips (0x80-0x9f). A regression bypassing toonEscape and leaking a raw `\x9b`/`\x9d` would pass green. | Broaden the pattern to any ESC + C1 range; add a `\x9b`/`\x9d` positive control. |
+   | LOW | axi_escape_test.go:100-101 | Crafted-field "surviving text" asserts (`Contains "RED"/"alert"`) pass whether or not the ESC was stripped (the residue `[31mRED[0m` survives either way) → no signal about the strip. | Assert the residual-but-safe form (`Contains "[31mRED"`) to distinguish "ESC stripped, text kept". |
+   | LOW | axi_escape_test.go:113-114 | Review escape scan coupled to `--fail-on high`/exit-1 + a live-mock finding; an unrelated mock change breaks the escape-pinning test. | Decouple: run plain `review --axi` (exit 0) and scan independent of the exit code. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 4.6, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH → **Adversarial review passed.** All three are
+   cheap, strengthen the backstop, and keep every test green — the MEDIUM makes the
+   test file's own header comment overclaim (per the 1.5.A/2.14.A resolve-not-defer
+   precedent), so all THREE are **RESOLVED in 4.6**, not deferred: (1) broaden
+   `axiEscapePattern` to any ESC + C1 range (0x80-0x9f), keeping CSI/OSC covered, and
+   add a C1 (`\x9b`/`\x9d`) positive control; (2) assert `Contains "[31mRED"` proving
+   the ESC byte specifically was stripped; (3) decouple the review scan to a plain
+   `review --axi` (exit 0). Newlines/tabs (C0 whitespace the TOON payload legitimately
+   uses as row separators) are NOT in the broadened set, so no false positive.
 
-### 4.6 [ ] **[Escape-Sequence Pinning Test - REFACTOR](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
+### 4.6 [x] **[Escape-Sequence Pinning Test - REFACTOR](plan/user-stories/04-axi-stderr-isolation-and-escape-sequence-guarantee.md)**
    1. Fix CRITICAL/HIGH issues from 4.5.A (if any)
    2. Improve tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(cmd): tighten escape-sequence pinning test"`
    **Duration:** 20min
