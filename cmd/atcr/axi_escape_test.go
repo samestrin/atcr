@@ -26,11 +26,14 @@ import (
 // (U+0080–U+009F), which include the single-byte CSI (U+009B) and OSC (U+009D)
 // forms a terminal honors identically. This mirrors exactly what renderAXI's
 // toonEscape strips (unicode.IsControl covers 0x00–0x1f and 0x7f–0x9f), so a
-// regression that bypassed toonEscape and leaked EITHER a raw ESC OR a raw C1 byte
-// is caught — not just the two 7-bit CSI/OSC forms the AC names as its baseline
-// (AC 04-02 Edge Case 2). The C0 whitespace controls the TOON payload legitimately
-// uses as structure — newline row separators (\n), tabs, CR — are deliberately NOT
-// in this set, so a well-formed payload never false-positives.
+// regression that bypassed toonEscape and leaked EITHER an ESC OR a C1 control
+// introducer is caught — not just the two 7-bit CSI/OSC forms the AC names as its
+// baseline (AC 04-02 Edge Case 2). The C1 arm matches DECODED runes (U+0080–U+009F),
+// which is the only form the payload can carry: renderAXI re-encodes every field via
+// WriteRune, so a raw invalid-UTF-8 C1 byte cannot survive onto stdout in the first
+// place. The C0 whitespace controls the TOON payload legitimately uses as structure
+// — newline row separators (\n), tabs, CR — are deliberately NOT in this set, so a
+// well-formed payload never false-positives.
 var axiEscapePattern = regexp.MustCompile(`\x1b|[\x{80}-\x{9f}]`)
 
 // findEscapeSequence returns the byte offset of the first ANSI/OSC escape
@@ -118,6 +121,28 @@ func TestAXIRender_CraftedFindingFieldEscapeStripped(t *testing.T) {
 	// passed through intact" — a signal a bare Contains("RED") would not give.
 	assert.Contains(t, out, "[31mRED", "the ESC byte is stripped but the surrounding text survives")
 	assert.Contains(t, out, "alert")
+}
+
+// TestAXIRenderReviewSummary_CraftedFieldEscapeStripped is the crafted-input proof
+// for the path `review --axi` / `resume --axi` ACTUALLY emit to stdout: the
+// RenderReviewSummaryAXI run-summary payload (not the findings table
+// TestAXIRender_CraftedFindingFieldEscapeStripped covers). Its free-text ID/Dir
+// fields flow onto stdout, so a crafted escape smuggled into them must be stripped
+// by the same shared toonQuote encoder — closing the gap between the findings-path
+// proof and the summary path (AC 04-02 Edge Case 1 on the emitted path).
+func TestAXIRenderReviewSummary_CraftedFieldEscapeStripped(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, report.RenderReviewSummaryAXI(&buf, report.ReviewSummaryAXI{
+		ID:              "2026-06-18_\x1b[31mevil\x1b[0m",       // crafted CSI in the review id
+		Dir:             ".atcr/reviews/\x1b]8;;file://x\x1b\\", // crafted OSC in the dir
+		AgentsSucceeded: 1,
+		AgentsTotal:     1,
+	}))
+	out := buf.String()
+
+	requireNoEscapeSequence(t, out, "RenderReviewSummaryAXI crafted-field payload")
+	// The surrounding legitimate text of the id survives the ESC strip.
+	assert.Contains(t, out, "[31mevil", "the ESC byte is stripped but the id text survives")
 }
 
 // TestAXIStdout_NoEscapeSequences_Review is AC 04-02 Scenario 1: a real

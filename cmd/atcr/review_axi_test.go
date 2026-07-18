@@ -20,12 +20,20 @@ import (
 // --axi clean-stdout guarantee (AC 01-03 Story-Specific DoD).
 func assertNoANSIOrMarkdown(t *testing.T, s string) {
 	t.Helper()
-	assert.NotContains(t, s, "\x1b[", "axi stdout must carry zero ANSI CSI escapes")
-	assert.NotContains(t, s, "\x1b]", "axi stdout must carry zero ANSI OSC escapes")
+	// Route the escape check through the shared detector (bare ESC + C1 introducers)
+	// so this helper enforces the full guarantee its name claims, not just the two
+	// 7-bit CSI/OSC substrings a narrower check would (Phase 4 gate LOW).
+	if off, found := findEscapeSequence(s); found {
+		assert.Failf(t, "axi stdout carries an escape introducer",
+			"first at byte offset %d: %q", off, s[off:min(off+8, len(s))])
+	}
 	assert.NotContains(t, s, "|---", "axi stdout must carry no Markdown table rule")
 	for _, ln := range strings.Split(s, "\n") {
-		assert.False(t, strings.HasPrefix(ln, "# ") || strings.HasPrefix(ln, "## "),
-			"axi stdout must carry no Markdown heading, got line %q", ln)
+		// Any leading run of '#' followed by a space is a Markdown heading (#, ##,
+		// ###, …) — broader than the old #/## check (Phase 4 gate LOW).
+		if h := strings.TrimLeft(ln, "#"); len(h) < len(ln) && strings.HasPrefix(h, " ") {
+			assert.Failf(t, "axi stdout must carry no Markdown heading", "got line %q", ln)
+		}
 	}
 }
 
