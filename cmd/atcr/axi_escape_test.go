@@ -82,8 +82,8 @@ func TestAXIEscapeDetector_FlagsBothCSIAndOSC(t *testing.T) {
 // could leak past a detector scoped to only `\x1b[`/`\x1b]` (4.5.A MEDIUM). This is
 // the C1 analogue of the osc8() positive control.
 func TestAXIEscapeDetector_FlagsC1Introducers(t *testing.T) {
-	_, csi8 := findEscapeSequence("data 31m x")   // 8-bit CSI (C1)
-	_, osc8b := findEscapeSequence("data 8;;u x") // 8-bit OSC (C1)
+	_, csi8 := findEscapeSequence("data \u009b31m x")   // 8-bit CSI (C1)
+	_, osc8b := findEscapeSequence("data \u009d8;;u x") // 8-bit OSC (C1)
 	assert.True(t, csi8, "the 8-bit C1 CSI introducer (U+009B) must be detected")
 	assert.True(t, osc8b, "the 8-bit C1 OSC introducer (U+009D) must be detected")
 }

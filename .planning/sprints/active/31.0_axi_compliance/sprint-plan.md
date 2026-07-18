@@ -1101,9 +1101,19 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    2. Improve tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(cmd): non-axi regression coverage cleanup"`
    **Duration:** 20min
 
-### 4.10 [ ] **Phase 4 - DoD Validation**
+### 4.10 [x] **Phase 4 - DoD Validation**
    Run DoD Verification Checklist: T3 (`go test ./cmd/atcr/...`), coverage ≥80% for touched files, `golangci-lint run`, `go build ./...`, docs (none required this phase).
    Report using the DoD Report Template.
+
+   **Story-4 DoD Complete**
+   - Auto: 5/5 — T3 `go test ./cmd/atcr/...` PASS; `go build ./...` OK; `go vet ./...` clean;
+     `golangci-lint run ./cmd/atcr/...` 0 issues (fixed ST1018: C1 controls now ``/``
+     escapes); coverage 86.9% (≥80% baseline).
+   - Story-Specific: AC 04-01 (all 11 write sites gated, confirmed + tested; interrupt stderr-only),
+     AC 04-02 (escape pinning test with osc8 + C1 positive controls, crafted-field strip, review/resume
+     scans), AC 04-03 (non-axi baseline unchanged; ordered-fragment guard) — all met.
+   - Docs: none required this phase (Phase 5 owns docs).
+   - Manual Review: [ ] Code reviewed (→ /execute-code-review).
 
 ### 4.11 [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 4: `cmd/atcr/review.go`, `cmd/atcr/resume.go`, `cmd/atcr/axi_escape_test.go` (new), plus other `_test.go` files touched
