@@ -481,6 +481,29 @@ func TestPreview_UnrecognizedEnvValueWarnsViaCmdStderr(t *testing.T) {
 		"a misspelled opt-in must warn on the command's stderr on the --preview path")
 }
 
+// TestPreview_ReadErrorFailsOpen proves the preview fails OPEN on an unreadable
+// local-debt store — matching the send path's silent-noop posture, but with a
+// stderr note so the user inspecting the preview is informed: exit 0 (not the
+// former usage-error exit 2), the empty payload rendered, and a note on the
+// command's stderr mentioning the read failure. The two paths can never diverge
+// silently on a corrupt store.
+func TestPreview_ReadErrorFailsOpen(t *testing.T) {
+	isolate(t)
+	// A regular file where the debt directory belongs makes ReadDir fail with a
+	// non-ENOENT error (ENOTDIR) — deterministic, no permission bits involved.
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "debt"), []byte("not a dir"), 0o644))
+
+	out, errOut, code := runRootPreview(t, "review", "--preview")
+	require.Equal(t, 0, code, "a local-debt read failure must fail open on the preview path, not exit 2")
+	jsonPart, marker := splitPreview(out)
+	assert.Equal(t, "[]", strings.TrimSpace(jsonPart),
+		"the preview must render the empty payload array on read failure, exactly as an empty store does (not null)")
+	assert.Contains(t, marker, "nothing was transmitted")
+	assert.Contains(t, errOut, "reading local debt store",
+		"the read failure must be noted on the command's stderr so the two paths never diverge silently")
+}
+
 // TestPreview_RegisteredOnReconcile proves the flag is hosted on `atcr reconcile`
 // too, and that its short-circuit fires before resolveReviewDir (which would
 // otherwise error with no review present) — the two-host-command contract.
