@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,6 +25,37 @@ func TestLockWaitAtLeastStale(t *testing.T) {
 	if lockWait < lockStale {
 		t.Fatalf("lockWait (%s) must be >= lockStale (%s): a waiter has to be able to wait until it could declare a lock stale", lockWait, lockStale)
 	}
+}
+
+// TestWithLockTimeoutErrorRedactsPath locks the SECURITY contract (store.go:26-31):
+// a surfaced error must not embed the absolute store path, which can carry a
+// username segment. The lock timeout error interpolated the full lockDir with %s;
+// it must be reduced to the base name like every other store path error
+// (basePathErr).
+func TestWithLockTimeoutErrorRedactsPath(t *testing.T) {
+	// Fast timeout: shrink only lockWait so a held, NON-stale lock forces a timeout
+	// (lockStale stays at its large default so the fresh owner is never judged stale).
+	oldWait := lockWait
+	lockWait = 50 * time.Millisecond
+	defer func() { lockWait = oldWait }()
+
+	// An absolute dir with a username-shaped segment the error must never leak.
+	dir := filepath.Join(t.TempDir(), "Users", "secretuser", "project", ".atcr", "debt")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	lockDir := filepath.Join(dir, lockSubdir)
+	require.NoError(t, os.MkdirAll(lockDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(lockDir, lockOwner),
+		[]byte(fmt.Sprintf("session=live|epoch=%d", time.Now().Unix())), 0o600))
+
+	err := withLock(dir, "waiter", func() error { return nil })
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timeout acquiring localdebt lock")
+	assert.NotContains(t, err.Error(), "secretuser",
+		"timeout error must not leak the username-bearing absolute path")
+	assert.NotContains(t, err.Error(), lockDir,
+		"timeout error must not contain the full absolute lock path")
+	assert.False(t, strings.Contains(err.Error(), string(filepath.Separator)+"Users"+string(filepath.Separator)),
+		"timeout error must carry only the base name, not path segments")
 }
 
 // TestWithLockReclaimsStaleLockWithoutOverlap stresses the stale-reclaim path: many
