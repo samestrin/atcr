@@ -114,16 +114,22 @@ func runReport(cmd *cobra.Command, args []string) error {
 		if err := report.RenderMarkdownWithContested(&buf, findings, df, cr); err != nil {
 			return usageError(err)
 		}
+	case format == report.FormatAXI:
+		// AXI routes through the single shared pagination wrapper (AC 03-04): the
+		// same internal/report step atcr review --axi's findings path would use, so
+		// neither command reimplements truncation. The line cap resolves once from
+		// ATCR_AXI_MAX_LINES (AC 03-03); RenderAXIPaginated caps the payload, preserves
+		// the header's true N, and emits the truncated flag (AC 03-01/03-02).
+		if err := report.RenderAXIPaginated(&buf, findings, axiMaxLinesFromEnv()); err != nil {
+			// An AXI serialization fault is an internal, non-operator-fixable rendering
+			// fault → exit 1 (generic failure), left unwrapped so it defaults to
+			// exitFailure (AC 02-02 Error Scenario 3, which names `atcr report --axi`).
+			return fmt.Errorf("axi output rendering failed: %w", err)
+		}
 	default:
 		if err := report.Render(&buf, findings, format); err != nil {
-			// An AXI serialization fault is an internal, non-operator-fixable
-			// rendering fault → exit 1 (generic failure), left unwrapped so it defaults
-			// to exitFailure (AC 02-02 Error Scenario 3, which names `atcr report
-			// --axi` specifically). The other formats keep their pre-existing
-			// usage-error classification (out of this story's scope).
-			if format == report.FormatAXI {
-				return fmt.Errorf("axi output rendering failed: %w", err)
-			}
+			// The non-AXI formats keep their pre-existing usage-error classification
+			// (out of this story's scope).
 			return usageError(err)
 		}
 	}

@@ -151,3 +151,28 @@ func TestReviewCmd_AXIAutoFixResumeIsUsageError(t *testing.T) {
 	require.Equal(t, 2, code, "--axi + --auto-fix must be a usage error on the resume path too")
 	require.Contains(t, out, "--axi and --auto-fix are mutually exclusive")
 }
+
+// TestReviewCmd_AXIRunSummaryUnaffectedByMaxLines is the review side of AC 03-04
+// Edge Case 2. The review --axi run-summary is a single-row payload, out of
+// pagination scope (Phase 2 gate: pagination wraps the findings path / renderAXI /
+// report --axi, NOT the single-row run summary; sprint-plan.md Phase 2 gate). A
+// tiny ATCR_AXI_MAX_LINES must therefore NOT truncate the run-summary — proving
+// review.go neither reimplements nor misapplies the findings cap (there is one
+// shared truncation implementation, in internal/report/pagination.go, and review
+// does not carry a second one). Findings truncation is exercised on the report
+// --axi path (report_test.go).
+func TestReviewCmd_AXIRunSummaryUnaffectedByMaxLines(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	t.Setenv("ATCR_AXI_MAX_LINES", "1")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	code, stdout, _ := execCmdSplit(t, "review", "--axi", "--base", "HEAD^")
+	require.Equal(t, 0, code)
+	// The full run-summary (header + data row) survives despite cap=1: it is not a
+	// paginated findings list.
+	assert.Contains(t, stdout, "review_summary", "run-summary header present under cap=1")
+	assert.Contains(t, stdout, "agents_succeeded", "run-summary row present under cap=1 (not capped away)")
+}

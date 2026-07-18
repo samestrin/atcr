@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -11,6 +13,64 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// manyFindingsJSON marshals n minimal reconciled findings so a report --axi run
+// renders more than a chosen line cap.
+func manyFindingsJSON(t *testing.T, n int) string {
+	t.Helper()
+	fs := make([]reconcile.JSONFinding, n)
+	for i := range fs {
+		fs[i] = reconcile.JSONFinding{Severity: "LOW", File: "a.go", Line: i + 1,
+			Problem: "p", Category: "style", Confidence: "LOW"}
+	}
+	data, err := json.Marshal(fs)
+	require.NoError(t, err)
+	return string(data)
+}
+
+// TestReportCmd_AXITruncatesAtEnvCap is AC 03-04 Scenario 2 / AC 03-01: report
+// --axi honors ATCR_AXI_MAX_LINES, capping the payload content while the header N
+// preserves the true total and the truncated flag is emitted.
+func TestReportCmd_AXITruncatesAtEnvCap(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "r", manyFindingsJSON(t, 20))
+	t.Setenv("ATCR_AXI_MAX_LINES", "5")
+	code, out := execCmdCapture(t, "report", "--format", "axi", "r")
+	require.Equal(t, 0, code)
+	assert.Contains(t, out, "truncated: true", "over-cap report --axi flags truncation")
+	assert.Contains(t, out, "findings[20|]{", "header declares the true total (20), not the capped row count")
+	content := strings.TrimSuffix(out, "truncated: true\n")
+	assert.Equal(t, 5, strings.Count(content, "\n"), "content capped to exactly the env cap (5 physical lines)")
+}
+
+// TestReportCmd_AXIUnderCapNotTruncated is AC 03-01 Scenario 1 at the command
+// level: an under-cap report --axi emits truncated: false with the full row set.
+func TestReportCmd_AXIUnderCapNotTruncated(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "r", manyFindingsJSON(t, 20))
+	code, out := execCmdCapture(t, "report", "--format", "axi", "r")
+	require.Equal(t, 0, code)
+	assert.Contains(t, out, "truncated: false", "under the default cap, report --axi is not truncated")
+	assert.Contains(t, out, "findings[20|]{", "header declares the true total")
+}
+
+// TestReportCmd_AXIUsesSharedPaginationWrapper is AC 03-04 Error Scenario 1 /
+// Edge Case 2: report --axi's output must be byte-identical to the shared
+// report.RenderAXIPaginated for the same findings + cap, proving it routes
+// through the single shared step rather than a private truncation copy.
+func TestReportCmd_AXIUsesSharedPaginationWrapper(t *testing.T) {
+	isolate(t)
+	js := manyFindingsJSON(t, 12)
+	fixtureReconciled(t, "r", js)
+	t.Setenv("ATCR_AXI_MAX_LINES", "6")
+	_, cmdOut := execCmdCapture(t, "report", "--format", "axi", "r")
+
+	var fs []reconcile.JSONFinding
+	require.NoError(t, json.Unmarshal([]byte(js), &fs))
+	var want bytes.Buffer
+	require.NoError(t, report.RenderAXIPaginated(&want, fs, 6))
+	assert.Equal(t, want.String(), cmdOut, "report --axi must match the shared wrapper byte-for-byte (no private truncation logic)")
+}
 
 // fixtureReconciled writes a reconciled/findings.json under ./.atcr/reviews/<id>
 // and a .atcr/latest pointer.
