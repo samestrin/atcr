@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/log"
@@ -146,45 +147,81 @@ func renderQualitySignalPreview(w io.Writer, payload []telemetry.QualitySignal) 
 // buildQualitySignalPayload; only tests reassign it.
 var buildQualitySignalPayloadFn = buildQualitySignalPayload
 
+// qualitySignalInFlight tracks the detached build+send goroutines spawned by
+// maybeSendQualitySignal so tests can drain them deterministically BEFORE
+// waiting on the telemetry client: the client's WaitGroup only observes a send
+// once the goroutine dispatches it, so draining the client alone would race the
+// in-flight build. Production never waits — the send stays fire-and-forget.
+var qualitySignalInFlight sync.WaitGroup
+
+// waitQualitySignalInFlight blocks until every detached quality-signal
+// build+send goroutine has run to completion (dispatched or short-circuited).
+// Test-only drain; production callers fire-and-forget and never call it.
+func waitQualitySignalInFlight() { qualitySignalInFlight.Wait() }
+
 // maybeSendQualitySignal is the gated, fail-open send call site for the community
 // prompt quality signal, invoked at review/reconcile completion adjacent to the
-// passive-ping emission. It resolves the independent opt-in gate FRESH per run and
-// short-circuits — before any payload construction, goroutine spawn, or client
-// work — when disabled, so a non-opted-in run allocates nothing and transmits
-// nothing (AC 06-01). When enabled it builds the payload via the SAME constructor
-// --preview renders and, when the aggregation is non-empty, hands it to the
-// fail-open transport (task 5.5). A zero-row aggregation transmits nothing (AC
-// 06-02 EC1). Every failure — a debt-store read error, a marshal error, a
+// passive-ping emission. It resolves the independent opt-in gate FRESH per run
+// and SYNCHRONOUSLY — short-circuiting before any payload construction,
+// goroutine spawn, or client work when disabled — so a non-opted-in run
+// allocates nothing and transmits nothing (AC 06-01). When enabled, the WHOLE
+// quality-signal cost — the O(n) debt-store ReadAll + aggregation AND the
+// transport — runs on a detached goroutine, matching the passive ping's
+// fully-async posture: the payload is built via the SAME constructor --preview
+// renders and, when the aggregation is non-empty, handed to the fail-open
+// transport (task 5.5), so the store read never adds wall-clock latency to the
+// tail of an opted-in run. A zero-row aggregation transmits nothing (AC 06-02
+// EC1). Every failure — a debt-store read error, a marshal error, a
 // non-2xx/DNS/timeout, or a panic inside the send path — is swallowed here or by
 // the transport: the send never changes the run's exit code or stdout (AC 06-03).
+//
+// DRAIN NOTE: the detached goroutine registers with the telemetry client's
+// WaitGroup only when it dispatches, so a process exiting in the narrow window
+// between spawn and dispatch (main's bounded drainTelemetry observes an empty
+// WaitGroup) can strand a just-spawned build — acceptable under the send's
+// best-effort, fail-open posture (AC 06-03); closing it fully would need a
+// builder-closure API on the telemetry client.
 func maybeSendQualitySignal(ctx context.Context) {
-	// Fail-open absolute (AC 06-03): a panic anywhere on this best-effort path — the
-	// synchronous aggregation build or the transport dispatch — is recovered here so
-	// it can never alter the review/reconcile run's exit code or stdout. The transport
-	// goroutine has its own recover; this guards the synchronous portion at the inline
-	// call site, which is not itself deferred on the reconcile path.
+	// Fail-open absolute (AC 06-03): a panic anywhere on this best-effort path —
+	// the gate resolution or the goroutine spawn — is recovered here so it can
+	// never alter the review/reconcile run's exit code or stdout. The detached
+	// goroutine and the transport each have their own recover; this guards the
+	// synchronous portion at the inline call site, which is not itself deferred
+	// on the reconcile path.
 	defer func() {
 		if r := recover(); r != nil {
 			log.FromContext(ctx).Debug("quality-signal: recovered from panic", "value", r)
 		}
 	}()
-	// Gate FIRST: a disabled opt-in short-circuits before any payload is built,
-	// proving the privacy line at the constructor, not merely at the network seam.
+	// Gate FIRST and synchronously: a disabled opt-in short-circuits before any
+	// payload is built or goroutine spawned, proving the privacy line at the
+	// constructor, not merely at the network seam.
 	if !qualitySignalGate() {
 		return
 	}
-	payload, err := buildQualitySignalPayloadFn(".")
-	if err != nil {
-		return // fail-open: a read error never surfaces on the send path
-	}
-	if len(payload) == 0 {
-		return // nothing to transmit — no empty/partial body is ever sent
-	}
-	// Hand the payload to the fail-open transport on its detached goroutine. The
-	// same buildQualitySignalPayloadFn output feeds --preview, and SendQualitySignal
-	// marshals it with the identical indentation the preview renders, so the sent
-	// bytes are byte-identical to the preview (AC 06-02). A nil client no-ops.
-	telemetry.FromContext(ctx).SendQualitySignal(ctx, payload)
+	client := telemetry.FromContext(ctx)
+	qualitySignalInFlight.Add(1)
+	go func() {
+		defer qualitySignalInFlight.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.FromContext(ctx).Debug("quality-signal: recovered from panic", "value", r)
+			}
+		}()
+		payload, err := buildQualitySignalPayloadFn(".")
+		if err != nil {
+			return // fail-open: a read error never surfaces on the send path
+		}
+		if len(payload) == 0 {
+			return // nothing to transmit — no empty/partial body is ever sent
+		}
+		// Hand the payload to the fail-open transport. The same
+		// buildQualitySignalPayloadFn output feeds --preview, and
+		// SendQualitySignal marshals it with the identical indentation the
+		// preview renders, so the sent bytes are byte-identical to the preview
+		// (AC 06-02). A nil client no-ops.
+		client.SendQualitySignal(ctx, payload)
+	}()
 }
 
 // maybePreviewQualitySignal implements the --preview short-circuit for the host

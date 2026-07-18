@@ -92,6 +92,7 @@ func runReviewSend(t *testing.T, client *telemetry.Client, args ...string) {
 	full := append([]string{"--base", "HEAD^", "--head", "HEAD"}, args...)
 	require.NoError(t, cmd.ParseFlags(full))
 	_ = runReview(cmd, cmd.Flags().Args())
+	waitQualitySignalInFlight() // drain the detached build+send goroutine before the client (it registers only at dispatch)
 	client.Wait()
 }
 
@@ -292,6 +293,7 @@ func runReconcileSend(t *testing.T, client *telemetry.Client, args ...string) in
 	cmd.SetErr(new(bytes.Buffer))
 	require.NoError(t, cmd.ParseFlags(args))
 	rerr := runReconcile(cmd, cmd.Flags().Args())
+	waitQualitySignalInFlight() // drain the detached build+send goroutine before the client (it registers only at dispatch)
 	client.Wait()
 	return exitCode(rerr)
 }
@@ -493,6 +495,7 @@ func TestQualitySignalSend_TimeoutDoesNotBlockRunCompletion(t *testing.T) {
 	start := time.Now()
 	_ = runReconcile(cmd, cmd.Flags().Args())
 	elapsed := time.Since(start)
+	waitQualitySignalInFlight() // the detached build must have dispatched before client.Wait can observe the send
 	close(release)
 	client.Wait()
 
@@ -560,6 +563,7 @@ func TestQualitySignalSend_FailureDiagnosticsNeverIncludePayloadBody(t *testing.
 	cmd.SetErr(new(bytes.Buffer))
 	require.NoError(t, cmd.ParseFlags([]string{"r"}))
 	_ = runReconcile(cmd, cmd.Flags().Args())
+	waitQualitySignalInFlight() // drain the detached build+send goroutine before the client (it registers only at dispatch)
 	client.Wait()
 
 	logs := logbuf.String()

@@ -185,6 +185,10 @@ func runReconcileGated(t *testing.T, client *telemetry.Client, args ...string) {
 	cmd.SetErr(new(bytes.Buffer))
 	require.NoError(t, cmd.ParseFlags(args))
 	_ = runReconcile(cmd, cmd.Flags().Args())
+	// Drain the detached quality-signal build+send goroutine FIRST: it registers
+	// with the client's WaitGroup only when it dispatches, so waiting on the
+	// client alone would race the in-flight build.
+	waitQualitySignalInFlight()
 	client.Wait() // drain so the send count is race-free
 }
 
