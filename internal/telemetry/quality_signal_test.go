@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -37,6 +39,37 @@ func TestQualitySignal_PayloadHasExactlyFourAllowlistedKeys(t *testing.T) {
 		for _, k := range allowed {
 			if _, ok := m[k]; !ok {
 				t.Errorf("missing allowlisted key %q in %s", k, raw)
+			}
+		}
+	}
+}
+
+// TestQualitySignal_NoOmitEmptyOrIgnoredTags is the MECHANICAL gate for the
+// "no omitempty" rule that TestQualitySignal_PayloadHasExactlyFourAllowlistedKeys
+// cannot enforce alone (TD 30.0): a 5th field tagged `json:"path,omitempty"` is
+// invisible to the len==4 assertion because the fixtures never populate it, so
+// the field-creep privacy leak would ship green. Reflecting over the struct tags
+// fails the moment ANY field is json-ignored or carries an omitempty option,
+// whatever the fixtures contain — the rule stops being a doc comment.
+func TestQualitySignal_NoOmitEmptyOrIgnoredTags(t *testing.T) {
+	typ := reflect.TypeOf(QualitySignal{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		tag, ok := f.Tag.Lookup("json")
+		if !ok {
+			t.Errorf("field %s has no json tag — every allowlisted field must serialize explicitly", f.Name)
+			continue
+		}
+		name, opts, _ := strings.Cut(tag, ",")
+		if name == "-" {
+			t.Errorf("field %s is json-ignored (%q) — the allowlist must serialize every field", f.Name, tag)
+		}
+		if name == "" {
+			t.Errorf("field %s has no explicit json name (%q)", f.Name, tag)
+		}
+		for _, opt := range strings.Split(opts, ",") {
+			if opt == "omitempty" {
+				t.Errorf("field %s carries omitempty (%q) — a never-populated field would be invisible to the len==4 guard", f.Name, tag)
 			}
 		}
 	}
