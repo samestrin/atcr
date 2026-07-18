@@ -664,3 +664,81 @@ func TestDebtResolve_ExplicitEmptyResolveIsUsageError(t *testing.T) {
 	require.NoError(t, err, "omitting --resolve must still list open items")
 	assert.Contains(t, out, "internal/x/a.go")
 }
+
+func TestDebtResolve_TerminalRecordUnionsReviewersAcrossOpenRecords(t *testing.T) {
+	// The same File/Line/Problem finding raised by two separate reconcile runs yields
+	// two distinct open records under one stable id, each with its own reviewer/model
+	// attribution. AggregateQualitySignal reads only the terminal record
+	// (foldTerminalByID), so stamping just the first open record's Reviewers would
+	// deny the later run's personas their dismissed/confirmed credit.
+	first := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	first.Reviewers = []string{"bruce", "greta"}
+	first.Model = "claude-sonnet-4-6"
+	second := first
+	second.RunID = "2026-07-02T10:00:00Z-b"
+	second.Timestamp = second.RunID
+	second.Reviewers = []string{"ingrid", "bruce"}
+	second.Model = "gpt-5.2"
+	require.Equal(t, first.ID, second.ID, "identical File/Line/Problem must yield the same stable id")
+	dir := writeDebtStore(t, first, second)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", first.ID)
+	require.NoError(t, err)
+
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var terminal *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == first.ID && recs[i].Status == "resolved" {
+			terminal = &recs[i]
+		}
+	}
+	require.NotNil(t, terminal, "a terminal record must be appended")
+	assert.Equal(t, []string{"bruce", "greta", "ingrid"}, terminal.Reviewers,
+		"terminal record must credit every persona that raised the finding (deduped, first-seen order)")
+	assert.Equal(t, "gpt-5.2", terminal.Model,
+		"Model follows the most recent open record's non-empty value so the latest run's model gets the credit")
+
+	// End-to-end: the aggregated signal must confirm every raising persona, bucketed
+	// under the most recent model.
+	confirmed := map[string]int{}
+	for _, row := range localdebt.AggregateQualitySignal(recs) {
+		confirmed[row.Persona+"/"+row.Model] = row.ConfirmedCount
+	}
+	assert.Equal(t, 1, confirmed["bruce/gpt-5.2"], "first-run persona still credited")
+	assert.Equal(t, 1, confirmed["greta/gpt-5.2"], "first-run persona still credited")
+	assert.Equal(t, 1, confirmed["ingrid/gpt-5.2"], "later-run persona must not lose credit")
+	assert.Zero(t, confirmed["bruce/claude-sonnet-4-6"], "the stale earlier model must not split the bucket")
+}
+
+func TestDebtResolve_TerminalRecordModelFallsBackToEarlierNonEmpty(t *testing.T) {
+	// When the most recent open record has no model attribution (v1, or unresolved
+	// attribution), the terminal record must keep an earlier open record's non-empty
+	// Model rather than blanking it — an empty Model is excluded from every
+	// AggregateQualitySignal row, so blanking would silently drop all credit.
+	first := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	first.Reviewers = []string{"bruce"}
+	first.Model = "claude-sonnet-4-6"
+	second := first
+	second.RunID = "2026-07-02T10:00:00Z-b"
+	second.Timestamp = second.RunID
+	second.Reviewers = []string{"ingrid"}
+	second.Model = ""
+	dir := writeDebtStore(t, first, second)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", first.ID)
+	require.NoError(t, err)
+
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var terminal *localdebt.Record
+	for i := range recs {
+		if recs[i].ID == first.ID && recs[i].Status == "resolved" {
+			terminal = &recs[i]
+		}
+	}
+	require.NotNil(t, terminal, "a terminal record must be appended")
+	assert.Equal(t, "claude-sonnet-4-6", terminal.Model,
+		"most recent NON-EMPTY model wins; a later attribution-less record must not blank it")
+	assert.Equal(t, []string{"bruce", "ingrid"}, terminal.Reviewers)
+}
