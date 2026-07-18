@@ -226,6 +226,51 @@ func TestQualitySignalSend_GateReEvaluatedFreshPerRun(t *testing.T) {
 		"a freshly persisted opt-in must be observed on the next run — no stale gate cache")
 }
 
+// TestQualitySignalSend_PayloadBuildRunsDetached proves the O(n) debt-store read
+// and aggregation run on the detached goroutine, off the run's critical path:
+// maybeSendQualitySignal must return even while the payload builder is blocked,
+// with only the synchronous opt-in gate resolved inline. The forced build error
+// after release keeps the test hermetic (the send short-circuits, no client
+// interaction).
+func TestQualitySignalSend_PayloadBuildRunsDetached(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	t.Setenv("ATCR_TELEMETRY", "0")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	prev := buildQualitySignalPayloadFn
+	buildQualitySignalPayloadFn = func(string) ([]telemetry.QualitySignal, error) {
+		close(entered)
+		<-release // block until the test releases the builder
+		return nil, errors.New("forced build error")
+	}
+	t.Cleanup(func() { buildQualitySignalPayloadFn = prev })
+	released := false
+	defer func() {
+		if !released {
+			close(release) // unblock a synchronous (pre-fix) build so the wrapper goroutine can exit
+		}
+	}()
+
+	client := telemetry.New(qsEndpoint)
+	logger, err := log.New("info", "text", io.Discard)
+	require.NoError(t, err)
+	ctx := telemetry.NewContext(log.NewContext(context.Background(), logger), client)
+
+	done := make(chan struct{})
+	go func() { maybeSendQualitySignal(ctx); close(done) }()
+
+	<-entered // the builder was invoked
+	select {
+	case <-done:
+		// returned without waiting for the blocked build — the build is detached
+	case <-time.After(2 * time.Second):
+		t.Fatal("maybeSendQualitySignal blocked on the payload build: the O(n) store read must run on the detached goroutine, off the run's critical path")
+	}
+	close(release)
+	released = true
+}
+
 // reconcileFixture writes the standard one-finding reconcile fixture used by the
 // send tests so runReconcileGated has a review dir to reconcile.
 func reconcileFixture(t *testing.T) {
