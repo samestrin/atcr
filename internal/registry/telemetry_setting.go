@@ -16,7 +16,7 @@ import (
 // .atcr/config.yaml under root, WITHOUT requiring a valid roster the way the
 // strict LoadProjectConfig does — so the opt-out gate can read it on every
 // command (including reconcile, which loads no project config) at negligible
-// cost. It returns:
+// cost. It delegates to the key-agnostic loadConfigBool. It returns:
 //
 //   - (nil, nil) when the config file is absent OR present without a telemetry
 //     key: the setting is unset (neutral), contributing nothing to the gate;
@@ -25,6 +25,23 @@ import (
 //     (e.g. telemetry: maybe) — a corrupt value must surface, never silently
 //     fall open to enabled.
 func LoadTelemetrySetting(root string) (*bool, error) {
+	return loadConfigBool(root, "telemetry")
+}
+
+// loadConfigBool is the shared, key-agnostic implementation behind
+// LoadTelemetrySetting and LoadQualitySignalSetting: it resolves the persisted
+// boolean at key in .atcr/config.yaml under root, WITHOUT requiring a valid
+// roster the way the strict LoadProjectConfig does — so a gate can read it on
+// every command (including reconcile, which loads no project config) at
+// negligible cost. It returns:
+//
+//   - (nil, nil) when the config file is absent OR present without key: the
+//     setting is unset (neutral), contributing nothing to the gate;
+//   - (&value, nil) for an explicit key: true/false;
+//   - (nil, err) when the file is unreadable or the value at key is malformed
+//     (e.g. key: maybe) — a corrupt value must surface, never be silently
+//     coerced.
+func loadConfigBool(root, key string) (*bool, error) {
 	path := DefaultProjectConfigPath(root)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -33,27 +50,55 @@ func LoadTelemetrySetting(root string) (*bool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	// Permissive decode: only the telemetry field is read, unknown sibling keys
-	// (agents, payload_mode, …) are ignored, so a roster-less or partial config
-	// still resolves. A non-boolean telemetry value fails here, by design.
-	var probe struct {
-		Telemetry *bool `yaml:"telemetry"`
-	}
+	// Permissive decode: sibling keys (agents, telemetry, payload_mode, …)
+	// parse into interface{} and are ignored, so a roster-less or partial
+	// config still resolves. Only the value at key is type-checked: a
+	// non-boolean value fails here, by design.
+	var probe map[string]interface{}
 	if err := yaml.Unmarshal(data, &probe); err != nil {
-		return nil, fmt.Errorf("parse %s telemetry setting: %w", filepath.Base(path), err)
+		return nil, fmt.Errorf("parse %s %s setting: %w", filepath.Base(path), key, err)
 	}
-	return probe.Telemetry, nil
+	v, ok := probe[key]
+	if !ok || v == nil {
+		return nil, nil
+	}
+	b, ok := v.(bool)
+	if !ok {
+		return nil, fmt.Errorf("parse %s %s setting: value %v is not a boolean", filepath.Base(path), key, v)
+	}
+	return &b, nil
 }
 
 // SetTelemetrySetting persists enabled to the telemetry key of the existing
 // .atcr/config.yaml under root, mutating ONLY that key via a yaml.Node edit so
-// every other key (and its comments) survives untouched. The config file must
-// already exist — a missing file is returned as a wrapped I/O error (an
-// environment failure, not a usage mistake); this never creates the file.
+// every other key (and its comments) survives untouched. It delegates to the
+// key-agnostic setConfigBool with the set-telemetry lock session. The config
+// file must already exist — a missing file is returned as a wrapped I/O error
+// (an environment failure, not a usage mistake); this never creates the file.
 func SetTelemetrySetting(root string, enabled bool) error {
+	return setConfigBool(root, "set-telemetry", "telemetry", enabled)
+}
+
+// setConfigBool is the shared, key-agnostic implementation behind
+// SetTelemetrySetting and SetQualitySignalSetting: it persists enabled to key
+// of the existing .atcr/config.yaml under root, mutating ONLY that key via a
+// yaml.Node edit so every other key (and its comments) survives untouched.
+// session identifies the lock holder in the owner metadata. The config file
+// must already exist — a missing file is returned as a wrapped I/O error (an
+// environment failure, not a usage mistake); this never creates the file.
+func setConfigBool(root, session, key string, enabled bool) error {
 	path := DefaultProjectConfigPath(root)
 	dir := filepath.Dir(path)
-	return withConfigLock(dir, "set-telemetry", func() error {
+	return withConfigLock(dir, session, func() error {
+		// Fail-fast symlink pre-check right after lock acquisition: a symlinked
+		// config is rejected before paying for the read/parse/temp-write below.
+		// The pre-rename Lstat further down remains the authoritative TOCTOU
+		// guard — this early check is a cheap fast path, not a replacement.
+		// ErrNotExist falls through to the Stat below, which reports the missing
+		// file as the documented read error.
+		if li, lerr := os.Lstat(path); lerr == nil && li.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("config %s: symlinked configs are unsupported — rename would sever the link; use a regular file", path)
+		}
 		info, err := os.Stat(path)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", path, err)
@@ -71,7 +116,7 @@ func SetTelemetrySetting(root string, enabled bool) error {
 		if err != nil {
 			return err
 		}
-		setMappingBool(mapping, "telemetry", enabled)
+		setMappingBool(mapping, key, enabled)
 
 		out, err := yaml.Marshal(&doc)
 		if err != nil {

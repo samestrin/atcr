@@ -86,6 +86,42 @@ func TestAddSyncCloudFlags_NoWarningWhenEndpointOverridden(t *testing.T) {
 	assert.NotContains(t, buf.String(), "placeholder")
 }
 
+// TestAddQualitySignalFlags_RegistersPreviewWithoutPreRunE pins the resolved TD
+// item: addQualitySignalFlags has no --preview precondition of its own, so it
+// must register the flag and nothing else — wrapping PreRunE in a pass-through
+// closure "for a future precondition" is dead indirection plus a wasted closure
+// allocation on every command build. Chaining belongs here only when a real
+// precondition appears.
+func TestAddQualitySignalFlags_RegistersPreviewWithoutPreRunE(t *testing.T) {
+	cmd := &cobra.Command{Use: "probe"}
+	addQualitySignalFlags(cmd)
+
+	preview := cmd.Flags().Lookup("preview")
+	require.NotNil(t, preview, "--preview must be registered")
+	assert.Equal(t, "bool", preview.Value.Type())
+	assert.Equal(t, "false", preview.DefValue)
+
+	assert.Nil(t, cmd.PreRunE, "no --preview precondition exists; the helper must not wrap PreRunE")
+}
+
+// TestAddQualitySignalFlags_LeavesPriorPreRunEIntact proves dropping the wrapper
+// is behavior-preserving at the real call sites (review.go, reconcile.go install
+// addQualitySignalFlags last): a hook installed earlier stays in place and still
+// fires, now invoked directly by cobra instead of through a pass-through closure.
+func TestAddQualitySignalFlags_LeavesPriorPreRunEIntact(t *testing.T) {
+	cmd := &cobra.Command{Use: "probe"}
+	ran := false
+	cmd.PreRunE = func(_ *cobra.Command, _ []string) error {
+		ran = true
+		return nil
+	}
+	addQualitySignalFlags(cmd)
+
+	require.NotNil(t, cmd.PreRunE)
+	require.NoError(t, cmd.PreRunE(cmd, nil))
+	assert.True(t, ran, "the previously-installed hook must still run")
+}
+
 // TestAddRangeFlags_ChainOrderPrevFirst pins the chain-order invariant shared
 // with addSyncCloudFlags: a previously-installed PreRunE runs BEFORE
 // addRangeFlags' own validation (prev-first — hooks run in installation order),

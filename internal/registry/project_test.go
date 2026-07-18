@@ -78,6 +78,19 @@ func TestDefaultProjectConfigYAML_DocumentsTelemetry(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestDefaultProjectConfigYAML_DocumentsQualitySignal(t *testing.T) {
+	out := DefaultProjectConfigYAML([]string{"bruce"})
+	// quality_signal is the opt-IN sibling of the telemetry opt-out: the template
+	// must document it with the same discoverability so an operator who runs
+	// `atcr init` learns the knob exists (default off; set true or
+	// ATCR_QUALITY_SIGNAL=1 to enable).
+	assert.Contains(t, out, "quality_signal:")
+
+	// The rendered config (commented quality_signal line included) must still load cleanly.
+	_, err := LoadProjectConfig(writeProject(t, out))
+	require.NoError(t, err)
+}
+
 func TestProjectConfig_MinimalRoster(t *testing.T) {
 	cfg, err := LoadProjectConfig(writeProject(t, `
 agents: [bruce]

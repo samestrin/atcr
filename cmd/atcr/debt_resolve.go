@@ -67,6 +67,12 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 	// would be silently ignored (dropping the user's dismissal intent and skipping
 	// --status validation). Reject that combination rather than fall through to list.
 	if id == "" {
+		// An explicitly changed but empty --resolve (--resolve "") is a mark attempt
+		// with no id, not a list request: reject it rather than silently falling
+		// through to the list view.
+		if cmd.Flags().Changed("resolve") {
+			return usageError(fmt.Errorf("--resolve requires a non-empty id"))
+		}
 		var provided []string
 		if cmd.Flags().Changed("status") {
 			provided = append(provided, "--status")
@@ -82,6 +88,18 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	if id != "" {
+		// --json/--severity/--max only affect the list renderer, which the mark branch
+		// never reaches; combined with --resolve they would be silently ignored. Reject
+		// the combination, symmetric with --status/--reason without --resolve above.
+		var listOnly []string
+		for _, name := range []string{"json", "severity", "max"} {
+			if cmd.Flags().Changed(name) {
+				listOnly = append(listOnly, "--"+name)
+			}
+		}
+		if len(listOnly) > 0 {
+			return usageError(fmt.Errorf("%s cannot be used with --resolve", strings.Join(listOnly, ", ")))
+		}
 		status := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "status")))
 		if !resolveStatuses[status] {
 			return usageError(fmt.Errorf("invalid --status %q: expected resolved|wontfix", status))
@@ -93,13 +111,13 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 	if sev != "" && !resolveSeverities[sev] {
 		return usageError(fmt.Errorf("invalid --severity %q: expected CRITICAL|HIGH|MEDIUM|LOW", mustFlag(cmd, "severity")))
 	}
-	max, _ := cmd.Flags().GetInt("max")
+	limit, _ := cmd.Flags().GetInt("max")
 
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to read local debt store: %w", err)
 	}
-	open := selectOpenDebt(recs, sev, max)
+	open := selectOpenDebt(recs, sev, limit)
 
 	if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
 		return renderResolveJSON(cmd.OutOrStdout(), open)
@@ -113,81 +131,38 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 // wontfix (Epic 24.0) folds a finding out exactly like resolved — it marks a
 // false-positive/accepted pattern that agents must stop re-surfacing.
 func isClosedStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "resolved", "deferred", "wontfix":
-		return true
-	default:
-		return false
-	}
+	return localdebt.IsClosedStatus(status)
 }
 
-// closedStatusRank orders terminal statuses so a deterministic effective status can
-// be chosen when divergent terminal records exist for one id (the no-lock TD-004
-// concurrency window in markDebtResolved). A permanent dismissal (wontfix) outranks a
-// resolved or deferred record, so the audit trail reports the strongest terminal
-// claim regardless of shard read order. An unknown/empty status ranks lowest.
 func closedStatusRank(status string) int {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "wontfix":
-		return 3
-	case "resolved":
-		return 2
-	case "deferred":
-		return 1
-	default:
-		return 0
-	}
+	return localdebt.ClosedStatusRank(status)
 }
 
-// higherClosedStatus returns whichever of the two terminal statuses ranks higher (see
-// closedStatusRank). An empty incumbent is always replaced by any real status.
 func higherClosedStatus(current, candidate string) string {
-	if closedStatusRank(candidate) > closedStatusRank(current) {
-		return candidate
-	}
-	return current
+	return localdebt.HigherClosedStatus(current, candidate)
 }
 
 // selectOpenDebt folds the append-only record stream by id into the open backlog.
-// An id is open unless any record for it carries a terminal status; the displayed
-// record is the first open (non-terminal) occurrence, so a later resolution record
-// folds the item out. Results are sorted severity DESC then ts ASC (oldest first)
-// and capped at max — the deterministic selection rule the skill route documents.
-func selectOpenDebt(recs []localdebt.Record, severity string, max int) []localdebt.Record {
-	type agg struct {
-		rec      localdebt.Record
-		resolved bool
-		hasRec   bool
-	}
-	order := make([]string, 0, len(recs))
-	m := make(map[string]*agg, len(recs))
-	for _, r := range recs {
-		a := m[r.ID]
-		if a == nil {
-			a = &agg{}
-			m[r.ID] = a
-			order = append(order, r.ID)
-		}
-		if isClosedStatus(r.Status) {
-			a.resolved = true
+// An id is open unless its effective record carries a terminal status; the displayed
+// record is the effective open occurrence FoldRecords keeps (the LAST open record for
+// the id). It reuses localdebt.FoldRecords so this resolve list, Compact, and
+// AggregateQualitySignal share ONE precedence rule — a finding re-raised across runs
+// under the same id can no longer rank/filter on the first occurrence here while the
+// quality signal aggregates the last. Records whose effective occurrence has no File
+// are skipped (nothing to display/act on). Results are sorted severity DESC then ts
+// ASC (oldest first) and capped at max — the deterministic selection rule the skill
+// route documents.
+func selectOpenDebt(recs []localdebt.Record, severity string, limit int) []localdebt.Record {
+	folded := localdebt.FoldRecords(recs)
+	open := make([]localdebt.Record, 0, len(folded))
+	for _, r := range folded {
+		if isClosedStatus(r.Status) || r.File == "" {
 			continue
 		}
-		if !a.hasRec && r.File != "" {
-			a.rec = r
-			a.hasRec = true
-		}
-	}
-
-	open := make([]localdebt.Record, 0, len(order))
-	for _, id := range order {
-		a := m[id]
-		if a.resolved || !a.hasRec {
+		if severity != "" && strings.ToUpper(r.Severity) != severity {
 			continue
 		}
-		if severity != "" && strings.ToUpper(a.rec.Severity) != severity {
-			continue
-		}
-		open = append(open, a.rec)
+		open = append(open, r)
 	}
 
 	sort.SliceStable(open, func(i, j int) bool {
@@ -197,8 +172,8 @@ func selectOpenDebt(recs []localdebt.Record, severity string, max int) []localde
 		}
 		return open[i].Timestamp < open[j].Timestamp
 	})
-	if max > 0 && len(open) > max {
-		open = open[:max]
+	if limit > 0 && len(open) > limit {
+		open = open[:limit]
 	}
 	return open
 }
@@ -257,9 +232,12 @@ func renderResolveList(w io.Writer, recs []localdebt.Record) error {
 const maxReasonBytes = 4 << 10 // 4 KiB
 
 // markDebtResolved records an append-only resolution for id: it copies the item's
-// open record, stamps a terminal status/timestamp, and appends it so the fold in
-// selectOpenDebt drops the item from the open list. The stable id is preserved
-// (never re-stamped) so the resolution lines up with the original finding.
+// first open record, unions the Reviewers attribution of every open record for the
+// id (and picks the most recent non-empty Model) so AggregateQualitySignal credits
+// every persona that raised the finding, stamps a terminal status/timestamp, and
+// appends it so the fold in selectOpenDebt drops the item from the open list. The
+// stable id is preserved (never re-stamped) so the resolution lines up with the
+// original finding.
 func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error {
 	// A --reason is stored verbatim as the record's Justification. The store bounds a
 	// single JSONL line at maxLineBytes (1 MiB) on read and silently drops any line
@@ -279,6 +257,9 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	}
 
 	var orig *localdebt.Record
+	var reviewers []string
+	seenReviewer := make(map[string]bool)
+	var model string
 	var alreadyClosed bool
 	var closedStatus string
 	for i := range recs {
@@ -297,6 +278,27 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		if orig == nil && recs[i].File != "" {
 			r := recs[i]
 			orig = &r
+		}
+		// Union attribution across every open record for the id: the same finding can
+		// be re-raised by later reconcile runs as distinct open records under one
+		// stable id, and AggregateQualitySignal reads only the terminal record
+		// (foldTerminalByID) — stamping just the first open record's Reviewers would
+		// deny the later runs' personas their dismissed/confirmed credit. Dedupe
+		// first-seen so the order is deterministic.
+		for _, rv := range recs[i].Reviewers {
+			if !seenReviewer[rv] {
+				seenReviewer[rv] = true
+				reviewers = append(reviewers, rv)
+			}
+		}
+		// The terminal record carries a single Model, and AggregateQualitySignal
+		// buckets every credited persona by it — so the choice materially affects
+		// attribution. Prefer the most recent open record's non-empty Model (stream
+		// order is append order, so last non-empty wins): it reflects the latest
+		// run's attribution, while a later attribution-less record never blanks an
+		// earlier model (an empty Model is excluded from every signal row).
+		if strings.TrimSpace(recs[i].Model) != "" {
+			model = recs[i].Model
 		}
 	}
 	// Concurrency-tolerant, not lock-protected: a terminal record for this id already
@@ -322,6 +324,10 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	rec := *orig
+	rec.Reviewers = reviewers
+	if model != "" {
+		rec.Model = model
+	}
 	rec.RunID = now + "-" + status
 	rec.Timestamp = now
 	rec.Status = status

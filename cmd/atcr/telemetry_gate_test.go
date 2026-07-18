@@ -157,6 +157,26 @@ func TestTelemetryGate_EnvAndConfig(t *testing.T) {
 	})
 }
 
+// TestTelemetryGate_ResolvesRepoRoot covers the cwd-independence fix: when atcr
+// runs from a repo SUBDIRECTORY, the gate must locate .atcr/config.yaml via
+// repo-root discovery — the same root `atcr config set telemetry` persists to
+// (runConfigSet) — rather than reading the config cwd-relative, so the gate and
+// the write path agree on config location. Harness mirrors
+// TestQualitySignalGate_ResolvesRepoRoot (qualitysignal_test.go).
+func TestTelemetryGate_ResolvesRepoRoot(t *testing.T) {
+	isolate(t)
+	repo := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".atcr", "config.yaml"), []byte("agents: [bruce]\ntelemetry: false\n"), 0o644))
+	subdir := filepath.Join(repo, "subdir")
+	require.NoError(t, os.MkdirAll(subdir, 0o755))
+	t.Chdir(subdir)
+	_ = os.Unsetenv("ATCR_TELEMETRY")
+
+	assert.False(t, telemetryGate(),
+		"a persisted opt-out at the repo root must be observed from a subdirectory — the gate and `config set` must agree on config location")
+}
+
 // countingDoRequest installs a doRequest seam that counts outbound sends without
 // touching the network (bypassing TLS), and returns the counter + a restore.
 // This is the "counting send-hook" AC 02-01's strictness requirement names.
@@ -185,6 +205,10 @@ func runReconcileGated(t *testing.T, client *telemetry.Client, args ...string) {
 	cmd.SetErr(new(bytes.Buffer))
 	require.NoError(t, cmd.ParseFlags(args))
 	_ = runReconcile(cmd, cmd.Flags().Args())
+	// Drain the detached quality-signal build+send goroutine FIRST: it registers
+	// with the client's WaitGroup only when it dispatches, so waiting on the
+	// client alone would race the in-flight build.
+	waitQualitySignalInFlight()
 	client.Wait() // drain so the send count is race-free
 }
 

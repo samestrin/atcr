@@ -515,6 +515,125 @@ func TestRunReconcile_LocalDebtAccumulatesAcrossRuns(t *testing.T) {
 		"second run accumulates additively (2 + 3), not overwrites")
 }
 
+// TestPersistLocalDebt_PopulatesModelFromAgentStatus covers Sprint 30.0 AC
+// 01-02 Scenario 1: persistLocalDebt copies the model bound to a finding's
+// reviewer (from the fan-out pool summary's AgentStatus.Model) onto the persisted
+// record, and stamps it schema v2. The reviewer "host" is bound to
+// "claude-sonnet-4-6" in the pool summary, so the record's Model must carry it.
+func TestPersistLocalDebt_PopulatesModelFromAgentStatus(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
+	})
+	// Bind reviewer "host" to a concrete model in the pool summary. Written
+	// directly (not via fixtureReview, which prepends a findings header that would
+	// corrupt the JSON), mirroring writePoolSummary.
+	poolDir := filepath.Join(".atcr", "reviews", "r", "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	summary := `{"agents":[{"agent":"host","model":"claude-sonnet-4-6","tokens_in":200,"tokens_out":60,"duration_ms":1200}],"total":1,"succeeded":1}`
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "summary.json"), []byte(summary), 0o644))
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "claude-sonnet-4-6", recs[0].Model,
+		"persistLocalDebt must populate Model from the pool summary's AgentStatus.Model")
+	assert.Equal(t, 2, recs[0].SchemaVersion, "the persisted record is stamped schema v2")
+}
+
+// TestResolveRecordModel covers Sprint 30.0 AC 01-02/01-03 and the Phase 1 gate
+// fix: a single Record.Model can only be attributed when unambiguous. A
+// single-reviewer or same-model merge resolves to that model; a cross-model
+// merged finding (reviewers on 2+ distinct models) resolves to "" —
+// attribution-incomplete — so the aggregation excludes it rather than
+// mis-crediting one persona's model to another persona that never ran it.
+func TestResolveRecordModel(t *testing.T) {
+	byRev := map[string]string{
+		"security-reviewer": "claude-sonnet-4-6",
+		"perf-reviewer":     "gpt-5.1",
+		"style-reviewer":    "claude-sonnet-4-6",
+	}
+	cases := []struct {
+		name      string
+		reviewers []string
+		want      string
+	}{
+		{"single reviewer", []string{"security-reviewer"}, "claude-sonnet-4-6"},
+		{"two reviewers same model", []string{"security-reviewer", "style-reviewer"}, "claude-sonnet-4-6"},
+		{"two reviewers different models excluded", []string{"security-reviewer", "perf-reviewer"}, ""},
+		{"reviewer absent from map", []string{"unknown-reviewer"}, ""},
+		{"empty reviewers", nil, ""},
+		{"known + unknown resolves to known", []string{"unknown-reviewer", "perf-reviewer"}, "gpt-5.1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, resolveRecordModel(tc.reviewers, byRev))
+		})
+	}
+}
+
+// TestPersistLocalDebt_CrossModelMergeExcludedFromModelAttribution covers the
+// Phase 1 gate fix end-to-end: a finding flagged by two personas that ran on
+// different models (a merged consensus finding) persists with an empty Model, so
+// it is attribution-incomplete and excluded from per-(persona, model) rows rather
+// than corrupting a group with a model a persona never ran on.
+func TestPersistLocalDebt_CrossModelMergeExcludedFromModelAttribution(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	// Two personas independently flag the identical file:line:problem, so reconcile
+	// merges them into one record with Reviewers=[bruce, greta].
+	fixtureReview(t, "r", map[string]string{
+		"sources/pool/raw/agent/bruce/findings.txt": "HIGH|a.go:1|same issue here|fix|security|10|ev|bruce\n",
+		"sources/pool/raw/agent/greta/findings.txt": "HIGH|a.go:1|same issue here|fix|security|10|ev|greta\n",
+	})
+	// bruce and greta ran on DIFFERENT models.
+	poolDir := filepath.Join(".atcr", "reviews", "r", "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	summary := `{"agents":[{"agent":"bruce","model":"claude-sonnet-4-6"},{"agent":"greta","model":"gpt-5.1"}],"total":2,"succeeded":2}`
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "summary.json"), []byte(summary), 0o644))
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1, "the two personas' identical finding merges to one record")
+	assert.Len(t, recs[0].Reviewers, 2, "the merged record unions both reviewers")
+	assert.Equal(t, "", recs[0].Model,
+		"a cross-model merge is attribution-incomplete: Model is empty, not one reviewer's model")
+}
+
+// TestPersistLocalDebt_UnknownModelReviewerNotCreditedUnderSibling covers the
+// mixed-attribution merge: two personas flag the identical finding, but only one
+// has a recorded pool-summary model. The record resolves to that one model, and
+// AggregateQualitySignal credits every persona in Reviewers under it — so the
+// persona with no recorded model must be dropped from the record's attribution
+// rather than mis-credited under a sibling's model it never ran on.
+func TestPersistLocalDebt_UnknownModelReviewerNotCreditedUnderSibling(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	// Two personas independently flag the identical file:line:problem, so reconcile
+	// merges them into one record with Reviewers=[bruce, greta].
+	fixtureReview(t, "r", map[string]string{
+		"sources/pool/raw/agent/bruce/findings.txt": "HIGH|a.go:1|same issue here|fix|security|10|ev|bruce\n",
+		"sources/pool/raw/agent/greta/findings.txt": "HIGH|a.go:1|same issue here|fix|security|10|ev|greta\n",
+	})
+	// Only bruce has a recorded model; greta's is unrecorded (no model key).
+	poolDir := filepath.Join(".atcr", "reviews", "r", "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	summary := `{"agents":[{"agent":"bruce","model":"claude-sonnet-4-6"},{"agent":"greta"}],"total":2,"succeeded":2}`
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "summary.json"), []byte(summary), 0o644))
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1, "the two personas' identical finding merges to one record")
+	assert.Equal(t, "claude-sonnet-4-6", recs[0].Model,
+		"the one recorded model still resolves for the merged record")
+	assert.Equal(t, []string{"bruce"}, recs[0].Reviewers,
+		"greta has no recorded model and must be dropped from attribution, not credited under bruce's model")
+}
+
 // TestRunReconcile_LocalDebtDedupsSameFinding covers AC 02-03 Scenario 2:
 // re-running reconcile on the same review dir with unchanged findings does not
 // duplicate records (write-time dedup by FindingID over full-history ReadAll).

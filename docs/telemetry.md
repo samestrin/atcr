@@ -179,6 +179,171 @@ against whatever baseline the dashboard defines, not invented by the CLI.
 
 ---
 
+## Community prompt quality signal
+
+The **community prompt quality signal** is a separate, **opt-in**, aggregate,
+content-free signal that tells the maintainer which reviewer prompts (persona +
+model pairs) are over-reporting — derived entirely from the local dismissal
+outcomes (`wontfix`/`resolved`) already recorded in your local debt store. Its
+purpose is to point prompt tuning at the personas that most need it, without ever
+transmitting a line of your code or a word of any finding.
+
+It is its **own path**, distinct from the usage ping and from `--sync-cloud`:
+
+- It is **off by default** and sends nothing until you explicitly opt in — the
+  inverse polarity of the usage ping, which is on-by-default/opt-out.
+- Its opt-in shares **no state** with the usage-ping opt-out or with
+  `--sync-cloud`: enabling or disabling one has no bearing on the other.
+- It is **fail-open**: any transport failure (a non-2xx response, DNS failure,
+  timeout, or panic) is dropped and the `review`/`reconcile` run exits exactly as
+  it would have anyway — the send never changes the exit code or stdout.
+
+> **Currently inactive.** Like the usage ping, the compiled-in ingestion endpoint
+> is empty in this build, so an opted-in send is a wired **no-op** — nothing is
+> transmitted until a real backend endpoint is configured. The schema below
+> describes the payload that *would* be sent; the opt-in is off by default
+> regardless.
+
+### Quality-signal payload schema
+
+The payload is a list of per-(persona, model) rows. Each row carries exactly four
+allowlisted fields and nothing else:
+
+| Field              | Type   | Example                                                              | Meaning                                                      |
+|--------------------|--------|---------------------------------------------------------------------|-------------------------------------------------------------|
+| `persona_id_hash`  | string | `a1b2c3…` (SHA-256 hex)                                              | The one-way hash of the reviewer/persona name (see below).  |
+| `model`            | string | `claude-sonnet-4-6`                                                  | The model slug that ran under that persona.                 |
+| `dismissed_count`  | int    | `3`                                                                  | How many of that pair's findings were dismissed (`wontfix`).|
+| `confirmed_count`  | int    | `1`                                                                  | How many were confirmed/kept (`resolved`).                  |
+
+That is the whole payload. This is its **own separately-tested allowlist** — it
+does **not** embed or extend the usage-ping `event`, any scorecard struct, or a
+local-debt record, so no source code, file path, or finding text can structurally
+be placed into it. A dedicated regression test locks the wire schema to exactly
+these four keys and fails loudly on any future field addition.
+
+None of the four fields carries `omitempty`, so **zero-value counts always
+serialize as `0`** — a maintainer can distinguish "zero dismissals" from "field
+absent".
+
+### Opt-in
+
+The quality signal is **off by default** and can be enabled from two independent
+surfaces. The two are **OR'd** (opt-**in**): the signal is enabled whenever
+*either* surface says so. This is the **inverse** of the usage-ping opt-out, and
+it carries no precedence or override chain of its own.
+
+| `ATCR_QUALITY_SIGNAL` | config `quality_signal` | Result   |
+|-----------------------|-------------------------|----------|
+| unset / falsy         | unset                   | disabled (the default) |
+| unset / falsy         | `true`                  | enabled  (config alone is sufficient consent) |
+| unset / falsy         | `false`                 | disabled |
+| truthy                | unset                   | enabled  (env alone is sufficient consent) |
+| truthy                | `true`                  | enabled  |
+| truthy                | `false`                 | enabled  (an explicit env opt-in is never revoked by a stale config `false`) |
+
+An unset config value is **neutral**: it contributes nothing to the OR and can
+never out-rank a permitting env var.
+
+**Independence.** This gate shares no state with the usage-ping opt-out or with
+`--sync-cloud`. A telemetry opt-out, a valid `ATCR_API_KEY`, or an enabled
+`--sync-cloud` plan can neither grant nor revoke quality-signal consent, and vice
+versa.
+
+#### `ATCR_QUALITY_SIGNAL` environment variable
+
+```sh
+ATCR_QUALITY_SIGNAL=1 atcr review ...
+```
+
+> **Note the opt-in direction.** `ATCR_QUALITY_SIGNAL` names the **enabled** state
+> directly and defaults **off**, the opposite posture of `ATCR_TELEMETRY` (which
+> is enabled-by-default). A recognized truthy value (`1`, `true`, `t`, `T`,
+> `True`, `TRUE`) opts in; unset, blank, or any **unparseable** value fails
+> **safe** to disabled — a corrupt value can never be read as consent to transmit
+> (an unparseable value also warns to stderr so a misspelled opt-in is visible).
+
+#### `atcr config set quality_signal`
+
+Persists the opt-in to `.atcr/config.yaml` in the current project, so it survives
+across runs without needing the environment variable:
+
+```sh
+atcr config set quality_signal true    # opt in for this project
+atcr config set quality_signal false   # opt back out
+```
+
+The value accepts the `strconv.ParseBool` vocabulary (`true`/`false`, `1`/`0`,
+`t`/`f`, `True`/`False`, `TRUE`/`FALSE`). Setting `quality_signal` leaves the
+sibling `telemetry` key untouched, and a **malformed** persisted value fails
+**safe** to disabled — never a silent re-enable.
+
+### `--preview` — see exactly what would be sent, before opting in
+
+The `review` and `reconcile` commands accept a `--preview` flag that renders the
+exact content-free payload locally and **sends nothing**:
+
+```sh
+atcr review --preview ...
+atcr reconcile --preview ...
+```
+
+`--preview` prints the pretty-printed JSON payload followed by a distinct
+human-readable marker on its own line:
+
+```json
+[
+  {
+    "persona_id_hash": "a1b2c3…",
+    "model": "claude-sonnet-4-6",
+    "dismissed_count": 3,
+    "confirmed_count": 1
+  }
+]
+Preview only — nothing was transmitted. The quality signal is sent only after you explicitly opt in.
+```
+
+The printed JSON is **byte-identical** to the marshaled body a real send would
+transmit — both paths build the payload from a single shared constructor, so the
+preview can never drift from what is actually sent. Key properties:
+
+- It **needs no opt-in**: `--preview` renders whether or not you have enabled the
+  signal, and it runs **before** any opt-in gate check.
+- It **makes no network call** and requires **no credential** — it never reads
+  `ATCR_API_KEY` and constructs no HTTP client.
+- It **takes precedence over `--sync-cloud`**: `--preview --sync-cloud` together
+  prints the payload and pushes nothing.
+- On a fresh checkout with no dismissal history, it prints an **empty payload**
+  (`[]`) rather than failing.
+
+The marker line is deliberately **separate** from the JSON so the preview can
+never be mistaken for confirmation that data was transmitted.
+
+### No code, no finding content, ever
+
+The quality signal transmits **only** the four allowlisted primitive fields above:
+a hashed persona identifier, a model slug, and two integer counts. It carries **no
+source code, no file path, no repository name, and no finding text, title, or
+excerpt** — not by policy but structurally: the payload type cannot embed or
+extend any struct that holds those, and the four-key allowlist is locked by a
+regression test. Nothing is sent by default, and `--preview` lets you inspect the
+exact bytes before you ever opt in.
+
+The `persona_id_hash` follows the **same** hashing model documented under
+[Persona Leaderboard data](#persona-leaderboard-data): a **one-way, unsalted
+SHA-256** of the raw persona/reviewer name.
+
+- **Deterministic and one-way:** the same persona always hashes to the same value
+  and the digest is not directly reversible.
+- **Pseudonymous, not anonymous:** because persona names are a small, enumerable,
+  often publicly-known set, someone who pre-hashes a list of known persona names
+  could match a digest back to a name. Treat `persona_id_hash` as a stable
+  pseudonym, not a secret. Hardening the hash to a keyed HMAC is tracked as
+  **TD-007**; the quality-signal path shares that same unsalted scheme and would
+  be hardened in lockstep.
+
+---
+
 ## Related
 
 - [Scorecard](scorecard.md) — the local per-reviewer record and the separate

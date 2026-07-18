@@ -1,3 +1,29 @@
+## [30.0.0] - 2026-07-17
+
+Add an opt-in, aggregate, content-free quality signal that tells the maintainer which reviewer prompts (persona+model pairs) are over- or under-reporting, derived entirely from existing dismissal outcomes — closing the persona living-library flywheel.
+
+### Added
+
+- `atcr config set quality_signal <bool>` — independent opt-in gate for the quality signal, off by default and structurally isolated from the existing `telemetry` opt-out.
+- `--preview` flag on `review`/`reconcile` showing exactly what quality-signal payload would be sent, with nothing transmitted.
+- `atcr quality-report` — maintainer-facing report ranking reviewer prompts by dismissal rate (`--format md|json`).
+- `atcr debt compact` — folds the local append-only debt store and reports before/after/dropped record counts.
+- Gated, content-free quality-signal transmission: per-persona+model dismissed/confirmed counts only, fail-open on any transport failure.
+- `docs/telemetry.md` now documents the quality-signal field allowlist, opt-in mechanism, `--preview` behavior, and the absolute no-code/no-finding-content guarantee.
+
+### Fixed
+
+- Local-debt lock timeout and shard-removal errors no longer leak the full username-bearing file path.
+- Lock wait timing corrected so a legitimate long-running operation no longer times out before it could be declared stale.
+- Quality-signal aggregation no longer drops a real outcome when a model-less terminal record folds over a model-attributed one.
+- `debt resolve`'s list now agrees with the quality signal on which occurrence of a re-raised finding is authoritative.
+
+### Changed
+
+- `atcr init`'s generated config template now documents the `quality_signal` opt-in key alongside `telemetry`.
+
+*Shipped via /execute-sprint + /execute-code-review (sprint 30.0)*
+
 ## [29.0.0] - 2026-07-17
 
 Ship a new community persona, `simon`, hyper-focused on hunting down AI-generated code bloat, backed by a passing fixture test and a refreshed marketing blog outline.

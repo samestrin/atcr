@@ -93,6 +93,15 @@ type ProjectConfig struct {
 	// default-enabled posture. It is OR'd with the ATCR_TELEMETRY env var: either
 	// surface disabling is sufficient and final (see cmd/atcr telemetryGate).
 	Telemetry *bool `yaml:"telemetry,omitempty"`
+	// QualitySignal persists the opt-IN state for the community prompt quality
+	// signal (Sprint 30.0). A pointer so an explicit false survives default
+	// application (the Telemetry idiom); nil means "unset", treated as the
+	// default-DISABLED posture — the exact inverse of Telemetry's default-enabled
+	// opt-out. It is declared here so a persisted quality_signal key passes the
+	// strict KnownFields roster load; the opt-in gate reads it via the permissive
+	// LoadQualitySignalSetting, never coupling to telemetry (see cmd/atcr
+	// qualitySignalGate).
+	QualitySignal *bool `yaml:"quality_signal,omitempty"`
 }
 
 // DefaultProjectConfigPath returns .atcr/config.yaml under root.
@@ -140,6 +149,10 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("# telemetry: anonymous usage ping. Default enabled; set false (or export\n")
 	b.WriteString("#   ATCR_TELEMETRY=0) to opt out. Either surface disabling is sufficient.\n")
 	b.WriteString("# telemetry: true\n")
+	b.WriteString("# quality_signal: content-free reviewer-quality signal (per-persona/model\n")
+	b.WriteString("#   confirm/dismiss counts). Default disabled; set true (or export\n")
+	b.WriteString("#   ATCR_QUALITY_SIGNAL=1) to opt in.\n")
+	b.WriteString("# quality_signal: false\n")
 	b.WriteString("# auto_fix: opt-in remediation for `atcr review --auto-fix`. Off unless the flag\n")
 	b.WriteString("#   is passed; leave this stanza commented to keep the default review path.\n")
 	b.WriteString("#   apply_target: working-tree dir the patch applies to (default: repo root).\n")

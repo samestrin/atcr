@@ -6,13 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/telemetry"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,9 +47,10 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
 	}
 }
 
-func TestRootCmd_HasExactlyTwentyThreeSubcommands(t *testing.T) {
+func TestRootCmd_HasExactlyTwentyFourSubcommands(t *testing.T) {
 	// The twenty-two prior commands plus `config`, the project-config mutation
-	// namespace whose only key today is the telemetry opt-out (Sprint 28.0).
+	// namespace (Sprint 28.0), plus `quality-report`, the maintainer-facing
+	// community prompt quality signal (Sprint 30.0).
 	root := newRootCmd()
 	names := map[string]bool{}
 	for _, c := range root.Commands() {
@@ -54,8 +59,8 @@ func TestRootCmd_HasExactlyTwentyThreeSubcommands(t *testing.T) {
 		}
 		names[c.Name()] = true
 	}
-	assert.Len(t, names, 23)
-	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "models", "debt", "history", "audit-report", "version", "config"} {
+	assert.Len(t, names, 24)
+	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "quality-report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "models", "debt", "history", "audit-report", "version", "config"} {
 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
 	}
 }
@@ -308,6 +313,47 @@ func TestHandleSignals_ForceExitsAfterGracePeriod(t *testing.T) {
 	assert.Contains(t, buf.String(), "forcing exit", "AC7: timeout notice printed")
 }
 
+// TestCommandTree_QualityReportDistinctFromReport covers AC 04-04: the new
+// quality-report subcommand is a structurally independent command registered
+// alongside `atcr report`, with a distinct name and its own RunE (not a wrapper or
+// alias of newReportCmd/runReport), and its help cross-references `atcr report` so
+// the two are not confused. `atcr report`'s own definition is left untouched (its
+// Short is byte-identical to before this story — the story's explicit
+// MUST-NOT-modify constraint on report.go).
+func TestCommandTree_QualityReportDistinctFromReport(t *testing.T) {
+	root := newRootCmd()
+	var reportCmd, qualityCmd *cobra.Command
+	for _, c := range root.Commands() {
+		switch c.Name() {
+		case "report":
+			reportCmd = c
+		case "quality-report":
+			qualityCmd = c
+		}
+	}
+	require.NotNil(t, reportCmd, "report must remain registered")
+	require.NotNil(t, qualityCmd, "quality-report must be registered")
+
+	assert.NotSame(t, reportCmd, qualityCmd, "distinct *cobra.Command instances")
+	assert.NotEqual(t, reportCmd.Name(), qualityCmd.Name(), "distinct Use names, no collision")
+	require.NotNil(t, qualityCmd.RunE, "quality-report must define its own RunE")
+
+	// report.go MUST NOT be modified: its Short stays byte-identical.
+	assert.Equal(t, "Render md, json, checklist, or sarif views over reconciled findings", reportCmd.Short,
+		"atcr report's Short must be unchanged by this story")
+
+	// The new command's help cross-references `atcr report` to prevent confusion.
+	qualityHelp := strings.ToLower(qualityCmd.Short + " " + qualityCmd.Long)
+	assert.Contains(t, qualityHelp, "report", "quality-report help must reference atcr report")
+
+	// No name collision with any existing registered subcommand.
+	seen := map[string]int{}
+	for _, c := range root.Commands() {
+		seen[c.Name()]++
+	}
+	assert.Equal(t, 1, seen["quality-report"], "quality-report name must not collide")
+}
+
 func TestRootCmd_SubcommandsUseRunE(t *testing.T) {
 	// Handlers must return errors (RunE) so exit codes are mapped centrally
 	// in main() — no os.Exit inside handlers.
@@ -319,4 +365,75 @@ func TestRootCmd_SubcommandsUseRunE(t *testing.T) {
 		assert.Nil(t, c.Run, "%s must not use Run", c.Name())
 		assert.NotNil(t, c.RunE, "%s must define RunE", c.Name())
 	}
+}
+
+// --- Telemetry drain on process exit ---------------------------------------
+
+// TestDrainTelemetry_FlushesInFlightSend covers the TD fix: main() must give
+// in-flight telemetry sends a bounded window to complete before os.Exit —
+// otherwise the fire-and-forget goroutine is stranded and the ping never
+// reaches the endpoint.
+func TestDrainTelemetry_FlushesInFlightSend(t *testing.T) {
+	sent := make(chan struct{})
+	restore := telemetry.SetDoRequestForTest(func(_ *http.Client, _ *http.Request) (*http.Response, error) {
+		close(sent)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	defer restore()
+
+	client := telemetry.New("https://telemetry.test/ingest")
+	client.Send(context.Background(), telemetry.Event{Event: "review_run", Lang: "go", Lines: 1, Status: "success"})
+
+	drainTelemetry(client, 2*time.Second)
+
+	select {
+	case <-sent:
+	default:
+		t.Fatal("drainTelemetry returned before the in-flight send reached the endpoint")
+	}
+}
+
+// TestDrainTelemetry_BoundedWhenSendHangs proves the drain is capped: a hung
+// endpoint must never unbound run completion, so drainTelemetry returns at its
+// timeout even though the send goroutine is still blocked.
+func TestDrainTelemetry_BoundedWhenSendHangs(t *testing.T) {
+	release := make(chan struct{})
+	restore := telemetry.SetDoRequestForTest(func(_ *http.Client, _ *http.Request) (*http.Response, error) {
+		<-release // hang until the test lets the send finish
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	defer func() {
+		close(release) // unblock the stranded send goroutine before restoring the seam
+		restore()
+	}()
+
+	client := telemetry.New("https://telemetry.test/ingest")
+	client.Send(context.Background(), telemetry.Event{Event: "reconcile_run", Lang: "go", Lines: 1, Status: "success"})
+
+	start := time.Now()
+	drainTelemetry(client, 50*time.Millisecond)
+	elapsed := time.Since(start)
+
+	assert.Less(t, elapsed, 2*time.Second, "a hung send must not unbound the drain")
+}
+
+// TestDrainTelemetry_NilClient pins fail-open symmetry with telemetry's own
+// contract (a nil Client's Send/Wait are no-ops): the drain must not panic.
+func TestDrainTelemetry_NilClient(t *testing.T) {
+	drainTelemetry(nil, time.Second) // must return, not panic
+}
+
+// TestNewRootCmdWithClient_InjectsProvidedClient proves main() drains the SAME
+// client the subcommands send through: newRootCmdWithClient must inject exactly
+// the caller-supplied client into the command context via PersistentPreRunE.
+func TestNewRootCmdWithClient_InjectsProvidedClient(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "info")
+	client := telemetry.New("")
+	root := newRootCmdWithClient(client)
+	root.SetContext(context.Background())
+	root.SetErr(io.Discard)
+
+	require.NoError(t, root.PersistentPreRunE(root, nil))
+	assert.Same(t, client, telemetry.FromContext(root.Context()),
+		"main's drain target must be the client subcommands send through")
 }

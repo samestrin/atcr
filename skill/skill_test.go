@@ -131,7 +131,7 @@ func TestSkill_NoAbsoluteOrClaudePaths(t *testing.T) {
 // from newRootCmd, update this list so the routing-table test catches drift
 // rather than letting the routing table silently diverge (AC 01-01, Edge Case 1).
 var dispatcherCommands = []string{
-	"review", "reconcile", "verify", "debate", "report", "github",
+	"review", "reconcile", "verify", "debate", "report", "quality-report", "github",
 	"range", "status", "init", "quickstart", "serve", "doctor",
 	"trust", "scorecard", "leaderboard", "benchmark", "personas",
 	"models", "debt", "history", "audit-report", "version",
@@ -155,6 +155,18 @@ func TestSkill_DispatcherRoutingTable(t *testing.T) {
 	desc := fieldValue(fm, "description")
 	assert.Regexp(t, regexp.MustCompile(`(?i)dispatch|<command>|command`), desc,
 		"description must reflect the /atcr <command> dispatcher, not a review-only flow")
+}
+
+// TestSkill_DescriptionEnumeratesRoutedCommands — the frontmatter description's
+// command enumeration must keep pace with the routing surface: quality-report
+// and config were routed without the description listing them, so a maintainer
+// scanning only the description would not see either command.
+func TestSkill_DescriptionEnumeratesRoutedCommands(t *testing.T) {
+	desc := fieldValue(frontmatter(t), "description")
+	for _, name := range []string{"quality-report", "config"} {
+		assert.Regexp(t, regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\b`), desc,
+			"frontmatter description must enumerate the %q command", name)
+	}
 }
 
 // TestSkill_ReviewFlowRoutable (AC 01-02) — the review orchestration remains

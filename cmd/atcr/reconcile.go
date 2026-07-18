@@ -48,6 +48,7 @@ falsy, unparseable, or unset value keeps AST grouping on.`,
 	cmd.Flags().Bool("no-scorecard", false, "skip writing scorecard records to the local store")
 	cmd.Flags().Bool("no-local-debt", false, "skip writing reconciled findings to the local TD store")
 	addSyncCloudFlags(cmd)
+	addQualitySignalFlags(cmd)
 	return cmd
 }
 
@@ -76,6 +77,18 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// logger was wired (no reliance on slog.Default). User-facing summary output
 	// still goes to stdout (OutOrStdout) unchanged.
 	logger := log.FromContext(cmd.Context())
+
+	// --preview renders the outbound quality-signal payload locally and sends
+	// nothing (Story 3). It short-circuits at the top of RunE — before the
+	// --sync-cloud precondition, the opt-in gate, review-dir resolution, and any
+	// transport/credential resolution — so it works for an undecided user with no
+	// ATCR_API_KEY and never runs a reconcile (AC 03-01/03-02). (Cobra's pure
+	// flag-relationship PreRunE still runs before RunE but does no I/O, network,
+	// gate, or credential access.) Its output is the marshal of the shared
+	// buildQualitySignalPayload, identical to a real send.
+	if handled, perr := maybePreviewQualitySignal(cmd); handled {
+		return perr
+	}
 
 	// Resolve --sync-cloud preconditions FIRST so a missing/empty ATCR_API_KEY
 	// (exit 3) or a bad --cloud-endpoint (exit 2) fails fast — before any reconcile
@@ -191,6 +204,15 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		telemetry.FromContext(cmd.Context()).Send(cmd.Context(), reconcileTelemetryEvent(status))
 	}
 
+	// Fire the gated, content-free community prompt quality signal (Story 6) adjacent
+	// to the passive ping above. Its own independent opt-in gate is resolved fresh
+	// inside — short-circuiting before any payload construction when disabled — and
+	// it is fail-open: a transport failure never changes this command's outcome.
+	// --preview (Story 3) short-circuits at the top of runReconcile, so it is never
+	// reached on the preview path. The gate's unrecognized-env-value warning goes to
+	// this command's stderr.
+	maybeSendQualitySignal(cmd.Context(), cmd.ErrOrStderr())
+
 	// --sync-cloud push (Story 4): an explicit, user-invoked action fired AFTER the
 	// reconcile outcome is finalized. An auth rejection overrides the outcome with
 	// exit 3 (AC 04-04); any other push failure is a non-fatal warning that
@@ -252,6 +274,22 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 	// provenance line up across the two ledgers; the ts is the same reconcile
 	// timestamp (deterministic, no second clock read).
 	runID := res.Summary.ReconciledAt + "-" + filepath.Base(reviewDir)
+
+	// Resolve each finding's model from the fan-out pool summary's per-agent
+	// AgentStatus.Model (schema v2, Sprint 30.0), mirroring EmitForReconcile's
+	// reviewer->model mapping. Best-effort: a missing/unreadable summary leaves the
+	// map empty and records persist with Model == "" (attribution-incomplete), which
+	// the quality-signal aggregation excludes from per-model rows rather than
+	// mis-bucketing under an empty model.
+	modelByReviewer := map[string]string{}
+	if ps, err := fanout.ReadPoolSummary(reviewDir); err == nil {
+		for _, a := range ps.Agents {
+			if a.Model != "" {
+				modelByReviewer[a.Agent] = a.Model
+			}
+		}
+	}
+
 	for _, f := range findings {
 		// Apply the same exclusions the gate uses (internal/reconcile/gate.go
 		// IsFailing): out-of-scope findings and refuted verdicts never persist,
@@ -268,6 +306,19 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 			continue
 		}
 
+		// Narrow the record's attribution to the reviewers the resolved model
+		// actually covers: AggregateQualitySignal credits every persona in
+		// Reviewers under the record's single Model, so a persona with no
+		// recorded model must not be stamped alongside a sibling whose model
+		// resolved — it would be credited under a model it never ran on. When
+		// no model resolves (none recorded, or a cross-model merge) the full
+		// reviewer list is kept: an empty Model excludes the record from
+		// per-model rows regardless.
+		model := resolveRecordModel(f.Reviewers, modelByReviewer)
+		reviewers := f.Reviewers
+		if model != "" {
+			reviewers = attributableReviewers(f.Reviewers, modelByReviewer, model)
+		}
 		rec := localdebt.Record{
 			SchemaVersion: localdebt.SchemaVersion,
 			RunID:         runID,
@@ -280,8 +331,9 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 			Category:      f.Category,
 			EstMinutes:    f.EstMinutes,
 			Evidence:      f.Evidence,
-			Reviewers:     f.Reviewers,
+			Reviewers:     reviewers,
 			Confidence:    f.Confidence,
+			Model:         model,
 			Justification: f.Justification,
 		}
 		if f.SourceReport != nil {
@@ -302,6 +354,53 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 			_, _ = fmt.Fprintf(diag, "localdebt: append failed: %v\n", err)
 		}
 	}
+}
+
+// resolveRecordModel picks the single model to attribute to a persisted
+// local-debt record from its reviewers and the fan-out's reviewer->model map
+// (Sprint 30.0, schema v2). A record carries one Model field, so a model can only
+// be attributed when it is unambiguous: it returns the shared model when the
+// record's resolvable reviewers all agree on one model (a single reviewer, or a
+// multi-persona merge that ran on the same model). It returns "" —
+// attribution-incomplete, which AggregateQualitySignal excludes from per-model
+// rows — when no reviewer has a resolvable model, OR when reviewers span two or
+// more DISTINCT models (a cross-model merged finding). Returning the first
+// reviewer's model in the cross-model case would mis-credit the other personas'
+// dismissal signal to a model they never ran on, so it is deliberately excluded
+// rather than guessed.
+func resolveRecordModel(reviewers []string, modelByReviewer map[string]string) string {
+	model := ""
+	for _, rev := range reviewers {
+		m := modelByReviewer[rev]
+		if m == "" {
+			continue
+		}
+		if model == "" {
+			model = m
+		} else if m != model {
+			return "" // reviewers disagree on model → attribution-incomplete
+		}
+	}
+	return model
+}
+
+// attributableReviewers returns the subset of reviewers whose recorded pool
+// model IS the record's resolved model, preserving reviewer order. It is the
+// narrowing half of record attribution: AggregateQualitySignal credits every
+// persona in a record's Reviewers under the record's single Model, so when one
+// reviewer's model resolved and a sibling's is unrecorded, the sibling is
+// dropped from the record rather than mis-credited under a model it never ran
+// on. Callers invoke it only with a resolved (non-empty) model, so every
+// reviewer with an unrecorded model fails the equality and is excluded; a
+// reviewer that ran on the resolved model is kept.
+func attributableReviewers(reviewers []string, modelByReviewer map[string]string, model string) []string {
+	out := make([]string, 0, len(reviewers))
+	for _, rev := range reviewers {
+		if modelByReviewer[rev] == model {
+			out = append(out, rev)
+		}
+	}
+	return out
 }
 
 // gateFlagValue reads the --fail-on flag and trims it, so both threshold
