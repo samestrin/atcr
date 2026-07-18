@@ -26,10 +26,16 @@ func runDebtCompact(cmd *cobra.Command, _ []string) error {
 	dir := mustFlag(cmd, "dir")
 
 	opts := localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}
-	if err := localdebt.Compact(dir, opts); err != nil {
+	res, err := localdebt.Compact(dir, opts)
+	if err != nil {
 		return fmt.Errorf("compact: %w", err)
 	}
 
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Compaction complete.")
+	if !res.StoreFound {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No local TD store to compact.")
+		return nil
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Compacted %d records into %d (%d superseded dropped).\n",
+		res.RecordsBefore, res.RecordsAfter, res.Dropped)
 	return nil
 }

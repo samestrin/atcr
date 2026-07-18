@@ -295,22 +295,41 @@ func sweepStaleTemps(dir string) {
 	}
 }
 
+// CompactResult reports what a Compact call did so a caller can tell a real fold
+// from a no-op. StoreFound is false when there was nothing to compact (the store is
+// missing or holds no records). RecordsBefore is the total records read;
+// RecordsAfter is the folded (live) count; Dropped is RecordsBefore-RecordsAfter,
+// the superseded records removed. All counts are zero on a no-op.
+type CompactResult struct {
+	StoreFound    bool
+	RecordsBefore int
+	RecordsAfter  int
+	Dropped       int
+}
+
 // Compact reads all records in dir, folds them by ID to keep only the effective
 // records (dropping superseded ones), and rewrites the sharded monthly JSONL
 // files atomically. Shards that no longer have any active records are deleted.
 // Compact runs within a cross-process lock to prevent races with concurrent Appends.
-func Compact(dir string, opts ReadOpts) error {
-	return withLock(dir, "compact", func() error {
+func Compact(dir string, opts ReadOpts) (CompactResult, error) {
+	var result CompactResult
+	err := withLock(dir, "compact", func() error {
 		sweepStaleTemps(dir)
 		recs, err := ReadAll(dir, opts)
 		if err != nil {
 			return err
 		}
 		if len(recs) == 0 {
-			return nil
+			return nil // result stays zero: StoreFound false (no-op)
 		}
 
 		folded := FoldRecords(recs)
+		result = CompactResult{
+			StoreFound:    true,
+			RecordsBefore: len(recs),
+			RecordsAfter:  len(folded),
+			Dropped:       len(recs) - len(folded),
+		}
 
 		byMonth := map[string][]Record{}
 		for _, r := range folded {
@@ -389,4 +408,5 @@ func Compact(dir string, opts ReadOpts) error {
 
 		return nil
 	})
+	return result, err
 }

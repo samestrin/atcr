@@ -375,7 +375,8 @@ func TestCompact(t *testing.T) {
 	openBefore := FoldRecords(beforeRecs)
 
 	// 4. Run compaction.
-	require.NoError(t, Compact(dir, ReadOpts{}))
+	_, err = Compact(dir, ReadOpts{})
+	require.NoError(t, err)
 
 	// Check file size / count after compaction
 	afterBytes, err := os.ReadFile(path)
@@ -413,7 +414,7 @@ func TestCompact(t *testing.T) {
 		// Compacters
 		go func() {
 			defer wg.Done()
-			_ = Compact(dir, ReadOpts{})
+			_, _ = Compact(dir, ReadOpts{})
 		}()
 	}
 	wg.Wait()
@@ -443,7 +444,8 @@ func TestCompact_SweepsStaleTempFiles(t *testing.T) {
 		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
 	}
 
-	require.NoError(t, Compact(dir, ReadOpts{}))
+	_, cerr := Compact(dir, ReadOpts{})
+	require.NoError(t, cerr)
 
 	for _, p := range []string{stale1, stale2} {
 		_, err := os.Stat(p)
