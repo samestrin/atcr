@@ -41,17 +41,17 @@ func qualitySignalEnabled(envEnabled bool, cfgQualitySignal *bool) bool {
 // names the ENABLED state directly and defaults OFF: unset, blank, or any
 // unparseable value resolves to disabled — the privacy-preserving fail-safe, the
 // inverse of ATCR_TELEMETRY's fail-OPEN-to-enabled posture. An unparseable value
-// warns to stderr (in production it is read via a single per-run qualitySignalGate
-// check) so a misspelled opt-in (e.g. "ture") is visible rather than silently
-// ignored.
-func qualitySignalEnabledFromEnv() bool {
+// warns to w (os.Stderr from the per-run qualitySignalGate check, the command's
+// stderr on the --preview path) so a misspelled opt-in (e.g. "ture") is visible
+// rather than silently ignored.
+func qualitySignalEnabledFromEnv(w io.Writer) bool {
 	v := strings.TrimSpace(os.Getenv("ATCR_QUALITY_SIGNAL"))
 	if v == "" {
 		return false
 	}
 	enabled, err := strconv.ParseBool(v)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "warning: unrecognized ATCR_QUALITY_SIGNAL value %q; treating as disabled\n", v)
+		_, _ = fmt.Fprintf(w, "warning: unrecognized ATCR_QUALITY_SIGNAL value %q; treating as disabled\n", v)
 		return false
 	}
 	return enabled
@@ -77,7 +77,10 @@ func qualitySignalEnabledFromEnv() bool {
 // A malformed persisted quality_signal value fails SAFE to disabled: a corrupt
 // value can never be interpreted as consent to transmit.
 func qualitySignalGate() bool {
-	env := qualitySignalEnabledFromEnv()
+	// The warning writer is os.Stderr here: the gate's send-path call sites
+	// (review.go/reconcile.go) pass only a context, and this plain UX string
+	// mirrors telemetryEnabledFromEnv's stderr warning convention.
+	env := qualitySignalEnabledFromEnv(os.Stderr)
 	// Resolve the config via repo-root discovery so the gate reads the same
 	// .atcr/config.yaml `config set` writes, from any subdirectory. On a
 	// discovery failure (os.Getwd), fall back to the former cwd-relative read
@@ -198,10 +201,17 @@ func maybeSendQualitySignal(ctx context.Context) {
 // key) are unaffected. When --preview is unset it returns handled=false and the
 // caller proceeds normally. A non-ENOENT local-debt read failure is surfaced as a
 // usage error (exit 2), matching the host commands' config/range error convention.
+//
+// The opt-in env var is validated here too: --preview is where users experiment
+// with opting in, so a misspelled ATCR_QUALITY_SIGNAL warns on the command's
+// stderr on this path exactly as the gated send path warns on os.Stderr. The
+// resolved value is deliberately discarded — the preview renders regardless of
+// the gate outcome (AC 03-02).
 func maybePreviewQualitySignal(cmd *cobra.Command) (handled bool, err error) {
 	if !boolFlag(cmd, "preview") {
 		return false, nil
 	}
+	_ = qualitySignalEnabledFromEnv(cmd.ErrOrStderr())
 	payload, err := buildQualitySignalPayload(".")
 	if err != nil {
 		return true, usageError(fmt.Errorf("reading local debt store for --preview: %w", err))

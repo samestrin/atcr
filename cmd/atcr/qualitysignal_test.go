@@ -80,7 +80,7 @@ func TestQualitySignalEnabledFromEnv(t *testing.T) {
 			} else {
 				_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
 			}
-			assert.Equal(t, tc.want, qualitySignalEnabledFromEnv())
+			assert.Equal(t, tc.want, qualitySignalEnabledFromEnv(io.Discard))
 		})
 	}
 }
