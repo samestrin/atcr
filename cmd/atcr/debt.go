@@ -126,7 +126,9 @@ func mustFlag(cmd *cobra.Command, name string) string {
 
 // renderDebtTable writes an aligned, tab-separated table of records. Problem
 // text is truncated so a long finding never wraps the terminal into an
-// unreadable block; the full text lives in the shard/README.
+// unreadable block; the full text lives in the shard/README. Every cell passes
+// through cell so a stray tab or newline in a README-parsed field cannot tear
+// a row or misalign the tabwriter block.
 func renderDebtTable(w io.Writer, recs []debt.Record) error {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintln(tw, "SEVERITY\tSTATUS\tGROUP\tEST\tFILE\tCATEGORY\tPROBLEM"); err != nil {
@@ -134,11 +136,24 @@ func renderDebtTable(w io.Writer, recs []debt.Record) error {
 	}
 	for _, r := range recs {
 		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
-			r.Severity, r.Status, r.Group, r.EstMinutes, r.File, r.Category, truncate(r.Problem, 60)); err != nil {
+			cell(r.Severity), cell(r.Status), cell(r.Group), r.EstMinutes,
+			cell(r.File), cell(r.Category), cell(truncate(r.Problem, 60))); err != nil {
 			return err
 		}
 	}
 	return tw.Flush()
+}
+
+// cell makes a raw README-parsed field safe to interpolate into the
+// tab-separated table: a literal newline would break the row and a literal tab
+// would tear a column, so both collapse to spaces. The render layer enforces
+// this structurally — the same line escapeMarkdownCell holds for the telemetry
+// report — rather than trusting the fields to be single-line.
+func cell(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return strings.ReplaceAll(s, "\t", " ")
 }
 
 // truncate shortens s to at most n runes, appending an ellipsis when it cut

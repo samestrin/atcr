@@ -273,12 +273,35 @@ func FoldRecords(recs []Record) []Record {
 	return folded
 }
 
+// sweepStaleTemps removes compaction temp files (.<month>.jsonl.tmp-*) leaked by a
+// Compact killed between CreateTemp and rename (a SIGKILL skips the deferred
+// os.Remove). It runs at the start of every Compact — under the same cross-process
+// lock and before any new temp is created — so crash debris is reaped by the next
+// run instead of accumulating in the store dir. Removal is best-effort: a failed
+// remove is retried by the next Compact, and ReadAll ignores the temps regardless
+// (they lack the .jsonl suffix), so a sweep failure never blocks compaction.
+func sweepStaleTemps(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if name := e.Name(); strings.HasPrefix(name, ".") && strings.Contains(name, ".jsonl.tmp-") {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+	}
+}
+
 // Compact reads all records in dir, folds them by ID to keep only the effective
 // records (dropping superseded ones), and rewrites the sharded monthly JSONL
 // files atomically. Shards that no longer have any active records are deleted.
 // Compact runs within a cross-process lock to prevent races with concurrent Appends.
 func Compact(dir string, opts ReadOpts) error {
 	return withLock(dir, "compact", func() error {
+		sweepStaleTemps(dir)
 		recs, err := ReadAll(dir, opts)
 		if err != nil {
 			return err
