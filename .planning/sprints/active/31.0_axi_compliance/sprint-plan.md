@@ -231,7 +231,7 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
    2. Improve code and tests (T1), validate all tests still pass (T3), COMMIT: `git commit -m "refactor(report): reconcile AXI schema with findings/v1"`
    **Duration:** 1h
 
-### 1.7 [ ] **Phase 1 - DoD Validation**
+### 1.7 [x] **Phase 1 - DoD Validation**
    Run DoD Verification Checklist: T3 (`go test ./internal/report/...`), coverage ≥80% for touched files, `golangci-lint run`, `go build ./...`, docs updated (`docs/findings-format.md` cross-reference).
    Report using the DoD Report Template.
 

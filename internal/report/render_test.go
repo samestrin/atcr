@@ -533,6 +533,28 @@ func TestRenderAXI_ReservedAndNumericQuoted(t *testing.T) {
 	}
 }
 
+// TestRenderAXI_AllEscapeSequences pins the full TOON escape contract for the
+// security-critical quoting path (AC 01-01 Security): backslash, quote, CR and
+// tab are emitted as their two-character escapes, while control bytes with no
+// valid TOON escape (a raw ANSI \x1b, the U+2028 line separator) are stripped —
+// never smuggled through as raw bytes.
+func TestRenderAXI_AllEscapeSequences(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Confidence: "MEDIUM",
+			Problem: "back\\slash \"q\" \r\t\x1b[0m end\u2028sep"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	assert.Contains(t, out, `\\`, "backslash escaped")
+	assert.Contains(t, out, `\"`, "double quote escaped")
+	assert.Contains(t, out, `\r`, "carriage return escaped")
+	assert.Contains(t, out, `\t`, "tab escaped")
+	assert.NotContains(t, out, "\x1b", "raw ANSI escape byte must be stripped, not emitted")
+	assert.NotContains(t, out, "\u2028", "U+2028 line separator must be stripped")
+	assert.Contains(t, out, "endsep", "visible text around stripped control chars survives contiguously")
+}
+
 // --- AC 01-02: AXI schema reconciled with atcr-findings/v1 + TOON conventions ---
 
 // axiHeaderFields returns the tabular-array header's declared field list (the

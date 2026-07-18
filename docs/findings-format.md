@@ -64,9 +64,9 @@ MEDIUM|internal/store/cache.go:88|Unbounded map grows without eviction (disagree
 | 8 | `REVIEWER` (per-source) / `REVIEWERS` (reconciled) | Source attribution | Single name vs. comma-joined set. |
 | 9 | `CONFIDENCE` (reconciled only) | `HIGH` / `MEDIUM` / `LOW` | Reviewer-agreement signal, refined by per-run PageRank authority (an isolated finding from an above-`1/N`-authority model is promoted to `HIGH`; never demoted). |
 
-## AXI (`--axi`) TOON encoding
+## AXI TOON encoding (`atcr report --format axi`)
 
-`atcr report --format axi` (and the `--axi` flag on `atcr review`/`atcr resume`) re-encodes these same reconciled findings as a token-dense [TOON](https://toonformat.dev/) tabular array for agent consumption. It is a **re-encoding of this contract, not a competing schema** — the columns map to the reconciled 9-column stream field-for-field:
+`atcr report --format axi` re-encodes these same reconciled findings as a token-dense [TOON](https://toonformat.dev/) tabular array for agent consumption. It is a **re-encoding of this contract, not a competing schema** — the columns map to the reconciled 9-column stream field-for-field:
 
 ```
 findings[N|]{severity|"file:line"|problem|fix|category|est_minutes|evidence|reviewers|confidence}:
@@ -74,10 +74,9 @@ findings[N|]{severity|"file:line"|problem|fix|category|est_minutes|evidence|revi
 ```
 
 - **Delimiter:** the pipe (`[N|]{…}:`) is declared in the header so a row is structurally adjacent to the `SEVERITY|FILE:LINE|…` grammar above.
-- **`N`:** the array header carries the true total finding count (independent of the emitted row count once the `--axi` line cap truncates — see [ci-integration.md](ci-integration.md)).
-- **Escaping is faithful, not lossy:** unlike the per-source stream's `|`→`/` neutralization, AXI quotes any field containing the delimiter, a colon, a reserved token (`true`/`false`/`null`), a number-like value, or a control character, using only TOON's five escapes (`\\ \" \n \r \t`). Control/ANSI bytes have no TOON escape and are stripped, so `--axi` stdout is structurally free of escape sequences.
-- **Additive signals:** a finding's optional severity `disagreement` annotation and its `verification` / `evidence_exec` JSON blocks (below) surface as additive `disagreement` / `verification.*` / `evidence_exec.*` columns when any finding in the payload carries them, so AXI is a superset — never a lossy subset — of the JSON form.
-- **MCP:** `axi` is a CLI-only format and is intentionally excluded from the MCP `atcr_report` format enum.
+- **`N`:** the array header carries the true total finding count.
+- **Escaping is faithful, not lossy:** unlike the per-source stream's `|`→`/` neutralization, the axi encoder quotes any field containing the delimiter, a colon, a reserved token (`true`/`false`/`null`), a number-like value, or a control character, using only TOON's five escapes (`\\ \" \n \r \t`). Control/ANSI bytes have no TOON escape and are stripped, so the payload is structurally free of escape sequences.
+- **Additive signals:** a finding's optional severity `disagreement` annotation and its `verification` / `evidence_exec` JSON blocks (below) surface as additive `disagreement` / `verification.*` / `evidence_exec.*` columns when any finding in the payload carries them, so the axi payload is a superset — never a lossy subset — of the JSON form.
 
 ## Parsing rules
 
