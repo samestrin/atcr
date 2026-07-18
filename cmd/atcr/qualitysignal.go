@@ -42,9 +42,9 @@ func qualitySignalEnabled(envEnabled bool, cfgQualitySignal *bool) bool {
 // names the ENABLED state directly and defaults OFF: unset, blank, or any
 // unparseable value resolves to disabled — the privacy-preserving fail-safe, the
 // inverse of ATCR_TELEMETRY's fail-OPEN-to-enabled posture. An unparseable value
-// warns to w (os.Stderr from the per-run qualitySignalGate check, the command's
-// stderr on the --preview path) so a misspelled opt-in (e.g. "ture") is visible
-// rather than silently ignored.
+// warns to w (the command's ErrOrStderr from both the --preview path and the
+// per-run qualitySignalGate send-path check) so a misspelled opt-in (e.g.
+// "ture") is visible rather than silently ignored.
 func qualitySignalEnabledFromEnv(w io.Writer) bool {
 	v := strings.TrimSpace(os.Getenv("ATCR_QUALITY_SIGNAL"))
 	if v == "" {
@@ -77,11 +77,12 @@ func qualitySignalEnabledFromEnv(w io.Writer) bool {
 //
 // A malformed persisted quality_signal value fails SAFE to disabled: a corrupt
 // value can never be interpreted as consent to transmit.
-func qualitySignalGate() bool {
-	// The warning writer is os.Stderr here: the gate's send-path call sites
-	// (review.go/reconcile.go) pass only a context, and this plain UX string
-	// mirrors telemetryEnabledFromEnv's stderr warning convention.
-	env := qualitySignalEnabledFromEnv(os.Stderr)
+//
+// w receives the unrecognized-env-value warning: the send-path call sites pass
+// the command's ErrOrStderr so a misspelled opt-in is capturable in cmd-scoped
+// tests exactly as on the --preview path.
+func qualitySignalGate(w io.Writer) bool {
+	env := qualitySignalEnabledFromEnv(w)
 	// Resolve the config via repo-root discovery so the gate reads the same
 	// .atcr/config.yaml `config set` writes, from any subdirectory. On a
 	// discovery failure (os.Getwd), fall back to the former cwd-relative read
@@ -181,7 +182,11 @@ func waitQualitySignalInFlight() { qualitySignalInFlight.Wait() }
 // WaitGroup) can strand a just-spawned build — acceptable under the send's
 // best-effort, fail-open posture (AC 06-03); closing it fully would need a
 // builder-closure API on the telemetry client.
-func maybeSendQualitySignal(ctx context.Context) {
+//
+// errW receives the gate's unrecognized-env-value warning (the call sites pass
+// cmd.ErrOrStderr(), so a misspelled ATCR_QUALITY_SIGNAL is capturable in
+// cmd-scoped tests); the detached goroutine never writes to it.
+func maybeSendQualitySignal(ctx context.Context, errW io.Writer) {
 	// Fail-open absolute (AC 06-03): a panic anywhere on this best-effort path —
 	// the gate resolution or the goroutine spawn — is recovered here so it can
 	// never alter the review/reconcile run's exit code or stdout. The detached
@@ -196,7 +201,7 @@ func maybeSendQualitySignal(ctx context.Context) {
 	// Gate FIRST and synchronously: a disabled opt-in short-circuits before any
 	// payload is built or goroutine spawned, proving the privacy line at the
 	// constructor, not merely at the network seam.
-	if !qualitySignalGate() {
+	if !qualitySignalGate(errW) {
 		return
 	}
 	client := telemetry.FromContext(ctx)
@@ -244,9 +249,9 @@ func maybeSendQualitySignal(ctx context.Context) {
 //
 // The opt-in env var is validated here too: --preview is where users experiment
 // with opting in, so a misspelled ATCR_QUALITY_SIGNAL warns on the command's
-// stderr on this path exactly as the gated send path warns on os.Stderr. The
-// resolved value is deliberately discarded — the preview renders regardless of
-// the gate outcome (AC 03-02).
+// stderr on this path exactly as the gated send path warns via the command's
+// stderr. The resolved value is deliberately discarded — the preview renders
+// regardless of the gate outcome (AC 03-02).
 func maybePreviewQualitySignal(cmd *cobra.Command) (handled bool, err error) {
 	if !boolFlag(cmd, "preview") {
 		return false, nil

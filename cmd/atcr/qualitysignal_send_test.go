@@ -292,7 +292,7 @@ func TestQualitySignalSend_PayloadBuildRunsDetached(t *testing.T) {
 	ctx := telemetry.NewContext(log.NewContext(context.Background(), logger), client)
 
 	done := make(chan struct{})
-	go func() { maybeSendQualitySignal(ctx); close(done) }()
+	go func() { maybeSendQualitySignal(ctx, io.Discard); close(done) }()
 
 	<-entered // the builder was invoked
 	select {

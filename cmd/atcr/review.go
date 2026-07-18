@@ -497,7 +497,8 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// before any payload construction when disabled — and it is fail-open: a
 		// transport failure never changes this command's outcome. --preview (Story 3)
 		// short-circuits at the top of runReview, so it is never reached on that path.
-		defer maybeSendQualitySignal(ctx)
+		// The gate's unrecognized-env-value warning goes to this command's stderr.
+		defer maybeSendQualitySignal(ctx, cmd.ErrOrStderr())
 	}
 	if err != nil {
 		return err // all-agents-failed → exit 1, artifacts preserved

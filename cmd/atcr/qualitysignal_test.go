@@ -91,7 +91,7 @@ func TestQualitySignalEnabledFromEnv(t *testing.T) {
 func TestQualitySignalGate_DisabledWithNoEnvNoConfig(t *testing.T) {
 	isolate(t)
 	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
-	assert.False(t, qualitySignalGate(), "quality signal must be disabled with no env var and no config")
+	assert.False(t, qualitySignalGate(io.Discard), "quality signal must be disabled with no env var and no config")
 }
 
 // TestQualitySignalGate_DisabledWithUnrelatedConfigKeysOnly proves an absent
@@ -101,7 +101,7 @@ func TestQualitySignalGate_DisabledWithUnrelatedConfigKeysOnly(t *testing.T) {
 	isolate(t)
 	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
 	writeAtcrConfig(t, "agents: [bruce]\ntelemetry: true\npayload_mode: blocks\n")
-	assert.False(t, qualitySignalGate(), "an absent quality_signal key must be neutral, not an implicit opt-in")
+	assert.False(t, qualitySignalGate(io.Discard), "an absent quality_signal key must be neutral, not an implicit opt-in")
 }
 
 // TestQualitySignalGate_IndependentFromTelemetrySetting proves the two surfaces
@@ -114,7 +114,7 @@ func TestQualitySignalGate_IndependentFromTelemetrySetting(t *testing.T) {
 		_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
 		_ = os.Unsetenv("ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\nquality_signal: true\n")
-		assert.True(t, qualitySignalGate(), "quality_signal: true must enable the quality gate")
+		assert.True(t, qualitySignalGate(io.Discard), "quality_signal: true must enable the quality gate")
 		assert.False(t, telemetryGate(), "telemetry: false must keep the telemetry gate disabled — independently")
 	})
 	t.Run("quality off, telemetry on", func(t *testing.T) {
@@ -122,7 +122,7 @@ func TestQualitySignalGate_IndependentFromTelemetrySetting(t *testing.T) {
 		_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
 		_ = os.Unsetenv("ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: true\nquality_signal: false\n")
-		assert.False(t, qualitySignalGate(), "quality_signal: false must keep the quality gate disabled")
+		assert.False(t, qualitySignalGate(io.Discard), "quality_signal: false must keep the quality gate disabled")
 		assert.True(t, telemetryGate(), "telemetry: true (no env opt-out) must keep the telemetry gate enabled — independently")
 	})
 }
@@ -143,7 +143,7 @@ func TestQualitySignalGate_ResolvesRepoRoot(t *testing.T) {
 	t.Chdir(subdir)
 	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
 
-	assert.True(t, qualitySignalGate(),
+	assert.True(t, qualitySignalGate(io.Discard),
 		"a persisted opt-in at the repo root must be observed from a subdirectory — the gate and `config set` must agree on config location")
 }
 
@@ -154,7 +154,7 @@ func TestQualitySignalGate_IndependentFromSyncCloud(t *testing.T) {
 	isolate(t)
 	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
 	t.Setenv("ATCR_API_KEY", "a-valid-looking-key")
-	assert.False(t, qualitySignalGate(), "a valid ATCR_API_KEY must not enable the quality-signal gate")
+	assert.False(t, qualitySignalGate(io.Discard), "a valid ATCR_API_KEY must not enable the quality-signal gate")
 }
 
 // TestQualitySignalGate_MalformedConfigFailsSafeToDisabled is a privacy release
@@ -168,13 +168,13 @@ func TestQualitySignalGate_MalformedConfigFailsSafeToDisabled(t *testing.T) {
 		isolate(t)
 		_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
 		writeAtcrConfig(t, "agents: [bruce]\nquality_signal: maybe\n")
-		assert.False(t, qualitySignalGate(), "a corrupt quality_signal value must never be interpreted as consent to transmit")
+		assert.False(t, qualitySignalGate(io.Discard), "a corrupt quality_signal value must never be interpreted as consent to transmit")
 	})
 	t.Run("malformed config overrides an env opt-in -> disabled", func(t *testing.T) {
 		isolate(t)
 		t.Setenv("ATCR_QUALITY_SIGNAL", "1")
 		writeAtcrConfig(t, "agents: [bruce]\nquality_signal: maybe\n")
-		assert.False(t, qualitySignalGate(), "a corrupt config must fail safe to disabled even with an env opt-in present")
+		assert.False(t, qualitySignalGate(io.Discard), "a corrupt config must fail safe to disabled even with an env opt-in present")
 	})
 }
 
@@ -184,11 +184,11 @@ func TestQualitySignalGate_MalformedConfigFailsSafeToDisabled(t *testing.T) {
 func TestQualitySignalGate_ReEvaluatedFreshPerInvocation(t *testing.T) {
 	isolate(t)
 	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
-	assert.False(t, qualitySignalGate(), "first call: disabled by default")
-	assert.False(t, qualitySignalGate(), "repeated call with no change: still disabled")
+	assert.False(t, qualitySignalGate(io.Discard), "first call: disabled by default")
+	assert.False(t, qualitySignalGate(io.Discard), "repeated call with no change: still disabled")
 
 	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
-	assert.True(t, qualitySignalGate(), "a fresh env opt-in must be observed on the next call, not masked by a cache")
+	assert.True(t, qualitySignalGate(io.Discard), "a fresh env opt-in must be observed on the next call, not masked by a cache")
 }
 
 // --- Story 3: Local --preview surface (Phase 3) --------------------------

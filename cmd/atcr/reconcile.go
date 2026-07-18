@@ -209,8 +209,9 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// inside — short-circuiting before any payload construction when disabled — and
 	// it is fail-open: a transport failure never changes this command's outcome.
 	// --preview (Story 3) short-circuits at the top of runReconcile, so it is never
-	// reached on the preview path.
-	maybeSendQualitySignal(cmd.Context())
+	// reached on the preview path. The gate's unrecognized-env-value warning goes to
+	// this command's stderr.
+	maybeSendQualitySignal(cmd.Context(), cmd.ErrOrStderr())
 
 	// --sync-cloud push (Story 4): an explicit, user-invoked action fired AFTER the
 	// reconcile outcome is finalized. An auth rejection overrides the outcome with
