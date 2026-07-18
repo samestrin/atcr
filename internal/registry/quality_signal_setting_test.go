@@ -125,3 +125,20 @@ func TestSetQualitySignalSetting_SymlinkRejected(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, info.Mode()&os.ModeSymlink != 0, "the symlink must remain a symlink")
 }
+
+// TestSetQualitySignalSetting_SymlinkRejectedFast verifies the fail-fast
+// pre-check: a symlinked config is rejected immediately after lock acquisition
+// — before any read/parse/temp-write work — so even a DANGLING link (whose
+// target a follow-the-link Stat cannot read) surfaces the symlink error rather
+// than a read error. The pre-rename Lstat remains the authoritative TOCTOU
+// guard.
+func TestSetQualitySignalSetting_SymlinkRejectedFast(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".atcr"), 0o755))
+	link := DefaultProjectConfigPath(dir)
+	require.NoError(t, os.Symlink(filepath.Join(dir, "does-not-exist.yaml"), link))
+
+	err := SetQualitySignalSetting(dir, true)
+	require.Error(t, err, "a symlinked config must be rejected even when its target is unreadable")
+	assert.Contains(t, err.Error(), "symlinked configs are unsupported")
+}
