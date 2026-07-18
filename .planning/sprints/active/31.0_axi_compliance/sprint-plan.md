@@ -136,7 +136,7 @@ GitHub Flow / trunk-based: `feature/<desc>` branches from `main`, Conventional C
 
 **Items:** Story 1 (AC 01-01, 01-02)
 
-### 1.1 [ ] **[FormatAXI Render Dispatch - RED](plan/user-stories/01-axi-token-dense-output-mode.md)**
+### 1.1 [x] **[FormatAXI Render Dispatch - RED](plan/user-stories/01-axi-token-dense-output-mode.md)**
    1. Analyze [AC 01-01](plan/acceptance-criteria/01-01-axi-format-render-dispatch.md); identify testable units: format-enum registration, `Render()` dispatch branch, golden-file fixture, zero-findings empty-array case, pipe/comma/colon/newline/unicode escaping
    2. Write tests: golden-file case (`{"axi", FormatAXI, "report.axi", nil}` in `goldenCases`), zero-findings empty-payload test, escaping edge-case table test, unicode-path preservation test
    3. Verify tests fail correctly (missing `FormatAXI`/`renderAXI`)

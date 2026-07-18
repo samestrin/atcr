@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -25,6 +26,13 @@ const (
 	FormatJSON      = "json"
 	FormatChecklist = "checklist"
 	FormatSarif     = "sarif"
+	// FormatAXI is the Agent eXperience Interface output: a token-dense TOON
+	// (Token-Optimized Object Notation) re-encoding of the findings for
+	// consumption by autonomous agents (--axi). It is a valid CLI --format, so it
+	// lives in FormatList/ValidFormat, but it is deliberately excluded from the
+	// MCP atcr_report enum (AC 01-05, Phase 2): surfacing a token-frugal format
+	// through the token-heavy MCP JSON-RPC envelope would be self-defeating.
+	FormatAXI = "axi"
 )
 
 // maxTextLen bounds PROBLEM/FIX/EVIDENCE in the md and checklist views; the json
@@ -34,7 +42,7 @@ const maxTextLen = 500
 // ValidFormat reports whether s names a supported format.
 func ValidFormat(s string) bool {
 	switch s {
-	case FormatMarkdown, FormatJSON, FormatChecklist, FormatSarif:
+	case FormatMarkdown, FormatJSON, FormatChecklist, FormatSarif, FormatAXI:
 		return true
 	default:
 		return false
@@ -42,9 +50,11 @@ func ValidFormat(s string) bool {
 }
 
 // FormatList returns the supported output formats as a slice. It is the single
-// source of truth for both human-readable listings and the MCP schema enum.
+// source of truth for human-readable listings and CLI --format validation. The
+// MCP schema enum derives from this list MINUS FormatAXI (AC 01-05, Phase 2):
+// axi is a CLI-only format.
 func FormatList() []string {
-	return []string{FormatMarkdown, FormatJSON, FormatChecklist, FormatSarif}
+	return []string{FormatMarkdown, FormatJSON, FormatChecklist, FormatSarif, FormatAXI}
 }
 
 // Formats lists the supported formats for error messages.
@@ -68,6 +78,8 @@ func Render(w io.Writer, findings []reconcile.JSONFinding, format string) error 
 		return renderChecklist(w, findings)
 	case FormatSarif:
 		return renderSarif(w, findings)
+	case FormatAXI:
+		return renderAXI(w, findings)
 	default:
 		return fmt.Errorf("unknown format %q: supported formats are %s", format, Formats())
 	}
@@ -85,6 +97,142 @@ func renderJSON(w io.Writer, findings []reconcile.JSONFinding) error {
 	}
 	_, err = w.Write(append(data, '\n'))
 	return err
+}
+
+// axiDelim is the TOON tabular-array delimiter for the axi payload: the pipe,
+// chosen so a row is visually and structurally adjacent to the existing
+// atcr-findings/v1 SEVERITY|FILE:LINE|... grammar rather than fragmenting the
+// machine-format surface (AC 01-01 Edge Case 2; toon-format-reference.md).
+const axiDelim = '|'
+
+// renderAXI re-encodes findings as a TOON (Token-Optimized Object Notation)
+// tabular array — the token-dense machine payload for the agent-experience
+// (--axi) mode. The columns mirror the atcr-findings/v1 reconciled 9-column
+// contract (SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|
+// REVIEWERS|CONFIDENCE) field-for-field, so the axi payload is a re-encoding of
+// the same machine contract a --format json consumer sees, not a new schema.
+//
+// The array header declares its element count (findings[N|]{...}:) and the pipe
+// delimiter. Free-text fields are quoted per TOON's must-quote rules (toonQuote);
+// only the five valid TOON escapes (\\ \" \n \r \t) are ever emitted and every
+// other control byte (ANSI \x1b, U+2028/U+2029, …) is stripped, so a raw escape
+// sequence can never ride the payload — the structural half of the axi no-ANSI
+// guarantee (AC 01-01 Security).
+func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
+	var b bytes.Buffer
+	if len(findings) == 0 {
+		// TOON empty-array form: a well-formed payload for a zero-findings review,
+		// not an error or a human "No findings." sentence (AC 01-01 Edge Case 1).
+		b.WriteString("findings[0]:\n")
+		_, err := w.Write(b.Bytes())
+		return err
+	}
+	header := []string{"severity", "file:line", "problem", "fix", "category", "est_minutes", "evidence", "reviewers", "confidence"}
+	quotedHeader := make([]string, len(header))
+	for i, h := range header {
+		quotedHeader[i] = toonQuote(h)
+	}
+	fmt.Fprintf(&b, "findings[%d%c]{%s}:\n", len(findings), axiDelim, strings.Join(quotedHeader, string(axiDelim)))
+	for _, f := range findings {
+		row := axiRow(f)
+		b.WriteString("  ")
+		b.WriteString(strings.Join(row, string(axiDelim)))
+		b.WriteByte('\n')
+	}
+	_, err := w.Write(b.Bytes())
+	return err
+}
+
+// axiRow encodes one finding into the base 9-column TOON row, mirroring the
+// atcr-findings/v1 reconciled column order. FILE:LINE is one combined column (as
+// in v1); est_minutes is emitted as a bare number; every free-text field is
+// routed through toonQuote.
+func axiRow(f reconcile.JSONFinding) []string {
+	return []string{
+		toonQuote(f.Severity),
+		toonQuote(fmt.Sprintf("%s:%d", f.File, f.Line)),
+		toonQuote(f.Problem),
+		toonQuote(f.Fix),
+		toonQuote(f.Category),
+		strconv.Itoa(f.EstMinutes),
+		toonQuote(f.Evidence),
+		toonQuote(strings.Join(f.Reviewers, ",")),
+		toonQuote(f.Confidence),
+	}
+}
+
+// toonQuote returns s formatted per TOON's must-quote rules. A string is quoted
+// (with the five valid TOON escapes applied, all other control bytes stripped)
+// when it is empty, has leading/trailing whitespace, contains a TOON special
+// character (: " \ [ ] { }), contains a control character, or contains the active
+// delimiter. Otherwise it is returned verbatim — unicode and emoji are safe
+// unquoted.
+func toonQuote(s string) string {
+	if toonMustQuote(s) {
+		return toonEscape(s)
+	}
+	return s
+}
+
+// toonMustQuote reports whether s must be quoted under the axi delimiter.
+func toonMustQuote(s string) bool {
+	if s == "" {
+		return true
+	}
+	if strings.TrimSpace(s) != s {
+		return true
+	}
+	if strings.ContainsRune(s, axiDelim) {
+		return true
+	}
+	// TOON special characters that force quoting regardless of the delimiter.
+	if strings.ContainsAny(s, ":\"\\[]{}") {
+		return true
+	}
+	// Any control character (newline/CR/tab and the escape-less ones like \x1b)
+	// forces quoting; toonEscape then escapes the representable ones and strips
+	// the rest. U+2028/U+2029 are separators, not Unicode "control", so are
+	// checked explicitly (mirroring cmd/atcr sanitizeDisplay).
+	if strings.IndexFunc(s, isTOONControl) >= 0 {
+		return true
+	}
+	return false
+}
+
+// isTOONControl reports whether r is a control/separator character that TOON
+// cannot carry as a raw byte.
+func isTOONControl(r rune) bool {
+	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+}
+
+// toonEscape returns s wrapped in double quotes with the five valid TOON escape
+// sequences applied (\\ \" \n \r \t). TOON defines no \x/\u escape, so any other
+// control byte (e.g. a raw ANSI \x1b) is dropped rather than smuggled through as
+// a raw byte — this is what makes the payload structurally escape-free.
+func toonEscape(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			if isTOONControl(r) {
+				continue // no valid TOON escape → strip, never emit a raw control byte
+			}
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 // renderMarkdown writes a human report: a severity x confidence summary grid then

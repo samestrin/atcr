@@ -53,6 +53,7 @@ func TestValidFormat(t *testing.T) {
 	assert.True(t, ValidFormat("json"))
 	assert.True(t, ValidFormat("checklist"))
 	assert.True(t, ValidFormat("sarif"))
+	assert.True(t, ValidFormat("axi"))
 	assert.False(t, ValidFormat("xml"))
 	// The format enum stays case-sensitive (AC 01-01 Edge Case 1): no
 	// normalization is introduced for sarif that the other formats lack.
@@ -70,6 +71,7 @@ var goldenCases = []struct {
 	{"json", FormatJSON, "findings.json", nil},
 	{"checklist", FormatChecklist, "checklist.md", nil},
 	{"sarif", FormatSarif, "report.sarif.json", sampleSarif()},
+	{"axi", FormatAXI, "report.axi", nil},
 }
 
 // TestRender_GoldenFiles compares each format's full render output byte-for-byte
@@ -432,4 +434,68 @@ func TestEscDelegatesToReconcileEsc(t *testing.T) {
 	for _, c := range cases {
 		assert.Equal(t, reconcile.Esc(c), esc(c), "input %q must match reconcile.Esc exactly", c)
 	}
+}
+
+// --- AC 01-01: FormatAXI render dispatch (token-dense TOON payload) ---
+
+// TestRenderAXI_ZeroFindings pins the empty-container form: a review with no
+// reconciled findings emits a well-formed empty TOON array (findings[0]:) rather
+// than an error or a human-oriented "No findings." sentence (AC 01-01 Edge Case 1).
+func TestRenderAXI_ZeroFindings(t *testing.T) {
+	var b strings.Builder
+	require.NoError(t, Render(&b, nil, FormatAXI))
+	assert.Equal(t, "findings[0]:", strings.TrimSpace(b.String()),
+		"zero findings must render the TOON empty-array header, not a human sentence")
+}
+
+// TestRenderAXI_EscapesDelimiterColonNewline exercises AC 01-01 Edge Case 2: a
+// field carrying the active delimiter (pipe), a colon, an embedded newline, and a
+// comma must be quoted and escaped per TOON's must-quote rules so the original
+// text is round-trippable and the one-row-per-line structure is never broken by a
+// raw delimiter/newline (contrast with atcr-findings/v1's lossy |→/ munging).
+func TestRenderAXI_EscapesDelimiterColonNewline(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Confidence: "MEDIUM",
+			Problem: "a|b:c\nd", Fix: "x,y"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	// The whole problem value is quoted; the pipe/colon ride inside the quotes and
+	// the newline is the \n TOON escape (a literal backslash-n, not a raw newline).
+	assert.Contains(t, out, `"a|b:c\nd"`, "delimiter/colon/newline field must be quoted and newline-escaped")
+	// One header line + exactly one data row: the embedded newline did not split a row.
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	assert.Len(t, lines, 2, "an embedded newline must not add a physical row")
+}
+
+// TestRenderAXI_UnicodePreserved mirrors the markdown renderer's unicode-path
+// guarantee (AC 01-01 Edge Case 3): multi-byte UTF-8 in a file path or finding
+// text survives byte-for-byte with no mojibake or truncation.
+func TestRenderAXI_UnicodePreserved(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "src/café/main.go", Line: 3, Problem: "naïve façade", Confidence: "MEDIUM"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	assert.Contains(t, out, "src/café/main.go", "unicode file path preserved")
+	assert.Contains(t, out, "naïve façade", "unicode finding text preserved")
+}
+
+// TestRenderAXI_NoANSINoMarkdown enforces the AC 01-01 story requirement and DoD:
+// axi stdout carries zero \x1b[ ANSI escape sequences (even when a finding field
+// contains a raw ANSI sequence — TOON has no \x escape, so it is stripped, not
+// smuggled) and zero Markdown table (|---|) or heading (#) syntax.
+func TestRenderAXI_NoANSINoMarkdown(t *testing.T) {
+	findings := append(sample(),
+		reconcile.JSONFinding{Severity: "HIGH", File: "x.go", Line: 9, Confidence: "LOW",
+			Problem: "\x1b[31mred\x1b[0m text"})
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	assert.NotContains(t, out, "\x1b[", "no raw ANSI escape sequence may reach axi stdout")
+	assert.NotContains(t, out, "|---|", "no markdown table separator")
+	assert.NotContains(t, out, "# ", "no markdown heading")
+	assert.Contains(t, out, "red", "the visible text survives; only the control bytes are stripped")
 }

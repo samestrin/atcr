@@ -67,7 +67,11 @@ func TestToolSchema_ReportFormatEnum(t *testing.T) {
 	require.True(t, ok, "format property must be present")
 	enum, ok := format["enum"].([]any)
 	require.True(t, ok, "format must declare an enum")
-	assert.ElementsMatch(t, []any{"md", "json", "checklist", "sarif"}, enum)
+	// INTERIM (Sprint 31.0 Phase 1): the enum derives from report.FormatList(),
+	// which now includes "axi" after AC 01-01. AC 01-05 (Phase 2, task 2.8) filters
+	// FormatAXI back out of the MCP-facing enum, at which point this expectation
+	// returns to the four non-axi formats.
+	assert.ElementsMatch(t, []any{"md", "json", "checklist", "sarif", "axi"}, enum)
 }
 
 // schemaProperties extracts the "properties" object from a tool's input schema
