@@ -375,8 +375,12 @@ func (e *engine) handleReport(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 	if format == "" {
 		format = report.FormatMarkdown
 	}
-	if !report.ValidFormat(format) {
-		return nil, ReportResult{}, fmt.Errorf("invalid format: %s; must be one of: %s", format, report.Formats())
+	// Defense in depth for programmatic callers that bypass the JSON Schema enum:
+	// reject any format not in the MCP-facing set. report.ValidFormat("axi") is true
+	// (axi is a valid CLI format), so FormatAXI needs an explicit reject here — it is
+	// deliberately excluded from the MCP surface (Design Decision #3, AC 01-05).
+	if format == report.FormatAXI || !report.ValidFormat(format) {
+		return nil, ReportResult{}, fmt.Errorf("invalid format: %s; must be one of: %s", format, mcpReportFormatsText())
 	}
 
 	dir, id, err := e.resolveReviewDir(in.IDOrPath)
