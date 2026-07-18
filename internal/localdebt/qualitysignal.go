@@ -24,11 +24,38 @@ func foldTerminalByID(records []Record) []Record {
 	effective := FoldRecords(records)
 	terminal := make([]Record, 0, len(effective))
 	for _, r := range effective {
-		if IsClosedStatus(r.Status) {
-			terminal = append(terminal, r)
+		if !IsClosedStatus(r.Status) {
+			continue
 		}
+		// FoldRecords keeps the highest-precedence terminal (wontfix > resolved >
+		// deferred), which can be a later attribution-less record even when an earlier
+		// same-id terminal carried a real Model. AggregateQualitySignal excludes empty
+		// Model, so without this the whole finding — a genuine outcome that DID have
+		// model attribution — would be silently dropped. Recover the model from the
+		// most recent same-id terminal that carries one before excluding.
+		if strings.TrimSpace(r.Model) == "" {
+			r.Model = latestTerminalModel(records, r.ID)
+		}
+		terminal = append(terminal, r)
 	}
 	return terminal
+}
+
+// latestTerminalModel returns the Model of the most recent terminal record for id
+// that carries a non-empty Model (by timestamp; last-wins on ties, matching
+// FoldRecords), or "" if no terminal record for the id has a model.
+func latestTerminalModel(records []Record, id string) string {
+	var model, bestTS string
+	for _, r := range records {
+		if r.ID != id || !IsClosedStatus(r.Status) || strings.TrimSpace(r.Model) == "" {
+			continue
+		}
+		if model == "" || r.Timestamp >= bestTS {
+			model = r.Model
+			bestTS = r.Timestamp
+		}
+	}
+	return model
 }
 
 // QualityRow is one aggregated per-(persona, model) quality-signal row: how many
