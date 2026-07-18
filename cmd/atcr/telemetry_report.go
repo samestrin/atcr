@@ -59,6 +59,10 @@ func newQualityReportCmd() *cobra.Command {
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runQualityReport,
 	}
+	// --dir mirrors `debt resolve`/`debt compact` exactly (same name, default, and
+	// help text) so the three store-reading commands script identically and tests
+	// can point quality-report at a fixture store without chdir.
+	cmd.Flags().String("dir", defaultDebtResolveDir, "path to the local TD store (.atcr/debt)")
 	cmd.Flags().String("format", "md", "output format: md or json")
 	return cmd
 }
@@ -72,7 +76,7 @@ func runQualityReport(cmd *cobra.Command, _ []string) error {
 		return usageError(fmt.Errorf("unknown format %q: supported formats are md, json", format))
 	}
 
-	records, err := localdebt.ReadAll(localdebt.DefaultDir("."), localdebt.ReadOpts{Writer: io.Discard})
+	records, err := localdebt.ReadAll(mustFlag(cmd, "dir"), localdebt.ReadOpts{Writer: io.Discard})
 	if err != nil {
 		// A present-but-unreadable store is a genuine failure (exit 1), distinct
 		// from the empty "no data" state below (a missing store reads as nil, nil).
