@@ -595,3 +595,72 @@ func TestDebtResolve_SelectionWorksWithoutOptionalFields(t *testing.T) {
 	require.Len(t, items, 1)
 	assert.Equal(t, "internal/x/a.go", items[0]["file"])
 }
+
+func TestDebtResolve_ListFlagsWithResolveAreUsageError(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	errorLine := func(out string) string {
+		parts := strings.SplitN(out, "\n", 2)
+		return strings.ToLower(strings.TrimSpace(parts[0]))
+	}
+
+	// --json/--severity/--max only affect the list renderer, which the mark branch
+	// never reaches; combined with --resolve they would be silently ignored. They
+	// must be rejected as usage errors, symmetric with --status/--reason without
+	// --resolve. Assert against the first output line only — cobra's usage dump on
+	// error lists every flag name and would false-positive a Contains on full output.
+	cases := []struct {
+		name string
+		args []string
+		want []string // flag names that must appear on the error line
+	}{
+		{"json", []string{"--json"}, []string{"--json"}},
+		{"severity", []string{"--severity", "HIGH"}, []string{"--severity"}},
+		{"max", []string{"--max", "5"}, []string{"--max"}},
+		{"combined", []string{"--json", "--max", "5"}, []string{"--json", "--max"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"resolve", "--dir", dir, "--resolve", rec.ID}, tc.args...)
+			out, err := runDebt(t, args...)
+			require.Error(t, err, "%s with --resolve must be a usage error, not silently ignored", tc.name)
+			assert.Equal(t, exitUsage, exitCode(err), "exit code must be 2 (usage), like --status without --resolve")
+			el := errorLine(out)
+			for _, flag := range tc.want {
+				assert.Contains(t, el, flag, "error must name the rejected list-only flag")
+			}
+			assert.NotContains(t, strings.ToLower(out), "marked", "a rejected invocation must not report a resolution")
+		})
+	}
+
+	// No terminal record may be appended by any of the rejected invocations.
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	for _, r := range recs {
+		assert.False(t, r.ID == rec.ID && r.Status != "", "rejected invocations must not append a terminal record")
+	}
+
+	// A bare --resolve (no list-only flags) still marks the item, unchanged.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err, "a plain --resolve without list-only flags must still succeed")
+}
+
+func TestDebtResolve_ExplicitEmptyResolveIsUsageError(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	// --resolve "" is explicitly changed but empty: routing it to the list path would
+	// silently discard the user's mark intent. It must be a usage error (exit 2),
+	// governed by Changed("resolve"), not by the empty value falling through to list.
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", "")
+	require.Error(t, err, `an explicit --resolve "" must be a usage error, not a silent list`)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, strings.ToLower(out), "--resolve", "error must name the --resolve flag")
+	assert.NotContains(t, out, "internal/x/a.go", "must not fall through to the list view")
+
+	// Omitting --resolve entirely still lists, untouched by the new guard.
+	out, err = runDebt(t, "resolve", "--dir", dir)
+	require.NoError(t, err, "omitting --resolve must still list open items")
+	assert.Contains(t, out, "internal/x/a.go")
+}
