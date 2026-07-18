@@ -603,6 +603,37 @@ func TestPersistLocalDebt_CrossModelMergeExcludedFromModelAttribution(t *testing
 		"a cross-model merge is attribution-incomplete: Model is empty, not one reviewer's model")
 }
 
+// TestPersistLocalDebt_UnknownModelReviewerNotCreditedUnderSibling covers the
+// mixed-attribution merge: two personas flag the identical finding, but only one
+// has a recorded pool-summary model. The record resolves to that one model, and
+// AggregateQualitySignal credits every persona in Reviewers under it — so the
+// persona with no recorded model must be dropped from the record's attribution
+// rather than mis-credited under a sibling's model it never ran on.
+func TestPersistLocalDebt_UnknownModelReviewerNotCreditedUnderSibling(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	// Two personas independently flag the identical file:line:problem, so reconcile
+	// merges them into one record with Reviewers=[bruce, greta].
+	fixtureReview(t, "r", map[string]string{
+		"sources/pool/raw/agent/bruce/findings.txt": "HIGH|a.go:1|same issue here|fix|security|10|ev|bruce\n",
+		"sources/pool/raw/agent/greta/findings.txt": "HIGH|a.go:1|same issue here|fix|security|10|ev|greta\n",
+	})
+	// Only bruce has a recorded model; greta's is unrecorded (no model key).
+	poolDir := filepath.Join(".atcr", "reviews", "r", "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	summary := `{"agents":[{"agent":"bruce","model":"claude-sonnet-4-6"},{"agent":"greta"}],"total":2,"succeeded":2}`
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "summary.json"), []byte(summary), 0o644))
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 1, "the two personas' identical finding merges to one record")
+	assert.Equal(t, "claude-sonnet-4-6", recs[0].Model,
+		"the one recorded model still resolves for the merged record")
+	assert.Equal(t, []string{"bruce"}, recs[0].Reviewers,
+		"greta has no recorded model and must be dropped from attribution, not credited under bruce's model")
+}
+
 // TestRunReconcile_LocalDebtDedupsSameFinding covers AC 02-03 Scenario 2:
 // re-running reconcile on the same review dir with unchanged findings does not
 // duplicate records (write-time dedup by FindingID over full-history ReadAll).
