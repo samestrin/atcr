@@ -97,6 +97,11 @@ func TestRootCmd_BareInvocationShowsHomeView(t *testing.T) {
 	// AC1/AC2: a bare `atcr` (no subcommand) now renders the live home view — the
 	// one-line description — instead of the static help/usage text. Formerly
 	// TestRootCmd_BareInvocationShowsHelp, updated for epic 31.1 (Content First).
+	//
+	// Isolate from the real filesystem: an empty temp working directory has no
+	// .atcr/latest, pinning the deterministic first-run home state regardless of
+	// where the suite runs (matches the t.Chdir(t.TempDir()) pattern in home_test.go).
+	t.Chdir(t.TempDir())
 	out, err := execute(t)
 	require.NoError(t, err)
 	assert.Contains(t, out, "Agent Team Code Review — a review panel, not a reviewer",
