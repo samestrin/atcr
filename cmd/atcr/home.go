@@ -114,7 +114,7 @@ func renderHomeView(w io.Writer, execPath, description string, st homeState) err
 			_, err := fmt.Fprintf(w, "Latest review %s is unavailable — its status could not be read.\n", st.reviewID)
 			return err
 		}
-		_, err := fmt.Fprintln(w, "Latest review pointer is unreadable — run `atcr review` to start a fresh one.")
+		_, err := fmt.Fprintln(w, ".atcr/latest pointer file is corrupted or unreadable — run `atcr review` to regenerate it.")
 		return err
 	default:
 		_, err := fmt.Fprintln(w, "No reviews yet — run `atcr review` to start one.")
