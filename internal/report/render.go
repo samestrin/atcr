@@ -206,6 +206,13 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 // is routed through toonQuote. A finding missing a declared signal contributes
 // empty cells (an empty exit_code cell, never a misleading 0) so the row keeps the
 // header width.
+//
+// In a mixed payload (only some findings carry a declared block) the typed
+// additive columns are loosely typed per cell: verification.challenge_survived
+// and evidence_exec.exit_code emit a bare bool/int where the block is present
+// but a quoted empty string ("") where it is absent, so one column carries both
+// shapes across rows. A consumer decoding the payload must tolerate the mixed
+// present/absent form rather than assume a strict per-column type.
 func axiRow(f reconcile.JSONFinding, hasDisagreement, hasVerification, hasEvidence bool) []string {
 	row := []string{
 		toonQuote(f.Severity),
