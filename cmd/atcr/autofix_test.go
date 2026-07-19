@@ -763,6 +763,25 @@ func TestNoSandboxFlag_HelpNamesTheRisk(t *testing.T) {
 		require.Contains(t, usage, want,
 			"--no-sandbox help must name the risk (disables container isolation, runs LLM-generated code on the host)")
 	}
+	// The escalation framing carries the severity, not just the neutral nouns — pin
+	// it so the help cannot be silently weakened to understate the risk (3.5.A LOW).
+	for _, want := range []string{"DANGER", "privileges", "no isolation"} {
+		require.Contains(t, usage, want,
+			"--no-sandbox help must keep its severity framing (DANGER / your privileges / no isolation)")
+	}
+}
+
+// TestReviewCmd_NoSandboxFlagRegisteredOnReview: guards the actual wiring —
+// deleting addAutoFixFlags(cmd) from newReviewCmd would leave the real `review`
+// command with no --no-sandbox flag while the synthetic-command tests still passed
+// (3.5.A MEDIUM). Mirrors TestReviewCmd_AutoFixFlagExists.
+func TestReviewCmd_NoSandboxFlagRegisteredOnReview(t *testing.T) {
+	_, help := execCmdCapture(t, "review", "--help")
+	require.Contains(t, help, "--no-sandbox")
+
+	v, err := newReviewCmd().Flags().GetBool("no-sandbox")
+	require.NoError(t, err)
+	require.False(t, v, "--no-sandbox must default to false on the real review command")
 }
 
 // --- 02-03: sandbox resolution is the gate's fourth checked piece -----------
