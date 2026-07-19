@@ -11,24 +11,30 @@ import (
 	"github.com/samestrin/atcr/internal/verify"
 )
 
+// mcpAllowedFormats is the explicit allow list of report formats surfaced through
+// the MCP atcr_report tool (Design Decision #3, AC 01-05). Modeling the MCP
+// surface as an allow list — rather than report.FormatList() minus a hardcoded
+// exclusion — means a future CLI-only format added to FormatList() is excluded
+// by construction: it reaches the MCP enum only when deliberately added here.
+// AXI is excluded deliberately: the entire point of --axi is to skip MCP's token
+// overhead (axi.md's own benchmark: MCP costs 2.3x-12x more tokens than the
+// CLI), so an axi-encoded string nested inside an MCP JSON-RPC envelope delivers
+// none of that saving and would be misleading. The allow list lives here in the
+// MCP layer, not in report.FormatList(), so the CLI's report.ValidFormat/Formats
+// keep advertising axi while only the MCP enum omits it.
+var mcpAllowedFormats = []string{
+	report.FormatMarkdown,
+	report.FormatJSON,
+	report.FormatChecklist,
+	report.FormatSarif,
+}
+
 // mcpReportFormats returns the report formats surfaced through the MCP atcr_report
-// tool: every CLI --format value EXCEPT report.FormatAXI. AXI is deliberately
-// excluded from the MCP surface (Design Decision #3, AC 01-05) — the entire point
-// of --axi is to skip MCP's token overhead (axi.md's own benchmark: MCP costs
-// 2.3x-12x more tokens than the CLI), so an axi-encoded string nested inside an
-// MCP JSON-RPC envelope delivers none of that saving and would be misleading. The
-// filter lives here in the MCP layer, not in report.FormatList(), so the CLI's
-// report.ValidFormat/Formats keep advertising axi while only the MCP enum omits it.
+// tool — the explicit mcpAllowedFormats allow list. The JSON Schema enum and
+// handleReport's defense-in-depth guard consult this one set, so the two sites
+// can never drift on which formats the MCP surface accepts.
 func mcpReportFormats() []string {
-	all := report.FormatList()
-	out := make([]string, 0, len(all))
-	for _, f := range all {
-		if f == report.FormatAXI {
-			continue
-		}
-		out = append(out, f)
-	}
-	return out
+	return mcpAllowedFormats
 }
 
 // mcpReportFormatsText is mcpReportFormats joined for description/help text, the

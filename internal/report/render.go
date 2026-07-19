@@ -51,8 +51,10 @@ func ValidFormat(s string) bool {
 
 // FormatList returns the supported output formats as a slice. It is the single
 // source of truth for human-readable listings and CLI --format validation. The
-// MCP schema enum derives from this list MINUS FormatAXI (AC 01-05, Phase 2):
-// axi is a CLI-only format.
+// MCP schema enum is a separate explicit allow list (internal/mcp
+// mcpAllowedFormats) that excludes FormatAXI (AC 01-05): axi is a CLI-only
+// format, and any future CLI-only format added here stays off the MCP surface
+// unless deliberately opted in there.
 func FormatList() []string {
 	return []string{FormatMarkdown, FormatJSON, FormatChecklist, FormatSarif, FormatAXI}
 }

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -73,6 +74,34 @@ func TestToolSchema_ReportFormatEnum(t *testing.T) {
 	// purpose. The enum is the four non-axi formats.
 	assert.ElementsMatch(t, []any{"md", "json", "checklist", "sarif"}, enum)
 	assert.NotContains(t, enum, "axi", "axi must be excluded from the MCP report enum")
+}
+
+// TestMCPReportFormats_AllowListContract pins the atcr_report MCP surface as an
+// explicit allow list consulted by BOTH the JSON Schema enum and handleReport's
+// defense-in-depth guard (AC 01-05): every advertised format is CLI-valid, the
+// CLI-only axi format is absent, and for every format report.FormatList() knows,
+// the handler accepts it iff the advertised set contains it — so a future
+// CLI-only format added to FormatList() is excluded by construction instead of
+// leaking onto the MCP surface through one of the two sites.
+func TestMCPReportFormats_AllowListContract(t *testing.T) {
+	advertised := mcpReportFormats()
+	for _, f := range advertised {
+		assert.True(t, report.ValidFormat(f), "MCP-advertised format %q must be CLI-valid", f)
+	}
+	assert.NotContains(t, advertised, report.FormatAXI, "axi is CLI-only and must stay off the MCP surface")
+
+	e := &engine{root: t.TempDir()}
+	for _, f := range report.FormatList() {
+		_, _, err := e.handleReport(context.Background(), nil, ReportArgs{Format: f})
+		require.Error(t, err, "an empty review root must error after the guard for %q", f)
+		if slices.Contains(advertised, f) {
+			// Past the guard: it fails later (no review dir), never with the
+			// invalid-format error.
+			assert.NotContains(t, err.Error(), "invalid format", "advertised format %q must pass the handler guard", f)
+		} else {
+			assert.Contains(t, err.Error(), "invalid format", "non-advertised CLI format %q must be rejected by the handler guard", f)
+		}
+	}
 }
 
 // schemaProperties extracts the "properties" object from a tool's input schema
