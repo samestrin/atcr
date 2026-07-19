@@ -260,13 +260,22 @@ func newRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
+			return runHome(cmd)
 		},
 	}
 
 	// --log-format is a persistent flag so every subcommand inherits it; LOG_LEVEL
 	// is read from the environment (see logLevelFromEnv). Both feed setupLogger.
 	root.PersistentFlags().String("log-format", "text", "log output format: text or json")
+
+	// --axi is a LOCAL flag on the root command (not persistent): it is reachable
+	// only on the bare `atcr` invocation, so `atcr --axi` renders the home view as
+	// a token-dense TOON payload (Content First, epic 31.1). Being local, it is not
+	// inherited by subcommands and cannot collide with `atcr review`'s own --axi.
+	// The root PersistentPreRunE's Lookup("axi") then propagates it into the command
+	// context (newAXIContext), so runHome reads it via axiFromContext — the same
+	// context-propagation plumbing review/resume already reuse (Epic 31.0).
+	root.Flags().Bool("axi", false, "emit the home view as a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption (Agent eXperience Interface)")
 
 	// Flag-parse errors (unknown flags, bad values, violated flag groups)
 	// are usage errors: exit 2.
