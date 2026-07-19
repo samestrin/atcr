@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -81,11 +83,13 @@ func TestRenderHomeView_NoReview(t *testing.T) {
 }
 
 // TestResolveHomeState_NoReviews covers AC3's resolution: a repo with no
-// .atcr/latest yields the no-review state (never an error).
+// .atcr/latest (os.ErrNotExist) yields the no-review first-run state, never an
+// error and never the "unavailable" degrade state.
 func TestResolveHomeState_NoReviews(t *testing.T) {
 	t.Chdir(t.TempDir())
-	st := resolveHomeState()
+	st := resolveHomeState(context.Background())
 	assert.False(t, st.hasReview, "a repo with no .atcr/latest yields the no-review state")
+	assert.False(t, st.unavailable, "a truly-absent pointer is first-run, not unavailable")
 }
 
 // TestResolveHomeState_HasReview covers the live-state read: resolveHomeState
@@ -95,10 +99,83 @@ func TestResolveHomeState_HasReview(t *testing.T) {
 	writeStatusFixture(t, root, "2026-06-10_x")
 	t.Chdir(root)
 
-	st := resolveHomeState()
+	st := resolveHomeState(context.Background())
 	require.True(t, st.hasReview)
 	assert.Equal(t, "2026-06-10_x", st.reviewID)
 	assert.Equal(t, "completed", st.status)
+}
+
+// TestResolveHomeState_StalePointer covers the degrade path flagged by
+// independent review: a .atcr/latest pointer that names a review whose directory
+// can't be read (pruned/corrupt) is the honest "unavailable" state carrying the
+// known id — NOT silently masked as first-run.
+func TestResolveHomeState_StalePointer(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte("2026-06-10_gone\n"), 0o644))
+	t.Chdir(root)
+
+	st := resolveHomeState(context.Background())
+	assert.False(t, st.hasReview, "a pointer to an unreadable review is not a readable review")
+	assert.True(t, st.unavailable, "a stale/unreadable pointer is the unavailable state, not first-run")
+	assert.Equal(t, "2026-06-10_gone", st.reviewID, "the known id is preserved for an honest message")
+}
+
+// TestResolveHomeState_CorruptPointer covers the other degrade cause: an empty
+// (or malformed) .atcr/latest is a non-ErrNotExist anchor error, reported as
+// unavailable with no id — distinct from the true first-run state.
+func TestResolveHomeState_CorruptPointer(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte("   \n"), 0o644))
+	t.Chdir(root)
+
+	st := resolveHomeState(context.Background())
+	assert.False(t, st.hasReview)
+	assert.True(t, st.unavailable, "an empty/corrupt pointer is unavailable, not first-run")
+	assert.Empty(t, st.reviewID, "no usable id from a corrupt pointer")
+}
+
+// TestRenderHomeView_Unavailable covers the honest degrade rendering for both the
+// known-id (stale pointer) and unknown-id (corrupt pointer) cases — never the
+// misleading "No reviews yet" line.
+func TestRenderHomeView_Unavailable(t *testing.T) {
+	stubHomeDir(t, filepath.FromSlash("/home/testuser"))
+	const desc = "Agent Team Code Review — a review panel, not a reviewer"
+
+	var withID bytes.Buffer
+	require.NoError(t, renderHomeView(&withID, filepath.FromSlash("/home/testuser/go/bin/atcr"), desc,
+		homeState{unavailable: true, reviewID: "2026-06-10_gone"}))
+	assert.Contains(t, withID.String(), "2026-06-10_gone")
+	assert.Contains(t, withID.String(), "unavailable")
+	assert.NotContains(t, withID.String(), "No reviews yet")
+
+	var noID bytes.Buffer
+	require.NoError(t, renderHomeView(&noID, filepath.FromSlash("/home/testuser/go/bin/atcr"), desc,
+		homeState{unavailable: true}))
+	assert.Contains(t, noID.String(), "unreadable")
+	assert.NotContains(t, noID.String(), "No reviews yet")
+}
+
+// TestRunHome_ExecutableFallback covers the LOW independent-review finding: when
+// the homeExecutable seam errors, runHome still renders the home view (with the
+// "atcr" fallback path) rather than erroring — AC3's never-error guarantee holds
+// even on exec-path resolution failure.
+func TestRunHome_ExecutableFallback(t *testing.T) {
+	t.Chdir(t.TempDir()) // no .atcr/latest -> deterministic no-review path
+	origExec := homeExecutable
+	t.Cleanup(func() { homeExecutable = origExec })
+	homeExecutable = func() (string, error) { return "", errors.New("exec resolution failed") }
+
+	root := newRootCmd()
+	root.SetContext(context.Background()) // no axi in context -> text path
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+
+	require.NoError(t, runHome(root))
+	got := buf.String()
+	assert.Contains(t, got, "atcr", "the exec fallback renders the fallback name")
+	assert.Contains(t, got, "Agent Team Code Review — a review panel, not a reviewer")
 }
 
 // TestRootCmd_BareAXIRendersHomeViewPayload covers AC4/T3: bare `atcr --axi`
