@@ -230,8 +230,8 @@ func newRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 		// An unknown subcommand is a usage error (exit 2), not the generic
 		// failure code: in CI, exit 1 specifically means "findings at/above
 		// threshold". Setting Args bypasses cobra's legacyArgs path (which
-		// returns an uncoded error from Find), and the RunE keeps bare `atcr`
-		// printing help with exit 0.
+		// returns an uncoded error from Find), and the RunE renders the
+		// home view for a bare `atcr` invocation with exit 0.
 		Args: usageArgs(cobra.NoArgs),
 		// PersistentPreRunE is inherited by every subcommand, so it is the single
 		// point where the root logger is constructed (from LOG_LEVEL and
