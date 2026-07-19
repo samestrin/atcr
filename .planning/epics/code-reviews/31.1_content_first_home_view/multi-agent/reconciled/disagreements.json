@@ -1,0 +1,171 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/home.go",
+      "line": 148,
+      "severity": "HIGH",
+      "problem": "(runHome) No integration test exercises the `atcr --axi` bare invocation path; the AXI home view is only unit-tested at the renderer level, not end-to-end (AC4)",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/main_test.go",
+      "line": 96,
+      "severity": "HIGH",
+      "problem": "(TestRootCmd_BareInvocationShowsHomeView) AC5 requires a golden/snapshot test pinning the non-`--axi` home-view output, but no such test exists; the existing test only checks substrings, not the exact output",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "cmd/atcr/main_test.go",
+      "line": 96,
+      "severity": "HIGH",
+      "problem": "(TestRootCmd_BareInvocationShowsHomeView) TestRootCmd_BareInvocationShowsHomeView is not isolated from the filesystem; its output depends on whether `.atcr/latest` exists in the working directory, making it unreliable",
+      "score": 3,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "cmd/atcr/home.go",
+      "line": 44,
+      "severity": "MEDIUM",
+      "problem": "relHome has no direct tests for edge cases (path under home, path outside home, home dir error); the integration test relies on the real home directory, making relativization nondeterministic",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "MEDIUM",
+          "problem": "relHome has no direct tests for edge cases (path under home, path outside home, home dir error); the integration test relies on the real home directory, making relativization nondeterministic"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "cmd/atcr/home.go",
+      "line": 46,
+      "severity": "MEDIUM",
+      "problem": "relHome constructs paths using filepath.Separator, which produces backslashes on Windows, potentially breaking downstream TOON parsers or scripts that expect forward slashes in the exec_path field",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "brad"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "brad",
+          "severity": "MEDIUM",
+          "problem": "relHome constructs paths using filepath.Separator, which produces backslashes on Windows, potentially breaking downstream TOON parsers or scripts that expect forward slashes in the exec_path field"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "cmd/atcr/home.go",
+      "line": 81,
+      "severity": "MEDIUM",
+      "problem": "resolveHomeState error paths (anchorDir non-ErrNotExist, ReadReviewStatus failure) have zero test coverage; the \"unavailable\" degrade is never exercised",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "dax",
+          "severity": "MEDIUM",
+          "problem": "resolveHomeState error paths (anchorDir non-ErrNotExist, ReadReviewStatus failure) have zero test coverage; the \"unavailable\" degrade is never exercised"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "cmd/atcr/home.go",
+      "line": 115,
+      "severity": "MEDIUM",
+      "problem": "runHome uses a hardcoded fallback \"atcr\" for the executable path",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "otto",
+          "severity": "MEDIUM",
+          "problem": "runHome uses a hardcoded fallback \"atcr\" for the executable path"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "internal/report/home_test.go",
+      "line": 63,
+      "severity": "MEDIUM",
+      "problem": "Golden test hardcodes Unix forward-slash paths but relHome uses platform filepath.Separator — golden passes while real code path produces backslash paths on Windows",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "mira"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "mira",
+          "severity": "MEDIUM",
+          "problem": "Golden test hardcodes Unix forward-slash paths but relHome uses platform filepath.Separator — golden passes while real code path produces backslash paths on Windows"
+        }
+      ]
+    },
+    {
+      "kind": "gray_zone",
+      "file": "cmd/atcr/home.go",
+      "line": 53,
+      "severity": "LOW",
+      "problem": "relHome uses a bespoke string concatenation for the home separator",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "otto"
+      ],
+      "detail": "similarity 0.00",
+      "positions": [
+        {
+          "reviewer": "otto",
+          "severity": "LOW",
+          "problem": "relHome uses a bespoke string concatenation for the home separator"
+        }
+      ]
+    }
+  ]
+}

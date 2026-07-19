@@ -244,3 +244,14 @@
 {"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"LOW","id":"9a29e7f62a29aa13","file":"cmd/atcr/report_test.go","category":"testing"}
 {"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"LOW","id":"22e5ea4f9a3360dd","file":"cmd/atcr/axi.go","category":"style"}
 {"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"LOW","id":"c9f0f04ecfb4c8fb","file":"cmd/atcr/report_test.go","category":"style"}
+{"ts":"2026-07-19T07:10:01.413182-07:00","package":"cmd/atcr","severity":"LOW","id":"9dcb7fab79788f68","file":"cmd/atcr/home.go","category":"correctness"}
+{"ts":"2026-07-19T07:10:01.413182-07:00","package":"internal/report","severity":"MEDIUM","id":"f71657b7546a7b17","file":"internal/report/home_test.go","category":"portability"}
+{"ts":"2026-07-19T07:10:01.413182-07:00","package":"cmd/atcr","severity":"HIGH","id":"50493a6022b62593","file":"cmd/atcr/home.go","category":"]{...}:` and key fields"}
+{"ts":"2026-07-19T07:10:01.413182-07:00","package":"cmd/atcr","severity":"HIGH","id":"a3d81f960b186af0","file":"cmd/atcr/main_test.go","category":"testing"}
+{"ts":"2026-07-19T07:10:01.413182-07:00","package":"cmd/atcr","severity":"HIGH","id":"58579f53ecbcd1bb","file":"cmd/atcr/main_test.go","category":"testing"}
+{"ts":"2026-07-19T07:10:01.413182-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"1f3bc8d493817f6d","file":"cmd/atcr/home.go","category":"testing"}
+{"ts":"2026-07-19T07:10:01.413182-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"c38b0f51aba966ef","file":"cmd/atcr/home.go","category":"testing"}
+{"ts":"2026-07-19T07:10:01.413182-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"66a1223403cc3d17","file":"cmd/atcr/home.go","category":"portability"}
+{"ts":"2026-07-19T07:10:01.413182-07:00","package":"cmd/atcr","severity":"LOW","id":"11ed1e99cbf73857","file":"cmd/atcr/home.go","category":"reliability"}
+{"ts":"2026-07-19T07:10:01.413182-07:00","package":"cmd/atcr","severity":"LOW","id":"0cd836da1c4267cc","file":"cmd/atcr/home.go","category":"style"}
+{"ts":"2026-07-19T07:10:01.413182-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"bf63a2f65470c0c9","file":"cmd/atcr/home.go","category":"structure"}

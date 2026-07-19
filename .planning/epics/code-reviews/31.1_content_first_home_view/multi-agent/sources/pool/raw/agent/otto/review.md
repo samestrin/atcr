@@ -1,0 +1,3 @@
+LOW|cmd/atcr/home.go:53|relHome uses a bespoke string concatenation for the home separator|Use filepath.Join("~", rel) or a consistent separator constant|style|5|return "~" + string(filepath.Separator) + rel
+
+MEDIUM|cmd/atcr/home.go:115|runHome uses a hardcoded fallback "atcr" for the executable path|Inject the command name from cmd.Name() to avoid hardcoding the binary name|structure|5|execPath = "atcr"

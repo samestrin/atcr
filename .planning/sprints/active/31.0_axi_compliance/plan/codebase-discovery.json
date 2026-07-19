@@ -1,0 +1,164 @@
+{
+  "generated": "2026-07-18",
+  "refined": "2026-07-18",
+  "refinement_mode": "deep",
+  "discovery_method": "semantic",
+  "queries": [
+    "CLI output formatter markdown table",
+    "review command exit code handling",
+    "stdout stderr logging separation",
+    "JSON output review findings",
+    "report rendering ANSI colors",
+    "review summary stdout human output",
+    "truncate output line cap budget",
+    "MCP report format enum schema",
+    "strip ANSI color codes terminal",
+    "environment variable configuration override"
+  ],
+  "match_count": 18,
+  "build_from": {
+    "primary_file": "cmd/atcr/main.go",
+    "reason": "Exit-code semantics (exitFailure=1, exitUsage=2, exitAuth=3, codedError, exitCode()) are already fully centralized here (const block at line 126, exitCode() at line 156) and match the epic's AC2 shape closely. AXI work should reuse this mechanism rather than reinvent it — at most it adds a distinguishable code for 'findings present' if the existing exitFailure=1 convention is judged not distinct enough from generic failures.",
+    "suggested_approach": "Add an --axi persistent (or review-scoped) flag alongside --log-format in newRootCmdWithClient (line 191) / newReviewCmd. Route it into a new lightweight output-mode context value in PersistentPreRunE (line 230), mirroring how log.NewContext (setupLogger, line 329) and telemetry.NewContext are threaded, so cmd/atcr/review.go, cmd/atcr/resume.go, and internal/report can all consult it without new global state."
+  },
+  "semantic_matches": [
+    {"file": "cmd/atcr/main.go", "symbol": "exitCode/codedError/exitFailure/exitUsage/exitAuth", "type": "function/const", "line": 126, "score": 0.98, "query": "review command exit code handling", "relevance": "Exit-code contract already implemented and documented; epic's exit-code AC is largely satisfied for atcr review already (0/1/2, plus an existing 3 for auth). Const block at 126-130, codedError at 133, exitCode() at 156."},
+    {"file": "docs/ci-integration.md", "symbol": "Exit semantics table", "type": "doc", "line": 11, "score": 1.0, "query": "review command exit code handling", "relevance": "Exit codes 0/1/2 are already documented for CI gating; the epic's AC3 needs no new code, only confirmation --axi doesn't change this contract."},
+    {"file": "docs/logging.md", "symbol": "Logging", "type": "doc", "line": 1, "score": 0.11, "query": "stdout stderr logging separation", "relevance": "Confirms stderr/stdout separation (AC2 of the epic) already exists project-wide via internal/log; atcr serve already keeps stdout protocol-only."},
+    {"file": "internal/report/render.go", "symbol": "Render/FormatMarkdown/FormatJSON/FormatChecklist/FormatSarif", "type": "function/const", "line": 24, "score": 0.9, "query": "JSON output review findings", "relevance": "atcr report already dispatches to a JSON formatter for reconciled findings — the closest existing analog to a token-dense machine format, and the natural place to add a TOON/axi format constant (const block lines 23-28, Render switch at 57)."},
+    {"file": "cmd/atcr/report.go", "symbol": "--format flag", "type": "cli-flag", "line": 25, "score": 0.85, "query": "JSON output review findings", "relevance": "Shows the existing pattern for adding a new output format (md/json/checklist/sarif) via report.ValidFormat/report.Formats — --axi likely follows the same enum-extension pattern rather than a separate boolean flag."},
+    {"file": "docs/findings-format.md", "symbol": "atcr-findings/v1 specification", "type": "doc", "line": 1, "score": 0.99, "query": "refinement-pass (format precedent grep)", "relevance": "CORRECTED from docs/skill-usage.md: the canonical specification of the existing `# atcr-findings/v1` agent-facing wire format lives here (header gate, additive-only evolution policy, 8-column layout). skill/findings-format.md and skill/host-review.md carry the skill-side copy. Review this before inventing a new TOON schema — agent-consumption of atcr findings already has one precedent format with a versioning policy."},
+    {"file": "internal/report/disagree.go", "symbol": "escaping/rendering pattern", "type": "pattern", "line": 1, "score": 0.65, "query": "CLI output formatter markdown table", "relevance": "Epic 7.2 already consolidated markdown/table rendering into a shared renderer (internal/reconcile WriteRadarSection); any new axi formatter should follow this shared-renderer precedent instead of adding a third divergent copy."},
+    {"file": "internal/mcp/tools.go", "symbol": "reportInputSchema/descReport", "type": "function", "line": 224, "score": 0.99, "query": "MCP report format enum schema", "relevance": "The MCP atcr_report tool's format enum is derived from report.FormatList() (lines 234-238) and its description from report.Formats() (line 216) — adding a FormatAXI constant automatically exposes it to MCP clients. Sprint 25.0 (SARIF) required explicit CLI/MCP parity (AC 01-04) after TD-003 caught the enum drifting; the same parity decision is needed for axi."},
+    {"file": "internal/mcp/handlers.go", "symbol": "handleReport format validation", "type": "function", "line": 378, "score": 0.9, "query": "MCP report format enum schema", "relevance": "handleReport defensively re-validates the format via report.ValidFormat() before dispatch, so a new enum constant passes MCP validation automatically — no handler change needed, but the exposure decision must be deliberate."},
+    {"file": "cmd/atcr/review.go", "symbol": "runReview stdout writes", "type": "function", "line": 433, "score": 0.95, "query": "review summary stdout human output", "relevance": "GAP CLOSED: the live `atcr review` human output path writes to cmd.OutOrStdout() at lines 433, 436, 551, 573, 591 (progress/summary/reconcile counts) and passes stdout into orchestrateAutoFix at line 602. --axi must suppress/replace every one of these, not just the final report rendering."},
+    {"file": "cmd/atcr/review_summary.go", "symbol": "writeReviewSummary", "type": "function", "line": 80, "score": 0.95, "query": "review summary stdout human output", "relevance": "The end-of-review human metrics summary (Total elapsed / Agents / API calls / Findings). Either gated off in axi mode or replaced by a machine-readable summary block in the axi payload."},
+    {"file": "cmd/atcr/resume.go", "symbol": "resume summary write", "type": "function", "line": 195, "score": 0.9, "query": "review summary stdout human output", "relevance": "The resume path also calls writeReviewSummary(cmd.OutOrStdout(), ...) — an easy-to-miss second caller that must honor axi mode identically to review.go."},
+    {"file": "cmd/atcr/models.go", "symbol": "sanitizeDisplay", "type": "function", "line": 288, "score": 0.1, "query": "strip ANSI color codes terminal", "relevance": "Existing unexported control-character stripping helper (with precedent tests TestDriftLine_StripsControlChars, TestRenderPersonaSearch_StripsControlChars) — the in-repo idiom for guaranteeing emitted text carries no escape/control sequences."},
+    {"file": "cmd/atcr/quickstart.go", "symbol": "osc8", "type": "function", "line": 456, "score": 0.03, "query": "strip ANSI color codes terminal", "relevance": "Proof that atcr DOES emit ANSI/OSC escape sequences in interactive paths (OSC 8 hyperlinks) — axi mode must ensure no such sequence reaches stdout on the review/report paths."},
+    {"file": "cmd/atcr/github.go", "symbol": "envOr", "type": "function", "line": 66, "score": 0.16, "query": "environment variable configuration override", "relevance": "Existing flag-with-env-fallback helper; with telemetryEnabledFromEnv (main.go:306) and logLevelFromEnv (main.go:288) it forms the in-repo idiom for ATCR_* env overrides such as ATCR_AXI_MAX_LINES."},
+    {"file": "internal/report/render_test.go", "symbol": "TestRender_GoldenFiles/goldenCases", "type": "test", "line": 80, "score": 0.77, "query": "MCP report format enum schema", "relevance": "Every report format is pinned byte-for-byte to a golden file in internal/report/testdata/ via the goldenCases table, regenerated with `go test ./internal/report -update`. A new axi format needs a goldenCases entry plus a committed fixture — this is how sprint 25.0 shipped SARIF."},
+    {"file": "docs/payload-modes.md", "symbol": "Byte budgets and truncation", "type": "doc", "line": 38, "score": 0.6, "query": "truncate output line cap budget", "relevance": "Existing deterministic-truncation contract for reviewer payloads (512 KiB budget, largest-first drops, every drop recorded, `truncated` boolean in per-agent status.json). The AXI 500-line cap + `truncated` flag should mirror this never-silent truncation philosophy and reuse the `truncated` field naming."},
+    {"file": ".planning/plans/completed/25.0_sarif_output_integration/codebase-discovery.json", "symbol": "SARIF format-addition plan", "type": "plan-precedent", "line": 25, "score": 0.98, "query": "MCP report format enum schema", "relevance": "The completed sprint that last added a report format (FormatSarif) — direct precedent for the enum-extension mechanics, the golden-fixture test requirement, and the CLI/MCP parity acceptance criterion (01-04-cli-flag-and-mcp-parity.md)."}
+  ],
+  "existing_patterns": [
+    {
+      "name": "Coded exit-code semantics",
+      "description": "cmd/atcr/main.go defines exitFailure=1, exitUsage=2, exitAuth=3 (lines 126-130), and a codedError type implementing ExitCode() int; exitCode(err) walks the error chain via errors.As to resolve the process exit code. usageError()/authError() wrap errors at the point of failure.",
+      "files": ["cmd/atcr/main.go"],
+      "follow_for": "Any new exit-code requirement (e.g. distinguishing 'clean' vs 'findings present' vs 'error') should extend this single dispatch point, not add a parallel exit mechanism."
+    },
+    {
+      "name": "Stderr-only diagnostics sink",
+      "description": "internal/log wraps log/slog; the root logger is constructed once in setupLogger() (cmd/atcr/main.go:329) writing to cmd.ErrOrStderr(). All subcommands retrieve it via log.FromContext. stdout is reserved for command output and (in `atcr serve`) the MCP protocol stream.",
+      "files": ["cmd/atcr/main.go", "docs/logging.md"],
+      "follow_for": "AXI's stderr-isolation requirement (AC2) is already satisfied by this pattern for atcr review's own logging; verification work is mostly confirming no code path currently writes progress/diagnostics to stdout, not new plumbing."
+    },
+    {
+      "name": "Format-enum output dispatch",
+      "description": "internal/report/render.go defines format constants (FormatMarkdown=\"md\", FormatJSON=\"json\", FormatChecklist=\"checklist\", FormatSarif=\"sarif\", lines 23-28) and a single Render(w, findings, format) switch (line 57). cmd/atcr/report.go validates --format against report.ValidFormat() before any I/O.",
+      "files": ["internal/report/render.go", "cmd/atcr/report.go"],
+      "follow_for": "A new token-dense/TOON format is a natural addition to this enum (e.g. FormatAXI or a --format=axi value) rather than a wholly separate flag/writer stack — but note this dispatcher currently only covers `atcr report`, not the live `atcr review` progress stream, which has its own output path."
+    },
+    {
+      "name": "Context-threaded cross-cutting values",
+      "description": "PersistentPreRunE (cmd/atcr/main.go:230) injects the root logger (log.NewContext) and the process telemetry client (telemetry.NewContext) into cmd.Context(); every subcommand retrieves them via FromContext helpers instead of globals or signature changes.",
+      "files": ["cmd/atcr/main.go", "internal/log/log.go", "internal/telemetry"],
+      "follow_for": "The axi output-mode value should be threaded exactly this way — a small NewContext/FromContext pair (new file cmd/atcr/axi.go or a tiny internal package) set once in PersistentPreRunE, consulted by review.go, resume.go, and the report path."
+    },
+    {
+      "name": "ATCR_* env-var override parsing",
+      "description": "telemetryEnabledFromEnv (cmd/atcr/main.go:306) reads ATCR_TELEMETRY with strict strconv.ParseBool, never errors, and warns once on unrecognized values; logLevelFromEnv (main.go:288) trims/defaults LOG_LEVEL; envOr (cmd/atcr/github.go:66) implements flag-then-env fallback.",
+      "files": ["cmd/atcr/main.go", "cmd/atcr/github.go"],
+      "follow_for": "ATCR_AXI_MAX_LINES parsing: read once per run, fail to the documented 500-line default on unset/invalid (with a one-time stderr warning, never a hard error), matching the telemetry precedent's fail-open posture."
+    },
+    {
+      "name": "Golden-file renderer tests",
+      "description": "internal/report/render_test.go pins each format's full output byte-for-byte to a fixture in internal/report/testdata/ via the goldenCases table (line 63) and TestRender_GoldenFiles (line 80); fixtures regenerate with `go test ./internal/report -update`. Sprint 25.0 added report.sarif.json this way.",
+      "files": ["internal/report/render_test.go", "internal/report/testdata"],
+      "follow_for": "The axi renderer gets a goldenCases entry and a committed testdata fixture, so token-dense output drift fails loudly in CI — the same gate that keeps md/json/checklist/sarif stable."
+    },
+    {
+      "name": "Never-silent deterministic truncation",
+      "description": "Reviewer payloads carry a byte budget (default 512 KiB); truncation is deterministic (largest-first file drops), and every truncation is recorded in the agent's status.json as `truncated: true` plus `files_dropped` (docs/payload-modes.md, lines 38-44).",
+      "files": ["docs/payload-modes.md"],
+      "follow_for": "The AXI 500-line cap should adopt the same contract: deterministic truncation point, an explicit `truncated` flag in the emitted payload (same field name as status.json), and the cap overridable via ATCR_AXI_MAX_LINES — never a silently clipped stream."
+    },
+    {
+      "name": "Control-character sanitization for terminal output",
+      "description": "sanitizeDisplay (cmd/atcr/models.go:288) strips control characters from untrusted display strings, with dedicated precedent tests (TestDriftLine_StripsControlChars, TestRenderPersonaSearch_StripsControlChars). Interactive paths intentionally emit escapes elsewhere — osc8 hyperlinks (cmd/atcr/quickstart.go:456).",
+      "files": ["cmd/atcr/models.go", "cmd/atcr/quickstart.go", "cmd/atcr/personas_test.go"],
+      "follow_for": "Axi-mode stdout needs a guarantee, not a hope: either render from a format that cannot contain escapes, or pass final output through a sanitize step following this precedent — with a StripsControlChars-style test pinning it."
+    }
+  ],
+  "related_files": [
+    {"path": "cmd/atcr/main.go", "relevance": "high", "purpose": "Process entrypoint; owns exit-code mapping, root logger construction, PersistentPreRunE context injection, and command tree registration.", "likely_modification": "extend"},
+    {"path": "cmd/atcr/review.go", "relevance": "high", "purpose": "`atcr review` run path; owns the live human progress/summary stdout writes (lines 433, 436, 551, 573, 591) and the auto-fix stdout handoff (line 602).", "likely_modification": "extend"},
+    {"path": "cmd/atcr/review_summary.go", "relevance": "high", "purpose": "writeReviewSummary — the human end-of-review metrics block written to stdout.", "likely_modification": "extend"},
+    {"path": "cmd/atcr/resume.go", "relevance": "medium", "purpose": "Resume path; second caller of writeReviewSummary to stdout (line 195) plus its own status lines.", "likely_modification": "extend"},
+    {"path": "internal/report/render.go", "relevance": "high", "purpose": "Existing multi-format findings renderer (md/json/checklist/sarif) used by `atcr report`.", "likely_modification": "extend"},
+    {"path": "cmd/atcr/report.go", "relevance": "high", "purpose": "`atcr report` subcommand; owns --format flag validation and dispatch to internal/report.Render.", "likely_modification": "extend"},
+    {"path": "internal/mcp/tools.go", "relevance": "medium", "purpose": "MCP tool schemas; atcr_report's format enum and description derive from report.FormatList()/report.Formats() (lines 216, 224-238), so a new format constant propagates to MCP automatically.", "likely_modification": "reference-only (propagation is automatic; touch only if axi must be excluded from MCP)"},
+    {"path": "internal/mcp/handlers.go", "relevance": "medium", "purpose": "MCP handlers; handleReport re-validates format via report.ValidFormat() (line 378) and routes through the same renderers.", "likely_modification": "reference-only"},
+    {"path": "internal/report/testdata", "relevance": "medium", "purpose": "Golden fixtures pinning each report format's output byte-for-byte; a new axi fixture belongs here.", "likely_modification": "create (new golden file)"},
+    {"path": "docs/ci-integration.md", "relevance": "high", "purpose": "Documents the existing 0/1/2 exit-code contract for CI gating.", "likely_modification": "extend (add Agentic Consumption cross-reference)"},
+    {"path": "docs/logging.md", "relevance": "medium", "purpose": "Documents the stderr-only diagnostics sink and stdout/stderr separation already in place.", "likely_modification": "reference-only"},
+    {"path": "docs/findings-format.md", "relevance": "medium", "purpose": "Canonical specification of the existing `# atcr-findings/v1` agent-facing wire format and its additive-only versioning policy.", "likely_modification": "reference-only (precedent for a machine format)"},
+    {"path": "docs/payload-modes.md", "relevance": "medium", "purpose": "Documents the existing deterministic truncation + byte-budget contract and the `truncated` flag naming used in status.json.", "likely_modification": "reference-only (truncation philosophy precedent)"},
+    {"path": "cmd/atcr/models.go", "relevance": "low", "purpose": "Hosts sanitizeDisplay, the existing control-character stripping helper for terminal-bound text.", "likely_modification": "reference-only"},
+    {"path": "cmd/atcr/quickstart.go", "relevance": "low", "purpose": "Hosts osc8 (line 456) — proof interactive paths emit ANSI/OSC escapes that axi mode must never leak.", "likely_modification": "reference-only"},
+    {"path": "internal/reconcile", "relevance": "medium", "purpose": "Owns the shared radar/disagreement renderer consolidated in epic 7.2; the pattern to follow for any new shared formatter.", "likely_modification": "reference-only"},
+    {"path": ".planning/plans/completed/25.0_sarif_output_integration", "relevance": "medium", "purpose": "Completed sprint that last added a report format (SARIF): enum extension, golden fixture, CLI flag help, and the MCP-parity AC — the closest end-to-end precedent for this plan's renderer work.", "likely_modification": "reference-only"}
+  ],
+  "integration_gaps": [
+    {"location": "cmd/atcr/main.go:newRootCmdWithClient", "type": "entry-point", "description": "Where --log-format is registered as a persistent flag today (line 247); a persistent --axi flag (or extending --format at the report level) would be wired here or in individual subcommand flag registration."},
+    {"location": "cmd/atcr/main.go:setupLogger/PersistentPreRunE", "type": "hook", "description": "Single point where the root logger and its writer (stderr) are established per invocation (lines 230, 329) — the axi-mode context value should be threaded alongside this, in PersistentPreRunE."},
+    {"location": "internal/report/render.go:Render", "type": "api", "description": "Existing format-dispatch switch (line 57); the natural integration point for a new token-dense format constant."},
+    {"location": "cmd/atcr/review.go:runReview", "type": "gap", "description": "Live stdout writes at lines 433, 436, 551, 573, 591 and the orchestrateAutoFix stdout handoff at line 602 are NOT covered by the internal/report dispatcher — axi mode must gate or replace each of these writes, plus the writeReviewSummary call in cmd/atcr/resume.go:195. This is the plan's biggest coverage gap versus a report-only implementation."},
+    {"location": "internal/mcp/tools.go:reportInputSchema + internal/mcp/handlers.go:handleReport", "type": "gap", "description": "The MCP atcr_report format enum derives from report.FormatList() (tools.go:234) and validates via report.ValidFormat (handlers.go:378): adding FormatAXI silently exposes it to MCP clients. Sprint 25.0 treated CLI/MCP parity as an explicit acceptance criterion (01-04); this plan must decide parity deliberately — expose (free, automatic) or exclude (needs explicit filtering)."},
+    {"location": "internal/report/testdata + render_test.go:goldenCases", "type": "test-hook", "description": "New formats must register a goldenCases entry and commit a golden fixture, regenerated via `go test ./internal/report -update`; without it the new renderer ships without the byte-stability gate every other format has."}
+  ],
+  "reusable_components": [
+    {"name": "codedError / exitCode()", "path": "cmd/atcr/main.go", "can_extend": true, "usage_example": "return usageError(fmt.Errorf(...)) for exit 2; a new axi-specific coded error could reuse the same &codedError{code: N, err: err} pattern if a distinct exit code is needed."},
+    {"name": "report.Render format dispatch", "path": "internal/report/render.go", "can_extend": true, "usage_example": "Add FormatAXI = \"axi\" (or similar) and a renderAXI(w, findings) case alongside renderJSON/renderMarkdown."},
+    {"name": "internal/log stderr sink", "path": "internal/log", "can_extend": true, "usage_example": "Diagnostics already flow through log.FromContext(ctx) to a stderr writer; no new logging plumbing needed for AC2, only an audit that no other path writes to stdout."},
+    {"name": "Context value injection (log/telemetry)", "path": "cmd/atcr/main.go", "can_extend": true, "usage_example": "Mirror telemetry.NewContext/FromContext: cmd.SetContext(axi.NewContext(cmd.Context(), mode)) in PersistentPreRunE; review.go/resume.go read axi.FromContext(ctx) to gate stdout writes."},
+    {"name": "Env override parsers", "path": "cmd/atcr/main.go", "can_extend": true, "usage_example": "telemetryEnabledFromEnv's strict-parse-warn-once-fail-open shape applied to ATCR_AXI_MAX_LINES (integer; default 500; invalid → default + one stderr warning)."},
+    {"name": "Golden-file test harness", "path": "internal/report/render_test.go", "can_extend": true, "usage_example": "Add {\"axi\", FormatAXI, \"report.axi.txt\"} to goldenCases and commit the regenerated fixture (go test ./internal/report -update)."}
+  ],
+  "architecture_notes": [
+    "The epic's Components Touched list (internal/cli/, internal/formatters/) do not exist in the codebase. The actual analogous packages are cmd/atcr/ (CLI commands, exit-code routing) and internal/report/ (existing multi-format findings renderer). Plan artifacts should target these real paths, not the epic's aspirational ones.",
+    "Two exit-code contracts already coexist and must be reconciled by this plan: `atcr review`/`atcr reconcile --fail-on` use 0=clean/1=gate-failure/2=usage-error/3=auth-error (cmd/atcr/main.go, docs/ci-integration.md); the epic's proposed contract (0=success, 1=actionable findings, 2=internal/syntax error) is very close but swaps the meaning of 2 (usage error today vs. epic's 'internal/syntax error'). This needs explicit reconciliation, not a fresh scheme, since scripts already depend on the current mapping.",
+    "stdout/stderr isolation (epic AC2) already exists as a codebase-wide invariant enforced by internal/log and cmd.ErrOrStderr(); this plan's job is largely to verify/lock it in for the new --axi path rather than build it from scratch.",
+    "A prior epic 7.2 already consolidated divergent markdown renderers into one shared renderer in internal/reconcile — any new AXI/TOON formatter should follow that precedent (single shared renderer, parameterized) instead of adding a third divergent rendering path.",
+    "A distinct precedent for an agent-facing structured format already exists: `# atcr-findings/v1`, specified in docs/findings-format.md (NOT docs/skill-usage.md as an earlier pass cited — corrected in this refinement) with skill-side copies in skill/findings-format.md and skill/host-review.md, used across .atcr/reviews/<id>/sources/pool/raw/agent/*/findings.txt. Its additive-only versioning policy is the model for evolving any new axi schema.",
+    "MCP parity is a deliberate decision, not an afterthought: report.FormatList() feeds the MCP atcr_report schema enum (internal/mcp/tools.go:234) and description (tools.go:216), and handleReport validates with report.ValidFormat (handlers.go:378) — a new FormatAXI constant auto-propagates to MCP clients. Sprint 25.0 (SARIF) made CLI/MCP parity an explicit AC after TD-003 caught enum drift; decide and document the axi parity stance the same way.",
+    "The `truncated` flag name already exists in the codebase's truncation contract (per-agent status.json under .atcr/reviews/, documented in docs/payload-modes.md) — reusing it for the AXI line-cap keeps one vocabulary for 'output was deterministically clipped'.",
+    "Two stdout paths must both honor axi mode: the report path (internal/report.Render via cmd/atcr/report.go) and the live review path (cmd/atcr/review.go OutOrStdout writes plus cmd/atcr/resume.go's writeReviewSummary call). Gating only the renderer leaves the primary invocation path (`atcr review --axi`) polluted — the plan's own risk register calls this out.",
+    "Test coverage for the new format follows the golden-file gate: every existing format is pinned byte-for-byte in internal/report/testdata/ via goldenCases (regenerated with `go test ./internal/report -update`); the axi renderer should ship with its fixture from day one, plus a StripsControlChars-style test pinning the no-ANSI guarantee."
+  ],
+  "files_to_modify": [
+    {"path": "cmd/atcr/main.go", "reason": "Register the --axi flag (or equivalent) and thread an axi-mode value through command context alongside the logger/telemetry client in PersistentPreRunE; add the ATCR_AXI_MAX_LINES env parser following the telemetryEnabledFromEnv precedent.", "scope": "minor"},
+    {"path": "internal/report/render.go", "reason": "Add a token-dense/TOON format constant and renderer to the existing Render() dispatch (format consts lines 23-28, switch at line 57).", "scope": "major"},
+    {"path": "cmd/atcr/report.go", "reason": "Extend --format validation/enum to include the new axi format, or wire the standalone --axi flag if it stays a boolean modifier rather than a --format value.", "scope": "minor"},
+    {"path": "cmd/atcr/review.go", "reason": "Gate or replace every human stdout write under axi mode: progress/summary lines (433, 436, 551, 573, 591) and the orchestrateAutoFix stdout handoff (602) — the primary invocation path the epic targets.", "scope": "major"},
+    {"path": "cmd/atcr/review_summary.go", "reason": "writeReviewSummary (line 80) must be suppressed in axi mode or emit a machine-readable summary block inside the axi payload instead of the human lines.", "scope": "minor"},
+    {"path": "cmd/atcr/resume.go", "reason": "Resume path duplicates the review summary write (line 195) and must honor axi mode identically to review.go.", "scope": "minor"},
+    {"path": "docs/ci-integration.md", "reason": "Cross-reference or extend the existing exit-semantics table with the axi-specific contract; add a link to the new Agentic Consumption doc.", "scope": "minor"}
+  ],
+  "files_to_create": [
+    {"path": "internal/report/axi.go (or similar)", "purpose": "TOON/compact-JSON renderer implementing the new format, following the existing renderJSON/renderMarkdown sibling pattern in internal/report/render.go.", "based_on": "internal/report/render.go"},
+    {"path": "internal/report/pagination.go (or similar)", "purpose": "Line-cap wrapping writer / post-processing step applied uniformly to axi-mode output: default 500-line cap, ATCR_AXI_MAX_LINES override, deterministic truncation point, and a `truncated` flag in the emitted payload (naming per the status.json precedent).", "based_on": "docs/payload-modes.md truncation contract"},
+    {"path": "cmd/atcr/axi.go (or similar)", "purpose": "Axi-mode context value helpers (NewContext/FromContext) mirroring internal/log and internal/telemetry injection, so review.go, resume.go, and the report path consult one mode flag without globals.", "based_on": "cmd/atcr/main.go PersistentPreRunE injection pattern"},
+    {"path": "internal/report/testdata/report.axi.txt (or similar)", "purpose": "Golden fixture pinning the axi renderer's output byte-for-byte, wired into goldenCases in render_test.go.", "based_on": "internal/report/render_test.go golden-file harness"},
+    {"path": "docs/agentic-consumption.md", "purpose": "New docs page explaining how to orchestrate atcr in agent swarms via --axi, pagination (ATCR_AXI_MAX_LINES), and the exit-code contract.", "based_on": "docs/ci-integration.md"}
+  ],
+  "test_patterns": {
+    "framework": "go test (testify require/assert)",
+    "test_location": "co-located _test.go files, e.g. internal/report/render_test.go, cmd/atcr/main_test.go",
+    "naming_convention": "Test<Subject>_<Scenario>",
+    "example_test": "internal/report/render_test.go",
+    "golden_files": "Report renderers are pinned byte-for-byte: add a goldenCases entry in internal/report/render_test.go (line 63) and commit the fixture under internal/report/testdata/; regenerate with `go test ./internal/report -update`.",
+    "stdout_capture": "cmd/atcr tests capture command output by redirecting the command's Out/Err writers (cmd.OutOrStdout()/ErrOrStderr()), which is how axi-mode stdout purity (no ANSI, no progress lines) should be asserted."
+  }
+}
