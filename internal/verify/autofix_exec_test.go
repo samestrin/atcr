@@ -129,4 +129,8 @@ func TestResolveAutoFixSandbox_RefusesWhenUnconfigured(t *testing.T) {
 	b, err := ResolveAutoFixSandbox(context.Background(), true, nil)
 	require.Error(t, err, "sandboxed-by-default must refuse when no sandbox is configured")
 	assert.Nil(t, b)
+	// The sentinel's purpose is errors.Is-distinguishability from ErrExecNoBackend
+	// (the two features have opposite default polarities), so pin that explicitly.
+	assert.ErrorIs(t, err, ErrAutoFixSandboxUnconfigured)
+	assert.NotErrorIs(t, err, ErrExecNoBackend, "auto-fix's unconfigured sentinel must be distinct from --exec's")
 }

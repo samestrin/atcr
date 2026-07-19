@@ -150,17 +150,17 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
 
 **Focus:** Add `internal/verify/autofix_exec.go` with a resolver mirroring `ResolveExecBackend`'s resolve-and-preflight shape but inverting the default posture (sandboxed-on-by-default, explicit disable signal). Resolve two open design questions before any other phase builds on this one: (a) `SandboxConfig.Validate()`'s unconditional `Image`+`TestCommand` requirement, (b) timeout precedence — `auto_fix.validate_timeout` must win over `sandbox.timeout_secs` via `RunSpec.Timeout`, never silently shrunk by the backend default.
 
-### 1.1 [ ] **[Resolver Builds and Preflights a Sandbox Backend - RED](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 1.1 [x] **[Resolver Builds and Preflights a Sandbox Backend - RED](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
    1. Analyze [AC 02-01](plan/acceptance-criteria/02-01-resolver-builds-and-preflights-sandbox-backend.md), identify testable units
    2. Write tests in `internal/verify/autofix_exec_test.go` (mirroring `exec_test.go`'s `fakeDocker` shim shape): refuses-without-backend, builds-and-preflights, `Preflight()` failure surfaces as an error
    3. Verify tests fail correctly (resolver does not exist yet)
    **Files:** `internal/verify/autofix_exec_test.go` | **Duration:** 0.5 day
 
-### 1.2 [ ] **[Resolver Builds and Preflights a Sandbox Backend - GREEN](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 1.2 [x] **[Resolver Builds and Preflights a Sandbox Backend - GREEN](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
    GREEN: Implement `internal/verify/autofix_exec.go` — translate `*registry.SandboxConfig` into a `sandbox.DockerConfig`, construct `sandbox.NewDockerBackend`, require `Preflight()` before returning a ready `sandbox.Backend` (T1), verify all pass (T2), COMMIT
    **Files:** `internal/verify/autofix_exec.go` | **Duration:** 0.5 day
 
-### 1.2.A [ ] **[Resolver Builds and Preflights a Sandbox Backend - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 1.2.A [x] **[Resolver Builds and Preflights a Sandbox Backend - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
    **Changed Files:** [LIST FILES MODIFIED IN 1.1-1.2]
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.1-1.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -178,11 +178,15 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-07-19):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | autofix_exec_test.go — unconfigured test | Asserts only `Error`/`Nil`, not `errors.Is(err, ErrAutoFixSandboxUnconfigured)`; sentinel's purpose is `errors.Is`-distinguishability | Add `assert.ErrorIs` — done in 1.3 REFACTOR |
+   | LOW | autofix_exec_test.go — preflight test | Substring `"preflight"` check vs unwrap | No change — AC 02-01 Error Scenario 1 mandates the substring |
+   | LOW | autofix_exec_test.go — override test | `TimeoutSecs` override not directly covered (not observable in docker argv) | Deferred → TD-001 (needs signature/exposure change, out of scope) |
+   | LOW | autofix_exec.go:55 | `sc.Backend` not checked (Docker-only) | No change — by design per AC 02-01 Error Scenario 2, mirrors `ResolveExecBackend` |
+
+   **Result: No CRITICAL/HIGH. MEDIUM fixed in 1.3; one LOW deferred to TD-001; two LOW are AC-compliant by design.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 1.3, do NOT proceed until fixed
@@ -201,8 +205,8 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
    **Files:** `internal/verify/autofix_exec_test.go`, `internal/registry/sandbox_test.go` | **Duration:** 0.5 day
 
 ### 1.5 [ ] **[Inverted Default Posture and SandboxConfig.Validate() Tension - GREEN](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
-   GREEN: Make the explicit design decision on the `Image`+`TestCommand` validation tension (split validation, relaxed path, or parallel block — `--exec`'s existing contract must not be loosened as a side effect); implement the sandboxed-on-by-default resolver signature; ensure `RunSpec.Timeout` is sourced from `auto_fix.validate_timeout`, never silently shrunk by `sandbox.timeout_secs`'s default (T1), verify all pass (T2), COMMIT
-   **Files:** `internal/verify/autofix_exec.go`, `internal/registry/sandbox.go` (if design decision requires it) | **Duration:** 0.5 day
+   GREEN: Resolve the `Image`+`TestCommand` validation tension decisively for this sprint — keep `SandboxConfig.Validate()` unchanged (auto-fix requires a `[sandbox]` block with `Image`+`TestCommand`, per AC 02-02), pin that current behavior with the regression test written in 1.4, and document the split-validation / relaxed-path / parallel-block options as a code-comment follow-up rather than loosening `--exec`'s contract now; implement the sandboxed-on-by-default resolver signature; ensure `RunSpec.Timeout` is sourced from `auto_fix.validate_timeout`, never silently shrunk by `sandbox.timeout_secs`'s default (T1), verify all pass (T2), COMMIT
+   **Files:** `internal/verify/autofix_exec.go` (`internal/registry/sandbox.go` left unmodified per the AC 02-02 decision) | **Duration:** 0.5 day
 
 ### 1.5.A [ ] **[Inverted Default Posture and SandboxConfig.Validate() Tension - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
    **Changed Files:** [LIST FILES MODIFIED IN 1.4-1.5]
@@ -768,7 +772,7 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
 
 ## Phase 5: Documentation & Final Validation
 
-**Focus:** Write/extend `docs/` (either a new `--auto-fix` section in `docs/execution.md` or a new `docs/auto-fix.md` cross-linking it) covering the sandboxed-by-default posture, the `auto_fix:` config block (previously undocumented), and the `--no-sandbox` risk — reconciled against Phases 2-3's final flag name and warning text immediately before merge. Run the existing docs-audit test suite and full Definition of Done validation across all 4 stories.
+**Focus:** Write a new `docs/auto-fix.md` (cross-linking `docs/execution.md`, added to the `docs/README.md` index) covering the sandboxed-by-default posture, the `auto_fix:` config block (previously undocumented), and the `--no-sandbox` risk — reconciled against Phases 2-3's final flag name and warning text immediately before merge. Run the existing docs-audit test suite and full Definition of Done validation across all 4 stories.
 
 ### 5.1 [ ] **[Sandboxed-by-Default Posture Documented - RED](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
    1. Analyze [AC 04-01](plan/acceptance-criteria/04-01-sandboxed-by-default-and-auto-fix-config-documented.md), identify testable units
@@ -777,8 +781,8 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
    **Files:** `docs/` docs-audit test file | **Duration:** 0.25 day
 
 ### 5.2 [ ] **[Sandboxed-by-Default Posture Documented - GREEN](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
-   GREEN: Write the new `--auto-fix` section in `docs/execution.md` (or new `docs/auto-fix.md`) covering the sandboxed-by-default posture and the previously-undocumented `auto_fix:` config block, modeled on `docs/execution.md`'s existing `--exec` security-posture section (T1), verify all pass (T2), COMMIT
-   **Files:** `docs/execution.md` or `docs/auto-fix.md` | **Duration:** 0.5 day
+   GREEN: Write a new `docs/auto-fix.md` covering the sandboxed-by-default posture and the previously-undocumented `auto_fix:` config block, modeled on `docs/execution.md`'s existing `--exec` security-posture section, and add it to the `docs/README.md` index (required by `TestDocsIndexCoversEveryDoc`) (T1), verify all pass (T2), COMMIT
+   **Files:** `docs/auto-fix.md`, `docs/README.md` | **Duration:** 0.5 day
 
 ### 5.2.A [ ] **[Docs — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
    **Changed Files:** [LIST FILES MODIFIED IN 5.1-5.2]
@@ -821,8 +825,8 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
    **Files:** `docs/` docs-audit test file | **Duration:** 0.25 day
 
 ### 5.5 [ ] **[--no-sandbox Risk Documented and Cross-Linked - GREEN](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
-   GREEN: Write the `--no-sandbox` risk documentation, cross-linked from the sandboxed-by-default section; reconcile flag name and warning text against the final merged CLI help text/warning strings from Phases 2-3 (T1), verify all pass (T2), COMMIT
-   **Files:** `docs/execution.md` or `docs/auto-fix.md` | **Duration:** 0.5 day
+   GREEN: Write the `--no-sandbox` risk documentation in `docs/auto-fix.md`, cross-linked from the sandboxed-by-default section and from the existing `--auto-fix` mentions in `docs/ci-integration.md` and `docs/agentic-consumption.md`; reconcile flag name and warning text against the final merged CLI help text/warning strings from Phases 2-3 (T1), verify all pass (T2), COMMIT
+   **Files:** `docs/auto-fix.md`, `docs/ci-integration.md`, `docs/agentic-consumption.md` | **Duration:** 0.5 day
 
 ### 5.5.A [ ] **[--no-sandbox Risk Docs — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
    **Changed Files:** [LIST FILES MODIFIED IN 5.4-5.5]
