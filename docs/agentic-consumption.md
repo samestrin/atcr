@@ -14,10 +14,11 @@ stdout/stderr isolation guarantee.
 
 ## Invocation
 
-AXI mode is exposed on the two agent-facing surfaces:
+AXI mode is exposed on these agent-facing surfaces:
 
 | Command | How to enable AXI | stdout payload |
 |---------|-------------------|----------------|
+| `atcr` (no subcommand) | `--axi` flag | a one-row `home` TOON array (executable path, one-line description, current review state) |
 | `atcr review` | `--axi` flag | a one-row `review_summary` TOON array (run metadata) |
 | `atcr review --resume <id>` | `--axi` flag | identical `review_summary` shape to `review --axi` |
 | `atcr report` | `--format axi` | a `findings[N]` TOON array of the reconciled findings |
@@ -35,6 +36,23 @@ atcr review --axi > run.toon 2> review.log
 # Read the reconciled findings themselves as a token-dense payload.
 atcr report --format axi > findings.toon 2> report.log
 ```
+
+### The bare `atcr --axi` home payload
+
+A bare `atcr` (no subcommand) renders a live "home view" instead of static help
+(axi.md Principle 8, "Content First"): an orchestrator can sanity-check state in
+one cheap call before deciding what to do next. Under `--axi` that view is a
+single-row TOON array — the executable path (home-relativized with `~`), atcr's
+one-line description, and the current review's id and status:
+
+```
+home[1|]{exec_path|description|review_id|review_status}:
+  ~/go/bin/atcr|Agent Team Code Review — a review panel, not a reviewer|20260718T142233Z-9f3a|completed
+```
+
+When no review has run yet, `review_id` is a quoted empty string (`""`) and
+`review_status` is `none` — the home view is never an error and never empty, even
+on a first run with no `.atcr/latest` pointer.
 
 ### The `review --axi` run-summary payload
 

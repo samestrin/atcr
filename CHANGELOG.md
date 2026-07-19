@@ -1,3 +1,18 @@
+## [31.1.0] - 2026-07-18
+
+Deliver axi.md Principle 8 ("Content First"): a bare `atcr` (no subcommand) now renders a live home view — the executable path, atcr's one-line description, and the current review state — instead of static help text, so an orchestrator can sanity-check state in one cheap call.
+
+### Added
+
+- Content-First home view on a bare `atcr` invocation: the `~`-relativized executable path, atcr's one-line description, and the current review's id/status — or an explicit no-reviews-yet line on first run (never an error, even with no `.atcr/latest`).
+- `atcr --axi` (bare) renders the home view as a token-dense single-row `home` TOON payload, reusing the existing AXI context-propagation and TOON serializer plumbing rather than a parallel renderer; documented in `docs/agentic-consumption.md`.
+
+### Changed
+
+- A bare `atcr` (no subcommand) now shows the live home view instead of the static help/usage text. `atcr --help`, `atcr -h`, `atcr --version`, and every subcommand are unchanged.
+
+*Shipped via /execute-epic (epic 31.1)*
+
 ## [31.0.0] - 2026-07-18
 
 Add a first-class `--axi` (Agent eXperience Interface) output mode to `atcr review`/`atcr report`, so an autonomous agent can consume findings as a clean, token-dense TOON/JSON payload instead of ANSI-colored/Markdown human output.
