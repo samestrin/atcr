@@ -37,13 +37,19 @@
 - **Relevant:** Directly satisfies the plan's acceptance criterion that `--auto-fix` refuses to run (fail-closed) when sandboxing is expected but unavailable/misconfigured — the load-bearing safety guarantee of this epic.
 - **Time-bound:** Implementable and hermetically tested (via the `fakeDocker` shim pattern from `internal/verify/exec_test.go`, no live Docker daemon required) within this sprint's first phase, ahead of Story 1's routing work which consumes the resolved backend.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-resolver-builds-and-preflights-sandbox-backend.md) | Resolver Builds and Preflights a Sandbox Backend | Unit |
+| [02-02](../acceptance-criteria/02-02-inverted-default-posture-and-validation-tension.md) | Inverted Default Posture (Sandbox-On-By-Default) and the SandboxConfig.Validate() Tension | Unit |
+| [02-03](../acceptance-criteria/02-03-gate-integration-and-combined-error.md) | Gate Integration — Sandbox Resolution as the Fourth Piece of validateAutoFixBackend | Integration |
+
+## Original Criteria Overview
 
 1. A new resolver in `internal/verify` builds a `sandbox.Backend` from `*registry.SandboxConfig`, applying the same field-override pattern as `ResolveExecBackend` (DockerPath, Image, Memory, CPUs, PidsLimit, TimeoutSecs), and runs `Preflight(ctx)` before returning it as ready.
 2. The resolver's default posture is inverted from `ResolveExecBackend`: sandboxing is expected/on by default for auto-fix, so an unconfigured or failing backend is a hard refusal unless an explicit disable signal (the future `--no-sandbox`) is passed in — never a silent fallback to unsandboxed execution.
 3. `validateAutoFixBackend` calls the new resolver as a fourth piece of its existing all-or-nothing gate, joining any resolution/preflight failure into the same combined `missing []string` usage error alongside apply-target, validation-command, and GitHub-credential failures, and the resolved backend rides the `autoFixBackend` struct into `runAutoFix` without re-resolution.
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/32.0_sandbox_execution_environment/`_
 
 ## Technical Considerations
 

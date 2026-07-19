@@ -30,13 +30,19 @@
 - **Relevant:** Delivers the epic's Acceptance Criterion 2 verbatim ("A `--no-sandbox` flag exists to bypass the isolation, accompanied by strict security warnings") and is the only way `--auto-fix` remains usable in Docker-less environments once Story 1/2 make sandboxing the default gate.
 - **Time-bound:** Completed within this sprint alongside Stories 1, 2, and 4; unblocked once Story 2's resolver/gate lands.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-flag-registration-and-help-text.md) | `--no-sandbox` Flag Registration and Help Text | Unit |
+| [03-02](../acceptance-criteria/03-02-bypass-sandbox-resolver-and-preflight-gate.md) | `--no-sandbox` Bypasses Story 2's Resolver/Preflight Gate | Unit/Integration |
+| [03-03](../acceptance-criteria/03-03-every-run-stderr-security-warning.md) | Every-Run (Non-Memoized) stderr Security Warning | Unit |
+
+## Original Criteria Overview
 
 1. `--no-sandbox` is registered as a boolean flag (default `false`) on the `review` command via `addAutoFixFlags`, with cobra help text that states plainly that passing it disables container isolation and runs LLM-generated validation commands directly on the host.
 2. When `--no-sandbox` is passed alongside `--auto-fix`, `validateAutoFixBackend` bypasses Story 2's sandbox resolution/Preflight requirement entirely (Docker need not be installed, no `sandbox:` config need exist) and the resolved backend causes `runAutoFix`'s validation step to execute via the pre-existing direct `os/exec` path.
 3. Every run that takes the `--no-sandbox` path prints a clearly-marked security warning to stderr (not stdout) before the validation command executes, and this warning prints on every invocation — never suppressed after the first, never gated behind a "seen once" flag/env var/state file.
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/32.0_sandbox_execution_environment/`_
 
 ## Technical Considerations
 

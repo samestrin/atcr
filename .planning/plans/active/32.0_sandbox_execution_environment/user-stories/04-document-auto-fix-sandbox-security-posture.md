@@ -30,13 +30,18 @@
 - **Relevant:** Directly satisfies the epic's Acceptance Criterion 2 requirement that `--no-sandbox` be "accompanied by strict security warnings in the CLI **and documentation**" — without this story, the documentation half of that AC is unmet even if the code ships correctly.
 - **Time-bound:** A single small documentation change, completable within the same sprint cycle as Stories 1-3, with final accuracy reconciliation happening once those stories' flag/warning text is settled.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-sandboxed-by-default-and-auto-fix-config-documented.md) | Auto-Fix Sandboxed-by-Default Posture and `auto_fix:` Config Block Are Documented | E2E |
+| [04-02](../acceptance-criteria/04-02-no-sandbox-risk-warning-and-cross-link-accuracy.md) | `--no-sandbox` Risk Is Documented and Cross-Linked, Verified Accurate Against Shipped CLI Behavior | E2E |
+
+## Original Criteria Overview
 
 1. Documentation exists (extending `docs/execution.md` or a new `docs/auto-fix.md`) that states the `--auto-fix` validation step is sandboxed by default via the same container isolation guarantees documented for `--exec`, and documents the previously-undocumented `auto_fix:` config block.
 2. Documentation explains `--no-sandbox`: what it bypasses, the specific risk (host-privileged execution of untrusted/potentially malicious LLM-generated code), that it prints a warning on every invocation, and concrete guidance on when its use might be acceptable.
 3. Content is cross-linked with `docs/execution.md`'s existing sandbox-guarantees and security-posture sections rather than duplicating them, and is verified accurate against the actual flag name and behavior shipped by Stories 1-3 before merge.
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/32.0_sandbox_execution_environment/`_
 
 ## Technical Considerations
 

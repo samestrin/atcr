@@ -30,13 +30,19 @@
 - **Relevant:** Delivers the epic's primary acceptance criterion — "the Auto-Fix pipeline routes its validation steps through the existing `internal/sandbox` by default" — this is the actual security boundary the epic exists to create; without this story the epic ships no functional isolation.
 - **Time-bound:** Completable within one sprint cycle as a single cohesive unit (adapter function + its unit tests + the call-site swap in the validation path), independent of Story 2's resolver work landing in parallel.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-sandbox-routed-command-dispatch.md) | Sandbox-Routed Command Dispatch | Unit |
+| [01-02](../acceptance-criteria/01-02-runresult-to-validationresult-translation.md) | RunResult-to-ValidationResult Translation | Unit |
+| [01-03](../acceptance-criteria/01-03-zero-behavior-change-to-runautofix-pipeline.md) | Zero Behavior Change to the runAutoFix Pipeline | Integration |
+
+## Original Criteria Overview
 
 1. When a sandbox backend is supplied to the validation path, the configured validation command runs via `sandbox.Backend.Run` (combined output, no direct `os/exec` invocation on the host) instead of the current host-direct execution.
 2. The `sandbox.RunResult` returned by `Run` is translated into a `verify.ValidationResult` whose `Passed()`, `TimedOut`, `StartError`, and exit-code semantics exactly match what `runAutoFix` (`cmd/atcr/autofix.go:252`) already expects — the existing "cannot validate" vs. "validation failed" vs. "validation passed" branches in `runAutoFix` require no changes.
 3. All other stages of `runAutoFix` (`ApplyPatch`, `RevertPatch`, `CleanupBackups`, branch/commit/PR creation) are provably unaffected — verified by the existing auto-fix test suite passing unchanged against the new sandboxed path.
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/32.0_sandbox_execution_environment/`_
 
 ## Technical Considerations
 
