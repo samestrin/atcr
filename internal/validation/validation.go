@@ -69,6 +69,14 @@ func FilePath(path string) error {
 	// Match a directory boundary (exact dir or "<dir>/" prefix).
 	for _, sysDir := range []string{"/etc", "/proc", "/sys", "/private/etc", "/private/var"} {
 		if path == sysDir || strings.HasPrefix(path, sysDir+"/") {
+			// /private/var/folders is macOS's per-user temp tree ($TMPDIR): user-writable
+			// and not system state, so exempt it from the /private/var block — symmetric
+			// with /tmp (-> /private/tmp), which is not in this list. /private/var/db and
+			// every other /private/var subpath (and look-alikes like /private/var/foldersX)
+			// stay blocked.
+			if sysDir == "/private/var" && (path == "/private/var/folders" || strings.HasPrefix(path, "/private/var/folders/")) {
+				continue
+			}
 			return &ValidationError{"file path", path, "must not reference system directories"}
 		}
 	}
