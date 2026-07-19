@@ -39,6 +39,12 @@ func RunSandboxedValidation(ctx context.Context, backend sandbox.Backend, argv [
 		return ValidationResult{StartError: err}, err
 	}
 
+	// Mirror the host path's guard exactly (localvalidate.go:93): an empty dir is
+	// not stat-checked here and instead defers to the backend's RunSpec.validate(),
+	// which rejects an empty/relative SnapshotDir before any container spawn. In
+	// production dir is always the resolved absolute applyTarget, so this branch
+	// runs; the empty-dir delegation only matters to callers that omit it, and it
+	// still fails closed (StartError) via the backend.
 	if dir != "" {
 		if _, err := os.Stat(dir); err != nil {
 			startErr := fmt.Errorf("validation working directory does not exist: %s: %w", dir, err)

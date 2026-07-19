@@ -69,6 +69,10 @@ func TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec(t *testing.T) 
 	assert.Equal(t, timeout, fb.gotSpec.Timeout, "timeout must be forwarded exactly, not silently defaulted here")
 	assert.Empty(t, fb.gotSpec.Script, "Script must never be populated on the argv path (RunSpec exactly-one invariant)")
 	assert.True(t, res.Passed(), "exit 0 with no timeout and no fault must pass")
+	assert.Equal(t, "build ok", res.Stdout, "combined RunResult.Output routes into Stdout")
+	assert.Empty(t, res.Stderr, "Stderr is left empty on the sandbox path (documented stream-collapse)")
+	assert.False(t, res.StdoutTruncated, "sandbox reports no per-stream truncation signal — flag left false, not guessed")
+	assert.False(t, res.StderrTruncated, "sandbox reports no per-stream truncation signal — flag left false, not guessed")
 }
 
 func TestRunSandboxedValidation_EmptyArgvShortCircuitsBeforeBackend(t *testing.T) {
