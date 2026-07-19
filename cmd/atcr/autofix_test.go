@@ -17,6 +17,7 @@ import (
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -92,6 +93,23 @@ func sandboxConfig(dockerPath string) *registry.SandboxConfig {
 		Image:       "alpine:3.20",
 		TestCommand: []string{"go", "test", "./..."},
 	}
+}
+
+// spyResolveSandbox installs a counting stand-in for the sandbox resolver and
+// returns a pointer to its invocation count, restoring the real resolver on
+// cleanup. It lets a --no-sandbox test PROVE zero invocations (AC 03-02), which a
+// resolver that merely no-ops on enabled==false could not demonstrate. The stub
+// returns (nil, nil) so a counted call does not itself fail the gate.
+func spyResolveSandbox(t *testing.T) *int {
+	t.Helper()
+	calls := 0
+	orig := resolveAutoFixSandboxFn
+	resolveAutoFixSandboxFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, error) {
+		calls++
+		return nil, nil
+	}
+	t.Cleanup(func() { resolveAutoFixSandboxFn = orig })
+	return &calls
 }
 
 // --- 06-01: flag off by default, discoverable in help ----------------------
@@ -877,4 +895,89 @@ func TestValidateAutoFixBackend_SandboxUsesSuppliedContext(t *testing.T) {
 	require.Error(t, err, "a cancelled supplied context must make sandbox Preflight fail the gate")
 	require.Equal(t, 2, exitCode(err))
 	require.Contains(t, err.Error(), "sandbox", "the cancelled-context preflight failure must surface as the sandbox gate piece")
+}
+
+// --- 03-02: --no-sandbox bypasses the resolver/preflight gate ---------------
+
+// noSandboxCmd builds a bare auto-fix command with --no-sandbox already set, so a
+// bypass test drives validateAutoFixBackend on the opt-out path.
+func noSandboxCmd(t *testing.T, repo, token string) *cobra.Command {
+	t.Helper()
+	c := autoFixCmd(t, repo, token, "")
+	require.NoError(t, c.Flags().Set("no-sandbox", "true"))
+	return c
+}
+
+// TestValidateAutoFixBackend_NoSandboxSkipsResolver: with --no-sandbox set and NO
+// sandbox config and no Docker, the resolver is never called, no sandbox entry is
+// appended to missing, and the gate passes with a nil sandboxBackend (AC 03-02
+// Scenario 1). Proven by a zero-invocation spy, not merely "no docker error".
+func TestValidateAutoFixBackend_NoSandboxSkipsResolver(t *testing.T) {
+	clearGitHubEnv(t)
+	calls := spyResolveSandbox(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := noSandboxCmd(t, "o/r", "tok")
+	be, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err, "--no-sandbox must let the gate pass without a sandbox config")
+	require.Equal(t, 0, *calls, "the sandbox resolver must be called ZERO times under --no-sandbox")
+	require.Nil(t, be.sandboxBackend, "no sandbox backend is resolved on the --no-sandbox path")
+}
+
+// TestValidateAutoFixBackend_NoSandboxSkipsEvenWithValidConfig: a working
+// sandbox config does not override an explicit --no-sandbox — the operator's
+// choice wins and the resolver is still never called (AC 03-02 Scenario 3).
+func TestValidateAutoFixBackend_NoSandboxSkipsEvenWithValidConfig(t *testing.T) {
+	clearGitHubEnv(t)
+	calls := spyResolveSandbox(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
+	cmd := noSandboxCmd(t, "o/r", "tok")
+	be, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err)
+	require.Equal(t, 0, *calls, "a valid sandbox config must not override an explicit --no-sandbox")
+	require.Nil(t, be.sandboxBackend)
+}
+
+// TestValidateAutoFixBackend_NoSandboxStillEnforcesOtherPieces: the bypass is
+// scoped to sandbox resolution only — a missing token still fails closed, and the
+// error names the token failure but NOT any sandbox failure (AC 03-02 Security).
+func TestValidateAutoFixBackend_NoSandboxStillEnforcesOtherPieces(t *testing.T) {
+	clearGitHubEnv(t)
+	calls := spyResolveSandbox(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := noSandboxCmd(t, "o/r", "") // token missing
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "a GitHub token is required", "other gate pieces stay enforced under --no-sandbox")
+	require.NotContains(t, err.Error(), "[sandbox] block", "no sandbox failure may appear on the bypass path")
+	require.Equal(t, 0, *calls)
+}
+
+// TestValidateAutoFixBackend_NoSandboxFalseKeepsGate: --no-sandbox=false is
+// identical to the flag being absent — the real resolver/preflight gate runs and a
+// missing sandbox is a hard refusal (AC 03-02 EC3 regression guard). The bypass
+// must be gated strictly on true, not on "the flag was set". Uses the REAL
+// resolver (no spy) so the refusal it asserts is genuine, proving the resolver was
+// actually reached.
+func TestValidateAutoFixBackend_NoSandboxFalseKeepsGate(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	require.NoError(t, cmd.Flags().Set("no-sandbox", "false"))
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err, "--no-sandbox=false must leave the sandbox gate intact")
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "[sandbox] block", "the resolver's unconfigured refusal must run when --no-sandbox is false")
 }

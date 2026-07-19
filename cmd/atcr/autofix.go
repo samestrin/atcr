@@ -61,6 +61,13 @@ func addAutoFixFlags(cmd *cobra.Command) {
 	cmd.Flags().String("api-url", "", "GitHub REST API base for --auto-fix (default: $GITHUB_API_URL or https://api.github.com)")
 }
 
+// resolveAutoFixSandboxFn is the sandbox resolver validateAutoFixBackend calls,
+// indirected through a package var (like resolveHeadSHAFn) so a test can count
+// invocations — the load-bearing proof that --no-sandbox skips resolution
+// entirely rather than calling a resolver that no-ops (AC 03-02). Production
+// points at the real verify.ResolveAutoFixSandbox.
+var resolveAutoFixSandboxFn = verify.ResolveAutoFixSandbox
+
 // autoFixBackend holds the fully-resolved backend the gate validated, so
 // runAutoFix consumes it without re-resolving any piece (AC 06-03).
 type autoFixBackend struct {
@@ -215,17 +222,28 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 	if proj != nil {
 		sandboxConfig = proj.Sandbox
 	}
-	// cmd.Context() is nil on a bare command that was never executed (cobra does
-	// not default it); production always reaches here via ExecuteContext, so this
-	// guard only backstops direct callers and tests. Preflight needs a real ctx.
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if backend, err := verify.ResolveAutoFixSandbox(ctx, true, sandboxConfig); err != nil {
-		missing = append(missing, fmt.Sprintf("sandbox: %s", err.Error()))
-	} else {
-		be.sandboxBackend = backend
+	// The --no-sandbox opt-out short-circuits the entire sandbox check BEFORE any
+	// resolution: the resolver is never called (not even to no-op on a disabled
+	// flag), so no Docker/`sandbox:` config is required and be.sandboxBackend stays
+	// nil — validation will run directly on the host (AC 03-02). The bypass is
+	// scoped to sandbox resolution only; the other three checks above already ran
+	// and stay enforced. It is gated strictly on true (not "flag was set"), so
+	// --no-sandbox=false is identical to the flag being absent.
+	noSandbox, _ := cmd.Flags().GetBool("no-sandbox")
+	if !noSandbox {
+		// cmd.Context() is nil on a bare command that was never executed (cobra
+		// does not default it); production always reaches here via ExecuteContext,
+		// so this guard only backstops direct callers and tests. Preflight (a local
+		// `docker` subprocess) needs a real ctx.
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if backend, err := resolveAutoFixSandboxFn(ctx, true, sandboxConfig); err != nil {
+			missing = append(missing, fmt.Sprintf("sandbox: %s", err.Error()))
+		} else {
+			be.sandboxBackend = backend
+		}
 	}
 
 	if len(missing) > 0 {
