@@ -78,6 +78,23 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		}
 	}
 
+	// --auto-fix, --debate, --single-model, and --exec all parse on the shared
+	// review command but are read only by runReview's fresh path: with --resume
+	// the write-back remediation, cross-examination stage, and sandbox
+	// reproduction would be silently dropped with zero feedback. Reject
+	// fail-closed (exit 2), pointing at the standalone command.
+	resumeStandalone := map[string]string{
+		"auto-fix":     "run `atcr review --auto-fix` on a fresh review instead",
+		"debate":       "run `atcr debate` afterward instead",
+		"single-model": "this flag only applies to --debate — run `atcr debate` afterward instead",
+		"exec":         "this flag only applies to --verify — run `atcr verify --exec` afterward instead",
+	}
+	for _, f := range []string{"auto-fix", "debate", "single-model", "exec"} {
+		if cmd.Flags().Changed(f) {
+			return usageError(fmt.Errorf("--resume does not support --%s; %s", f, resumeStandalone[f]))
+		}
+	}
+
 	dir, err := resolveResumeDir(anchor)
 	if err != nil {
 		return usageError(err)
