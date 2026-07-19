@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -67,7 +68,40 @@ func TestToolSchema_ReportFormatEnum(t *testing.T) {
 	require.True(t, ok, "format property must be present")
 	enum, ok := format["enum"].([]any)
 	require.True(t, ok, "format must declare an enum")
+	// AC 01-05 (Design Decision #3): FormatAXI is a CLI-subprocess-only format,
+	// deliberately filtered OUT of the MCP atcr_report enum — surfacing a
+	// token-frugal payload through the token-heavy MCP JSON-RPC envelope defeats its
+	// purpose. The enum is the four non-axi formats.
 	assert.ElementsMatch(t, []any{"md", "json", "checklist", "sarif"}, enum)
+	assert.NotContains(t, enum, "axi", "axi must be excluded from the MCP report enum")
+}
+
+// TestMCPReportFormats_AllowListContract pins the atcr_report MCP surface as an
+// explicit allow list consulted by BOTH the JSON Schema enum and handleReport's
+// defense-in-depth guard (AC 01-05): every advertised format is CLI-valid, the
+// CLI-only axi format is absent, and for every format report.FormatList() knows,
+// the handler accepts it iff the advertised set contains it — so a future
+// CLI-only format added to FormatList() is excluded by construction instead of
+// leaking onto the MCP surface through one of the two sites.
+func TestMCPReportFormats_AllowListContract(t *testing.T) {
+	advertised := mcpReportFormats()
+	for _, f := range advertised {
+		assert.True(t, report.ValidFormat(f), "MCP-advertised format %q must be CLI-valid", f)
+	}
+	assert.NotContains(t, advertised, report.FormatAXI, "axi is CLI-only and must stay off the MCP surface")
+
+	e := &engine{root: t.TempDir()}
+	for _, f := range report.FormatList() {
+		_, _, err := e.handleReport(context.Background(), nil, ReportArgs{Format: f})
+		require.Error(t, err, "an empty review root must error after the guard for %q", f)
+		if slices.Contains(advertised, f) {
+			// Past the guard: it fails later (no review dir), never with the
+			// invalid-format error.
+			assert.NotContains(t, err.Error(), "invalid format", "advertised format %q must pass the handler guard", f)
+		} else {
+			assert.Contains(t, err.Error(), "invalid format", "non-advertised CLI format %q must be rejected by the handler guard", f)
+		}
+	}
 }
 
 // schemaProperties extracts the "properties" object from a tool's input schema
@@ -110,11 +144,11 @@ func TestReportInputSchema_Enum(t *testing.T) {
 	s, err := reportInputSchema()
 	require.NoError(t, err)
 	require.NotNil(t, s.Properties["format"])
-	want := make([]any, len(report.FormatList()))
-	for i, f := range report.FormatList() {
-		want[i] = f
-	}
-	assert.ElementsMatch(t, want, s.Properties["format"].Enum)
+	// The MCP enum is the CLI format list MINUS FormatAXI (AC 01-05, Design
+	// Decision #3): axi is a CLI-only format, never surfaced through MCP.
+	assert.ElementsMatch(t, []any{"md", "json", "checklist", "sarif"}, s.Properties["format"].Enum)
+	assert.NotContains(t, s.Properties["format"].Enum, report.FormatAXI,
+		"FormatAXI must be filtered out of the MCP report enum")
 }
 
 // TestReportFormatDescriptions_DerivedFromFormats verifies the format list shown
@@ -122,12 +156,18 @@ func TestReportInputSchema_Enum(t *testing.T) {
 // source of truth (report.Formats()), so a future format add/remove cannot drift
 // out of sync with the schema enum and report.ValidFormat (AC 04-04).
 func TestReportFormatDescriptions_DerivedFromFormats(t *testing.T) {
-	wantDesc := "output format (default " + report.FormatMarkdown + "): " + report.Formats()
 	s, err := reportInputSchema()
 	require.NoError(t, err)
 	require.NotNil(t, s.Properties["format"])
-	assert.Equal(t, wantDesc, s.Properties["format"].Description)
-	assert.Contains(t, descReport, report.Formats())
+	// The description text tracks the MCP-facing (axi-excluded) format list, not the
+	// raw report.Formats(), so it stays consistent with the enum (AC 01-05 DoD).
+	desc := s.Properties["format"].Description
+	assert.NotContains(t, desc, "axi", "the MCP format description must not advertise axi")
+	assert.NotContains(t, descReport, "axi", "the atcr_report tool description must not advertise axi")
+	for _, f := range []string{"md", "json", "checklist", "sarif"} {
+		assert.Contains(t, desc, f, "MCP format description must list %q", f)
+		assert.Contains(t, descReport, f, "atcr_report description must list %q", f)
+	}
 }
 
 // TestRegisterTool_NoOpAfterError verifies that once an error is recorded, later

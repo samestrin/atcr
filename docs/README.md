@@ -39,6 +39,9 @@ single source of truth the website build consumes, so it links every doc in
 ## Integration
 
 - [CI Integration](ci-integration.md) — wiring atcr into a CI gate.
+- [Agentic Consumption](agentic-consumption.md) — driving `atcr` from another
+  autonomous agent via `--axi`: token-dense TOON output, exit codes, pagination,
+  and stdout/stderr isolation.
 - [GitHub Action — PR Review](github-action.md) — posting reconciled findings to
   a pull request.
 - [Hermes Maintenance Agents](hermes-maintenance-agents.md) — configuration

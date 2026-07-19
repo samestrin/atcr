@@ -38,6 +38,18 @@ func TestMerge_ReviewersJoinedDedupedSorted(t *testing.T) {
 	eq(t, m.Confidence, ConfHigh, "2 distinct reviewers → HIGH")
 }
 
+func TestMerge_ReviewerNamesEnforceNoCommaInvariant(t *testing.T) {
+	// The reconciled reviewers cell is comma-joined on the wire (v1 findings and
+	// the axi payload alike), so a comma in a source reviewer name would read back
+	// as two names. Merge normalizes names to the no-comma invariant at reconcile
+	// time, regardless of what an upstream source emitted.
+	m := Merge([]Finding{
+		mf("HIGH", "a.go", 1, "p", "f", "sec", 10, "e1", "br,uce"),
+		mf("HIGH", "a.go", 1, "p", "f", "sec", 10, "e2", "greta"),
+	})
+	deepEq(t, m.Reviewers, []string{"bruce", "greta"}, "comma-bearing reviewer name is normalized before dedup")
+}
+
 func TestMerge_SingleReviewerIsMedium(t *testing.T) {
 	m := Merge([]Finding{mf("LOW", "a.go", 1, "p", "f", "style", 5, "e", "greta")})
 	eq(t, m.Confidence, ConfMedium, "single reviewer → MEDIUM")

@@ -87,6 +87,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("no-ignore", false, "review files matched by the repo-root .gitignore/.atcrignore that are normally filtered out of the payload")
 	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
 	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
+	cmd.Flags().Bool("axi", false, "emit a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption; diagnostics and progress stay on stderr (Agent eXperience Interface)")
 	addRangeFlags(cmd)
 	addAutoFixFlags(cmd)
 	addSyncCloudFlags(cmd)
@@ -191,6 +192,23 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// shared buildQualitySignalPayload, identical to what a real send would transmit.
 	if handled, perr := maybePreviewQualitySignal(cmd); handled {
 		return perr
+	}
+
+	// --axi gates every human-oriented stdout write below behind a single mode
+	// value propagated by the root PersistentPreRunE (AC 01-03). Read once here,
+	// immediately after the --preview short-circuit; the auto-fix guard below and
+	// every later write site consult axiMode rather than re-reading the context.
+	axiMode := axiFromContext(cmd.Context())
+
+	// --axi and --auto-fix are mutually exclusive (exit 2): --auto-fix drives an
+	// interactive write-back/PR flow whose stdout handoff (orchestrateAutoFix) is not
+	// a consumable findings payload, so the combination is rejected up front rather
+	// than silently leaking human text onto the axi stream (fresh path) or silently
+	// dropping --auto-fix (resume path). Placed ABOVE the --resume dispatch so the
+	// guard fires for `review --resume --axi --auto-fix` too (AC 01-03 Edge Case 3,
+	// AC 02-02 Error Scenario 2). --preview wins over both and short-circuits above.
+	if axiMode && boolFlag(cmd, "auto-fix") {
+		return usageError(errors.New("--axi and --auto-fix are mutually exclusive: --auto-fix drives an interactive write-back/PR flow, not a consumable findings payload"))
 	}
 
 	// --resume targets an existing review directory and runs only its pending
@@ -429,11 +447,31 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// config load, and scaffolding overhead); atcr_review_duration_seconds is
 	// engine-level (starts inside fanout.ExecuteReview). The two values measure
 	// slightly different spans and will rarely agree exactly — this is intentional.
+	// axiWerr captures a broken-stdout run-summary payload write (axi mode only) so
+	// the history/audit ledgers below are recorded before the fault is surfaced.
+	var axiWerr error
 	if result != nil {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
-			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
-		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now))
+		// --axi replaces the one-line outcome + the four human summary lines with a
+		// single token-dense TOON run-summary payload on stdout; the human lines are
+		// gated off entirely (AC 01-03). An axi render fault is left unwrapped so it
+		// defaults to exitFailure (1), never a usageError — an internal serialization
+		// fault is not operator-fixable (AC 02-02 Error Scenario 3).
+		if axiMode {
+			// A write failure here (only reachable if stdout itself is broken, e.g. a
+			// closed pipe) is captured, not returned: the history/audit ledgers below
+			// must still record the run before the fault is surfaced (the payload is
+			// undeliverable either way, but the compliance record is not). The fault
+			// stays unwrapped → exitFailure (1), never a usageError (AC 02-02 Error
+			// Scenario 3).
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), result.ID, result.Dir, summaryDelta); werr != nil {
+				axiWerr = fmt.Errorf("axi output rendering failed: %w", werr)
+			}
+		} else {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
+				result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
+			writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now))
+		}
 
 		// --sync-cloud push (Story 4): an explicit, user-invoked action, DEFERRED so
 		// it fires once runReview's full outcome is finalized — the history/audit
@@ -529,6 +567,16 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	auditPath := filepath.Join(req.Root, ".atcr", "audit.log.jsonl")
 	writeAuditRecord(cmd.ErrOrStderr(), ctx, auditPath, result.Dir, now, req.PRNumber, req.Range.Base, req.Range.Head)
 
+	// Surface a captured broken-stdout payload write only now that the ledgers are
+	// recorded: exit 1 with the render fault (never usageError), keeping the
+	// telemetry/sync-cloud outcome reads consistent with the exit code. The
+	// one-shot gate below is skipped exactly as it was when this path returned at
+	// the emit site.
+	if axiWerr != nil {
+		err = axiWerr
+		return err
+	}
+
 	// One-shot mode: reconcile in-process and gate on the threshold. Review
 	// artifacts are already on disk, so a reconcile failure (exit 2) preserves
 	// them for inspection (AC 03-02 Error Scenario 3).
@@ -548,7 +596,14 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		if rerr != nil {
 			return usageError(fmt.Errorf("review failed: %w", rerr))
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
+		// Gated under --axi. The axi run-summary payload carries findings_total (the
+		// raw per-agent fanout metric, mirroring writeReviewSummary's "Findings:"
+		// line); the deduplicated reconciled count and the verify/debate verdict
+		// counts are intentionally omitted from the summary — an agent that needs the
+		// reconciled findings themselves reads them via `atcr report --axi`.
+		if !axiMode {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
+		}
 
 		// --verify chains the adversarial verify stage after the single reconcile
 		// (AC 04-02). --debate then chains the cross-examination stage. Both mutate
@@ -570,10 +625,12 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 			if verr != nil {
 				return verifyFailureError(verr)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-				"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable\n",
-				vres.FindingsProcessed, vres.VerdictCounts.Confirmed, vres.VerdictCounts.Refuted,
-				vres.VerdictCounts.Unverifiable)
+			if !axiMode { // gated under --axi: stdout stays payload-only
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable\n",
+					vres.FindingsProcessed, vres.VerdictCounts.Confirmed, vres.VerdictCounts.Refuted,
+					vres.VerdictCounts.Unverifiable)
+			}
 		}
 		// A debate failure here intentionally leaves the verify findings already
 		// written to disk: they are valid artifacts the operator can still inspect,
@@ -588,9 +645,11 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 			if derr != nil {
 				return debateFailureError(derr)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-				"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow)\n",
-				dres.Selected, dres.Upheld, dres.Overturned, dres.Split, dres.Unresolved, dres.Overflow)
+			if !axiMode { // gated under --axi: stdout stays payload-only
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow)\n",
+					dres.Selected, dres.Upheld, dres.Overturned, dres.Split, dres.Unresolved, dres.Overflow)
+			}
 		}
 
 		// --auto-fix consumes the reconciled (and, when chained, verified/debated)

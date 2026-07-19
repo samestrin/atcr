@@ -1,3 +1,26 @@
+## [31.0.0] - 2026-07-18
+
+Add a first-class `--axi` (Agent eXperience Interface) output mode to `atcr review`/`atcr report`, so an autonomous agent can consume findings as a clean, token-dense TOON/JSON payload instead of ANSI-colored/Markdown human output.
+
+### Added
+
+- `--axi` flag on `atcr review`/`atcr report` emitting a token-dense TOON payload (superset of the `atcr-findings/v1` schema) instead of human-formatted output, with zero ANSI escapes or Markdown syntax on stdout.
+- `ATCR_AXI_MAX_LINES` environment override for the AXI payload's default 500-line pagination cap, with a `truncated` flag and true total count always present.
+- `docs/agentic-consumption.md` — orchestration guide for autonomous agents, with a worked exit-code-branching sweeper example, cross-referenced from `docs/ci-integration.md`.
+
+### Changed
+
+- Reconciled `--axi`'s exit codes with the existing 0/1/2/3 contract (`atcr verify` precedent) instead of introducing a new internal-error code; documented in `docs/ci-integration.md`.
+- `atcr review --resume --axi` now gates all human-oriented stdout writes and rejects chained-stage flags (`--auto-fix`/`--debate`/`--single-model`/`--exec`) instead of silently dropping them.
+- Hardened `resolveOutputPath` to resolve a symlinked parent directory for a not-yet-existing `--output` file, closing a symlink-follow bypass.
+
+### Fixed
+
+- AXI stdout no longer leaks raw C1 control bytes (e.g. `0x9b`/`0x9d`) through unquoted fields.
+- macOS's `/private/var/folders` temp tree is now exempt from the system-directory validation guard, fixing spurious rejection of temp-dir writes.
+
+*Shipped via /execute-sprint + /execute-code-review (sprint 31.0)*
+
 ## [30.0.0] - 2026-07-17
 
 Add an opt-in, aggregate, content-free quality signal that tells the maintainer which reviewer prompts (persona+model pairs) are over- or under-reporting, derived entirely from existing dismissal outcomes — closing the persona living-library flywheel.

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -375,8 +376,13 @@ func (e *engine) handleReport(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 	if format == "" {
 		format = report.FormatMarkdown
 	}
-	if !report.ValidFormat(format) {
-		return nil, ReportResult{}, fmt.Errorf("invalid format: %s; must be one of: %s", format, report.Formats())
+	// Defense in depth for programmatic callers that bypass the JSON Schema enum:
+	// reject any format outside the MCP-facing allow list. report.ValidFormat("axi")
+	// is true (axi is a valid CLI format), so validating against ValidFormat would
+	// leak CLI-only formats onto the MCP surface — mcpReportFormats() is the single
+	// set both the schema enum and this guard consult (Design Decision #3, AC 01-05).
+	if !slices.Contains(mcpReportFormats(), format) {
+		return nil, ReportResult{}, fmt.Errorf("invalid format: %s; must be one of: %s", format, mcpReportFormatsText())
 	}
 
 	dir, id, err := e.resolveReviewDir(in.IDOrPath)

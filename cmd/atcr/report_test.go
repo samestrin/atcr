@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -11,6 +13,64 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// manyFindingsJSON marshals n minimal reconciled findings so a report --axi run
+// renders more than a chosen line cap.
+func manyFindingsJSON(t *testing.T, n int) string {
+	t.Helper()
+	fs := make([]reconcile.JSONFinding, n)
+	for i := range fs {
+		fs[i] = reconcile.JSONFinding{Severity: "LOW", File: "a.go", Line: i + 1,
+			Problem: "p", Category: "style", Confidence: "LOW"}
+	}
+	data, err := json.Marshal(fs)
+	require.NoError(t, err)
+	return string(data)
+}
+
+// TestReportCmd_AXITruncatesAtEnvCap is AC 03-04 Scenario 2 / AC 03-01: report
+// --axi honors ATCR_AXI_MAX_LINES, capping the payload content while the header N
+// preserves the true total and the truncated flag is emitted.
+func TestReportCmd_AXITruncatesAtEnvCap(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "r", manyFindingsJSON(t, 20))
+	t.Setenv("ATCR_AXI_MAX_LINES", "5")
+	code, out := execCmdCapture(t, "report", "--format", "axi", "r")
+	require.Equal(t, 0, code)
+	assert.Contains(t, out, "truncated: true", "over-cap report --axi flags truncation")
+	assert.Contains(t, out, "findings[20|]{", "header declares the true total (20), not the capped row count")
+	content := strings.TrimSuffix(out, "truncated: true\n")
+	assert.Equal(t, 5, strings.Count(content, "\n"), "content capped to exactly the env cap (5 physical lines)")
+}
+
+// TestReportCmd_AXIUnderCapNotTruncated is AC 03-01 Scenario 1 at the command
+// level: an under-cap report --axi emits truncated: false with the full row set.
+func TestReportCmd_AXIUnderCapNotTruncated(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "r", manyFindingsJSON(t, 20))
+	code, out := execCmdCapture(t, "report", "--format", "axi", "r")
+	require.Equal(t, 0, code)
+	assert.Contains(t, out, "truncated: false", "under the default cap, report --axi is not truncated")
+	assert.Contains(t, out, "findings[20|]{", "header declares the true total")
+}
+
+// TestReportCmd_AXIUsesSharedPaginationWrapper is AC 03-04 Error Scenario 1 /
+// Edge Case 2: report --axi's output must be byte-identical to the shared
+// report.RenderAXIPaginated for the same findings + cap, proving it routes
+// through the single shared step rather than a private truncation copy.
+func TestReportCmd_AXIUsesSharedPaginationWrapper(t *testing.T) {
+	isolate(t)
+	js := manyFindingsJSON(t, 12)
+	fixtureReconciled(t, "r", js)
+	t.Setenv("ATCR_AXI_MAX_LINES", "6")
+	_, cmdOut := execCmdCapture(t, "report", "--format", "axi", "r")
+
+	var fs []reconcile.JSONFinding
+	require.NoError(t, json.Unmarshal([]byte(js), &fs))
+	var want bytes.Buffer
+	require.NoError(t, report.RenderAXIPaginated(&want, fs, 6))
+	assert.Equal(t, want.String(), cmdOut, "report --axi must match the shared wrapper byte-for-byte (no private truncation logic)")
+}
 
 // fixtureReconciled writes a reconciled/findings.json under ./.atcr/reviews/<id>
 // and a .atcr/latest pointer.
@@ -241,4 +301,41 @@ func TestReportCmd_DisagreementsWithSarifIsUsageError(t *testing.T) {
 	code, out := execCmdCapture(t, "report", "--disagreements", "--format", "sarif", "2026-06-10_ds")
 	require.Equal(t, 2, code)
 	require.Contains(t, out, "sarif")
+}
+
+// TestResolveOutputPath_ResolvesSymlinkedParentForNewLeaf locks the fix for the
+// new-file symlink-parent bypass: when --output names a not-yet-existing file
+// inside a symlinked directory, filepath.EvalSymlinks fails on the whole path
+// (the leaf is absent), and the old code fell open to the un-resolved link path —
+// leaving the parent symlink to be followed only later by os.WriteFile, after
+// validation had vetted the wrong path. resolveOutputPath must resolve the parent
+// symlink so validation and the write both act on the real parent directory.
+func TestResolveOutputPath_ResolvesSymlinkedParentForNewLeaf(t *testing.T) {
+	realDir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(realDir, link))
+
+	// Leaf does not exist yet, so the whole-path EvalSymlinks inside
+	// resolveOutputPath fails and the parent-directory resolution must kick in.
+	target := filepath.Join(link, "report.json")
+
+	got, err := resolveOutputPath(target)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(realDir, "report.json"), got,
+		"resolveOutputPath must resolve a symlinked parent even when the leaf is a new file")
+}
+
+// TestResolveOutputPath_FailsOpenWhenParentAbsent keeps the fail-open contract for
+// a genuinely absent parent: neither the leaf nor its directory exist on disk, so
+// there is nothing to resolve and the absolute (un-resolved) form is returned
+// rather than erroring the write.
+func TestResolveOutputPath_FailsOpenWhenParentAbsent(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "nope", "deeper", "report.json")
+
+	got, err := resolveOutputPath(target)
+	require.NoError(t, err)
+	require.True(t, filepath.IsAbs(got), "absent parent falls open to the absolute path, got %q", got)
+	require.Equal(t, target, got)
 }

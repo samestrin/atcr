@@ -53,6 +53,7 @@ func TestValidFormat(t *testing.T) {
 	assert.True(t, ValidFormat("json"))
 	assert.True(t, ValidFormat("checklist"))
 	assert.True(t, ValidFormat("sarif"))
+	assert.True(t, ValidFormat("axi"))
 	assert.False(t, ValidFormat("xml"))
 	// The format enum stays case-sensitive (AC 01-01 Edge Case 1): no
 	// normalization is introduced for sarif that the other formats lack.
@@ -70,6 +71,7 @@ var goldenCases = []struct {
 	{"json", FormatJSON, "findings.json", nil},
 	{"checklist", FormatChecklist, "checklist.md", nil},
 	{"sarif", FormatSarif, "report.sarif.json", sampleSarif()},
+	{"axi", FormatAXI, "report.axi", nil},
 }
 
 // TestRender_GoldenFiles compares each format's full render output byte-for-byte
@@ -431,5 +433,280 @@ func TestEscDelegatesToReconcileEsc(t *testing.T) {
 	}
 	for _, c := range cases {
 		assert.Equal(t, reconcile.Esc(c), esc(c), "input %q must match reconcile.Esc exactly", c)
+	}
+}
+
+// --- AC 01-01: FormatAXI render dispatch (token-dense TOON payload) ---
+
+// TestRenderAXI_ZeroFindings pins the empty-container form: a review with no
+// reconciled findings emits a well-formed empty TOON array (findings[0]:) rather
+// than an error or a human-oriented "No findings." sentence (AC 01-01 Edge Case 1).
+func TestRenderAXI_ZeroFindings(t *testing.T) {
+	var b strings.Builder
+	require.NoError(t, Render(&b, nil, FormatAXI))
+	assert.Equal(t, "findings[0]:", strings.TrimSpace(b.String()),
+		"zero findings must render the TOON empty-array header, not a human sentence")
+}
+
+// TestRenderAXI_EscapesDelimiterColonNewline exercises AC 01-01 Edge Case 2: a
+// field carrying the active delimiter (pipe), a colon, an embedded newline, and a
+// comma must be quoted and escaped per TOON's must-quote rules so the original
+// text is round-trippable and the one-row-per-line structure is never broken by a
+// raw delimiter/newline (contrast with atcr-findings/v1's lossy |→/ munging).
+func TestRenderAXI_EscapesDelimiterColonNewline(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Confidence: "MEDIUM",
+			Problem: "a|b:c\nd", Fix: "x,y"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	// The whole problem value is quoted; the pipe/colon ride inside the quotes and
+	// the newline is the \n TOON escape (a literal backslash-n, not a raw newline).
+	assert.Contains(t, out, `"a|b:c\nd"`, "delimiter/colon/newline field must be quoted and newline-escaped")
+	// One header line + exactly one data row: the embedded newline did not split a row.
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	assert.Len(t, lines, 2, "an embedded newline must not add a physical row")
+}
+
+// TestRenderAXI_UnicodePreserved mirrors the markdown renderer's unicode-path
+// guarantee (AC 01-01 Edge Case 3): multi-byte UTF-8 in a file path or finding
+// text survives byte-for-byte with no mojibake or truncation.
+func TestRenderAXI_UnicodePreserved(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "src/café/main.go", Line: 3, Problem: "naïve façade", Confidence: "MEDIUM"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	assert.Contains(t, out, "src/café/main.go", "unicode file path preserved")
+	assert.Contains(t, out, "naïve façade", "unicode finding text preserved")
+}
+
+// TestRenderAXI_CapsOversizeCell pins the AXI payload byte-safety bound (TD from
+// sprint 31.0): a single reviewer-controlled free-text field (LLM-generated,
+// potentially adversarial) must not render as one unbounded physical line that the
+// line-count pagination never trims. Each free-text cell is rune-capped to
+// maxTextLen like the md/checklist views (escTrunc), so a multi-megabyte Problem
+// cannot blow an agent consumer's context budget.
+func TestRenderAXI_CapsOversizeCell(t *testing.T) {
+	huge := strings.Repeat("A", maxTextLen*4)
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Confidence: "MEDIUM", Problem: huge},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+
+	// The full oversize field must never reach stdout, and the single data row must
+	// be bounded near maxTextLen (plus modest per-row structural overhead), not the
+	// 4×maxTextLen the reviewer supplied.
+	assert.NotContains(t, out, huge, "the full multi-megabyte field must not reach stdout")
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	require.Len(t, lines, 2, "header + one data row")
+	assert.LessOrEqual(t, len(lines[1]), maxTextLen+200,
+		"oversize free-text cell must be rune-capped, not emitted whole")
+}
+
+// TestRenderAXI_QuotesInvalidUTF8C1Byte pins the renderer's self-enforced
+// no-raw-C1 guarantee (TD from sprint 31.0): a field carrying a lone raw C1 byte
+// (8-bit CSI 0x9b / OSC 0x9d) decodes to U+FFFD under range/IndexFunc, for which
+// isTOONControl is false — so without an explicit invalid-UTF-8 check toonMustQuote
+// returns false and the raw C1 byte reaches stdout verbatim in an unquoted field.
+// The field must be quoted so toonEscape replaces the raw byte with U+FFFD, and no
+// raw 0x9b/0x9d may appear on the wire. Guards against the masking effect of the
+// upstream json.Marshal round-trip — the renderer must enforce this itself.
+func TestRenderAXI_QuotesInvalidUTF8C1Byte(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Confidence: "MEDIUM",
+			Problem: "ab\x9bcd", Fix: "ef\x9dgh"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	assert.NotContains(t, out, "\x9b", "raw 8-bit CSI (0x9b) must not reach axi stdout")
+	assert.NotContains(t, out, "\x9d", "raw 8-bit OSC (0x9d) must not reach axi stdout")
+	// The visible ASCII around the stripped byte survives.
+	assert.Contains(t, out, "ab", "text before the stripped C1 byte survives")
+	assert.Contains(t, out, "cd", "text after the stripped C1 byte survives")
+}
+
+// TestRenderAXI_NoANSINoMarkdown enforces the AC 01-01 story requirement and DoD:
+// axi stdout carries zero \x1b[ ANSI escape sequences (even when a finding field
+// contains a raw ANSI sequence — TOON has no \x escape, so it is stripped, not
+// smuggled) and zero Markdown table (|---|) or heading (#) syntax.
+func TestRenderAXI_NoANSINoMarkdown(t *testing.T) {
+	findings := append(sample(),
+		reconcile.JSONFinding{Severity: "HIGH", File: "x.go", Line: 9, Confidence: "LOW",
+			Problem: "\x1b[31mred\x1b[0m text"})
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	assert.NotContains(t, out, "\x1b[", "no raw ANSI escape sequence may reach axi stdout")
+	assert.NotContains(t, out, "|---|", "no markdown table separator")
+	assert.NotContains(t, out, "# ", "no markdown heading")
+	assert.Contains(t, out, "red", "the visible text survives; only the control bytes are stripped")
+}
+
+// TestRenderAXI_ReservedAndNumericQuoted pins the remaining TOON must-quote
+// conditions (toon-format-reference.md): a field value that equals a reserved
+// token (true/false/null), looks like a number, or starts with '-' must be quoted
+// so a conforming TOON parser reads it back as the original string rather than a
+// bool/null/number — the round-trip guarantee renderAXI promises. (Surfaced by
+// the 1.2.A adversarial review; leading-'-' is common in diff-style Fix text.)
+func TestRenderAXI_ReservedAndNumericQuoted(t *testing.T) {
+	cases := []struct{ name, val, wantQuoted string }{
+		{"number", "42", `"42"`},
+		{"leading-zero-number", "05", `"05"`},
+		{"float-and-dash", "-3.14", `"-3.14"`},
+		{"bool-true", "true", `"true"`},
+		{"bool-false", "false", `"false"`},
+		{"null", "null", `"null"`},
+		{"leading-dash-text", "- drop the call", `"- drop the call"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			findings := []reconcile.JSONFinding{
+				{Severity: "HIGH", File: "a.go", Line: 1, Confidence: "MEDIUM", Category: c.val, Fix: c.val},
+			}
+			var b strings.Builder
+			require.NoError(t, Render(&b, findings, FormatAXI))
+			out := b.String()
+			assert.Contains(t, out, c.wantQuoted, "%s value must be quoted so it round-trips as a string", c.name)
+			// The bare token must never appear as an unquoted column value (which a
+			// TOON parser would misread as a non-string type).
+			bare := string(axiDelim) + c.val + string(axiDelim)
+			assert.NotContains(t, out, bare, "%s must not appear as a bare column value", c.name)
+		})
+	}
+}
+
+// TestRenderAXI_AllEscapeSequences pins the full TOON escape contract for the
+// security-critical quoting path (AC 01-01 Security): backslash, quote, CR and
+// tab are emitted as their two-character escapes, while control bytes with no
+// valid TOON escape (a raw ANSI \x1b, the U+2028 line separator) are stripped —
+// never smuggled through as raw bytes.
+func TestRenderAXI_AllEscapeSequences(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Confidence: "MEDIUM",
+			Problem: "back\\slash \"q\" \r\t\x1b[0m end\u2028sep"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	assert.Contains(t, out, `\\`, "backslash escaped")
+	assert.Contains(t, out, `\"`, "double quote escaped")
+	assert.Contains(t, out, `\r`, "carriage return escaped")
+	assert.Contains(t, out, `\t`, "tab escaped")
+	assert.NotContains(t, out, "\x1b", "raw ANSI escape byte must be stripped, not emitted")
+	assert.NotContains(t, out, "\u2028", "U+2028 line separator must be stripped")
+	assert.Contains(t, out, "endsep", "visible text around stripped control chars survives contiguously")
+}
+
+// --- AC 01-02: AXI schema reconciled with atcr-findings/v1 + TOON conventions ---
+
+// axiHeaderFields returns the tabular-array header's declared field list (the
+// tokens between `{` and `}` on the first output line), for the field-count
+// invariant checks. Fixtures used with it must not embed the pipe delimiter in a
+// value, so a naive split is exact.
+func axiHeaderFields(t *testing.T, out string) []string {
+	t.Helper()
+	line := strings.SplitN(out, "\n", 2)[0]
+	i := strings.Index(line, "{")
+	j := strings.LastIndex(line, "}")
+	require.Truef(t, i >= 0 && j > i, "axi header must carry a {field} list: %q", line)
+	return strings.Split(line[i+1:j], string(axiDelim))
+}
+
+// TestRenderAXI_PipeHeaderAndV1FieldSet pins AC 01-02 Scenarios 1 & 2: the header
+// declares the pipe delimiter (findings[N|]{...}:) and its field list mirrors the
+// atcr-findings/v1 reconciled 9-column contract field-for-field, so the axi
+// surface converges with the existing machine format instead of fragmenting it.
+func TestRenderAXI_PipeHeaderAndV1FieldSet(t *testing.T) {
+	var b strings.Builder
+	require.NoError(t, Render(&b, sample(), FormatAXI))
+	header := strings.SplitN(b.String(), "\n", 2)[0]
+	assert.True(t, strings.HasPrefix(header, "findings[2|]{"), "header declares count and pipe delimiter: %q", header)
+	assert.Contains(t, header,
+		`severity|"file:line"|problem|fix|category|est_minutes|evidence|reviewers|confidence`,
+		"header field list mirrors the atcr-findings/v1 9-column contract")
+}
+
+// TestRenderAXI_VerificationEvidenceRoundTrip is AC 01-02 Edge Cases 1-3: a
+// finding carrying a Verification block and an EvidenceExec block must surface
+// them as additive columns (no signal dropped vs --format json), and a value that
+// collides with a reserved token ("true") must be quoted.
+func TestRenderAXI_VerificationEvidenceRoundTrip(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "auth.go", Line: 7, Problem: "p", Fix: "f",
+			Category: "true", EstMinutes: 5, Evidence: "e",
+			Reviewers: []string{"greta"}, Confidence: "VERIFIED",
+			Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "reproduced locally"},
+			EvidenceExec: &reconcile.EvidenceExec{Command: "go test ./x", ExitCode: 1, OutputExcerpt: "FAIL"}},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	header := axiHeaderFields(t, out)
+	for _, want := range []string{
+		"verification.verdict", "verification.skeptic", "verification.notes",
+		"evidence_exec.command", "evidence_exec.exit_code", "evidence_exec.output_excerpt",
+	} {
+		assert.Contains(t, header, want, "additive column for the verification/evidence block")
+	}
+	for _, want := range []string{"confirmed", "otto", "reproduced locally", "go test ./x", "FAIL"} {
+		assert.Contains(t, out, want, "verification/evidence value carried into the row")
+	}
+	assert.Contains(t, out, `"true"`, "a reserved-token-looking Category value must be quoted")
+}
+
+// TestRenderAXI_DisagreementAndChallengeSurvived closes the two lossy-subset gaps
+// the 1.5.A adversarial review found: the severity `disagreement` annotation and
+// `verification.challenge_survived` are both populated JSON signals that must
+// survive into the axi payload for it to be a true superset of the JSON form (not
+// just the 9-column text stream). A disagreement column appears only when a
+// finding carries one; challenge_survived rides the verification block.
+func TestRenderAXI_DisagreementAndChallengeSurvived(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "MEDIUM", File: "a.go", Line: 1, Problem: "p", Confidence: "MEDIUM",
+			Disagreement: "LOW vs MEDIUM",
+			Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "judge", ChallengeSurvived: true}},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	header := axiHeaderFields(t, out)
+	assert.Contains(t, header, "disagreement", "a severity disagreement must surface as an additive column")
+	assert.Contains(t, header, "verification.challenge_survived", "the judge-upheld signal must not be dropped")
+	assert.Contains(t, out, "LOW vs MEDIUM", "the disagreement value must be carried into the row")
+	// challenge_survived is a bare TOON boolean.
+	assert.Contains(t, out, string(axiDelim)+"true\n", "challenge_survived=true emitted as a bare boolean at row end")
+	// A no-disagreement payload must NOT declare the column (omitempty discipline).
+	var b2 strings.Builder
+	require.NoError(t, Render(&b2, sample(), FormatAXI))
+	assert.NotContains(t, axiHeaderFields(t, b2.String()), "disagreement",
+		"a payload with no disagreement must not declare the column")
+}
+
+// TestRenderAXI_FieldCountInvariant is AC 01-02 Error Scenario 1: every emitted
+// data row must carry exactly as many columns as the header declares — including a
+// mixed payload where only some findings carry a verification/evidence block, so
+// the absent-block padding is proven correct rather than silently short-rowed.
+func TestRenderAXI_FieldCountInvariant(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Confidence: "MEDIUM"},
+		{Severity: "LOW", File: "b.go", Line: 2, Problem: "p2", Confidence: "LOW",
+			Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto"},
+			EvidenceExec: &reconcile.EvidenceExec{Command: "cmd", ExitCode: 2, OutputExcerpt: "out"}},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	want := len(axiHeaderFields(t, out))
+	rows := strings.Split(strings.TrimRight(out, "\n"), "\n")[1:] // drop header line
+	require.Len(t, rows, 2, "one row per finding")
+	for i, r := range rows {
+		got := len(strings.Split(strings.TrimSpace(r), string(axiDelim)))
+		assert.Equalf(t, want, got, "row %d column count must equal header field count", i)
 	}
 }

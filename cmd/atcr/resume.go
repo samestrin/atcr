@@ -47,6 +47,10 @@ func resolveResumeDir(anchor string) (string, error) {
 // the interrupted marker (AC7), exiting 1 with the same notice as a fresh review.
 func runResume(cmd *cobra.Command, anchor string) error {
 	ctx := cmd.Context()
+	// --axi gates resume's human-oriented stdout writes and swaps the summary block
+	// for the shared token-dense payload, read from the same context value review.go
+	// uses so review/resume stay in lockstep with one flag parse (AC 01-04).
+	axiMode := axiFromContext(ctx)
 
 	// --resume targets an existing review; --id and --output-dir only make sense
 	// when creating a new one, so reject the combination up front (exit 2).
@@ -71,6 +75,23 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	for _, f := range []string{"fresh", "thorough", "min-severity"} {
 		if cmd.Flags().Changed(f) {
 			return usageError(fmt.Errorf("--resume does not support --%s; this flag only applies to --verify, which is not supported with --resume", f))
+		}
+	}
+
+	// --auto-fix, --debate, --single-model, and --exec all parse on the shared
+	// review command but are read only by runReview's fresh path: with --resume
+	// the write-back remediation, cross-examination stage, and sandbox
+	// reproduction would be silently dropped with zero feedback. Reject
+	// fail-closed (exit 2), pointing at the standalone command.
+	resumeStandalone := map[string]string{
+		"auto-fix":     "run `atcr review --auto-fix` on a fresh review instead",
+		"debate":       "run `atcr debate` afterward instead",
+		"single-model": "this flag only applies to --debate — run `atcr debate` afterward instead",
+		"exec":         "this flag only applies to --verify — run `atcr verify --exec` afterward instead",
+	}
+	for _, f := range []string{"auto-fix", "debate", "single-model", "exec"} {
+		if cmd.Flags().Changed(f) {
+			return usageError(fmt.Errorf("--resume does not support --%s; %s", f, resumeStandalone[f]))
 		}
 	}
 
@@ -150,14 +171,32 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// so a review that was interrupted-but-actually-complete reports completed
 	// rather than interrupted (AC6).
 	if info.AllComplete() {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "All configured agents already completed. Re-running reconciliation...")
+		// Gated under --axi (AC 01-04 Edge Case 1): stdout stays payload-only. The
+		// human announce is suppressed and the run-summary payload below takes its
+		// place so the axi stream is never empty on this path.
+		if !axiMode {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "All configured agents already completed. Re-running reconciliation...")
+		}
 		if err := fanout.ClearInterrupted(dir); err != nil {
 			return usageError(fmt.Errorf("resume failed: %w", err))
 		}
-		if err := resumeReconcile(ctx, cmd, dir); err != nil {
+		reconciledTotal, err := resumeReconcile(ctx, cmd, dir)
+		if err != nil {
 			return err
 		}
 		recordHistory(ctx, histRoot, dir, req.StartedAt)
+		if axiMode {
+			// This path runs no fan-out, so there is no metrics delta to report: the
+			// payload carries the already-complete agent set (all succeeded) and the
+			// just-reconciled findings total.
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), prep.ID, dir, summarySnapshot{
+				agentsSucceeded: int64(len(info.Completed)),
+				agentsTotal:     int64(len(info.Completed)),
+				findingsTotal:   int64(reconciledTotal),
+			}); werr != nil {
+				return fmt.Errorf("axi output rendering failed: %w", werr)
+			}
+		}
 		// AllComplete re-reconciles an already-completed review; no new review work
 		// was performed, so do not append another audit record.
 		return nil
@@ -167,8 +206,10 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		return err // no pending slot can authenticate → exit 2 before any provider call
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "resuming review %s: %d completed, %d pending (%s)\n",
-		prep.ID, len(info.Completed), len(info.Pending), strings.Join(info.Pending, ", "))
+	if !axiMode { // gated under --axi: stdout stays payload-only
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "resuming review %s: %d completed, %d pending (%s)\n",
+			prep.ID, len(info.Completed), len(info.Pending), strings.Join(info.Pending, ", "))
+	}
 
 	// Snapshot the summary counters before the resumed fan-out so the end-of-review
 	// summary reports only this resume's contribution, mirroring runReview.
@@ -184,15 +225,31 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		return reportInterrupt(cmd, ctx, result, prep)
 	}
 
+	// axiWerr captures a broken-stdout run-summary payload write (axi mode only) so
+	// the history/audit ledgers below are recorded before the fault is surfaced —
+	// the same ledgers-first ordering runReview uses.
+	var axiWerr error
 	if result != nil {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
-			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
 		// End-of-review metrics summary (Epic 4.4 AC3), mirroring runReview: emitted
-		// before the all-agents-failed error guard so a fully-failed resume still prints
-		// the breakdown. elapsed is measured from req.StartedAt (set just before
-		// PrepareResume), the resume's wall-clock start.
+		// before the all-agents-failed error guard so a fully-failed resume still
+		// reports the breakdown. Under --axi the human outcome + summary lines are
+		// replaced by the one shared token-dense payload, byte-identical to
+		// review --axi for equivalent data (AC 01-04); a write fault stays unwrapped
+		// (exitFailure, AC 02-02 Error Scenario 3).
 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
-		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(req.StartedAt))
+		if axiMode {
+			// A write failure here (a broken stdout, e.g. a closed pipe) is captured
+			// and surfaced only after the history/audit ledgers are written below, so
+			// a closed pipe cannot cost the run its compliance record; the fault
+			// stays unwrapped → exitFailure (1) (AC 02-02 Error Scenario 3).
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), result.ID, result.Dir, summaryDelta); werr != nil {
+				axiWerr = fmt.Errorf("axi output rendering failed: %w", werr)
+			}
+		} else {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
+				result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
+			writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(req.StartedAt))
+		}
 	}
 	if err != nil {
 		// An empty union is a usage/state error (exit 2), consistent with the
@@ -207,11 +264,16 @@ func runResume(cmd *cobra.Command, anchor string) error {
 
 	// Auto-reconcile on successful completion (epic 4.1.1: a resumed run always
 	// produces a fresh reconciliation, mirroring the in-process one-shot path).
-	if err := resumeReconcile(ctx, cmd, result.Dir); err != nil {
+	if _, err := resumeReconcile(ctx, cmd, result.Dir); err != nil {
 		return err
 	}
 	recordHistory(ctx, histRoot, result.Dir, req.StartedAt)
 	recordResumeAudit(cmd, ctx, result.Dir, req.StartedAt, req.PRNumber, req.Range.Base, req.Range.Head)
+	// Surface a captured broken-stdout payload write only now that the ledgers are
+	// recorded: exit 1 with the render fault (never usageError).
+	if axiWerr != nil {
+		return axiWerr
+	}
 	return nil
 }
 
@@ -243,19 +305,25 @@ func recordResumeAudit(cmd *cobra.Command, ctx context.Context, dir string, ts t
 	writeAuditRecord(cmd.ErrOrStderr(), ctx, auditPath, dir, ts, pr, base, head)
 }
 
-// resumeReconcile runs the deterministic reconcile pipeline against dir and prints
-// the merged finding count, mapping a reconcile failure to a usage error (exit 2)
-// with the on-disk review preserved for inspection. The partial flag is read from
-// the just-finalized review so reconcile records the run's partial provenance.
-func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir string) error {
+// resumeReconcile runs the deterministic reconcile pipeline against dir, prints
+// the merged finding count (gated under --axi), and returns that count so the
+// AllComplete path can carry it in the run-summary payload. A reconcile failure
+// maps to a usage error (exit 2) with the on-disk review preserved for inspection.
+// The partial flag is read from the just-finalized review so reconcile records the
+// run's partial provenance.
+func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir string) (int, error) {
 	rec, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
 		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
 	})
 	if err != nil {
-		return usageError(fmt.Errorf("resume failed: %w", err))
+		return 0, usageError(fmt.Errorf("resume failed: %w", err))
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
-	return nil
+	// Shared by the AllComplete and pending paths; gated under --axi (read from the
+	// same context value) so both resume routes keep stdout payload-only (AC 01-04).
+	if !axiFromContext(ctx) {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
+	}
+	return rec.Summary.TotalFindings, nil
 }

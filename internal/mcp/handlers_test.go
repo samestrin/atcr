@@ -650,6 +650,25 @@ func TestReportHandler_InvalidFormatInProcess(t *testing.T) {
 	assert.Contains(t, err.Error(), "sarif")
 }
 
+// TestReportHandler_RejectsAXIInProcess verifies the handler's defense-in-depth
+// rejects format:"axi" for programmatic callers that bypass the JSON Schema enum
+// (which already omits axi at the transport layer): FormatAXI is CLI-only and must
+// not render through the MCP surface even when the enum is sidestepped (AC 01-05
+// Edge Case 1 / Story-Specific DoD). report.ValidFormat("axi") is true, so the
+// handler needs its own explicit exclusion beyond the ValidFormat backstop.
+func TestReportHandler_RejectsAXIInProcess(t *testing.T) {
+	e := &engine{root: t.TempDir()}
+	_, _, err := e.handleReport(context.Background(), nil, ReportArgs{Format: report.FormatAXI})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid format")
+	// The message echoes the rejected input ("...: axi"), but the supported-format
+	// list it offers must NOT include axi.
+	_, supported, found := strings.Cut(err.Error(), "must be one of:")
+	require.True(t, found, "error must list the supported formats")
+	assert.NotContains(t, supported, "axi", "the supported-format list must not advertise axi")
+	assert.Contains(t, supported, "sarif")
+}
+
 // TestReportHandler_InvalidReviewID verifies a path-traversal id_or_path is
 // rejected by resolveReviewDir before any report work (path-containment).
 func TestReportHandler_InvalidReviewID(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/spf13/cobra"
 )
@@ -123,6 +124,19 @@ func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Wri
 // --fail-on threshold violations), 2 usage or configuration errors, 3 a
 // --sync-cloud authentication failure (missing/empty key or a remote 401/403),
 // distinct from exitUsage so scripts/CI can detect an auth failure specifically.
+//
+// --axi (Agent eXperience Interface) mode reuses this exact 0/1/2/3 contract
+// UNCHANGED — it governs stdout payload shape only, never the exit code (there is
+// no --axi branch in exitCode). A new AXI-introduced flag-combination error
+// (--axi + --auto-fix) classifies as 2 (usageError); an internal AXI render fault
+// classifies as 1 (unwrapped generic failure). The epic's original proposal to
+// repurpose 2 as a distinct "internal/syntax error" code was considered and
+// REJECTED: 2 is already reserved for usage/config errors CI depends on, so AXI
+// introduces no new code and repurposes none. --axi structured diagnostics stay
+// on stderr (atcr's convention), NOT stdout (axi.md Principle 6), so --axi stdout
+// is always payload-only and the exit code is the branch signal. Reconciliation
+// documented in docs/ci-integration.md; cross-validated by `atcr verify`'s
+// independently-derived 0/1/2 table.
 const (
 	exitFailure = 1
 	exitUsage   = 2
@@ -235,6 +249,14 @@ func newRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			// alongside the logger, so runReview/runReconcile retrieve it via
 			// telemetry.FromContext without a signature change.
 			cmd.SetContext(telemetry.NewContext(cmd.Context(), telemetryClient))
+			// Propagate the --axi output mode once, at this single flag-parse point,
+			// so review.go/resume.go read it via axiFromContext rather than re-parsing
+			// the flag at each stdout call site (AC 01-04). The flag lives only on
+			// `atcr review`; the Lookup guard leaves every other command unaffected.
+			if cmd.Flags().Lookup("axi") != nil {
+				axi, _ := cmd.Flags().GetBool("axi")
+				cmd.SetContext(newAXIContext(cmd.Context(), axi))
+			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -318,6 +340,45 @@ func telemetryEnabledFromEnv() bool {
 		return true
 	}
 	return enabled
+}
+
+// axiMaxLinesFromEnv resolves the --axi line cap from ATCR_AXI_MAX_LINES,
+// mirroring logLevelFromEnv/telemetryEnabledFromEnv's read-once, fail-open shape
+// (AC 03-03). It must be called once per run and the resolved value threaded into
+// every AXI emission point, so the warning below is inherently one-time.
+//
+//   - unset            -> report.AXIMaxLinesDefault, no warning (Scenario 1)
+//   - valid positive N -> N, no warning (Scenario 2; a huge value is the
+//     operator's explicit choice to disable practical truncation)
+//   - set-but-blank / non-numeric / zero / negative -> default + exactly one
+//     warning on w (Edge Cases 1-3)
+//
+// The resolved value is a header-inclusive physical-line cap: the array header
+// consumes line 1, so a cap of N emits at most N-1 finding rows (see
+// report.PaginateAXI). The knob maps to physical lines, not findings shown.
+//
+// A malformed value is NEVER a fatal error or usageError — this is the reconciled
+// Story-2 decision (AC 02-02 Edge Case 1): the cap fails open, the run continues,
+// exit code unaffected. LookupEnv distinguishes unset (silent) from set-but-blank
+// (warned), the one behavioral split from telemetryEnabledFromEnv.
+//
+// The warning goes to the injected writer — cmd.ErrOrStderr() at the production
+// call site — so it routes through the same redirectable seam as the logger and
+// stays assertable in tests; the message prints the trimmed token so an
+// all-whitespace value doesn't log invisible characters.
+func axiMaxLinesFromEnv(w io.Writer) int {
+	raw, ok := os.LookupEnv("ATCR_AXI_MAX_LINES")
+	if !ok {
+		return report.AXIMaxLinesDefault
+	}
+	trimmed := strings.TrimSpace(raw)
+	if n, err := strconv.Atoi(trimmed); err == nil && n > 0 {
+		return n
+	}
+	// Blank, non-numeric, zero, or negative: fail open to the default and warn
+	// once so a misconfigured value is visible rather than silently ignored.
+	_, _ = fmt.Fprintf(w, "warning: unrecognized ATCR_AXI_MAX_LINES value %q; using default %d\n", trimmed, report.AXIMaxLinesDefault)
+	return report.AXIMaxLinesDefault
 }
 
 // setupLogger constructs the single root logger from LOG_LEVEL and --log-format

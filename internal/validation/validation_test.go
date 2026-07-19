@@ -81,6 +81,16 @@ func TestFilePath(t *testing.T) {
 		`invalid file path "/private/etc/passwd": must not reference system directories`)
 	assert.EqualError(t, FilePath("/private/var/db/something"),
 		`invalid file path "/private/var/db/something": must not reference system directories`)
+
+	// macOS per-user temp tree: /private/var/folders ($TMPDIR) is user-writable, not
+	// system state, so it is exempt from the /private/var block — symmetric with /tmp
+	// (-> /private/tmp) already being allowed. Required so a caller-resolved --output
+	// path under the macOS temp dir is not falsely rejected. The exemption is scoped
+	// to /private/var/folders exactly and its subtree; look-alikes stay blocked.
+	require.NoError(t, FilePath("/private/var/folders/xy/zz/T/out.sarif"))
+	require.NoError(t, FilePath("/private/var/folders"))
+	assert.EqualError(t, FilePath("/private/var/foldersX/y"),
+		`invalid file path "/private/var/foldersX/y": must not reference system directories`)
 }
 
 func TestFilePath_WindowsSystemDirs(t *testing.T) {

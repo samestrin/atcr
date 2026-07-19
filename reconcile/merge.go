@@ -72,12 +72,17 @@ func Merge(group []Finding) Merged {
 }
 
 // distinctReviewers returns the sorted, deduplicated reviewer names in a group.
-// Each input finding carries a single per-source Reviewer.
+// Each input finding carries a single per-source Reviewer. Names are normalized
+// to the no-comma invariant the comma-joined reviewers cell relies on (the v1
+// findings wire format and the axi payload both join names with ','): any comma
+// in a source name is stripped before dedup so one name can never read back as
+// two in the joined cell — the invariant is enforced here, at reconcile time,
+// regardless of what an upstream source emitted.
 func distinctReviewers(group []Finding) []string {
 	set := map[string]bool{}
 	for _, f := range group {
-		if f.Reviewer != "" {
-			set[f.Reviewer] = true
+		if r := strings.ReplaceAll(f.Reviewer, ",", ""); r != "" {
+			set[r] = true
 		}
 	}
 	out := make([]string, 0, len(set))
