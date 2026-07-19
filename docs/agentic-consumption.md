@@ -50,7 +50,10 @@ The header names the pipe (`|`) delimiter and the fixed column order; the single
 data row carries the run id, the review directory, and six bare-integer counts —
 the last, `findings_total`, being the raw pre-reconcile fan-out count. To act on the reconciled
 findings, read `atcr report --format axi` against the same review directory —
-`findings_total` is a fan-out metric, not the deduplicated reconciled count.
+`findings_total` is a fan-out metric, not the deduplicated reconciled count. One
+exception: a `review --resume <id> --axi` run that finds nothing pending (the
+review is already fully complete) runs no fan-out, so its payload reports the
+just-reconciled total instead of a fan-out count.
 
 ### The `report --format axi` findings payload
 
