@@ -107,6 +107,12 @@ func writeReviewSummaryAXI(w io.Writer, id, dir string, m summarySnapshot) error
 		AgentsTimedOut:  m.agentsTimedOut,
 		APICalls:        m.apiCalls,
 		FindingsTotal:   m.findingsTotal,
+		// Carry the same per-severity breakdown the human summary emits via
+		// severityBreakdown, so the AXI payload is no less informative than stdout.
+		FindingsCritical: m.findingsBySeverity["CRITICAL"],
+		FindingsHigh:     m.findingsBySeverity["HIGH"],
+		FindingsMedium:   m.findingsBySeverity["MEDIUM"],
+		FindingsLow:      m.findingsBySeverity["LOW"],
 	})
 }
 

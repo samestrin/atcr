@@ -268,6 +268,13 @@ type ReviewSummaryAXI struct {
 	AgentsTimedOut  int64
 	APICalls        int64
 	FindingsTotal   int64
+	// Per-severity finding counts, the token-dense analogue of the human summary's
+	// severityBreakdown. Carried so an agent consuming AXI can make a fail-on-severity
+	// decision from the run summary — parity with what a human reads on stdout.
+	FindingsCritical int64
+	FindingsHigh     int64
+	FindingsMedium   int64
+	FindingsLow      int64
 }
 
 // reviewSummaryAXIHeader is the fixed column order of the review-summary payload.
@@ -276,6 +283,7 @@ type ReviewSummaryAXI struct {
 var reviewSummaryAXIHeader = []string{
 	"id", "dir", "agents_succeeded", "agents_total",
 	"agents_failed", "agents_timed_out", "api_calls", "findings_total",
+	"findings_critical", "findings_high", "findings_medium", "findings_low",
 }
 
 // RenderReviewSummaryAXI writes s as a single-row TOON tabular array
@@ -301,6 +309,10 @@ func RenderReviewSummaryAXI(w io.Writer, s ReviewSummaryAXI) error {
 		strconv.FormatInt(s.AgentsTimedOut, 10),
 		strconv.FormatInt(s.APICalls, 10),
 		strconv.FormatInt(s.FindingsTotal, 10),
+		strconv.FormatInt(s.FindingsCritical, 10),
+		strconv.FormatInt(s.FindingsHigh, 10),
+		strconv.FormatInt(s.FindingsMedium, 10),
+		strconv.FormatInt(s.FindingsLow, 10),
 	}
 	// Same defensive width invariant renderAXI enforces for findings: the row must
 	// carry exactly as many columns as reviewSummaryAXIHeader declares. It cannot
