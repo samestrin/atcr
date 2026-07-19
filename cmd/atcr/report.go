@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -164,21 +163,10 @@ func resolveOutputPath(output string) (string, error) {
 		return "", fmt.Errorf("resolving --output: %w", err)
 	}
 	resolved, err := evalSymlinksFn(abs)
-	if err == nil {
-		return resolved, nil
-	}
-	// EvalSymlinks resolves only a path whose components all exist, so a
-	// not-yet-created leaf fails the whole-path resolve above. Resolve the parent
-	// directory (which does exist for any valid write target) and rejoin the leaf,
-	// so a symlinked PARENT pointing into a system location is still caught before
-	// validation and os.WriteFile act — closing the new-file case of the bypass.
-	// Fall open to the absolute path only when the parent is genuinely absent too.
-	dir, base := filepath.Split(abs)
-	resolvedDir, dirErr := evalSymlinksFn(filepath.Clean(dir))
-	if dirErr != nil {
+	if err != nil {
 		return abs, nil
 	}
-	return filepath.Join(resolvedDir, base), nil
+	return resolved, nil
 }
 
 // loadContested reads the debate stage's reconciled/debate.json (Epic 6.0) and
