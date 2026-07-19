@@ -14,6 +14,11 @@
 - `cmd/atcr/autofix_test.go` - modify/create: add a test asserting the flag is registered, defaults to `false`, and is reachable via `cmd.Flags().GetBool("no-sandbox")`
 - `cmd/atcr/review.go` - reference only: confirms `addAutoFixFlags(cmd)` is called from `newReviewCmd` (line 92), so `--no-sandbox` becomes available on `atcr review` without further wiring in this file
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/autofix.go:43` — update: `addAutoFixFlags` registers `--no-sandbox` (bool, default `false`) with security-warning help text (discovery integration point, entry-point).
+- `cmd/atcr/autofix_test.go` — update: flag registration/default/help-text assertions via `cmd.Flags().Lookup("no-sandbox")` (discovery `files_to_modify`, scope minor).
+
 ## Happy Path Scenarios
 **Scenario 1: Flag is registered with the correct name, type, and default**
 - **Given** `addAutoFixFlags(cmd)` has been called on a fresh `*cobra.Command`

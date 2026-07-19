@@ -14,6 +14,11 @@
 - `cmd/atcr/autofix_test.go` - modify/create: a test that invokes the `--no-sandbox` path twice in the same process (two consecutive calls, not two separate process invocations) and asserts the warning string appears in captured stderr output both times, proving no memoization
 - `cmd/atcr/main.go` - reference only: `telemetryEnabledFromEnv` (line 337, warning at line 348) is the explicit anti-pattern this AC must NOT replicate — cited so a reviewer can confirm the divergence is intentional and documented in a code comment, not accidental
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/autofix.go` — update: add the dedicated `warnNoSandbox(out io.Writer)` helper and call it unconditionally on every `--no-sandbox` code path (discovery `files_to_modify`, scope major; stderr-warning precedent at `cmd/atcr/main.go:348`, reference only).
+- `cmd/atcr/autofix_test.go` — update: consecutive-invocation stderr-capture tests proving the warning prints on every run with no memoization (discovery `files_to_modify`, scope minor).
+
 ## Happy Path Scenarios
 **Scenario 1: Warning prints once per single `--no-sandbox` invocation**
 - **Given** `atcr review --auto-fix --no-sandbox` runs once against a captured stderr buffer

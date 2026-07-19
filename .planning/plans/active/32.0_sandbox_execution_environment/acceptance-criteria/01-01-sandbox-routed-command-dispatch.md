@@ -15,6 +15,12 @@
 - `internal/sandbox/sandbox.go` - reference only: `Backend.Run(ctx, RunSpec) (RunResult, error)` is the interface consumed as-is; no change to this file.
 - `cmd/atcr/autofix.go` - reference only: `runAutoFix` (line 252) is the sole call site whose signature/behavior this AC's routing function must remain compatible with; no functional change to this file under this specific AC (the call-site swap is covered by AC 01-03).
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/verify/localvalidate.go:80` — update: `RunConfiguredValidation` gains the sandbox-routing execution path (or a sibling variant, per the discovery integration point) that builds `sandbox.RunSpec{Command: argv, Timeout: timeout, SnapshotDir: dir}` and dispatches to `Backend.Run` when a backend is supplied.
+- `internal/verify/localvalidate_test.go` — update: fake-backend dispatch tests asserting the sandbox path is taken and no host `os/exec` child process is spawned for the validation command.
+- `cmd/atcr/autofix.go:252` — update: the sole production call site selects the sandboxed path when a resolved backend is present (the swap itself is verified by AC 01-03).
+
 ## Happy Path Scenarios
 **Scenario 1: A configured sandbox backend routes the validation command into the container**
 - **Given** an `autoFixBackend`-equivalent caller holds a non-nil `sandbox.Backend` (a fake in tests, `*sandbox.DockerBackend` in production) and a resolved `validateArgv` (e.g. `["go", "build", "./..."]`), `applyTarget` directory, and `validateTimeout`

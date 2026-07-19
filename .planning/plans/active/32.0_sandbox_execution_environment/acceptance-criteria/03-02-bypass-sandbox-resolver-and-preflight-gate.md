@@ -15,6 +15,11 @@
 - `cmd/atcr/autofix_test.go` - modify/create: table-driven test asserting `validateAutoFixBackend` with `--no-sandbox=true` never invokes the sandbox resolver (via a call-counting fake or by asserting no Docker/Preflight-shaped error appears) even when no `sandbox:` config block exists and no Docker binary is reachable
 - `internal/verify/exec.go` - reference only: confirms `ResolveExecBackend`'s existing `execEnabled bool` early-return shape (`if !execEnabled { return nil, nil, 0, nil }`, lines 25-27) is the precedent this story's bypass branch should structurally match for Story 2's analogous resolver
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/autofix.go:107` — update: `validateAutoFixBackend` gains the `--no-sandbox` early-bypass branch that skips Story 2's resolver/Preflight entirely; `runAutoFix` (`:239`) keeps the direct `os/exec` validation call (`:252`) when the resolved backend carries no sandbox (discovery `files_to_modify`, scope major).
+- `cmd/atcr/autofix_test.go` — update: bypass tests proving zero resolver invocations under `--no-sandbox` and unchanged gating of the other three checks (discovery `files_to_modify`, scope minor).
+
 ## Happy Path Scenarios
 **Scenario 1: `--no-sandbox` skips resolution with no Docker and no sandbox config**
 - **Given** a project with no `sandbox:` block in `.atcr/config.yaml` and no `docker` binary on `PATH`
@@ -60,7 +65,7 @@
 - **Then** Story 2's resolver failure appends to `missing` and the combined usage error (exit 2) names the sandbox failure — proving this AC's bypass branch does not accidentally weaken the default-on gate for the non-bypass path
 
 ## Performance Requirements
-- **Response Time:** The bypass branch must short-circuit before any `Preflight`/Docker-related I/O — the whole point is avoiding that cost when Docker is unavailable; test asserts zero calls to the resolver, not merely a fast failure from it
+- **Response Time:** The bypass branch must short-circuit before any `Preflight`/Docker-related I/O — the whole point is avoiding that cost when Docker is unavailable; the test asserts zero resolver invocations, not merely that an invoked resolver errors out before reaching Docker I/O
 - **Throughput:** N/A — one bypass check per `--auto-fix` invocation
 
 ## Security Considerations

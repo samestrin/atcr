@@ -15,6 +15,11 @@
 - `internal/registry/autofix.go` - reference only (read, not modified): `AutoFixConfig{ApplyTarget, ValidateCommand, ValidateTimeout}` and its `Validate()` method are the ground truth for the config-block documentation; the doc's field names and default-fallback claims must match this file exactly.
 - `docs/execution.md` - reference only (read; optionally modify to add a forward cross-link from "What the sandbox guarantees" to the new auto-fix content, mirroring the story's cross-link requirement).
 
+### Related Files (from codebase-discovery.json)
+
+- `docs/auto-fix.md` — create (discovery `files_to_create`, structural option (b), based on `docs/execution.md`): hosts the sandboxed-by-default posture and the full `auto_fix:` config block. Alternative: `docs/execution.md:123` — update with an appended auto-fix section (option (a)); exactly one of the two is chosen at drafting time.
+- `docs/README.md` — update: add the new page to the docs index (required by `TestDocsIndexCoversEveryDoc`, `cmd/atcr/docs_audit_test.go:468`) only if the new-file option is chosen.
+
 ## Happy Path Scenarios
 **Scenario 1: Reader finds the sandboxed-by-default statement**
 - **Given** a reader opens the documentation location this story creates/extends
@@ -25,6 +30,7 @@
 - **Given** the same documentation location
 - **When** the reader reads the sandboxing description closely
 - **Then** the doc distinguishes auto-fix's sandboxed validation from `--exec`'s read-only snapshot model: because validation runs against the already-patched working tree, the mount is writable rather than the read-only `/work` snapshot `--exec` uses, and this distinction is stated rather than left implied by silence (per the story's Risk Mitigation: describe what is specific to the auto-fix context, don't just restate `--exec`'s guarantees verbatim)
+- **Clarification (refinement):** whether the auto-fix validation mount is writable or remains read-only is an explicit `/design-sprint` decision per plan.md ("may require a `RunSpec` extension or a distinct mount mode") and codebase-discovery (the default Go validation path already works against the read-only `/work` mount because `HOME`/`TMPDIR`/`XDG_CACHE_HOME`/`GOCACHE`/`GOTMPDIR` redirect into the writable `/scratch` tmpfs, `internal/sandbox/docker.go:127-131`). The doc must state the mount semantics *as actually shipped*: if the read-only mount is retained, it must instead explain that validation runs against the already-patched tree mounted read-only with build caches redirected to `/scratch`, and that validation commands writing into the tree itself (coverage profiles, codegen, `lint --fix`) are a documented limitation. Either way, the auto-fix-specific distinction — validation runs against the already-mutated working tree, not a pristine review snapshot — must be stated rather than implied.
 
 **Scenario 3: Reader finds the full `auto_fix:` config block documented**
 - **Given** the documentation location
@@ -64,6 +70,7 @@
 ## Security Considerations
 - **Authentication/Authorization:** N/A — pure documentation, no runtime access control surface.
 - **Input Validation:** The doc's claims are the "input" that matters here: it must not overstate the isolation guarantee (e.g., must not claim the working tree is read-only during auto-fix validation — it is not, unlike `--exec`'s snapshot) and must not omit the writable-mount distinction, since an operator who assumes `--exec`-equivalent read-only isolation could misjudge the actual blast radius of a malicious validation command mutating files outside the intended apply target.
+- **Clarification (refinement):** whether the auto-fix mount ships writable or stays read-only (with `/scratch` env redirects covering build caches) is decided at `/design-sprint` (see Scenario 2's clarification); the requirement above is accuracy against the shipped semantics — the doc must not claim read-only if a writable mode ships, nor claim writable if read-only is retained.
 
 ## Test Implementation Guidance
 **Test Type:** DOCS AUDIT (existing automated suite) + MANUAL (content accuracy)

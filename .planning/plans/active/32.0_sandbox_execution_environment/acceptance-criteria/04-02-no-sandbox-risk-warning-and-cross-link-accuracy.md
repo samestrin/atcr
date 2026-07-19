@@ -15,6 +15,12 @@
 - `docs/agentic-consumption.md` - modify: add a cross-link next to the file's existing `--auto-fix` mentions (`docs/agentic-consumption.md:111-112`, currently only about the `--axi --auto-fix` incompatibility), per the story's Integration Points.
 - `docs/execution.md` - reference only: the "Security posture" section (lines 123-130) is the tone/structure model to mirror, not duplicate, for the new `--no-sandbox` risk language.
 
+### Related Files (from codebase-discovery.json)
+
+- `docs/auto-fix.md` (or the `docs/execution.md` section from AC 04-01) — update: add the `--no-sandbox` risk/warning subsection (discovery `files_to_create`/`files_to_modify`, pending the structural choice made in AC 04-01).
+- `docs/ci-integration.md:30` — update: cross-link the new `--no-sandbox` content beside the existing `--auto-fix` mention (story Integration Points).
+- `docs/agentic-consumption.md:111-112` — update: cross-link the new content beside the existing `--auto-fix` mentions (story Integration Points).
+
 ## Happy Path Scenarios
 **Scenario 1: Reader finds what `--no-sandbox` bypasses and why it is dangerous**
 - **Given** a reader opens the `--no-sandbox` documentation section

@@ -15,6 +15,11 @@
 - `internal/verify/exec.go` - reference (read-only): `ResolveExecBackend`'s opt-in default (`execEnabled=false` → `(nil, nil, 0, nil)`, `internal/verify/exec.go:25-27`) is the mirror-image contrast this story inverts.
 - `internal/registry/sandbox.go` - reference (read-only): `Validate()` (`:43-74`) unconditionally requires `Image` (`:50-52`) and `TestCommand` (`:53-55`) regardless of whether the operator ever uses `--exec` — the constraint this story must surface as an explicit open design question, not silently work around.
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/verify/autofix_exec.go` — create: the `enabled bool` parameter, inverted-default branching, and the distinct unconfigured-sentinel error (discovery `files_to_create`, based on `internal/verify/exec.go:24-57`).
+- `internal/verify/autofix_exec_test.go` — create: posture tests (disabled-is-noop, unconfigured-is-hard-error) plus the regression pin asserting `internal/registry/sandbox.go:43-74`'s `Validate()` keeps requiring `Image` + `TestCommand` unconditionally (discovery `files_to_create`, based on `internal/verify/exec_test.go:15-23`).
+
 ## Happy Path Scenarios
 **Scenario 1: Explicitly disabled sandboxing is a clean no-op, symmetric with `ResolveExecBackend`**
 - **Given** `enabled = false` is passed (the shape Story 3's future `--no-sandbox` flag will produce) and any `*registry.SandboxConfig` (including `nil`)
@@ -41,6 +46,11 @@
 - **Given** a future caller reads both resolvers' signatures side by side
 - **When** comparing `ResolveExecBackend(ctx, execEnabled bool, sc)` (opt-in: `false` is the safe default) against `ResolveAutoFixSandbox(ctx, enabled bool, sc)` (opt-out: `true` is the safe default)
 - **Then** the parameter name and doc comment on `ResolveAutoFixSandbox` must explicitly state the inverted polarity (documented as a comment stating "unlike ResolveExecBackend, enabled defaults to true for auto-fix call sites") so a future reader does not assume symmetric defaults.
+
+**Edge Case 4: `--exec`'s own resolver and gate remain byte-for-byte untouched by this story**
+- **Given** the new resolver ships in a new sibling file (`internal/verify/autofix_exec.go`), not inside `internal/verify/exec.go`
+- **When** this story's changes land
+- **Then** `internal/verify/exec.go` (`ResolveExecBackend` at `:24-57`, `ErrExecNoBackend` at `:16`) carries no modifications and the existing `internal/verify/exec_test.go` suite (`TestResolveExecBackend_DisabledIsNoOp`, `_RefusesWithoutBackend`, `_BuildsAndPreflights`, `_PreflightFailureRefuses` — `exec_test.go:25-65`) passes without any edit, proving the `--exec` (Epic 11.0) behavior is unaffected outside the auto-fix validation call site, per plan.md's Planning Success Criteria.
 
 ## Error Conditions
 **Error Scenario 1: Unconfigured sandbox under the default posture**
@@ -73,6 +83,7 @@
 - [ ] `enabled=false` returns `(nil, nil)` with zero Docker/Preflight work, symmetric with `ResolveExecBackend`'s disabled path
 - [ ] `enabled=true` with `sc=nil` returns a non-nil sentinel error distinct from `ErrExecNoBackend`
 - [ ] A regression test pins `SandboxConfig.Validate()`'s current unconditional `Image`+`TestCommand` requirement (proving this story did not silently relax it)
+- [ ] The existing `internal/verify/exec_test.go` suite (`TestResolveExecBackend_*`) passes unmodified, proving the `--exec` path is untouched
 - [ ] The resolver's doc comment explicitly states the inverted default polarity relative to `ResolveExecBackend`
 
 **Manual Review:**

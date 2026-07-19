@@ -5,7 +5,7 @@ Plan 32.0 hardens `--auto-fix` (Epic 17.0) by routing its post-apply validation 
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/32.0_sandbox_execution_environment/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/32.0_sandbox_execution_environment/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/32.0_sandbox_execution_environment/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/32.0_sandbox_execution_environment/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/32.0_sandbox_execution_environment/`
 
 ## Timeline & Milestones
@@ -37,5 +37,6 @@ See [documentation/README.md](documentation/README.md) for the full index.
 - [Plan](plan.md)
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)
+- [Sprint Design](sprint-design.md)

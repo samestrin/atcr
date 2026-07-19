@@ -15,6 +15,11 @@
 - `internal/autofix/autofix.go` (or wherever `ApplyPatch`/`RevertPatch`/`CleanupBackups` are defined) - reference only: this AC proves these are never touched by the routing change; no modification expected here.
 - `internal/verify/localvalidate_test.go` - reference only: this AC's "provably unaffected" requirement is partly satisfied by confirming this file's existing host-path tests (`TestRunConfiguredValidation_*`) continue to pass unmodified, proving the host `os/exec` code path itself is untouched.
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/autofix.go:252` — update: the sole call-site swap (`verify.RunConfiguredValidation(...)` → the sandbox-routing equivalent) inside `runAutoFix`, with the three post-call branches (`:253`, `:260`, `:269`) unchanged (discovery `files_to_modify`, scope major).
+- `cmd/atcr/autofix_test.go` — update: sandboxed-path pipeline regression tests mirroring the existing host-path cases against the call-recording `autoFixGitHub` fake (discovery `files_to_modify`, scope minor).
+
 ## Happy Path Scenarios
 **Scenario 1: Sandboxed validation passes — full pipeline proceeds to PR creation unchanged**
 - **Given** `runAutoFix` is invoked with a backend wired to route validation through a fake `sandbox.Backend` that returns a passing result (`Passed() == true`)

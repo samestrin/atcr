@@ -58,6 +58,7 @@
   - Unlike `ResolveExecBackend` (`execEnabled=false` → `(nil,nil,0,nil)`, off by default), this resolver's disabled path is the exception, not the default — its signature should make the "sandboxing is expected unless explicitly disabled" posture explicit and easy for Story 3 to wire `--no-sandbox` into without changing the call shape `validateAutoFixBackend` already uses for its other three checks.
   - Extend `autoFixBackend` (`cmd/atcr/autofix.go:59`) with a new field to carry the resolved `sandbox.Backend` through to `runAutoFix`, so Story 1's routing work reads it directly rather than re-resolving.
   - Add the resolver call inside `validateAutoFixBackend` (`cmd/atcr/autofix.go:107`) as step (4), following the existing pattern at steps (1)-(3): append to `missing` on failure, assign to `be.<field>` on success.
+  - Timeout precedence (open design question, from `documentation/autofix-gate-and-config.md`): mirroring `ResolveExecBackend` means applying `sc.TimeoutSecs` to `cfg.Timeout`, but that value is only the *backend default* used when `RunSpec.Timeout == 0`. Story 1's dispatch always forwards the auto-fix validation timeout (`auto_fix.validate_timeout`, default 2m) into `RunSpec.Timeout` (AC 01-01 Scenario 3), so `RunSpec.Timeout` must remain the authoritative per-run budget — design must ensure a configured `sandbox.timeout_secs` (default 60s) never silently shrinks the operator's validation budget.
 - **Integration Points:**
   - `internal/sandbox.Backend`, `DockerBackend`, `NewDockerBackend`, `DefaultDockerConfig` (Epic 11.0, unchanged).
   - `internal/registry.SandboxConfig` (`internal/registry/sandbox.go`) — read-only consumption; whether its `Validate()` (currently requiring both `Image` and `TestCommand` unconditionally) needs to change for the auto-fix path, or whether auto-fix should validate through a parallel/relaxed path, is an open design question this story surfaces rather than resolves. Do not silently loosen `--exec`'s existing validation to accommodate auto-fix.
@@ -76,4 +77,4 @@
 ---
 
 **Created:** July 19, 2026
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Generated

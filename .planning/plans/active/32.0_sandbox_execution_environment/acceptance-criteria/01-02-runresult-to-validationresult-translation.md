@@ -15,6 +15,11 @@
 - `internal/sandbox/sandbox.go` - reference only: `RunResult` field semantics (`ExitCode` is "never a Go error" for a non-zero program exit; `TimedOut` marks a killed run; a non-nil `error` from `Run` is reserved for backend faults) are the source-of-truth contract this translation must honor.
 - `internal/sandbox/docker.go` - reference only: `DockerBackend.Run` (lines 212-265) is the concrete backend showing exactly which conditions produce `TimedOut`, a non-zero `ExitCode`, or a returned error (Docker exit 125-127/128+N) — this AC's test fixtures should mirror those three outcome classes.
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/verify/localvalidate.go:53-62` — update: add the `sandbox.RunResult` → `ValidationResult` translation adjacent to the `ValidationResult` type and its `Passed()` method, closing the discovery integration gap "No adapter between sandbox.RunResult and verify.ValidationResult".
+- `internal/verify/localvalidate_test.go` — update: table-driven translation tests (exit 0, non-zero exit, `TimedOut`/`124`, `Run`-returned Go error) pinning `Passed()` semantics for each class.
+
 ## Happy Path Scenarios
 **Scenario 1: Clean pass — exit 0, no timeout, no error**
 - **Given** `Backend.Run` returns `RunResult{ExitCode: 0, Output: "build ok", TimedOut: false}` and a nil error

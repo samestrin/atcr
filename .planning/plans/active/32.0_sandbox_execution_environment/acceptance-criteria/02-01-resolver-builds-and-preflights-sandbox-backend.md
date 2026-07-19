@@ -16,6 +16,11 @@
 - `internal/registry/sandbox.go` - reference (read-only): `SandboxConfig` field definitions (`:20-38`) consumed by the resolver.
 - `internal/sandbox/sandbox.go` - reference (read-only): `Backend` interface (`:84-95`), `DefaultDockerConfig`/`NewDockerBackend` construction contract.
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/verify/autofix_exec.go` — create: `ResolveAutoFixSandbox` resolver (discovery `files_to_create`, based on `internal/verify/exec.go:24-57`).
+- `internal/verify/autofix_exec_test.go` — create: resolver tests mirroring `exec_test.go`'s shape (discovery `files_to_create`, based on the `fakeDocker` shim at `internal/verify/exec_test.go:15-23`).
+
 ## Happy Path Scenarios
 **Scenario 1: Full field override is applied before preflight**
 - **Given** a `*registry.SandboxConfig` with `DockerPath` pointing at a passing `fakeDocker` shim, and `Image`, `Memory`, `CPUs`, `PidsLimit`, and `TimeoutSecs` all explicitly set

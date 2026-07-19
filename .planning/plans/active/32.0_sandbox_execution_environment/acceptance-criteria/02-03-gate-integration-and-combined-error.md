@@ -16,6 +16,11 @@
 - `internal/registry/project.go` - reference (read-only): `ProjectConfig.Sandbox` field (`:85`) — already in scope at the `validateAutoFixBackend` call site via `proj *registry.ProjectConfig`, no new plumbing required.
 - `cmd/atcr/review.go` - reference (read-only): `:353` already passes `cfg.Project` into the gate call chain, confirming `proj.Sandbox` reaches `validateAutoFixBackend` unchanged.
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/autofix.go:107` — update: `validateAutoFixBackend` gains sandbox resolution as gate step (4), appended to the same `missing []string`; the `autoFixBackend` struct (`:59`) gains the resolved `sandbox.Backend` field (discovery `files_to_modify`, scope major).
+- `cmd/atcr/autofix_test.go` — update: table-driven gate tests asserting the combined usage error names the sandbox failure alongside other missing pieces (discovery `files_to_modify`, scope minor).
+
 ## Happy Path Scenarios
 **Scenario 1: Sandbox resolution succeeds alongside the other three pieces**
 - **Given** a fully valid `proj.SandboxConfig` (passing `fakeDocker` shim), a valid apply target, a resolvable validation command, and valid GitHub credentials
