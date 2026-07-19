@@ -20,6 +20,7 @@
   - Must preserve the existing all-or-nothing gate contract: sandbox resolution failures join the same `missing []string` collection in `validateAutoFixBackend`, not a separate early-return error path.
   - Must preserve the refuse-on-preflight-failure discipline from `ResolveExecBackend`: any preflight error is a hard error with no silent fallback to unsandboxed execution.
   - `registry.SandboxConfig.Validate()` (`internal/registry/sandbox.go:43-74`) currently requires both `Image` and `TestCommand` unconditionally — a `--exec`-only assumption. Reusing it unmodified for auto-fix would force every `--auto-fix` operator to configure `test_command` even when they never use `--exec`. This story must surface that tension as an explicit open design question (not silently resolve it by, e.g., quietly relaxing validation in a way that weakens `--exec`'s existing guarantees).
+  - Must not modify `internal/verify/exec.go` or alter `--exec`'s existing behavior in any way — the new resolver ships as a sibling file (`internal/verify/autofix_exec.go`), so Epic 11.0's feature remains byte-for-byte unaffected and the existing `internal/verify/exec_test.go` suite (`TestResolveExecBackend_*`, `exec_test.go:25-65`) keeps passing unedited (plan.md Planning Success Criteria; pinned by AC 02-02 Edge Case 4).
 
 ## Story Details
 

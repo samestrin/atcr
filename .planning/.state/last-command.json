@@ -1,9 +1,9 @@
 {
-  "skill": "design-sprint",
-  "args": "@.planning/plans/active/32.0_sandbox_execution_environment/",
-  "invocation": "/design-sprint @.planning/plans/active/32.0_sandbox_execution_environment/",
+  "skill": "create-sprint",
+  "args": "@.planning/plans/active/32.0_sandbox_execution_environment/ --gated",
+  "invocation": "/create-sprint @.planning/plans/active/32.0_sandbox_execution_environment/ --gated",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "30e89e16-281b-4eab-876e-b86844b5d984",
-  "timestamp": "2026-07-19T20:53:10.886Z"
+  "session_id": "e545a872-0918-4b1e-bed4-d35b728049d2",
+  "timestamp": "2026-07-19T22:24:27.230Z"
 }

@@ -1,0 +1,80 @@
+# Original Requirements
+
+**Date:** July 19, 2026 11:03:24AM
+**Command:** `/init-plan @.planning/epics/active/32.0_sandbox_execution_environment.md`
+**Target:** `.planning/epics/active/32.0_sandbox_execution_environment.md`
+
+## Purpose
+
+This document captures the original, unmodified source content that seeded this plan. It is the source of truth for all downstream planning artifacts (plan.md, user-stories/, acceptance-criteria/, sprint-design.md, etc.). If any generated artifact appears to drift from the original intent, this file is the arbiter.
+
+## Content
+
+# Epic Plan 32.0: Containerized Sandbox for Auto-Merged Fixes
+
+- **Estimated time**: TBD
+- **Tasks/Components**: 3 / 4
+- **Execution**: init-plan
+
+## Objective
+
+Build a secure, containerized execution sandbox (e.g., via Docker SDK or ephemeral containers) to safely run validation steps (`go build`, `npm test`) on LLM-generated code. This prevents malicious or hallucinated code from compromising the host machine or CI runner during the `--auto-fix` lifecycle.
+
+## Context
+
+Epic 17.0 (Auto-Merged Fixes) enables the ATCR engine to apply an LLM-generated patch to the local working directory, run a validation step to ensure the fix compiles/passes tests, and automatically revert the filesystem on failure using `internal/atomicfs`.
+
+However, `atomicfs` only protects the files; it does not protect the host machine. If an LLM hallucinates (or is prompt-injected to generate) a malicious `init()` function or pre-build script, running the validation step executes that untrusted code directly on the host. To make `--auto-fix` enterprise-grade and secure by default, the validation execution step must be isolated in a sandbox.
+
+## Proposed Solution
+
+1. **Opt-Out Fallback:** Provide a `--no-sandbox` flag or config option for users who explicitly accept the risk of running untrusted code on their host machine (useful for environments where Docker isn't available, though heavily warned against).
+2. **Integration with Epic 17.0:** Wire the existing `internal/sandbox.Backend` executor (built during Epic 11.0) into the validation step of the Auto-Fix pipeline so that all compiler/linter/test commands are intercepted and routed through the sandbox.
+
+## Acceptance Criteria
+
+- [ ] The Auto-Fix pipeline routes its validation steps through the existing `internal/sandbox` by default.
+- [ ] A `--no-sandbox` flag exists to bypass the isolation, accompanied by strict security warnings in the CLI and documentation.
+
+## Components Touched
+
+- `internal/sandbox/` (New package for execution isolation)
+- `internal/autofix/` (Wiring the sandbox into the validation pipeline)
+- `cmd/atcr/` (New flag parsing for sandbox config)
+- `docs/` (Security warnings for the --no-sandbox flag)
+
+## Dependencies
+
+- Epic 17.0 (Auto-Merged Fixes) - This epic hardens the validation step introduced in 17.0.
+
+## Refinements (2026-07-15)
+
+This section records findings from `/refine-epic` run on 2026-07-15. It is additive — original plan content above is preserved.
+
+### Auto-applied corrections (3)
+
+- ✅ **Redundant work discovered:** The plan proposes building a Docker SDK sandbox. Codebase discovery reveals this was already built for Epic 11.0 in `internal/sandbox` (`sandbox.Backend` interface and `DockerBackend`). Updated the Proposed Solution and Tasks to skip building the sandbox and focus purely on wiring the existing `internal/sandbox` into `internal/autofix` and adding the `--no-sandbox` flag.
+- ✅ **Task count mismatch:** Plan claims `TBD` task(s); derived `3` (assuming redundant build tasks are dropped). Updated to "Task Count: 3".
+- ✅ **Component count mismatch:** Plan lists 3 components; derived 4 (missed `docs/`). Added `docs/` to COMPONENTS_TOUCHED.
+
+### Items needing user confirmation (0)
+
+### Advisory observations (1)
+
+- ℹ️ **Scope-guard violation:** Derived TASK_COUNT=3, COMPONENT_COUNT=4 — exceeds the execute-epic skill's ≤6 tasks / ≤2 components limit. This plan will be rejected by the execute-epic skill and should run through `the init-plan skill @.planning/epics/active/32.0_sandbox_execution_environment.md` for the full sprint pipeline. Refining alone will not unblock /execute-epic.
+
+### Verification context
+
+- Refinement depth: deep
+- Derived TASK_COUNT: 3 (limit: 6)
+- Derived COMPONENT_COUNT: 4 (limit: 2)
+- COMPONENTS_TOUCHED: `internal/sandbox/`, `internal/autofix/`, `cmd/atcr/`, `docs/`
+- VISUAL_SURFACE: false
+- HAS_GATED_WORK: false
+- HAS_CROSS_SYSTEM: true
+- Cited references checked: 0
+- Codebase search queries (spot-check): ["ExecutionSandbox", "internal/sandbox autofix", "Epic 17.0 docker"]
+- Deep discovery method: keyword
+- Deep discovery queries: ExecutionSandbox, internal/sandbox, internal/autofix, Epic 17.0
+- Deep discovery match count: 4
+- Deep discovery snapshot: /Users/samestrin/Documents/GitHub/atcr/.planning/.temp/refine-epic/codebase-discovery.json (temp-only — not committed)

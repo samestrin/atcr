@@ -42,7 +42,7 @@
 
 **Sprint Name:** Sandboxed Auto-Fix Validation
 **Complexity:** 8/12 (COMPLEX)
-**Timeline:** 9 days
+**Timeline:** 9.5 days
 **Phases:** 5
 **Pattern:** Foundation → Core → Gate Integration & Opt-Out → Integration Testing → Documentation & Validation
 
@@ -70,7 +70,7 @@ security opt-out flag stderr warning
 - **Risk/Unknowns:** 2/3 - Several concrete open design questions are explicitly flagged by the plan/stories for resolution in this sprint (config-validation split, timeout precedence, stream-collapse documentation) but the domain itself (mirroring a shipped, tested pattern) is well understood — not "significant unknowns."
 
 **Time Formula:** COMPLEXITY_SCORE 8/12 (COMPLEX) → phase_count 5 → baseline range 8-12 days per the complexity→phase mapping table.
-**Calculation:** Picked 9 days (low end of the COMPLEX range): the resolver/adapter work is a close structural mirror of already-shipped, already-tested code (`ResolveExecBackend`, `DockerBackend`), which offsets the story/test-count weight that pushed the Story/Task score to 3/3.
+**Calculation:** Picked 9.5 days (low end of the COMPLEX range): the resolver/adapter work is a close structural mirror of already-shipped, already-tested code (`ResolveExecBackend`, `DockerBackend`), which offsets the story/test-count weight that pushed the Story/Task score to 3/3.
 
 ---
 
