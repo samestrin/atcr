@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -13,16 +14,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newReportCmd builds `atcr report`: render md, json, checklist, or sarif views
+// newReportCmd builds `atcr report`: render the supported views (report.Formats())
 // over the reconciled findings.json.
 func newReportCmd() *cobra.Command {
+	// Derive the Short + --format help from report.Formats() — the single source of
+	// truth the enum/validation already use — so adding a format (e.g. axi in Sprint
+	// 31.0) can never leave the help text advertising a stale subset that the
+	// invalid-format error and --format validation contradict (TD-001; mirrors the
+	// MCP descReport/tools.go dynamic pattern).
 	cmd := &cobra.Command{
 		Use:   "report [id-or-path]",
-		Short: "Render md, json, checklist, or sarif views over reconciled findings",
+		Short: "Render " + report.Formats() + " views over reconciled findings",
 		Args:  usageArgs(cobra.MaximumNArgs(1)),
 		RunE:  runReport,
 	}
-	cmd.Flags().String("format", "md", "output format: md, json, checklist, or sarif")
+	cmd.Flags().String("format", "md", "output format: "+report.Formats())
 	cmd.Flags().String("output", "", "write to a file instead of stdout")
 	cmd.Flags().Bool("disagreements", false, "render the disagreement radar: a ranked view of the highest-tension spots (severity splits, solo findings, gray-zone clusters) instead of the standard report")
 	return cmd
@@ -109,8 +115,26 @@ func runReport(cmd *cobra.Command, args []string) error {
 		if err := report.RenderMarkdownWithContested(&buf, findings, df, cr); err != nil {
 			return usageError(err)
 		}
+	case format == report.FormatAXI:
+		// AXI routes through the single shared pagination wrapper (AC 03-04): the
+		// same internal/report step atcr review --axi's findings path would use, so
+		// neither command reimplements truncation. The line cap resolves once from
+		// ATCR_AXI_MAX_LINES (AC 03-03); RenderAXIPaginated caps the payload, preserves
+		// the header's true N, and emits the truncated flag (AC 03-01/03-02).
+		if err := report.RenderAXIPaginated(&buf, findings, axiMaxLinesFromEnv(cmd.ErrOrStderr())); err != nil {
+			// An AXI serialization fault is an internal, non-operator-fixable rendering
+			// fault → exit 1 (generic failure), left unwrapped so it defaults to
+			// exitFailure (AC 02-02 Error Scenario 3, which names `atcr report --axi`).
+			return fmt.Errorf("axi output rendering failed: %w", err)
+		}
 	default:
 		if err := report.Render(&buf, findings, format); err != nil {
+			// The non-AXI formats deliberately keep their legacy usage-error (exit 2)
+			// classification for post-load render faults — preserved for compatibility:
+			// AC 02-02 scoped exit-code reconciliation to AXI-introduced errors only,
+			// and CI consumers key on exit 2 as the usage/config class for these
+			// formats. The asymmetry with the AXI branch above (internal render fault →
+			// exit 1) is intentional, not an unexamined gap.
 			return usageError(err)
 		}
 	}
@@ -140,10 +164,21 @@ func resolveOutputPath(output string) (string, error) {
 		return "", fmt.Errorf("resolving --output: %w", err)
 	}
 	resolved, err := evalSymlinksFn(abs)
-	if err != nil {
+	if err == nil {
+		return resolved, nil
+	}
+	// EvalSymlinks resolves only a path whose components all exist, so a
+	// not-yet-created leaf fails the whole-path resolve above. Resolve the parent
+	// directory (which does exist for any valid write target) and rejoin the leaf,
+	// so a symlinked PARENT pointing into a system location is still caught before
+	// validation and os.WriteFile act — closing the new-file case of the bypass.
+	// Fall open to the absolute path only when the parent is genuinely absent too.
+	dir, base := filepath.Split(abs)
+	resolvedDir, dirErr := evalSymlinksFn(filepath.Clean(dir))
+	if dirErr != nil {
 		return abs, nil
 	}
-	return resolved, nil
+	return filepath.Join(resolvedDir, base), nil
 }
 
 // loadContested reads the debate stage's reconciled/debate.json (Epic 6.0) and

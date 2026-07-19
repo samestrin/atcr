@@ -1,9 +1,9 @@
 {
-  "skill": "create-sprint",
-  "args": "@.planning/plans/active/31.0_axi_compliance/ --gated",
-  "invocation": "/create-sprint @.planning/plans/active/31.0_axi_compliance/ --gated",
+  "skill": "sprint-complete",
+  "args": "@.planning/sprints/active/31.0_axi_compliance/",
+  "invocation": "/sprint-complete @.planning/sprints/active/31.0_axi_compliance/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "da5b5858-73c7-4635-b300-368e4115a82e",
-  "timestamp": "2026-07-18T18:12:01.034Z"
+  "session_id": "2ed07858-3df7-4907-b56b-7c41e46a8554",
+  "timestamp": "2026-07-19T04:19:35.306Z"
 }

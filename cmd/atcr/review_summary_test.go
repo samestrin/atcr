@@ -40,6 +40,40 @@ func TestWriteReviewSummary(t *testing.T) {
 	}
 }
 
+// TestWriteReviewSummaryAXIIncludesSeverityBreakdown pins that the --axi run
+// summary carries the same per-severity finding counts the human summary emits via
+// severityBreakdown. Without them the token-dense agent payload is strictly less
+// informative than the human text it replaces: an agent consuming AXI cannot make
+// a fail-on-severity decision from the run summary the way a human reading stdout
+// can. The four columns must always be present (even when a severity is zero) and
+// must land in CRITICAL/HIGH/MEDIUM/LOW order.
+func TestWriteReviewSummaryAXIIncludesSeverityBreakdown(t *testing.T) {
+	reg := metrics.NewRegistry()
+	reg.Counter(metrics.NameFindingsTotal).Add(6)
+	reg.Counter(metrics.Key(metrics.NameFindingsBySeverity, metrics.LabelSeverity, "CRITICAL")).Add(1)
+	reg.Counter(metrics.Key(metrics.NameFindingsBySeverity, metrics.LabelSeverity, "HIGH")).Add(2)
+	reg.Counter(metrics.Key(metrics.NameFindingsBySeverity, metrics.LabelSeverity, "MEDIUM")).Add(3)
+	// LOW deliberately left at zero to prove the column is emitted even when empty.
+
+	snap := snapshotSummaryMetrics(reg).sub(snapshotSummaryMetrics(metrics.NewRegistry()))
+
+	var buf bytes.Buffer
+	if err := writeReviewSummaryAXI(&buf, "2026-07-18_ax", "review/2026-07-18_ax", snap); err != nil {
+		t.Fatalf("writeReviewSummaryAXI: %v", err)
+	}
+	out := buf.String()
+
+	for _, want := range []string{"findings_critical", "findings_high", "findings_medium", "findings_low"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("axi summary header missing column %q\n---\n%s", want, out)
+		}
+	}
+	// Ordered row tail: findings_total|crit|high|med|low = 6|1|2|3|0 (pipe = axiDelim).
+	if !strings.Contains(out, "6|1|2|3|0") {
+		t.Errorf("axi summary row missing ordered severity counts 6|1|2|3|0\n---\n%s", out)
+	}
+}
+
 // TestWriteReviewSummaryNoFindings verifies the breakdown suffix is omitted when
 // there are no findings.
 func TestWriteReviewSummaryNoFindings(t *testing.T) {
