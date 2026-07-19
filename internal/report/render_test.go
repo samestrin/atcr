@@ -508,6 +508,29 @@ func TestRenderAXI_CapsOversizeCell(t *testing.T) {
 		"oversize free-text cell must be rune-capped, not emitted whole")
 }
 
+// TestRenderAXI_QuotesInvalidUTF8C1Byte pins the renderer's self-enforced
+// no-raw-C1 guarantee (TD from sprint 31.0): a field carrying a lone raw C1 byte
+// (8-bit CSI 0x9b / OSC 0x9d) decodes to U+FFFD under range/IndexFunc, for which
+// isTOONControl is false — so without an explicit invalid-UTF-8 check toonMustQuote
+// returns false and the raw C1 byte reaches stdout verbatim in an unquoted field.
+// The field must be quoted so toonEscape replaces the raw byte with U+FFFD, and no
+// raw 0x9b/0x9d may appear on the wire. Guards against the masking effect of the
+// upstream json.Marshal round-trip — the renderer must enforce this itself.
+func TestRenderAXI_QuotesInvalidUTF8C1Byte(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Confidence: "MEDIUM",
+			Problem: "ab\x9bcd", Fix: "ef\x9dgh"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	assert.NotContains(t, out, "\x9b", "raw 8-bit CSI (0x9b) must not reach axi stdout")
+	assert.NotContains(t, out, "\x9d", "raw 8-bit OSC (0x9d) must not reach axi stdout")
+	// The visible ASCII around the stripped byte survives.
+	assert.Contains(t, out, "ab", "text before the stripped C1 byte survives")
+	assert.Contains(t, out, "cd", "text after the stripped C1 byte survives")
+}
+
 // TestRenderAXI_NoANSINoMarkdown enforces the AC 01-01 story requirement and DoD:
 // axi stdout carries zero \x1b[ ANSI escape sequences (even when a finding field
 // contains a raw ANSI sequence — TOON has no \x escape, so it is stripped, not
