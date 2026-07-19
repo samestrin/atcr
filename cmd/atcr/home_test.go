@@ -136,6 +136,23 @@ func TestResolveHomeState_CorruptPointer(t *testing.T) {
 	assert.Empty(t, st.reviewID, "no usable id from a corrupt pointer")
 }
 
+// TestResolveHomeState_DanglingPointer covers the broken-pointer honesty gap:
+// .atcr/latest as a symlink whose target is gone makes os.ReadFile report
+// ErrNotExist (it follows the link), yet the pointer itself exists — the honest
+// state is unavailable, NOT the misleading "No reviews yet" first-run line.
+func TestResolveHomeState_DanglingPointer(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(root, ".atcr", "reviews", "2026-06-10_gone"),
+		filepath.Join(root, ".atcr", "latest")))
+	t.Chdir(root)
+
+	st := resolveHomeState(context.Background())
+	assert.False(t, st.hasReview, "a dangling pointer is not a readable review")
+	assert.True(t, st.unavailable, "a dangling .atcr/latest symlink is a present-but-broken pointer: unavailable, not first-run")
+	assert.Empty(t, st.reviewID, "no usable id from a dangling pointer")
+}
+
 // TestRenderHomeView_Unavailable covers the honest degrade rendering for both the
 // known-id (stale pointer) and unknown-id (corrupt pointer) cases — never the
 // misleading "No reviews yet" line.
