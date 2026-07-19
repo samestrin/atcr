@@ -53,7 +53,7 @@ func relHome(path string) string {
 	if rel == "." {
 		return "~"
 	}
-	return "~" + string(filepath.Separator) + rel
+	return filepath.Join("~", rel)
 }
 
 // resolveHomeState resolves the current review's id/status via the same
