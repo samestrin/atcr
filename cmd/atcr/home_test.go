@@ -49,6 +49,16 @@ func TestRelHome_NoHomeDir(t *testing.T) {
 	assert.Equal(t, p, relHome(p), "when home can't be resolved, path is returned verbatim")
 }
 
+// TestRelHome_EmptyHomeDir pins the other unresolvable-home shape: homeUserDir
+// succeeds but returns an empty string — relHome must treat that like the error
+// case and return the path verbatim, never a broken "~/..." substitution.
+func TestRelHome_EmptyHomeDir(t *testing.T) {
+	stubHomeDir(t, "")
+
+	p := filepath.FromSlash("/usr/local/bin/atcr")
+	assert.Equal(t, p, relHome(p), "an empty home dir is unresolvable: path is returned verbatim")
+}
+
 // TestRenderHomeView_HasReview covers the happy path: exec path (~-relativized),
 // one-line description, and the current review's id/status.
 func TestRenderHomeView_HasReview(t *testing.T) {
