@@ -115,6 +115,33 @@ func TestRootCmd_AXIFlagRegisteredOnRoot(t *testing.T) {
 	assert.Equal(t, "false", f.DefValue, "--axi defaults to false")
 }
 
+// TestRootCmd_HelpAndVersionUnaffected pins AC2: --help, -h, and --version still
+// short-circuit before RunE and print their usage/version text — the home-view
+// branch (epic 31.1) replaces ONLY the bare no-subcommand path, not these.
+func TestRootCmd_HelpAndVersionUnaffected(t *testing.T) {
+	helpOut, err := execute(t, "--help")
+	require.NoError(t, err)
+	assert.Contains(t, helpOut, "Usage:", "--help must still print usage")
+
+	shortHelpOut, err := execute(t, "-h")
+	require.NoError(t, err)
+	assert.Contains(t, shortHelpOut, "Usage:", "-h must still print usage")
+
+	verOut, err := execute(t, "--version")
+	require.NoError(t, err)
+	assert.Contains(t, verOut, atcrVersion(), "--version must still print the version")
+}
+
+// TestRootCmd_AXINotInheritedBySubcommands pins that the root-local --axi flag is
+// NOT inherited by subcommands (AC2): only `atcr review` defines its own --axi, so
+// a subcommand that never declared it (e.g. status) must still reject --axi as an
+// unknown flag (exit 2) — the root flag must not leak onto the subcommand surface.
+func TestRootCmd_AXINotInheritedBySubcommands(t *testing.T) {
+	_, err := execute(t, "status", "--axi")
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err), "--axi is unknown on status; the root-local flag must not leak")
+}
+
 func TestExitCode(t *testing.T) {
 	plain := errors.New("boom")
 	coded := usageError(plain)

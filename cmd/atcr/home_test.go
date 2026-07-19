@@ -119,3 +119,29 @@ func TestRootCmd_BareNonAXIIsTextNotPayload(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, out, "home[1", "without --axi the home view is human text, not the TOON payload")
 }
+
+// TestHomeView_GoldenNonAXI is the AC5 snapshot: it pins the exact non-axi
+// home-view output byte-for-byte, for both the has-review and no-review states,
+// with the executable path and home dir stubbed for determinism.
+func TestHomeView_GoldenNonAXI(t *testing.T) {
+	home := filepath.FromSlash("/home/testuser")
+	stubHomeDir(t, home)
+	execPath := filepath.Join(home, "go", "bin", "atcr")
+	wantExec := "~" + string(filepath.Separator) + filepath.FromSlash("go/bin/atcr")
+	const desc = "Agent Team Code Review — a review panel, not a reviewer"
+
+	t.Run("has review", func(t *testing.T) {
+		var buf bytes.Buffer
+		require.NoError(t, renderHomeView(&buf, execPath, desc,
+			homeState{hasReview: true, reviewID: "2026-06-10_x", status: "completed"}))
+		want := wantExec + "\n" + desc + "\nLatest review: 2026-06-10_x (completed)\n"
+		assert.Equal(t, want, buf.String())
+	})
+
+	t.Run("no review", func(t *testing.T) {
+		var buf bytes.Buffer
+		require.NoError(t, renderHomeView(&buf, execPath, desc, homeState{hasReview: false}))
+		want := wantExec + "\n" + desc + "\nNo reviews yet — run `atcr review` to start one.\n"
+		assert.Equal(t, want, buf.String())
+	})
+}

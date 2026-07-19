@@ -62,3 +62,18 @@ func TestRenderHomeViewAXI_NoEscapeSequences(t *testing.T) {
 	}))
 	assert.NotContains(t, b.String(), "\x1b", "control/ANSI bytes are stripped by toonQuote")
 }
+
+// TestRenderHomeViewAXI_Golden pins the exact home-view AXI wire format
+// byte-for-byte (AC4), so a future edit to the encoder or column set is caught.
+func TestRenderHomeViewAXI_Golden(t *testing.T) {
+	var b bytes.Buffer
+	require.NoError(t, RenderHomeViewAXI(&b, HomeViewAXI{
+		ExecPath:     "~/go/bin/atcr",
+		Description:  "Agent Team Code Review — a review panel, not a reviewer",
+		ReviewID:     "2026-06-10_x",
+		ReviewStatus: "completed",
+	}))
+	want := "home[1|]{exec_path|description|review_id|review_status}:\n" +
+		"  ~/go/bin/atcr|Agent Team Code Review — a review panel, not a reviewer|2026-06-10_x|completed\n"
+	assert.Equal(t, want, b.String())
+}
