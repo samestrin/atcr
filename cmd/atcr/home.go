@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/report"
 	"github.com/spf13/cobra"
 )
 
@@ -98,5 +99,24 @@ func runHome(cmd *cobra.Command) error {
 		// view still renders content rather than erroring (AC3: never error).
 		execPath = "atcr"
 	}
-	return renderHomeView(cmd.OutOrStdout(), execPath, cmd.Short, resolveHomeState())
+	st := resolveHomeState()
+
+	// --axi renders the same home-view data as a token-dense TOON payload, read
+	// from the context the root PersistentPreRunE populated from the root-local
+	// --axi flag (axiFromContext) — the same context-propagation plumbing
+	// review/resume reuse (Epic 31.0), not a parallel mode switch.
+	if axiFromContext(cmd.Context()) {
+		reviewID, status := "", "none"
+		if st.hasReview {
+			reviewID, status = st.reviewID, st.status
+		}
+		return report.RenderHomeViewAXI(cmd.OutOrStdout(), report.HomeViewAXI{
+			ExecPath:     relHome(execPath),
+			Description:  cmd.Short,
+			ReviewID:     reviewID,
+			ReviewStatus: status,
+		})
+	}
+
+	return renderHomeView(cmd.OutOrStdout(), execPath, cmd.Short, st)
 }
