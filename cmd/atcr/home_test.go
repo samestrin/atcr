@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -186,15 +187,26 @@ func TestRenderHomeView_Unavailable(t *testing.T) {
 	assert.NotContains(t, noID.String(), "No reviews yet")
 }
 
+// pinArgs overrides os.Args for the duration of a test so the exec-path
+// fallback chain is deterministic regardless of the test binary's own argv.
+func pinArgs(t *testing.T, args []string) {
+	t.Helper()
+	orig := os.Args
+	t.Cleanup(func() { os.Args = orig })
+	os.Args = args
+}
+
 // TestRunHome_ExecutableFallback covers the LOW independent-review finding: when
-// the homeExecutable seam errors, runHome still renders the home view (with the
-// "atcr" fallback path) rather than erroring — AC3's never-error guarantee holds
-// even on exec-path resolution failure.
+// the homeExecutable seam errors, runHome still renders the home view rather
+// than erroring — AC3's never-error guarantee holds even on exec-path
+// resolution failure. os.Args is pinned so the fallback chain is deterministic:
+// with Args[0] = "atcr" the rendered exec path is the invocation name.
 func TestRunHome_ExecutableFallback(t *testing.T) {
 	t.Chdir(t.TempDir()) // no .atcr/latest -> deterministic no-review path
 	origExec := homeExecutable
 	t.Cleanup(func() { homeExecutable = origExec })
 	homeExecutable = func() (string, error) { return "", errors.New("exec resolution failed") }
+	pinArgs(t, []string{"atcr"})
 
 	root := newRootCmd()
 	root.SetContext(context.Background()) // no axi in context -> text path
@@ -203,8 +215,51 @@ func TestRunHome_ExecutableFallback(t *testing.T) {
 
 	require.NoError(t, runHome(root))
 	got := buf.String()
-	assert.Contains(t, got, "atcr", "the exec fallback renders the fallback name")
+	firstLine, _, _ := strings.Cut(got, "\n")
+	assert.Equal(t, "atcr", firstLine, "the exec fallback renders the os.Args[0] invocation name")
 	assert.Contains(t, got, "Agent Team Code Review — a review panel, not a reviewer")
+}
+
+// TestRunHome_ExecutableFallbackUsesArgsZero covers the renamed-binary case:
+// when os.Executable fails, the fallback exec path is os.Args[0] — the name the
+// binary was actually invoked as — not a hardcoded "atcr", which would render a
+// misleading exec_path for a renamed or wrapped binary.
+func TestRunHome_ExecutableFallbackUsesArgsZero(t *testing.T) {
+	t.Chdir(t.TempDir()) // no .atcr/latest -> deterministic no-review path
+	origExec := homeExecutable
+	t.Cleanup(func() { homeExecutable = origExec })
+	homeExecutable = func() (string, error) { return "", errors.New("exec resolution failed") }
+	pinArgs(t, []string{"/usr/local/bin/renamed-atcr"})
+
+	root := newRootCmd()
+	root.SetContext(context.Background())
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+
+	require.NoError(t, runHome(root))
+	firstLine, _, _ := strings.Cut(buf.String(), "\n")
+	assert.Equal(t, "/usr/local/bin/renamed-atcr", firstLine,
+		"the fallback exec path is os.Args[0], not a hardcoded binary name")
+}
+
+// TestRunHome_ExecutableFallbackEmptyArgs pins the last-ditch branch: with no
+// argv at all (exotic embedding), the fallback is the command's own name —
+// injected from cmd.Name(), not a hardcoded literal.
+func TestRunHome_ExecutableFallbackEmptyArgs(t *testing.T) {
+	t.Chdir(t.TempDir()) // no .atcr/latest -> deterministic no-review path
+	origExec := homeExecutable
+	t.Cleanup(func() { homeExecutable = origExec })
+	homeExecutable = func() (string, error) { return "", errors.New("exec resolution failed") }
+	pinArgs(t, []string{})
+
+	root := newRootCmd()
+	root.SetContext(context.Background())
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+
+	require.NoError(t, runHome(root))
+	firstLine, _, _ := strings.Cut(buf.String(), "\n")
+	assert.Equal(t, root.Name(), firstLine, "with empty argv the fallback is cmd.Name()")
 }
 
 // TestRootCmd_BareAXIRendersHomeViewPayload covers AC4/T3: bare `atcr --axi`
