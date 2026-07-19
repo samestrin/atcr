@@ -52,10 +52,10 @@
 - **When** the result is translated
 - **Then** `ValidationResult.StdoutTruncated` and `ValidationResult.StderrTruncated` are both left `false` (the sandbox path does not claim knowledge it does not have); this is a documented, acceptable behavior difference from the host path's precise truncation flags, not a defect
 
-**Edge Case 4: Duration is either populated from measured wall-clock time or left at zero, consistently**
+**Edge Case 4: Duration is populated from measured wall-clock time**
 - **Given** `sandbox.RunResult` has no `Duration` field
 - **When** the result is translated
-- **Then** the adapter either measures wall-clock duration around the `Backend.Run` call itself and sets `ValidationResult.Duration` from that measurement, or leaves it at zero — whichever is chosen, the behavior must be deterministic and covered by a test asserting the chosen behavior (this AC requires the implementation to pick one and document it, not leave it undefined)
+- **Then** the adapter measures wall-clock duration around the `Backend.Run` call itself and sets `ValidationResult.Duration` from that measurement (never left at zero), preserving parity with the host `os/exec` path which already populates `Duration`; covered by a test asserting a non-zero `Duration` reflecting the measured elapsed time
 
 ## Error Conditions
 **Error Scenario 1: Docker runtime fault (exit 125-127) is never misrouted into a "validation failed" result**
