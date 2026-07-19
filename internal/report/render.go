@@ -217,39 +217,51 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 // present/absent form rather than assume a strict per-column type.
 func axiRow(f reconcile.JSONFinding, hasDisagreement, hasVerification, hasEvidence bool) []string {
 	row := []string{
-		toonQuote(f.Severity),
-		toonQuote(fmt.Sprintf("%s:%d", f.File, f.Line)),
-		toonQuote(f.Problem),
-		toonQuote(f.Fix),
-		toonQuote(f.Category),
+		axiText(f.Severity),
+		axiText(fmt.Sprintf("%s:%d", f.File, f.Line)),
+		axiText(f.Problem),
+		axiText(f.Fix),
+		axiText(f.Category),
 		strconv.Itoa(f.EstMinutes),
-		toonQuote(f.Evidence),
-		toonQuote(strings.Join(f.Reviewers, ",")),
-		toonQuote(f.Confidence),
+		axiText(f.Evidence),
+		axiText(strings.Join(f.Reviewers, ",")),
+		axiText(f.Confidence),
 	}
 	if hasDisagreement {
-		row = append(row, toonQuote(f.Disagreement))
+		row = append(row, axiText(f.Disagreement))
 	}
 	if hasVerification {
 		if f.Verification != nil {
 			// challenge_survived is emitted as a bare TOON boolean; an absent block
 			// gets an empty cell (distinct from a real false) so the additive block
 			// stays a faithful superset of the JSON verification object.
-			row = append(row, toonQuote(f.Verification.Verdict), toonQuote(f.Verification.Skeptic),
-				toonQuote(f.Verification.Notes), strconv.FormatBool(f.Verification.ChallengeSurvived))
+			row = append(row, axiText(f.Verification.Verdict), axiText(f.Verification.Skeptic),
+				axiText(f.Verification.Notes), strconv.FormatBool(f.Verification.ChallengeSurvived))
 		} else {
-			row = append(row, toonQuote(""), toonQuote(""), toonQuote(""), toonQuote(""))
+			row = append(row, axiText(""), axiText(""), axiText(""), axiText(""))
 		}
 	}
 	if hasEvidence {
 		if f.EvidenceExec != nil {
-			row = append(row, toonQuote(f.EvidenceExec.Command), strconv.Itoa(f.EvidenceExec.ExitCode), toonQuote(f.EvidenceExec.OutputExcerpt))
+			row = append(row, axiText(f.EvidenceExec.Command), strconv.Itoa(f.EvidenceExec.ExitCode), axiText(f.EvidenceExec.OutputExcerpt))
 		} else {
-			row = append(row, toonQuote(""), toonQuote(""), toonQuote(""))
+			row = append(row, axiText(""), axiText(""), axiText(""))
 		}
 	}
 	return row
 }
+
+// axiText is toonQuote with a per-cell rune cap (maxTextLen, the same bound the
+// md/checklist views apply via escTrunc). A findings row is one physical AXI line
+// that the line-count pagination (PaginateAXI) never trims, so without a per-cell
+// cap a single reviewer-controlled free-text field (LLM-generated, potentially
+// adversarial) could render as one multi-megabyte line and blow an agent
+// consumer's context budget. Truncation happens before quoting so the cap bounds
+// the actual field content; the payload is intentionally no longer length-faithful
+// for over-cap fields — the byte-safety bound takes precedence over verbatim
+// re-encoding, matching the human views. Well-sized fields (< maxTextLen runes,
+// including the whole report.axi golden) pass through byte-for-byte.
+func axiText(s string) string { return toonQuote(truncate(s, maxTextLen)) }
 
 // ReviewSummaryAXI is the run-level metadata carried by the --axi review/resume
 // summary payload: review identity plus per-attempt agent counts and a findings
