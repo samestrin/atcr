@@ -1,3 +1,7 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
 # Feature Request: AXI Content-First Home View
 
 - **Estimated time**: 1-2 days
@@ -32,11 +36,11 @@ The view respects `--axi` (bare `atcr --axi`) by reusing Epic 31.0's `FormatAXI`
 
 ## Acceptance Criteria
 
-- [x] AC1: `atcr` with no arguments and no flags shows a live home view (not help text) — `~`-relativized executable path, one-line description, and current review state.
-- [x] AC2: `atcr --help`, `atcr -h`, `atcr --version`, and every existing subcommand's behavior is unchanged.
-- [x] AC3: When no review has ever been run (`.atcr/latest` missing), the home view shows an explicit "no reviews yet" state — never an error, never empty/zero-byte output.
-- [x] AC4: `atcr --axi` (bare, no subcommand) renders the home-view data through Epic 31.0's `FormatAXI`/pagination context plumbing, not a parallel ad hoc renderer.
-- [x] AC5: A golden/snapshot test pins the non-`--axi` home-view output; full existing test suite, `go vet`, and lint pass unmodified.
+- [ ] AC1: `atcr` with no arguments and no flags shows a live home view (not help text) — `~`-relativized executable path, one-line description, and current review state.
+- [ ] AC2: `atcr --help`, `atcr -h`, `atcr --version`, and every existing subcommand's behavior is unchanged.
+- [ ] AC3: When no review has ever been run (`.atcr/latest` missing), the home view shows an explicit "no reviews yet" state — never an error, never empty/zero-byte output.
+- [ ] AC4: `atcr --axi` (bare, no subcommand) renders the home-view data through Epic 31.0's `FormatAXI`/pagination context plumbing, not a parallel ad hoc renderer.
+- [ ] AC5: A golden/snapshot test pins the non-`--axi` home-view output; full existing test suite, `go vet`, and lint pass unmodified.
 
 ## Out of Scope
 
@@ -121,3 +125,5 @@ None — no mechanical/zero-risk corrections were needed. All cited file paths (
    A: Option (a) — add a `HomeViewAXI` struct + `RenderHomeViewAXI` in `internal/report` reusing the shared `toonQuote`/`axiDelim` TOON encoder, emitting a single-row tabular payload. Matches the `ReviewSummaryAXI`/`RenderReviewSummaryAXI` precedent for data with no findings list. (b) fails — `ReviewSummaryAXI`'s columns are meaningless/zero for a bare home view; (c) fails — `RenderAXIPaginated(nil)` conveys zero home-view data. (Confidence 92%)
 2. Q: Home-view firing condition vs. T1's "zero flags" wording?
    A: Confirmed — fire the branch whenever bare `atcr` reaches root's `RunE` (no subcommand), regardless of persistent flags, not on a literal "zero flags" check. `-h`/`--help`/`--version` short-circuit before `RunE` and need no extra guard. Implementing this requires newly registering `--axi` at the root level, since a local flag on the unreached `review` subcommand is invisible to root. (Confidence 90%)
+----- END SPRINT PLAN -----
+
