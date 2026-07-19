@@ -109,6 +109,19 @@ func TestRunSandboxedValidation_BackendFaultIsCannotValidateBranch(t *testing.T)
 	assert.False(t, res.Passed())
 }
 
+func TestRunSandboxedValidation_TimeoutIsNotCannotValidateBranch(t *testing.T) {
+	// A sandbox timeout is a completed hard failure, NOT a backend fault: the
+	// dispatch fn must return (res, nil) with StartError nil and Passed() false,
+	// so the call site takes its !res.Passed() branch, never verr != nil.
+	fb := &fakeSandboxBackend{name: "fake", result: sandbox.RunResult{ExitCode: 124, Output: "deadline", TimedOut: true}}
+	res, err := RunSandboxedValidation(context.Background(), fb, []string{"go", "build"}, t.TempDir(), 5*time.Second)
+	require.NoError(t, err, "a timeout is not a Go error — it is a completed hard failure")
+	assert.Nil(t, res.StartError, "a timeout must not be mislabeled as a cannot-validate start error")
+	assert.True(t, res.TimedOut)
+	assert.Zero(t, res.ExitCode, "conventional timeout code 124 must not surface as a competing exit")
+	assert.False(t, res.Passed())
+}
+
 // --- AC 01-02: RunResult -> ValidationResult translation ------------------
 
 // TestTranslateRunResult pins the pure struct-to-struct mapping per the
@@ -153,6 +166,17 @@ func TestTranslateRunResult(t *testing.T) {
 			wantPassed: false,
 		},
 		{
+			// Not just 124: any non-zero exit reported alongside TimedOut (e.g. 137
+			// SIGKILL/OOM, 143 SIGTERM) must be suppressed, proving the rule is
+			// "TimedOut suppresses every ExitCode", not "special-case 124".
+			name:       "timed out with 137 (SIGKILL) still suppresses the exit code",
+			rr:         sandbox.RunResult{ExitCode: 137, Output: "killed", TimedOut: true},
+			wantExit:   0,
+			wantStdout: "killed",
+			wantTimed:  true,
+			wantPassed: false,
+		},
+		{
 			name:       "backend fault with zero result maps to StartError",
 			rr:         sandbox.RunResult{},
 			runErr:     backendFault,
@@ -173,6 +197,7 @@ func TestTranslateRunResult(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			res := translateRunResult(tc.rr, tc.runErr)
+			assert.Zero(t, res.Duration, "the pure mapping never sets Duration — the dispatch adapter measures it")
 			assert.Equal(t, tc.wantExit, res.ExitCode)
 			assert.Equal(t, tc.wantStdout, res.Stdout, "combined Output routes into Stdout")
 			assert.Empty(t, res.Stderr, "sandbox path never populates Stderr (documented stream-collapse)")
