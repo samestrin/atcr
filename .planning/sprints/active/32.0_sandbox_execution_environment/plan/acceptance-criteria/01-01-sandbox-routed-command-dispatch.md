@@ -78,15 +78,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A fake-backend unit test proves `RunSpec{Command: argv, Timeout: timeout, SnapshotDir: dir}` is constructed and passed to `Backend.Run` exactly once when a backend is supplied
-- [ ] A unit test proves empty argv short-circuits before `Backend.Run` is called, returning the existing `StartError`
-- [ ] A unit test proves a nonexistent `dir` short-circuits before `Backend.Run` is called, returning the existing `StartError`
-- [ ] A unit test proves `RunSpec.Script` is never populated (only `Command`) for this call path
+- [x] A fake-backend unit test proves `RunSpec{Command: argv, Timeout: timeout, SnapshotDir: dir}` is constructed and passed to `Backend.Run` exactly once when a backend is supplied
+- [x] A unit test proves empty argv short-circuits before `Backend.Run` is called, returning the existing `StartError`
+- [x] A unit test proves a nonexistent `dir` short-circuits before `Backend.Run` is called, returning the existing `StartError`
+- [x] A unit test proves `RunSpec.Script` is never populated (only `Command`) for this call path
 
 **Manual Review:**
 - [ ] Code reviewed and approved

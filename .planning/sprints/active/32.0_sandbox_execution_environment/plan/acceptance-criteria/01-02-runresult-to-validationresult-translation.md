@@ -81,16 +81,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Table-driven test proves exit-0/no-timeout/no-error maps to `Passed() == true`
-- [ ] Table-driven test proves non-zero exit/no-timeout/no-error maps to `Passed() == false` with `StartError == nil` (the "validation failed" branch)
-- [ ] Table-driven test proves `TimedOut: true` maps to `ValidationResult.TimedOut == true`, `Passed() == false`, without fabricating a competing failure signal from `ExitCode: 124`
-- [ ] Table-driven test proves a non-nil error from `Run` maps to a non-nil `ValidationResult.StartError` and a non-nil returned error (the "cannot validate" branch), covering both a zero-value and a partially-populated `RunResult` alongside that error
-- [ ] Test proves `RunResult.Output` lands in `ValidationResult.Stdout` with `Stderr` left empty, with a comment/doc note explaining the stream-collapse
+- [x] Table-driven test proves exit-0/no-timeout/no-error maps to `Passed() == true`
+- [x] Table-driven test proves non-zero exit/no-timeout/no-error maps to `Passed() == false` with `StartError == nil` (the "validation failed" branch)
+- [x] Table-driven test proves `TimedOut: true` maps to `ValidationResult.TimedOut == true`, `Passed() == false`, without fabricating a competing failure signal from `ExitCode: 124`
+- [x] Table-driven test proves a non-nil error from `Run` maps to a non-nil `ValidationResult.StartError` and a non-nil returned error (the "cannot validate" branch), covering both a zero-value and a partially-populated `RunResult` alongside that error
+- [x] Test proves `RunResult.Output` lands in `ValidationResult.Stdout` with `Stderr` left empty, with a comment/doc note explaining the stream-collapse
 
 **Manual Review:**
 - [ ] Code reviewed and approved
