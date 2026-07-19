@@ -353,6 +353,10 @@ func telemetryEnabledFromEnv() bool {
 //   - set-but-blank / non-numeric / zero / negative -> default + exactly one
 //     warning on w (Edge Cases 1-3)
 //
+// The resolved value is a header-inclusive physical-line cap: the array header
+// consumes line 1, so a cap of N emits at most N-1 finding rows (see
+// report.PaginateAXI). The knob maps to physical lines, not findings shown.
+//
 // A malformed value is NEVER a fatal error or usageError — this is the reconciled
 // Story-2 decision (AC 02-02 Edge Case 1): the cap fails open, the run continues,
 // exit code unaffected. LookupEnv distinguishes unset (silent) from set-but-blank

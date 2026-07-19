@@ -11,6 +11,10 @@ import (
 // AXIMaxLinesDefault is the default physical-line cap applied to an --axi
 // payload (AC 03-01). ATCR_AXI_MAX_LINES overrides it; that env resolution lives
 // in cmd/atcr (AC 03-03) and is threaded in as maxLines.
+//
+// The cap is header-inclusive: the array header consumes line 1, so a cap of N
+// emits at most N-1 finding rows. An operator setting ATCR_AXI_MAX_LINES=N gets
+// N-1 findings, not N — the knob bounds physical lines, not data rows.
 const AXIMaxLinesDefault = 500
 
 // PaginateAXI applies the deterministic line cap to an already-rendered AXI
