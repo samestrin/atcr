@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/samestrin/atcr/internal/fanout"
@@ -9,6 +10,38 @@ import (
 	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/verify"
 )
+
+// mcpAllowedFormats is the explicit allow list of report formats surfaced through
+// the MCP atcr_report tool (Design Decision #3, AC 01-05). Modeling the MCP
+// surface as an allow list — rather than report.FormatList() minus a hardcoded
+// exclusion — means a future CLI-only format added to FormatList() is excluded
+// by construction: it reaches the MCP enum only when deliberately added here.
+// AXI is excluded deliberately: the entire point of --axi is to skip MCP's token
+// overhead (axi.md's own benchmark: MCP costs 2.3x-12x more tokens than the
+// CLI), so an axi-encoded string nested inside an MCP JSON-RPC envelope delivers
+// none of that saving and would be misleading. The allow list lives here in the
+// MCP layer, not in report.FormatList(), so the CLI's report.ValidFormat/Formats
+// keep advertising axi while only the MCP enum omits it.
+var mcpAllowedFormats = []string{
+	report.FormatMarkdown,
+	report.FormatJSON,
+	report.FormatChecklist,
+	report.FormatSarif,
+}
+
+// mcpReportFormats returns the report formats surfaced through the MCP atcr_report
+// tool — the explicit mcpAllowedFormats allow list. The JSON Schema enum and
+// handleReport's defense-in-depth guard consult this one set, so the two sites
+// can never drift on which formats the MCP surface accepts.
+func mcpReportFormats() []string {
+	return mcpAllowedFormats
+}
+
+// mcpReportFormatsText is mcpReportFormats joined for description/help text, the
+// MCP-facing analogue of report.Formats().
+func mcpReportFormatsText() string {
+	return strings.Join(mcpReportFormats(), ", ")
+}
 
 // Tool names — the public MCP contract. Renaming any of these is a breaking
 // change that requires a coordinated v2 bump (AC 04-02).
@@ -94,7 +127,7 @@ type DebateResult struct {
 // constrained to a closed enum by reportInputSchema.
 type ReportArgs struct {
 	IDOrPath string `json:"id_or_path,omitempty" jsonschema:"review id to render (review id only; paths are not accepted); defaults to .atcr/latest"`
-	Format   string `json:"format,omitempty" jsonschema:"output format: md (default), json, checklist, or sarif"`
+	Format   string `json:"format,omitempty" jsonschema:"output format (default md); see the format enum for supported values"`
 }
 
 // RangeArgs are the atcr_range tool arguments (all optional).
@@ -212,15 +245,19 @@ const (
 )
 
 // descReport is a var (not const) so the embedded format list is derived from
-// report.Formats(), the single source of truth for the closed enum.
+// mcpReportFormatsText(), the MCP-facing (axi-excluded) format list — the single
+// source of truth the enum below shares, so the description can never drift from
+// what the enum accepts.
 var descReport = "Render a view over a review's reconciled findings. " +
 	"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), " +
-	"format (" + report.Formats() + "; default " + report.FormatMarkdown + ")."
+	"format (" + mcpReportFormatsText() + "; default " + report.FormatMarkdown + ")."
 
 // reportInputSchema builds the atcr_report input schema with the format property
-// constrained to the closed enum md|json|checklist|sarif, so an invalid format is
-// rejected by JSON Schema validation before the handler runs (AC 04-04 Edge
-// Case 2). The handler additionally defends with its own enum check.
+// constrained to the closed enum md|json|checklist|sarif — mcpReportFormats(),
+// i.e. report.FormatList() with FormatAXI filtered OUT (Design Decision #3,
+// AC 01-05) — so an invalid or CLI-only format is rejected by JSON Schema
+// validation before the handler runs (AC 04-04 Edge Case 2). The handler
+// additionally defends with its own enum check (including an explicit axi reject).
 func reportInputSchema() (*jsonschema.Schema, error) {
 	s, err := jsonschema.For[ReportArgs](nil)
 	if err != nil {
@@ -231,11 +268,12 @@ func reportInputSchema() (*jsonschema.Schema, error) {
 		return nil, fmt.Errorf("inferring atcr_report schema: %w", err)
 	}
 	if p := s.Properties["format"]; p != nil {
-		p.Enum = make([]any, len(report.FormatList()))
-		for i, f := range report.FormatList() {
+		formats := mcpReportFormats()
+		p.Enum = make([]any, len(formats))
+		for i, f := range formats {
 			p.Enum[i] = f
 		}
-		p.Description = "output format (default " + report.FormatMarkdown + "): " + report.Formats()
+		p.Description = "output format (default " + report.FormatMarkdown + "): " + mcpReportFormatsText()
 	}
 	return s, nil
 }
