@@ -131,11 +131,18 @@ func runHome(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 	execPath, err := homeExecutable()
 	if err != nil {
-		// os.Executable rarely fails; fall back to the command name so the home
-		// view still renders content rather than erroring (AC3: never error), and
-		// log the cause at debug so the degrade is not silent.
-		log.FromContext(ctx).Debug("home view: os.Executable failed, using fallback name", "err", err)
-		execPath = "atcr"
+		// os.Executable rarely fails; fall back to the invocation name so the
+		// home view still renders content rather than erroring (AC3: never
+		// error), and log the cause at debug so the degrade is not silent.
+		// os.Args[0] reflects how the binary was actually invoked — a renamed
+		// or wrapped binary renders its real name; with no argv at all, the
+		// command's own name is the last-ditch value, not a hardcoded literal.
+		log.FromContext(ctx).Debug("home view: os.Executable failed, using argv/command-name fallback", "err", err)
+		if len(os.Args) > 0 && os.Args[0] != "" {
+			execPath = os.Args[0]
+		} else {
+			execPath = cmd.Name()
+		}
 	}
 	st := resolveHomeState(ctx)
 
