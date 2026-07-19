@@ -225,6 +225,10 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		return reportInterrupt(cmd, ctx, result, prep)
 	}
 
+	// axiWerr captures a broken-stdout run-summary payload write (axi mode only) so
+	// the history/audit ledgers below are recorded before the fault is surfaced —
+	// the same ledgers-first ordering runReview uses.
+	var axiWerr error
 	if result != nil {
 		// End-of-review metrics summary (Epic 4.4 AC3), mirroring runReview: emitted
 		// before the all-agents-failed error guard so a fully-failed resume still
@@ -234,8 +238,12 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		// (exitFailure, AC 02-02 Error Scenario 3).
 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
 		if axiMode {
+			// A write failure here (a broken stdout, e.g. a closed pipe) is captured
+			// and surfaced only after the history/audit ledgers are written below, so
+			// a closed pipe cannot cost the run its compliance record; the fault
+			// stays unwrapped → exitFailure (1) (AC 02-02 Error Scenario 3).
 			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), result.ID, result.Dir, summaryDelta); werr != nil {
-				return fmt.Errorf("axi output rendering failed: %w", werr)
+				axiWerr = fmt.Errorf("axi output rendering failed: %w", werr)
 			}
 		} else {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
@@ -261,6 +269,11 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	}
 	recordHistory(ctx, histRoot, result.Dir, req.StartedAt)
 	recordResumeAudit(cmd, ctx, result.Dir, req.StartedAt, req.PRNumber, req.Range.Base, req.Range.Head)
+	// Surface a captured broken-stdout payload write only now that the ledgers are
+	// recorded: exit 1 with the render fault (never usageError).
+	if axiWerr != nil {
+		return axiWerr
+	}
 	return nil
 }
 
