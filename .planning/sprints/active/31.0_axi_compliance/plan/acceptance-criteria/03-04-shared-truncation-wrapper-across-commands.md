@@ -58,15 +58,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `atcr review --axi` and `atcr report --axi` produce identical truncation behavior (line count, `truncated` flag, header `N`) for equivalent input
-- [ ] Both commands call a single shared implementation in `internal/report/pagination.go`, with no duplicated truncation logic in `cmd/atcr/review.go` or `cmd/atcr/report.go`
-- [ ] `atcr review --axi`'s live/incremental output path applies the same cap as its batch/summary output
-- [ ] An `ATCR_AXI_MAX_LINES` override applies identically across both commands
+- [x] `atcr review --axi` and `atcr report --axi` produce identical truncation behavior (line count, `truncated` flag, header `N`) for equivalent input
+- [x] Both commands call a single shared implementation in `internal/report/pagination.go`, with no duplicated truncation logic in `cmd/atcr/review.go` or `cmd/atcr/report.go`
+- [x] `atcr review --axi`'s live/incremental output path applies the same cap as its batch/summary output
+- [x] An `ATCR_AXI_MAX_LINES` override applies identically across both commands
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

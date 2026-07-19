@@ -63,15 +63,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `truncated` field is present in every AXI payload (never omitted), `true` when capped and `false` otherwise
-- [ ] TOON array header `N` (or compact-JSON equivalent) always reflects the true, uncapped total count
-- [ ] Dedicated test asserts header `N` != emitted row count when `truncated: true` (Risk 3 regression guard)
-- [ ] Field name/semantics match `internal/fanout/status.go`'s `Truncated bool` precedent exactly
+- [x] `truncated` field is present in every AXI payload (never omitted), `true` when capped and `false` otherwise
+- [x] TOON array header `N` (or compact-JSON equivalent) always reflects the true, uncapped total count
+- [x] Dedicated test asserts header `N` != emitted row count when `truncated: true` (Risk 3 regression guard)
+- [x] Field name/semantics match `internal/fanout/status.go`'s `Truncated bool` precedent exactly
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

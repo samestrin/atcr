@@ -78,15 +78,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Worked example shows a subprocess invocation of `atcr review --axi` (and/or `atcr report --axi`)
-- [ ] Worked example shows payload parsing of the captured stdout, including checking the `truncated` field
-- [ ] Worked example shows explicit branching on exit codes 0/1/2/3 matching the reconciled contract
-- [ ] Worked example does not depict any flag, field, or exit code not actually shipped by Stories 1-4
+- [x] Worked example shows a subprocess invocation of `atcr review --axi` (and/or `atcr report --axi`)
+- [x] Worked example shows payload parsing of the captured stdout, including checking the `truncated` field
+- [x] Worked example shows explicit branching on exit codes 0/1/2/3 matching the reconciled contract
+- [x] Worked example does not depict any flag, field, or exit code not actually shipped by Stories 1-4
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

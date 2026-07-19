@@ -64,16 +64,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `docs/ci-integration.md`'s exit-semantics table section explicitly states `--axi` reuses the existing 0/1/2/3 contract
-- [ ] `docs/ci-integration.md` explicitly states the epic's original `2`=internal/syntax-error proposal was considered and rejected, with reasoning
-- [ ] `cmd/atcr/main.go`'s exit-code comment block (lines 122-130 region) contains the equivalent statement at the code site
-- [ ] Both updated locations cross-reference each other and/or `documentation/exit-code-cli-mcp-precedent.md` and `atcr verify`'s exit-code table as precedent
-- [ ] The structured-error stream decision for the `--axi` surface (stdout per axi.md Principle 6 vs. stderr per atcr's existing convention) is explicitly recorded in `docs/ci-integration.md`, per the story's Constraints
+- [x] `docs/ci-integration.md`'s exit-semantics table section explicitly states `--axi` reuses the existing 0/1/2/3 contract
+- [x] `docs/ci-integration.md` explicitly states the epic's original `2`=internal/syntax-error proposal was considered and rejected, with reasoning
+- [x] `cmd/atcr/main.go`'s exit-code comment block (lines 122-130 region) contains the equivalent statement at the code site
+- [x] Both updated locations cross-reference each other and/or `documentation/exit-code-cli-mcp-precedent.md` and `atcr verify`'s exit-code table as precedent
+- [x] The structured-error stream decision for the `--axi` surface (stdout per axi.md Principle 6 vs. stderr per atcr's existing convention) is explicitly recorded in `docs/ci-integration.md`, per the story's Constraints
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

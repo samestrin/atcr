@@ -78,15 +78,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Every listed `cmd.OutOrStdout()` write in `cmd/atcr/review.go` (lines 433, 436, 551, 573, 591, 602) is gated behind AXI mode, confirmed by code inspection
-- [ ] Every listed `cmd.OutOrStdout()` write in `cmd/atcr/resume.go` (lines 153, 170, 188, 195, 259) is gated behind AXI mode, confirmed by code inspection
-- [ ] Both callers of `writeReviewSummary` (`review.go:436`, `resume.go:195`) exhibit identical gated behavior under `--axi`
-- [ ] A test exercising the `AllComplete()` resume branch confirms line 153's text does not leak under `--axi`
+- [x] Every listed `cmd.OutOrStdout()` write in `cmd/atcr/review.go` (lines 433, 436, 551, 573, 591, 602) is gated behind AXI mode, confirmed by code inspection
+- [x] Every listed `cmd.OutOrStdout()` write in `cmd/atcr/resume.go` (lines 153, 170, 188, 195, 259) is gated behind AXI mode, confirmed by code inspection
+- [x] Both callers of `writeReviewSummary` (`review.go:436`, `resume.go:195`) exhibit identical gated behavior under `--axi`
+- [x] A test exercising the `AllComplete()` resume branch confirms line 153's text does not leak under `--axi`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

@@ -79,15 +79,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Every new AXI-introduced error source is enumerated and each maps to `usageError` (exit 2) or leaves the error unwrapped (exit 1, generic failure) per the operator-fixable vs. not distinction
-- [ ] No new exit code (e.g., a repurposed or new "4") is introduced for any AXI error condition
-- [ ] Malformed `ATCR_AXI_MAX_LINES` is covered by a test asserting the fail-open contract (default 500, exactly one stderr warning, exit code unaffected) per AC 03-03; unsupported `--axi` flag combinations are covered by explicit test cases asserting exit code `2`
-- [ ] An internal (non-operator-fixable) AXI rendering fault is covered by a test case asserting exit code `1`
+- [x] Every new AXI-introduced error source is enumerated and each maps to `usageError` (exit 2) or leaves the error unwrapped (exit 1, generic failure) per the operator-fixable vs. not distinction
+- [x] No new exit code (e.g., a repurposed or new "4") is introduced for any AXI error condition
+- [x] Malformed `ATCR_AXI_MAX_LINES` is covered by a test asserting the fail-open contract (default 500, exactly one stderr warning, exit code unaffected) per AC 03-03; unsupported `--axi` flag combinations are covered by explicit test cases asserting exit code `2`
+- [x] An internal (non-operator-fixable) AXI rendering fault is covered by a test case asserting exit code `1`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

@@ -84,15 +84,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `docs/agentic-consumption.md` exists and covers `--axi` invocation for both `atcr review` and `atcr report`
-- [ ] The doc's exit-code section matches `docs/ci-integration.md`'s exit-semantics table exactly (0/1/2/3) and links to it rather than duplicating it
-- [ ] The pagination section names the actual shipped default (500 lines), env var (`ATCR_AXI_MAX_LINES`), and truncation flag (`truncated`)
-- [ ] The stdout/stderr separation section is consistent with `docs/logging.md`
+- [x] `docs/agentic-consumption.md` exists and covers `--axi` invocation for both `atcr review` and `atcr report`
+- [x] The doc's exit-code section matches `docs/ci-integration.md`'s exit-semantics table exactly (0/1/2/3) and links to it rather than duplicating it
+- [x] The pagination section names the actual shipped default (500 lines), env var (`ATCR_AXI_MAX_LINES`), and truncation flag (`truncated`)
+- [x] The stdout/stderr separation section is consistent with `docs/logging.md`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

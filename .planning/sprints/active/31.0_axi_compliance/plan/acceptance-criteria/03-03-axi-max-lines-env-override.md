@@ -72,15 +72,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `axiMaxLinesFromEnv()` follows the `logLevelFromEnv`/`telemetryEnabledFromEnv` fail-open structure exactly
-- [ ] Unset/blank/invalid/non-positive values fall open to default 500 with exactly one stderr warning, never a fatal error or non-zero exit
-- [ ] Valid override (e.g. `ATCR_AXI_MAX_LINES=50`) changes the cap and produces no warning
-- [ ] Env var is read once per run and the resolved value is reused consistently across all AXI-mode emission points
+- [x] `axiMaxLinesFromEnv()` follows the `logLevelFromEnv`/`telemetryEnabledFromEnv` fail-open structure exactly
+- [x] Unset/blank/invalid/non-positive values fall open to default 500 with exactly one stderr warning, never a fatal error or non-zero exit
+- [x] Valid override (e.g. `ATCR_AXI_MAX_LINES=50`) changes the cap and produces no warning
+- [x] Env var is read once per run and the resolved value is reused consistently across all AXI-mode emission points
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

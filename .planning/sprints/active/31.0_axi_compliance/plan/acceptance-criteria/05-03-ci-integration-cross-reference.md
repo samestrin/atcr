@@ -67,15 +67,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `docs/ci-integration.md` contains a working Markdown link to `docs/agentic-consumption.md`
-- [ ] The link's anchor text clearly signals it targets agentic/orchestration invocation, distinct from the existing CI-gate content
-- [ ] No existing section of `docs/ci-integration.md` (table, headings, anchors) was reordered, rewritten, or duplicated by this edit
-- [ ] The link target file exists at merge time (i.e., this AC is sequenced after AC 05-01)
+- [x] `docs/ci-integration.md` contains a working Markdown link to `docs/agentic-consumption.md`
+- [x] The link's anchor text clearly signals it targets agentic/orchestration invocation, distinct from the existing CI-gate content
+- [x] No existing section of `docs/ci-integration.md` (table, headings, anchors) was reordered, rewritten, or duplicated by this edit
+- [x] The link target file exists at merge time (i.e., this AC is sequenced after AC 05-01)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

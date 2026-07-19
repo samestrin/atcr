@@ -65,15 +65,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A pinning test asserts zero `\x1b\[`/`\x1b\]` byte matches in captured `--axi` stdout for both the fresh-review and resume paths
-- [ ] The pinning test includes a positive-control case reproducing `osc8()`'s exact escape pattern (`quickstart.go:456-461`) and confirms the detector flags it
-- [ ] A crafted-input edge case (escape sequence embedded in a finding field) confirms the guarantee holds against untrusted data, not just static human-text strings
-- [ ] Test is named/documented in the style of `TestDriftLine_StripsControlChars` for discoverability alongside existing sanitization precedent
+- [x] A pinning test asserts zero `\x1b\[`/`\x1b\]` byte matches in captured `--axi` stdout for both the fresh-review and resume paths
+- [x] The pinning test includes a positive-control case reproducing `osc8()`'s exact escape pattern (`quickstart.go:456-461`) and confirms the detector flags it
+- [x] A crafted-input edge case (escape sequence embedded in a finding field) confirms the guarantee holds against untrusted data, not just static human-text strings
+- [x] Test is named/documented in the style of `TestDriftLine_StripsControlChars` for discoverability alongside existing sanitization precedent
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

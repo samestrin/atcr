@@ -70,15 +70,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/report/...`)
-- [ ] No linting errors (`golangci-lint run` or project equivalent)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/report/...`)
+- [x] No linting errors (`golangci-lint run` or project equivalent)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `FormatAXI` added to the format enum and `Render()` dispatch without altering any existing golden file's byte content
-- [ ] New `report.axi` golden fixture checked in and covered by `TestRender_GoldenFiles`
-- [ ] Zero-findings and escaping edge cases each have a dedicated unit test
-- [ ] `atcr report --format axi` output contains no `\x1b[` sequences and no Markdown table/heading syntax, verified by an automated check
+- [x] `FormatAXI` added to the format enum and `Render()` dispatch without altering any existing golden file's byte content
+- [x] New `report.axi` golden fixture checked in and covered by `TestRender_GoldenFiles`
+- [x] Zero-findings and escaping edge cases each have a dedicated unit test
+- [x] `atcr report --format axi` output contains no `\x1b[` sequences and no Markdown table/heading syntax, verified by an automated check
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

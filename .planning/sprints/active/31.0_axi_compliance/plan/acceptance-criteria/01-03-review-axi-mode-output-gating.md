@@ -64,15 +64,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./cmd/atcr/...`)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./cmd/atcr/...`)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `atcr review --axi` stdout contains zero occurrences of the pre-existing human progress/summary line formats
-- [ ] `atcr review --axi` stdout contains zero `\x1b[` ANSI sequences and zero Markdown table/heading syntax
-- [ ] `--verify`/`--debate` chained stage output is also gated, not just the top-level summary
-- [ ] Interrupt path (`reportInterrupt`) is axi-aware, not left on the human-only branch
+- [x] `atcr review --axi` stdout contains zero occurrences of the pre-existing human progress/summary line formats
+- [x] `atcr review --axi` stdout contains zero `\x1b[` ANSI sequences and zero Markdown table/heading syntax
+- [x] `--verify`/`--debate` chained stage output is also gated, not just the top-level summary
+- [x] Interrupt path (`reportInterrupt`) is axi-aware, not left on the human-only branch
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

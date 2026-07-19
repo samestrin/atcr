@@ -73,15 +73,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] All pre-existing non-`--axi` tests in `cmd/atcr/review_test.go` and `cmd/atcr/resume_test.go` pass unmodified after AC 04-01's gating lands
-- [ ] Explicit stdout-content assertions exist for every write site listed in AC 04-01, confirming unchanged text/format under non-`--axi` invocations
-- [ ] The `AllComplete()` resume branch (resume.go:152-164) is confirmed unaffected without `--axi`
-- [ ] Mixed-flag scenarios (`--verify`/`--debate` without `--axi`) confirmed to retain full human-oriented output
+- [x] All pre-existing non-`--axi` tests in `cmd/atcr/review_test.go` and `cmd/atcr/resume_test.go` pass unmodified after AC 04-01's gating lands
+- [x] Explicit stdout-content assertions exist for every write site listed in AC 04-01, confirming unchanged text/format under non-`--axi` invocations
+- [x] The `AllComplete()` resume branch (resume.go:152-164) is confirmed unaffected without `--axi`
+- [x] Mixed-flag scenarios (`--verify`/`--debate` without `--axi`) confirmed to retain full human-oriented output
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

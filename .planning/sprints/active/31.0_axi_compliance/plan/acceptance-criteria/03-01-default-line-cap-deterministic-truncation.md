@@ -73,15 +73,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Payloads under the cap pass through byte-identical to unwrapped renderer output
-- [ ] Payloads over the cap are truncated at exactly the cap line count, at a row boundary
-- [ ] Truncation is deterministic and reproducible across repeated runs on identical input
-- [ ] The cap applies uniformly via a single shared step consumed by both `atcr review --axi` and `atcr report --axi`
+- [x] Payloads under the cap pass through byte-identical to unwrapped renderer output
+- [x] Payloads over the cap are truncated at exactly the cap line count, at a row boundary
+- [x] Truncation is deterministic and reproducible across repeated runs on identical input
+- [x] The cap applies uniformly via a single shared step consumed by both `atcr review --axi` and `atcr report --axi`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

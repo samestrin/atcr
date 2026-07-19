@@ -59,15 +59,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/mcp/...`)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./internal/mcp/...`)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A single explicit decision (include vs. exclude `FormatAXI` from the MCP enum) is made and documented in code comments, not left as an accidental side effect of AC 01-01's enum change
-- [ ] `reportInputSchema`'s generated JSON Schema enum matches the decision (contains or omits `"axi"`)
-- [ ] `descReport`'s generated description text matches the decision
-- [ ] `handleReport`'s defense-in-depth validation behavior is verified consistent with the decision (accepts or rejects `format: "axi"` as intended)
+- [x] A single explicit decision (include vs. exclude `FormatAXI` from the MCP enum) is made and documented in code comments, not left as an accidental side effect of AC 01-01's enum change
+- [x] `reportInputSchema`'s generated JSON Schema enum matches the decision (contains or omits `"axi"`)
+- [x] `descReport`'s generated description text matches the decision
+- [x] `handleReport`'s defense-in-depth validation behavior is verified consistent with the decision (accepts or rejects `format: "axi"` as intended)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

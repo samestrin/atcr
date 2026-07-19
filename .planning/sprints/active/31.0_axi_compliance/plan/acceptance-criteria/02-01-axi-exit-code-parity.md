@@ -72,15 +72,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A test asserts `atcr review --axi`, `atcr report --axi`, and `atcr reconcile --fail-on --axi` return exit codes `0`/`1`/`2`/`3` matching their non-`--axi` counterparts for equivalent inputs
-- [ ] No `--axi`-specific branch exists in `exitCode()` (`cmd/atcr/main.go:156`) — confirmed by code inspection
-- [ ] `atcr verify`'s exit-code table is cited as cross-validation evidence in test comments or documentation
-- [ ] Partial-success-is-not-failure behavior is confirmed unaffected by `--axi`
+- [x] A test asserts `atcr review --axi`, `atcr report --axi`, and `atcr reconcile --fail-on --axi` return exit codes `0`/`1`/`2`/`3` matching their non-`--axi` counterparts for equivalent inputs
+- [x] No `--axi`-specific branch exists in `exitCode()` (`cmd/atcr/main.go:156`) — confirmed by code inspection
+- [x] `atcr verify`'s exit-code table is cited as cross-validation evidence in test comments or documentation
+- [x] Partial-success-is-not-failure behavior is confirmed unaffected by `--axi`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

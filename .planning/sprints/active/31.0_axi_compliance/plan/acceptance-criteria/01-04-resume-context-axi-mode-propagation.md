@@ -58,16 +58,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./cmd/atcr/...`)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./cmd/atcr/...`)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `atcr resume --axi` and `atcr review --axi` emit byte-identical payload shapes for equivalent summary data
-- [ ] axi-mode value is propagated via `PersistentPreRunE` context injection, not re-parsed independently in `review.go` and `resume.go`
-- [ ] The `AllComplete()` short-circuit branch in `resume.go` is also axi-gated
-- [ ] The resume-path reconcile-count line (`"reconciled %d finding(s)"`, `cmd/atcr/resume.go` line 259) is also axi-gated
-- [ ] Exit-code/stderr behavior is unchanged by `--axi` (confirmed by an error-path test)
+- [x] `atcr resume --axi` and `atcr review --axi` emit byte-identical payload shapes for equivalent summary data
+- [x] axi-mode value is propagated via `PersistentPreRunE` context injection, not re-parsed independently in `review.go` and `resume.go`
+- [x] The `AllComplete()` short-circuit branch in `resume.go` is also axi-gated
+- [x] The resume-path reconcile-count line (`"reconciled %d finding(s)"`, `cmd/atcr/resume.go` line 259) is also axi-gated
+- [x] Exit-code/stderr behavior is unchanged by `--axi` (confirmed by an error-path test)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

@@ -68,16 +68,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/report/...`)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./internal/report/...`)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] AXI payload's field set is verified (via test or manual diff) to be a superset of the `atcr-findings/v1` reconciled 9-column contract — no field silently dropped
-- [ ] Pipe delimiter is used for the AXI tabular-array header, matching the `atcr-findings/v1` convergence decision recorded in the story
-- [ ] axi.md Principle 2 (default-field-count) and Principle 4 (pre-computed aggregates) tension resolutions are recorded with the schema decision, per the story's Technical Considerations and `documentation/axi-design-principles.md`
-- [ ] `docs/findings-format.md` (or a sibling doc) cross-references the AXI schema against `atcr-findings/v1` so the two machine-format surfaces do not drift independently
-- [ ] Verification and evidence_exec blocks round-trip into the AXI payload when present
+- [x] AXI payload's field set is verified (via test or manual diff) to be a superset of the `atcr-findings/v1` reconciled 9-column contract — no field silently dropped
+- [x] Pipe delimiter is used for the AXI tabular-array header, matching the `atcr-findings/v1` convergence decision recorded in the story
+- [x] axi.md Principle 2 (default-field-count) and Principle 4 (pre-computed aggregates) tension resolutions are recorded with the schema decision, per the story's Technical Considerations and `documentation/axi-design-principles.md`
+- [x] `docs/findings-format.md` (or a sibling doc) cross-references the AXI schema against `atcr-findings/v1` so the two machine-format surfaces do not drift independently
+- [x] Verification and evidence_exec blocks round-trip into the AXI payload when present
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved
