@@ -230,8 +230,8 @@ func newRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 		// An unknown subcommand is a usage error (exit 2), not the generic
 		// failure code: in CI, exit 1 specifically means "findings at/above
 		// threshold". Setting Args bypasses cobra's legacyArgs path (which
-		// returns an uncoded error from Find), and the RunE keeps bare `atcr`
-		// printing help with exit 0.
+		// returns an uncoded error from Find), and the RunE renders the
+		// home view for a bare `atcr` invocation with exit 0.
 		Args: usageArgs(cobra.NoArgs),
 		// PersistentPreRunE is inherited by every subcommand, so it is the single
 		// point where the root logger is constructed (from LOG_LEVEL and
@@ -260,13 +260,22 @@ func newRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
+			return runHome(cmd)
 		},
 	}
 
 	// --log-format is a persistent flag so every subcommand inherits it; LOG_LEVEL
 	// is read from the environment (see logLevelFromEnv). Both feed setupLogger.
 	root.PersistentFlags().String("log-format", "text", "log output format: text or json")
+
+	// --axi is a LOCAL flag on the root command (not persistent): it is reachable
+	// only on the bare `atcr` invocation, so `atcr --axi` renders the home view as
+	// a token-dense TOON payload (Content First, epic 31.1). Being local, it is not
+	// inherited by subcommands and cannot collide with `atcr review`'s own --axi.
+	// The root PersistentPreRunE's Lookup("axi") then propagates it into the command
+	// context (newAXIContext), so runHome reads it via axiFromContext — the same
+	// context-propagation plumbing review/resume already reuse (Epic 31.0).
+	root.Flags().Bool("axi", false, "emit the home view as a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption (Agent eXperience Interface)")
 
 	// Flag-parse errors (unknown flags, bad values, violated flag groups)
 	// are usage errors: exit 2.
