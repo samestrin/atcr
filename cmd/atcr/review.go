@@ -447,6 +447,9 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// config load, and scaffolding overhead); atcr_review_duration_seconds is
 	// engine-level (starts inside fanout.ExecuteReview). The two values measure
 	// slightly different spans and will rarely agree exactly — this is intentional.
+	// axiWerr captures a broken-stdout run-summary payload write (axi mode only) so
+	// the history/audit ledgers below are recorded before the fault is surfaced.
+	var axiWerr error
 	if result != nil {
 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
 		// --axi replaces the one-line outcome + the four human summary lines with a
@@ -456,13 +459,13 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// fault is not operator-fixable (AC 02-02 Error Scenario 3).
 		if axiMode {
 			// A write failure here (only reachable if stdout itself is broken, e.g. a
-			// closed pipe) short-circuits before the history/audit ledgers and the
-			// one-shot gate below. That asymmetry with the non-axi branch is
-			// deliberate: if stdout is broken the payload cannot be delivered at all,
-			// and classifying an unwrapped internal render/write fault as exitFailure
-			// (1) — never a usageError — is the AC 02-02 Error Scenario 3 contract.
+			// closed pipe) is captured, not returned: the history/audit ledgers below
+			// must still record the run before the fault is surfaced (the payload is
+			// undeliverable either way, but the compliance record is not). The fault
+			// stays unwrapped → exitFailure (1), never a usageError (AC 02-02 Error
+			// Scenario 3).
 			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), result.ID, result.Dir, summaryDelta); werr != nil {
-				return fmt.Errorf("axi output rendering failed: %w", werr)
+				axiWerr = fmt.Errorf("axi output rendering failed: %w", werr)
 			}
 		} else {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
@@ -563,6 +566,16 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// successful review, so it is logged and swallowed.
 	auditPath := filepath.Join(req.Root, ".atcr", "audit.log.jsonl")
 	writeAuditRecord(cmd.ErrOrStderr(), ctx, auditPath, result.Dir, now, req.PRNumber, req.Range.Base, req.Range.Head)
+
+	// Surface a captured broken-stdout payload write only now that the ledgers are
+	// recorded: exit 1 with the render fault (never usageError), keeping the
+	// telemetry/sync-cloud outcome reads consistent with the exit code. The
+	// one-shot gate below is skipped exactly as it was when this path returned at
+	// the emit site.
+	if axiWerr != nil {
+		err = axiWerr
+		return err
+	}
 
 	// One-shot mode: reconcile in-process and gate on the threshold. Review
 	// artifacts are already on disk, so a reconcile failure (exit 2) preserves
