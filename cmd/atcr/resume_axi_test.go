@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
+	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/audit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -197,4 +201,31 @@ func TestResume_NonAXIRegressionUnchanged(t *testing.T) {
 	assert.Contains(t, stdout, "Total elapsed:", "non-axi resume must still print the human summary")
 	assert.Contains(t, stdout, "reconciled", "non-axi resume must still print the reconcile line")
 	assert.NotContains(t, stdout, "review_summary", "non-axi resume must not emit the axi payload")
+}
+
+// TestResume_AXIRenderFaultStillRecordsLedgers mirrors
+// TestReviewCmd_AXIRenderFaultStillRecordsLedgers for the resume pending path:
+// a broken-stdout axi payload write must not cost the run its history/audit
+// ledger records — the run exits 1 (payload undeliverable) only after the
+// ledgers are written.
+func TestResume_AXIRenderFaultStillRecordsLedgers(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce", "robin")
+	base := gitRevParse(t, "HEAD^")
+	head := gitRevParse(t, "HEAD")
+	writeResumeReviewFixture(t, "2026-06-18_demo", base, head, []string{"bruce", "robin"}, []string{"bruce"})
+
+	root := newRootCmd()
+	root.SetArgs([]string{"review", "--resume", "latest", "--axi", "--base", "HEAD^"})
+	root.SetOut(failWriter{})
+	root.SetErr(io.Discard)
+	err := root.ExecuteContext(context.Background())
+	require.Equal(t, exitFailure, exitCode(err), "a broken-stdout resume still exits 1")
+
+	recs, lerr := audit.Load(filepath.Join(".", ".atcr", "audit.log.jsonl"))
+	require.NoError(t, lerr)
+	require.Len(t, recs, 1, "the audit ledger must record the resume even when the axi payload write fails")
 }
