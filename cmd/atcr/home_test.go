@@ -204,6 +204,25 @@ func TestRenderHomeView_Unavailable(t *testing.T) {
 	assert.NotContains(t, noID.String(), "No reviews yet")
 }
 
+// TestRenderHomeView_SanitizesExecPath covers the LOW security-parity finding
+// (home.go renderHomeView): the human home view prints the executable path, and a
+// binary installed at an attacker-controlled path could smuggle ANSI escapes or
+// control bytes to the terminal. The AXI renderer already strips these via
+// toonQuote; the human renderer must reach the same control-byte safety by
+// routing the exec path through sanitizeDisplay before Fprintln.
+func TestRenderHomeView_SanitizesExecPath(t *testing.T) {
+	stubHomeDir(t, filepath.FromSlash("/home/testuser"))
+	var buf bytes.Buffer
+	// An ESC byte smuggled into the install path (an ANSI SGR sequence).
+	execPath := filepath.Join(filepath.FromSlash("/home/testuser"), "go", "bin", "\x1b[31matcr")
+	require.NoError(t, renderHomeView(&buf, execPath,
+		"Agent Team Code Review — a review panel, not a reviewer",
+		homeState{hasReview: false}))
+	firstLine, _, _ := strings.Cut(buf.String(), "\n")
+	assert.NotContains(t, firstLine, "\x1b",
+		"the exec path must have terminal control bytes stripped before printing (parity with the AXI toonQuote path)")
+}
+
 // pinArgs overrides os.Args for the duration of a test so the exec-path
 // fallback chain is deterministic regardless of the test binary's own argv.
 func pinArgs(t *testing.T, args []string) {
