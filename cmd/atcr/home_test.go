@@ -23,14 +23,16 @@ func stubHomeDir(t *testing.T, dir string) {
 
 // TestRelHome covers the ~-relativization idiom (T2): a path under home renders
 // with a ~ prefix, the home dir itself renders as ~, and a path outside home
-// falls back to the verbatim absolute path (filepath.Rel-plus-fallback).
+// falls back to the verbatim absolute path (filepath.Rel-plus-fallback). The
+// "~" form is pinned as literal forward slashes on every platform — the AXI
+// payload's cross-platform contract.
 func TestRelHome(t *testing.T) {
 	home := filepath.FromSlash("/home/testuser")
 	stubHomeDir(t, home)
 
-	assert.Equal(t, "~"+string(filepath.Separator)+filepath.FromSlash("go/bin/atcr"),
+	assert.Equal(t, "~/go/bin/atcr",
 		relHome(filepath.Join(home, "go", "bin", "atcr")),
-		"a path under home is rendered with a ~ prefix")
+		"a path under home renders with a ~/ prefix, forward-slash on every platform")
 	assert.Equal(t, "~", relHome(home), "the home dir itself renders as ~")
 
 	outside := filepath.FromSlash("/usr/local/bin/atcr")
@@ -70,7 +72,7 @@ func TestRenderHomeView_HasReview(t *testing.T) {
 		homeState{hasReview: true, reviewID: "2026-06-10_x", status: "completed"}))
 
 	got := buf.String()
-	assert.Contains(t, got, "~"+string(filepath.Separator), "exec path is ~-relativized")
+	assert.Contains(t, got, "~/", "exec path is ~-relativized, forward-slash on every platform")
 	assert.Contains(t, got, "Agent Team Code Review — a review panel, not a reviewer")
 	assert.Contains(t, got, "2026-06-10_x", "the current review id is shown")
 	assert.Contains(t, got, "completed", "the current review status is shown")
@@ -231,7 +233,7 @@ func TestHomeView_GoldenNonAXI(t *testing.T) {
 	home := filepath.FromSlash("/home/testuser")
 	stubHomeDir(t, home)
 	execPath := filepath.Join(home, "go", "bin", "atcr")
-	wantExec := "~" + string(filepath.Separator) + filepath.FromSlash("go/bin/atcr")
+	wantExec := "~/go/bin/atcr" // pinned forward-slash: the cross-platform AXI contract
 	const desc = "Agent Team Code Review — a review panel, not a reviewer"
 
 	t.Run("has review", func(t *testing.T) {

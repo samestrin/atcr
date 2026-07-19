@@ -40,7 +40,9 @@ type homeState struct {
 // relDisplay, internal/log/redact.go's relativizePaths): a path under home renders
 // as "~/rel", the home dir itself as "~", and anything outside home (or when home
 // can't be resolved) falls back to the verbatim path — never a broken "~/../.."
-// substitution.
+// substitution. The "~" form is ALWAYS forward-slash (~/rel), on every platform:
+// the string feeds the agent-facing AXI payload, whose cross-platform TOON
+// consumers parse the documented forward-slash shape.
 func relHome(path string) string {
 	home, err := homeUserDir()
 	if err != nil || home == "" {
@@ -53,7 +55,7 @@ func relHome(path string) string {
 	if rel == "." {
 		return "~"
 	}
-	return filepath.Join("~", rel)
+	return "~/" + filepath.ToSlash(rel)
 }
 
 // resolveHomeState resolves the current review's id/status via the same
