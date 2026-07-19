@@ -62,6 +62,7 @@ func TestSandboxConfig_Validate_AutoFixTensionUnchanged(t *testing.T) {
 
 	// Symmetrically, omitting image is still rejected.
 	noImage := &SandboxConfig{Backend: "docker", TestCommand: []string{"go", "test", "./..."}}
-	require.Error(t, noImage.Validate())
-	assert.Contains(t, noImage.Validate().Error(), "image is required")
+	noImageErr := noImage.Validate()
+	require.Error(t, noImageErr)
+	assert.Contains(t, noImageErr.Error(), "image is required")
 }

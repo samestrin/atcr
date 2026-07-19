@@ -193,22 +193,23 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 1.3 [ ] **[Resolver Builds and Preflights a Sandbox Backend - REFACTOR](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 1.3 [x] **[Resolver Builds and Preflights a Sandbox Backend - REFACTOR](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
    1. Fix CRITICAL/HIGH issues from 1.2.A (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.25 day
 
-### 1.4 [ ] **[Inverted Default Posture and SandboxConfig.Validate() Tension - RED](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 1.4 [x] **[Inverted Default Posture and SandboxConfig.Validate() Tension - RED](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
    1. Analyze [AC 02-02](plan/acceptance-criteria/02-02-inverted-default-posture-and-validation-tension.md), identify testable units
    2. Write tests asserting: sandboxed-on-by-default signature (no config → sandboxing expected, not skipped); `SandboxConfig.Validate()`'s unconditional `Image`+`TestCommand` requirement is surfaced explicitly for the auto-fix case, not silently relaxed or silently satisfied
    3. Verify tests fail correctly
    **Files:** `internal/verify/autofix_exec_test.go`, `internal/registry/sandbox_test.go` | **Duration:** 0.5 day
 
-### 1.5 [ ] **[Inverted Default Posture and SandboxConfig.Validate() Tension - GREEN](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 1.5 [x] **[Inverted Default Posture and SandboxConfig.Validate() Tension - GREEN](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+   _Delivered inside 1.2's cohesive resolver (`autofix_exec.go`), since it is one mirrored function: the decision to keep `SandboxConfig.Validate()` unchanged, the inverted-polarity doc comment, the sandboxed-on-by-default signature, and the "RunSpec.Timeout sourced from auto_fix.validate_timeout, never shrunk by sandbox default" note. 1.4's tests characterize/verify that already-correct behavior; no additional code change required._
    GREEN: Resolve the `Image`+`TestCommand` validation tension decisively for this sprint — keep `SandboxConfig.Validate()` unchanged (auto-fix requires a `[sandbox]` block with `Image`+`TestCommand`, per AC 02-02), pin that current behavior with the regression test written in 1.4, and document the split-validation / relaxed-path / parallel-block options as a code-comment follow-up rather than loosening `--exec`'s contract now; implement the sandboxed-on-by-default resolver signature; ensure `RunSpec.Timeout` is sourced from `auto_fix.validate_timeout`, never silently shrunk by `sandbox.timeout_secs`'s default (T1), verify all pass (T2), COMMIT
    **Files:** `internal/verify/autofix_exec.go` (`internal/registry/sandbox.go` left unmodified per the AC 02-02 decision) | **Duration:** 0.5 day
 
-### 1.5.A [ ] **[Inverted Default Posture and SandboxConfig.Validate() Tension - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 1.5.A [x] **[Inverted Default Posture and SandboxConfig.Validate() Tension - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
    **Changed Files:** [LIST FILES MODIFIED IN 1.4-1.5]
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.4-1.5 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -226,11 +227,13 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-07-19):** No CRITICAL/HIGH. Sentinel distinctness (`ErrorIs`+`NotErrorIs`), disabled-is-noop capture-absent proof, and Validate substring pins all verified sound and hermetic.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | autofix_exec_test.go — DisabledIsNoOp | Capture-absent check runs once after the loop; nil-config case proven only indirectly | Applied in 1.6: per-case capture assertion + narrowed message |
+   | LOW | sandbox_test.go — tension test | `noImage.Validate()` evaluated twice | Applied in 1.6: capture into `err` once |
+
+   **Result: No CRITICAL/HIGH. Both LOW applied in 1.6 REFACTOR.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 1.6, do NOT proceed until fixed

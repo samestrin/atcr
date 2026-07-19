@@ -143,11 +143,12 @@ func TestResolveAutoFixSandbox_DisabledIsNoOp(t *testing.T) {
 			b, err := ResolveAutoFixSandbox(context.Background(), false, tc.sc)
 			require.NoError(t, err, "disabled path must never error")
 			assert.Nil(t, b, "disabled path must return a nil backend")
+			// Assert per-case that the (config-supplied) docker shim was never
+			// invoked, so a fall-through in either case is attributable here.
+			_, statErr := os.Stat(capture)
+			assert.True(t, os.IsNotExist(statErr), "disabled path must spawn no docker subprocess")
 		})
 	}
-	// No docker invocation may have happened on the disabled path.
-	_, statErr := os.Stat(capture)
-	assert.True(t, os.IsNotExist(statErr), "disabled path must spawn no docker subprocess (no capture file)")
 }
 
 func TestResolveAutoFixSandbox_RefusesWhenUnconfigured(t *testing.T) {
