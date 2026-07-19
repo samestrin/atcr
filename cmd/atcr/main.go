@@ -351,23 +351,29 @@ func telemetryEnabledFromEnv() bool {
 //   - valid positive N -> N, no warning (Scenario 2; a huge value is the
 //     operator's explicit choice to disable practical truncation)
 //   - set-but-blank / non-numeric / zero / negative -> default + exactly one
-//     stderr warning (Edge Cases 1-3)
+//     warning on w (Edge Cases 1-3)
 //
 // A malformed value is NEVER a fatal error or usageError — this is the reconciled
 // Story-2 decision (AC 02-02 Edge Case 1): the cap fails open, the run continues,
 // exit code unaffected. LookupEnv distinguishes unset (silent) from set-but-blank
 // (warned), the one behavioral split from telemetryEnabledFromEnv.
-func axiMaxLinesFromEnv() int {
+//
+// The warning goes to the injected writer — cmd.ErrOrStderr() at the production
+// call site — so it routes through the same redirectable seam as the logger and
+// stays assertable in tests; the message prints the trimmed token so an
+// all-whitespace value doesn't log invisible characters.
+func axiMaxLinesFromEnv(w io.Writer) int {
 	raw, ok := os.LookupEnv("ATCR_AXI_MAX_LINES")
 	if !ok {
 		return report.AXIMaxLinesDefault
 	}
-	if n, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && n > 0 {
+	trimmed := strings.TrimSpace(raw)
+	if n, err := strconv.Atoi(trimmed); err == nil && n > 0 {
 		return n
 	}
 	// Blank, non-numeric, zero, or negative: fail open to the default and warn
 	// once so a misconfigured value is visible rather than silently ignored.
-	_, _ = fmt.Fprintf(os.Stderr, "warning: unrecognized ATCR_AXI_MAX_LINES value %q; using default %d\n", raw, report.AXIMaxLinesDefault)
+	_, _ = fmt.Fprintf(w, "warning: unrecognized ATCR_AXI_MAX_LINES value %q; using default %d\n", trimmed, report.AXIMaxLinesDefault)
 	return report.AXIMaxLinesDefault
 }
 

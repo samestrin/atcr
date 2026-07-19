@@ -120,7 +120,7 @@ func runReport(cmd *cobra.Command, args []string) error {
 		// neither command reimplements truncation. The line cap resolves once from
 		// ATCR_AXI_MAX_LINES (AC 03-03); RenderAXIPaginated caps the payload, preserves
 		// the header's true N, and emits the truncated flag (AC 03-01/03-02).
-		if err := report.RenderAXIPaginated(&buf, findings, axiMaxLinesFromEnv()); err != nil {
+		if err := report.RenderAXIPaginated(&buf, findings, axiMaxLinesFromEnv(cmd.ErrOrStderr())); err != nil {
 			// An AXI serialization fault is an internal, non-operator-fixable rendering
 			// fault → exit 1 (generic failure), left unwrapped so it defaults to
 			// exitFailure (AC 02-02 Error Scenario 3, which names `atcr report --axi`).

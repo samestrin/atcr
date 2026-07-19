@@ -193,22 +193,6 @@ func TestRootCmd_LogLevelEnvEmptyDefaultsToInfo(t *testing.T) {
 	assert.Equal(t, "info", logLevelFromEnv(), "whitespace-only LOG_LEVEL is treated as unset")
 }
 
-// captureStderrDuring redirects os.Stderr to a pipe for the duration of fn and
-// returns everything fn wrote (mirrors the telemetry_gate_test capture pattern).
-func captureStderrDuring(t *testing.T, fn func()) string {
-	t.Helper()
-	oldStderr := os.Stderr
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	os.Stderr = w
-	defer func() { os.Stderr = oldStderr }()
-	fn()
-	require.NoError(t, w.Close())
-	out, err := io.ReadAll(r)
-	require.NoError(t, err)
-	return string(out)
-}
-
 // unsetEnvForTest removes key for the duration of the test, restoring the prior
 // state on cleanup (t.Setenv cannot express "unset").
 func unsetEnvForTest(t *testing.T, key string) {
@@ -236,15 +220,16 @@ func TestAXIMaxLinesFromEnv(t *testing.T) {
 		val      string
 		want     int
 		wantWarn bool
+		wantVal  string
 	}{
-		{"unset uses default, no warning", false, "", report.AXIMaxLinesDefault, false},
-		{"valid override", true, "50", 50, false},
-		{"large valid override accepted", true, "999999999", 999999999, false},
-		{"blank falls open with warning", true, "", report.AXIMaxLinesDefault, true},
-		{"whitespace falls open with warning", true, "   ", report.AXIMaxLinesDefault, true},
-		{"non-numeric falls open with warning", true, "notanumber", report.AXIMaxLinesDefault, true},
-		{"zero falls open with warning", true, "0", report.AXIMaxLinesDefault, true},
-		{"negative falls open with warning", true, "-10", report.AXIMaxLinesDefault, true},
+		{"unset uses default, no warning", false, "", report.AXIMaxLinesDefault, false, ""},
+		{"valid override", true, "50", 50, false, ""},
+		{"large valid override accepted", true, "999999999", 999999999, false, ""},
+		{"blank falls open with warning", true, "", report.AXIMaxLinesDefault, true, `""`},
+		{"whitespace falls open with warning", true, "   ", report.AXIMaxLinesDefault, true, `""`},
+		{"non-numeric falls open with warning", true, "notanumber", report.AXIMaxLinesDefault, true, `"notanumber"`},
+		{"zero falls open with warning", true, "0", report.AXIMaxLinesDefault, true, `"0"`},
+		{"negative falls open with warning", true, "-10", report.AXIMaxLinesDefault, true, `"-10"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -253,12 +238,14 @@ func TestAXIMaxLinesFromEnv(t *testing.T) {
 			} else {
 				unsetEnvForTest(t, "ATCR_AXI_MAX_LINES")
 			}
-			var got int
-			stderr := captureStderrDuring(t, func() { got = axiMaxLinesFromEnv() })
+			var warn bytes.Buffer
+			got := axiMaxLinesFromEnv(&warn)
+			stderr := warn.String()
 			assert.Equal(t, tc.want, got, "resolved cap")
 			if tc.wantWarn {
 				assert.Contains(t, stderr, "ATCR_AXI_MAX_LINES", "warning names the env var")
 				assert.Contains(t, stderr, "using default", "warning states the fallback")
+				assert.Containsf(t, stderr, "value "+tc.wantVal+";", "warning prints the trimmed token, got: %q", stderr)
 				assert.Equalf(t, 1, strings.Count(stderr, "\n"), "exactly one warning line, got: %q", stderr)
 			} else {
 				assert.Emptyf(t, strings.TrimSpace(stderr), "no warning expected, got: %q", stderr)
@@ -273,9 +260,7 @@ func TestAXIMaxLinesFromEnv(t *testing.T) {
 func TestAXIMaxLinesFromEnv_InvalidNeverFatal(t *testing.T) {
 	t.Setenv("ATCR_AXI_MAX_LINES", "garbage")
 	require.NotPanics(t, func() {
-		_ = captureStderrDuring(t, func() {
-			assert.Equal(t, report.AXIMaxLinesDefault, axiMaxLinesFromEnv())
-		})
+		assert.Equal(t, report.AXIMaxLinesDefault, axiMaxLinesFromEnv(io.Discard))
 	})
 }
 
