@@ -779,3 +779,28 @@ func TestValidateAutoFixBackend_SandboxPreflightFailureJoinsGate(t *testing.T) {
 	require.Equal(t, 2, exitCode(err))
 	require.Contains(t, err.Error(), "preflight", "a preflight failure must surface through the combined gate error")
 }
+
+// TestValidateAutoFixBackend_SandboxUsesSuppliedContext: when the command carries a
+// real context (as it always does in production via ExecuteContext), the gate
+// threads THAT context into the sandbox resolver rather than falling back to the
+// nil-guard's context.Background(). A cancelled context makes Preflight fail, and
+// that failure surfaces through the combined gate error — proving the supplied
+// context reaches ResolveAutoFixSandbox.
+func TestValidateAutoFixBackend_SandboxUsesSuppliedContext(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)), // would pass Preflight with a live ctx
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancelled: Preflight's docker subprocess must abort
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	cmd.SetContext(ctx)
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err, "a cancelled supplied context must make sandbox Preflight fail the gate")
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "sandbox", "the cancelled-context preflight failure must surface as the sandbox gate piece")
+}

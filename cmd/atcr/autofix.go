@@ -199,9 +199,12 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 	// sandboxed-on posture `enabled` is true, so a nil/failing sandbox is a hard
 	// refusal that joins the same `missing` slice (append-or-assign, no early
 	// return) — mirroring resolveExec's ResolveExecBackend call but inverting the
-	// polarity (verify.go:54). Preflight makes only local `docker` subprocess calls,
-	// preserving the gate's "local-only, no network" contract. The --no-sandbox
-	// opt-out (Story 3) short-circuits this whole check before resolution.
+	// polarity (verify.go:54). Preflight shells out to the local `docker` binary
+	// only (no GitHub/HTTP call of the gate's own), so the "no GitHub network before
+	// the gate passes" invariant holds; note that `docker` itself honors DOCKER_HOST
+	// and may contact a remote/DinD daemon, so "local" here means "no direct network
+	// I/O by this gate", not "docker never talks to a remote daemon". The
+	// --no-sandbox opt-out (Story 3) short-circuits this whole check before resolution.
 	var sandboxConfig *registry.SandboxConfig
 	if proj != nil {
 		sandboxConfig = proj.Sandbox
