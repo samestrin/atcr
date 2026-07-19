@@ -114,7 +114,9 @@ func TestResume_AXIPayloadShapeMatchesReview(t *testing.T) {
 
 // TestResume_AXIAllCompleteGated covers AC 01-04 Edge Case 1: the AllComplete
 // short-circuit branch is also axi-gated — its "All configured agents already
-// completed" announce and the re-reconcile count line do not leak onto stdout.
+// completed" announce and the re-reconcile count line do not leak onto stdout —
+// and the shared run-summary payload is emitted in their place so the axi stream
+// is never empty.
 func TestResume_AXIAllCompleteGated(t *testing.T) {
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")
@@ -129,6 +131,8 @@ func TestResume_AXIAllCompleteGated(t *testing.T) {
 	assert.NotContains(t, stdout, "All configured agents already completed",
 		"AllComplete announce must be gated under --axi")
 	assert.NotContains(t, stdout, "reconciled", "AllComplete re-reconcile line must be gated under --axi")
+	assert.Contains(t, stdout, "review_summary",
+		"AllComplete --axi resume must emit the run-summary payload, not an empty stream")
 	assertNoANSIOrMarkdown(t, stdout)
 }
 
