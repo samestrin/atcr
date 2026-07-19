@@ -108,3 +108,83 @@ func TestRunSandboxedValidation_BackendFaultIsCannotValidateBranch(t *testing.T)
 	assert.NotNil(t, res.StartError, "a backend fault maps to StartError, not a fabricated non-zero exit")
 	assert.False(t, res.Passed())
 }
+
+// --- AC 01-02: RunResult -> ValidationResult translation ------------------
+
+// TestTranslateRunResult pins the pure struct-to-struct mapping per the
+// translation-gap table: combined Output -> Stdout only, TimedOut direct with the
+// conventional exit 124 NOT surfaced as a competing program failure, a Go error
+// from Run -> StartError (the "cannot validate" branch, never a fabricated exit),
+// and the truncation flags left false since the sandbox carries no per-stream
+// signal. Duration is deliberately not set here — the dispatch adapter measures it
+// around Backend.Run (covered by TestRunSandboxedValidation_MeasuresDurationAroundRun).
+func TestTranslateRunResult(t *testing.T) {
+	backendFault := errors.New("docker run: runtime error (exit 125)")
+	cases := []struct {
+		name       string
+		rr         sandbox.RunResult
+		runErr     error
+		wantExit   int
+		wantStdout string
+		wantTimed  bool
+		wantStart  bool
+		wantPassed bool
+	}{
+		{
+			name:       "clean pass exit 0",
+			rr:         sandbox.RunResult{ExitCode: 0, Output: "build ok"},
+			wantExit:   0,
+			wantStdout: "build ok",
+			wantPassed: true,
+		},
+		{
+			name:       "ran and failed exit 1 is not a Go error",
+			rr:         sandbox.RunResult{ExitCode: 1, Output: "build failed: pkg/x.go:3"},
+			wantExit:   1,
+			wantStdout: "build failed: pkg/x.go:3",
+			wantPassed: false,
+		},
+		{
+			name:       "timed out with conventional 124 does not surface a competing exit",
+			rr:         sandbox.RunResult{ExitCode: 124, Output: "deadline", TimedOut: true},
+			wantExit:   0,
+			wantStdout: "deadline",
+			wantTimed:  true,
+			wantPassed: false,
+		},
+		{
+			name:       "backend fault with zero result maps to StartError",
+			rr:         sandbox.RunResult{},
+			runErr:     backendFault,
+			wantExit:   0,
+			wantStart:  true,
+			wantPassed: false,
+		},
+		{
+			name:       "backend fault with partial result maps to StartError and keeps partial output",
+			rr:         sandbox.RunResult{ExitCode: 125, Output: "partial before fault"},
+			runErr:     backendFault,
+			wantExit:   0,
+			wantStdout: "partial before fault",
+			wantStart:  true,
+			wantPassed: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := translateRunResult(tc.rr, tc.runErr)
+			assert.Equal(t, tc.wantExit, res.ExitCode)
+			assert.Equal(t, tc.wantStdout, res.Stdout, "combined Output routes into Stdout")
+			assert.Empty(t, res.Stderr, "sandbox path never populates Stderr (documented stream-collapse)")
+			assert.Equal(t, tc.wantTimed, res.TimedOut)
+			assert.False(t, res.StdoutTruncated, "no per-stream truncation signal — left false")
+			assert.False(t, res.StderrTruncated, "no per-stream truncation signal — left false")
+			if tc.wantStart {
+				assert.Error(t, res.StartError, "a backend fault must surface as StartError, not a program exit")
+			} else {
+				assert.NoError(t, res.StartError)
+			}
+			assert.Equal(t, tc.wantPassed, res.Passed())
+		})
+	}
+}

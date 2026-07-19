@@ -62,17 +62,49 @@ func RunSandboxedValidation(ctx context.Context, backend sandbox.Backend, argv [
 	rr, runErr := backend.Run(ctx, spec)
 	elapsed := time.Since(start)
 
+	res := translateRunResult(rr, runErr)
+	// Duration is measured here (around Backend.Run), not inside translateRunResult:
+	// sandbox.RunResult carries no duration, so the pure mapping cannot know it. This
+	// preserves parity with the host os/exec path, which populates Duration too.
+	res.Duration = elapsed
+	if res.StartError != nil {
+		return res, res.StartError
+	}
+	return res, nil
+}
+
+// translateRunResult is the pure sandbox.RunResult -> ValidationResult mapping,
+// shared implicitly with the host path's contract via the common ValidationResult
+// type and its Passed() gate. It performs no I/O and does not set Duration (the
+// caller measures wall-clock around Backend.Run). Per the translation-gap table
+// (AC 01-02):
+//
+//   - runErr != nil is a backend fault (spawn failure, malformed spec, Docker
+//     runtime fault such as exit 125-127 or signal death) -> StartError, so the
+//     call site takes its "cannot even validate" branch; a fabricated non-zero
+//     program ExitCode is never synthesized from a fault.
+//   - Output (combined stdout+stderr) -> Stdout only; Stderr is left empty — a
+//     deliberate, documented stream-collapse, since the sandbox returns one stream.
+//   - TimedOut -> TimedOut directly. When TimedOut, ExitCode is left at zero so the
+//     conventional timeout code 124 is not double-reported as a program failure;
+//     Passed() already fails via its !TimedOut clause.
+//   - StdoutTruncated/StderrTruncated are left false: the sandbox reports no
+//     per-stream truncation signal, so the flag is not guessed.
+func translateRunResult(rr sandbox.RunResult, runErr error) ValidationResult {
+	if runErr != nil {
+		// Preserve any partial output for the failure report, but the outcome is a
+		// start failure, not a program exit — leave ExitCode at zero.
+		return ValidationResult{
+			Stdout:     rr.Output,
+			StartError: fmt.Errorf("auto-fix sandbox validation could not run: %w", runErr),
+		}
+	}
 	res := ValidationResult{
 		Stdout:   rr.Output,
 		TimedOut: rr.TimedOut,
 	}
-	res.Duration = elapsed
-	if runErr != nil {
-		res.StartError = fmt.Errorf("auto-fix sandbox validation could not run: %w", runErr)
-		return res, res.StartError
-	}
 	if !rr.TimedOut {
 		res.ExitCode = rr.ExitCode
 	}
-	return res, nil
+	return res
 }
