@@ -1,9 +1,9 @@
 {
-  "skill": "sprint-complete",
-  "args": "@.planning/sprints/active/31.0_axi_compliance/",
-  "invocation": "/sprint-complete @.planning/sprints/active/31.0_axi_compliance/",
+  "skill": "create-user-stories",
+  "args": "@.planning/plans/active/32.0_sandbox_execution_environment/",
+  "invocation": "/create-user-stories @.planning/plans/active/32.0_sandbox_execution_environment/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "2ed07858-3df7-4907-b56b-7c41e46a8554",
-  "timestamp": "2026-07-19T04:19:35.306Z"
+  "session_id": "5b16760c-265a-44b1-bbaa-47bc6110db95",
+  "timestamp": "2026-07-19T19:33:50.045Z"
 }
