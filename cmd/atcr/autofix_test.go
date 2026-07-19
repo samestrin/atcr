@@ -710,6 +710,61 @@ func TestOrchestrateAutoFix_SkippedDuplicatesNotice(t *testing.T) {
 	require.Contains(t, buf.String(), "skipped", "output must tell the operator that duplicate-path fixes were skipped")
 }
 
+// --- 03-01: --no-sandbox flag registration and help text -------------------
+
+// TestNoSandboxFlag_Registered: --no-sandbox is a bool flag defaulting to false,
+// present and readable even before any parsing (AC 03-01 Scenario 1/2).
+func TestNoSandboxFlag_Registered(t *testing.T) {
+	c := &cobra.Command{Use: "review"}
+	addAutoFixFlags(c)
+
+	f := c.Flags().Lookup("no-sandbox")
+	require.NotNil(t, f, "--no-sandbox must be registered by addAutoFixFlags")
+	require.Equal(t, "bool", f.Value.Type(), "--no-sandbox must be a bool flag")
+	require.Equal(t, "false", f.DefValue, "--no-sandbox must default to false")
+
+	v, err := c.Flags().GetBool("no-sandbox")
+	require.NoError(t, err)
+	require.False(t, v, "--no-sandbox must read false when unset (present, not merely absent)")
+}
+
+// TestNoSandboxFlag_ParsesTrue: passing --no-sandbox on the command line sets it
+// to true (AC 03-01 Scenario 3).
+func TestNoSandboxFlag_ParsesTrue(t *testing.T) {
+	c := &cobra.Command{Use: "review"}
+	addAutoFixFlags(c)
+	require.NoError(t, c.Flags().Parse([]string{"--auto-fix", "--no-sandbox"}))
+	v, err := c.Flags().GetBool("no-sandbox")
+	require.NoError(t, err)
+	require.True(t, v)
+}
+
+// TestNoSandboxFlag_ParsesWithoutAutoFix: the flag parses cleanly even without
+// --auto-fix (cobra never rejects an unused bool); its no-op-without-auto-fix
+// behavior is enforced at the call site, not by registration (AC 03-01 EC1).
+func TestNoSandboxFlag_ParsesWithoutAutoFix(t *testing.T) {
+	c := &cobra.Command{Use: "review"}
+	addAutoFixFlags(c)
+	require.NoError(t, c.Flags().Parse([]string{"--no-sandbox"}))
+	v, err := c.Flags().GetBool("no-sandbox")
+	require.NoError(t, err)
+	require.True(t, v)
+}
+
+// TestNoSandboxFlag_HelpNamesTheRisk: the help text is a security control — it
+// must plainly state that the flag disables container isolation and runs
+// LLM-generated validation directly on the host (AC 03-01 EC2 / Security).
+func TestNoSandboxFlag_HelpNamesTheRisk(t *testing.T) {
+	c := &cobra.Command{Use: "review"}
+	addAutoFixFlags(c)
+	usage := c.Flags().Lookup("no-sandbox").Usage
+	require.NotEmpty(t, usage)
+	for _, want := range []string{"container isolation", "host", "LLM-generated"} {
+		require.Contains(t, usage, want,
+			"--no-sandbox help must name the risk (disables container isolation, runs LLM-generated code on the host)")
+	}
+}
+
 // --- 02-03: sandbox resolution is the gate's fourth checked piece -----------
 
 // TestValidateAutoFixBackend_SandboxUnconfiguredJoinsGate: under the default
