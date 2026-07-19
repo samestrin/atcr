@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -192,6 +193,77 @@ func TestRootCmd_LogLevelEnvEmptyDefaultsToInfo(t *testing.T) {
 	assert.Equal(t, "info", logLevelFromEnv(), "whitespace-only LOG_LEVEL is treated as unset")
 }
 
+// unsetEnvForTest removes key for the duration of the test, restoring the prior
+// state on cleanup (t.Setenv cannot express "unset").
+func unsetEnvForTest(t *testing.T, key string) {
+	t.Helper()
+	orig, had := os.LookupEnv(key)
+	require.NoError(t, os.Unsetenv(key))
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv(key, orig)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
+}
+
+// TestAXIMaxLinesFromEnv is AC 03-03: ATCR_AXI_MAX_LINES resolution mirrors the
+// logLevelFromEnv/telemetryEnabledFromEnv fail-open structure — unset uses the
+// default silently; a valid positive integer overrides; blank/whitespace/
+// non-numeric/zero/negative fall open to the default with exactly one stderr
+// warning and never a fatal error.
+func TestAXIMaxLinesFromEnv(t *testing.T) {
+	cases := []struct {
+		name     string
+		set      bool
+		val      string
+		want     int
+		wantWarn bool
+		wantVal  string
+	}{
+		{"unset uses default, no warning", false, "", report.AXIMaxLinesDefault, false, ""},
+		{"valid override", true, "50", 50, false, ""},
+		{"large valid override accepted", true, "999999999", 999999999, false, ""},
+		{"blank falls open with warning", true, "", report.AXIMaxLinesDefault, true, `""`},
+		{"whitespace falls open with warning", true, "   ", report.AXIMaxLinesDefault, true, `""`},
+		{"non-numeric falls open with warning", true, "notanumber", report.AXIMaxLinesDefault, true, `"notanumber"`},
+		{"zero falls open with warning", true, "0", report.AXIMaxLinesDefault, true, `"0"`},
+		{"negative falls open with warning", true, "-10", report.AXIMaxLinesDefault, true, `"-10"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.set {
+				t.Setenv("ATCR_AXI_MAX_LINES", tc.val)
+			} else {
+				unsetEnvForTest(t, "ATCR_AXI_MAX_LINES")
+			}
+			var warn bytes.Buffer
+			got := axiMaxLinesFromEnv(&warn)
+			stderr := warn.String()
+			assert.Equal(t, tc.want, got, "resolved cap")
+			if tc.wantWarn {
+				assert.Contains(t, stderr, "ATCR_AXI_MAX_LINES", "warning names the env var")
+				assert.Contains(t, stderr, "using default", "warning states the fallback")
+				assert.Containsf(t, stderr, "value "+tc.wantVal+";", "warning prints the trimmed token, got: %q", stderr)
+				assert.Equalf(t, 1, strings.Count(stderr, "\n"), "exactly one warning line, got: %q", stderr)
+			} else {
+				assert.Emptyf(t, strings.TrimSpace(stderr), "no warning expected, got: %q", stderr)
+			}
+		})
+	}
+}
+
+// TestAXIMaxLinesFromEnv_InvalidNeverFatal is AC 03-03 Error Scenario 1: a
+// malformed value must never produce a fatal error/panic — the function returns
+// the default and the run continues (exit 0 semantics preserved).
+func TestAXIMaxLinesFromEnv_InvalidNeverFatal(t *testing.T) {
+	t.Setenv("ATCR_AXI_MAX_LINES", "garbage")
+	require.NotPanics(t, func() {
+		assert.Equal(t, report.AXIMaxLinesDefault, axiMaxLinesFromEnv(io.Discard))
+	})
+}
+
 // TestSetupLogger_RedactsSecrets verifies the root logger constructed in
 // setupLogger scrubs secret-shaped tokens (AC5) at the single construction point,
 // so EVERY command (CLI, serve, MCP) inherits one already-redacted logger.
@@ -338,9 +410,11 @@ func TestCommandTree_QualityReportDistinctFromReport(t *testing.T) {
 	assert.NotEqual(t, reportCmd.Name(), qualityCmd.Name(), "distinct Use names, no collision")
 	require.NotNil(t, qualityCmd.RunE, "quality-report must define its own RunE")
 
-	// report.go MUST NOT be modified: its Short stays byte-identical.
-	assert.Equal(t, "Render md, json, checklist, or sarif views over reconciled findings", reportCmd.Short,
-		"atcr report's Short must be unchanged by this story")
+	// report's Short is derived from report.Formats() (Sprint 31.0 TD-001, so it
+	// can never advertise a stale format subset); it stays a "Render <formats>
+	// views over reconciled findings" sentence distinct from quality-report's Short.
+	assert.Equal(t, "Render "+report.Formats()+" views over reconciled findings", reportCmd.Short,
+		"atcr report's Short is the report.Formats()-derived sentence")
 
 	// The new command's help cross-references `atcr report` to prevent confusion.
 	qualityHelp := strings.ToLower(qualityCmd.Short + " " + qualityCmd.Long)

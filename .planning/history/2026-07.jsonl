@@ -229,3 +229,18 @@
 {"ts":"2026-07-17T16:49:30.591297-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"142fc3af1cc7374f","file":"cmd/atcr/debt_compact.go","category":"state"}
 {"ts":"2026-07-17T16:49:30.591297-07:00","package":"cmd/atcr","severity":"LOW","id":"5a1bab33c18a40bf","file":"cmd/atcr/debt_compact.go","category":"style"}
 {"ts":"2026-07-17T16:49:30.591297-07:00","package":"internal/localdebt","severity":"LOW","id":"036b96fbfc863506","file":"internal/localdebt/lock.go","category":"structure"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"696de257b2b8aa8d","file":"cmd/atcr/report_test.go","category":"correctness"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"internal/report/testdata","severity":"HIGH","id":"5b09b01aaac2b032","file":"internal/report/testdata/report.axi","category":"` between columns 6 and 7 is unquoted bare pipe on pipe-delimiter — adjacent `"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"806ccc987bde2b59","file":"cmd/atcr/report_test.go","category":"testing"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"internal/report/testdata","severity":"LOW","id":"2db4a9b7e2127437","file":"internal/report/testdata/report.axi","category":"observability"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"LOW","id":"a73a5737f22ddf4e","file":"cmd/atcr/axi.go","category":"robustness"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"LOW","id":"db049468bc8648ac","file":"cmd/atcr/axi.go","category":"testing"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"c2d6af7fa7029ba1","file":"cmd/atcr/report_test.go","category":"testing"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"LOW","id":"c94230d2e7f8634e","file":"cmd/atcr/report_test.go","category":"testing"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"b5b15ee9373731ea","file":"cmd/atcr/report_test.go","category":"testing"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"internal/report/testdata","severity":"LOW","id":"a70d59333f8502ef","file":"internal/report/testdata/report.axi","category":"testing"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"745215c0b6c7b336","file":"cmd/atcr/review_summary.go","category":"performance"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"572a4620e67f5c3d","file":"cmd/atcr/report_test.go","category":"testing"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"LOW","id":"9a29e7f62a29aa13","file":"cmd/atcr/report_test.go","category":"testing"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"LOW","id":"22e5ea4f9a3360dd","file":"cmd/atcr/axi.go","category":"style"}
+{"ts":"2026-07-18T17:21:46.466291-07:00","package":"cmd/atcr","severity":"LOW","id":"c9f0f04ecfb4c8fb","file":"cmd/atcr/report_test.go","category":"style"}

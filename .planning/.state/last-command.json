@@ -1,9 +1,9 @@
 {
-  "skill": "execute-code-review",
-  "args": ".planning/sprints/active/30.0_community_prompt_quality_signal/ --multi-agent",
-  "invocation": "/execute-code-review .planning/sprints/active/30.0_community_prompt_quality_signal/ --multi-agent",
+  "skill": "sprint-complete",
+  "args": "@.planning/sprints/active/31.0_axi_compliance/",
+  "invocation": "/sprint-complete @.planning/sprints/active/31.0_axi_compliance/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "b45b3c7d-a71b-4763-af16-7ba8369e3f28",
-  "timestamp": "2026-07-17T23:48:54.140Z"
+  "session_id": "2ed07858-3df7-4907-b56b-7c41e46a8554",
+  "timestamp": "2026-07-19T04:19:35.306Z"
 }
