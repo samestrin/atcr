@@ -123,6 +123,33 @@ func TestResolveAutoFixSandbox_PreflightFailureRefuses(t *testing.T) {
 	assert.Contains(t, err.Error(), "preflight")
 }
 
+func TestResolveAutoFixSandbox_DisabledIsNoOp(t *testing.T) {
+	// enabled=false is the shape Story 3's --no-sandbox produces: a clean no-op
+	// symmetric with ResolveExecBackend's disabled path — (nil, nil), with zero
+	// Docker config construction and no Preflight subprocess spawned.
+	dockerPath, capture := fakeDockerRecording(t)
+	cases := []struct {
+		name string
+		sc   *registry.SandboxConfig
+	}{
+		{"nil config", nil},
+		{"valid config still skipped", &registry.SandboxConfig{
+			Backend: "docker", DockerPath: dockerPath, Image: "alpine:3.20",
+			TestCommand: []string{"go", "test", "./..."},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := ResolveAutoFixSandbox(context.Background(), false, tc.sc)
+			require.NoError(t, err, "disabled path must never error")
+			assert.Nil(t, b, "disabled path must return a nil backend")
+		})
+	}
+	// No docker invocation may have happened on the disabled path.
+	_, statErr := os.Stat(capture)
+	assert.True(t, os.IsNotExist(statErr), "disabled path must spawn no docker subprocess (no capture file)")
+}
+
 func TestResolveAutoFixSandbox_RefusesWhenUnconfigured(t *testing.T) {
 	// Inverted posture: the auto-fix default is enabled=true, so a missing
 	// [sandbox] block (sc == nil) is a hard refusal, never a silent skip.

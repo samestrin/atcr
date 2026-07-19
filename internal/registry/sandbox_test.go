@@ -41,3 +41,27 @@ func TestSandboxConfig_Validate(t *testing.T) {
 		})
 	}
 }
+
+// TestSandboxConfig_Validate_AutoFixTensionUnchanged pins the open design tension
+// surfaced by Sprint 32.0 (AC 02-02): an operator who adds a `sandbox:` block
+// SOLELY so `--auto-fix`'s validation step can be sandboxed — and omits
+// test_command, which is irrelevant to auto-fix (it runs auto_fix.validate_command,
+// not test_command) — STILL fails config load with the unconditional
+// Image+TestCommand requirement. Sprint 32.0 deliberately does NOT relax this
+// (loosening it would weaken `--exec`'s existing contract); it pins the current
+// behavior here and leaves a split/parallel-light-validation path as future work.
+// If a later change relaxes SandboxConfig.Validate() for the auto-fix case, this
+// test must be revisited as a conscious decision, not slipped in silently.
+func TestSandboxConfig_Validate_AutoFixTensionUnchanged(t *testing.T) {
+	// A sandbox block added only for --auto-fix, missing the (auto-fix-irrelevant)
+	// test_command, must still be rejected at config load.
+	autoFixOnly := &SandboxConfig{Backend: "docker", Image: "golang:1.25"}
+	err := autoFixOnly.Validate()
+	require.Error(t, err, "auto-fix-only sandbox block must still require test_command (tension NOT relaxed)")
+	assert.Contains(t, err.Error(), "test_command is required")
+
+	// Symmetrically, omitting image is still rejected.
+	noImage := &SandboxConfig{Backend: "docker", TestCommand: []string{"go", "test", "./..."}}
+	require.Error(t, noImage.Validate())
+	assert.Contains(t, noImage.Validate().Error(), "image is required")
+}
