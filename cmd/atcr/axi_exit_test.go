@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/audit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -142,6 +144,30 @@ func TestReviewCmd_AXIRenderFaultExitsOne(t *testing.T) {
 	err := root.ExecuteContext(context.Background())
 	require.Equal(t, exitFailure, exitCode(err),
 		"a broken-stdout AXI render fault is a generic failure (exit 1), not usage/auth")
+}
+
+// TestReviewCmd_AXIRenderFaultStillRecordsLedgers pins that a broken-stdout axi
+// payload write does NOT short-circuit the history/audit ledgers: the run still
+// exits 1 (the payload is undeliverable), but the compliance ledger records the
+// run — the piping pattern agent mode encourages (`atcr review --axi | head`)
+// must not cost the run its audit record.
+func TestReviewCmd_AXIRenderFaultStillRecordsLedgers(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	root := newRootCmd()
+	root.SetArgs([]string{"review", "--axi", "--base", "HEAD^"})
+	root.SetOut(failWriter{})
+	root.SetErr(io.Discard)
+	err := root.ExecuteContext(context.Background())
+	require.Equal(t, exitFailure, exitCode(err), "a broken-stdout run still exits 1")
+
+	recs, lerr := audit.Load(filepath.Join(".", ".atcr", "audit.log.jsonl"))
+	require.NoError(t, lerr)
+	require.Len(t, recs, 1, "the audit ledger must record the run even when the axi payload write fails")
 }
 
 // TestReportCmd_AXIRenderFaultClassification pins that report's AXI render step
