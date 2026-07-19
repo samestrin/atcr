@@ -377,6 +377,30 @@ func TestResume_VerifyOnlyFlagsAreExit2(t *testing.T) {
 	}
 }
 
+// TestResume_ChainedStageFlagsAreExit2 pins the fail-closed contract for the
+// flags that parse on the shared review command but are read only by runReview's
+// fresh path: with --resume they must be rejected (exit 2) pointing at the
+// standalone command, never silently dropped.
+func TestResume_ChainedStageFlagsAreExit2(t *testing.T) {
+	for _, tc := range []struct {
+		flag string
+		args []string
+	}{
+		{"auto-fix", []string{"review", "--resume", "latest", "--auto-fix"}},
+		{"debate", []string{"review", "--resume", "latest", "--debate"}},
+		{"single-model", []string{"review", "--resume", "latest", "--single-model"}},
+		{"exec", []string{"review", "--resume", "latest", "--exec"}},
+	} {
+		tc := tc
+		t.Run(tc.flag, func(t *testing.T) {
+			isolate(t)
+			code, out := execResume(t, tc.args...)
+			require.Equal(t, 2, code, "--%s should be rejected with exit 2 when using --resume", tc.flag)
+			require.Contains(t, out, "does not support --"+tc.flag)
+		})
+	}
+}
+
 func TestResume_InterruptEmitsStructuredWarn(t *testing.T) {
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")
