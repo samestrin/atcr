@@ -154,21 +154,32 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// so a review that was interrupted-but-actually-complete reports completed
 	// rather than interrupted (AC6).
 	if info.AllComplete() {
-		// Gated under --axi (AC 01-04 Edge Case 1): stdout stays payload-only. This
-		// path produces no fanout result, so it emits no run-summary payload either —
-		// exit 0 still signals success and `atcr report --axi` yields the findings.
-		// Emitting a payload here (from info.Completed + the reconciled total) is
-		// deferred as TD-004.
+		// Gated under --axi (AC 01-04 Edge Case 1): stdout stays payload-only. The
+		// human announce is suppressed and the run-summary payload below takes its
+		// place so the axi stream is never empty on this path.
 		if !axiMode {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "All configured agents already completed. Re-running reconciliation...")
 		}
 		if err := fanout.ClearInterrupted(dir); err != nil {
 			return usageError(fmt.Errorf("resume failed: %w", err))
 		}
-		if err := resumeReconcile(ctx, cmd, dir); err != nil {
+		reconciledTotal, err := resumeReconcile(ctx, cmd, dir)
+		if err != nil {
 			return err
 		}
 		recordHistory(ctx, histRoot, dir, req.StartedAt)
+		if axiMode {
+			// This path runs no fan-out, so there is no metrics delta to report: the
+			// payload carries the already-complete agent set (all succeeded) and the
+			// just-reconciled findings total.
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), prep.ID, dir, summarySnapshot{
+				agentsSucceeded: int64(len(info.Completed)),
+				agentsTotal:     int64(len(info.Completed)),
+				findingsTotal:   int64(reconciledTotal),
+			}); werr != nil {
+				return fmt.Errorf("axi output rendering failed: %w", werr)
+			}
+		}
 		// AllComplete re-reconciles an already-completed review; no new review work
 		// was performed, so do not append another audit record.
 		return nil
@@ -228,7 +239,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 
 	// Auto-reconcile on successful completion (epic 4.1.1: a resumed run always
 	// produces a fresh reconciliation, mirroring the in-process one-shot path).
-	if err := resumeReconcile(ctx, cmd, result.Dir); err != nil {
+	if _, err := resumeReconcile(ctx, cmd, result.Dir); err != nil {
 		return err
 	}
 	recordHistory(ctx, histRoot, result.Dir, req.StartedAt)
@@ -264,23 +275,25 @@ func recordResumeAudit(cmd *cobra.Command, ctx context.Context, dir string, ts t
 	writeAuditRecord(cmd.ErrOrStderr(), ctx, auditPath, dir, ts, pr, base, head)
 }
 
-// resumeReconcile runs the deterministic reconcile pipeline against dir and prints
-// the merged finding count, mapping a reconcile failure to a usage error (exit 2)
-// with the on-disk review preserved for inspection. The partial flag is read from
-// the just-finalized review so reconcile records the run's partial provenance.
-func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir string) error {
+// resumeReconcile runs the deterministic reconcile pipeline against dir, prints
+// the merged finding count (gated under --axi), and returns that count so the
+// AllComplete path can carry it in the run-summary payload. A reconcile failure
+// maps to a usage error (exit 2) with the on-disk review preserved for inspection.
+// The partial flag is read from the just-finalized review so reconcile records the
+// run's partial provenance.
+func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir string) (int, error) {
 	rec, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
 		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
 	})
 	if err != nil {
-		return usageError(fmt.Errorf("resume failed: %w", err))
+		return 0, usageError(fmt.Errorf("resume failed: %w", err))
 	}
 	// Shared by the AllComplete and pending paths; gated under --axi (read from the
 	// same context value) so both resume routes keep stdout payload-only (AC 01-04).
 	if !axiFromContext(ctx) {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
 	}
-	return nil
+	return rec.Summary.TotalFindings, nil
 }
