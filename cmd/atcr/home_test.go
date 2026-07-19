@@ -100,3 +100,22 @@ func TestResolveHomeState_HasReview(t *testing.T) {
 	assert.Equal(t, "2026-06-10_x", st.reviewID)
 	assert.Equal(t, "completed", st.status)
 }
+
+// TestRootCmd_BareAXIRendersHomeViewPayload covers AC4/T3: bare `atcr --axi`
+// renders the home view as the token-dense TOON payload through the shared AXI
+// context plumbing (root local --axi flag -> PersistentPreRunE -> axiFromContext),
+// exit 0 — not the human text and not help.
+func TestRootCmd_BareAXIRendersHomeViewPayload(t *testing.T) {
+	out, err := execute(t, "--axi")
+	require.NoError(t, err)
+	assert.Contains(t, out, "home[1", "bare atcr --axi emits the home-view TOON payload")
+	assert.NotContains(t, out, "Usage:", "axi home view is not help text")
+}
+
+// TestRootCmd_BareNonAXIIsTextNotPayload pins that WITHOUT --axi the home view is
+// human text, not the TOON payload — the same data, two renderers, one dispatch.
+func TestRootCmd_BareNonAXIIsTextNotPayload(t *testing.T) {
+	out, err := execute(t)
+	require.NoError(t, err)
+	assert.NotContains(t, out, "home[1", "without --axi the home view is human text, not the TOON payload")
+}
