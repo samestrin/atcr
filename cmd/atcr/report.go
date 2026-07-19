@@ -128,8 +128,12 @@ func runReport(cmd *cobra.Command, args []string) error {
 		}
 	default:
 		if err := report.Render(&buf, findings, format); err != nil {
-			// The non-AXI formats keep their pre-existing usage-error classification
-			// (out of this story's scope).
+			// The non-AXI formats deliberately keep their legacy usage-error (exit 2)
+			// classification for post-load render faults — preserved for compatibility:
+			// AC 02-02 scoped exit-code reconciliation to AXI-introduced errors only,
+			// and CI consumers key on exit 2 as the usage/config class for these
+			// formats. The asymmetry with the AXI branch above (internal render fault →
+			// exit 1) is intentional, not an unexamined gap.
 			return usageError(err)
 		}
 	}
