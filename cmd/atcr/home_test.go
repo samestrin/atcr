@@ -198,7 +198,9 @@ func TestRenderHomeView_Unavailable(t *testing.T) {
 	var noID bytes.Buffer
 	require.NoError(t, renderHomeView(&noID, filepath.FromSlash("/home/testuser/go/bin/atcr"), desc,
 		homeState{unavailable: true}))
-	assert.Contains(t, noID.String(), "unreadable")
+	assert.Contains(t, noID.String(),
+		".atcr/latest pointer file is corrupted or unreadable — run `atcr review` to regenerate it.",
+		"the empty-id unavailable message names the pointer file and the single remedy")
 	assert.NotContains(t, noID.String(), "No reviews yet")
 }
 
