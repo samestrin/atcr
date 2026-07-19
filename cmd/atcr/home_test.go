@@ -149,6 +149,21 @@ func TestResolveHomeState_CorruptPointer(t *testing.T) {
 	assert.Empty(t, st.reviewID, "no usable id from a corrupt pointer")
 }
 
+// TestResolveHomeState_UnreadableAnchor covers the non-ErrNotExist anchorDir
+// failure path directly: .atcr/latest exists but cannot be read as a file (here
+// it is a directory, so os.ReadFile fails with EISDIR rather than ErrNotExist).
+// The honest state is unavailable with no id — never the first-run guidance.
+func TestResolveHomeState_UnreadableAnchor(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr", "latest"), 0o755))
+	t.Chdir(root)
+
+	st := resolveHomeState(context.Background())
+	assert.False(t, st.hasReview)
+	assert.True(t, st.unavailable, "an unreadable .atcr/latest (non-ErrNotExist anchor error) is unavailable, not first-run")
+	assert.Empty(t, st.reviewID, "no usable id from an unreadable anchor")
+}
+
 // TestResolveHomeState_DanglingPointer covers the broken-pointer honesty gap:
 // .atcr/latest as a symlink whose target is gone makes os.ReadFile report
 // ErrNotExist (it follows the link), yet the pointer itself exists — the honest
