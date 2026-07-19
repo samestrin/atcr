@@ -61,7 +61,10 @@ func relHome(path string) string {
 // errors — the home view must stay exit 0 (AC3) — but it distinguishes causes so
 // it does not silently mask them:
 //   - a genuinely absent .atcr/latest pointer (os.ErrNotExist) is the first-run
-//     state: no review has run, render the guidance line;
+//     state: no review has run, render the guidance line. os.ReadFile follows
+//     symlinks, so a DANGLING .atcr/latest symlink also surfaces as ErrNotExist;
+//     Lstat (which does not follow the link) separates the two — a pointer that
+//     exists but points nowhere is the unavailable state, never first-run;
 //   - a present-but-corrupt/empty pointer, or a pointer naming a review that
 //     cannot be read (pruned, corrupt manifest, permission), is reported as the
 //     explicit "unavailable" state — NOT conflated with first-run, unlike a naive
@@ -70,6 +73,10 @@ func resolveHomeState(ctx context.Context) homeState {
 	dir, err := anchorDir("")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if _, lerr := os.Lstat(filepath.Join(".atcr", "latest")); lerr == nil {
+				log.FromContext(ctx).Debug("home view: .atcr/latest is a dangling pointer", "err", err)
+				return homeState{unavailable: true}
+			}
 			return homeState{} // no .atcr/latest at all: true first-run (AC3)
 		}
 		log.FromContext(ctx).Debug("home view: .atcr/latest pointer unreadable", "err", err)
