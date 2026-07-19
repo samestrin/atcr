@@ -99,7 +99,11 @@ func resolveHomeState(ctx context.Context) homeState {
 // honest "unavailable" line when a pointer exists but its review can't be read. It
 // never returns a coded error: a first-run repo renders guidance, not a failure.
 func renderHomeView(w io.Writer, execPath, description string, st homeState) error {
-	if _, err := fmt.Fprintln(w, relHome(execPath)); err != nil {
+	// sanitizeDisplay strips terminal control bytes (ESC/C0/C1, line separators)
+	// from the executable path — an attacker-controlled install path could otherwise
+	// smuggle ANSI escapes to the terminal. This mirrors the control-byte safety the
+	// AXI renderer already enforces via toonQuote, keeping the two renderers in parity.
+	if _, err := fmt.Fprintln(w, sanitizeDisplay(relHome(execPath))); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(w, description); err != nil {
