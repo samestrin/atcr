@@ -394,6 +394,17 @@ func toonMustQuote(s string) bool {
 	if strings.IndexFunc(s, isTOONControl) >= 0 {
 		return true
 	}
+	// Invalid UTF-8 (e.g. a lone raw C1 byte such as 8-bit CSI 0x9b or OSC 0x9d)
+	// must force quoting so toonEscape runs and replaces the raw byte with U+FFFD.
+	// The IndexFunc scan above cannot catch it: range/IndexFunc decode the raw byte
+	// to U+FFFD, for which isTOONControl is false, so an unquoted field would be
+	// returned verbatim by toonQuote and the raw C1 byte would reach stdout —
+	// breaking renderAXI's no-raw-control-byte guarantee. This self-enforces the
+	// invariant rather than relying on the upstream json.Marshal round-trip to have
+	// normalized invalid UTF-8 first.
+	if !utf8.ValidString(s) {
+		return true
+	}
 	return false
 }
 
