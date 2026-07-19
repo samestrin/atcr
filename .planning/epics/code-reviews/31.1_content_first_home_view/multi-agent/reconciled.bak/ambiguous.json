@@ -1,0 +1,146 @@
+[
+  {
+    "id": "amb-ae6987459765169c6013af2732bab39a",
+    "file": "cmd/atcr/home.go",
+    "line": 44,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "cmd/atcr/home.go",
+        "Line": 44,
+        "Problem": "relHome has no direct tests for edge cases (path under home, path outside home, home dir error); the integration test relies on the real home directory, making relativization nondeterministic",
+        "Fix": "Add unit tests for relHome with mocked homeUserDir covering: path under home, path equals home, path outside home, home dir error, empty home dir",
+        "Category": "testing",
+        "EstMinutes": 20,
+        "Evidence": "`relHome` branches on `filepath.Rel` result and home dir error; no test pins these paths",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-abe80314fa243e13c9e4eab86bb4a163",
+    "file": "cmd/atcr/home.go",
+    "line": 46,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "cmd/atcr/home.go",
+        "Line": 46,
+        "Problem": "relHome constructs paths using filepath.Separator, which produces backslashes on Windows, potentially breaking downstream TOON parsers or scripts that expect forward slashes in the exec_path field",
+        "Fix": "Normalize path separators to forward slashes before rendering to ensure consistent cross-platform TOON payloads",
+        "Category": "portability",
+        "EstMinutes": 10,
+        "Evidence": "return \"~\" + string(filepath.Separator) + rel emits backslashes on Windows, conflicting with the forward-slash convention in the AXI/TOON spec examples",
+        "Reviewer": "brad",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-852da76a9695b3c6c535f071bb7bce1d",
+    "file": "cmd/atcr/home.go",
+    "line": 81,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "cmd/atcr/home.go",
+        "Line": 81,
+        "Problem": "resolveHomeState error paths (anchorDir non-ErrNotExist, ReadReviewStatus failure) have zero test coverage; the \"unavailable\" degrade is never exercised",
+        "Fix": "Add table-driven tests for resolveHomeState covering anchorDir permission error, corrupt pointer, and ReadReviewStatus failure",
+        "Category": "testing",
+        "EstMinutes": 25,
+        "Evidence": "`resolveHomeState` returns `homeState{unavailable: true}` on non-ErrNotExist errors and on ReadReviewStatus failure, but no test triggers these branches",
+        "Reviewer": "dax",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-60395d898e3a46d7a56b76b8b84ce71e",
+    "file": "cmd/atcr/home.go",
+    "line": 115,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "cmd/atcr/home.go",
+        "Line": 115,
+        "Problem": "runHome uses a hardcoded fallback \"atcr\" for the executable path",
+        "Fix": "Inject the command name from cmd.Name() to avoid hardcoding the binary name",
+        "Category": "structure",
+        "EstMinutes": 5,
+        "Evidence": "execPath = \"atcr\"",
+        "Reviewer": "otto",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-c87d3935333d7b7d87eb1cf64ef24e8f",
+    "file": "internal/report/home_test.go",
+    "line": 63,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "internal/report/home_test.go",
+        "Line": 63,
+        "Problem": "Golden test hardcodes Unix forward-slash paths but relHome uses platform filepath.Separator — golden passes while real code path produces backslash paths on Windows",
+        "Fix": "Use filepath.FromSlash(\"~/go/bin/atcr\") for ExecPath in golden test data; use filepath.ToSlash on want string before assert, or compare parsed struct fields rather than raw string",
+        "Category": "portability",
+        "EstMinutes": 30,
+        "Evidence": "TestRenderHomeViewAXI_Golden hardcodes ExecPath:\"~/go/bin/atcr\" and want:\"~/go/bin/atcr\" but relHome returns \"~\\\\go\\\\bin\\\\atcr\" on Windows via filepath.Separator",
+        "Reviewer": "mira",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  },
+  {
+    "id": "amb-3ae79cc1349f18a42ddf0b1d7ecb8798",
+    "file": "cmd/atcr/home.go",
+    "line": 53,
+    "similarity": 0,
+    "findings": [
+      {
+        "Severity": "LOW",
+        "File": "cmd/atcr/home.go",
+        "Line": 53,
+        "Problem": "relHome uses a bespoke string concatenation for the home separator",
+        "Fix": "Use filepath.Join(\"~\", rel) or a consistent separator constant",
+        "Category": "style",
+        "EstMinutes": 5,
+        "Evidence": "return \"~\" + string(filepath.Separator) + rel",
+        "Reviewer": "otto",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  }
+]

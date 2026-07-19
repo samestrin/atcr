@@ -1,0 +1,2 @@
+# atcr-findings/v1
+LOW|cmd/atcr/home.go:127|"unavailable" with empty reviewID uses ambiguous message|See note in findings — the message "Latest review pointer is unreadable" is technically correct but conflates "pointer file unreadable" with "review directory unreadable"; the user may not understand whether they need to fix the pointer or simply run a new review|correctness|10|fmt.Fprintln(w, "Latest review pointer is unreadable — run `atcr review` to start a fresh one.")|bruce

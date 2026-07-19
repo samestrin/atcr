@@ -1,0 +1,86 @@
+[
+  {
+    "severity": "HIGH",
+    "file": "cmd/atcr/home.go",
+    "line": 148,
+    "problem": "(runHome) No integration test exercises the `atcr --axi` bare invocation path; the AXI home view is only unit-tested at the renderer level, not end-to-end (AC4)",
+    "fix": "Add a test in `main_test.go` that runs `execute(t, \"--axi\")` and asserts the TOON header `home[1",
+    "category": "]{...}:` and key fields",
+    "est_minutes": 0,
+    "evidence": "20/`runHome` calls `report.RenderHomeViewAXI` under `if axiFromContext(ctx)` but no test in `main_test.go` executes `atcr --axi`",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "HIGH|cmd/atcr/home.go:148|No integration test exercises the `atcr --axi` bare invocation path; the AXI home view is only unit-tested at the renderer level, not end-to-end (AC4)|Add a test in `main_test.go` that runs `execute(t, \"--axi\")` and asserts the TOON header `home[1|]{...}:` and key fields|testing|20|`runHome` calls `report.RenderHomeViewAXI` under `if axiFromContext(ctx)` but no test in `main_test.go` executes `atcr --axi`\nHIGH|cmd/atcr/main_test.go:96|AC5 requires a golden/snapshot test pinning the non-`--axi` home-view output, but no such test exists; the existing test only checks substrings, not the exact output|Add a golden test with mocked `homeExecutable`/`homeUserDir` asserting the full byte-for-byte output for the first-run state|testing|20|`TestRootCmd_BareInvocationShowsHomeView` uses `Contains`/`NotContains` instead of exact output match; AC5 mandates a golden test\nHIGH|cmd/atcr/main_test.go:96|TestRootCmd_BareInvocationShowsHomeView is not isolated from the filesyst…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 1
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "cmd/atcr/main_test.go",
+    "line": 96,
+    "problem": "(TestRootCmd_BareInvocationShowsHomeView) AC5 requires a golden/snapshot test pinning the non-`--axi` home-view output, but no such test exists; the existing test only checks substrings, not the exact output",
+    "fix": "Add a golden test with mocked `homeExecutable`/`homeUserDir` asserting the full byte-for-byte output for the first-run state",
+    "category": "testing",
+    "est_minutes": 20,
+    "evidence": "`TestRootCmd_BareInvocationShowsHomeView` uses `Contains`/`NotContains` instead of exact output match; AC5 mandates a golden test",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "HIGH|cmd/atcr/home.go:148|No integration test exercises the `atcr --axi` bare invocation path; the AXI home view is only unit-tested at the renderer level, not end-to-end (AC4)|Add a test in `main_test.go` that runs `execute(t, \"--axi\")` and asserts the TOON header `home[1|]{...}:` and key fields|testing|20|`runHome` calls `report.RenderHomeViewAXI` under `if axiFromContext(ctx)` but no test in `main_test.go` executes `atcr --axi`\nHIGH|cmd/atcr/main_test.go:96|AC5 requires a golden/snapshot test pinning the non-`--axi` home-view output, but no such test exists; the existing test only checks substrings, not the exact output|Add a golden test with mocked `homeExecutable`/`homeUserDir` asserting the full byte-for-byte output for the first-run state|testing|20|`TestRootCmd_BareInvocationShowsHomeView` uses `Contains`/`NotContains` instead of exact output match; AC5 mandates a golden test\nHIGH|cmd/atcr/main_test.go:96|TestRootCmd_BareInvocationShowsHomeView is not isolated from the filesyst…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 2
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "cmd/atcr/main_test.go",
+    "line": 96,
+    "problem": "(TestRootCmd_BareInvocationShowsHomeView) TestRootCmd_BareInvocationShowsHomeView is not isolated from the filesystem; its output depends on whether `.atcr/latest` exists in the working directory, making it unreliable",
+    "fix": "Set up a temp directory with no `.atcr/latest` or mock `anchorDir` to ensure deterministic first-run state",
+    "category": "testing",
+    "est_minutes": 30,
+    "evidence": "`execute(t)` runs in the current directory without isolating `.atcr/latest`; the test only checks for description and absence of \"Usage:\"",
+    "reviewers": [
+      "dax"
+    ],
+    "confidence": "MEDIUM",
+    "path_valid": true,
+    "justification": "HIGH|cmd/atcr/home.go:148|No integration test exercises the `atcr --axi` bare invocation path; the AXI home view is only unit-tested at the renderer level, not end-to-end (AC4)|Add a test in `main_test.go` that runs `execute(t, \"--axi\")` and asserts the TOON header `home[1|]{...}:` and key fields|testing|20|`runHome` calls `report.RenderHomeViewAXI` under `if axiFromContext(ctx)` but no test in `main_test.go` executes `atcr --axi`\nHIGH|cmd/atcr/main_test.go:96|AC5 requires a golden/snapshot test pinning the non-`--axi` home-view output, but no such test exists; the existing test only checks substrings, not the exact output|Add a golden test with mocked `homeExecutable`/`homeUserDir` asserting the full byte-for-byte output for the first-run state|testing|20|`TestRootCmd_BareInvocationShowsHomeView` uses `Contains`/`NotContains` instead of exact output match; AC5 mandates a golden test\nHIGH|cmd/atcr/main_test.go:96|TestRootCmd_BareInvocationShowsHomeView is not isolated from the filesyst…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/dax/review.md",
+      "line": 2
+    }
+  },
+  {
+    "severity": "LOW",
+    "file": "cmd/atcr/home.go",
+    "line": 126,
+    "problem": "(runHome) runHome falls back to the literal string \"atcr\" when os.Executable() fails, which may not match the actual binary name or path, causing misleading exec_path output in edge cases (e.g., renamed binaries or embedded environments)",
+    "fix": "See note in findings — the message \"Latest review pointer is unreadable\" is technically correct but conflates \"pointer file unreadable\" with \"review directory unreadable\"; the user may not understand whether they need to fix the pointer or simply run a new review",
+    "category": "correctness",
+    "est_minutes": 10,
+    "evidence": "[brad] execPath = \"atcr\" hardcodes the name instead of deriving it from the invocation or command metadata / [bruce] fmt.Fprintln(w, \"Latest review pointer is unreadable — run `atcr review` to start a fresh one.\")",
+    "reviewers": [
+      "brad",
+      "bruce"
+    ],
+    "confidence": "HIGH",
+    "path_valid": true,
+    "fallback_reviewers": {
+      "bruce": "minimax-m2.7"
+    },
+    "justification": "HIGH|cmd/atcr/main.go:226|PersistentPreRunE unconditionally overwrites the AXI context flag for every command in the execution chain, breaking atcr --axi \u003csubcommand\u003e because the subcommand's local --axi (default false) overwrites the root's true value|Guard the context assignment with cmd.Root() == cmd or only apply when cmd.Flags().Changed(\"axi\")|logic|15|PersistentPreRunE runs on root then subcommand; cmd.Flags().GetBool(\"axi\") on subcommand returns default false, overwriting the root's true value set in the prior hook invocation\nMEDIUM|cmd/atcr/home.go:46|relHome constructs paths using filepath.Separator, which produces backslashes on Windows, potentially breaking downstream TOON parsers or scripts that expect forward slashes in the exec_path field|Normalize path separators to forward slashes before rendering to ensure consistent cross-platform TOON payloads|portability|10|return \"~\" + string(filepath.Separator) + rel emits backslashes on Windows, conflicting with the forward-slash…",
+    "source_report": {
+      "path": "sources/pool/raw/agent/brad/review.md",
+      "line": 3
+    }
+  }
+]

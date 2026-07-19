@@ -1,0 +1,5 @@
+
+
+MEDIUM|internal/report/home_test.go:1-79|Missing test for "unavailable" state renders correctly in AXI mode|The AXI "unavailable" state (homeState{unavailable:true, reviewID:""}) is exercised in `runHome`/`RenderHomeViewAXI` but `home_test.go` only covers the "has review" and "no review" states — the "unavailable" path that produces `review_status:unavailable` has no dedicated unit test|correctness|15|no test covers HomeViewAXI{ReviewID:"", ReviewStatus:"unavailable"}
+
+LOW|cmd/atcr/home.go:127|"unavailable" with empty reviewID uses ambiguous message|See note in findings — the message "Latest review pointer is unreadable" is technically correct but conflates "pointer file unreadable" with "review directory unreadable"; the user may not understand whether they need to fix the pointer or simply run a new review|correctness|10|fmt.Fprintln(w, "Latest review pointer is unreadable — run `atcr review` to start a fresh one.")
