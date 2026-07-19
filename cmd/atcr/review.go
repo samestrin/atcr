@@ -194,6 +194,12 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		return perr
 	}
 
+	// --axi gates every human-oriented stdout write below behind a single mode
+	// value propagated by the root PersistentPreRunE (AC 01-03). Read once here,
+	// immediately after the --preview short-circuit; the auto-fix guard below and
+	// every later write site consult axiMode rather than re-reading the context.
+	axiMode := axiFromContext(cmd.Context())
+
 	// --axi and --auto-fix are mutually exclusive (exit 2): --auto-fix drives an
 	// interactive write-back/PR flow whose stdout handoff (orchestrateAutoFix) is not
 	// a consumable findings payload, so the combination is rejected up front rather
@@ -201,7 +207,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// dropping --auto-fix (resume path). Placed ABOVE the --resume dispatch so the
 	// guard fires for `review --resume --axi --auto-fix` too (AC 01-03 Edge Case 3,
 	// AC 02-02 Error Scenario 2). --preview wins over both and short-circuits above.
-	if axiFromContext(cmd.Context()) && boolFlag(cmd, "auto-fix") {
+	if axiMode && boolFlag(cmd, "auto-fix") {
 		return usageError(errors.New("--axi and --auto-fix are mutually exclusive: --auto-fix drives an interactive write-back/PR flow, not a consumable findings payload"))
 	}
 
@@ -243,10 +249,6 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	}
 
 	ctx := cmd.Context()
-	// --axi gates every human-oriented stdout write below behind a single mode
-	// value propagated by the root PersistentPreRunE (AC 01-03). Read once here; the
-	// individual write sites consult axiMode rather than re-parsing the flag.
-	axiMode := axiFromContext(ctx)
 	base, _ := cmd.Flags().GetString("base")
 	head, _ := cmd.Flags().GetString("head")
 	mergeCommit, _ := cmd.Flags().GetString("merge-commit")
