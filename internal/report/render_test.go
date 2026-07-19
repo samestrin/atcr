@@ -483,6 +483,31 @@ func TestRenderAXI_UnicodePreserved(t *testing.T) {
 	assert.Contains(t, out, "naïve façade", "unicode finding text preserved")
 }
 
+// TestRenderAXI_CapsOversizeCell pins the AXI payload byte-safety bound (TD from
+// sprint 31.0): a single reviewer-controlled free-text field (LLM-generated,
+// potentially adversarial) must not render as one unbounded physical line that the
+// line-count pagination never trims. Each free-text cell is rune-capped to
+// maxTextLen like the md/checklist views (escTrunc), so a multi-megabyte Problem
+// cannot blow an agent consumer's context budget.
+func TestRenderAXI_CapsOversizeCell(t *testing.T) {
+	huge := strings.Repeat("A", maxTextLen*4)
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Confidence: "MEDIUM", Problem: huge},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+
+	// The full oversize field must never reach stdout, and the single data row must
+	// be bounded near maxTextLen (plus modest per-row structural overhead), not the
+	// 4×maxTextLen the reviewer supplied.
+	assert.NotContains(t, out, huge, "the full multi-megabyte field must not reach stdout")
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	require.Len(t, lines, 2, "header + one data row")
+	assert.LessOrEqual(t, len(lines[1]), maxTextLen+200,
+		"oversize free-text cell must be rune-capped, not emitted whole")
+}
+
 // TestRenderAXI_NoANSINoMarkdown enforces the AC 01-01 story requirement and DoD:
 // axi stdout carries zero \x1b[ ANSI escape sequences (even when a finding field
 // contains a raw ANSI sequence — TOON has no \x escape, so it is stripped, not
