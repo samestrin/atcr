@@ -391,8 +391,8 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
    Run DoD Verification Checklist (T3 tests, coverage, lint, build, docs) against files changed in Phase 2. Report using the DoD Report Template.
    **Duration:** 0.25 day
 
-### 2.8 [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
-   **Scope:** All files changed during Phase 2 (integration-level, not TDD cadence)
+### 2.8 [x] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 2 (integration-level, not TDD cadence). Files: `internal/verify/sandboxvalidate.go`, `internal/verify/sandboxvalidate_test.go`.
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
 
@@ -410,11 +410,13 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Gate result (2026-07-19):** Phase gate passed — no CRITICAL/HIGH/MEDIUM. Four LOW integration findings: two doc-precision items fixed inline (softened the "byte-for-byte identical" claim; documented the container timeout-enforcement boundary); two Phase-4 cross-phase concerns + one design-divergence captured as TD-002/003/004.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | sandboxvalidate.go:48 | "byte-for-byte identical" overstated for empty/relative dir | Fixed inline — doc softened to production-parity + fail-closed divergence note |
+   | LOW | sandboxvalidate.go:57 | Zero-timeout effective-budget parity gap vs host path | Captured → TD-002 (Phase 4 confirms `be.validateTimeout` non-zero / Phase 5 docs) |
+   | LOW | sandboxvalidate.go:62 | No ctx-level deadline backstop (defense-in-depth divergence) | Fixed inline (documented enforcement boundary) + captured → TD-004; naive backstop rejected (would misroute timeout→StartError) |
+   | LOW | sandboxvalidate_test.go | No real-backend fail-closed test for empty/relative dir delegation | Captured → TD-003 (Phase 4 integration testing owns it) |
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.

@@ -23,16 +23,23 @@ import (
 // string) inside the supplied sandbox.Backend rather than on the host, returning a
 // ValidationResult identical in shape to RunConfiguredValidation's. It reuses the
 // host path's pre-flight guards — empty argv and a missing working directory are
-// the same StartError-carrying refusals, evaluated BEFORE any Backend.Run — so a
-// caller sees byte-for-byte identical start-failure behavior on either path.
+// the same StartError-carrying refusals, evaluated BEFORE any Backend.Run. In
+// production (where dir is the resolved absolute applyTarget) the start-failure
+// behavior matches the host path; for a non-production empty or relative dir the
+// two diverge but both fail closed — the sandbox path defers to the backend's
+// RunSpec.validate(), which rejects an empty/relative SnapshotDir.
 //
 // The timeout is forwarded into RunSpec.Timeout exactly as received; unlike
 // RunConfiguredValidation this adapter never substitutes defaultValidationTimeout
 // for a zero value (RunConfiguredValidation remains the sole place that defaults,
-// and a zero RunSpec.Timeout defers to the backend's own default). A non-nil error
-// from Backend.Run is a backend fault (daemon unreachable, malformed spec, Docker
-// runtime fault) and becomes StartError plus a non-nil returned error — the "cannot
-// even validate" branch — never a fabricated non-zero program exit.
+// and a zero RunSpec.Timeout defers to the backend's own default). The container is
+// the timeout-enforcement boundary here: the backend kills the run at
+// RunSpec.Timeout, so no ctx-level deadline backstop is layered on — a ctx
+// cancellation would surface from Backend.Run as a Go error and misroute a genuine
+// timeout into the StartError ("cannot validate") branch instead of TimedOut. A
+// non-nil error from Backend.Run is a backend fault (daemon unreachable, malformed
+// spec, Docker runtime fault) and becomes StartError plus a non-nil returned error
+// — the "cannot even validate" branch — never a fabricated non-zero program exit.
 func RunSandboxedValidation(ctx context.Context, backend sandbox.Backend, argv []string, dir string, timeout time.Duration) (ValidationResult, error) {
 	if len(argv) == 0 {
 		err := errors.New("auto-fix validation command not found or not executable: no command configured")
