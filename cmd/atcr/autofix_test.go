@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,43 @@ func clearGitHubEnv(t *testing.T) {
 func writeGoMod(t *testing.T, dir string) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n\ngo 1.22\n"), 0o644))
+}
+
+// fakeDockerShim writes a POSIX `docker` shim and returns its path. When pass is
+// true the shim satisfies Preflight (the `info` subcommand reports a generous host
+// so validateHostCaps passes; every other invocation exits 0); when false the
+// `info` subcommand exits non-zero so Preflight fails. It mirrors the
+// fakeDockerRecording shim in internal/verify/autofix_exec_test.go so the cmd/atcr
+// gate tests stay hermetic (no live Docker daemon).
+func fakeDockerShim(t *testing.T, pass bool) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake-docker shim is POSIX-only")
+	}
+	dir := t.TempDir()
+	var infoBody string
+	if pass {
+		infoBody = `  echo '{"MemTotal": 8589934592, "NCPU": 8}'
+  exit 0`
+	} else {
+		infoBody = `  echo 'Cannot connect to the Docker daemon' 1>&2
+  exit 1`
+	}
+	body := "if [ \"$1\" = \"info\" ]; then\n" + infoBody + "\nfi\nexit 0"
+	p := filepath.Join(dir, "docker")
+	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755))
+	return p
+}
+
+// sandboxConfig returns a valid SandboxConfig wired to the fakeDockerShim at
+// dockerPath, so a gate test can supply the gate's fourth (sandbox) piece.
+func sandboxConfig(dockerPath string) *registry.SandboxConfig {
+	return &registry.SandboxConfig{
+		Backend:     "docker",
+		DockerPath:  dockerPath,
+		Image:       "alpine:3.20",
+		TestCommand: []string{"go", "test", "./..."},
+	}
 }
 
 // --- 06-01: flag off by default, discoverable in help ----------------------
@@ -189,7 +227,11 @@ func TestValidateAutoFixBackend_ApplyTargetResolvedAbsolute(t *testing.T) {
 	dir := t.TempDir()
 	writeGoMod(t, dir)
 	t.Chdir(dir)
-	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
 	cmd := autoFixCmd(t, "o/r", "tok", "")
 	be, err := validateAutoFixBackend(cmd, proj, ".")
 	require.NoError(t, err)
@@ -238,7 +280,11 @@ func TestValidateAutoFixBackend_PassesWhenConfigured(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "env/repo")
 	root := t.TempDir()
 	writeGoMod(t, root)
-	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
 	cmd := autoFixCmd(t, "flag/repo", "flagtok", "")
 
 	be, err := validateAutoFixBackend(cmd, proj, root)
@@ -264,7 +310,11 @@ func TestValidateAutoFixBackend_NoNetworkCall(t *testing.T) {
 	defer srv.Close()
 	root := t.TempDir()
 	writeGoMod(t, root)
-	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
 	cmd := autoFixCmd(t, "o/r", "tok", srv.URL)
 
 	be, err := validateAutoFixBackend(cmd, proj, root)
@@ -281,6 +331,7 @@ func TestValidateAutoFixBackend_ConfiguredCommandWins(t *testing.T) {
 	proj := &registry.ProjectConfig{
 		Agents:  []string{"a"},
 		AutoFix: &registry.AutoFixConfig{ApplyTarget: ".", ValidateCommand: []string{"make", "check"}},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
 	}
 	cmd := autoFixCmd(t, "o/r", "tok", "")
 	be, err := validateAutoFixBackend(cmd, proj, root)
@@ -298,6 +349,7 @@ func TestValidateAutoFixBackend_ConfiguredTimeout(t *testing.T) {
 	proj := &registry.ProjectConfig{
 		Agents:  []string{"a"},
 		AutoFix: &registry.AutoFixConfig{ApplyTarget: ".", ValidateTimeout: "30s"},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
 	}
 	cmd := autoFixCmd(t, "o/r", "tok", "")
 	be, err := validateAutoFixBackend(cmd, proj, root)
@@ -656,4 +708,74 @@ func TestOrchestrateAutoFix_SkippedDuplicatesNotice(t *testing.T) {
 	err := orchestrateAutoFix(context.Background(), &buf, be, filepath.Join(".atcr", "reviews", id), "", "main")
 	require.Error(t, err) // the live GitHub client fails without network/auth
 	require.Contains(t, buf.String(), "skipped", "output must tell the operator that duplicate-path fixes were skipped")
+}
+
+// --- 02-03: sandbox resolution is the gate's fourth checked piece -----------
+
+// TestValidateAutoFixBackend_SandboxUnconfiguredJoinsGate: under the default
+// sandboxed-on posture, a nil `sandbox:` block is a hard gate refusal even when
+// every other piece is valid — the fail-closed behavior change (AC 02-03 EC3 /
+// Scenario 2). The refusal is the standard usage error (exit 2), not a new path.
+func TestValidateAutoFixBackend_SandboxUnconfiguredJoinsGate(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err), "an unconfigured sandbox is a fail-closed usage error")
+	require.Contains(t, err.Error(), "[sandbox] block", "the combined error must name the sandbox failure")
+}
+
+// TestValidateAutoFixBackend_SandboxFailureCombinesWithMissingToken: the sandbox
+// check joins the SAME `missing []string` slice rather than returning early, so a
+// nil sandbox AND a missing token both appear in one combined error (AC 02-03 EC1).
+func TestValidateAutoFixBackend_SandboxFailureCombinesWithMissingToken(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := autoFixCmd(t, "o/r", "", "") // token missing
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "[sandbox] block", "sandbox failure must appear in the combined error")
+	require.Contains(t, err.Error(), "a GitHub token is required", "token failure must appear in the SAME combined error")
+}
+
+// TestValidateAutoFixBackend_SandboxResolvedStoredOnBackend: with all four pieces
+// present (including a preflight-passing sandbox), the gate returns nil and stores
+// the resolved backend on autoFixBackend.sandboxBackend (AC 02-03 Scenario 1 / EC2).
+func TestValidateAutoFixBackend_SandboxResolvedStoredOnBackend(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	be, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err)
+	require.NotNil(t, be.sandboxBackend, "the resolved sandbox backend must be stored on the returned backend")
+}
+
+// TestValidateAutoFixBackend_SandboxPreflightFailureJoinsGate: a `sandbox:` block
+// whose backend fails Preflight surfaces through the same combined path with the
+// resolver's "preflight"-bearing message intact (AC 02-03 Error Scenario 2).
+func TestValidateAutoFixBackend_SandboxPreflightFailureJoinsGate(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, false)),
+	}
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "preflight", "a preflight failure must surface through the combined gate error")
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
 )
@@ -64,6 +65,13 @@ type autoFixBackend struct {
 	repo            string
 	token           string
 	apiURL          string
+	// sandboxBackend is the resolved-and-preflighted container backend the
+	// validation step runs inside (the gate's fourth checked piece, AC 02-03).
+	// nil means validation runs directly on the host — the --no-sandbox opt-out
+	// path (AC 03-02), never a silent fallback: under the default sandboxed-on
+	// posture an unresolvable sandbox is a hard gate refusal, so a nil here only
+	// ever reflects an explicit operator opt-out.
+	sandboxBackend sandbox.Backend
 }
 
 // resolveValidateTimeout picks the effective validation timeout: an operator-
@@ -183,6 +191,32 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 	// surfacing lazily at the first HTTP call in ghaction.Client.baseURL (TD-014).
 	if err := ghaction.ValidateAPIURL(be.apiURL); err != nil {
 		missing = append(missing, err.Error())
+	}
+
+	// (4) Sandbox backend — the validation step's container isolation, resolved and
+	// preflighted here so an unconfigured/unreachable sandbox refuses at the gate
+	// alongside the other pieces rather than surfacing mid-run. Under the default
+	// sandboxed-on posture `enabled` is true, so a nil/failing sandbox is a hard
+	// refusal that joins the same `missing` slice (append-or-assign, no early
+	// return) — mirroring resolveExec's ResolveExecBackend call but inverting the
+	// polarity (verify.go:54). Preflight makes only local `docker` subprocess calls,
+	// preserving the gate's "local-only, no network" contract. The --no-sandbox
+	// opt-out (Story 3) short-circuits this whole check before resolution.
+	var sandboxConfig *registry.SandboxConfig
+	if proj != nil {
+		sandboxConfig = proj.Sandbox
+	}
+	// cmd.Context() is nil on a bare command that was never executed (cobra does
+	// not default it); production always reaches here via ExecuteContext, so this
+	// guard only backstops direct callers and tests. Preflight needs a real ctx.
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if backend, err := verify.ResolveAutoFixSandbox(ctx, true, sandboxConfig); err != nil {
+		missing = append(missing, fmt.Sprintf("sandbox: %s", err.Error()))
+	} else {
+		be.sandboxBackend = backend
 	}
 
 	if len(missing) > 0 {
