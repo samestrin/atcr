@@ -240,16 +240,17 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 1.6 [ ] **[Inverted Default Posture and SandboxConfig.Validate() Tension - REFACTOR](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 1.6 [x] **[Inverted Default Posture and SandboxConfig.Validate() Tension - REFACTOR](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
    1. Fix CRITICAL/HIGH issues from 1.5.A (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.25 day
 
-### 1.7 [ ] **Phase 1 - DoD Verification**
+### 1.7 [x] **Phase 1 - DoD Verification**
+   _Result: Tests ✓ (T3 pass) | Coverage 94.6% (ResolveAutoFixSandbox 100%) ≥80% ✓ | Lint ✓ (0 issues) | Build ✓ | Docs N/A this phase._
    Run DoD Verification Checklist (T3 tests, coverage, lint, build, docs) against files changed in Phase 1. Report using the DoD Report Template.
    **Duration:** 0.25 day
 
-### 1.8 [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+### 1.8 [x] **Phase 1 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -268,16 +269,15 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Gate result (2026-07-19):** Phase gate passed — no CRITICAL/HIGH/MED/LOW findings.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | - | No findings — all phase-exit contracts honored; fail-closed invariant structurally guaranteed; `--exec` untouched | - |
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
    - MEDIUM/LOW found -> Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   - None found -> Note "Phase gate passed" and proceed to phase stop ✅
    **Duration:** 15-30 min
 
 ---

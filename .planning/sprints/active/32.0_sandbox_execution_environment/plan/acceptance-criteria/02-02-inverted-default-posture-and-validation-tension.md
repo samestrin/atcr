@@ -75,16 +75,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `enabled=false` returns `(nil, nil)` with zero Docker/Preflight work, symmetric with `ResolveExecBackend`'s disabled path
-- [ ] `enabled=true` with `sc=nil` returns a non-nil sentinel error distinct from `ErrExecNoBackend`
-- [ ] A regression test pins `SandboxConfig.Validate()`'s current unconditional `Image`+`TestCommand` requirement (proving this story did not silently relax it)
-- [ ] The existing `internal/verify/exec_test.go` suite (`TestResolveExecBackend_*`) passes unmodified, proving the `--exec` path is untouched
-- [ ] The resolver's doc comment explicitly states the inverted default polarity relative to `ResolveExecBackend`
+- [x] `enabled=false` returns `(nil, nil)` with zero Docker/Preflight work, symmetric with `ResolveExecBackend`'s disabled path
+- [x] `enabled=true` with `sc=nil` returns a non-nil sentinel error distinct from `ErrExecNoBackend`
+- [x] A regression test pins `SandboxConfig.Validate()`'s current unconditional `Image`+`TestCommand` requirement (proving this story did not silently relax it)
+- [x] The existing `internal/verify/exec_test.go` suite (`TestResolveExecBackend_*`) passes unmodified, proving the `--exec` path is untouched
+- [x] The resolver's doc comment explicitly states the inverted default polarity relative to `ResolveExecBackend`
 
 **Manual Review:**
 - [ ] Code reviewed and approved

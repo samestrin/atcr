@@ -76,15 +76,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `ResolveAutoFixSandbox` applies all six field overrides (DockerPath, Image, Memory, CPUs, PidsLimit, TimeoutSecs) only when set, leaving unset fields at `DefaultDockerConfig()` values
-- [ ] `Preflight(ctx)` is called and must succeed before any non-nil backend is returned
-- [ ] A preflight failure returns `(nil, <wrapped error containing "preflight">)`, never a partially-ready backend
-- [ ] Test suite runs hermetically (no live Docker) via the `fakeDocker` shim pattern
+- [x] `ResolveAutoFixSandbox` applies all six field overrides (DockerPath, Image, Memory, CPUs, PidsLimit, TimeoutSecs) only when set, leaving unset fields at `DefaultDockerConfig()` values _(five observed via docker-run argv; TimeoutSecs by mirrored code + TD-001)_
+- [x] `Preflight(ctx)` is called and must succeed before any non-nil backend is returned
+- [x] A preflight failure returns `(nil, <wrapped error containing "preflight">)`, never a partially-ready backend
+- [x] Test suite runs hermetically (no live Docker) via the `fakeDocker` shim pattern
 
 **Manual Review:**
 - [ ] Code reviewed and approved
