@@ -93,10 +93,26 @@ func TestRootCmd_UnknownSubcommandIsUsageError(t *testing.T) {
 	assert.Equal(t, 2, exitCode(err))
 }
 
-func TestRootCmd_BareInvocationShowsHelp(t *testing.T) {
+func TestRootCmd_BareInvocationShowsHomeView(t *testing.T) {
+	// AC1/AC2: a bare `atcr` (no subcommand) now renders the live home view — the
+	// one-line description — instead of the static help/usage text. Formerly
+	// TestRootCmd_BareInvocationShowsHelp, updated for epic 31.1 (Content First).
 	out, err := execute(t)
 	require.NoError(t, err)
-	assert.Contains(t, out, "Usage:")
+	assert.Contains(t, out, "Agent Team Code Review — a review panel, not a reviewer",
+		"bare atcr must show the one-line description")
+	assert.NotContains(t, out, "Usage:", "bare atcr must show the home view, not help text")
+}
+
+// TestRootCmd_AXIFlagRegisteredOnRoot verifies the --axi flag exists on the root
+// command itself (a LOCAL flag, reachable on the bare invocation but not inherited
+// by subcommands) so `atcr --axi` renders the home view through the shared AXI
+// context plumbing (AC4/T3). Today --axi lives only on `atcr review`.
+func TestRootCmd_AXIFlagRegisteredOnRoot(t *testing.T) {
+	root := newRootCmd()
+	f := root.Flags().Lookup("axi")
+	require.NotNil(t, f, "root must declare a local --axi flag")
+	assert.Equal(t, "false", f.DefValue, "--axi defaults to false")
 }
 
 func TestExitCode(t *testing.T) {
