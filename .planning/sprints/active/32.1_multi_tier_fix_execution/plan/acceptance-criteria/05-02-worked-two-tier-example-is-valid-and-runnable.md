@@ -69,15 +69,15 @@ The worked two-tier example — a cheap-tier registry config and a frontier-tier
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `examples/registry-with-executor.yaml` (and/or a new `examples/registry-with-executor-tier2.yaml`) contains a complete, schema-valid cheap-tier and frontier-tier executor example
-- [ ] Both example files load with zero errors through atcr's actual registry loader (verified by a dry-run load, not visual inspection alone)
-- [ ] The example's accompanying comments describe the real two-independent-runs mechanism Story 3 ships, not a speculative or contradicted one
-- [ ] `docs/registry.md`'s runnable-examples cross-reference sentence is updated to mention the new two-tier example file(s)
+- [x] `examples/registry-with-executor.yaml` (and/or a new `examples/registry-with-executor-tier2.yaml`) contains a complete, schema-valid cheap-tier and frontier-tier executor example
+- [x] Both example files load with zero errors through atcr's actual registry loader (verified by a dry-run load, not visual inspection alone)
+- [x] The example's accompanying comments describe the real two-independent-runs mechanism Story 3 ships, not a speculative or contradicted one
+- [x] `docs/registry.md`'s runnable-examples cross-reference sentence is updated to mention the new two-tier example file(s)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

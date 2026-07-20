@@ -534,17 +534,17 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 **Items:** Story 5 (Document the Multi-Tier Workflow)
 **Focus:** `docs/registry.md` executor field table gains `max_estimated_minutes`/`max_severity_for_fix` rows immediately after `min_severity_for_fix`; `docs/findings-format.md`'s `EST_MINUTES` description cross-references the new routing consumer; `examples/registry-with-executor.yaml` gains a worked cheap-tier + frontier-tier example, validated by loading it through atcr's registry loader (dry-run, zero load errors). Sprint-wide Definition of Done validation.
 
-### 4.1 [ ] **[Document the Multi-Tier Workflow - RED](plan/user-stories/05-document-multi-tier-workflow.md)**
+### 4.1 [x] **[Document the Multi-Tier Workflow - RED](plan/user-stories/05-document-multi-tier-workflow.md)**
    1. Analyze [AC 05-01](plan/acceptance-criteria/05-01-ceiling-fields-documented-in-registry-and-findings-format-docs.md) and [AC 05-02](plan/acceptance-criteria/05-02-worked-two-tier-example-is-valid-and-runnable.md), identify testable units
    2. Extend `internal/registry/examples_test.go`'s `TestExampleRegistriesLoad`/`TestRegistryExamples_Valid` coverage to assert the extended `examples/registry-with-executor.yaml` (with its new two-tier block) loads and validates with zero errors
    3. Verify the new/extended test fails correctly (worked example not yet added)
    **Files:** `internal/registry/examples_test.go` | **Duration:** 0.4 day
 
-### 4.2 [ ] **[Document the Multi-Tier Workflow - GREEN](plan/user-stories/05-document-multi-tier-workflow.md)**
+### 4.2 [x] **[Document the Multi-Tier Workflow - GREEN](plan/user-stories/05-document-multi-tier-workflow.md)**
    GREEN: Add the `max_estimated_minutes`/`max_severity_for_fix` rows and explanatory prose to `docs/registry.md`'s executor field table (matching the existing `min_severity_for_fix`/`fix_timeout` phrasing convention); add a one-sentence cross-reference in `docs/findings-format.md`'s `EST_MINUTES` description; extend `examples/registry-with-executor.yaml` with a worked cheap-tier + frontier-tier two-tier example (T1), verify all pass (T2), COMMIT
    **Files:** `docs/registry.md`, `docs/findings-format.md`, `examples/registry-with-executor.yaml` | **Duration:** 0.7 day
 
-### 4.2.A [ ] **[Document the Multi-Tier Workflow - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-document-multi-tier-workflow.md)**
+### 4.2.A [x] **[Document the Multi-Tier Workflow - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-document-multi-tier-workflow.md)**
    **Changed Files:** [LIST FILES MODIFIED IN 4.1-4.2]
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 4.1-4.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -562,27 +562,30 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings** (1 MEDIUM, 1 LOW — no CRITICAL/HIGH; both fixed in 4.3, not deferred, each directly hardens Story 5's own AC 05-01 accuracy). The subagent independently confirmed both example files load/validate clean, field names/ranges/error phrasing match the shipped `config.go`, both tiers share `name: executor`, the findings-format anchor resolves, and the ceiling boundary semantics match `withinComplexityCeiling`/`withinSeverityCeiling`:
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | docs/registry.md (max_estimated_minutes row) | Table row said "Unset (or `0`) means no ceiling," but `validateExecutor` rejects any non-nil pointer `<= 0` (`must be within 1..10080`) — only the in-memory resolver treats 0 as no-ceiling, unreachable from loaded YAML. `max_estimated_minutes: 0` is a copy-paste trap that fails to load. | Fixed in 4.3: dropped "(or `0`)"; row now reads "a non-positive or out-of-range value is a load error. Unset (omit the field) means no ceiling." Matches AC 05-01 Error Scenario 1 (docs must match real load-time behavior). |
+   | LOW | examples/*.yaml + docs/registry.md (two-tier prose) | The invariant "every finding is fixed by exactly one tier or explicitly skipped-and-logged, never both, never neither" overstates: a below-floor / below-HIGH-confidence finding is fixed by neither tier and is NOT ceiling-skip-logged — it fails the confidence/`min_severity_for_fix` gate silently. "Never neither" holds only over the fix-eligible subset (the Phase 2 gate precondition #3, carried forward). | Fixed in 4.3: scoped the invariant to fix-eligible findings (HIGH+ confidence, at/above `min_severity_for_fix`) in the two example comments and the docs prose. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 4.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No CRITICAL/HIGH. Both the MEDIUM and the LOW are fixed inline in 4.3 (not deferred) — the MEDIUM is a factual docs defect (a load-failing recommendation) that undermines AC 05-01's "docs match shipped validation" requirement, and the LOW aligns the prose with the Phase 2 gate's eligible-subset precondition; both are ~1-line edits to this story's own deliverable, matching the Phase 1-3 fix-inline precedent.
 
-### 4.3 [ ] **[Document the Multi-Tier Workflow - REFACTOR](plan/user-stories/05-document-multi-tier-workflow.md)**
+### 4.3 [x] **[Document the Multi-Tier Workflow - REFACTOR](plan/user-stories/05-document-multi-tier-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 4.2.A (if any)
    2. Improve docs and tests (T1), validate (T3), COMMIT
    **Duration:** 0.3 day
 
-### 4.4 [ ] **Phase 4 - DoD Verification**
+### 4.4 [x] **Phase 4 - DoD Verification**
+   **Result:** T3 full suite passing; `internal/registry` coverage 91.0% (≥80%); `golangci-lint run` 0 issues; `go build ./...` OK; `go vet ./...` clean. Docs phase — `docs/registry.md`, `docs/findings-format.md`, and the two example YAMLs updated and validated by the real registry loader (`TestTwoTierExecutorExamples_Load`). AC 05-01/05-02 Auto-Verified + all 8 Story-Specific items checked; Manual Review left for `/execute-code-review`.
+   ```
+   Story-5 DoD Complete
+   Auto: 3/3 | Story-Specific: 8/8 (AC 05-01: 4/4, AC 05-02: 4/4)
+   Manual Review: [ ] Code reviewed
+   ```
    Run DoD Verification Checklist (T3 tests, coverage, lint, build, docs) against files changed in Phase 4. Report using the DoD Report Template.
    **Duration:** 0.25 day
 
-### 4.5 [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+### 4.5 [x] **Phase 4 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 4 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -601,16 +604,12 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Gate findings** (none — clean gate). The hostile-integrator gate independently CONFIRMED: both example files load/validate clean through the real `LoadRegistry`; `TestTwoTierExecutorExamples_Load` genuinely asserts the ceiling contrast (Positive tier-1 / Zero tier-2 / NotEqual), not a hand-rolled YAML check; converting the with-executor example to the cheap tier broke no existing assertion (`TestExampleRegistriesLoad`, `TestRegistryExamples_Valid` both still pass); documented defaults/ranges/error phrasing match `config.go` exactly (max_estimated_minutes 1..10080, non-positive = load error, nil/0/neg → no ceiling; max_severity_for_fix canonical + not-below-floor); the findings-format anchor `registry.md#executor-fix-generation-active-in-70` resolves to the executor heading; the inclusive-boundary "exceeds" wording matches `withinComplexityCeiling` (`estMinutes <= maxMinutes`); `go build ./...` and `go test ./internal/registry/ ./internal/verify/` all clean.
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | None | — | — | — |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   **Phase gate passed** — no findings. Contract-exit (docs describe the shipped resolver/validation contract), config back-compat (both ceilings default to no-op/unset), no regression (existing example tests green), and downstream consumability (the worked example + docs let an operator assemble the two-tier workflow without reading source) all confirmed.
    **Duration:** 15-30 min
 
 ---
@@ -618,18 +617,18 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 ## Final Phase: Validation
 
 ### Validation Checklist
-- [ ] All tests passing (T3): `go test ./...`
-- [ ] Coverage meets threshold (≥80%): `go test -coverprofile=coverage.out ./...`
-- [ ] Lint/format clean: `golangci-lint run`, `go fmt ./...`
-- [ ] Build succeeds: `go build ./...`
+- [x] All tests passing (T3): `go test ./...` — full suite green
+- [x] Coverage meets threshold (≥80%): `go test -coverprofile=coverage.out ./...` — registry 91.0%, verify 95.2%
+- [x] Lint/format clean: `golangci-lint run` (0 issues), `go fmt ./...` (gofmt -l clean), `go vet ./...` clean
+- [x] Build succeeds: `go build ./...`
 
 ### Optional: Targeted Mutation Testing
 No mutation testing tool detected on this machine (`stryker-mutator`, `mutmut`, `cargo-mutants` all unavailable) — skip this step. If a tool becomes available before this sprint executes, target only `withinComplexityCeiling` and the `generateFixes` skip-chain/self-gating branches (highest-risk routing logic), not the full codebase.
 
 ### Drift Analysis
 Compare final implementation against [plan/original-requirements.md](plan/original-requirements.md):
-- [ ] Reviewer agents output an estimated complexity/time metric for every finding (original epic AC1) — already satisfied pre-sprint by `EstMinutes`; confirm no regression.
-- [ ] `atcr.yaml` configuration supports defining complexity ceilings for the executor (original epic AC2) — `ExecutorConfig.MaxEstimatedMinutes`/`MaxSeverityForFix` (Phase 1).
-- [ ] The Execution Engine successfully skips findings that exceed the configured complexity boundaries (original epic AC3) — `generateFixes` ceiling skip chain (Phase 2).
-- [ ] A multi-tier workflow can be successfully run: a cheap model knocks out LOW complexity bugs, and a second run tackles the remaining HIGH complexity bugs (original epic AC4) — two-tier integration/E2E test + worked example (Phases 3-4).
-- [ ] No `Registry.Executor` schema redesign (single-executor-plus-ceiling interpretation) — confirm `Registry.Executor` remains a single `*ExecutorConfig` pointer, per the Design Decision locked in sprint-design.md.
+- [x] Reviewer agents output an estimated complexity/time metric for every finding (original epic AC1) — already satisfied pre-sprint by `EstMinutes`; no regression (full suite green; `EST_MINUTES` still emitted/parsed, now also documented as a routing input).
+- [x] `atcr.yaml` configuration supports defining complexity ceilings for the executor (original epic AC2) — `ExecutorConfig.MaxEstimatedMinutes`/`MaxSeverityForFix` + validation (Phase 1), documented in `docs/registry.md` (Phase 4).
+- [x] The Execution Engine successfully skips findings that exceed the configured complexity boundaries (original epic AC3) — `generateFixes` ceiling skip chain + self-gating decline (Phase 2).
+- [x] A multi-tier workflow can be successfully run: a cheap model knocks out LOW complexity bugs, and a second run tackles the remaining HIGH complexity bugs (original epic AC4) — two-tier partition/E2E tests (Phase 3) + runnable worked example `examples/registry-with-executor.yaml` (cheap) + `examples/registry-with-executor-tier2.yaml` (frontier), loader-validated (Phase 4).
+- [x] No `Registry.Executor` schema redesign (single-executor-plus-ceiling interpretation) — confirmed `Registry.Executor` remains a single `*ExecutorConfig` pointer (`internal/registry/config.go:509`), per the Design Decision locked in sprint-design.md.

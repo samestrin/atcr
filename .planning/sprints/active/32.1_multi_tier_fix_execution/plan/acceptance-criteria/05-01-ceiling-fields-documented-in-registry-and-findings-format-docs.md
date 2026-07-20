@@ -68,15 +68,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `docs/registry.md` executor table has `max_estimated_minutes` (and `max_severity_for_fix`, if shipped) rows matching the existing table's format, phrasing, and validation-error style
-- [ ] `docs/registry.md` gains a prose paragraph explaining skip-and-log behavior and the two-independent-runs multi-tier mechanism
-- [ ] `docs/findings-format.md`'s `EST_MINUTES` documentation gains a cross-reference to the executor-ceiling routing use, with a working relative link, and its existing merge/parsing sentence is unchanged
-- [ ] New field names/defaults/validation wording match Story 1's actual shipped code, verified by diff against `internal/registry/config.go`
+- [x] `docs/registry.md` executor table has `max_estimated_minutes` (and `max_severity_for_fix`, if shipped) rows matching the existing table's format, phrasing, and validation-error style
+- [x] `docs/registry.md` gains a prose paragraph explaining skip-and-log behavior and the two-independent-runs multi-tier mechanism
+- [x] `docs/findings-format.md`'s `EST_MINUTES` documentation gains a cross-reference to the executor-ceiling routing use, with a working relative link, and its existing merge/parsing sentence is unchanged
+- [x] New field names/defaults/validation wording match Story 1's actual shipped code, verified by diff against `internal/registry/config.go`
 
 **Manual Review:**
 - [ ] Code reviewed and approved
