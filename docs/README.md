@@ -21,6 +21,9 @@ single source of truth the website build consumes, so it links every doc in
   code each reviewer sees.
 - [Execution reproduction (`--exec`)](execution.md) — sandboxed reproduction of
   findings during a single stage.
+- [Auto-fix sandboxed validation (`--auto-fix`)](auto-fix.md) — sandboxed-by-default
+  post-apply validation for auto-merged fixes, the `auto_fix:` config block, and
+  the `--no-sandbox` opt-out.
 - [Adversarial Verification](verification.md) — skeptic agents that try to
   disprove reconciled findings.
 - [Cross-Examination (Debate Stage)](cross-examination.md) — proposer /
