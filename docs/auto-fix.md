@@ -16,11 +16,12 @@ is **sandboxed by default — there is no flag to opt in**. When you pass
 container backend before any patch is validated, and it runs inside an ephemeral
 container with the same guarantees `--exec` provides: no network, a read-only
 root filesystem, all Linux capabilities dropped, no-new-privileges, a non-root
-user, and memory / CPU / PID resource caps plus a wall-clock timeout. For the
-full list of what the container enforces, see
+user, and memory / CPU / PID resource caps plus a wall-clock timeout. That
+summary names *what* is enforced; for *how* each guarantee is enforced (the
+`docker run` flags, the preflight, the scratch overlay), see
 [What the sandbox guarantees](execution.md#what-the-sandbox-guarantees) in the
-execution reference — this page does not restate those mechanics, so there is a
-single source of truth for them.
+execution reference, which is the authoritative source for the container
+mechanics this page deliberately does not duplicate.
 
 Because sandboxing is on by default, `--auto-fix` **fails closed**: if no
 `sandbox:` block is configured (or the backend fails its preflight) and you did
