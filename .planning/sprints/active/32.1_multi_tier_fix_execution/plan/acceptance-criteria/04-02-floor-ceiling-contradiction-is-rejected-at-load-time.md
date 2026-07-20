@@ -67,15 +67,15 @@ When both severity bounds are set and each individually normalizes to a canonica
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Cross-field check added to `validateExecutor` comparing `reclib.SeverityRank[maxSeverityForFix]` against `reclib.SeverityRank[minSeverityForFix]` (using the existing shared `reconcile.SeverityRank` map, not a new local rank table)
-- [ ] Check fires only when both fields normalize successfully (no panic/false-positive on an already-invalid individual field)
-- [ ] `TestExecutor_MaxSeverityForFixBelowMinSeverityRejected` asserts a specific, distinguishable contradictory-range error message
-- [ ] A positive-path test confirms a valid ceiling-at-or-above-floor combination (including the equal-value boundary) loads without error
+- [x] Cross-field check added to `validateExecutor` comparing `reclib.SeverityRank[maxSeverityForFix]` against `reclib.SeverityRank[minSeverityForFix]` (using the existing shared `reconcile.SeverityRank` map, not a new local rank table)
+- [x] Check fires only when both fields normalize successfully (no panic/false-positive on an already-invalid individual field)
+- [x] `TestExecutor_MaxSeverityForFixBelowMinSeverityRejected` asserts a specific, distinguishable contradictory-range error message
+- [x] A positive-path test confirms a valid ceiling-at-or-above-floor combination (including the equal-value boundary) loads without error
 
 **Manual Review:**
 - [ ] Code reviewed and approved

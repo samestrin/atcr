@@ -66,15 +66,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `ExecutorConfig` struct has `MaxEstimatedMinutes *int` (yaml: `max_estimated_minutes,omitempty`) and `MaxSeverityForFix string` (yaml: `max_severity_for_fix,omitempty`) fields with doc comments
-- [ ] New unit tests confirm both fields parse to the exact configured values asserted in Scenarios 1–2 when present, including case-normalization of `max_severity_for_fix`
-- [ ] New unit tests confirm both fields are absent-safe (nil/empty) when omitted from an existing `atcr.yaml`, with no parse error
-- [ ] No validation logic (range checks, allowed-value checks) is introduced in this AC — confirmed by diff review against Story 4's scope boundary
+- [x] `ExecutorConfig` struct has `MaxEstimatedMinutes *int` (yaml: `max_estimated_minutes,omitempty`) and `MaxSeverityForFix string` (yaml: `max_severity_for_fix,omitempty`) fields with doc comments
+- [x] New unit tests confirm both fields parse to the exact configured values asserted in Scenarios 1–2 when present, including case-normalization of `max_severity_for_fix`
+- [x] New unit tests confirm both fields are absent-safe (nil/empty) when omitted from an existing `atcr.yaml`, with no parse error
+- [x] No validation logic (range checks, allowed-value checks) is introduced in this AC — confirmed by diff review against Story 4's scope boundary
 
 **Manual Review:**
 - [ ] Code reviewed and approved

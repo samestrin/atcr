@@ -140,18 +140,18 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 **Items:** Story 1 (Configure a Complexity Ceiling), Story 4 (Validate Ceiling Configuration)
 **Focus:** Add `MaxEstimatedMinutes *int` and `MaxSeverityForFix string` to `ExecutorConfig` (`internal/registry/config.go:206-225`) with their `EffectiveMaxEstimatedMinutes()`/`EffectiveMaxSeverityForFix()` resolvers, then harden `validateExecutor` (`internal/registry/config.go:593-677`) with a new `MaxExecutorEstimatedMinutes` named-constant range check, a `max_severity_for_fix` normalization check, and the floor/ceiling cross-field contradiction check. Config-only — nothing consumes these fields yet.
 
-### 1.1 [ ] **[Configure a Complexity Ceiling - RED](plan/user-stories/01-configure-complexity-ceiling.md)**
+### 1.1 [x] **[Configure a Complexity Ceiling - RED](plan/user-stories/01-configure-complexity-ceiling.md)**
    1. Analyze [AC 01-01](plan/acceptance-criteria/01-01-executorconfig-exposes-complexity-ceiling-fields.md) and [AC 01-02](plan/acceptance-criteria/01-02-effective-value-resolvers-return-correct-defaults.md), identify testable units
    2. Write tests in `internal/registry/executor_config_test.go` asserting: `MaxEstimatedMinutes`/`MaxSeverityForFix` fields exist and round-trip through YAML; `EffectiveMaxEstimatedMinutes()`/`EffectiveMaxSeverityForFix()` return "no ceiling" defaults when unset and the configured value when set
    3. Verify tests fail correctly (fields/resolvers do not exist yet)
    **Files:** `internal/registry/executor_config_test.go` | **Duration:** 0.4 day
 
-### 1.2 [ ] **[Configure a Complexity Ceiling - GREEN](plan/user-stories/01-configure-complexity-ceiling.md)**
+### 1.2 [x] **[Configure a Complexity Ceiling - GREEN](plan/user-stories/01-configure-complexity-ceiling.md)**
    GREEN: Add `MaxEstimatedMinutes *int` (yaml: `max_estimated_minutes,omitempty`) and `MaxSeverityForFix string` (yaml: `max_severity_for_fix,omitempty`) to `ExecutorConfig`, mirroring the `TimeoutSecs`/`MaxToolCalls` pointer convention; add `EffectiveMaxEstimatedMinutes()`/`EffectiveMaxSeverityForFix()` resolver methods matching `EffectiveFixMinSeverity`/`EffectiveMaxToolCalls` naming and doc-comment style (T1), verify all pass (T2), COMMIT
    **Files:** `internal/registry/config.go` | **Duration:** 0.4 day
 
-### 1.2.A [ ] **[Configure a Complexity Ceiling - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-configure-complexity-ceiling.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 1.1-1.2]
+### 1.2.A [x] **[Configure a Complexity Ceiling - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-configure-complexity-ceiling.md)**
+   **Changed Files:** `internal/registry/config.go`, `internal/registry/executor_config_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.1-1.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
@@ -168,34 +168,33 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings:** None. **Adversarial review passed.**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | None | — | — | — |
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 1.3, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 1.3 [ ] **[Configure a Complexity Ceiling - REFACTOR](plan/user-stories/01-configure-complexity-ceiling.md)**
+### 1.3 [x] **[Configure a Complexity Ceiling - REFACTOR](plan/user-stories/01-configure-complexity-ceiling.md)**
    1. Fix CRITICAL/HIGH issues from 1.2.A (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.2 day
 
-### 1.4 [ ] **[Validate Ceiling Configuration - RED](plan/user-stories/04-validate-ceiling-configuration.md)**
+### 1.4 [x] **[Validate Ceiling Configuration - RED](plan/user-stories/04-validate-ceiling-configuration.md)**
    1. Analyze [AC 04-01](plan/acceptance-criteria/04-01-numeric-and-severity-ceiling-values-are-range-validated.md) and [AC 04-02](plan/acceptance-criteria/04-02-floor-ceiling-contradiction-is-rejected-at-load-time.md), identify testable units
    2. Write tests in `internal/registry/executor_config_test.go`: `TestExecutor_MaxEstimatedMinutesOutOfRangeRejected`, `TestExecutor_MaxSeverityForFixInvalidRejected`, `TestExecutor_MaxSeverityForFixBelowMinSeverityRejected`, plus a positive-path valid-combination test
    3. Verify tests fail correctly
    **Files:** `internal/registry/executor_config_test.go` | **Duration:** 0.4 day
 
-### 1.5 [ ] **[Validate Ceiling Configuration - GREEN](plan/user-stories/04-validate-ceiling-configuration.md)**
+### 1.5 [x] **[Validate Ceiling Configuration - GREEN](plan/user-stories/04-validate-ceiling-configuration.md)**
    GREEN: Add `MaxExecutorEstimatedMinutes` named constant alongside `MaxExecutorToolCalls`/`MaxExecutorRules`; add the `max_estimated_minutes` range check (mirroring the `TimeoutSecs` shape) and the `max_severity_for_fix` normalization check (mirroring the `MinSeverity` check) to `validateExecutor`, accumulating into `errs`; add the floor/ceiling cross-field contradiction check using a local severity rank comparison (T1), verify all pass (T2), COMMIT
    **Files:** `internal/registry/config.go` | **Duration:** 0.4 day
 
-### 1.5.A [ ] **[Validate Ceiling Configuration - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-validate-ceiling-configuration.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 1.4-1.5]
+### 1.5.A [x] **[Validate Ceiling Configuration - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-validate-ceiling-configuration.md)**
+   **Changed Files:** `internal/registry/config.go`, `internal/registry/executor_config_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.4-1.5 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
@@ -212,28 +211,25 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings** (2 LOW — both resolved in 1.6, not deferred, as they harden Story 4's own contradiction check):
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | config.go (cross-field check) | Whitespace-only `min_severity_for_fix` ("   ") leaks past the contradiction check: `EffectiveFixMinSeverity()` guards on literal `== ""`, so "   " returns verbatim → normalizes to "" → cross-field skipped, yet `applyDefaults` collapses it to the MEDIUM default → a dead `min:"   " + max:LOW` config loads clean. | Compute floorNorm = NormalizeSeverity(MinSeverity); if empty, use DefaultFixMinSeverity — matches runtime effective floor without touching shared EffectiveFixMinSeverity. |
+   | LOW | executor_config_test.go | Missing coverage: (a) invalid-min + valid-max accumulates only the per-field error (no false "below"); (b) unset-min + `max:LOW` is rejected against the defaulted MEDIUM floor. | Add both cases to the ceiling-validation tests. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 1.6, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No CRITICAL/HIGH. The two LOW findings are fixed in 1.6 (REFACTOR) rather than deferred — both directly harden this story's contradiction check and are ~3 lines + tests.
 
-### 1.6 [ ] **[Validate Ceiling Configuration - REFACTOR](plan/user-stories/04-validate-ceiling-configuration.md)**
+### 1.6 [x] **[Validate Ceiling Configuration - REFACTOR](plan/user-stories/04-validate-ceiling-configuration.md)**
    1. Fix CRITICAL/HIGH issues from 1.5.A (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.2 day
 
-### 1.7 [ ] **Phase 1 - DoD Verification**
+### 1.7 [x] **Phase 1 - DoD Verification**
    Run DoD Verification Checklist (T3 tests, coverage, lint, build, docs) against files changed in Phase 1. Report using the DoD Report Template.
    **Duration:** 0.25 day
 
-### 1.8 [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
-   **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence)
+### 1.8 [x] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 1: `internal/registry/config.go`, `internal/registry/executor_config_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
 
@@ -251,16 +247,12 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings** (1 MEDIUM — scheduled scope, not deferred as debt):
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | docs/registry.md | The two new executor keys are undocumented in the field table/example. | Already the explicit deliverable of Phase 4 / Story 5 / Task 4.2 — sprint sequences all docs to Phase 4. No tech-debt entry created (not debt; scheduled). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   **Phase gate passed** — no CRITICAL/HIGH; the lone MEDIUM is Phase 4's planned work. Contract-exit, config back-compat, and phase-exit consumability (Phase 2 `generateFixes` can call both `EffectiveXxx` resolvers) all confirmed by the gate.
    **Duration:** 15-30 min
 
 ---

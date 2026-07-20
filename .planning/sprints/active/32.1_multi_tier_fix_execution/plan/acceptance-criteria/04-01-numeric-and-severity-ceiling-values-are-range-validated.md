@@ -80,15 +80,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `MaxExecutorEstimatedMinutes` constant added to the `MaxExecutor*` block with a doc comment explaining the bound as a typo-guard (not a policy opinion), matching `MaxExecutorToolCalls`'s comment style
-- [ ] `validateExecutor` rejects non-positive and over-cap `max_estimated_minutes`, accumulating into `errs` without short-circuiting
-- [ ] `validateExecutor` rejects a `max_severity_for_fix` that does not normalize to CRITICAL/HIGH/MEDIUM/LOW via `reclib.NormalizeSeverity`
-- [ ] New tests `TestExecutor_MaxEstimatedMinutesOutOfRangeRejected`, `TestExecutor_MaxEstimatedMinutesBoundaryAccepted`, and `TestExecutor_MaxSeverityForFixInvalidRejected` pass and follow the existing `TestExecutor_*` naming convention
+- [x] `MaxExecutorEstimatedMinutes` constant added to the `MaxExecutor*` block with a doc comment explaining the bound as a typo-guard (not a policy opinion), matching `MaxExecutorToolCalls`'s comment style
+- [x] `validateExecutor` rejects non-positive and over-cap `max_estimated_minutes`, accumulating into `errs` without short-circuiting
+- [x] `validateExecutor` rejects a `max_severity_for_fix` that does not normalize to CRITICAL/HIGH/MEDIUM/LOW via `reclib.NormalizeSeverity`
+- [x] New tests `TestExecutor_MaxEstimatedMinutesOutOfRangeRejected`, `TestExecutor_MaxEstimatedMinutesBoundaryAccepted`, and `TestExecutor_MaxSeverityForFixInvalidRejected` pass and follow the existing `TestExecutor_*` naming convention
 
 **Manual Review:**
 - [ ] Code reviewed and approved

@@ -71,15 +71,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `EffectiveMaxEstimatedMinutes() int` returns the configured value when `MaxEstimatedMinutes` is set to a positive int, and `0` (no ceiling) when nil, zero, or negative
-- [ ] `EffectiveMaxSeverityForFix() string` returns the configured value when `MaxSeverityForFix` is non-empty, and `""` (no ceiling) when unset
-- [ ] Resolver doc comments state the fallback rule explicitly and reference that a later story's `generateFixes` routing logic is the intended consumer, mirroring the `EffectiveFixMinSeverity`/`EffectiveMaxToolCalls` comment style
-- [ ] Resolvers perform no validation/normalization of out-of-range or invalid input — confirmed by a passthrough test case
+- [x] `EffectiveMaxEstimatedMinutes() int` returns the configured value when `MaxEstimatedMinutes` is set to a positive int, and `0` (no ceiling) when nil, zero, or negative
+- [x] `EffectiveMaxSeverityForFix() string` returns the configured value when `MaxSeverityForFix` is non-empty, and `""` (no ceiling) when unset
+- [x] Resolver doc comments state the fallback rule explicitly and reference that a later story's `generateFixes` routing logic is the intended consumer, mirroring the `EffectiveFixMinSeverity`/`EffectiveMaxToolCalls` comment style
+- [x] Resolvers perform no validation/normalization of out-of-range or invalid input — confirmed by a passthrough test case
 
 **Manual Review:**
 - [ ] Code reviewed and approved
