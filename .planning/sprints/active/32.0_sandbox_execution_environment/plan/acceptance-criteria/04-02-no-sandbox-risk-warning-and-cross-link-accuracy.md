@@ -85,16 +85,16 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go build ./...` succeeds
-- [ ] `go test ./cmd/atcr/...` passes, including `TestDocsClaimedFlagsAreReal` (confirms `--no-sandbox` is a real flag by merge time) and `TestDocsReferenceOnlyRealCommands`
-- [ ] No dangling markdown links from the new cross-links in `docs/ci-integration.md` / `docs/agentic-consumption.md`
+- [x] `go build ./...` succeeds
+- [x] `go test ./cmd/atcr/...` passes, including `TestDocsClaimedFlagsAreReal` (confirms `--no-sandbox` is a real flag by merge time) and `TestDocsReferenceOnlyRealCommands`
+- [x] No dangling markdown links from the new cross-links in `docs/ci-integration.md` / `docs/agentic-consumption.md`
 
 **Story-Specific:**
-- [ ] Doc states what `--no-sandbox` bypasses and the concrete host-privilege-execution risk
-- [ ] Doc states a warning prints on every invocation (as intent, not a verbatim CLI string)
-- [ ] Doc gives concrete guidance on when use might be acceptable (e.g., no Docker available) and what risk is being accepted
-- [ ] `docs/ci-integration.md` and `docs/agentic-consumption.md` cross-link to the new content from their existing `--auto-fix` mentions
-- [ ] Content reconciled against Stories 1-3's final merged `--no-sandbox` flag name, default behavior, and warning trigger condition immediately before this story's docs PR merges
+- [x] Doc states what `--no-sandbox` bypasses and the concrete host-privilege-execution risk
+- [x] Doc states a warning prints on every invocation (as intent, not a verbatim CLI string)
+- [x] Doc gives concrete guidance on when use might be acceptable (e.g., no Docker available) and what risk is being accepted
+- [x] `docs/ci-integration.md` and `docs/agentic-consumption.md` cross-link to the new content from their existing `--auto-fix` mentions
+- [x] Content reconciled against Stories 1-3's final merged `--no-sandbox` flag name, default behavior, and warning trigger condition immediately before this story's docs PR merges
 
 **Manual Review:**
 - [ ] Code reviewed and approved

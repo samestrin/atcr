@@ -737,95 +737,79 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
 
 **Focus:** Write a new `docs/auto-fix.md` (cross-linking `docs/execution.md`, added to the `docs/README.md` index) covering the sandboxed-by-default posture, the `auto_fix:` config block (previously undocumented), and the `--no-sandbox` risk — reconciled against Phases 2-3's final flag name and warning text immediately before merge. Run the existing docs-audit test suite and full Definition of Done validation across all 4 stories.
 
-### 5.1 [ ] **[Sandboxed-by-Default Posture Documented - RED](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
+### 5.1 [x] **[Sandboxed-by-Default Posture Documented - RED](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
    1. Analyze [AC 04-01](plan/acceptance-criteria/04-01-sandboxed-by-default-and-auto-fix-config-documented.md), identify testable units
    2. Write/extend docs-audit test assertions (existing Go test suite, no new framework) expecting the new `--auto-fix` sandboxed-by-default section and the `auto_fix:` config block to be present and cross-linked
    3. Verify tests fail correctly (docs section does not exist yet)
    **Files:** `docs/` docs-audit test file | **Duration:** 0.25 day
 
-### 5.2 [ ] **[Sandboxed-by-Default Posture Documented - GREEN](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
+### 5.2 [x] **[Sandboxed-by-Default Posture Documented - GREEN](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
    GREEN: Write a new `docs/auto-fix.md` covering the sandboxed-by-default posture and the previously-undocumented `auto_fix:` config block, modeled on `docs/execution.md`'s existing `--exec` security-posture section, and add it to the `docs/README.md` index (required by `TestDocsIndexCoversEveryDoc`) (T1), verify all pass (T2), COMMIT
    **Files:** `docs/auto-fix.md`, `docs/README.md` | **Duration:** 0.5 day
 
-### 5.2.A [ ] **[Docs — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 5.1-5.2]
+### 5.2.A [x] **[Docs — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
+   **Changed Files:** `docs/auto-fix.md`, `docs/README.md`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 5.1-5.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Adversarial review: 5.2`
-   - prompt: Self-contained brief including:
-     - Files to review (absolute paths): [LIST FROM 5.1-5.2]
-     - Checklist (pass verbatim):
-       - SECURITY: Auth bypass, injection, data exposure?
-       - EDGE CASES: Null, empty, boundaries, concurrent access?
-       - ERROR HANDLING: Missing catches, swallowed errors?
-       - PERFORMANCE: N+1, leaks, blocking ops?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-07-19):** No CRITICAL/HIGH. Reviewer verified against ground truth: all three `auto_fix:` fields + YAML keys + defaults + `Validate()` behavior match `internal/registry/autofix.go`; the read-only `:ro` `/work` mount and live-working-tree-not-snapshot distinction match `internal/sandbox/docker.go:133` and `sandboxvalidate.go:65`; the five env redirects, the fail-closed gate, the `--no-sandbox` flag name/behavior, and the `execution.md#what-the-sandbox-guarantees` anchor (real heading, line 51) all correct; no invented config fields/flags/subcommands; the `--no-sandbox` host-execution risk is NOT undersold (matches `warnNoSandbox`). One MEDIUM navigation defect.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | auto-fix.md:35,99 | Two `[`--no-sandbox`](#opting-out---no-sandbox)` links + a "described below" promise target a section that does not exist yet | In-phase scheduled: task 5.5 creates the dedicated `## Opting out (`--no-sandbox`)` section (slug `opting-out---no-sandbox`) these anchors point to. Phase is the merge unit; anchor resolves before the phase gate. Verified at 5.7 DoD. NOT deferred TD (mirrors this sprint's 2.2.A/2.4 in-phase-coverage precedent). |
+
+   **Result: No CRITICAL/HIGH. One MEDIUM folded forward into task 5.5 (the section it references is 5.5's deliverable), not appended to tech-debt — same disposition pattern as Phase 2's scheduled-coverage findings.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 5.3, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 5.3 [ ] **[Sandboxed-by-Default Posture Documented - REFACTOR](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
+### 5.3 [x] **[Sandboxed-by-Default Posture Documented - REFACTOR](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
+   _No CRITICAL/HIGH from 5.2.A; the single MEDIUM (dangling `#opting-out---no-sandbox` anchor) is folded into task 5.5, which authors the section it targets — fixing it here would pre-empt 5.4/5.5's RED/GREEN. Docs audit green (T3). No code/test change this leg; nothing to commit (mirrors 4.6 no-op REFACTOR)._
    1. Fix CRITICAL/HIGH issues from 5.2.A (if any)
    2. Improve docs and tests (T1), validate (T3), COMMIT
    **Duration:** 0.25 day
 
-### 5.4 [ ] **[--no-sandbox Risk Documented and Cross-Linked - RED](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
+### 5.4 [x] **[--no-sandbox Risk Documented and Cross-Linked - RED](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
    1. Analyze [AC 04-02](plan/acceptance-criteria/04-02-no-sandbox-risk-warning-and-cross-link-accuracy.md), identify testable units
    2. Write/extend docs-audit test assertions expecting the `--no-sandbox` risk section and its cross-links to be present
    3. Verify tests fail correctly
    **Files:** `docs/` docs-audit test file | **Duration:** 0.25 day
 
-### 5.5 [ ] **[--no-sandbox Risk Documented and Cross-Linked - GREEN](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
+### 5.5 [x] **[--no-sandbox Risk Documented and Cross-Linked - GREEN](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
    GREEN: Write the `--no-sandbox` risk documentation in `docs/auto-fix.md`, cross-linked from the sandboxed-by-default section and from the existing `--auto-fix` mentions in `docs/ci-integration.md` and `docs/agentic-consumption.md`; reconcile flag name and warning text against the final merged CLI help text/warning strings from Phases 2-3 (T1), verify all pass (T2), COMMIT
    **Files:** `docs/auto-fix.md`, `docs/ci-integration.md`, `docs/agentic-consumption.md` | **Duration:** 0.5 day
 
-### 5.5.A [ ] **[--no-sandbox Risk Docs — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 5.4-5.5]
+### 5.5.A [x] **[--no-sandbox Risk Docs — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
+   **Changed Files:** `docs/auto-fix.md` (`## Opting out (--no-sandbox)` section), `docs/ci-integration.md`, `docs/agentic-consumption.md`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 5.4-5.5 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Adversarial review: 5.5`
-   - prompt: Self-contained brief including:
-     - Files to review (absolute paths): [LIST FROM 5.4-5.5]
-     - Checklist (pass verbatim):
-       - SECURITY: Auth bypass, injection, data exposure?
-       - EDGE CASES: Null, empty, boundaries, concurrent access?
-       - ERROR HANDLING: Missing catches, swallowed errors?
-       - PERFORMANCE: N+1, leaks, blocking ops?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-07-19):** No CRITICAL/HIGH/MEDIUM. Reviewer verified against ground truth: `--no-sandbox` is a real registered flag (autofix.go:54); "warns on every run" stated as intent (not verbatim), matching non-memoized `warnNoSandbox` → stderr; bypass description (resolver+preflight skipped, host execution, full atcr-process privileges, no network/fs/cap/non-root) matches the short-circuit + host path; "no config-file disable" accurate (`AutoFixConfig` has no such field); risk NOT undersold; `#opting-out---no-sandbox` and `execution.md#what-the-sandbox-guarantees` anchors both resolve; cross-links point to a same-dir doc that exists. One LOW.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | auto-fix.md:17-23 | "Sandboxed by default" enumerates the guarantee list AND then claimed "this page does not restate those mechanics" — self-contradiction undermining the single-source-of-truth framing | Applied in 5.6 — the enumeration is REQUIRED by AC 04-01 Scenario 1 (must state non-root/cap-drop/no-new-privs/resource-caps/timeout), so kept it; reworded the false clause to "summary names *what*; cross-link is authoritative for *how* (the mechanics this page does not duplicate)" — removes the contradiction without dropping AC-mandated content |
+
+   **Result: No CRITICAL/HIGH. One LOW (doc-precision self-contradiction) fixed inline in 5.6 REFACTOR — cheap and in-scope, not deferred; same inline-fix pattern as this sprint's 2.8 doc-precision LOWs.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 5.6, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 5.6 [ ] **[--no-sandbox Risk Documented - REFACTOR](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
+### 5.6 [x] **[--no-sandbox Risk Documented - REFACTOR](plan/user-stories/04-document-auto-fix-sandbox-security-posture.md)**
+   _Fixed 5.5.A's LOW inline: reworded auto-fix.md's sandbox-guarantees summary so it no longer claims "does not restate" while restating (kept the AC 04-01 S1-mandated guarantee enumeration; clarified the cross-link is authoritative for the mechanics). Docs audit green (T3), build OK, committed._
    1. Fix CRITICAL/HIGH issues from 5.5.A (if any)
    2. Improve docs and tests (T1), validate (T3), COMMIT
    **Duration:** 0.25 day
 
-### 5.7 [ ] **Phase 5 - DoD Verification**
+### 5.7 [x] **Phase 5 - DoD Verification**
+   _Result: Tests ✓ (T3 full `go test ./...` all pass; `cmd/atcr` incl. TestDocsIndexCoversEveryDoc/ReferenceOnlyRealCommands/ClaimedFlagsAreReal green) | Coverage 87.6% pkg (unchanged — no Go source touched this docs-only phase) ≥80% ✓ | Lint ✓ (0 issues) | Build ✓ | Docs ✓ (docs/auto-fix.md created + indexed; ci-integration.md/agentic-consumption.md cross-linked). Anchor `#opting-out---no-sandbox` resolves. Story-4 AC 04-01 (4/4) + AC 04-02 (5/5) Story-Specific all met; Manual Review deferred to /execute-code-review._
+   ```
+   Story-4 DoD Complete
+   Auto: 5/5 | Story-Specific: 9/9
+   Manual Review: [ ] Code reviewed
+   ```
    Run DoD Verification Checklist (T3 tests, coverage, lint, build, docs) across all 4 stories. Report using the DoD Report Template.
    **Duration:** 0.25 day
 

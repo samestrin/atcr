@@ -80,15 +80,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go build ./...` succeeds (no Go source is touched by this story, so this simply confirms nothing else broke)
-- [ ] `go test ./cmd/atcr/...` passes, including `TestDocsIndexCoversEveryDoc`, `TestDocsReferenceOnlyRealCommands`, and `TestDocsClaimedFlagsAreReal` against the new/edited doc
-- [ ] No dangling markdown links introduced (verified by the same `TestDocsIndexCoversEveryDoc` link-target check)
+- [x] `go build ./...` succeeds (no Go source is touched by this story, so this simply confirms nothing else broke)
+- [x] `go test ./cmd/atcr/...` passes, including `TestDocsIndexCoversEveryDoc`, `TestDocsReferenceOnlyRealCommands`, and `TestDocsClaimedFlagsAreReal` against the new/edited doc
+- [x] No dangling markdown links introduced (verified by the same `TestDocsIndexCoversEveryDoc` link-target check)
 
 **Story-Specific:**
-- [ ] Doc states `--auto-fix` validation is sandboxed by default via `internal/sandbox` container isolation, with no flag required
-- [ ] Doc distinguishes the writable-working-tree mount from `--exec`'s read-only snapshot rather than implying identical semantics
-- [ ] Doc documents all three `auto_fix:` fields (`apply_target`, `validate_command`, `validate_timeout`) matching `internal/registry/autofix.go` exactly, including the nil-block and empty-field defaults
-- [ ] If a new `docs/auto-fix.md` file was created, `docs/README.md` links it
+- [x] Doc states `--auto-fix` validation is sandboxed by default via `internal/sandbox` container isolation, with no flag required
+- [x] Doc distinguishes the writable-working-tree mount from `--exec`'s read-only snapshot rather than implying identical semantics
+- [x] Doc documents all three `auto_fix:` fields (`apply_target`, `validate_command`, `validate_timeout`) matching `internal/registry/autofix.go` exactly, including the nil-block and empty-field defaults
+- [x] If a new `docs/auto-fix.md` file was created, `docs/README.md` links it
 
 **Manual Review:**
 - [ ] Code reviewed and approved
