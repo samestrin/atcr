@@ -218,6 +218,8 @@ func TestExecutorConfig_EffectiveFixMinSeverity(t *testing.T) {
 		"unset min_severity_for_fix falls back to the MEDIUM default")
 	assert.Equal(t, "HIGH", ExecutorConfig{MinSeverity: "HIGH"}.EffectiveFixMinSeverity(),
 		"an explicit floor is returned unchanged")
+	assert.Equal(t, DefaultFixMinSeverity, ExecutorConfig{MinSeverity: "   "}.EffectiveFixMinSeverity(),
+		"a whitespace-only floor counts as unset and falls back to the MEDIUM default")
 }
 
 // The executor name is interpolated into the "fix by <name>" attribution appended
