@@ -44,7 +44,8 @@ const defaultValidationTimeout = 2 * time.Minute
 func addAutoFixFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("auto-fix", false,
 		"opt-in: after review, apply each finding's fix, validate locally, and open a GitHub PR only if validation passes; "+
-			"refuses without a validation command + apply target + GitHub token/repo (token needs contents:write and pull_requests:write). "+
+			"refuses without a validation command + apply target + GitHub token/repo (token needs contents:write and pull_requests:write) "+
+			"+ a preflighted [sandbox] block (validation is sandboxed by default; pass --no-sandbox to run it unsandboxed on the host). "+
 			"Only findings at or above --fail-on are fixed, so the default fail_on: HIGH applies HIGH+ fixes only — lower --fail-on to include MEDIUM/LOW. "+
 			"Each run opens a NEW pull request on a fresh timestamped branch (create-per-run; it does not update a prior auto-fix PR). "+
 			"Requires local HEAD to be pushed and to equal the PR base branch (the base commit and commit parent are resolved from local HEAD). "+
