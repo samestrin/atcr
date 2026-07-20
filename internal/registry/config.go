@@ -285,10 +285,22 @@ func (e ExecutorConfig) EffectiveMaxSeverityForFix() string {
 // It is the single resolver generateFixes and the verify snapshot pre-check
 // share so the empty-check + DefaultFixMinSeverity fallback lives in one place.
 func (e ExecutorConfig) EffectiveFixMinSeverity() string {
-	if e.MinSeverity == "" {
+	return effectiveFixMinSeverity(e.MinSeverity)
+}
+
+// effectiveFixMinSeverity resolves a raw min_severity_for_fix to the effective
+// floor: a value that NORMALIZES to empty (unset or whitespace-only) falls back
+// to the MEDIUM default; anything else is returned unchanged. The
+// trim-before-empty-check lives in this one helper so the resolver,
+// applyDefaults, and the floor/ceiling contradiction check share a single
+// empty→MEDIUM rule instead of drifting into divergent empty-detections — a
+// literal == "" check lets a whitespace-only floor slip past as "set", which
+// meetsSeverityFloor then ranks 0 and silently disables the floor.
+func effectiveFixMinSeverity(raw string) string {
+	if reclib.NormalizeSeverity(raw) == "" {
 		return DefaultFixMinSeverity
 	}
-	return e.MinSeverity
+	return raw
 }
 
 // EffectiveExecutorTimeoutSecs returns the per-fix call deadline in seconds: the
@@ -742,16 +754,12 @@ func (r *Registry) validateExecutor() []error {
 		// The effective floor: a min_severity_for_fix that is unset OR normalizes to empty
 		// (e.g. whitespace-only, which applyDefaults also collapses) resolves to the MEDIUM
 		// default at runtime, so the contradiction check must use that same effective floor
-		// — reading it directly here (rather than via EffectiveFixMinSeverity, whose empty
-		// check is literal and would let a whitespace value skip the check while runtime
-		// still applies MEDIUM). An explicitly-invalid floor (e.g. "BOGUS") normalizes to a
+		// — resolved through the shared effectiveFixMinSeverity helper (normalized here for
+		// the rank lookup). An explicitly-invalid floor (e.g. "BOGUS") normalizes to a
 		// non-canonical token that reviewSeverities rejects, so the check is skipped and the
 		// per-field min_severity_for_fix error above is not masked (and SeverityRank is never
 		// indexed with an unranked key).
-		floorNorm := reclib.NormalizeSeverity(e.MinSeverity)
-		if floorNorm == "" {
-			floorNorm = DefaultFixMinSeverity
-		}
+		floorNorm := reclib.NormalizeSeverity(effectiveFixMinSeverity(e.MinSeverity))
 		if reviewSeverities[floorNorm] && reclib.SeverityRank[maxSevNorm] < reclib.SeverityRank[floorNorm] {
 			errs = append(errs, fmt.Errorf("executor: max_severity_for_fix (%s) must not be below min_severity_for_fix (%s) — this combination is never eligible for a fix", maxSevNorm, floorNorm))
 		}
@@ -1006,11 +1014,10 @@ func (r *Registry) applyDefaults() {
 		if r.Executor.Name == "" {
 			r.Executor.Name = RoleExecutor
 		}
-		if r.Executor.MinSeverity == "" {
-			r.Executor.MinSeverity = DefaultFixMinSeverity
-		} else {
-			r.Executor.MinSeverity = reclib.NormalizeSeverity(r.Executor.MinSeverity)
-		}
+		// The shared helper owns the empty→MEDIUM rule (unset OR whitespace-only);
+		// NormalizeSeverity then canonicalizes a set value — validation already
+		// rejected any non-canonical value, so it only fixes casing.
+		r.Executor.MinSeverity = reclib.NormalizeSeverity(effectiveFixMinSeverity(r.Executor.MinSeverity))
 		// max_severity_for_fix (Sprint 32.1) has NO default (empty = no ceiling), but a
 		// set value is canonicalized to upper-case so the Phase 2 routing check compares a
 		// stable token — mirroring min_severity_for_fix. validateExecutor rejects any
