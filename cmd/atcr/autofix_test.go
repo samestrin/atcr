@@ -990,10 +990,11 @@ func TestValidateAutoFixBackend_SandboxUnconfiguredJoinsGate(t *testing.T) {
 	require.Contains(t, err.Error(), "[sandbox] block", "the combined error must name the sandbox failure")
 }
 
-// TestValidateAutoFixBackend_SandboxFailureCombinesWithMissingToken: the sandbox
-// check joins the SAME `missing []string` slice rather than returning early, so a
-// nil sandbox AND a missing token both appear in one combined error (AC 02-03 EC1).
-func TestValidateAutoFixBackend_SandboxFailureCombinesWithMissingToken(t *testing.T) {
+// TestValidateAutoFixBackend_SandboxSkippedWhenTokenMissing: a missing token fails
+// one of the cheap local checks (1-3), so the sandbox check — the expensive fourth
+// piece that shells out to docker and spawns a throwaway container — is skipped
+// entirely. The combined error names the token failure and NOT the sandbox piece.
+func TestValidateAutoFixBackend_SandboxSkippedWhenTokenMissing(t *testing.T) {
 	clearGitHubEnv(t)
 	root := t.TempDir()
 	writeGoMod(t, root)
@@ -1001,8 +1002,8 @@ func TestValidateAutoFixBackend_SandboxFailureCombinesWithMissingToken(t *testin
 	cmd := autoFixCmd(t, "o/r", "", "") // token missing
 	_, err := validateAutoFixBackend(cmd, proj, root)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "[sandbox] block", "sandbox failure must appear in the combined error")
-	require.Contains(t, err.Error(), "a GitHub token is required", "token failure must appear in the SAME combined error")
+	require.Contains(t, err.Error(), "a GitHub token is required", "token failure must appear in the combined error")
+	require.NotContains(t, err.Error(), "[sandbox] block", "sandbox check is skipped when an earlier gate check already failed")
 }
 
 // TestValidateAutoFixBackend_SandboxResolvedStoredOnBackend: with all four pieces
@@ -1067,13 +1068,13 @@ func TestValidateAutoFixBackend_SandboxUsesSuppliedContext(t *testing.T) {
 	require.Contains(t, err.Error(), "sandbox", "the cancelled-context preflight failure must surface as the sandbox gate piece")
 }
 
-// TestValidateAutoFixBackend_AllFourPiecesCombineInOneError: the integration leg of
-// AC 02-03 — when every gate piece fails simultaneously (missing apply target,
-// unresolvable validation command, missing GitHub token, and an unconfigured
-// sandbox under the default sandboxed-on posture), the single returned usage error
-// names ALL FOUR in one combined message (exit 2), proving the sandbox check joins
-// the same `missing []string` slice as the other three rather than short-circuiting.
-func TestValidateAutoFixBackend_AllFourPiecesCombineInOneError(t *testing.T) {
+// TestValidateAutoFixBackend_CheapPiecesCombineInOneError: when every cheap local
+// gate piece fails simultaneously (missing apply target, unresolvable validation
+// command, missing GitHub token), the single returned usage error names ALL THREE
+// in one combined message (exit 2). The sandbox check — the expensive fourth piece
+// that shells out to docker — is gated on those cheap checks passing, so it
+// contributes nothing to a gate that already refuses.
+func TestValidateAutoFixBackend_CheapPiecesCombineInOneError(t *testing.T) {
 	clearGitHubEnv(t)
 	root := t.TempDir() // deliberately NO go.mod → validation command cannot resolve
 	proj := &registry.ProjectConfig{
@@ -1089,7 +1090,7 @@ func TestValidateAutoFixBackend_AllFourPiecesCombineInOneError(t *testing.T) {
 	require.Contains(t, msg, "apply target", "the combined error must name the apply-target failure")
 	require.Contains(t, msg, "validation command", "the combined error must name the validation-command failure")
 	require.Contains(t, msg, "a GitHub token is required", "the combined error must name the GitHub-credential failure")
-	require.Contains(t, msg, "[sandbox] block", "the combined error must name the sandbox failure alongside the other three")
+	require.NotContains(t, msg, "[sandbox] block", "sandbox check is skipped when the cheap checks already failed")
 }
 
 // --- 03-02: --no-sandbox bypasses the resolver/preflight gate ---------------

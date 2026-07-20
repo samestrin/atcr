@@ -140,7 +140,10 @@ func resolveValidateTimeout(af *registry.AutoFixConfig) (time.Duration, error) {
 // Any missing/malformed piece makes the whole
 // run refuse: every failure is collected and returned as one usage error (exit
 // 2) naming every missing piece, so a half-configured backend fails fast before
-// any file is touched. On success it returns the fully-resolved backend and nil.
+// any file is touched. The one exception is the sandbox check (4): it shells out
+// to docker and spawns a throwaway container, so it runs only when the cheap
+// local checks (1-3) passed — a run already refusing does not pay that cost.
+// On success it returns the fully-resolved backend and nil.
 func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, repoRoot string) (autoFixBackend, error) {
 	var be autoFixBackend
 	var missing []string
@@ -251,7 +254,11 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 		// and non-memoized (every invocation), so the operator can never lose sight
 		// of running untrusted LLM-generated validation on the host (AC 03-03).
 		warnNoSandbox(cmd.ErrOrStderr())
-	} else {
+	} else if len(missing) == 0 {
+		// Resolve/preflight the sandbox only when the cheap local checks above
+		// passed: resolution shells out to docker and spawns a throwaway
+		// container, so a run already refusing on a missing apply-target /
+		// validate-command / repo / token must not pay that cost before exit 2.
 		// cmd.Context() is nil on a bare command that was never executed (cobra
 		// does not default it); production always reaches here via ExecuteContext,
 		// so this guard only backstops direct callers and tests. Preflight (a local
