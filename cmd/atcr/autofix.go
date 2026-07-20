@@ -68,6 +68,21 @@ func addAutoFixFlags(cmd *cobra.Command) {
 // points at the real verify.ResolveAutoFixSandbox.
 var resolveAutoFixSandboxFn = verify.ResolveAutoFixSandbox
 
+// warnNoSandbox writes the --no-sandbox security warning to out. It is
+// deliberately NOT memoized — no sync.Once, no package-level "seen" bool, no
+// env/state gate — which is the exact opposite of the read-once ATCR_TELEMETRY
+// notice (main.go telemetryEnabledFromEnv). That precedent warns once by design;
+// this one must fire on EVERY --no-sandbox invocation so an operator can never
+// lose sight of the fact that untrusted, LLM-generated validation code is running
+// directly on the host with no container isolation (AC 03-03). It writes to
+// stderr (via the caller's cmd.ErrOrStderr()) so it never corrupts structured
+// stdout payloads.
+func warnNoSandbox(out io.Writer) {
+	_, _ = fmt.Fprintln(out, "WARNING: --no-sandbox is set — auto-fix validation is running WITHOUT container isolation. "+
+		"Untrusted, LLM-generated validation commands execute directly on this host with your privileges. "+
+		"Only pass --no-sandbox where Docker is unavailable and you accept that risk.")
+}
+
 // autoFixBackend holds the fully-resolved backend the gate validated, so
 // runAutoFix consumes it without re-resolving any piece (AC 06-03).
 type autoFixBackend struct {
@@ -230,7 +245,12 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 	// and stay enforced. It is gated strictly on true (not "flag was set"), so
 	// --no-sandbox=false is identical to the flag being absent.
 	noSandbox, _ := cmd.Flags().GetBool("no-sandbox")
-	if !noSandbox {
+	if noSandbox {
+		// Fire the security warning the moment the bypass is chosen — unconditional
+		// and non-memoized (every invocation), so the operator can never lose sight
+		// of running untrusted LLM-generated validation on the host (AC 03-03).
+		warnNoSandbox(cmd.ErrOrStderr())
+	} else {
 		// cmd.Context() is nil on a bare command that was never executed (cobra
 		// does not default it); production always reaches here via ExecuteContext,
 		// so this guard only backstops direct callers and tests. Preflight (a local

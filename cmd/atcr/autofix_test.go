@@ -997,6 +997,72 @@ func TestValidateAutoFixBackend_NoSandboxOtherPiecesFailClosed(t *testing.T) {
 	}
 }
 
+// --- 03-03: every-run (non-memoized) stderr security warning ----------------
+
+const noSandboxWarnMarker = "WITHOUT container isolation"
+
+// runNoSandboxGate drives validateAutoFixBackend once on the --no-sandbox path
+// against a fresh stderr buffer and returns what was written to stderr. Other
+// pieces are valid so the gate passes; the warning must fire regardless.
+func runNoSandboxGate(t *testing.T) string {
+	t.Helper()
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := noSandboxCmd(t, "o/r", "tok")
+	var errBuf, outBuf strings.Builder
+	cmd.SetErr(&errBuf)
+	cmd.SetOut(&outBuf)
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err, "the --no-sandbox gate should pass with all other pieces valid")
+	require.NotContains(t, outBuf.String(), noSandboxWarnMarker, "the warning must go to stderr, never stdout")
+	return errBuf.String()
+}
+
+// TestWarnNoSandbox_PrintsOnEveryConsecutiveCall: the warning fires on the first
+// AND every subsequent in-process invocation — the load-bearing non-memoization
+// guard. A sync.Once/package-bool implementation would fail the 2nd/3rd call
+// (AC 03-03 Scenario 2 / Error Scenario 1). Exercised through the real call site.
+func TestWarnNoSandbox_PrintsOnEveryConsecutiveCall(t *testing.T) {
+	for i := 1; i <= 3; i++ {
+		got := runNoSandboxGate(t)
+		require.Contains(t, got, noSandboxWarnMarker,
+			"the --no-sandbox warning must print on consecutive call #%d (no memoization)", i)
+	}
+}
+
+// TestWarnNoSandbox_NamesTheRisk: the warning is explicit about the risk —
+// container isolation is off and untrusted/LLM-generated code runs on the host
+// (AC 03-03 Scenario 3).
+func TestWarnNoSandbox_NamesTheRisk(t *testing.T) {
+	got := runNoSandboxGate(t)
+	for _, want := range []string{"WARNING", noSandboxWarnMarker, "LLM-generated", "host"} {
+		require.Contains(t, got, want, "the --no-sandbox warning must name the specific risk")
+	}
+}
+
+// TestWarnNoSandbox_AbsentWhenFlagUnset: the default (sandboxed) path prints NO
+// --no-sandbox warning — the warning is strictly conditional on the flag being
+// true (AC 03-03 EC3, regression guard against an inverted condition).
+func TestWarnNoSandbox_AbsentWhenFlagUnset(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
+	cmd := autoFixCmd(t, "o/r", "tok", "") // no --no-sandbox
+	var errBuf strings.Builder
+	cmd.SetErr(&errBuf)
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err)
+	require.NotContains(t, errBuf.String(), noSandboxWarnMarker,
+		"no --no-sandbox warning may appear on the default sandboxed path")
+}
+
 // TestValidateAutoFixBackend_NoSandboxFalseKeepsGate: --no-sandbox=false is
 // identical to the flag being absent — the real resolver/preflight gate runs and a
 // missing sandbox is a hard refusal (AC 03-02 EC3 regression guard). The bypass
