@@ -81,8 +81,11 @@ auto_fix:
 
 The block has exactly three fields:
 
-- **`apply_target`** — the working-tree path the patch is applied to, resolved
-  against the repo root when relative. **Empty defaults to the repo root.**
+- **`apply_target`** — the working-tree path the patch is applied to. **Empty
+  defaults to the repo root, which is currently the only accepted value:** a
+  relative value is resolved against the repo root and must resolve to the root
+  itself. A subdirectory target is rejected with a usage error, because fixes are
+  committed with repo-root-relative paths.
 - **`validate_command`** — the post-apply validation command as an explicit argv
   (a list of tokens, never a shell string), e.g. `[go, build, ./...]`. **Empty
   falls back to the single built-in default**, which is the Go build command when
