@@ -3,6 +3,7 @@ package verify
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"log/slog"
@@ -638,6 +639,245 @@ func TestBuildFixPrompt_FindingDataSeparatedByDelimiter(t *testing.T) {
 	findingIdx := strings.Index(result, "Severity:")
 	assert.True(t, framingIdx < delimIdx, "framing must precede the delimiter")
 	assert.True(t, delimIdx < findingIdx, "delimiter must precede the finding data")
+}
+
+// --- Phase 3 / Story 3: two-tier partition & attribution --------------------
+
+// twoTierConfig builds a tier ExecutorConfig for the two-tier integration tests:
+// a caller-chosen Name (attribution key) and estimated-minutes ceiling (0 = no
+// ceiling). Both tiers share testExecProvider so a single execRegistry satisfies
+// them. The Name is a parameter precisely because AC 03-02 turns on whether the
+// two tiers share it: a shared Name lets tier 2's attribution guard recognize a
+// finding tier 1 already fixed; distinct Names do not (Edge Case 1).
+func twoTierConfig(name string, maxMinutes int) *registry.ExecutorConfig {
+	ex := &registry.ExecutorConfig{
+		Name: name, Provider: testExecProvider, Model: "m-exec", Persona: "fixer",
+		Role: registry.RoleExecutor, MinSeverity: "MEDIUM",
+	}
+	if maxMinutes > 0 {
+		ex.MaxEstimatedMinutes = intPtr(maxMinutes)
+	}
+	return ex
+}
+
+// findingByFile returns a pointer to the fixture finding with the given File, so an
+// assertion can name a finding by its (unique-per-fixture) file rather than index.
+func findingByFile(t *testing.T, findings []reconcile.JSONFinding, file string) *reconcile.JSONFinding {
+	t.Helper()
+	for i := range findings {
+		if findings[i].File == file {
+			return &findings[i]
+		}
+	}
+	t.Fatalf("no fixture finding with File %q", file)
+	return nil
+}
+
+// AC 03-01 (Scenario 1, Edge Cases 1-2) + AC 03-02 (Scenario 1-2): a tier-1
+// low-ceiling pass followed by a tier-2 high-ceiling pass over the SAME finding
+// set (both tiers sharing the default executor Name) leaves every eligible finding
+// in exactly one terminal state — fixed-by-tier-1, fixed-by-tier-2, or
+// skip-logged-by-both — with zero double-processing (tier 2 never re-dispatches a
+// finding tier 1 already fixed) and zero silent drops.
+func TestGenerateFixes_TwoTierPartitionsFindingsExactlyOnce(t *testing.T) {
+	// A deliberate mix spanning the full partition matrix. Unique File names let the
+	// double-processing assertion identify which findings reached tier 2's completer.
+	// EstMinutes values (including the adversarial 0 and negative cases required by
+	// AC 03-01's input-validation note) exercise the ceiling comparison at every edge.
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "below.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 10},    // below tier-1 ceiling → tier 1 fixes
+		{Severity: "HIGH", File: "tier2.go", Line: 2, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 60},    // above tier-1, within tier-2 → tier 2 fixes
+		{Severity: "HIGH", File: "both.go", Line: 3, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 100000}, // above BOTH ceilings → skip-logged by both
+		{Severity: "HIGH", File: "boundary.go", Line: 4, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 30}, // exactly tier-1 ceiling (inclusive) → tier 1 fixes
+		{Severity: "HIGH", File: "zero.go", Line: 5, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 0},      // no estimate → not ceiling-skipped → tier 1 fixes
+		{Severity: "HIGH", File: "neg.go", Line: 6, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: -5},      // negative (defensive) → treated as no estimate → tier 1 fixes
+	}
+	reg := execRegistry("MEDIUM")
+	tier1 := twoTierConfig(registry.RoleExecutor, 30)  // cheap tier: low ceiling
+	tier2 := twoTierConfig(registry.RoleExecutor, 240) // frontier tier: high ceiling, same Name
+
+	rec1 := &recordingExecutor{out: "use a parameterized query"}
+	rec2 := &recordingExecutor{out: "use a prepared statement"}
+
+	// Tier 1 pass.
+	ctx1, buf1 := ceilingCtx()
+	generateFixes(ctx1, findings, tier1, reg, rec1, nil, okDispatcher(), 0)
+
+	// Snapshot which findings tier 1 fixed, before tier 2 runs, so "fixed by exactly
+	// one tier" is decidable even though both tiers share an attribution Name.
+	tier1Fixed := map[string]bool{}
+	for i := range findings {
+		if findings[i].Fix != "" {
+			tier1Fixed[findings[i].File] = true
+		}
+	}
+	assert.Equal(t, 4, rec1.calls, "tier 1 dispatches exactly the 4 within-ceiling findings")
+	assert.ElementsMatch(t, []string{"below.go", "boundary.go", "zero.go", "neg.go"},
+		keysOf(tier1Fixed), "tier 1 fixes exactly the within-ceiling findings")
+	assert.Contains(t, buf1.String(), "class=executor_ceiling_skip", "tier 1 logs its ceiling skips")
+
+	// Tier 2 pass over the SAME slice — the workflow an operator runs back-to-back.
+	generateFixes(context.Background(), findings, tier2, reg, rec2, nil, okDispatcher(), 0)
+
+	// Double-processing guard: tier 2 must call the completer only for the finding
+	// tier 1 ceiling-skipped that is within tier 2's ceiling — never for a
+	// tier-1-fixed finding (attribution guard) nor for the above-both finding.
+	require.Equal(t, 1, rec2.calls, "tier 2 dispatches exactly the one tier-1-skipped, within-tier-2 finding")
+	assert.Contains(t, rec2.prompts[0], "tier2.go:2", "tier 2's single call targets the tier-1-skipped finding")
+	for file := range tier1Fixed {
+		for _, p := range rec2.prompts {
+			assert.NotContains(t, p, file+":", "tier 2 must never re-dispatch a tier-1-fixed finding (%s)", file)
+		}
+	}
+
+	// Partition: every eligible finding ends in EXACTLY one terminal state.
+	for i := range findings {
+		f := &findings[i]
+		fixed := f.Fix != ""
+		skipLogged := f.Fix == "" && f.FixWarning != ""
+		assert.NotEqual(t, fixed, skipLogged,
+			"%s must be either fixed XOR skip-logged, never both, never neither", f.File)
+	}
+
+	// Concrete per-finding expectations.
+	assert.NotEmpty(t, findingByFile(t, findings, "below.go").Fix, "below-ceiling finding fixed by tier 1")
+	assert.NotEmpty(t, findingByFile(t, findings, "boundary.go").Fix, "boundary-exact finding fixed by tier 1 (inclusive)")
+	assert.NotEmpty(t, findingByFile(t, findings, "zero.go").Fix, "zero-estimate finding is not ceiling-skipped")
+	assert.NotEmpty(t, findingByFile(t, findings, "neg.go").Fix, "negative-estimate finding is not ceiling-skipped")
+
+	t2 := findingByFile(t, findings, "tier2.go")
+	assert.Equal(t, "use a prepared statement", t2.Fix, "tier-1-skipped finding fixed by tier 2")
+	assert.Contains(t, t2.Evidence, "fix by "+registry.RoleExecutor, "tier 2's fix is attributed")
+	assert.Empty(t, t2.FixWarning, "tier 2 success clears tier 1's stale ceiling-skip warning")
+	assert.False(t, tier1Fixed["tier2.go"], "tier 2 (not tier 1) fixed this finding")
+
+	both := findingByFile(t, findings, "both.go")
+	assert.Empty(t, both.Fix, "above-both-ceilings finding is fixed by neither tier")
+	assert.NotEmpty(t, both.FixWarning, "above-both-ceilings finding is explicitly skip-logged, not silently dropped")
+	assert.NotContains(t, both.Evidence, "fix by ", "no fabricated attribution on a skipped finding")
+}
+
+// keysOf returns the keys of a string-set map (test helper for ElementsMatch).
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// AC 03-02 Edge Case 1: with DISTINCT tier Names the name-scoped attribution guard
+// does NOT prevent tier 2 from re-attempting a finding tier 1 already fixed. This
+// pins the ACTUAL current behavior (the "fix attribution already exists" assumption
+// is a real gap under distinct Names) so it is documented by assertion, not faith.
+func TestGenerateFixes_TwoTierDistinctNamesReprocesses(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 10},
+	}
+	reg := execRegistry("MEDIUM")
+	tier1 := twoTierConfig("cheap-tier", 30)
+	tier2 := twoTierConfig("frontier-tier", 240) // distinct Name
+
+	rec1 := &recordingExecutor{out: "cheap fix"}
+	rec2 := &recordingExecutor{out: "frontier fix"}
+	generateFixes(context.Background(), findings, tier1, reg, rec1, nil, okDispatcher(), 0)
+	require.Equal(t, "cheap fix", findings[0].Fix)
+	require.Contains(t, findings[0].Evidence, "fix by cheap-tier")
+
+	generateFixes(context.Background(), findings, tier2, reg, rec2, nil, okDispatcher(), 0)
+	// Documented gap: distinct Name → attribution guard misses → tier 2 re-attempts.
+	assert.Equal(t, 1, rec2.calls, "distinct-Name tier 2 re-dispatches (name-scoped attribution gap, AC 03-02 EC1)")
+	assert.Equal(t, "frontier fix", findings[0].Fix, "tier 2's fix overwrites tier 1's under distinct Names")
+	assert.Contains(t, findings[0].Evidence, "fix by frontier-tier")
+	assert.Contains(t, findings[0].Evidence, "fix by cheap-tier", "both attributions accumulate in Evidence")
+}
+
+// AC 03-02 Edge Case 2: prefix-colliding tier Names ("op" vs "opus") must not
+// false-match on the substring — tier "op" must still fix a finding attributed
+// only to "opus", or it would be a silent drop.
+func TestGenerateFixes_TwoTierPrefixCollidingNames(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified,
+			Fix: "opus fix", Evidence: "Found by rev; fix by opus", EstMinutes: 10},
+	}
+	reg := execRegistry("MEDIUM")
+	tierOp := twoTierConfig("op", 240) // strict prefix of "opus"
+	rec := &recordingExecutor{out: "op fix"}
+	generateFixes(context.Background(), findings, tierOp, reg, rec, nil, okDispatcher(), 0)
+	assert.Equal(t, 1, rec.calls, "tier 'op' must not be suppressed by an existing 'fix by opus' token")
+	assert.Contains(t, findings[0].Evidence, "; fix by op")
+}
+
+// AC 03-01 Edge Case 3: two tiers over an empty finding set complete without error
+// and leave an empty set — trivially partitioned.
+func TestGenerateFixes_TwoTierEmptyInputSet(t *testing.T) {
+	findings := []reconcile.JSONFinding{}
+	reg := execRegistry("MEDIUM")
+	rec1 := &recordingExecutor{out: "x"}
+	rec2 := &recordingExecutor{out: "y"}
+	require.NotPanics(t, func() {
+		generateFixes(context.Background(), findings, twoTierConfig(registry.RoleExecutor, 30), reg, rec1, nil, okDispatcher(), 0)
+		generateFixes(context.Background(), findings, twoTierConfig(registry.RoleExecutor, 240), reg, rec2, nil, okDispatcher(), 0)
+	})
+	assert.Equal(t, 0, rec1.calls)
+	assert.Equal(t, 0, rec2.calls)
+	assert.Empty(t, findings)
+}
+
+// AC 03-01 Error Scenario 1: a tier-2 config whose Provider is not in the registry
+// logs executor_unknown_provider and processes nothing — it must NOT be misreported
+// as a clean partition; the finding set is left exactly as tier 1 produced it.
+func TestGenerateFixes_TwoTierUnknownProviderLeavesTier1State(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "tier2.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 60},
+	}
+	reg := execRegistry("MEDIUM")
+	// Tier 1 ceiling-skips the finding (60 > 30), leaving it unfixed.
+	generateFixes(context.Background(), findings, twoTierConfig(registry.RoleExecutor, 30), reg, &recordingExecutor{out: "x"}, nil, okDispatcher(), 0)
+	require.Empty(t, findings[0].Fix, "tier 1 ceiling-skipped the finding")
+	tier1Warning := findings[0].FixWarning
+
+	// Tier 2 points at an undefined provider.
+	badTier := twoTierConfig(registry.RoleExecutor, 240)
+	badTier.Provider = "does-not-exist"
+	rec2 := &recordingExecutor{out: "y"}
+	ctx, buf := ceilingCtx()
+	generateFixes(ctx, findings, badTier, reg, rec2, nil, okDispatcher(), 0)
+
+	assert.Equal(t, 0, rec2.calls, "unknown provider dispatches nothing")
+	assert.Contains(t, buf.String(), "executor_unknown_provider", "the unknown-provider warning fires")
+	assert.Empty(t, findings[0].Fix, "the finding is left exactly as tier 1 produced it (still unfixed)")
+	assert.Equal(t, tier1Warning, findings[0].FixWarning, "tier 2's failed run does not alter tier 1's state")
+}
+
+// AC 03-02 Error Scenario 1: attribution rides in Evidence and must survive the
+// findings.json write/read round-trip intact — a regression here would silently
+// defeat cross-tier double-processing prevention.
+func TestGenerateFixes_AttributionSurvivesFindingsJSONRoundTrip(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 10},
+	}
+	reg := execRegistry("MEDIUM")
+	generateFixes(context.Background(), findings, twoTierConfig(registry.RoleExecutor, 30), reg, &recordingExecutor{out: "tier1 fix"}, nil, okDispatcher(), 0)
+	require.Contains(t, findings[0].Evidence, "fix by "+registry.RoleExecutor)
+
+	// Round-trip through the shared findings.json contract.
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, reconciledSubdir), 0o755))
+	data, err := json.MarshalIndent(findings, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, reconciledSubdir, reconcile.FindingsJSON), data, 0o644))
+
+	reread, err := reconcile.ReadReconciledFindings(dir)
+	require.NoError(t, err)
+	require.Len(t, reread, 1)
+	assert.Equal(t, findings[0].Evidence, reread[0].Evidence, "attribution Evidence survives the findings.json round-trip")
+
+	// The re-read finding must still be recognized as already-fixed by the same tier.
+	tier2 := twoTierConfig(registry.RoleExecutor, 240)
+	rec2 := &recordingExecutor{out: "tier2 fix"}
+	generateFixes(context.Background(), reread, tier2, reg, rec2, nil, okDispatcher(), 0)
+	assert.Equal(t, 0, rec2.calls, "post-round-trip attribution still prevents tier 2 re-processing")
 }
 
 // generateFixes must treat a nil registry as a graceful no-op (defense-in-depth):
