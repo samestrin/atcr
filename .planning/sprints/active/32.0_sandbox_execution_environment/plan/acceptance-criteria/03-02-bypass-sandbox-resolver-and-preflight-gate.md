@@ -79,15 +79,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `validateAutoFixBackend` with `--no-sandbox=true` calls the sandbox resolver zero times, regardless of whether Docker or a `sandbox:` config is present/valid
-- [ ] `runAutoFix`'s validation step executes via the direct `os/exec` path (`verify.RunConfiguredValidation`) when the backend carries no sandbox, with unchanged pass/fail/revert semantics
-- [ ] `--no-sandbox=false` or absent leaves Story 2's resolver/Preflight gate fully intact (regression guard)
-- [ ] Apply-target, validation-command, and GitHub-credential checks in `validateAutoFixBackend` are unaffected by `--no-sandbox`'s value in either direction
+- [x] `validateAutoFixBackend` with `--no-sandbox=true` calls the sandbox resolver zero times, regardless of whether Docker or a `sandbox:` config is present/valid
+- [x] `runAutoFix`'s validation step executes via the direct `os/exec` path (`verify.RunConfiguredValidation`) when the backend carries no sandbox, with unchanged pass/fail/revert semantics
+- [x] `--no-sandbox=false` or absent leaves Story 2's resolver/Preflight gate fully intact (regression guard)
+- [x] Apply-target, validation-command, and GitHub-credential checks in `validateAutoFixBackend` are unaffected by `--no-sandbox`'s value in either direction
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

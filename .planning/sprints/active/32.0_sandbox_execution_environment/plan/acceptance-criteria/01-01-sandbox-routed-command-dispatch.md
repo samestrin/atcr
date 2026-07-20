@@ -89,4 +89,4 @@
 - [x] A unit test proves `RunSpec.Script` is never populated (only `Command`) for this call path
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

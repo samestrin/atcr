@@ -67,15 +67,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `cmd.Flags().Lookup("no-sandbox")` returns a non-nil flag of type `bool` with `DefValue == "false"`
-- [ ] Help text substring-matches language about disabling container isolation and running validation directly on the host
-- [ ] `--no-sandbox` parses successfully both with and without `--auto-fix` present on the same invocation
-- [ ] Existing `--auto-fix`-only invocations (no `--no-sandbox`) remain byte-identical in behavior (regression check against Story 1's default-sandboxed path)
+- [x] `cmd.Flags().Lookup("no-sandbox")` returns a non-nil flag of type `bool` with `DefValue == "false"`
+- [x] Help text substring-matches language about disabling container isolation and running validation directly on the host
+- [x] `--no-sandbox` parses successfully both with and without `--auto-fix` present on the same invocation
+- [x] Existing `--auto-fix`-only invocations (no `--no-sandbox`) remain byte-identical in behavior (regression check against Story 1's default-sandboxed path)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

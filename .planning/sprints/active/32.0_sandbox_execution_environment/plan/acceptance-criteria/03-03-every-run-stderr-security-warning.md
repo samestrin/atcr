@@ -78,16 +78,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Warning prints to stderr (never stdout) before validation executes, on every `--no-sandbox`-set invocation
-- [ ] Warning prints identically on a second and third consecutive in-process invocation — no `sync.Once`, no package-level "seen" flag, no env/state-file gate
-- [ ] Warning text explicitly names "WITHOUT container isolation" (or materially equivalent) run against untrusted/LLM-generated code
-- [ ] No warning appears at all when `--no-sandbox` is absent or explicitly `false`
-- [ ] A regression-style test proves a `sync.Once`/memoized implementation would fail the suite (i.e., the test genuinely exercises repetition, not just single-call presence)
+- [x] Warning prints to stderr (never stdout) before validation executes, on every `--no-sandbox`-set invocation
+- [x] Warning prints identically on a second and third consecutive in-process invocation — no `sync.Once`, no package-level "seen" flag, no env/state-file gate
+- [x] Warning text explicitly names "WITHOUT container isolation" (or materially equivalent) run against untrusted/LLM-generated code
+- [x] No warning appears at all when `--no-sandbox` is absent or explicitly `false`
+- [x] A regression-style test proves a `sync.Once`/memoized implementation would fail the suite (i.e., the test genuinely exercises repetition, not just single-call presence)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

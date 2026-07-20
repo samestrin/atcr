@@ -87,4 +87,4 @@
 - [x] Test suite runs hermetically (no live Docker) via the `fakeDocker` shim pattern
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

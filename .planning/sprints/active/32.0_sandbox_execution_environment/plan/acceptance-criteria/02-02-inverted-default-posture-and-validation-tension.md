@@ -87,4 +87,4 @@
 - [x] The resolver's doc comment explicitly states the inverted default polarity relative to `ResolveExecBackend`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

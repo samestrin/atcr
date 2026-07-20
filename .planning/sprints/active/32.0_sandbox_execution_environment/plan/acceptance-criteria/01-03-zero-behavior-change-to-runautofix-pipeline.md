@@ -76,15 +76,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Integration test proves a passing sandboxed validation drives the identical `ApplyPatch` → `CleanupBackups` → `CreateBranch` → `CreateCommit` → `FindOpenPullRequest`/`CreatePullRequest`/`UpdatePullRequest` sequence as the existing passing host-path test
-- [ ] Integration test proves a failing sandboxed validation drives `RevertPatch` and the exact existing "validation failed" error wording, with zero GitHub calls made
-- [ ] Integration test proves a sandbox `StartError` (cannot-validate) drives `RevertPatch` and the exact existing "cannot run validation" error wording, with zero GitHub calls made
-- [ ] Full existing `cmd/atcr` auto-fix test suite (apply-failure, revert-failure, empty-base-branch, PR-create-vs-update) passes unmodified in outcome when re-run against the new sandboxed path
+- [x] Integration test proves a passing sandboxed validation drives the identical `ApplyPatch` → `CleanupBackups` → `CreateBranch` → `CreateCommit` → `FindOpenPullRequest`/`CreatePullRequest`/`UpdatePullRequest` sequence as the existing passing host-path test
+- [x] Integration test proves a failing sandboxed validation drives `RevertPatch` and the exact existing "validation failed" error wording, with zero GitHub calls made
+- [x] Integration test proves a sandbox `StartError` (cannot-validate) drives `RevertPatch` and the exact existing "cannot run validation" error wording, with zero GitHub calls made
+- [x] Full existing `cmd/atcr` auto-fix test suite (apply-failure, revert-failure, empty-base-branch, PR-create-vs-update) passes unmodified in outcome when re-run against the new sandboxed path
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

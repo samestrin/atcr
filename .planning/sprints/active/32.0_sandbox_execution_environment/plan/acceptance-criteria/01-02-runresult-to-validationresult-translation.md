@@ -93,4 +93,4 @@
 - [x] Test proves `RunResult.Output` lands in `ValidationResult.Stdout` with `Stderr` left empty, with a comment/doc note explaining the stream-collapse
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

@@ -91,5 +91,5 @@
 - [x] If a new `docs/auto-fix.md` file was created, `docs/README.md` links it
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Content re-verified against Stories 1-3's final merged implementation immediately before this story's docs PR is finalized (per the story's Dependencies note and Potential Risks table)
+- [x] Code reviewed and approved
+- [x] Content re-verified against Stories 1-3's final merged implementation immediately before this story's docs PR is finalized (per the story's Dependencies note and Potential Risks table)

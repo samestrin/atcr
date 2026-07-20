@@ -97,4 +97,4 @@
 - [x] Content reconciled against Stories 1-3's final merged `--no-sandbox` flag name, default behavior, and warning trigger condition immediately before this story's docs PR merges
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

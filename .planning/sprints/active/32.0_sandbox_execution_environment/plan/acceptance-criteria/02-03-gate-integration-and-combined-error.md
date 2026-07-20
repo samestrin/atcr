@@ -73,15 +73,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `validateAutoFixBackend` calls `verify.ResolveAutoFixSandbox` as step (4), joining failures into the same `missing []string` slice
-- [ ] A combined-failure test proves the sandbox message appears alongside at least one other missing-piece message in a single returned error
-- [ ] The resolved `sandbox.Backend` is stored on a new `autoFixBackend` field and asserted populated on the success path
-- [ ] No new early-return error path is introduced — the sandbox check follows the append-or-assign pattern of the other three checks
+- [x] `validateAutoFixBackend` calls `verify.ResolveAutoFixSandbox` as step (4), joining failures into the same `missing []string` slice
+- [x] A combined-failure test proves the sandbox message appears alongside at least one other missing-piece message in a single returned error
+- [x] The resolved `sandbox.Backend` is stored on a new `autoFixBackend` field and asserted populated on the success path
+- [x] No new early-return error path is introduced — the sandbox check follows the append-or-assign pattern of the other three checks
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved
