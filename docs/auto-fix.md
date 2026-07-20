@@ -98,3 +98,35 @@ The block has exactly three fields:
 > validation command runs. If Docker is genuinely unavailable in your
 > environment, use [`--no-sandbox`](#opting-out---no-sandbox) to accept the risk
 > of host execution instead.
+
+## Opting out (`--no-sandbox`)
+
+The `--no-sandbox` flag is the **only** way to run `--auto-fix`'s validation
+outside the container. It is a command-line flag on `atcr review`; there is no
+config-file equivalent — nothing in the `auto_fix:` block (or anywhere in
+`.atcr/config.yaml`) can disable the sandbox.
+
+**What it does.** Passing `--no-sandbox` disables the container-isolation
+validation path entirely: the resolver and its preflight are skipped, and the
+post-apply validation command runs **directly on the host** instead. That means
+the untrusted, potentially LLM-hallucinated or prompt-injected validation code
+executes with the **full privileges of the `atcr` process** — none of the
+container guarantees apply. It has network access, a writable filesystem, the
+process's own capabilities, and no non-root confinement — the exact protections
+listed in
+[What the sandbox guarantees](execution.md#what-the-sandbox-guarantees) are all
+removed. This page does not re-list them so that description stays a single
+source of truth.
+
+**It warns on every run.** Every `--no-sandbox` invocation prints a security
+warning to stderr — not only the first time, and not gated behind any
+"seen once" state. If you script `--no-sandbox` into a loop, expect the warning
+on each run; that is deliberate, so the reduced isolation can never go unnoticed.
+
+**When it is acceptable.** The intended use is environments where Docker is
+unavailable — for example a CI runner or workstation with no Docker daemon, where
+the sandboxed-by-default path cannot preflight a backend at all. Choosing
+`--no-sandbox` there is choosing to **accept** that the validation command runs
+un-isolated on the host: only do it when you already trust the environment and
+the code under validation, or have other host-level containment around the
+`atcr` process. If Docker is available, prefer the default sandboxed path.
