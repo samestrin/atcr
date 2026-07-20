@@ -1,9 +1,9 @@
 {
-  "skill": "sprint-complete",
-  "args": ".planning/sprints/active/32.0_sandbox_execution_environment/",
-  "invocation": "/sprint-complete .planning/sprints/active/32.0_sandbox_execution_environment/",
+  "skill": "finalize-sprint",
+  "args": "@.planning/sprints/active/32.0_sandbox_execution_environment/",
+  "invocation": "/finalize-sprint @.planning/sprints/active/32.0_sandbox_execution_environment/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
   "session_id": "dd2f4995-7b5d-44eb-9739-351bbf9f1e18",
-  "timestamp": "2026-07-20T05:02:26.157Z"
+  "timestamp": "2026-07-20T15:38:28.874Z"
 }
