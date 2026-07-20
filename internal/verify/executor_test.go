@@ -923,6 +923,90 @@ func TestGenerateFixes_AttributionSurvivesFindingsJSONRoundTrip(t *testing.T) {
 	assert.Equal(t, 0, rec2.calls, "post-round-trip attribution still prevents tier 2 re-processing")
 }
 
+// AC 03-03: the two-tier workflow is proven by an AUTOMATED, REPRODUCIBLE E2E run
+// over a mixed-complexity fixture, using an actual findings.json on disk as the
+// shared, re-readable handoff artifact between tier 1 and tier 2 (the exact
+// sequence docs/registry.md documents for an operator). It asserts the full
+// partition contract over the reloaded file and that re-running the identical
+// sequence from the same seed yields byte-identical output (determinism).
+func TestGenerateFixes_TwoTierWorkflowReproducible(t *testing.T) {
+	reg := execRegistry("MEDIUM")
+
+	// A LOW/MEDIUM/HIGH-complexity mix (by EstMinutes), authored as struct literals
+	// so a JSONFinding schema change breaks compilation rather than silently drifting
+	// (AC 03-03 Error Scenario 1).
+	seed := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "cheap.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 15, Evidence: "Found by rev"},    // LOW → tier 1
+		{Severity: "HIGH", File: "mid.go", Line: 2, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 90, Evidence: "Found by rev"},      // MEDIUM → tier 2
+		{Severity: "HIGH", File: "hard.go", Line: 3, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 100000, Evidence: "Found by rev"}, // HIGH → skip-logged by both
+	}
+
+	// runWorkflow performs the full operator sequence in a fresh dir: seed
+	// findings.json, run tier 1 reading/writing it, then run tier 2 reading/writing
+	// it. Returns the final on-disk bytes plus the two tiers' call counts.
+	runWorkflow := func(t *testing.T) (finalBytes []byte, calls1, calls2 int) {
+		t.Helper()
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, reconciledSubdir), 0o755))
+		path := filepath.Join(dir, reconciledSubdir, reconcile.FindingsJSON)
+		write := func(fs []reconcile.JSONFinding) {
+			data, err := json.MarshalIndent(fs, "", "  ")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, data, 0o644))
+		}
+		runTier := func(ex *registry.ExecutorConfig, out string) int {
+			fs, err := reconcile.ReadReconciledFindings(dir)
+			require.NoError(t, err)
+			rec := &recordingExecutor{out: out}
+			generateFixes(context.Background(), fs, ex, reg, rec, nil, okDispatcher(), 0)
+			write(fs)
+			return rec.calls
+		}
+		write(seed)
+		calls1 = runTier(twoTierConfig(registry.RoleExecutor, 30), "cheap fix")     // tier 1: low ceiling
+		calls2 = runTier(twoTierConfig(registry.RoleExecutor, 240), "frontier fix") // tier 2: higher ceiling, same Name
+		finalBytes, err := os.ReadFile(path)
+		require.NoError(t, err)
+		return finalBytes, calls1, calls2
+	}
+
+	finalBytes, calls1, calls2 := runWorkflow(t)
+	assert.Equal(t, 1, calls1, "tier 1 fixes only the below-ceiling (cheap) finding")
+	assert.Equal(t, 1, calls2, "tier 2 fixes only the tier-1-skipped, within-tier-2 (mid) finding")
+
+	final, err := unmarshalFindings(finalBytes)
+	require.NoError(t, err)
+	byFile := map[string]reconcile.JSONFinding{}
+	for _, f := range final {
+		byFile[f.File] = f
+	}
+
+	// Partition contract over the file-handoff result.
+	assert.Equal(t, "cheap fix", byFile["cheap.go"].Fix, "cheap finding fixed by tier 1")
+	assert.Contains(t, byFile["cheap.go"].Evidence, "fix by "+registry.RoleExecutor)
+	assert.Equal(t, "frontier fix", byFile["mid.go"].Fix, "mid finding fixed by tier 2")
+	assert.Contains(t, byFile["mid.go"].Evidence, "fix by "+registry.RoleExecutor)
+	assert.Empty(t, byFile["hard.go"].Fix, "hard finding fixed by neither tier")
+	assert.NotEmpty(t, byFile["hard.go"].FixWarning, "hard finding is skip-logged, not silently dropped")
+	for _, f := range final {
+		assert.False(t, f.Fix != "" && f.FixWarning != "", "%s: never both Fix and FixWarning", f.File)
+		assert.False(t, f.Fix == "" && f.FixWarning == "", "%s: never neither (silent drop)", f.File)
+	}
+
+	// Reproducibility: the identical sequence from the same seed is deterministic.
+	finalBytes2, _, _ := runWorkflow(t)
+	assert.Equal(t, string(finalBytes), string(finalBytes2),
+		"re-running the two-tier workflow from the same seed yields byte-identical findings.json")
+}
+
+// unmarshalFindings decodes a findings.json byte slice into []JSONFinding — the same
+// shape ReadReconciledFindings produces, used where the test already holds the bytes.
+func unmarshalFindings(data []byte) ([]reconcile.JSONFinding, error) {
+	var fs []reconcile.JSONFinding
+	err := json.Unmarshal(data, &fs)
+	return fs, err
+}
+
 // generateFixes must treat a nil registry as a graceful no-op (defense-in-depth):
 // the in-memory direct-call/test path can pass a nil reg, and dereferencing
 // reg.Providers would panic with a nil-map deref and crash the verify run instead
