@@ -761,6 +761,34 @@ func TestRunAutoFix_SandboxFailRevertsWithIdenticalWording(t *testing.T) {
 	require.Equal(t, "old\n", string(got), "the working tree must be reverted after a sandbox validation failure")
 }
 
+// TestRunAutoFix_SandboxFailSurfacesCapturedOutput: a failing validation must not
+// discard its captured output — the sandbox path has already collapsed
+// stdout+stderr into res.Stdout, so the failure error must carry a bounded tail of
+// it, or the operator gets zero diagnostic bytes about WHY the fix was rejected.
+func TestRunAutoFix_SandboxFailSurfacesCapturedOutput(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	be := &fakeSandboxBackend{result: sandbox.RunResult{ExitCode: 3, Output: "boom: compile error at x.go:3"}}
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // would PASS on the host path
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: be,
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "local validation failed (exit 3)")
+	require.Contains(t, err.Error(), "boom: compile error at x.go:3",
+		"the failure error must surface the validation run's captured output")
+}
+
 // TestRunAutoFix_SandboxStartErrorRevertsWithCannotValidateWording: a backend fault
 // (Run returns a non-nil error → StartError per AC 01-02) takes the same
 // "cannot run validation" branch as a host-path StartError, reverting the tree with
