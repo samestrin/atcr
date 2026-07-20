@@ -17,26 +17,31 @@ func TestSandboxConfig_Validate(t *testing.T) {
 		name string
 		cfg  *SandboxConfig
 		ok   bool
+		// wantSub is the substring the error MUST contain for a failing case; it
+		// pins each rejection to the field it is meant to catch, so a refactor that
+		// short-circuits on the wrong field or reorders checks fails here instead of
+		// staying green on a generic require.Error. Empty for ok==true cases.
+		wantSub string
 	}{
-		{"nil is valid (unconfigured)", nil, true},
-		{"docker + image + test command", &SandboxConfig{Backend: "docker", Image: "golang:1.25", TestCommand: []string{"go", "test", "./..."}}, true},
-		{"default backend + image + test command", &SandboxConfig{Image: "python:3.12", TestCommand: []string{"make", "test"}}, true},
-		{"unsupported backend", &SandboxConfig{Backend: "podman", Image: "img", TestCommand: []string{"go", "test"}}, false},
-		{"missing image", &SandboxConfig{Backend: "docker", TestCommand: []string{"go", "test"}}, false},
-		{"missing test command", &SandboxConfig{Backend: "docker", Image: "img"}, false},
-		{"empty test token", &SandboxConfig{Image: "img", TestCommand: []string{"go", ""}}, false},
-		{"non-positive pids", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, PidsLimit: &pid}, false},
-		{"valid timeout_secs", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, TimeoutSecs: &secsValid}, true},
-		{"zero timeout_secs", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, TimeoutSecs: &secsZero}, false},
-		{"negative timeout_secs", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, TimeoutSecs: &secsNeg}, false},
-		{"over-max timeout_secs", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, TimeoutSecs: &secsOver}, false},
-		{"valid memory with unit", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, Memory: "512m"}, true},
-		{"valid memory bare bytes", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, Memory: "512"}, true},
-		{"invalid memory non-numeric", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, Memory: "abc"}, false},
-		{"invalid memory zero", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, Memory: "0"}, false},
-		{"valid cpus float", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, CPUs: "1.5"}, true},
-		{"invalid cpus non-numeric", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, CPUs: "abc"}, false},
-		{"invalid cpus zero", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, CPUs: "0"}, false},
+		{"nil is valid (unconfigured)", nil, true, ""},
+		{"docker + image + test command", &SandboxConfig{Backend: "docker", Image: "golang:1.25", TestCommand: []string{"go", "test", "./..."}}, true, ""},
+		{"default backend + image + test command", &SandboxConfig{Image: "python:3.12", TestCommand: []string{"make", "test"}}, true, ""},
+		{"unsupported backend", &SandboxConfig{Backend: "podman", Image: "img", TestCommand: []string{"go", "test"}}, false, "is unsupported"},
+		{"missing image", &SandboxConfig{Backend: "docker", TestCommand: []string{"go", "test"}}, false, "image is required"},
+		{"missing test command", &SandboxConfig{Backend: "docker", Image: "img"}, false, "test_command is required"},
+		{"empty test token", &SandboxConfig{Image: "img", TestCommand: []string{"go", ""}}, false, "must not contain empty tokens"},
+		{"non-positive pids", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, PidsLimit: &pid}, false, "pids_limit must be positive"},
+		{"valid timeout_secs", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, TimeoutSecs: &secsValid}, true, ""},
+		{"zero timeout_secs", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, TimeoutSecs: &secsZero}, false, "timeout_secs must be within"},
+		{"negative timeout_secs", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, TimeoutSecs: &secsNeg}, false, "timeout_secs must be within"},
+		{"over-max timeout_secs", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, TimeoutSecs: &secsOver}, false, "timeout_secs must be within"},
+		{"valid memory with unit", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, Memory: "512m"}, true, ""},
+		{"valid memory bare bytes", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, Memory: "512"}, true, ""},
+		{"invalid memory non-numeric", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, Memory: "abc"}, false, "is not a valid docker size"},
+		{"invalid memory zero", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, Memory: "0"}, false, "is not a valid docker size"},
+		{"valid cpus float", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, CPUs: "1.5"}, true, ""},
+		{"invalid cpus non-numeric", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, CPUs: "abc"}, false, "must be a positive number"},
+		{"invalid cpus zero", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, CPUs: "0"}, false, "must be a positive number"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -45,6 +50,8 @@ func TestSandboxConfig_Validate(t *testing.T) {
 				assert.NoError(t, err)
 			} else {
 				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.wantSub,
+					"failing case must return the error naming its root cause")
 			}
 		})
 	}
