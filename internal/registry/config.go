@@ -222,6 +222,16 @@ type ExecutorConfig struct {
 	// unset (nil → DefaultExecutorMaxToolCalls), mirroring AgentConfig.MaxTurns.
 	AgentMode    bool `yaml:"agent_mode,omitempty"`     // Epic 7.4: opt-in tool-loop fix generation (default false)
 	MaxToolCalls *int `yaml:"max_tool_calls,omitempty"` // Epic 7.4: agent-mode tool-call budget; nil = default 10
+	// Complexity ceilings (Sprint 32.1): the upper bound of fix work this executor
+	// will attempt, so a cheap/local-model tier safely skips-and-logs a finding beyond
+	// its capability instead of attempting it. MaxEstimatedMinutes is a pointer so an
+	// explicit 0 is distinguishable from unset (nil), mirroring MaxToolCalls; both an
+	// explicit 0 and unset mean "no ceiling" (unlimited) at the resolver. MaxSeverityForFix
+	// is the SEVERITY ceiling (the upper counterpart of MinSeverity's floor), normalized to
+	// canonical upper-case at load; empty means "no ceiling". generateFixes's ceiling skip
+	// chain (Phase 2) is the intended consumer, via the EffectiveXxx resolvers below.
+	MaxEstimatedMinutes *int   `yaml:"max_estimated_minutes,omitempty"` // routing ceiling on Finding.EstMinutes; nil/0 = no ceiling
+	MaxSeverityForFix   string `yaml:"max_severity_for_fix,omitempty"`  // fix ceiling: LOW|MEDIUM|HIGH|CRITICAL; empty = no ceiling
 }
 
 // EffectiveMaxToolCalls returns the agent-mode tool-call budget: the executor's own
@@ -233,6 +243,31 @@ func (e ExecutorConfig) EffectiveMaxToolCalls() int {
 		return *e.MaxToolCalls
 	}
 	return DefaultExecutorMaxToolCalls
+}
+
+// EffectiveMaxEstimatedMinutes returns the executor's complexity ceiling in minutes
+// (Sprint 32.1): the executor's own max_estimated_minutes when set positive, otherwise
+// 0 — the "no ceiling" (unlimited) sentinel. A nil (unset), explicit 0, or negative
+// value all resolve to 0, mirroring the non-positive → sentinel guard EffectiveMaxToolCalls
+// uses. It is the single resolver generateFixes's ceiling skip chain (Phase 2) consumes,
+// so the nil/non-positive → 0 fallback lives in one place; it performs no validation
+// (Story 4's validateExecutor owns range checks at load).
+func (e ExecutorConfig) EffectiveMaxEstimatedMinutes() int {
+	if e.MaxEstimatedMinutes != nil && *e.MaxEstimatedMinutes > 0 {
+		return *e.MaxEstimatedMinutes
+	}
+	return 0
+}
+
+// EffectiveMaxSeverityForFix returns the executor's severity ceiling (Sprint 32.1):
+// the executor's own max_severity_for_fix when set, otherwise "" — the "no ceiling"
+// sentinel (every finding severity is eligible), the upper counterpart to
+// EffectiveFixMinSeverity's floor. It is a pure pass-through: unlike EffectiveFixMinSeverity
+// it applies no default and, like it, performs no normalization here (applyDefaults
+// canonicalizes a set value at load; Story 4's validateExecutor rejects a non-canonical
+// one). generateFixes's ceiling skip chain (Phase 2) is the intended consumer.
+func (e ExecutorConfig) EffectiveMaxSeverityForFix() string {
+	return e.MaxSeverityForFix
 }
 
 // EffectiveFixMinSeverity returns the executor's own min_severity_for_fix when
@@ -927,6 +962,13 @@ func (r *Registry) applyDefaults() {
 			r.Executor.MinSeverity = DefaultFixMinSeverity
 		} else {
 			r.Executor.MinSeverity = reclib.NormalizeSeverity(r.Executor.MinSeverity)
+		}
+		// max_severity_for_fix (Sprint 32.1) has NO default (empty = no ceiling), but a
+		// set value is canonicalized to upper-case so the Phase 2 routing check compares a
+		// stable token — mirroring min_severity_for_fix. validateExecutor rejects any
+		// non-canonical value, so NormalizeSeverity here only fixes casing.
+		if r.Executor.MaxSeverityForFix != "" {
+			r.Executor.MaxSeverityForFix = reclib.NormalizeSeverity(r.Executor.MaxSeverityForFix)
 		}
 	}
 }

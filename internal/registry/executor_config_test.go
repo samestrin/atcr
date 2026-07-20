@@ -590,3 +590,89 @@ func TestExecutor_AbsentBlockValid_AC8(t *testing.T) {
 	require.NoError(t, err, "a registry with no executor block must be valid")
 	assert.Nil(t, reg.Executor, "no executor block leaves Registry.Executor nil; agent_mode cannot be set")
 }
+
+// --- Sprint 32.1: complexity-ceiling fields (Story 1) ---
+
+// AC 01-01 Scenario 1: both ceiling fields parse to their exact configured values.
+func TestExecutor_ComplexityCeilingFieldsParsed(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_estimated_minutes: 30
+  max_severity_for_fix: HIGH
+`))
+	require.NoError(t, err)
+	require.NotNil(t, reg.Executor)
+	require.NotNil(t, reg.Executor.MaxEstimatedMinutes, "max_estimated_minutes parses to a non-nil pointer")
+	assert.Equal(t, 30, *reg.Executor.MaxEstimatedMinutes)
+	assert.Equal(t, "HIGH", reg.Executor.MaxSeverityForFix)
+}
+
+// AC 01-01 Scenario 2: max_severity_for_fix is normalized to canonical upper-case,
+// mirroring min_severity_for_fix.
+func TestExecutor_MaxSeverityForFixNormalized(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_severity_for_fix: high
+`))
+	require.NoError(t, err)
+	require.NotNil(t, reg.Executor)
+	assert.Equal(t, "HIGH", reg.Executor.MaxSeverityForFix)
+}
+
+// AC 01-01 Scenario 3: both fields are absent-safe when omitted (backward compat).
+func TestExecutor_ComplexityCeilingFieldsAbsentSafe(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+`))
+	require.NoError(t, err)
+	require.NotNil(t, reg.Executor)
+	assert.Nil(t, reg.Executor.MaxEstimatedMinutes, "unset max_estimated_minutes stays nil")
+	assert.Equal(t, "", reg.Executor.MaxSeverityForFix, "unset max_severity_for_fix stays empty")
+}
+
+// AC 01-01 Edge Case 1: an explicit max_estimated_minutes: 0 parses to a non-nil
+// pointer dereferencing to 0, distinguishable from unset (pointer convention).
+func TestExecutor_MaxEstimatedMinutesExplicitZeroParsed(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_estimated_minutes: 0
+`))
+	require.NoError(t, err)
+	require.NotNil(t, reg.Executor)
+	require.NotNil(t, reg.Executor.MaxEstimatedMinutes, "explicit 0 parses to a non-nil pointer")
+	assert.Equal(t, 0, *reg.Executor.MaxEstimatedMinutes)
+}
+
+// AC 01-02 Scenarios 1 & 3, Edge Cases 1 & 2: EffectiveMaxEstimatedMinutes returns
+// the configured positive ceiling, and the 0 "no ceiling" sentinel when nil, zero,
+// or negative — a pure pass-through/fallback resolver, no validation.
+func TestExecutorConfig_EffectiveMaxEstimatedMinutes(t *testing.T) {
+	assert.Equal(t, 0, ExecutorConfig{}.EffectiveMaxEstimatedMinutes(),
+		"unset (nil) max_estimated_minutes resolves to 0 (no ceiling)")
+	assert.Equal(t, 0, ExecutorConfig{MaxEstimatedMinutes: intPtr(0)}.EffectiveMaxEstimatedMinutes(),
+		"explicit 0 resolves to 0 (no ceiling), identical to unset")
+	assert.Equal(t, 0, ExecutorConfig{MaxEstimatedMinutes: intPtr(-5)}.EffectiveMaxEstimatedMinutes(),
+		"a negative ceiling resolves to 0 (no ceiling), mirroring EffectiveMaxToolCalls")
+	assert.Equal(t, 45, ExecutorConfig{MaxEstimatedMinutes: intPtr(45)}.EffectiveMaxEstimatedMinutes(),
+		"an explicit positive ceiling is returned unchanged")
+}
+
+// AC 01-02 Scenarios 2 & 4, Edge Case 3: EffectiveMaxSeverityForFix returns the
+// configured value when non-empty and "" (no ceiling) when unset — pass-through,
+// no validation or normalization of its own (a bogus value is returned verbatim).
+func TestExecutorConfig_EffectiveMaxSeverityForFix(t *testing.T) {
+	assert.Equal(t, "", ExecutorConfig{}.EffectiveMaxSeverityForFix(),
+		"unset max_severity_for_fix resolves to \"\" (no ceiling)")
+	assert.Equal(t, "HIGH", ExecutorConfig{MaxSeverityForFix: "HIGH"}.EffectiveMaxSeverityForFix(),
+		"a configured value is returned unchanged")
+	assert.Equal(t, "BOGUS", ExecutorConfig{MaxSeverityForFix: "BOGUS"}.EffectiveMaxSeverityForFix(),
+		"the resolver is a pass-through: it does not validate or normalize")
+}
