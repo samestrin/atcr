@@ -110,7 +110,9 @@ adding a code:
 
 - An unsupported `--axi` flag combination — `atcr review --axi --auto-fix`
   (`--auto-fix` drives an interactive write-back flow, not a consumable payload)
-  — is a **usage error (2)**.
+  — is a **usage error (2)**. The `--auto-fix` flow's own sandboxed-by-default
+  validation and the `--no-sandbox` opt-out are documented in
+  [Auto-fix sandboxed validation](auto-fix.md).
 - An internal AXI rendering fault is a **generic failure (1)**.
 - A malformed `ATCR_AXI_MAX_LINES` is **not an error at all** — it fails open to
   the default cap (see below).

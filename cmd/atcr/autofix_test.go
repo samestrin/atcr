@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -54,6 +56,60 @@ func clearGitHubEnv(t *testing.T) {
 func writeGoMod(t *testing.T, dir string) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n\ngo 1.22\n"), 0o644))
+}
+
+// fakeDockerShim writes a POSIX `docker` shim and returns its path. When pass is
+// true the shim satisfies Preflight (the `info` subcommand reports a generous host
+// so validateHostCaps passes; every other invocation exits 0); when false the
+// `info` subcommand exits non-zero so Preflight fails. It mirrors the
+// fakeDockerRecording shim in internal/verify/autofix_exec_test.go so the cmd/atcr
+// gate tests stay hermetic (no live Docker daemon).
+func fakeDockerShim(t *testing.T, pass bool) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake-docker shim is POSIX-only")
+	}
+	dir := t.TempDir()
+	var infoBody string
+	if pass {
+		infoBody = `  echo '{"MemTotal": 8589934592, "NCPU": 8}'
+  exit 0`
+	} else {
+		infoBody = `  echo 'Cannot connect to the Docker daemon' 1>&2
+  exit 1`
+	}
+	body := "if [ \"$1\" = \"info\" ]; then\n" + infoBody + "\nfi\nexit 0"
+	p := filepath.Join(dir, "docker")
+	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755))
+	return p
+}
+
+// sandboxConfig returns a valid SandboxConfig wired to the fakeDockerShim at
+// dockerPath, so a gate test can supply the gate's fourth (sandbox) piece.
+func sandboxConfig(dockerPath string) *registry.SandboxConfig {
+	return &registry.SandboxConfig{
+		Backend:     "docker",
+		DockerPath:  dockerPath,
+		Image:       "alpine:3.20",
+		TestCommand: []string{"go", "test", "./..."},
+	}
+}
+
+// spyResolveSandbox installs a counting stand-in for the sandbox resolver and
+// returns a pointer to its invocation count, restoring the real resolver on
+// cleanup. It lets a --no-sandbox test PROVE zero invocations (AC 03-02), which a
+// resolver that merely no-ops on enabled==false could not demonstrate. The stub
+// returns (nil, nil) so a counted call does not itself fail the gate.
+func spyResolveSandbox(t *testing.T) *int {
+	t.Helper()
+	calls := 0
+	orig := resolveAutoFixSandboxFn
+	resolveAutoFixSandboxFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, error) {
+		calls++
+		return nil, nil
+	}
+	t.Cleanup(func() { resolveAutoFixSandboxFn = orig })
+	return &calls
 }
 
 // --- 06-01: flag off by default, discoverable in help ----------------------
@@ -166,6 +222,28 @@ func TestValidateAutoFixBackend_Refusals(t *testing.T) {
 	}
 }
 
+// TestValidateAutoFixBackend_SandboxSkippedWhenGateAlreadyFailing: the sandbox
+// resolver/Preflight (gate check 4) shells out to docker and spawns a throwaway
+// container, so it must be skipped when the cheap local checks (1-3) already
+// failed — a half-configured run refuses on the missing piece without paying
+// the container cost.
+func TestValidateAutoFixBackend_SandboxSkippedWhenGateAlreadyFailing(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	calls := spyResolveSandbox(t)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
+	cmd := autoFixCmd(t, "o/r", "", "") // repo present, token missing -> check (3) fails
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "GitHub token")
+	require.Equal(t, 0, *calls, "sandbox resolver must not run when an earlier gate check already failed")
+}
+
 // TestValidateAutoFixBackend_RejectsInsecureAPIURL: a malformed or insecure
 // (non-loopback http) --api-url is a fail-closed gate refusal, caught up front by
 // shape-checking rather than surfacing lazily at the first HTTP call (TD-014).
@@ -189,7 +267,11 @@ func TestValidateAutoFixBackend_ApplyTargetResolvedAbsolute(t *testing.T) {
 	dir := t.TempDir()
 	writeGoMod(t, dir)
 	t.Chdir(dir)
-	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
 	cmd := autoFixCmd(t, "o/r", "tok", "")
 	be, err := validateAutoFixBackend(cmd, proj, ".")
 	require.NoError(t, err)
@@ -238,7 +320,11 @@ func TestValidateAutoFixBackend_PassesWhenConfigured(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "env/repo")
 	root := t.TempDir()
 	writeGoMod(t, root)
-	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
 	cmd := autoFixCmd(t, "flag/repo", "flagtok", "")
 
 	be, err := validateAutoFixBackend(cmd, proj, root)
@@ -264,7 +350,11 @@ func TestValidateAutoFixBackend_NoNetworkCall(t *testing.T) {
 	defer srv.Close()
 	root := t.TempDir()
 	writeGoMod(t, root)
-	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
 	cmd := autoFixCmd(t, "o/r", "tok", srv.URL)
 
 	be, err := validateAutoFixBackend(cmd, proj, root)
@@ -281,6 +371,7 @@ func TestValidateAutoFixBackend_ConfiguredCommandWins(t *testing.T) {
 	proj := &registry.ProjectConfig{
 		Agents:  []string{"a"},
 		AutoFix: &registry.AutoFixConfig{ApplyTarget: ".", ValidateCommand: []string{"make", "check"}},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
 	}
 	cmd := autoFixCmd(t, "o/r", "tok", "")
 	be, err := validateAutoFixBackend(cmd, proj, root)
@@ -298,6 +389,7 @@ func TestValidateAutoFixBackend_ConfiguredTimeout(t *testing.T) {
 	proj := &registry.ProjectConfig{
 		Agents:  []string{"a"},
 		AutoFix: &registry.AutoFixConfig{ApplyTarget: ".", ValidateTimeout: "30s"},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
 	}
 	cmd := autoFixCmd(t, "o/r", "tok", "")
 	be, err := validateAutoFixBackend(cmd, proj, root)
@@ -579,6 +671,220 @@ func TestRunAutoFix_RemoteLeftoverNotice(t *testing.T) {
 	}
 }
 
+// --- 01-03: zero behavior change to runAutoFix, validation routed through a
+// supplied sandbox.Backend --------------------------------------------------
+
+// fakeSandboxBackend is a sandbox.Backend stand-in for runAutoFix pipeline tests:
+// it records that Run was invoked (and the RunSpec it received, so a test can
+// assert the runAutoFix→adapter forwarding of argv/timeout/apply-target) and
+// returns a preconfigured RunResult/error so a test can drive the sandbox-routed
+// validation path without a live container (AC 01-03).
+type fakeSandboxBackend struct {
+	runCalls int
+	gotSpec  sandbox.RunSpec
+	result   sandbox.RunResult
+	runErr   error
+}
+
+func (f *fakeSandboxBackend) Name() string                    { return "fake-sandbox" }
+func (f *fakeSandboxBackend) Preflight(context.Context) error { return nil }
+func (f *fakeSandboxBackend) Run(_ context.Context, spec sandbox.RunSpec) (sandbox.RunResult, error) {
+	f.runCalls++
+	f.gotSpec = spec
+	return f.result, f.runErr
+}
+
+// TestRunAutoFix_SandboxPassDrivesIdenticalPRSequence: when a sandbox.Backend is
+// supplied and reports a passing result, runAutoFix drives the identical
+// ApplyPatch → CleanupBackups → CreateBranch → CreateCommit → FindOpenPullRequest →
+// CreatePullRequest sequence as the host-exec pass case (AC 01-03 Scenario 1). The
+// validateArgv is `false` (would FAIL on the host path), so a green result here can
+// only come from routing through the fake backend — proving the dispatch, not the
+// host os/exec fallback.
+func TestRunAutoFix_SandboxPassDrivesIdenticalPRSequence(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	be := &fakeSandboxBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"false"}, // would FAIL on the host path
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: be,
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, be.runCalls, "validation must route through the supplied sandbox backend, not the host path")
+	require.Equal(t, []string{"false"}, be.gotSpec.Command,
+		"runAutoFix must forward validateArgv into the RunSpec unchanged")
+	require.Equal(t, 5*time.Second, be.gotSpec.Timeout,
+		"runAutoFix must forward validateTimeout into the RunSpec unchanged")
+	require.Equal(t, root, be.gotSpec.SnapshotDir,
+		"runAutoFix must forward the apply target as the RunSpec snapshot dir")
+	require.Equal(t, 1, gh.branchCalls)
+	require.Equal(t, 1, gh.commitCalls)
+	require.Equal(t, 1, gh.createPR)
+	require.Equal(t, 0, gh.updatePR)
+	got, _ := os.ReadFile(filepath.Join(root, rel))
+	require.Equal(t, "new\n", string(got), "validated content stays applied on a sandbox pass")
+}
+
+// TestRunAutoFix_SandboxFailRevertsWithIdenticalWording: a failing sandbox result
+// (non-zero exit) reverts the tree, fires ZERO GitHub calls, and returns the exact
+// existing "local validation failed (exit %d)" wording (AC 01-03 Scenario 2). The
+// validateArgv is `true` (would PASS on the host path), so a revert here can only
+// come from the sandbox result.
+func TestRunAutoFix_SandboxFailRevertsWithIdenticalWording(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	be := &fakeSandboxBackend{result: sandbox.RunResult{ExitCode: 3, Output: "boom"}}
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // would PASS on the host path
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: be,
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.Error(t, err)
+	require.Equal(t, 1, be.runCalls, "validation must route through the sandbox backend")
+	require.Contains(t, err.Error(), "local validation failed (exit 3)",
+		"the sandbox-fail branch must reuse the exact host-path failure wording with the sandbox exit code")
+	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
+		"no GitHub call may fire on a sandbox validation failure")
+	got, _ := os.ReadFile(filepath.Join(root, rel))
+	require.Equal(t, "old\n", string(got), "the working tree must be reverted after a sandbox validation failure")
+}
+
+// TestRunAutoFix_SandboxFailSurfacesCapturedOutput: a failing validation must not
+// discard its captured output — the sandbox path has already collapsed
+// stdout+stderr into res.Stdout, so the failure error must carry a bounded tail of
+// it, or the operator gets zero diagnostic bytes about WHY the fix was rejected.
+func TestRunAutoFix_SandboxFailSurfacesCapturedOutput(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	be := &fakeSandboxBackend{result: sandbox.RunResult{ExitCode: 3, Output: "boom: compile error at x.go:3"}}
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // would PASS on the host path
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: be,
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "local validation failed (exit 3)")
+	require.Contains(t, err.Error(), "boom: compile error at x.go:3",
+		"the failure error must surface the validation run's captured output")
+}
+
+// TestRunAutoFix_SandboxTimeoutReportsTimeoutNotExitZero: on a validation timeout
+// the translated result leaves ExitCode at 0 and sets TimedOut, so the failure
+// branch must say so — "local validation failed (exit 0)" is a nonsensical message
+// that hides the timeout from the operator.
+func TestRunAutoFix_SandboxTimeoutReportsTimeoutNotExitZero(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	be := &fakeSandboxBackend{result: sandbox.RunResult{Output: "partial before deadline", TimedOut: true}}
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // would PASS on the host path
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: be,
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "timed out", "a timed-out validation must surface AS a timeout")
+	require.NotContains(t, err.Error(), "exit 0", "reporting exit 0 for a timeout is nonsensical and misleading")
+	require.Contains(t, err.Error(), "partial before deadline",
+		"the partial output captured before the deadline must be retained in the error")
+	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
+		"no GitHub call may fire on a validation timeout")
+}
+
+// TestRunAutoFix_SandboxStartErrorRevertsWithCannotValidateWording: a backend fault
+// (Run returns a non-nil error → StartError per AC 01-02) takes the same
+// "cannot run validation" branch as a host-path StartError, reverting the tree with
+// zero GitHub calls (AC 01-03 Scenario 3). validateArgv is `true` so the host path
+// would have passed.
+func TestRunAutoFix_SandboxStartErrorRevertsWithCannotValidateWording(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	be := &fakeSandboxBackend{runErr: errors.New("docker daemon unreachable")}
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // would PASS on the host path
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: be,
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.Error(t, err)
+	require.Equal(t, 1, be.runCalls, "validation must route through the sandbox backend")
+	require.Contains(t, err.Error(), "cannot run validation",
+		"a sandbox backend fault must take the same cannot-validate branch as a host StartError")
+	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
+		"no GitHub call may fire when the sandbox cannot validate")
+	got, _ := os.ReadFile(filepath.Join(root, rel))
+	require.Equal(t, "old\n", string(got), "the working tree must be reverted when the sandbox cannot validate")
+}
+
+// TestRunAutoFix_NilSandboxUsesHostPath: with no sandbox backend supplied
+// (--no-sandbox opt-out), validation still runs on the host exactly as before, so
+// the existing host-path tests remain the zero-behavior-change baseline (AC 01-03
+// Edge Case: the routing change must not disturb the nil path).
+func TestRunAutoFix_NilSandboxUsesHostPath(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // host path passes
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: nil, // opt-out: host path
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, gh.createPR, "the host path stays byte-identical when no sandbox backend is supplied")
+}
+
 // --- thin finding->entry selection ----------------------------------------
 
 // TestSelectAutoFixEntries_FiltersByThresholdAndFix: only findings carrying a Fix
@@ -641,6 +947,14 @@ func TestOrchestrateAutoFix_SkippedDuplicatesNotice(t *testing.T) {
 	resolveHeadSHAFn = func(context.Context, string) (string, error) { return "deadbeef", nil }
 	t.Cleanup(func() { resolveHeadSHAFn = oldResolve })
 
+	// Stub the GitHub client seam so the run is hermetic: the pre-stub version's
+	// require.Error was satisfied by an incidental network/auth failure unrelated
+	// to the duplicate-skip behavior under test.
+	gh := &fakeGitHub{}
+	oldClient := newAutoFixGitHubFn
+	newAutoFixGitHubFn = func(string, string) autoFixGitHub { return gh }
+	t.Cleanup(func() { newAutoFixGitHubFn = oldClient })
+
 	id := verifyFixture(t, "dup", []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "same.txt", Line: 1, Fix: diffFor("same.txt")},
 		{Severity: "HIGH", File: "same.txt", Line: 9, Fix: diffFor("same.txt")},
@@ -654,6 +968,427 @@ func TestOrchestrateAutoFix_SkippedDuplicatesNotice(t *testing.T) {
 		owner:           "o", repo: "r", token: "tok",
 	}
 	err := orchestrateAutoFix(context.Background(), &buf, be, filepath.Join(".atcr", "reviews", id), "", "main")
-	require.Error(t, err) // the live GitHub client fails without network/auth
+	require.NoError(t, err, "orchestration must succeed hermetically — a live network/auth failure must not be load-bearing")
 	require.Contains(t, buf.String(), "skipped", "output must tell the operator that duplicate-path fixes were skipped")
+	require.Equal(t, 1, gh.createPR, "the run must drive the full PR sequence against the stubbed client")
+}
+
+// --- 03-01: --no-sandbox flag registration and help text -------------------
+
+// TestNoSandboxFlag_Registered: --no-sandbox is a bool flag defaulting to false,
+// present and readable even before any parsing (AC 03-01 Scenario 1/2).
+func TestNoSandboxFlag_Registered(t *testing.T) {
+	c := &cobra.Command{Use: "review"}
+	addAutoFixFlags(c)
+
+	f := c.Flags().Lookup("no-sandbox")
+	require.NotNil(t, f, "--no-sandbox must be registered by addAutoFixFlags")
+	require.Equal(t, "bool", f.Value.Type(), "--no-sandbox must be a bool flag")
+	require.Equal(t, "false", f.DefValue, "--no-sandbox must default to false")
+
+	v, err := c.Flags().GetBool("no-sandbox")
+	require.NoError(t, err)
+	require.False(t, v, "--no-sandbox must read false when unset (present, not merely absent)")
+}
+
+// TestNoSandboxFlag_ParsesTrue: passing --no-sandbox on the command line sets it
+// to true (AC 03-01 Scenario 3).
+func TestNoSandboxFlag_ParsesTrue(t *testing.T) {
+	c := &cobra.Command{Use: "review"}
+	addAutoFixFlags(c)
+	require.NoError(t, c.Flags().Parse([]string{"--auto-fix", "--no-sandbox"}))
+	v, err := c.Flags().GetBool("no-sandbox")
+	require.NoError(t, err)
+	require.True(t, v)
+}
+
+// TestNoSandboxFlag_ParsesWithoutAutoFix: the flag parses cleanly even without
+// --auto-fix (cobra never rejects an unused bool); its no-op-without-auto-fix
+// behavior is enforced at the call site, not by registration (AC 03-01 EC1).
+func TestNoSandboxFlag_ParsesWithoutAutoFix(t *testing.T) {
+	c := &cobra.Command{Use: "review"}
+	addAutoFixFlags(c)
+	require.NoError(t, c.Flags().Parse([]string{"--no-sandbox"}))
+	v, err := c.Flags().GetBool("no-sandbox")
+	require.NoError(t, err)
+	require.True(t, v)
+}
+
+// TestNoSandboxFlag_HelpNamesTheRisk: the help text is a security control — it
+// must plainly state that the flag disables container isolation and runs
+// LLM-generated validation directly on the host (AC 03-01 EC2 / Security).
+func TestNoSandboxFlag_HelpNamesTheRisk(t *testing.T) {
+	c := &cobra.Command{Use: "review"}
+	addAutoFixFlags(c)
+	usage := c.Flags().Lookup("no-sandbox").Usage
+	require.NotEmpty(t, usage)
+	for _, want := range []string{"container isolation", "host", "LLM-generated"} {
+		require.Contains(t, usage, want,
+			"--no-sandbox help must name the risk (disables container isolation, runs LLM-generated code on the host)")
+	}
+	// The escalation framing carries the severity, not just the neutral nouns — pin
+	// it so the help cannot be silently weakened to understate the risk (3.5.A LOW).
+	for _, want := range []string{"DANGER", "privileges", "no isolation"} {
+		require.Contains(t, usage, want,
+			"--no-sandbox help must keep its severity framing (DANGER / your privileges / no isolation)")
+	}
+}
+
+// TestReviewCmd_NoSandboxFlagRegisteredOnReview: guards the actual wiring —
+// deleting addAutoFixFlags(cmd) from newReviewCmd would leave the real `review`
+// command with no --no-sandbox flag while the synthetic-command tests still passed
+// (3.5.A MEDIUM). Mirrors TestReviewCmd_AutoFixFlagExists.
+func TestReviewCmd_NoSandboxFlagRegisteredOnReview(t *testing.T) {
+	_, help := execCmdCapture(t, "review", "--help")
+	require.Contains(t, help, "--no-sandbox")
+
+	v, err := newReviewCmd().Flags().GetBool("no-sandbox")
+	require.NoError(t, err)
+	require.False(t, v, "--no-sandbox must default to false on the real review command")
+}
+
+// --- 02-03: sandbox resolution is the gate's fourth checked piece -----------
+
+// TestValidateAutoFixBackend_SandboxUnconfiguredJoinsGate: under the default
+// sandboxed-on posture, a nil `sandbox:` block is a hard gate refusal even when
+// every other piece is valid — the fail-closed behavior change (AC 02-03 EC3 /
+// Scenario 2). The refusal is the standard usage error (exit 2), not a new path.
+func TestValidateAutoFixBackend_SandboxUnconfiguredJoinsGate(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err), "an unconfigured sandbox is a fail-closed usage error")
+	require.Contains(t, err.Error(), "[sandbox] block", "the combined error must name the sandbox failure")
+}
+
+// TestValidateAutoFixBackend_SandboxSkippedWhenTokenMissing: a missing token fails
+// one of the cheap local checks (1-3), so the sandbox check — the expensive fourth
+// piece that shells out to docker and spawns a throwaway container — is skipped
+// entirely. The combined error names the token failure and NOT the sandbox piece.
+func TestValidateAutoFixBackend_SandboxSkippedWhenTokenMissing(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := autoFixCmd(t, "o/r", "", "") // token missing
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "a GitHub token is required", "token failure must appear in the combined error")
+	require.NotContains(t, err.Error(), "[sandbox] block", "sandbox check is skipped when an earlier gate check already failed")
+}
+
+// TestValidateAutoFixBackend_SandboxResolvedStoredOnBackend: with all four pieces
+// present (including a preflight-passing sandbox), the gate returns nil and stores
+// the resolved backend on autoFixBackend.sandboxBackend (AC 02-03 Scenario 1 / EC2).
+func TestValidateAutoFixBackend_SandboxResolvedStoredOnBackend(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	be, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err)
+	require.NotNil(t, be.sandboxBackend, "the resolved sandbox backend must be stored on the returned backend")
+}
+
+// TestValidateAutoFixBackend_SandboxPreflightFailureJoinsGate: a `sandbox:` block
+// whose backend fails Preflight surfaces through the same combined path with the
+// resolver's "preflight"-bearing message intact (AC 02-03 Error Scenario 2).
+func TestValidateAutoFixBackend_SandboxPreflightFailureJoinsGate(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, false)),
+	}
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "preflight", "a preflight failure must surface through the combined gate error")
+}
+
+// TestValidateAutoFixBackend_SandboxUsesSuppliedContext: when the command carries a
+// real context (as it always does in production via ExecuteContext), the gate
+// threads THAT context into the sandbox resolver rather than falling back to the
+// nil-guard's context.Background(). A cancelled context makes Preflight fail, and
+// that failure surfaces through the combined gate error — proving the supplied
+// context reaches ResolveAutoFixSandbox.
+func TestValidateAutoFixBackend_SandboxUsesSuppliedContext(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)), // would pass Preflight with a live ctx
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancelled: Preflight's docker subprocess must abort
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	cmd.SetContext(ctx)
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err, "a cancelled supplied context must make sandbox Preflight fail the gate")
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "sandbox", "the cancelled-context preflight failure must surface as the sandbox gate piece")
+}
+
+// TestValidateAutoFixBackend_CheapPiecesCombineInOneError: when every cheap local
+// gate piece fails simultaneously (missing apply target, unresolvable validation
+// command, missing GitHub token), the single returned usage error names ALL THREE
+// in one combined message (exit 2). The sandbox check — the expensive fourth piece
+// that shells out to docker — is gated on those cheap checks passing, so it
+// contributes nothing to a gate that already refuses.
+func TestValidateAutoFixBackend_CheapPiecesCombineInOneError(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir() // deliberately NO go.mod → validation command cannot resolve
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "does-not-exist"}, // apply target stat-fails
+		Sandbox: nil,                                                    // unconfigured sandbox
+	}
+	cmd := autoFixCmd(t, "", "", "") // no repo, no token
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err), "an all-pieces-missing gate failure is a usage error (exit 2)")
+	msg := err.Error()
+	require.Contains(t, msg, "apply target", "the combined error must name the apply-target failure")
+	require.Contains(t, msg, "validation command", "the combined error must name the validation-command failure")
+	require.Contains(t, msg, "a GitHub token is required", "the combined error must name the GitHub-credential failure")
+	require.NotContains(t, msg, "[sandbox] block", "sandbox check is skipped when the cheap checks already failed")
+}
+
+// --- 03-02: --no-sandbox bypasses the resolver/preflight gate ---------------
+
+// noSandboxCmd builds a bare auto-fix command with --no-sandbox already set, so a
+// bypass test drives validateAutoFixBackend on the opt-out path.
+func noSandboxCmd(t *testing.T, repo, token string) *cobra.Command {
+	t.Helper()
+	c := autoFixCmd(t, repo, token, "")
+	require.NoError(t, c.Flags().Set("no-sandbox", "true"))
+	return c
+}
+
+// TestValidateAutoFixBackend_NoSandboxSkipsResolver: with --no-sandbox set and NO
+// sandbox config and no Docker, the resolver is never called, no sandbox entry is
+// appended to missing, and the gate passes with a nil sandboxBackend (AC 03-02
+// Scenario 1). Proven by a zero-invocation spy, not merely "no docker error".
+func TestValidateAutoFixBackend_NoSandboxSkipsResolver(t *testing.T) {
+	clearGitHubEnv(t)
+	calls := spyResolveSandbox(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := noSandboxCmd(t, "o/r", "tok")
+	be, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err, "--no-sandbox must let the gate pass without a sandbox config")
+	require.Equal(t, 0, *calls, "the sandbox resolver must be called ZERO times under --no-sandbox")
+	require.Nil(t, be.sandboxBackend, "no sandbox backend is resolved on the --no-sandbox path")
+}
+
+// TestValidateAutoFixBackend_NoSandboxSkipsEvenWithValidConfig: a working
+// sandbox config does not override an explicit --no-sandbox — the operator's
+// choice wins and the resolver is still never called (AC 03-02 Scenario 3).
+func TestValidateAutoFixBackend_NoSandboxSkipsEvenWithValidConfig(t *testing.T) {
+	clearGitHubEnv(t)
+	calls := spyResolveSandbox(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
+	cmd := noSandboxCmd(t, "o/r", "tok")
+	be, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err)
+	require.Equal(t, 0, *calls, "a valid sandbox config must not override an explicit --no-sandbox")
+	require.Nil(t, be.sandboxBackend)
+}
+
+// TestValidateAutoFixBackend_NoSandboxStillEnforcesOtherPieces: the bypass is
+// scoped to sandbox resolution only — a missing token still fails closed, and the
+// error names the token failure but NOT any sandbox failure (AC 03-02 Security).
+func TestValidateAutoFixBackend_NoSandboxStillEnforcesOtherPieces(t *testing.T) {
+	clearGitHubEnv(t)
+	calls := spyResolveSandbox(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := noSandboxCmd(t, "o/r", "") // token missing
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "a GitHub token is required", "other gate pieces stay enforced under --no-sandbox")
+	require.NotContains(t, err.Error(), "[sandbox] block", "no sandbox failure may appear on the bypass path")
+	require.Equal(t, 0, *calls)
+}
+
+// TestValidateAutoFixBackend_NoSandboxOtherPiecesFailClosed: the bypass touches
+// sandbox resolution ONLY — a missing apply target and a missing validation
+// command each still fail closed under --no-sandbox, with the resolver never
+// called (AC 03-02 Security / Story-Specific, all three non-sandbox pieces).
+func TestValidateAutoFixBackend_NoSandboxOtherPiecesFailClosed(t *testing.T) {
+	cases := []struct {
+		name    string
+		goMod   bool
+		target  string
+		wantSub string
+	}{
+		{name: "missing apply target", goMod: true, target: "does-not-exist", wantSub: "apply target"},
+		{name: "missing validation command", goMod: false, target: ".", wantSub: "validation command"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearGitHubEnv(t)
+			calls := spyResolveSandbox(t)
+			root := t.TempDir()
+			if tc.goMod {
+				writeGoMod(t, root)
+			}
+			proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: tc.target}}
+			cmd := noSandboxCmd(t, "o/r", "tok")
+			_, err := validateAutoFixBackend(cmd, proj, root)
+			require.Error(t, err)
+			require.Equal(t, 2, exitCode(err))
+			require.Contains(t, err.Error(), tc.wantSub, "non-sandbox gate pieces must still fail closed under --no-sandbox")
+			require.NotContains(t, err.Error(), "[sandbox] block", "the sandbox piece is bypassed, so it must not appear")
+			require.Equal(t, 0, *calls, "the resolver must not be called on the bypass path")
+		})
+	}
+}
+
+// --- 03-03: every-run (non-memoized) stderr security warning ----------------
+
+const noSandboxWarnMarker = "WITHOUT container isolation"
+
+// runNoSandboxGate drives validateAutoFixBackend once on the --no-sandbox path
+// against a fresh stderr buffer and returns what was written to stderr. Other
+// pieces are valid so the gate passes; the warning must fire regardless.
+func runNoSandboxGate(t *testing.T) string {
+	t.Helper()
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := noSandboxCmd(t, "o/r", "tok")
+	var errBuf, outBuf strings.Builder
+	cmd.SetErr(&errBuf)
+	cmd.SetOut(&outBuf)
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err, "the --no-sandbox gate should pass with all other pieces valid")
+	require.NotContains(t, outBuf.String(), noSandboxWarnMarker, "the warning must go to stderr, never stdout")
+	return errBuf.String()
+}
+
+// TestWarnNoSandbox_PrintsOnEveryConsecutiveCall: the warning fires on the first
+// AND every subsequent in-process invocation — the load-bearing non-memoization
+// guard. A sync.Once/package-bool implementation would fail the 2nd/3rd call
+// (AC 03-03 Scenario 2 / Error Scenario 1). Exercised through the real call site.
+func TestWarnNoSandbox_PrintsOnEveryConsecutiveCall(t *testing.T) {
+	for i := 1; i <= 3; i++ {
+		got := runNoSandboxGate(t)
+		require.Contains(t, got, noSandboxWarnMarker,
+			"the --no-sandbox warning must print on consecutive call #%d (no memoization)", i)
+	}
+}
+
+// TestWarnNoSandbox_PrintsExactlyOncePerCallToSharedWriter: three consecutive
+// gate calls writing to ONE shared stderr buffer must yield exactly three warning
+// occurrences — occurrence count, not mere presence, is what a sync.Once or
+// package-level "seen" bool would fail (it would show 1). Complements the
+// fresh-buffer presence test (AC 03-03 Error Scenario 1).
+func TestWarnNoSandbox_PrintsExactlyOncePerCallToSharedWriter(t *testing.T) {
+	clearGitHubEnv(t)
+	var shared strings.Builder
+	for i := 0; i < 3; i++ {
+		root := t.TempDir()
+		writeGoMod(t, root)
+		proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+		cmd := noSandboxCmd(t, "o/r", "tok")
+		cmd.SetErr(&shared)
+		_, err := validateAutoFixBackend(cmd, proj, root)
+		require.NoError(t, err)
+	}
+	require.Equal(t, 3, strings.Count(shared.String(), noSandboxWarnMarker),
+		"the warning must appear exactly once per invocation (no memoization across calls)")
+}
+
+// TestWarnNoSandbox_FiresEvenWhenGateFails: the warning fires the moment the
+// bypass is chosen, BEFORE the combined missing-piece early return — so a
+// --no-sandbox run that ALSO fails another check (missing token) still emits the
+// warning (AC 03-03 EC2). Locks the "warn before the len(missing)>0 return"
+// ordering against a refactor that moves the warning into the success path.
+func TestWarnNoSandbox_FiresEvenWhenGateFails(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := noSandboxCmd(t, "o/r", "") // token missing -> gate fails
+	var errBuf strings.Builder
+	cmd.SetErr(&errBuf)
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err, "the gate must still fail on the missing token")
+	require.Contains(t, errBuf.String(), noSandboxWarnMarker,
+		"the warning must fire even when the --no-sandbox run fails another gate check")
+}
+
+// TestWarnNoSandbox_NamesTheRisk: the warning is explicit about the risk —
+// container isolation is off and untrusted/LLM-generated code runs on the host
+// (AC 03-03 Scenario 3).
+func TestWarnNoSandbox_NamesTheRisk(t *testing.T) {
+	got := runNoSandboxGate(t)
+	for _, want := range []string{"WARNING", noSandboxWarnMarker, "LLM-generated", "host"} {
+		require.Contains(t, got, want, "the --no-sandbox warning must name the specific risk")
+	}
+}
+
+// TestWarnNoSandbox_AbsentWhenFlagUnset: the default (sandboxed) path prints NO
+// --no-sandbox warning — the warning is strictly conditional on the flag being
+// true (AC 03-03 EC3, regression guard against an inverted condition).
+func TestWarnNoSandbox_AbsentWhenFlagUnset(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
+	cmd := autoFixCmd(t, "o/r", "tok", "") // no --no-sandbox
+	var errBuf strings.Builder
+	cmd.SetErr(&errBuf)
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err)
+	require.NotContains(t, errBuf.String(), noSandboxWarnMarker,
+		"no --no-sandbox warning may appear on the default sandboxed path")
+}
+
+// TestValidateAutoFixBackend_NoSandboxFalseKeepsGate: --no-sandbox=false is
+// identical to the flag being absent — the real resolver/preflight gate runs and a
+// missing sandbox is a hard refusal (AC 03-02 EC3 regression guard). The bypass
+// must be gated strictly on true, not on "the flag was set". Uses the REAL
+// resolver (no spy) so the refusal it asserts is genuine, proving the resolver was
+// actually reached.
+func TestValidateAutoFixBackend_NoSandboxFalseKeepsGate(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := autoFixCmd(t, "o/r", "tok", "")
+	require.NoError(t, cmd.Flags().Set("no-sandbox", "false"))
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err, "--no-sandbox=false must leave the sandbox gate intact")
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "[sandbox] block", "the resolver's unconfigured refusal must run when --no-sandbox is false")
 }

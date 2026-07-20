@@ -1,3 +1,19 @@
+## [32.0.0] - 2026-07-20
+
+Route `--auto-fix` validation through the existing `internal/sandbox` container isolation so LLM-generated build/test commands never run directly on the host, sandboxed by default with a loudly-warned `--no-sandbox` opt-out.
+
+### Added
+
+- `--auto-fix` validation now runs inside a Docker sandbox by default via `internal/sandbox`, isolating LLM-generated build/test commands from the host machine; refuses to run (fail-closed) rather than silently falling back to unsandboxed execution when no sandbox is configured.
+- `--no-sandbox` opt-out flag for environments without Docker, printing a security warning to stderr on every invocation.
+- `docs/auto-fix.md` — documents the sandboxed-by-default posture, the `auto_fix:` config block, and the `--no-sandbox` risk.
+
+### Changed
+
+- The `--auto-fix` gate now resolves and preflights the sandbox backend as a fourth all-or-nothing setup check, alongside the existing apply-target/validation-command/GitHub-credential checks.
+
+*Shipped via /execute-sprint + /execute-code-review (sprint 32.0)*
+
 ## [31.1.0] - 2026-07-18
 
 Deliver axi.md Principle 8 ("Content First"): a bare `atcr` (no subcommand) now renders a live home view — the executable path, atcr's one-line description, and the current review state — instead of static help text, so an orchestrator can sanity-check state in one cheap call.

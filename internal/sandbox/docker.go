@@ -97,6 +97,13 @@ func NewDockerBackend(cfg DockerConfig) *DockerBackend {
 // Name implements Backend.
 func (b *DockerBackend) Name() string { return "docker" }
 
+// Timeout reports the backend's default per-run wall-clock budget — the value
+// applied when RunSpec.Timeout is zero (NewDockerBackend floors a non-positive
+// cfg.Timeout at 60s). Exposed so a resolver's propagation of an operator's
+// configured sandbox.timeout_secs into the backend can be asserted directly,
+// since that value is a context deadline and never appears in the docker run argv.
+func (b *DockerBackend) Timeout() time.Duration { return b.cfg.Timeout }
+
 // dockerRunArgs builds the `docker run` argv for spec. It is pure (no I/O) so the
 // hardening flags can be asserted in a unit test without a daemon. The script
 // body is NOT included here: it is streamed over stdin to `sh -s` by Run.
