@@ -276,8 +276,8 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    GREEN: Add `withinComplexityCeiling(estMinutes, maxMinutes int) bool` to `internal/verify/severity.go` alongside `meetsSeverityFloor`; insert it as a fourth pre-dispatch skip-chain condition in `generateFixes`, calling `logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", "<file>:<line>: ...")` and setting `f.FixWarning` to an explicit reason before `continue` — unlike the existing silent pre-dispatch skips (T1), verify all pass (T2), COMMIT
    **Files:** `internal/verify/severity.go`, `internal/verify/executor.go` | **Duration:** 0.6 day
 
-### 2.2.A [ ] **[Skip Over-Ceiling Findings - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-skip-over-ceiling-findings-safely.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.1-2.2]
+### 2.2.A [x] **[Skip Over-Ceiling Findings - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-skip-over-ceiling-findings-safely.md)**
+   **Changed Files:** `internal/verify/severity.go`, `internal/verify/executor.go`, `internal/verify/severity_test.go`, `internal/verify/executor_ceiling_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.1-2.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
@@ -294,18 +294,15 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings** (2 LOW — no CRITICAL/HIGH/MEDIUM):
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | executor.go:67-75 (`anyFixEligible`) | Harness-build gate consults only confidence + severity-floor, not the new ceilings; a single-tier config where every floor-eligible finding is over-ceiling builds the full snapshot/client then skips everything — the ceiling's cost-avoidance is bypassed one layer up. Benign in the intended multi-tier flow (over-ceiling findings are meant for a later tier). | Captured as TD-001 (out of Story 2 scope — Story 2 owns the skip mechanics, not harness-build gating). |
+   | LOW | executor.go (severity-ceiling reason) | Reason string interpolated the raw un-normalized `f.Severity` (e.g. lowercase `critical`) against the canonical `maxSev`. Cosmetic only; comparison is correct/case-insensitive. | Fixed in 2.3 REFACTOR — normalize the displayed severity. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No CRITICAL/HIGH. The casing LOW is fixed in 2.3 (directly hardens this story's output text); the `anyFixEligible` efficiency LOW is captured as TD-001 (broader, out-of-scope for Story 2).
 
-### 2.3 [ ] **[Skip Over-Ceiling Findings Before Dispatch - REFACTOR](plan/user-stories/02-skip-over-ceiling-findings-safely.md)**
+### 2.3 [x] **[Skip Over-Ceiling Findings Before Dispatch - REFACTOR](plan/user-stories/02-skip-over-ceiling-findings-safely.md)**
    1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.25 day

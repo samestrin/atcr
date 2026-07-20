@@ -167,7 +167,11 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			continue
 		}
 		if !withinSeverityCeiling(f.Severity, maxSev) {
-			reason := fmt.Sprintf("skipped: severity %s exceeds executor ceiling (%s)", f.Severity, maxSev)
+			// Display the canonical (normalized) severity so the reason reads
+			// consistently (e.g. "CRITICAL exceeds ... (HIGH)") regardless of the
+			// casing the reviewer emitted; the comparison itself is already
+			// case-insensitive inside withinSeverityCeiling.
+			reason := fmt.Sprintf("skipped: severity %s exceeds executor ceiling (%s)", reclib.NormalizeSeverity(f.Severity), maxSev)
 			logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", fmt.Sprintf("%s:%d: %s", f.File, f.Line, reason))
 			f.FixWarning = reason
 			continue
