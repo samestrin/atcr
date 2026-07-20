@@ -675,21 +675,22 @@ func TestRunAutoFix_RemoteLeftoverNotice(t *testing.T) {
 // supplied sandbox.Backend --------------------------------------------------
 
 // fakeSandboxBackend is a sandbox.Backend stand-in for runAutoFix pipeline tests:
-// it records that Run was invoked and returns a preconfigured RunResult/error so a
-// test can drive the sandbox-routed validation path without a live container
-// (AC 01-03). Its Run deliberately ignores the RunSpec — the point is to prove
-// runAutoFix dispatches HERE (not to the host os/exec path) and consumes the
-// translated ValidationResult through the same three post-call branches.
+// it records that Run was invoked (and the RunSpec it received, so a test can
+// assert the runAutoFix→adapter forwarding of argv/timeout/apply-target) and
+// returns a preconfigured RunResult/error so a test can drive the sandbox-routed
+// validation path without a live container (AC 01-03).
 type fakeSandboxBackend struct {
 	runCalls int
+	gotSpec  sandbox.RunSpec
 	result   sandbox.RunResult
 	runErr   error
 }
 
 func (f *fakeSandboxBackend) Name() string                    { return "fake-sandbox" }
 func (f *fakeSandboxBackend) Preflight(context.Context) error { return nil }
-func (f *fakeSandboxBackend) Run(_ context.Context, _ sandbox.RunSpec) (sandbox.RunResult, error) {
+func (f *fakeSandboxBackend) Run(_ context.Context, spec sandbox.RunSpec) (sandbox.RunResult, error) {
 	f.runCalls++
+	f.gotSpec = spec
 	return f.result, f.runErr
 }
 
@@ -720,6 +721,12 @@ func TestRunAutoFix_SandboxPassDrivesIdenticalPRSequence(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, be.runCalls, "validation must route through the supplied sandbox backend, not the host path")
+	require.Equal(t, []string{"false"}, be.gotSpec.Command,
+		"runAutoFix must forward validateArgv into the RunSpec unchanged")
+	require.Equal(t, 5*time.Second, be.gotSpec.Timeout,
+		"runAutoFix must forward validateTimeout into the RunSpec unchanged")
+	require.Equal(t, root, be.gotSpec.SnapshotDir,
+		"runAutoFix must forward the apply target as the RunSpec snapshot dir")
 	require.Equal(t, 1, gh.branchCalls)
 	require.Equal(t, 1, gh.commitCalls)
 	require.Equal(t, 1, gh.createPR)
