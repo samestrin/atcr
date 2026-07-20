@@ -73,8 +73,15 @@ const declineMarker = "ATCR_DECLINE"
 func parseSelfDecline(fix string) (string, bool) {
 	trimmed := strings.TrimSpace(fix)
 	// Tolerate a single pair of surrounding quotes: a literal-minded model may echo
-	// the sentinel example verbatim including quotes.
-	trimmed = strings.TrimSpace(strings.Trim(trimmed, `"'`))
+	// the sentinel example verbatim including quotes. Strip AT MOST one matching
+	// pair ("x" or 'x') — never an arbitrary run of quote characters — so a response
+	// wrapped in nested or mismatched quotes is not trimmed into a bare marker and
+	// misclassified as a decline.
+	if len(trimmed) >= 2 {
+		if q := trimmed[0]; (q == '"' || q == '\'') && trimmed[len(trimmed)-1] == q {
+			trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+		}
+	}
 	if !strings.HasPrefix(trimmed, declineMarker) {
 		return "", false
 	}
