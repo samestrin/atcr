@@ -145,3 +145,78 @@ func TestGenerateFixes_ConfidenceSkipPrecedesCeiling(t *testing.T) {
 	assert.Empty(t, findings[0].FixWarning, "a confidence skip precedes the ceiling and stays silent")
 	assert.NotContains(t, buf.String(), "executor_ceiling_skip", "the ceiling gate must not fire for a confidence-skipped finding")
 }
+
+func TestParseSelfDecline(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		fix         string
+		wantDecline bool
+	}{
+		{"bare marker declines", "ATCR_DECLINE", true},
+		{"marker with reason declines", "ATCR_DECLINE: fix exceeds safe complexity", true},
+		{"marker with leading/trailing space declines", "  ATCR_DECLINE: too hard  ", true},
+		{"marker without colon but suffix does not decline", "ATCR_DECLINED for now", false},
+		{"marker embedded mid-text does not decline", "I would say ATCR_DECLINE here", false},
+		{"prose mentioning decline does not decline", "declined to change the loop; use a guard", false},
+		{"normal code fix does not decline", "func add(a, b int) int { return a + b }", false},
+		{"empty does not decline", "", false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, declined := parseSelfDecline(tt.fix)
+			assert.Equal(t, tt.wantDecline, declined)
+		})
+	}
+}
+
+// AC 02-02 Scenario 2 / Edge Case 1: a snippet-path self-decline lands as a skip —
+// non-empty FixWarning, no Fix, no attribution — never as partial Fix content, and
+// its log class is executor_ceiling_skip (distinct from executor_fix_failed).
+func TestGenerateFixes_SelfGatingDeclineNotPartialFix(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Evidence: "Found by bruce"},
+	}
+	rec := &recordingExecutor{out: "ATCR_DECLINE: fix exceeds safe complexity for this model"}
+	ctx, buf := ceilingCtx()
+	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+
+	assert.Equal(t, 1, rec.calls, "the decline is post-dispatch: the executor was called once")
+	assert.Empty(t, findings[0].Fix, "a self-declined fix is never presented as Fix content")
+	assert.NotContains(t, findings[0].Evidence, "fix by opus", "a declined finding gets no fix attribution")
+	assert.NotEmpty(t, findings[0].FixWarning, "the decline must be visible via FixWarning")
+	assert.NotContains(t, findings[0].FixWarning, "ATCR_DECLINE", "the raw sentinel must not leak into the warning text")
+	assert.Contains(t, buf.String(), "class=executor_ceiling_skip", "a decline logs the ceiling-skip class")
+	assert.NotContains(t, buf.String(), "executor_fix_failed", "a decline is not a provider/transport failure")
+}
+
+// AC 02-02 Edge Case 3 / Error Scenario 2: an ambiguous, non-marker response is
+// NOT misclassified as a decline — it flows through normal fix handling.
+func TestGenerateFixes_AmbiguousResponseNotDeclined(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	rec := &recordingExecutor{out: "declined to alter the loop; instead add a nil guard before the deref"}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+
+	assert.Equal(t, "declined to alter the loop; instead add a nil guard before the deref", findings[0].Fix,
+		"a prose fix that merely mentions 'declined' is a real fix, not a self-decline")
+	assert.Empty(t, findings[0].FixWarning, "a normal fix carries no decline warning")
+}
+
+// AC 02-02 Scenario 1: an Agent-Mode self-decline (parseable JSON whose fix field is
+// the decline marker) also lands as a skip, not as Fix content.
+func TestGenerateFixes_AgentModeSelfGatingDecline(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"fix":"ATCR_DECLINE: too complex to fix safely"}`}}}
+	ctx, buf := ceilingCtx()
+	generateFixes(ctx, findings, agentExecConfig(), execRegistry("MEDIUM"), &recordingExecutor{}, cc, okDispatcher(), 0)
+
+	assert.Empty(t, findings[0].Fix, "an agent-mode decline is never presented as Fix content")
+	assert.NotEmpty(t, findings[0].FixWarning)
+	assert.Contains(t, buf.String(), "class=executor_ceiling_skip")
+}

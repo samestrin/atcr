@@ -55,6 +55,33 @@ var newFanoutEngine = func(cc fanout.ChatCompleter, opts ...fanout.EngineOption)
 // give the executor real code context (Epic 7.0 snippet tier).
 const fixSnippetRadius = 30
 
+// declineMarker is the documented self-gating decline sentinel (Sprint 32.1): an
+// executor that judges a dispatched fix beyond its capability emits a completion
+// whose leading token is this exact marker (optionally followed by ": <reason>")
+// instead of a partial patch.
+const declineMarker = "ATCR_DECLINE"
+
+// parseSelfDecline reports whether a fix response is a self-gating decline and, if
+// so, its human-readable reason (Sprint 32.1). Detection is CONSERVATIVE: the
+// trimmed response must either equal declineMarker exactly or begin with
+// "declineMarker:" — a leading-token match on the executor's OWN documented signal,
+// never a substring scan, so crafted finding/reviewer text embedded mid-response
+// (or a prose fix that merely mentions "decline") cannot force or suppress a decline
+// (AC 02-02 security note; Error Scenario 2 conservative-detector requirement). A
+// bare marker with no reason falls back to a generic reason so FixWarning is never
+// empty.
+func parseSelfDecline(fix string) (string, bool) {
+	trimmed := strings.TrimSpace(fix)
+	if trimmed != declineMarker && !strings.HasPrefix(trimmed, declineMarker+":") {
+		return "", false
+	}
+	reason := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(trimmed, declineMarker), ":"))
+	if reason == "" {
+		reason = "fix exceeds safe complexity for this executor"
+	}
+	return reason, true
+}
+
 // fixAttributionPrefix is the marker appended to a finding's Evidence after a fix
 // is generated; it doubles as the idempotency guard (a finding already carrying it
 // is not re-generated on a verify re-run).
@@ -236,6 +263,23 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				f.FixWarning = "fix generation returned an empty completion"
 				return
 			}
+			// Self-gating decline (Sprint 32.1): the executor may judge a dispatched fix
+			// beyond its capability and emit the documented decline sentinel instead of a
+			// partial patch — on the snippet path (out) or the agent path (the parsed fix
+			// flowing through out). Record it through the SAME FixWarning +
+			// executor_ceiling_skip contract as a pre-dispatch ceiling skip, returning
+			// BEFORE any f.Fix/f.Evidence assignment so a decline never lands as content
+			// (the stale-Fix-plus-warning risk the story flags). The class is distinct from
+			// executor_fix_failed (a provider/transport error), executor_truncated_fix, and
+			// executor_empty_fix — a decline is a deliberate choice, not a failure. Placed
+			// after the empty check so it classifies only a non-empty, marker-shaped
+			// response; an ambiguous non-marker response falls through to the syntax guard
+			// below unchanged.
+			if reason, declined := parseSelfDecline(fix); declined {
+				logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", fmt.Sprintf("%s:%d: self-declined: %s", f.File, f.Line, reason))
+				f.FixWarning = "executor declined: " + reason
+				return
+			}
 			f.Fix = fix
 			f.Evidence = appendFixAttribution(f.Evidence, ex.Name)
 			// Local syntax guard (Epic 7.1): parse the generated fix before it is
@@ -362,7 +406,11 @@ func buildFixPrompt(f reconcile.JSONFinding, snippet string, ex *registry.Execut
 		// applyDefaults already resolves an empty persona to DefaultExecutorPersona at
 		// registry load, so buildFixPrompt should not re-derive it here.
 		persona := strings.TrimSpace(ex.Persona)
-		fmt.Fprintf(&b, "You are %s, a code-fix executor. Generate the minimal code change that fixes the finding below. Preserve the existing style and conventions. Output only the fix (corrected code or a precise change instruction); do not restate the problem.\n\n", persona)
+		fmt.Fprintf(&b, "You are %s, a code-fix executor. Generate the minimal code change that fixes the finding below. Preserve the existing style and conventions. Output only the fix (corrected code or a precise change instruction); do not restate the problem.\n", persona)
+		// Self-gating (Sprint 32.1): give the executor an explicit, structured way to
+		// decline rather than emit a guessed/partial patch. parseSelfDecline detects this
+		// exact leading token and records a skip instead of a fix.
+		fmt.Fprintf(&b, "If the fix is genuinely beyond your capability or too complex to complete safely, reply with exactly %q followed by a brief reason (e.g. %q) instead of a partial or guessed fix.\n\n", declineMarker, declineMarker+": requires cross-module refactor beyond this pass")
 	}
 	if len(ex.Rules) > 0 {
 		b.WriteString("Coding rules to follow (apply these to your fix):\n")
@@ -553,6 +601,9 @@ func buildExecutorAgentPromptWithSentinel(finding reconcile.JSONFinding, sentine
 	b.WriteString("```json\n")
 	b.WriteString(`{"fix": "the minimal change that fixes the problem", "explanation": "why this fixes it"}`)
 	b.WriteString("\n```\n")
+	// Self-gating (Sprint 32.1): if the fix is beyond your capability, set "fix" to
+	// exactly the decline sentinel rather than guessing a partial patch.
+	fmt.Fprintf(&b, "If the fix is genuinely beyond your capability or too complex to complete safely, set \"fix\" to exactly %q followed by a brief reason instead of a partial or guessed fix.\n", declineMarker+": <reason>")
 	return b.String()
 }
 

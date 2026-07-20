@@ -307,13 +307,13 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.25 day
 
-### 2.4 [ ] **[Self-Gating Decline Never Presents a Partial Fix - RED](plan/user-stories/02-skip-over-ceiling-findings-safely.md)**
+### 2.4 [x] **[Self-Gating Decline Never Presents a Partial Fix - RED](plan/user-stories/02-skip-over-ceiling-findings-safely.md)**
    1. Analyze [AC 02-02](plan/acceptance-criteria/02-02-self-gating-decline-never-presents-a-partial-fix-as-complete.md), identify testable units
    2. Write `TestGenerateFixes_SelfGatingDeclineNotPartialFix` in `internal/verify/executor_test.go` asserting a self-declined fix lands as a skip (non-empty `FixWarning`, no `Fix` set, `logPipelineWarning("executor_ceiling_skip", ...)` distinct from `executor_fix_failed`) and never as partial `Fix` content
    3. Verify tests fail correctly
    **Files:** `internal/verify/executor_test.go` | **Duration:** 0.4 day
 
-### 2.5 [ ] **[Self-Gating Decline Never Presents a Partial Fix - GREEN](plan/user-stories/02-skip-over-ceiling-findings-safely.md)**
+### 2.5 [x] **[Self-Gating Decline Never Presents a Partial Fix - GREEN](plan/user-stories/02-skip-over-ceiling-findings-safely.md)**
    GREEN: Add the self-gating decline branch inside `generateFixes`'s per-finding goroutine, parallel to the existing `warn`/`truncated`/empty-string handling — returning before any `f.Fix` assignment (matching the file's documented early-return invariant) and surfacing the decline via the same `FixWarning` + `logPipelineWarning` contract as a pre-dispatch ceiling skip (T1), verify all pass (T2), COMMIT
    **Files:** `internal/verify/executor.go` | **Duration:** 0.5 day
 
