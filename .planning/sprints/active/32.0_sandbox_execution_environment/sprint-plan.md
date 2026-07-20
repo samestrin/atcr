@@ -691,8 +691,13 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
    Run DoD Verification Checklist (T3 tests, coverage, lint, build, docs) against files changed in Phase 4. Report using the DoD Report Template.
    **Duration:** 0.25 day
 
-### 4.8 [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
-   **Scope:** All files changed during Phase 4 (integration-level, not TDD cadence)
+### 4.8 [x] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 4 (integration-level, not TDD cadence). Files: `cmd/atcr/autofix.go` (runAutoFix dispatch branch), `cmd/atcr/autofix_test.go` (fakeSandboxBackend + sandbox routing tests + 4-piece combined-error test).
+
+   **Gate result (2026-07-19):** Phase gate passed — no CRITICAL/HIGH/MEDIUM/LOW findings. Hostile-integrator review confirmed: dispatch routes to `RunSandboxedValidation` when `be.sandboxBackend != nil` else `RunConfiguredValidation`, both returning the identical `verify.ValidationResult, error` contract so the three post-call branches are shared and unchanged (contract honored); no typed-nil panic risk (`ResolveAutoFixSandbox` returns a non-nil concrete backend only on `err==nil`, assigned only then); the nil/`--no-sandbox` host path is byte-identical (no regression); the four-piece combined gate error joins the same `missing` slice (no short-circuit); the timeout-default divergence and reused "local validation failed" wording are pre-existing/documented/intentional, not introduced this phase; no new config keys this phase; Phase 5 (docs-only) can consume the flag name/warning text/behavior without rework. `go vet` clean; all `TestRunAutoFix*` + the four-piece test pass.
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | NONE | - | No findings — all phase-exit contracts honored; sandbox routing byte-parity with host path; four-piece gate error intact; Phase 5 consumable without rework | - |
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
 
