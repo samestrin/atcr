@@ -7,8 +7,10 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -88,6 +90,30 @@ func TestResolveAutoFixSandbox_FullFieldOverrideAppliedBeforePreflight(t *testin
 	assert.Contains(t, run, "--cpus 0.5", "CPUs override must reach docker run")
 	assert.Contains(t, run, "--pids-limit 128", "PidsLimit override must reach docker run")
 	assert.Contains(t, run, "custom-image:9", "Image override must reach docker run")
+}
+
+// TestResolveAutoFixSandbox_TimeoutOverrideReachesBackend closes AC 02-01 Edge
+// Case 2: sandbox.timeout_secs is applied to the backend as a context deadline,
+// not a `docker run` argv flag, so the field-override argv assertions above can
+// never cover it. Assert the resolver copied the override into the backend's
+// per-run budget directly (the only place it is observable).
+func TestResolveAutoFixSandbox_TimeoutOverrideReachesBackend(t *testing.T) {
+	dockerPath, _ := fakeDockerRecording(t)
+	secs := 120
+	sc := &registry.SandboxConfig{
+		Backend:     "docker",
+		DockerPath:  dockerPath,
+		Image:       "alpine:3.20",
+		TimeoutSecs: &secs,
+		TestCommand: []string{"go", "test", "./..."},
+	}
+	b, err := ResolveAutoFixSandbox(context.Background(), true, sc)
+	require.NoError(t, err)
+	require.NotNil(t, b)
+
+	db, ok := b.(*sandbox.DockerBackend)
+	require.True(t, ok, "the resolver builds a *sandbox.DockerBackend")
+	assert.Equal(t, 120*time.Second, db.Timeout(), "TimeoutSecs override must reach the backend's per-run budget")
 }
 
 func TestResolveAutoFixSandbox_PartialConfigInheritsHardenedDefaults(t *testing.T) {
