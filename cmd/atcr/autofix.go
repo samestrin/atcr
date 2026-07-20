@@ -474,6 +474,14 @@ var resolveHeadSHAFn = func(ctx context.Context, dir string) (string, error) {
 	return sha, nil
 }
 
+// newAutoFixGitHubFn builds the GitHub client orchestrateAutoFix hands to
+// runAutoFix. A package var so a test can substitute a call-recording fake (the
+// real client talks to the GitHub API, which is not hermetic). In production it
+// returns the live client.
+var newAutoFixGitHubFn = func(apiURL, token string) autoFixGitHub {
+	return &ghaction.Client{APIURL: apiURL, Token: token}
+}
+
 // orchestrateAutoFix is the thin live bridge wired into `atcr review --auto-fix`:
 // it turns the reconciled findings into apply entries, resolves the base commit
 // and a fresh branch name, and hands everything to runAutoFix with a real
@@ -523,7 +531,7 @@ func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, r
 	// so each run opens a NEW PR rather than updating a stable one. Deterministic
 	// one-PR-per-target naming would be a separate feature, not a TD fix.
 	branch := fmt.Sprintf("atcr/auto-fix/%s", time.Now().UTC().Format("20060102-150405"))
-	client := &ghaction.Client{APIURL: be.apiURL, Token: be.token}
+	client := newAutoFixGitHubFn(be.apiURL, be.token)
 	return runAutoFix(ctx, out, client, autoFixRun{
 		Backend: be,
 		Entries: entries,

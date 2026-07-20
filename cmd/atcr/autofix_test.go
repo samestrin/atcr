@@ -947,6 +947,14 @@ func TestOrchestrateAutoFix_SkippedDuplicatesNotice(t *testing.T) {
 	resolveHeadSHAFn = func(context.Context, string) (string, error) { return "deadbeef", nil }
 	t.Cleanup(func() { resolveHeadSHAFn = oldResolve })
 
+	// Stub the GitHub client seam so the run is hermetic: the pre-stub version's
+	// require.Error was satisfied by an incidental network/auth failure unrelated
+	// to the duplicate-skip behavior under test.
+	gh := &fakeGitHub{}
+	oldClient := newAutoFixGitHubFn
+	newAutoFixGitHubFn = func(string, string) autoFixGitHub { return gh }
+	t.Cleanup(func() { newAutoFixGitHubFn = oldClient })
+
 	id := verifyFixture(t, "dup", []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "same.txt", Line: 1, Fix: diffFor("same.txt")},
 		{Severity: "HIGH", File: "same.txt", Line: 9, Fix: diffFor("same.txt")},
@@ -962,6 +970,7 @@ func TestOrchestrateAutoFix_SkippedDuplicatesNotice(t *testing.T) {
 	err := orchestrateAutoFix(context.Background(), &buf, be, filepath.Join(".atcr", "reviews", id), "", "main")
 	require.NoError(t, err, "orchestration must succeed hermetically — a live network/auth failure must not be load-bearing")
 	require.Contains(t, buf.String(), "skipped", "output must tell the operator that duplicate-path fixes were skipped")
+	require.Equal(t, 1, gh.createPR, "the run must drive the full PR sequence against the stubbed client")
 }
 
 // --- 03-01: --no-sandbox flag registration and help text -------------------
