@@ -650,8 +650,8 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
    GREEN: Finalize the combined error message joining so all four gate pieces report correctly together (T1), verify all pass (T2), COMMIT
    **Files:** `cmd/atcr/autofix.go` | **Duration:** 0.5 day
 
-### 4.5.A [ ] **[Combined Gate Error — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 4.4-4.5]
+### 4.5.A [x] **[Combined Gate Error — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+   **Changed Files:** `cmd/atcr/autofix_test.go` (`TestValidateAutoFixBackend_AllFourPiecesCombineInOneError`; no production change)
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 4.4-4.5 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
@@ -668,23 +668,26 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-07-19):** No CRITICAL/HIGH/MEDIUM/LOW. Reviewer traced each assertion to its gate piece and confirmed the test is non-vacuous and deterministic: all four failures are forced to coexist (apply-target stat-fail, no-`go.mod` validation-command failure, cleared-env token failure, `Sandbox:nil` → `ErrAutoFixSandboxUnconfigured` returned BEFORE any docker call so it is docker-independent), the sandbox piece is the last append with no early return, and each asserted substring uniquely distinguishes its own piece — so any short-circuit would fail the test.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | - | No findings — combined 4-piece gate error proven non-vacuous, deterministic, docker-independent | - |
+
+   **Result: Adversarial review passed — no findings.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 4.6, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 4.6 [ ] **[Combined Gate Error — REFACTOR](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 4.6 [x] **[Combined Gate Error — REFACTOR](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+   _No CRITICAL/HIGH from 4.5.A and the characterization test is already clean; no code or test change needed. `cmd/atcr/autofix.go` unmodified this leg (joining complete since Phase 3)._
    1. Fix CRITICAL/HIGH issues from 4.5.A (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.25 day
 
-### 4.7 [ ] **Phase 4 - DoD Verification**
+### 4.7 [x] **Phase 4 - DoD Verification**
+   _Result: Tests ✓ (T3 all pass) | Coverage 87.6% pkg (runAutoFix 83.7%) ≥80% ✓ | Lint ✓ (0 issues) | Build ✓ | Docs N/A this phase (Phase 5). Story-Specific: AC 01-03 sandbox pass/fail/start-error routing + nil→host baseline all green; AC 02-03 integration leg (4-piece combined gate error) pinned. Manual Review deferred to /execute-code-review._
    Run DoD Verification Checklist (T3 tests, coverage, lint, build, docs) against files changed in Phase 4. Report using the DoD Report Template.
    **Duration:** 0.25 day
 
