@@ -13,8 +13,9 @@
 #
 # The second pass reads tier 1's findings.json; fix attribution (both tiers share the
 # executor name "executor") means this tier fixes ONLY the findings tier 1 left
-# unfixed — it never re-attempts a finding tier 1 already fixed. Every finding is
-# fixed by exactly one tier or explicitly skipped-and-logged, never both, never neither.
+# unfixed — it never re-attempts a finding tier 1 already fixed. Every fix-eligible
+# finding (HIGH+ confidence, at/above min_severity_for_fix) is fixed by exactly one
+# tier or explicitly skipped-and-logged, never both, never neither.
 # There is no in-process executor chain and no new CLI flag: the "two tiers" are simply
 # two independent runs with two registry files. See docs/registry.md (Executor section).
 providers:

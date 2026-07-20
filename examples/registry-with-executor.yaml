@@ -18,8 +18,9 @@
 #   atcr verify --registry examples/registry-with-executor-tier2.yaml ./review-dir   # tier 2 (frontier)
 #
 # The tier-2 pass reads tier 1's findings.json and, via fix attribution, fixes
-# ONLY the findings tier 1 skipped — every finding is fixed by exactly one tier
-# or explicitly skipped-and-logged, never both, never neither. See
+# ONLY the findings tier 1 skipped — every fix-eligible finding (HIGH+ confidence,
+# at/above min_severity_for_fix) is fixed by exactly one tier or explicitly
+# skipped-and-logged, never both, never neither. See
 # examples/registry-with-executor-tier2.yaml for the frontier tier and
 # docs/registry.md (Executor section) for the field reference.
 providers:
