@@ -1032,6 +1032,46 @@ func TestWarnNoSandbox_PrintsOnEveryConsecutiveCall(t *testing.T) {
 	}
 }
 
+// TestWarnNoSandbox_PrintsExactlyOncePerCallToSharedWriter: three consecutive
+// gate calls writing to ONE shared stderr buffer must yield exactly three warning
+// occurrences — occurrence count, not mere presence, is what a sync.Once or
+// package-level "seen" bool would fail (it would show 1). Complements the
+// fresh-buffer presence test (AC 03-03 Error Scenario 1).
+func TestWarnNoSandbox_PrintsExactlyOncePerCallToSharedWriter(t *testing.T) {
+	clearGitHubEnv(t)
+	var shared strings.Builder
+	for i := 0; i < 3; i++ {
+		root := t.TempDir()
+		writeGoMod(t, root)
+		proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+		cmd := noSandboxCmd(t, "o/r", "tok")
+		cmd.SetErr(&shared)
+		_, err := validateAutoFixBackend(cmd, proj, root)
+		require.NoError(t, err)
+	}
+	require.Equal(t, 3, strings.Count(shared.String(), noSandboxWarnMarker),
+		"the warning must appear exactly once per invocation (no memoization across calls)")
+}
+
+// TestWarnNoSandbox_FiresEvenWhenGateFails: the warning fires the moment the
+// bypass is chosen, BEFORE the combined missing-piece early return — so a
+// --no-sandbox run that ALSO fails another check (missing token) still emits the
+// warning (AC 03-03 EC2). Locks the "warn before the len(missing)>0 return"
+// ordering against a refactor that moves the warning into the success path.
+func TestWarnNoSandbox_FiresEvenWhenGateFails(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := noSandboxCmd(t, "o/r", "") // token missing -> gate fails
+	var errBuf strings.Builder
+	cmd.SetErr(&errBuf)
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err, "the gate must still fail on the missing token")
+	require.Contains(t, errBuf.String(), noSandboxWarnMarker,
+		"the warning must fire even when the --no-sandbox run fails another gate check")
+}
+
 // TestWarnNoSandbox_NamesTheRisk: the warning is explicit about the risk —
 // container isolation is off and untrusted/LLM-generated code runs on the host
 // (AC 03-03 Scenario 3).
