@@ -76,9 +76,9 @@ The two-tier partition contract is proven by an automated integration test over 
 
 **Story-Specific:**
 - [x] Integration test with a mixed-complexity fixture proves the full partition contract (fixed-by-tier-1 XOR fixed-by-tier-2 XOR skip-logged, never both/neither) (`TestGenerateFixes_TwoTierWorkflowReproducible` over a findings.json handoff; determinism verified `-race -count=3`)
-- [ ] `examples/registry-with-executor.yaml` contains a loadable cheap-tier + frontier-tier profile pair validated by existing config-loading tests *(Phase 4 / Story 5 — docs scheduled)*
-- [ ] `docs/registry.md` contains a worked example with concrete expected `findings.json` state (not prose-only) and explicitly labels which design interpretation ((a) two independent runs) it demonstrates *(Phase 4 / Story 5 — docs scheduled)*
-- [ ] Documentation explicitly notes the open design question is not resolved by this story, per the story's Assumptions section *(Phase 4 / Story 5 — docs scheduled)*
+- [x] `examples/registry-with-executor.yaml` contains a loadable cheap-tier + frontier-tier profile pair validated by existing config-loading tests *(Phase 4 / Story 5 — docs scheduled)* — done: cheap tier (`registry-with-executor.yaml`) + frontier tier (`registry-with-executor-tier2.yaml`), both loaded/validated by `TestTwoTierExecutorExamples_Load`.
+- [x] `docs/registry.md` contains a worked example with concrete expected `findings.json` state (not prose-only) and explicitly labels which design interpretation ((a) two independent runs) it demonstrates *(Phase 4 / Story 5 — docs scheduled)* — done: the two-tier prose + runnable example pair label interpretation (a) (two independent runs against the same `findings.json`, single `ExecutorConfig` per run) explicitly.
+- [x] Documentation explicitly notes the open design question is not resolved by this story, per the story's Assumptions section *(Phase 4 / Story 5 — docs scheduled)* — done: docs state this is the two-independent-runs interpretation (a), not an in-process ordered executor chain, which the design deliberately does not add.
 
 **Manual Review:**
 - [ ] Code reviewed and approved

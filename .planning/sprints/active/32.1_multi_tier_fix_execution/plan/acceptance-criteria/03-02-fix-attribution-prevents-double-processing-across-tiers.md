@@ -78,7 +78,7 @@ Fix attribution keyed on the executor's `Name` prevents a second tier from re-at
 - [x] Test proves tier 2 skips a tier-1-fixed finding when both tiers share the same executor `Name` (including the default `"executor"` value) (partition test + `TestGenerateFixes_AttributionSurvivesFindingsJSONRoundTrip`, both using `registry.RoleExecutor` = `"executor"`)
 - [x] Test proves tier 2 attempts and fixes a tier-1-ceiling-skipped finding (`tier2.go` in the partition test)
 - [x] Test explicitly documents (via an assertion, not a comment) the actual behavior when tier 1 and tier 2 use distinct `Name` values, so the assumption in the story's Assumptions section is verified rather than taken on faith (`TestGenerateFixes_TwoTierDistinctNamesReprocesses`)
-- [ ] `docs/registry.md` updated to tell operators whether to keep `Name` consistent (or what alternate guard exists) across tier configs for correct cross-tier attribution *(Phase 4 / Story 5 — docs scheduled)*
+- [x] `docs/registry.md` updated to tell operators whether to keep `Name` consistent (or what alternate guard exists) across tier configs for correct cross-tier attribution *(Phase 4 / Story 5 — docs scheduled)* — done: two-tier prose states both tiers must share the executor `name`, that attribution is name-scoped, and that distinct names break the partition (no separate cross-tier lock).
 
 **Manual Review:**
 - [ ] Code reviewed and approved
