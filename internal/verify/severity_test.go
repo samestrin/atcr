@@ -77,6 +77,8 @@ func TestWithinSeverityCeiling(t *testing.T) {
 		{"case-insensitive finding", "critical", "HIGH", false},
 		{"case-insensitive ceiling", "HIGH", "medium", false},
 		{"unknown finding severity not skipped by ceiling", "BLOCKER", "HIGH", true},
+		{"bogus non-empty ceiling fails closed", "LOW", "BOGUS", false},
+		{"bogus ceiling skips critical", "CRITICAL", "BOGUS", false},
 	}
 	for _, tt := range tests {
 		tt := tt
