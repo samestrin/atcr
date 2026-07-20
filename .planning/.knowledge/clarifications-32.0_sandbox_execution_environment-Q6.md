@@ -5,7 +5,7 @@ created: 2026-07-19
 last_retrieved: ""
 sprints: [32.0_sandbox_execution_environment]
 files: [cmd/atcr/home.go, internal/tools/dispatch.go, internal/log/redact.go, cmd/atcr/quickstart.go]
-tags: [clarifications, sprint-32.0_sandbox_execution_environment, process, maintainability, scope-deferral]
+tags: [clarifications, sprint-learning, 32.0_sandbox_execution_environment, process, maintainability, scope-deferral]
 retrievals: 0
 status: active
 type: clarifications
