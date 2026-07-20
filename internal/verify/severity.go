@@ -49,14 +49,21 @@ func withinComplexityCeiling(estMinutes, maxMinutes int) bool {
 // 32.1) — the upper-bound counterpart to meetsSeverityFloor's floor. An empty
 // maxSeverity is the "no ceiling" sentinel (EffectiveMaxSeverityForFix), so every
 // finding is within it. Comparison is case-insensitive via the shared
-// reclib.NormalizeSeverity/SeverityRank rubric. A finding whose severity is empty or
-// unknown (rank 0) is treated as within the ceiling here — the floor check
-// (meetsSeverityFloor) already skips such findings before this predicate runs, so
-// this predicate never needs to re-decide them.
+// reclib.NormalizeSeverity/SeverityRank rubric. A NON-EMPTY maxSeverity whose rank
+// is 0 (an unrecognizable token, e.g. a typo in an unvalidated in-memory config)
+// fails CLOSED — no finding is within it — mirroring meetsSeverityFloor's rank-0
+// handling, so a bad ceiling never silently routes CRITICALs to a cheap tier.
+// A finding whose severity is empty or unknown (rank 0) is treated as within the
+// ceiling here — the floor check (meetsSeverityFloor) already skips such findings
+// before this predicate runs, so this predicate never needs to re-decide them.
 func withinSeverityCeiling(findingSeverity, maxSeverity string) bool {
-	cr := reclib.SeverityRank[reclib.NormalizeSeverity(maxSeverity)]
-	if cr == 0 {
+	nc := reclib.NormalizeSeverity(maxSeverity)
+	if nc == "" {
 		return true
+	}
+	cr := reclib.SeverityRank[nc]
+	if cr == 0 {
+		return false
 	}
 	return reclib.SeverityRank[reclib.NormalizeSeverity(findingSeverity)] <= cr
 }
