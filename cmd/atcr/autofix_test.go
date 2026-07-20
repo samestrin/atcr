@@ -222,6 +222,28 @@ func TestValidateAutoFixBackend_Refusals(t *testing.T) {
 	}
 }
 
+// TestValidateAutoFixBackend_SandboxSkippedWhenGateAlreadyFailing: the sandbox
+// resolver/Preflight (gate check 4) shells out to docker and spawns a throwaway
+// container, so it must be skipped when the cheap local checks (1-3) already
+// failed — a half-configured run refuses on the missing piece without paying
+// the container cost.
+func TestValidateAutoFixBackend_SandboxSkippedWhenGateAlreadyFailing(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	calls := spyResolveSandbox(t)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "."},
+		Sandbox: sandboxConfig(fakeDockerShim(t, true)),
+	}
+	cmd := autoFixCmd(t, "o/r", "", "") // repo present, token missing -> check (3) fails
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "GitHub token")
+	require.Equal(t, 0, *calls, "sandbox resolver must not run when an earlier gate check already failed")
+}
+
 // TestValidateAutoFixBackend_RejectsInsecureAPIURL: a malformed or insecure
 // (non-loopback http) --api-url is a fail-closed gate refusal, caught up front by
 // shape-checking rather than surfacing lazily at the first HTTP call (TD-014).
