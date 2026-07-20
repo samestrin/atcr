@@ -934,19 +934,34 @@ func TestGenerateFixes_TwoTierWorkflowReproducible(t *testing.T) {
 
 	// A LOW/MEDIUM/HIGH-complexity mix (by EstMinutes), authored as struct literals
 	// so a JSONFinding schema change breaks compilation rather than silently drifting
-	// (AC 03-03 Error Scenario 1).
+	// (AC 03-03 Error Scenario 1). TWO findings land in each of tier 1 and tier 2's
+	// dispatch set (cheap+cheap2 within tier 1's 30m ceiling; mid+mid2 above 30m but
+	// within tier 2's 240m ceiling) so each tier dispatches ≥2 fixes through the
+	// bounded worker pool concurrently — the byte-identical determinism check below
+	// therefore also guards against order-dependent fix generation, not just a
+	// single-writer path.
 	seed := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "cheap.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 15, Evidence: "Found by rev"},    // LOW → tier 1
-		{Severity: "HIGH", File: "mid.go", Line: 2, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 90, Evidence: "Found by rev"},      // MEDIUM → tier 2
-		{Severity: "HIGH", File: "hard.go", Line: 3, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 100000, Evidence: "Found by rev"}, // HIGH → skip-logged by both
+		{Severity: "HIGH", File: "cheap2.go", Line: 2, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 20, Evidence: "Found by rev"},   // LOW → tier 1
+		{Severity: "HIGH", File: "mid.go", Line: 3, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 90, Evidence: "Found by rev"},      // MEDIUM → tier 2
+		{Severity: "HIGH", File: "mid2.go", Line: 4, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 120, Evidence: "Found by rev"},    // MEDIUM → tier 2
+		{Severity: "HIGH", File: "hard.go", Line: 5, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 100000, Evidence: "Found by rev"}, // HIGH → skip-logged by both
+	}
+	// Eligibility precondition (makes the "never silently dropped" invariant below
+	// meaningful): every fixture finding clears the confidence + severity fix gate,
+	// so any empty Fix + empty FixWarning is a genuine drop, not a below-gate skip.
+	for _, f := range seed {
+		require.Equal(t, ConfidenceVerified, f.Confidence, "%s must be fix-eligible by confidence", f.File)
+		require.True(t, meetsSeverityFloor(f.Severity, "MEDIUM"), "%s must be fix-eligible by severity", f.File)
 	}
 
 	// runWorkflow performs the full operator sequence in a fresh dir: seed
 	// findings.json, run tier 1 reading/writing it, then run tier 2 reading/writing
-	// it. Returns the final on-disk bytes plus the two tiers' call counts.
-	runWorkflow := func(t *testing.T) (finalBytes []byte, calls1, calls2 int) {
+	// it — every read through the production findings.json reader. Returns the review
+	// dir, the final on-disk bytes, and the two tiers' call counts.
+	runWorkflow := func(t *testing.T) (dir string, finalBytes []byte, calls1, calls2 int) {
 		t.Helper()
-		dir := t.TempDir()
+		dir = t.TempDir()
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, reconciledSubdir), 0o755))
 		path := filepath.Join(dir, reconciledSubdir, reconcile.FindingsJSON)
 		write := func(fs []reconcile.JSONFinding) {
@@ -967,14 +982,16 @@ func TestGenerateFixes_TwoTierWorkflowReproducible(t *testing.T) {
 		calls2 = runTier(twoTierConfig(registry.RoleExecutor, 240), "frontier fix") // tier 2: higher ceiling, same Name
 		finalBytes, err := os.ReadFile(path)
 		require.NoError(t, err)
-		return finalBytes, calls1, calls2
+		return dir, finalBytes, calls1, calls2
 	}
 
-	finalBytes, calls1, calls2 := runWorkflow(t)
-	assert.Equal(t, 1, calls1, "tier 1 fixes only the below-ceiling (cheap) finding")
-	assert.Equal(t, 1, calls2, "tier 2 fixes only the tier-1-skipped, within-tier-2 (mid) finding")
+	dir, finalBytes, calls1, calls2 := runWorkflow(t)
+	assert.Equal(t, 2, calls1, "tier 1 fixes exactly the two below-ceiling (cheap) findings")
+	assert.Equal(t, 2, calls2, "tier 2 fixes exactly the two tier-1-skipped, within-tier-2 (mid) findings")
 
-	final, err := unmarshalFindings(finalBytes)
+	// Final assertion rides the production loader (the real handoff reader), not a
+	// bespoke unmarshal.
+	final, err := reconcile.ReadReconciledFindings(dir)
 	require.NoError(t, err)
 	byFile := map[string]reconcile.JSONFinding{}
 	for _, f := range final {
@@ -982,10 +999,14 @@ func TestGenerateFixes_TwoTierWorkflowReproducible(t *testing.T) {
 	}
 
 	// Partition contract over the file-handoff result.
-	assert.Equal(t, "cheap fix", byFile["cheap.go"].Fix, "cheap finding fixed by tier 1")
-	assert.Contains(t, byFile["cheap.go"].Evidence, "fix by "+registry.RoleExecutor)
-	assert.Equal(t, "frontier fix", byFile["mid.go"].Fix, "mid finding fixed by tier 2")
-	assert.Contains(t, byFile["mid.go"].Evidence, "fix by "+registry.RoleExecutor)
+	for _, cheap := range []string{"cheap.go", "cheap2.go"} {
+		assert.Equal(t, "cheap fix", byFile[cheap].Fix, "%s fixed by tier 1", cheap)
+		assert.Contains(t, byFile[cheap].Evidence, "fix by "+registry.RoleExecutor)
+	}
+	for _, mid := range []string{"mid.go", "mid2.go"} {
+		assert.Equal(t, "frontier fix", byFile[mid].Fix, "%s fixed by tier 2", mid)
+		assert.Contains(t, byFile[mid].Evidence, "fix by "+registry.RoleExecutor)
+	}
 	assert.Empty(t, byFile["hard.go"].Fix, "hard finding fixed by neither tier")
 	assert.NotEmpty(t, byFile["hard.go"].FixWarning, "hard finding is skip-logged, not silently dropped")
 	for _, f := range final {
@@ -993,18 +1014,11 @@ func TestGenerateFixes_TwoTierWorkflowReproducible(t *testing.T) {
 		assert.False(t, f.Fix == "" && f.FixWarning == "", "%s: never neither (silent drop)", f.File)
 	}
 
-	// Reproducibility: the identical sequence from the same seed is deterministic.
-	finalBytes2, _, _ := runWorkflow(t)
+	// Reproducibility: the identical sequence from the same seed is deterministic,
+	// including the order in which each tier's two concurrent fixes land.
+	_, finalBytes2, _, _ := runWorkflow(t)
 	assert.Equal(t, string(finalBytes), string(finalBytes2),
 		"re-running the two-tier workflow from the same seed yields byte-identical findings.json")
-}
-
-// unmarshalFindings decodes a findings.json byte slice into []JSONFinding — the same
-// shape ReadReconciledFindings produces, used where the test already holds the bytes.
-func unmarshalFindings(data []byte) ([]reconcile.JSONFinding, error) {
-	var fs []reconcile.JSONFinding
-	err := json.Unmarshal(data, &fs)
-	return fs, err
 }
 
 // generateFixes must treat a nil registry as a graceful no-op (defense-in-depth):
