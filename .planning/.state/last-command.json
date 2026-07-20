@@ -1,9 +1,9 @@
 {
-  "skill": "design-sprint",
-  "args": "@.planning/plans/active/32.1_multi_tier_fix_execution/",
-  "invocation": "/design-sprint @.planning/plans/active/32.1_multi_tier_fix_execution/",
+  "skill": "create-sprint",
+  "args": "@/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/32.1_multi_tier_fix_execution/ --gated",
+  "invocation": "/create-sprint @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/32.1_multi_tier_fix_execution/ --gated",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "05195b9a-29f9-415b-802f-48f83ad95170",
-  "timestamp": "2026-07-20T19:40:37.678Z"
+  "session_id": "bf241c1d-adab-40a1-a2e6-ad45a11e45d5",
+  "timestamp": "2026-07-20T19:50:36.365Z"
 }
