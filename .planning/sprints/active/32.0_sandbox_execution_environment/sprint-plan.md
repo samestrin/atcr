@@ -600,12 +600,12 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
    3. Verify tests fail correctly (or pre-existing tests still pass, confirming the baseline before wiring)
    **Files:** `cmd/atcr/autofix_test.go` | **Duration:** 0.5 day
 
-### 4.2 [ ] **[Zero Behavior Change to runAutoFix Pipeline - GREEN](plan/user-stories/01-route-autofix-validation-through-sandbox.md)**
+### 4.2 [x] **[Zero Behavior Change to runAutoFix Pipeline - GREEN](plan/user-stories/01-route-autofix-validation-through-sandbox.md)**
    GREEN: Fix any drift found by 4.1's tests so `runAutoFix`'s apply/revert/branch/commit/PR behavior is unaffected outside the validation call site (T1), verify all pass (T2), COMMIT
    **Files:** `cmd/atcr/autofix.go` | **Duration:** 0.5 day
 
-### 4.2.A [ ] **[Zero Behavior Change - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-route-autofix-validation-through-sandbox.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 4.1-4.2]
+### 4.2.A [x] **[Zero Behavior Change - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-route-autofix-validation-through-sandbox.md)**
+   **Changed Files:** `cmd/atcr/autofix.go` (runAutoFix dispatch branch), `cmd/atcr/autofix_test.go` (fakeSandboxBackend + TestRunAutoFix_Sandbox*/NilSandbox)
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 4.1-4.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
@@ -622,18 +622,19 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-07-19):** No CRITICAL/HIGH/MEDIUM/LOW. Reviewer confirmed the dispatch is minimal and correct — both paths return the identical `verify.ValidationResult`/error contract so the three post-call branches consume the result unchanged; the success path never reads `Stdout`/`Stderr` (stream-collapse downstream-invisible); the `!res.Passed()` path reads only `res.ExitCode` (both paths zero it on timeout → identical "exit 0" wording); no typed-nil deref possible (`ResolveAutoFixSandbox` returns a concrete non-nil `*DockerBackend` on success or `nil,err` on failure, never a non-nil interface over a nil pointer); all four routing cases covered with dispatch proven via inverted `validateArgv`.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | - | No findings — dispatch honors the byte-identical-contract requirement; host path untouched on the nil branch | - |
+
+   **Result: Adversarial review passed — no findings.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 4.3, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 4.3 [ ] **[Zero Behavior Change - REFACTOR](plan/user-stories/01-route-autofix-validation-through-sandbox.md)**
+### 4.3 [x] **[Zero Behavior Change - REFACTOR](plan/user-stories/01-route-autofix-validation-through-sandbox.md)**
    1. Fix CRITICAL/HIGH issues from 4.2.A (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.25 day
