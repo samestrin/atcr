@@ -72,10 +72,25 @@ const declineMarker = "ATCR_DECLINE"
 // empty.
 func parseSelfDecline(fix string) (string, bool) {
 	trimmed := strings.TrimSpace(fix)
-	if trimmed != declineMarker && !strings.HasPrefix(trimmed, declineMarker+":") {
+	// Tolerate a single pair of surrounding quotes: a literal-minded model may echo
+	// the sentinel example verbatim including quotes.
+	trimmed = strings.TrimSpace(strings.Trim(trimmed, `"'`))
+	if !strings.HasPrefix(trimmed, declineMarker) {
 		return "", false
 	}
-	reason := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(trimmed, declineMarker), ":"))
+	rest := trimmed[len(declineMarker):]
+	// The marker must be the WHOLE leading token: what follows (if anything) must be a
+	// separator (":" or whitespace), never an identifier char — so "ATCR_DECLINED" is
+	// NOT a decline. This keeps detection conservative against reviewer/finding text
+	// while accepting the reason separators the prompt invites (":" or a space/newline).
+	if rest != "" {
+		switch rest[0] {
+		case ':', ' ', '\t', '\n', '\r':
+		default:
+			return "", false
+		}
+	}
+	reason := strings.TrimSpace(strings.TrimPrefix(rest, ":"))
 	if reason == "" {
 		reason = "fix exceeds safe complexity for this executor"
 	}
@@ -410,7 +425,7 @@ func buildFixPrompt(f reconcile.JSONFinding, snippet string, ex *registry.Execut
 		// Self-gating (Sprint 32.1): give the executor an explicit, structured way to
 		// decline rather than emit a guessed/partial patch. parseSelfDecline detects this
 		// exact leading token and records a skip instead of a fix.
-		fmt.Fprintf(&b, "If the fix is genuinely beyond your capability or too complex to complete safely, reply with exactly %q followed by a brief reason (e.g. %q) instead of a partial or guessed fix.\n\n", declineMarker, declineMarker+": requires cross-module refactor beyond this pass")
+		fmt.Fprintf(&b, "If the fix is genuinely beyond your capability or too complex to complete safely, reply with exactly %s followed by a brief reason (for example, %s) instead of a partial or guessed fix.\n\n", declineMarker, declineMarker+": requires cross-module refactor beyond this pass")
 	}
 	if len(ex.Rules) > 0 {
 		b.WriteString("Coding rules to follow (apply these to your fix):\n")
@@ -603,7 +618,7 @@ func buildExecutorAgentPromptWithSentinel(finding reconcile.JSONFinding, sentine
 	b.WriteString("\n```\n")
 	// Self-gating (Sprint 32.1): if the fix is beyond your capability, set "fix" to
 	// exactly the decline sentinel rather than guessing a partial patch.
-	fmt.Fprintf(&b, "If the fix is genuinely beyond your capability or too complex to complete safely, set \"fix\" to exactly %q followed by a brief reason instead of a partial or guessed fix.\n", declineMarker+": <reason>")
+	fmt.Fprintf(&b, "If the fix is genuinely beyond your capability or too complex to complete safely, set the \"fix\" field to exactly %s followed by a brief reason instead of a partial or guessed fix.\n", declineMarker+": <reason>")
 	return b.String()
 }
 
