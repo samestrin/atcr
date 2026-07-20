@@ -813,7 +813,7 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
    Run DoD Verification Checklist (T3 tests, coverage, lint, build, docs) across all 4 stories. Report using the DoD Report Template.
    **Duration:** 0.25 day
 
-### 5.8 [ ] **Phase 5 - GATE: Integration & Exit Review (subagent)**
+### 5.8 [x] **Phase 5 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 5 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -832,11 +832,10 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Gate result (2026-07-19):** Phase gate passed. No CRITICAL/HIGH/MEDIUM. Hostile-integrator review confirmed the docs accurately reflect shipped Phases 1-4 behavior: sandboxed-by-default + fail-closed gate, `--no-sandbox` bypass + every-run stderr warning, read-only `:ro /work` mount of the already-patched tree + `/scratch` redirects, and the three `auto_fix:` keys/defaults all match `internal/registry/autofix.go` and `internal/sandbox/docker.go`; no invented keys/flags/commands; the internal `#opting-out---no-sandbox` and cross-doc `#what-the-sandbox-guarantees` anchors resolve; README index + ci-integration/agentic-consumption cross-links resolve with no regression; full docs-audit suite passes. One LOW fixed inline before the boundary.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | auto-fix.md apply_target bullet | Doc implied a subdirectory `apply_target` works; the gate hard-refuses any non-repo-root target (autofix.go:178-180, "a subdirectory apply_target is not supported") | Fixed inline — bullet now states the repo root is the only accepted value and a subdirectory target is rejected with a usage error. Docs audit re-run green; committed. |
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
@@ -849,17 +848,17 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
 ## Final Phase: Validation
 
 ### Validation Checklist
-- [ ] All tests passing (T3): `go test ./...`
-- [ ] Coverage meets threshold (≥80%): `go test -coverprofile=coverage.out ./...`
-- [ ] Lint/format clean: `golangci-lint run`, `go fmt ./...`
-- [ ] Build succeeds: `go build ./...`
+- [x] All tests passing (T3): `go test ./...`
+- [x] Coverage meets threshold (≥80%): `go test -coverprofile=coverage.out ./...` — 87.6% (verify pkg), unchanged (docs-only phase)
+- [x] Lint/format clean: `golangci-lint run` (0 issues), `go fmt ./...` (source formatted; only throwaway `.planning/.temp/spike-2.0/` files unformatted, out of scope)
+- [x] Build succeeds: `go build ./...`
 
 ### Optional: Targeted Mutation Testing
 No mutation testing tool detected on this machine (`stryker-mutator`, `mutmut`, `cargo-mutants` all unavailable) — skip this step. If a tool becomes available before this sprint executes, target only `internal/verify/autofix_exec.go` and the `RunResult`→`ValidationResult` adapter (high-risk translation logic), not the full codebase.
 
 ### Drift Analysis
 Compare final implementation against [plan/original-requirements.md](plan/original-requirements.md):
-- [ ] The Auto-Fix pipeline routes its validation steps through the existing `internal/sandbox` by default.
-- [ ] A `--no-sandbox` flag exists to bypass the isolation, accompanied by strict security warnings in the CLI and documentation.
-- [ ] No new sandbox backend or third-party execution package was introduced — `internal/sandbox.DockerBackend` reused as-is or minimally extended.
-- [ ] Existing `--exec` (Epic 11.0) and `--auto-fix` apply/revert (Epic 17.0) behavior is unaffected outside the validation call site.
+- [x] The Auto-Fix pipeline routes its validation steps through the existing `internal/sandbox` by default. — `runAutoFix` dispatches to `verify.RunSandboxedValidation` when `be.sandboxBackend != nil` (Phase 4 / AC 01-03); gate resolves+preflights the backend by default (Phase 3 / AC 02-03).
+- [x] A `--no-sandbox` flag exists to bypass the isolation, accompanied by strict security warnings in the CLI and documentation. — flag registered (autofix.go:54), non-memoized `warnNoSandbox` stderr warning on every run (AC 03-03), documented in `docs/auto-fix.md` `## Opting out` + cross-links (AC 04-02).
+- [x] No new sandbox backend or third-party execution package was introduced — `internal/sandbox.DockerBackend` reused as-is or minimally extended. — `go.mod`/`go.sum` unchanged vs `main`.
+- [x] Existing `--exec` (Epic 11.0) and `--auto-fix` apply/revert (Epic 17.0) behavior is unaffected outside the validation call site. — Phase 4 (AC 01-03) proved byte-identical `ValidationResult` contract on both paths; host path untouched on the nil branch; full suite green.
