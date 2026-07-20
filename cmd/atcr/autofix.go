@@ -362,6 +362,16 @@ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFi
 	// Both paths return the identical verify.ValidationResult contract, so the three
 	// post-call branches below (verr != nil / !res.Passed() / success) are consumed
 	// unchanged regardless of which path produced the result.
+	//
+	// Accepted taxonomy divergence for exits 125-127: on the host path a validation
+	// command exiting 125/126/127 is an ordinary non-zero program exit and lands in
+	// the !res.Passed() branch as "validation failed (exit N)". On the sandbox path
+	// docker reserves 125-127 for its own launch faults (daemon/exec/permission), so
+	// the backend reclassifies exit >=125 as a runtime fault (docker.go:258) ->
+	// StartError -> the verr != nil "cannot run validation" branch instead (AC 01-02
+	// documents 125-127 -> StartError as intentional). Same command intent, different
+	// branch and operator wording — deliberate, since docker cannot tell a program's
+	// 125-127 apart from its own, not a divergence in the shared contract.
 	var res verify.ValidationResult
 	var verr error
 	if be.sandboxBackend != nil {
