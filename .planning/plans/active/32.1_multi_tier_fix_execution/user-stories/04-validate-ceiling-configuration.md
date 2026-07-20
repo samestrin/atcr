@@ -36,13 +36,18 @@
 - **Relevant:** Bad ceiling config today would fail silently — the executor would simply never fire (or always fire) with no diagnostic — which is exactly the class of bug the existing `validateExecutor` convention exists to prevent for every other field.
 - **Time-bound:** Small, single-file (plus test file) change completable within one TDD cycle once Story 1's fields exist.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-numeric-and-severity-ceiling-values-are-range-validated.md) | Numeric and Severity Ceiling Values Are Range-Validated | Unit |
+| [04-02](../acceptance-criteria/04-02-floor-ceiling-contradiction-is-rejected-at-load-time.md) | Floor-Ceiling Contradiction Is Rejected at Load Time | Unit |
+
+## Original Criteria Overview
 
 1. `validateExecutor` rejects a `max_estimated_minutes` that is non-positive or exceeds a new named constant (e.g. `MaxExecutorEstimatedMinutes`), accumulating the error alongside all other executor faults rather than short-circuiting.
 2. `validateExecutor` rejects a `max_severity_for_fix` that does not normalize to one of CRITICAL/HIGH/MEDIUM/LOW via `reclib.NormalizeSeverity`, using the same error-message style as the existing `min_severity_for_fix` check.
 3. `validateExecutor` rejects a configuration where `max_severity_for_fix` (ceiling) is set below `min_severity_for_fix` (floor), since that combination makes the executor permanently ineligible for any finding — with a test asserting the specific contradictory-range error.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/32.1_multi_tier_fix_execution/`_
 
 ## Technical Considerations
 

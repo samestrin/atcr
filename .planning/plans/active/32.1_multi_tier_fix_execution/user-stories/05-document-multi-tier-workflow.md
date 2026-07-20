@@ -37,13 +37,18 @@
 - **Relevant:** Directly closes the original epic's AC4 (a documented multi-tier workflow example) and T5 (update docs/registry.md and user-facing docs) — without this story, Stories 1-3's routing capability is unusable by anyone who has not read the Go source.
 - **Time-bound:** A single-session documentation task, sequenced last in the plan since it depends on Stories 1 and 3's final field names and mechanism being locked.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-ceiling-fields-documented-in-registry-and-findings-format-docs.md) | Ceiling Fields Documented in Registry and Findings-Format Docs | Manual |
+| [05-02](../acceptance-criteria/05-02-worked-two-tier-example-is-valid-and-runnable.md) | Worked Two-Tier Example Is Valid and Runnable | Integration |
+
+## Original Criteria Overview
 
 1. `docs/registry.md`'s executor field table and surrounding prose document the new ceiling field(s) (name, default, validation range, effect on routing) in the same style as existing fields.
 2. `docs/findings-format.md`'s `EST_MINUTES` documentation cross-references the executor-ceiling routing use introduced by Story 1/2, without altering the existing merge/parsing semantics already documented there.
 3. `examples/registry-with-executor.yaml` (or a companion example file, if a single file cannot cleanly show two independent registries) contains a complete, valid, runnable worked example of a cheap-tier config and a frontier-tier config applied sequentially against the same `findings.json`, matching the mechanism Story 3 actually implements.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/32.1_multi_tier_fix_execution/`_
 
 ## Technical Considerations
 

@@ -36,15 +36,21 @@
 - **Relevant:** Directly implements the original epic's AC3 ("Execution Engine successfully skips findings that exceed the configured complexity boundaries"), T4 ("gracefully handle and log skipped findings when a complexity ceiling is hit"), and Proposed Solution #4 (self-gating) — the core routing behavior the whole multi-tier plan depends on.
 - **Time-bound:** Implementable within a single sprint phase alongside or immediately after Story 1, since it touches one function (`generateFixes`) and one new sibling helper.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-ceiling-exceeding-findings-are-skipped-before-dispatch.md) | Ceiling-Exceeding Findings Are Skipped Before Dispatch | Unit |
+| [02-02](../acceptance-criteria/02-02-self-gating-decline-never-presents-a-partial-fix-as-complete.md) | Self-Gating Decline Never Presents a Partial Fix as Complete | Unit |
+| [02-03](../acceptance-criteria/02-03-existing-skip-chain-and-failure-branches-remain-unaffected.md) | Existing Skip Chain and Failure Branches Remain Unaffected | Integration |
+
+## Original Criteria Overview
 
 1. A finding whose `EstMinutes` exceeds the executor's effective `max_estimated_minutes` ceiling is skipped before any fix-generation call is made (no wasted API call), with `f.FixWarning` set to a clear reason (e.g. `"skipped: estimated complexity (Nm) exceeds executor ceiling (Mm)"`) and a `logPipelineWarning(logger, "executor_ceiling_skip", "<file>:<line>: ...")` call emitted.
 2. If `max_severity_for_fix` is configured and a finding's severity exceeds it, the same skip-and-log contract applies, distinguishable in the warning detail from the estimated-minutes ceiling case.
 3. When the executor itself self-assesses (during or after a dispatched attempt) that a fix is too complex to complete safely, it declines rather than returning a partial/incomplete fix — the decline is recorded via the identical `FixWarning` + `logPipelineWarning` contract, never as `Fix` content and never as a silent no-op.
 4. Existing skip behavior (confidence floor, severity floor, prior-attribution idempotency guard) and existing skip/failure branches (`executor_fix_failed`, `executor_truncated_fix`, `executor_empty_fix`, `executor_invalid_syntax`) are unchanged in ordering and behavior — verified by the pre-existing executor test suite continuing to pass.
 5. A ceiling-skipped or self-declined finding remains visible end-to-end in `findings.json` / report output via its non-empty `FixWarning`, so a run where every configured tier skips a finding cannot be misread as a false "clean" run.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/32.1_multi_tier_fix_execution/`_
 
 ## Technical Considerations
 

@@ -37,13 +37,19 @@
 - **Relevant:** Directly satisfies the original epic's AC4 — the explicit "cheap tier + frontier tier" outcome that motivated the whole plan.
 - **Time-bound:** Deliverable within the current sprint, immediately after Stories 1 and 2 land.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-two-tier-run-partitions-every-finding-exactly-once.md) | Two-Tier Run Partitions Every Finding Exactly Once | Integration |
+| [03-02](../acceptance-criteria/03-02-fix-attribution-prevents-double-processing-across-tiers.md) | Fix Attribution Prevents Double-Processing Across Tiers | Integration |
+| [03-03](../acceptance-criteria/03-03-two-tier-workflow-is-test-verified-and-reproducible.md) | Two-Tier Workflow Is Test-Verified and Reproducible | E2E |
+
+## Original Criteria Overview
 
 1. A two-tier run (tier 1 low-ceiling executor, tier 2 high/no-ceiling executor, both against the same findings set) results in every finding being fixed by exactly one tier or explicitly logged as skipped — never both, never neither, never silently dropped.
 2. Fix attribution correctly prevents tier 2 from re-attempting a finding tier 1 already fixed, and correctly allows tier 2 to attempt a finding tier 1 skipped due to the ceiling.
 3. The behavior is validated by an automated test (not manual verification only) using a fixture findings set with a mix of complexity levels, and is documented with a worked example so an operator can reproduce the workflow without reading executor source code.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/32.1_multi_tier_fix_execution/`_
 
 ## Technical Considerations
 

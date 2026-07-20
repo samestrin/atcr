@@ -36,13 +36,18 @@
 - **Relevant:** Without a config surface for the ceiling, no routing/skip logic anywhere in this plan has anything to read; this story unblocks every subsequent story in the plan.
 - **Time-bound:** Small, self-contained change to one file (plus its test file) — completable within a single TDD cycle.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-executorconfig-exposes-complexity-ceiling-fields.md) | ExecutorConfig Exposes Complexity Ceiling Fields | Unit |
+| [01-02](../acceptance-criteria/01-02-effective-value-resolvers-return-correct-defaults.md) | Effective-Value Resolvers Return Correct Defaults | Unit |
+
+## Original Criteria Overview
 
 1. `ExecutorConfig` exposes `max_estimated_minutes` (int, omitempty) and `max_severity_for_fix` (string, omitempty) as new optional YAML fields, both backward-compatible (absent = no ceiling).
 2. `validateExecutor` rejects an invalid `max_estimated_minutes` (non-positive when set, or above a defined max constant) and an invalid `max_severity_for_fix` (not one of CRITICAL/HIGH/MEDIUM/LOW, or set below `min_severity_for_fix` such that the effective range is empty), accumulating errors like every other executor field check.
 3. `EffectiveMaxEstimatedMinutes()` and `EffectiveMaxSeverityForFix()` resolver methods return the configured ceiling when set, and an explicit "no ceiling" sentinel/zero-value when unset — ready for a later story's `generateFixes` routing logic to consume without re-deriving the fallback rule.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/32.1_multi_tier_fix_execution/`_
 
 ## Technical Considerations
 

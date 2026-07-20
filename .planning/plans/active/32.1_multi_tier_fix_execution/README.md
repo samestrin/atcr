@@ -7,7 +7,7 @@ Adds a configurable complexity ceiling to atcr's fix-generation executor so chea
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/32.1_multi_tier_fix_execution/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/32.1_multi_tier_fix_execution/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/32.1_multi_tier_fix_execution/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/32.1_multi_tier_fix_execution/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/32.1_multi_tier_fix_execution/`
 
