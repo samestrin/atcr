@@ -380,6 +380,13 @@ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFi
 		if rerr := autofix.RevertPatch(ctx, bm); rerr != nil {
 			return fmt.Errorf("auto-fix: validation failed AND revert failed: %w", rerr)
 		}
+		if res.TimedOut {
+			// A timeout leaves ExitCode at 0 (both translation paths), so the
+			// generic exit-code wording would read "failed (exit 0)" — name the
+			// timeout explicitly instead.
+			return fmt.Errorf("auto-fix: local validation timed out after %s; working tree reverted, no GitHub changes made%s",
+				be.validateTimeout, validationOutputTail(res.Stdout))
+		}
 		return fmt.Errorf("auto-fix: local validation failed (exit %d); working tree reverted, no GitHub changes made%s",
 			res.ExitCode, validationOutputTail(res.Stdout))
 	}
