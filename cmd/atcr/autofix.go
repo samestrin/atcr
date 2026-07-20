@@ -319,6 +319,24 @@ func remoteLeftoverNotice(branch string) string {
 	return fmt.Sprintf(" (remote branch %q was created and may contain a commit; delete it manually to avoid leaving it behind)", branch)
 }
 
+// validationOutputTail renders a bounded tail of a failed validation run's
+// captured output for the failure error. On the sandbox path stdout+stderr have
+// already been collapsed into Stdout (documented stream-collapse), so this is the
+// only diagnostic the operator gets about WHY the fix was rejected; on the host
+// path it is the command's stdout. The capture is already capped (1 MiB) at the
+// verify layer; the tail bounds what the error message carries.
+func validationOutputTail(stdout string) string {
+	const maxTail = 4000
+	t := strings.TrimSpace(stdout)
+	if t == "" {
+		return ""
+	}
+	if len(t) > maxTail {
+		t = t[len(t)-maxTail:]
+	}
+	return "\nvalidation output (tail):\n" + t
+}
+
 // runAutoFix executes the gated pipeline: apply → validate → revert-or-continue →
 // branch/commit/PR. Its single invariant: no GitHub-mutating call is reachable
 // until local validation has PASSED. On an apply failure or a validation failure
@@ -362,7 +380,8 @@ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFi
 		if rerr := autofix.RevertPatch(ctx, bm); rerr != nil {
 			return fmt.Errorf("auto-fix: validation failed AND revert failed: %w", rerr)
 		}
-		return fmt.Errorf("auto-fix: local validation failed (exit %d); working tree reverted, no GitHub changes made", res.ExitCode)
+		return fmt.Errorf("auto-fix: local validation failed (exit %d); working tree reverted, no GitHub changes made%s",
+			res.ExitCode, validationOutputTail(res.Stdout))
 	}
 
 	// Validation passed — the tree is trustworthy. Drop the now-redundant backups
