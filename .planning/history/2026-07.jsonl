@@ -255,3 +255,8 @@
 {"ts":"2026-07-19T07:10:01.413182-07:00","package":"cmd/atcr","severity":"LOW","id":"11ed1e99cbf73857","file":"cmd/atcr/home.go","category":"reliability"}
 {"ts":"2026-07-19T07:10:01.413182-07:00","package":"cmd/atcr","severity":"LOW","id":"0cd836da1c4267cc","file":"cmd/atcr/home.go","category":"style"}
 {"ts":"2026-07-19T07:10:01.413182-07:00","package":"cmd/atcr","severity":"MEDIUM","id":"bf63a2f65470c0c9","file":"cmd/atcr/home.go","category":"structure"}
+{"ts":"2026-07-19T18:31:32.773653-07:00","package":"internal/verify","severity":"MEDIUM","id":"a9912cd7a525c372","file":"internal/verify/autofix_exec.go","category":"operational"}
+{"ts":"2026-07-19T18:31:32.773653-07:00","package":"internal/verify","severity":"MEDIUM","id":"81989e561a470038","file":"internal/verify/autofix_exec.go","category":"testing"}
+{"ts":"2026-07-19T18:31:32.773653-07:00","package":"internal/verify","severity":"MEDIUM","id":"41856bfd063d4dd9","file":"internal/verify/autofix_exec.go","category":"robustness"}
+{"ts":"2026-07-19T18:31:32.773653-07:00","package":"internal/verify","severity":"LOW","id":"194ac4a2df1cd68e","file":"internal/verify/autofix_exec.go","category":"robustness"}
+{"ts":"2026-07-19T18:31:32.773653-07:00","package":"internal/verify","severity":"LOW","id":"2f8c605685ab5bdc","file":"internal/verify/autofix_exec.go","category":"style"}
