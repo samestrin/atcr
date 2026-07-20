@@ -739,7 +739,19 @@ func (r *Registry) validateExecutor() []error {
 	// is unset, not the empty literal. SeverityRank is the shared canonical map — no new
 	// rank table is introduced.
 	if maxSevNorm != "" && reviewSeverities[maxSevNorm] {
-		floorNorm := reclib.NormalizeSeverity(e.EffectiveFixMinSeverity())
+		// The effective floor: a min_severity_for_fix that is unset OR normalizes to empty
+		// (e.g. whitespace-only, which applyDefaults also collapses) resolves to the MEDIUM
+		// default at runtime, so the contradiction check must use that same effective floor
+		// — reading it directly here (rather than via EffectiveFixMinSeverity, whose empty
+		// check is literal and would let a whitespace value skip the check while runtime
+		// still applies MEDIUM). An explicitly-invalid floor (e.g. "BOGUS") normalizes to a
+		// non-canonical token that reviewSeverities rejects, so the check is skipped and the
+		// per-field min_severity_for_fix error above is not masked (and SeverityRank is never
+		// indexed with an unranked key).
+		floorNorm := reclib.NormalizeSeverity(e.MinSeverity)
+		if floorNorm == "" {
+			floorNorm = DefaultFixMinSeverity
+		}
 		if reviewSeverities[floorNorm] && reclib.SeverityRank[maxSevNorm] < reclib.SeverityRank[floorNorm] {
 			errs = append(errs, fmt.Errorf("executor: max_severity_for_fix (%s) must not be below min_severity_for_fix (%s) — this combination is never eligible for a fix", maxSevNorm, floorNorm))
 		}

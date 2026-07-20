@@ -758,6 +758,39 @@ executor:
 	assert.Contains(t, err.Error(), "below", "the contradiction error is distinguishable from the plain out-of-set error")
 }
 
+// AC 04-02 Edge Case 1 (negative side): min unset (defaults to MEDIUM) with a ceiling
+// below that default (LOW) is a contradiction and must be rejected — the check reads the
+// EFFECTIVE floor, not just an explicitly-written one. Also covers the whitespace-only
+// floor leak (a min that normalizes to empty must resolve to the MEDIUM default too).
+func TestExecutor_MaxSeverityForFixBelowDefaultedFloorRejected(t *testing.T) {
+	for _, minLine := range []string{"", "  min_severity_for_fix: \"   \"\n"} {
+		_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_severity_for_fix: LOW
+`+minLine))
+		require.Error(t, err, "max_severity_for_fix LOW below the effective MEDIUM floor must be rejected (min line %q)", minLine)
+		assert.Contains(t, err.Error(), "below")
+	}
+}
+
+// AC 04-02 Edge Case 2: an individually-invalid min_severity_for_fix with a valid
+// max_severity_for_fix accumulates only the per-field floor error — the cross-field
+// contradiction check must NOT fire a false "below" error nor panic on the unranked key.
+func TestExecutor_InvalidFloorDoesNotMaskOrFalseContradict(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  min_severity_for_fix: BOGUS
+  max_severity_for_fix: HIGH
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "min_severity_for_fix", "the per-field floor error is surfaced")
+	assert.NotContains(t, err.Error(), "below", "the cross-field check must not fire on an invalid floor")
+}
+
 // AC 04-02 Scenario 1 & 2, Edge Case 1: a valid floor/ceiling combination — ceiling
 // above floor, equal floor/ceiling, and ceiling-against-defaulted-floor — loads cleanly.
 func TestExecutor_ValidFloorCeilingCombinationAccepted(t *testing.T) {
