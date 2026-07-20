@@ -18,6 +18,7 @@ package verify
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -212,4 +213,50 @@ func TestTranslateRunResult(t *testing.T) {
 			assert.Equal(t, tc.wantPassed, res.Passed())
 		})
 	}
+}
+
+// --- AC 01-01: empty/relative dir delegation fails closed via the backend ---
+
+// TestRunSandboxedValidation_EmptyDirFailsClosedThroughRealBackend drives the
+// empty-dir delegation end-to-end through a real DockerBackend backed by the
+// fake-docker recording shim: the adapter deliberately does NOT stat-guard an
+// empty dir (see the dir != "" branch comment), so rejection must come from the
+// backend's RunSpec.validate() — surfacing as StartError + !Passed() + a non-nil
+// returned error BEFORE any container spawn (the shim records every invocation,
+// so a missing capture file proves no docker subprocess ran).
+func TestRunSandboxedValidation_EmptyDirFailsClosedThroughRealBackend(t *testing.T) {
+	dockerPath, capture := fakeDockerRecording(t)
+	cfg := sandbox.DefaultDockerConfig()
+	cfg.DockerPath = dockerPath
+	backend := sandbox.NewDockerBackend(cfg)
+
+	res, err := RunSandboxedValidation(context.Background(), backend, []string{"go", "build"}, "", 5*time.Second)
+	require.Error(t, err, "an empty dir must fail closed via the backend's RunSpec.validate()")
+	assert.NotNil(t, res.StartError, "empty SnapshotDir rejection maps to StartError, the cannot-validate branch")
+	assert.False(t, res.Passed())
+	_, statErr := os.Stat(capture)
+	assert.True(t, os.IsNotExist(statErr), "no docker subprocess may spawn for a spec RunSpec.validate() rejects")
+}
+
+// TestRunSandboxedValidation_RelativeDirFailsClosedThroughRealBackend drives a
+// relative dir that EXISTS past the adapter's os.Stat guard, so rejection must
+// again come from the backend's RunSpec.validate() absolute-path requirement —
+// the same StartError + !Passed() fail-closed outcome, again with zero spawns.
+func TestRunSandboxedValidation_RelativeDirFailsClosedThroughRealBackend(t *testing.T) {
+	dockerPath, capture := fakeDockerRecording(t)
+	cfg := sandbox.DefaultDockerConfig()
+	cfg.DockerPath = dockerPath
+	backend := sandbox.NewDockerBackend(cfg)
+
+	// Chdir into a scratch tree so "relsnap" is a relative path that exists and
+	// therefore passes the adapter's stat guard, isolating the backend's check.
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.Mkdir("relsnap", 0o755))
+
+	res, err := RunSandboxedValidation(context.Background(), backend, []string{"go", "build"}, "relsnap", 5*time.Second)
+	require.Error(t, err, "a relative dir must fail closed via the backend's RunSpec.validate()")
+	assert.NotNil(t, res.StartError, "relative SnapshotDir rejection maps to StartError, the cannot-validate branch")
+	assert.False(t, res.Passed())
+	_, statErr := os.Stat(capture)
+	assert.True(t, os.IsNotExist(statErr), "no docker subprocess may spawn for a spec RunSpec.validate() rejects")
 }
