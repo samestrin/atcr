@@ -649,6 +649,154 @@ func TestRunAutoFix_RemoteLeftoverNotice(t *testing.T) {
 	}
 }
 
+// --- 01-03: zero behavior change to runAutoFix, validation routed through a
+// supplied sandbox.Backend --------------------------------------------------
+
+// fakeSandboxBackend is a sandbox.Backend stand-in for runAutoFix pipeline tests:
+// it records that Run was invoked and returns a preconfigured RunResult/error so a
+// test can drive the sandbox-routed validation path without a live container
+// (AC 01-03). Its Run deliberately ignores the RunSpec — the point is to prove
+// runAutoFix dispatches HERE (not to the host os/exec path) and consumes the
+// translated ValidationResult through the same three post-call branches.
+type fakeSandboxBackend struct {
+	runCalls int
+	result   sandbox.RunResult
+	runErr   error
+}
+
+func (f *fakeSandboxBackend) Name() string                    { return "fake-sandbox" }
+func (f *fakeSandboxBackend) Preflight(context.Context) error { return nil }
+func (f *fakeSandboxBackend) Run(_ context.Context, _ sandbox.RunSpec) (sandbox.RunResult, error) {
+	f.runCalls++
+	return f.result, f.runErr
+}
+
+// TestRunAutoFix_SandboxPassDrivesIdenticalPRSequence: when a sandbox.Backend is
+// supplied and reports a passing result, runAutoFix drives the identical
+// ApplyPatch → CleanupBackups → CreateBranch → CreateCommit → FindOpenPullRequest →
+// CreatePullRequest sequence as the host-exec pass case (AC 01-03 Scenario 1). The
+// validateArgv is `false` (would FAIL on the host path), so a green result here can
+// only come from routing through the fake backend — proving the dispatch, not the
+// host os/exec fallback.
+func TestRunAutoFix_SandboxPassDrivesIdenticalPRSequence(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	be := &fakeSandboxBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"false"}, // would FAIL on the host path
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: be,
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, be.runCalls, "validation must route through the supplied sandbox backend, not the host path")
+	require.Equal(t, 1, gh.branchCalls)
+	require.Equal(t, 1, gh.commitCalls)
+	require.Equal(t, 1, gh.createPR)
+	require.Equal(t, 0, gh.updatePR)
+	got, _ := os.ReadFile(filepath.Join(root, rel))
+	require.Equal(t, "new\n", string(got), "validated content stays applied on a sandbox pass")
+}
+
+// TestRunAutoFix_SandboxFailRevertsWithIdenticalWording: a failing sandbox result
+// (non-zero exit) reverts the tree, fires ZERO GitHub calls, and returns the exact
+// existing "local validation failed (exit %d)" wording (AC 01-03 Scenario 2). The
+// validateArgv is `true` (would PASS on the host path), so a revert here can only
+// come from the sandbox result.
+func TestRunAutoFix_SandboxFailRevertsWithIdenticalWording(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	be := &fakeSandboxBackend{result: sandbox.RunResult{ExitCode: 3, Output: "boom"}}
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // would PASS on the host path
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: be,
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.Error(t, err)
+	require.Equal(t, 1, be.runCalls, "validation must route through the sandbox backend")
+	require.Contains(t, err.Error(), "local validation failed (exit 3)",
+		"the sandbox-fail branch must reuse the exact host-path failure wording with the sandbox exit code")
+	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
+		"no GitHub call may fire on a sandbox validation failure")
+	got, _ := os.ReadFile(filepath.Join(root, rel))
+	require.Equal(t, "old\n", string(got), "the working tree must be reverted after a sandbox validation failure")
+}
+
+// TestRunAutoFix_SandboxStartErrorRevertsWithCannotValidateWording: a backend fault
+// (Run returns a non-nil error → StartError per AC 01-02) takes the same
+// "cannot run validation" branch as a host-path StartError, reverting the tree with
+// zero GitHub calls (AC 01-03 Scenario 3). validateArgv is `true` so the host path
+// would have passed.
+func TestRunAutoFix_SandboxStartErrorRevertsWithCannotValidateWording(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	be := &fakeSandboxBackend{runErr: errors.New("docker daemon unreachable")}
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // would PASS on the host path
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: be,
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.Error(t, err)
+	require.Equal(t, 1, be.runCalls, "validation must route through the sandbox backend")
+	require.Contains(t, err.Error(), "cannot run validation",
+		"a sandbox backend fault must take the same cannot-validate branch as a host StartError")
+	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
+		"no GitHub call may fire when the sandbox cannot validate")
+	got, _ := os.ReadFile(filepath.Join(root, rel))
+	require.Equal(t, "old\n", string(got), "the working tree must be reverted when the sandbox cannot validate")
+}
+
+// TestRunAutoFix_NilSandboxUsesHostPath: with no sandbox backend supplied
+// (--no-sandbox opt-out), validation still runs on the host exactly as before, so
+// the existing host-path tests remain the zero-behavior-change baseline (AC 01-03
+// Edge Case: the routing change must not disturb the nil path).
+func TestRunAutoFix_NilSandboxUsesHostPath(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // host path passes
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: nil, // opt-out: host path
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, gh.createPR, "the host path stays byte-identical when no sandbox backend is supplied")
+}
+
 // --- thin finding->entry selection ----------------------------------------
 
 // TestSelectAutoFixEntries_FiltersByThresholdAndFix: only findings carrying a Fix

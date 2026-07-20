@@ -594,7 +594,7 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
 
 **Focus:** Prove the full `runAutoFix` pipeline is unaffected outside the validation call site — existing auto-fix unit/integration tests pass unmodified in outcome against a fake `sandbox.Backend`; the combined gate error names sandbox failures alongside apply-target/validation-command/GitHub-credential failures in one usage error; `verr != nil` vs `!res.Passed()` branching is provably preserved byte-for-byte regardless of execution path.
 
-### 4.1 [ ] **[Zero Behavior Change to runAutoFix Pipeline - RED](plan/user-stories/01-route-autofix-validation-through-sandbox.md)**
+### 4.1 [x] **[Zero Behavior Change to runAutoFix Pipeline - RED](plan/user-stories/01-route-autofix-validation-through-sandbox.md)**
    1. Analyze [AC 01-03](plan/acceptance-criteria/01-03-zero-behavior-change-to-runautofix-pipeline.md), identify testable units
    2. Write/extend integration tests proving the existing auto-fix test suite passes unmodified in outcome against a fake `sandbox.Backend`; assert `verr != nil` (cannot validate) vs `!res.Passed()` (validation failed) branching is byte-for-byte identical regardless of execution path
    3. Verify tests fail correctly (or pre-existing tests still pass, confirming the baseline before wiring)

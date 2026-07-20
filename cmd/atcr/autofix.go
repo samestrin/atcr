@@ -331,7 +331,19 @@ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFi
 		return fmt.Errorf("auto-fix: applying patch (working tree reverted, no GitHub changes made): %w", applyErr)
 	}
 
-	res, verr := verify.RunConfiguredValidation(ctx, be.validateArgv, be.applyTarget, be.validateTimeout)
+	// Route validation through the resolved sandbox backend when one is present
+	// (the default sandboxed-on posture), else run it directly on the host — the
+	// --no-sandbox opt-out, which leaves be.sandboxBackend nil (AC 01-03/03-02).
+	// Both paths return the identical verify.ValidationResult contract, so the three
+	// post-call branches below (verr != nil / !res.Passed() / success) are consumed
+	// unchanged regardless of which path produced the result.
+	var res verify.ValidationResult
+	var verr error
+	if be.sandboxBackend != nil {
+		res, verr = verify.RunSandboxedValidation(ctx, be.sandboxBackend, be.validateArgv, be.applyTarget, be.validateTimeout)
+	} else {
+		res, verr = verify.RunConfiguredValidation(ctx, be.validateArgv, be.applyTarget, be.validateTimeout)
+	}
 	if verr != nil {
 		// Could not even validate: fail closed exactly like a validation failure.
 		if rerr := autofix.RevertPatch(ctx, bm); rerr != nil {
