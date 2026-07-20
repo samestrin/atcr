@@ -963,6 +963,40 @@ func TestValidateAutoFixBackend_NoSandboxStillEnforcesOtherPieces(t *testing.T) 
 	require.Equal(t, 0, *calls)
 }
 
+// TestValidateAutoFixBackend_NoSandboxOtherPiecesFailClosed: the bypass touches
+// sandbox resolution ONLY — a missing apply target and a missing validation
+// command each still fail closed under --no-sandbox, with the resolver never
+// called (AC 03-02 Security / Story-Specific, all three non-sandbox pieces).
+func TestValidateAutoFixBackend_NoSandboxOtherPiecesFailClosed(t *testing.T) {
+	cases := []struct {
+		name    string
+		goMod   bool
+		target  string
+		wantSub string
+	}{
+		{name: "missing apply target", goMod: true, target: "does-not-exist", wantSub: "apply target"},
+		{name: "missing validation command", goMod: false, target: ".", wantSub: "validation command"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearGitHubEnv(t)
+			calls := spyResolveSandbox(t)
+			root := t.TempDir()
+			if tc.goMod {
+				writeGoMod(t, root)
+			}
+			proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: tc.target}}
+			cmd := noSandboxCmd(t, "o/r", "tok")
+			_, err := validateAutoFixBackend(cmd, proj, root)
+			require.Error(t, err)
+			require.Equal(t, 2, exitCode(err))
+			require.Contains(t, err.Error(), tc.wantSub, "non-sandbox gate pieces must still fail closed under --no-sandbox")
+			require.NotContains(t, err.Error(), "[sandbox] block", "the sandbox piece is bypassed, so it must not appear")
+			require.Equal(t, 0, *calls, "the resolver must not be called on the bypass path")
+		})
+	}
+}
+
 // TestValidateAutoFixBackend_NoSandboxFalseKeepsGate: --no-sandbox=false is
 // identical to the flag being absent — the real resolver/preflight gate runs and a
 // missing sandbox is a hard refusal (AC 03-02 EC3 regression guard). The bypass
