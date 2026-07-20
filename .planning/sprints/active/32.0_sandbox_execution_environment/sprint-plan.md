@@ -639,13 +639,14 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.25 day
 
-### 4.4 [ ] **[Combined Gate Error — Integration Leg - RED](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 4.4 [x] **[Combined Gate Error — Integration Leg - RED](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
    1. Analyze [AC 02-03](plan/acceptance-criteria/02-03-gate-integration-and-combined-error.md) integration leg, identify testable units
    2. Write an integration test asserting the combined `validateAutoFixBackend` usage error correctly names sandbox resolution/Preflight failures alongside apply-target/validation-command/GitHub-credential failures when multiple pieces are missing simultaneously
    3. Verify tests fail correctly
    **Files:** `cmd/atcr/autofix_test.go` | **Duration:** 0.5 day
 
-### 4.5 [ ] **[Combined Gate Error — Integration Leg - GREEN](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 4.5 [x] **[Combined Gate Error — Integration Leg - GREEN](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+   _No additional production code required: the four-piece combined-error joining was fully delivered in Phase 3 task 3.2 (the sandbox failure appends to the same `missing []string` slice as apply-target/validation-command/GitHub-credential, no early return). Task 4.4's `TestValidateAutoFixBackend_AllFourPiecesCombineInOneError` passes immediately, characterizing/pinning that already-correct behavior as the AC 02-03 integration-leg regression guard — mirroring this sprint's 1.4/1.5 precedent. `cmd/atcr/autofix.go` left unmodified._
    GREEN: Finalize the combined error message joining so all four gate pieces report correctly together (T1), verify all pass (T2), COMMIT
    **Files:** `cmd/atcr/autofix.go` | **Duration:** 0.5 day
 

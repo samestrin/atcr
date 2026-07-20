@@ -1045,6 +1045,31 @@ func TestValidateAutoFixBackend_SandboxUsesSuppliedContext(t *testing.T) {
 	require.Contains(t, err.Error(), "sandbox", "the cancelled-context preflight failure must surface as the sandbox gate piece")
 }
 
+// TestValidateAutoFixBackend_AllFourPiecesCombineInOneError: the integration leg of
+// AC 02-03 — when every gate piece fails simultaneously (missing apply target,
+// unresolvable validation command, missing GitHub token, and an unconfigured
+// sandbox under the default sandboxed-on posture), the single returned usage error
+// names ALL FOUR in one combined message (exit 2), proving the sandbox check joins
+// the same `missing []string` slice as the other three rather than short-circuiting.
+func TestValidateAutoFixBackend_AllFourPiecesCombineInOneError(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir() // deliberately NO go.mod → validation command cannot resolve
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: "does-not-exist"}, // apply target stat-fails
+		Sandbox: nil,                                                    // unconfigured sandbox
+	}
+	cmd := autoFixCmd(t, "", "", "") // no repo, no token
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err), "an all-pieces-missing gate failure is a usage error (exit 2)")
+	msg := err.Error()
+	require.Contains(t, msg, "apply target", "the combined error must name the apply-target failure")
+	require.Contains(t, msg, "validation command", "the combined error must name the validation-command failure")
+	require.Contains(t, msg, "a GitHub token is required", "the combined error must name the GitHub-credential failure")
+	require.Contains(t, msg, "[sandbox] block", "the combined error must name the sandbox failure alongside the other three")
+}
+
 // --- 03-02: --no-sandbox bypasses the resolver/preflight gate ---------------
 
 // noSandboxCmd builds a bare auto-fix command with --no-sandbox already set, so a
