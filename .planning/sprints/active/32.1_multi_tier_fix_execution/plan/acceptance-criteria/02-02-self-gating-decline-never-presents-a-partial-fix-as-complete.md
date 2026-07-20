@@ -67,15 +67,15 @@ An executor self-decline — on the single-shot snippet path or the Agent Mode t
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] A self-declined fix (both snippet-path and Agent-Mode-path where applicable) sets `f.FixWarning` to a non-empty, human-readable reason and never sets `f.Fix`
-- [ ] The decline's logged class is distinct from `executor_fix_failed`, `executor_truncated_fix`, and `executor_empty_fix`
-- [ ] The decline branch returns before any `f.Fix`/`f.Evidence` mutation (no stale-Fix-plus-warning state possible)
-- [ ] An ambiguous, non-decline response is never misclassified as a decline (conservative-detector test case passes)
+- [x] A self-declined fix (both snippet-path and Agent-Mode-path where applicable) sets `f.FixWarning` to a non-empty, human-readable reason and never sets `f.Fix`
+- [x] The decline's logged class is distinct from `executor_fix_failed`, `executor_truncated_fix`, and `executor_empty_fix`
+- [x] The decline branch returns before any `f.Fix`/`f.Evidence` mutation (no stale-Fix-plus-warning state possible)
+- [x] An ambiguous, non-decline response is never misclassified as a decline (conservative-detector test case passes)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

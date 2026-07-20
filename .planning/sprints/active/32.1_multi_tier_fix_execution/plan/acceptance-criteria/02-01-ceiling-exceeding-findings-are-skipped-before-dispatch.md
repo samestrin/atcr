@@ -75,15 +75,15 @@ A finding whose `EstMinutes` (or severity) exceeds the executor's configured cei
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `withinComplexityCeiling` (or equivalently named predicate) exists in `internal/verify/severity.go` and is unit-tested at the ceiling boundary, zero, and above-ceiling values
-- [ ] A ceiling-exceeding finding never reaches `callExecutor`/`invokeExecutor` (spy-verified), has `f.FixWarning` set to a non-empty reason, and triggers exactly one `logPipelineWarning(..., "executor_ceiling_skip", ...)` call with `File:Line` in the detail
-- [ ] A zero/unset ceiling never triggers a ceiling-based skip (regression-proofing the "no explicit opt-in" contract)
-- [ ] Minutes-ceiling and severity-ceiling skip reasons are distinguishable in `FixWarning` text
+- [x] `withinComplexityCeiling` (or equivalently named predicate) exists in `internal/verify/severity.go` and is unit-tested at the ceiling boundary, zero, and above-ceiling values
+- [x] A ceiling-exceeding finding never reaches `callExecutor`/`invokeExecutor` (spy-verified), has `f.FixWarning` set to a non-empty reason, and triggers exactly one `logPipelineWarning(..., "executor_ceiling_skip", ...)` call with `File:Line` in the detail
+- [x] A zero/unset ceiling never triggers a ceiling-based skip (regression-proofing the "no explicit opt-in" contract)
+- [x] Minutes-ceiling and severity-ceiling skip reasons are distinguishable in `FixWarning` text
 
 **Manual Review:**
 - [ ] Code reviewed and approved

@@ -70,15 +70,15 @@ The pre-existing skip chain (confidence → severity floor → attribution) keep
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Full pre-existing `internal/verify/executor_test.go` suite passes with zero edits to existing assertions
-- [ ] Skip-chain order (confidence → severity → attribution → ceiling) is verified by a test combining multiple simultaneous failing gates
-- [ ] `executor_fix_failed`, `executor_truncated_fix`, `executor_empty_fix`, `executor_invalid_syntax` classes and their `FixWarning` text are unchanged and verified by existing/regression tests
-- [ ] A run where every finding is ceiling-skipped or self-declined still yields non-empty `FixWarning` on every such finding (no false "clean" run)
+- [x] Full pre-existing `internal/verify/executor_test.go` suite passes with zero edits to existing assertions
+- [x] Skip-chain order (confidence → severity → attribution → ceiling) is verified by a test combining multiple simultaneous failing gates
+- [x] `executor_fix_failed`, `executor_truncated_fix`, `executor_empty_fix`, `executor_invalid_syntax` classes and their `FixWarning` text are unchanged and verified by existing/regression tests
+- [x] A run where every finding is ceiling-skipped or self-declined still yields non-empty `FixWarning` on every such finding (no false "clean" run)
 
 **Manual Review:**
 - [ ] Code reviewed and approved
