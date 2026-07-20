@@ -2,6 +2,9 @@
 
 **Related User Story:** [02: Skip Over-Ceiling Findings Safely](../user-stories/02-skip-over-ceiling-findings-safely.md)
 
+## Acceptance Criteria
+A finding whose `EstMinutes` (or severity) exceeds the executor's configured ceiling is skipped before any provider call — no wasted API call — with a non-empty `FixWarning` and exactly one `executor_ceiling_skip` pipeline warning carrying the finding's `File:Line`. Findings at/below the ceiling, and all findings under an unset (zero) ceiling, are dispatched exactly as today.
+
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -9,10 +12,11 @@
 | Test Framework | go test | Table-driven tests in `internal/verify/executor_test.go` |
 | Key Dependencies | `internal/registry` (`ExecutorConfig`), `internal/reconcile` (`JSONFinding`), `internal/log` (`logPipelineWarning`) | No new packages |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/verify/severity.go` - modify: add `withinComplexityCeiling(estMinutes, maxMinutes int) bool` (and, if Story 1 exposes a severity ceiling, an analogous severity-ceiling predicate), following the existing "one small pure predicate per rule" convention used by `meetsSeverityFloor`.
 - `internal/verify/executor.go` - modify: insert the ceiling check into `generateFixes`'s pre-dispatch skip chain (around lines 136-149), after the existing confidence/severity/attribution checks and before `wg.Add(1)`/goroutine dispatch; on skip, call `logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", "<file>:<line>: ...")` and set `f.FixWarning`.
 - `internal/verify/executor_test.go` - modify: add table-driven cases for at/below-ceiling (fix attempted) and above-ceiling (skipped, warned) findings.
+- `internal/verify/severity_test.go` - modify: add unit cases for the new ceiling predicate (inclusive boundary, zero-estimate, above-ceiling, and defensive negative values) alongside the existing `meetsSeverityFloor` cases.
 - `internal/verify/pipeline.go` - reference only: `logPipelineWarning` (line 41) is reused unchanged; only the new `"executor_ceiling_skip"` class string is introduced.
 
 ## Happy Path Scenarios

@@ -2,6 +2,9 @@
 
 **Related User Story:** [03: Run a Second Tier Over Skipped Findings](../user-stories/03-run-second-tier-over-skipped-findings.md)
 
+## Acceptance Criteria
+Running `generateFixes` twice — a tier-1 low-ceiling pass followed by a tier-2 high/no-ceiling pass over the same finding set — leaves every finding in exactly one terminal state: fixed-by-tier-1, fixed-by-tier-2, or explicitly skip-logged by both. No finding is double-processed, and no finding is silently dropped (empty `Fix` with no warning).
+
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -9,7 +12,7 @@
 | Test Framework | go test (table-driven + fixture-driven integration test) | Follows existing patterns in `internal/verify/executor_test.go` |
 | Key Dependencies | `internal/registry` (`ExecutorConfig`, ceiling fields from Story 1), `internal/reconcile` (`JSONFinding`, `ReadReconciledFindings`/`RenderJSON`) | No new packages required |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/verify/executor.go` - modify (Story 2 dependency): `generateFixes` is the function under test; this AC does not change its skip logic, only exercises it twice in sequence
 - `internal/verify/executor_test.go` - create/modify: add the two-tier partition integration test (fixture findings, tier-1 pass, tier-2 pass, partition assertions)
 - `internal/registry/config.go` - modify (Story 1 dependency): `ExecutorConfig` ceiling fields (`max_estimated_minutes`, optional `max_severity_for_fix`) configured differently for the tier-1 and tier-2 fixtures in this test

@@ -2,6 +2,9 @@
 
 **Related User Story:** [02: Skip Over-Ceiling Findings Safely](../user-stories/02-skip-over-ceiling-findings-safely.md)
 
+## Acceptance Criteria
+The pre-existing skip chain (confidence → severity floor → attribution) keeps its exact order and silent-`continue` semantics, and every existing failure branch (`executor_fix_failed`, `executor_truncated_fix`, `executor_empty_fix`, `executor_invalid_syntax`) keeps its exact warning class and `FixWarning` text after the ceiling check and self-decline branch are added — proven by the unmodified pre-existing `internal/verify` test suite passing as-is.
+
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -9,7 +12,7 @@
 | Test Framework | go test | Full `internal/verify` test suite plus targeted regression cases |
 | Key Dependencies | `reclib.ConfidenceAtOrAbove`, `meetsSeverityFloor`, `hasFixAttribution`, `logPipelineWarning`, `reconcile.JSONFinding.FixWarning` | All pre-existing, unchanged in signature |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/verify/executor.go` - modify: verify the new ceiling check and self-decline branch are inserted additively (order preserved: confidence → severity → attribution → ceiling → dispatch) without altering the existing `continue` semantics of the confidence/severity/attribution checks (lines ~136-149) or the existing `executor_fix_failed`/`executor_truncated_fix`/`executor_empty_fix`/`executor_invalid_syntax` branches (lines ~189-228).
 - `internal/verify/executor_test.go` - modify: existing test cases for confidence-below-floor, severity-below-floor, already-attributed, fix-failed, truncated, empty-fix, and invalid-syntax must continue to pass unmodified (or with only additive new cases, never edited assertions on existing cases).
 - `internal/reconcile/emit.go` - reference only: `JSONFinding.FixWarning` (line 136) — verifies the field's end-to-end visibility contract into `findings.json` is unchanged for both old and new skip reasons.

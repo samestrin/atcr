@@ -2,6 +2,9 @@
 
 **Related User Story:** [01: Configure a Complexity Ceiling on the Executor](../user-stories/01-configure-complexity-ceiling.md)
 
+## Acceptance Criteria
+`EffectiveMaxEstimatedMinutes()` returns the configured ceiling when set to a positive value and the `0` "no ceiling" sentinel when nil, zero, or negative; `EffectiveMaxSeverityForFix()` returns the configured value when non-empty and `""` (no ceiling) when unset — both are pure pass-through/fallback resolvers that perform no validation or normalization of their own.
+
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -9,7 +12,7 @@
 | Test Framework | go test (testify assert/require) | mirrors existing resolver tests, e.g. `EffectiveMaxToolCalls`/`EffectiveFixMinSeverity` coverage |
 | Key Dependencies | none new | pure in-memory struct methods, no I/O |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/registry/config.go` - modify: add `EffectiveMaxEstimatedMinutes() int` and `EffectiveMaxSeverityForFix() string` resolver methods on `ExecutorConfig`, placed alongside `EffectiveMaxToolCalls` (lines 227-236) and `EffectiveFixMinSeverity` (lines 238-249), following the same doc-comment structure (state the fallback rule and which later caller will consume it).
 - `internal/registry/executor_config_test.go` - modify: add new test functions asserting resolver behavior for unset, explicit-zero (for the minutes ceiling), and explicit-value cases, mirroring the style of existing tests like `TestExecutor_MaxToolCallsBoundaryAccepted` (line 557).
 

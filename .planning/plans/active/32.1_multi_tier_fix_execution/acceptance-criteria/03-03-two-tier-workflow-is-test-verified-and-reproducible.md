@@ -2,6 +2,9 @@
 
 **Related User Story:** [03: Run a Second Tier Over Skipped Findings](../user-stories/03-run-second-tier-over-skipped-findings.md)
 
+## Acceptance Criteria
+The two-tier partition contract is proven by an automated integration test over a mixed-complexity fixture (fixed-by-tier-1 XOR fixed-by-tier-2 XOR skip-logged-by-both — never both, never neither), and the same workflow is reproducible by an operator from `docs/registry.md` plus the example configs alone, without reading executor source code.
+
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -9,7 +12,7 @@
 | Test Framework | go test | Fixture-driven, mixed-complexity finding set |
 | Key Dependencies | `internal/registry`, `internal/reconcile`, existing YAML example/config loader | No new dependencies |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/verify/executor_test.go` - create/modify: the automated integration test proving the two-tier partition using a fixture findings set with mixed complexity (below-ceiling, above-ceiling, boundary)
 - `examples/registry-with-executor.yaml` - modify: add a second example profile (or a clearly-labeled sibling block) showing a "cheap-tier" `ExecutorConfig` (low `max_estimated_minutes`) and a "frontier-tier" `ExecutorConfig` (high/no ceiling) intended to run back-to-back against the same `findings.json`
 - `docs/registry.md` - modify: add a worked-example section walking through running atcr twice (tier 1 then tier 2) against the same `findings.json`, including expected outcome (what gets fixed by which tier, how to verify nothing was double-processed or dropped)

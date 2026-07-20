@@ -2,6 +2,9 @@
 
 **Related User Story:** [05: Document the Multi-Tier Workflow](../user-stories/05-document-multi-tier-workflow.md)
 
+## Acceptance Criteria
+`docs/registry.md` documents the shipped ceiling field(s) — new rows in the existing executor field table's exact style plus skip-and-log / two-independent-runs prose — and `docs/findings-format.md` gains an `EST_MINUTES` cross-reference to the executor-ceiling routing consumer, with all field names, defaults, and validation wording verified against the actual shipped `internal/registry/config.go` and all relative links resolving.
+
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -9,7 +12,7 @@
 | Test Framework | Manual doc review + relative-link check | No executable test framework; verified by diff-checking new rows against existing rows and confirming no broken relative links |
 | Key Dependencies | None (pure prose/table edits, no build tooling) | |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `docs/registry.md` - modify: add `max_estimated_minutes` and `max_severity_for_fix` rows to the `## Executor (fix generation, active in 7.0)` field table (currently lines 341-392, immediately after `min_severity_for_fix`), plus a short prose paragraph on ceiling/skip-and-log behavior and the two-independent-runs multi-tier workflow.
 - `docs/findings-format.md` - modify: add a cross-reference sentence to the `EST_MINUTES` row (the Columns table, currently line 62) and/or the surrounding prose (lines 23, 39) noting `EST_MINUTES` is now also an executor-ceiling routing input, linking to the `docs/registry.md` executor section.
 - `.planning/plans/active/32.1_multi_tier_fix_execution/user-stories/01-configure-complexity-ceiling.md` - reference only: source of the exact field names (`max_estimated_minutes` int pointer, `max_severity_for_fix` string), defaults ("unset/zero = no ceiling"), and validation rules (range check, floor/ceiling contradiction) this AC's docs must match once Story 1 lands.

@@ -2,6 +2,9 @@
 
 **Related User Story:** [04: Validate Ceiling Configuration](../user-stories/04-validate-ceiling-configuration.md)
 
+## Acceptance Criteria
+When both severity bounds are set and each individually normalizes to a canonical severity, `validateExecutor` rejects a `max_severity_for_fix` ranking strictly below `min_severity_for_fix` with a distinguishable contradictory-range error naming both configured values — using the shared `reconcile.SeverityRank` map (no new rank table) — a load-time guarantee that never fires at fix-generation time.
+
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -9,10 +12,10 @@
 | Test Framework | go test (`testify/assert`, `testify/require`) | Mirrors `TestExecutor_InvalidMinSeverityForFix` (`internal/registry/executor_config_test.go:112`) assertion style |
 | Key Dependencies | `github.com/samestrin/atcr/reconcile.SeverityRank` (`reconcile/severity.go:19-24`: `{"CRITICAL":4,"HIGH":3,"MEDIUM":2,"LOW":1}`) — an existing canonical ranked map, reused rather than a new local rank table | `reclib.NormalizeSeverity` for both fields before ranking |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/registry/config.go` - modify: add a cross-field check inside `validateExecutor` (`internal/registry/config.go:593-677`) comparing `reclib.SeverityRank[normalizedMaxSeverity]` against `reclib.SeverityRank[normalizedMinSeverity]` — only when BOTH fields are explicitly set and each individually normalizes to a known severity — and append an error when the ceiling ranks below the floor.
 - `internal/registry/executor_config_test.go` - modify: add `TestExecutor_MaxSeverityForFixBelowMinSeverityRejected` (the new cross-field contradiction case named in the story's Measurable criterion) plus a positive-path test confirming a valid floor/ceiling combination (e.g. `min_severity_for_fix: LOW`, `max_severity_for_fix: HIGH`) loads cleanly.
-- `reconcile/severity.go` - reference only: confirms `SeverityRank` (lines 19-24) is the correct, already-exported ranking source to reuse — this story must NOT introduce a second, uncoordinated rank map (the pattern already duplicated in `internal/debt/debt.go:138` and `internal/debt/aggregate.go:84`, which this story explicitly avoids repeating).
+- `reconcile/severity.go` - reference only: confirms `SeverityRank` (lines 19-24) is the correct, already-exported ranking source to reuse — this story must NOT introduce a second, uncoordinated rank map (the severity-ordering pattern is already duplicated in other shapes — a rank map in `internal/debt/debt.go:138`, an ordered slice in `internal/debt/aggregate.go:84` — which this story explicitly avoids repeating).
 
 **Minimum 2 files per AC**
 

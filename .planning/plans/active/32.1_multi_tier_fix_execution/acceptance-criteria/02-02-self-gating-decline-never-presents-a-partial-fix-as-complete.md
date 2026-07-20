@@ -2,6 +2,9 @@
 
 **Related User Story:** [02: Skip Over-Ceiling Findings Safely](../user-stories/02-skip-over-ceiling-findings-safely.md)
 
+## Acceptance Criteria
+An executor self-decline — on the single-shot snippet path or the Agent Mode tool-loop path — is recorded as a skip: non-empty human-readable `FixWarning`, a log class distinct from `executor_fix_failed`/`executor_truncated_fix`/`executor_empty_fix`, and a return before any `f.Fix`/`f.Evidence` assignment. A declined fix is never presented as complete and never dropped silently.
+
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -9,7 +12,7 @@
 | Test Framework | go test | Table-driven + scripted-completer tests in `internal/verify/executor_test.go` |
 | Key Dependencies | `internal/llmclient` (`executorCompleter`/`metaCompleter`), `internal/verify` (`invokeExecutor` for Agent Mode), `internal/log` (`logPipelineWarning`) | No new subsystem |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/verify/executor.go` - modify: add a self-decline detection branch inside the per-finding goroutine of `generateFixes` (around lines 158-228), parallel to (not overloading) the existing `warn`/`truncated`/empty-string handling; on decline, call `logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", "<file>:<line>: self-declined: <reason>")` (or an equally distinct, story-approved class/format) and set `f.FixWarning`, returning before any `f.Fix` assignment.
 - `internal/verify/executor.go` - modify: `invokeExecutor` (Agent Mode path) and/or `callExecutor`/prompt-building (`buildFixPrompt`) as needed to surface a self-decline signal distinct from an empty/truncated/error response.
 - `internal/verify/executor_test.go` - modify: add a scripted-completer/agent-mode test case where the executor's response indicates a decline, asserting the finding lands as a skip, not as `Fix` content.

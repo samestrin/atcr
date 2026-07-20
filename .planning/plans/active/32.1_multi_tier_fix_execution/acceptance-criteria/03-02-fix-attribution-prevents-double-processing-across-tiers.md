@@ -2,6 +2,9 @@
 
 **Related User Story:** [03: Run a Second Tier Over Skipped Findings](../user-stories/03-run-second-tier-over-skipped-findings.md)
 
+## Acceptance Criteria
+Fix attribution keyed on the executor's `Name` prevents a second tier from re-attempting a finding tier 1 already fixed (verified for the shared default-`Name` case, and explicitly characterized by test for distinct-`Name` tier configs), while never blocking a tier-2 attempt on a finding tier 1 ceiling-skipped — and attribution survives the `findings.json` write/read round-trip intact.
+
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -9,7 +12,7 @@
 | Test Framework | go test | Follows existing patterns in `internal/verify/executor_test.go` |
 | Key Dependencies | `internal/registry.ExecutorConfig.Name` (attribution key), `internal/reconcile.JSONFinding.Evidence` (attribution carrier) | No new dependencies |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/verify/executor.go` - reference/verify (no functional change expected): `hasFixAttribution` (line ~363) and `appendFixAttribution` (line ~376) key attribution on `ex.Name` via a delimited `"fix by <name>"` token in `Evidence`; the skip check at line ~147 (`hasFixAttribution(f.Evidence, ex.Name)`) runs before ceiling logic
 - `internal/verify/executor_test.go` - create/modify: add attribution-across-tiers test cases, including the same-`Name` and distinct-`Name` scenarios below
 - `internal/registry/config.go` - reference: `ExecutorConfig.Name` (line ~207) and its default value `RoleExecutor = "executor"` (line 65, applied when `Name` is left unset) — the attribution key both tiers must agree on for cross-tier recognition to work
@@ -42,7 +45,7 @@
 **Edge Case 3: Evidence field empty or missing on the finding tier 2 receives**
 - **Given** a finding with `Evidence == ""` (no prior attribution) that also has no ceiling-skip reason
 - **When** tier 2 evaluates it
-- **Then** `hasFixAttribution` returns false (not a panic on empty string) and the finding is correctly treated as eligible for tier 2
+- **Then** `hasFixAttribution` returns false (not a panic on empty string) and the finding passes all of tier 2's gates and is dispatched to tier 2's executor
 
 ## Error Conditions
 **Error Scenario 1: Attribution check silently short-circuits due to Evidence field being overwritten by an unrelated pipeline stage between tier 1 and tier 2**

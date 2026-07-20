@@ -2,6 +2,9 @@
 
 **Related User Story:** [04: Validate Ceiling Configuration](../user-stories/04-validate-ceiling-configuration.md)
 
+## Acceptance Criteria
+`validateExecutor` rejects a non-positive or over-cap `max_estimated_minutes` (bounded by a new `MaxExecutorEstimatedMinutes` named constant) and any `max_severity_for_fix` that does not normalize to CRITICAL/HIGH/MEDIUM/LOW — accumulating both errors alongside all other executor faults without short-circuiting — while valid values, boundary values, and unset (optional) fields load cleanly.
+
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -9,10 +12,10 @@
 | Test Framework | go test (`testify/assert`, `testify/require`) | Mirrors the table-driven style of `TestExecutor_MaxToolCallsOutOfRangeRejected` |
 | Key Dependencies | `github.com/samestrin/atcr/reconcile` (`reclib.NormalizeSeverity`), existing `reviewSeverities` map (`internal/registry/config.go:375`) | No new severity vocabulary introduced |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/registry/config.go` - modify: add `MaxExecutorEstimatedMinutes` named constant to the `MaxExecutor*` constants block (near `MaxExecutorToolCalls`/`MaxExecutorRules`, `internal/registry/config.go:72-`), add a `MaxEstimatedMinutes *int` range check and a `MaxSeverityForFix` normalization check inside `validateExecutor` (`internal/registry/config.go:593-677`), following the existing `TimeoutSecs` (line 633) and `MinSeverity` (line 610) check shapes exactly.
 - `internal/registry/executor_config_test.go` - modify: add `TestExecutor_MaxEstimatedMinutesOutOfRangeRejected` (direct analog of `TestExecutor_MaxToolCallsOutOfRangeRejected`, line 543), `TestExecutor_MaxEstimatedMinutesBoundaryAccepted` (analog of `TestExecutor_MaxToolCallsBoundaryAccepted`, line 557), and `TestExecutor_MaxSeverityForFixInvalidRejected` (analog of `TestExecutor_InvalidMinSeverityForFix`, line 112).
-- `internal/registry/registry.go` (or wherever `ExecutorConfig` is declared, per Story 1) - reference only: confirms the `MaxEstimatedMinutes *int` and `MaxSeverityForFix string` fields exist before this story's checks compile against them.
+- `internal/registry/config.go` (`ExecutorConfig` struct, lines 206-225) - reference only: confirms the `MaxEstimatedMinutes *int` and `MaxSeverityForFix string` fields exist before this story's checks compile against them. (Note: `ExecutorConfig` is declared in `config.go`, not a separate `registry.go`.)
 
 **Minimum 2 files per AC**
 

@@ -8,7 +8,7 @@ Adds a configurable complexity ceiling to atcr's fix-generation executor so chea
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/32.1_multi_tier_fix_execution/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/32.1_multi_tier_fix_execution/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/32.1_multi_tier_fix_execution/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/32.1_multi_tier_fix_execution/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/32.1_multi_tier_fix_execution/`
 
 ## Timeline & Milestones
@@ -34,5 +34,6 @@ Primary risk is a design ambiguity, not a technical one: whether "multi-tier" re
 - [Plan](plan.md)
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)
+- [Sprint Design](sprint-design.md)

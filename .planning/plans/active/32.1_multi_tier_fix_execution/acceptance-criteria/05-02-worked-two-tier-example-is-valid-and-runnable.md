@@ -2,6 +2,9 @@
 
 **Related User Story:** [05: Document the Multi-Tier Workflow](../user-stories/05-document-multi-tier-workflow.md)
 
+## Acceptance Criteria
+The worked two-tier example — a cheap-tier registry config and a frontier-tier registry config in `examples/` — loads with zero validation errors through atcr's real registry loader (dry-run, not visual inspection), demonstrates a meaningful ceiling contrast between tiers, and its comments describe exactly the two-independent-runs mechanism Story 3 ships.
+
 ## Implementation Technology
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -9,7 +12,7 @@
 | Test Framework | Go test exercising atcr's registry loader (`internal/registry`), run as a dry-run config load | Reuses the existing loader — no new test framework introduced |
 | Key Dependencies | atcr's own `internal/registry` package (YAML unmarshal + `validateExecutor`) | No third-party YAML validator; the loader itself is the source of truth for "valid" |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `examples/registry-with-executor.yaml` - modify: extend the existing single-executor example (currently lines 1-71) with a realistic cheap-tier `executor:` block (e.g. a local/cheap model, a low `max_estimated_minutes`), OR add a second commented section, per whichever shape Story 3's actual multi-tier mechanism (two independent registry runs against the same `findings.json`) requires.
 - `examples/registry-with-executor-tier2.yaml` - create (if the chosen mechanism needs two separate files rather than one annotated file): a companion frontier-tier registry example (higher-capability model, no ceiling or a much higher `max_estimated_minutes`), reusing the same `providers:`/`agents:` shape as the tier-1 file so the pair is directly comparable.
 - `docs/registry.md` - modify: the existing "runnable examples" cross-reference sentence (near the end of the Executor section, linking to `examples/registry-with-executor.yaml` and `examples/registry-without-executor.yaml`) is updated to also point at the new two-tier example(s).
