@@ -70,15 +70,15 @@ The two-tier partition contract is proven by an automated integration test over 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Integration test with a mixed-complexity fixture proves the full partition contract (fixed-by-tier-1 XOR fixed-by-tier-2 XOR skip-logged, never both/neither)
-- [ ] `examples/registry-with-executor.yaml` contains a loadable cheap-tier + frontier-tier profile pair validated by existing config-loading tests
-- [ ] `docs/registry.md` contains a worked example with concrete expected `findings.json` state (not prose-only) and explicitly labels which design interpretation ((a) two independent runs) it demonstrates
-- [ ] Documentation explicitly notes the open design question is not resolved by this story, per the story's Assumptions section
+- [x] Integration test with a mixed-complexity fixture proves the full partition contract (fixed-by-tier-1 XOR fixed-by-tier-2 XOR skip-logged, never both/neither) (`TestGenerateFixes_TwoTierWorkflowReproducible` over a findings.json handoff; determinism verified `-race -count=3`)
+- [ ] `examples/registry-with-executor.yaml` contains a loadable cheap-tier + frontier-tier profile pair validated by existing config-loading tests *(Phase 4 / Story 5 — docs scheduled)*
+- [ ] `docs/registry.md` contains a worked example with concrete expected `findings.json` state (not prose-only) and explicitly labels which design interpretation ((a) two independent runs) it demonstrates *(Phase 4 / Story 5 — docs scheduled)*
+- [ ] Documentation explicitly notes the open design question is not resolved by this story, per the story's Assumptions section *(Phase 4 / Story 5 — docs scheduled)*
 
 **Manual Review:**
 - [ ] Code reviewed and approved

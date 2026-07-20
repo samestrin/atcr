@@ -75,15 +75,15 @@ Running `generateFixes` twice — a tier-1 low-ceiling pass followed by a tier-2
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Integration test proves every finding in the fixture ends in exactly one of: fixed-by-tier-1, fixed-by-tier-2, or explicitly skip-logged-by-both — never two of these states at once, never none
-- [ ] Test explicitly asserts zero double-processing (no finding is re-submitted to a completer after it already carries a `Fix`+attribution from the other tier's pass, scoped per Story 2's skip semantics)
-- [ ] Test covers the above-both-ceilings edge case and confirms it is logged, not silently dropped
-- [ ] Test covers the error path (unknown provider / failed completer call) without misclassifying it as a clean partition
+- [x] Integration test proves every finding in the fixture ends in exactly one of: fixed-by-tier-1, fixed-by-tier-2, or explicitly skip-logged-by-both — never two of these states at once, never none (`TestGenerateFixes_TwoTierPartitionsFindingsExactlyOnce`; never-both/never-neither/XOR asserted separately)
+- [x] Test explicitly asserts zero double-processing (no finding is re-submitted to a completer after it already carries a `Fix`+attribution from the other tier's pass, scoped per Story 2's skip semantics) (`rec2.calls==1`; tier-1-fixed files asserted absent from tier-2 prompts)
+- [x] Test covers the above-both-ceilings edge case and confirms it is logged, not silently dropped (`both.go`, EstMinutes 100000)
+- [x] Test covers the error path (unknown provider / failed completer call) without misclassifying it as a clean partition (`TestGenerateFixes_TwoTierUnknownProviderLeavesTier1State`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

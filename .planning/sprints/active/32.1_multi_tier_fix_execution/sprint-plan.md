@@ -401,18 +401,18 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 **Items:** Story 3 (Run a Second Tier Over Skipped Findings)
 **Focus:** Integration/E2E test running `generateFixes` twice against the same fixture finding set with two different `ExecutorConfig`s (low-ceiling then high/no-ceiling), asserting every finding is fixed by exactly one tier or explicitly skipped-and-logged — never both, never neither. Dedicated assertion on fix-attribution state to prove tier 2 never re-attempts a tier-1-fixed finding. Interpretation locked per sprint-design.md: a single `ExecutorConfig` gains a ceiling; "tier 2" is a second, independently-configured run against the same `findings.json` — no `Registry.Executor` schema redesign in this plan.
 
-### 3.1 [ ] **[Two-Tier Partition & Attribution - RED](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
+### 3.1 [x] **[Two-Tier Partition & Attribution - RED](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
    1. Analyze [AC 03-01](plan/acceptance-criteria/03-01-two-tier-run-partitions-every-finding-exactly-once.md) and [AC 03-02](plan/acceptance-criteria/03-02-fix-attribution-prevents-double-processing-across-tiers.md), identify testable units
    2. Write `TestGenerateFixes_TwoTierPartitionsFindingsExactlyOnce` in `internal/verify/executor_test.go`: a fixture finding set with a deliberate mix of below-ceiling / tier-1-only / tier-2-only / above-both-ceilings `EstMinutes` values; assert each finding is fixed by exactly one tier or explicitly skipped-and-logged, and that fix attribution prevents tier 2 from re-attempting a tier-1-fixed finding
    3. Verify tests fail correctly
    **Files:** `internal/verify/executor_test.go` | **Duration:** 0.6 day
 
-### 3.2 [ ] **[Two-Tier Partition & Attribution - GREEN](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
+### 3.2 [x] **[Two-Tier Partition & Attribution - GREEN](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
    GREEN: Wire the two-tier test harness — invoke `generateFixes` twice in sequence against the same `[]Finding`, once with a low-ceiling `ExecutorConfig`, once with a high/no-ceiling one — fixing any gap that surfaces in the existing skip-chain/attribution logic so the partition invariant holds (T1), verify all pass (T2), COMMIT
    **Files:** `internal/verify/executor.go`, `internal/verify/executor_test.go` | **Duration:** 0.6 day
 
-### 3.2.A [ ] **[Two-Tier Partition & Attribution - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.1-3.2]
+### 3.2.A [x] **[Two-Tier Partition & Attribution - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
+   **Changed Files:** `internal/verify/executor_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.1-3.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
@@ -429,34 +429,32 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings** (1 HIGH, 1 MEDIUM, 1 LOW — all fixed in 3.3, none deferred; each directly hardens Story 3's own partition proof, matching the Phase 1/2 precedent):
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | executor_test.go (recordingExecutor.Complete) | The partition test dispatches 4 eligible tier-1 findings through the bounded worker pool (default MaxParallel=4), so `recordingExecutor.Complete` mutates `calls`/`prompts`/`temps` from up to 4 goroutines with no mutex — a real data race; `assert.Equal(4, rec1.calls)` can under-count and `go test -race` fails deterministically. | Fixed in 3.3: added a `sync.Mutex` guarding recordingExecutor's recorded fields (makes the shared helper race-safe for every 2+-eligible-finding test). Verified `go test -race ./internal/verify/` clean. |
+   | MEDIUM | executor_test.go (partition loop) | The `assert.NotEqual(fixed, skipLogged)` XOR check only catches the "neither" (silent-drop) case; a finding carrying BOTH a Fix and a stale FixWarning yields fixed=true/skipLogged=false and passes — the exact stale-warning hazard generateFixes:315 guards. | Fixed in 3.3: split into three explicit impossibilities — never-both (Fix + FixWarning), never-neither (empty + empty), and fixed-XOR-skipLogged. |
+   | LOW | executor_test.go (two-tier suite) | Only the estimated-minutes ceiling axis is exercised; the severity-ceiling axis (`withinSeverityCeiling`/`MaxSeverityForFix`) is never driven across two tiers — a severity-axis regression would leave Story 3 green. | Fixed in 3.3: added `TestGenerateFixes_TwoTierSeverityCeilingPartition` (tier-1 HIGH ceiling skip-logs a CRITICAL finding, tier 2 fixes it; HIGH finding fixed by tier 1, not re-touched by tier 2). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** The HIGH data race is fixed inline (required). The MEDIUM and LOW are also fixed inline (not deferred) because both directly harden Story 3's partition deliverable — leaving them would ship a partition test that does not fully prove the partition. `-race`, `go vet`, `golangci-lint` (0 issues) all clean post-fix.
 
-### 3.3 [ ] **[Two-Tier Partition & Attribution - REFACTOR](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
+### 3.3 [x] **[Two-Tier Partition & Attribution - REFACTOR](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
    1. Fix CRITICAL/HIGH issues from 3.2.A (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.3 day
 
-### 3.4 [ ] **[Two-Tier Workflow E2E Reproducibility - RED](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
+### 3.4 [x] **[Two-Tier Workflow E2E Reproducibility - RED](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
    1. Analyze [AC 03-03](plan/acceptance-criteria/03-03-two-tier-workflow-is-test-verified-and-reproducible.md), identify testable units
    2. Write `TestGenerateFixes_TwoTierWorkflowReproducible` as a full E2E reproduction against a fixture `findings.json` with the same below/above-ceiling mix, run through the exact two-tier sequence an operator would run, proving the workflow is automated and reproducible (not manual-only)
    3. Verify tests fail correctly
    **Files:** `internal/verify/executor_test.go` | **Duration:** 0.5 day
 
-### 3.5 [ ] **[Two-Tier Workflow E2E Reproducibility - GREEN](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
+### 3.5 [x] **[Two-Tier Workflow E2E Reproducibility - GREEN](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
    GREEN: Finalize the fixture `findings.json` and harness so the E2E test passes deterministically end-to-end (T1), verify all pass (T2), COMMIT
    **Files:** `internal/verify/executor_test.go` | **Duration:** 0.4 day
 
-### 3.5.A [ ] **[Two-Tier Workflow E2E - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.4-3.5]
+### 3.5.A [x] **[Two-Tier Workflow E2E - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
+   **Changed Files:** `internal/verify/executor_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.4-3.5 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
@@ -473,28 +471,32 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings** (1 MEDIUM, 2 LOW — no CRITICAL/HIGH; all fixed in 3.6, none deferred, each hardens Story 3's E2E deliverable). The subagent independently confirmed the determinism check is not flaky (order-preserving slice, no timestamps/temp-paths/random sentinels/serialized maps in output) and the partition assertions are not tautological:
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | executor_test.go (determinism check) | With the 3-finding fixture each tier dispatched exactly ONE eligible finding, so `generateFixes`'s worker pool never had 2+ concurrent writers — a regression making fix generation order-dependent would still pass the "byte-identical" determinism claim. | Fixed in 3.6: seeded a second within-ceiling finding for EACH tier (cheap+cheap2 for tier 1; mid+mid2 for tier 2) so each tier dispatches 2 fixes concurrently. Determinism check now guards ordering; verified `-race -count=3` clean. |
+   | LOW | executor_test.go (`unmarshalFindings`) | The final on-disk assertion used a bespoke `unmarshalFindings` instead of the production `reconcile.ReadReconciledFindings`, so the final read did not exercise the real reader path it claims to prove. | Fixed in 3.6: final read now rides `reconcile.ReadReconciledFindings(dir)`; the bespoke helper was deleted. |
+   | LOW | executor_test.go (silent-drop invariant) | The "never silently dropped" invariant is only valid because every fixture finding is fix-eligible, but that precondition was assumed, not asserted — a future fixture edit lowering a finding below the gate would misfire as a false failure. | Fixed in 3.6: added an explicit eligibility precondition loop (confidence + `meetsSeverityFloor`) asserting every seed finding clears the fix gate, with a comment scoping the invariant. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.6, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No CRITICAL/HIGH. All three findings fixed inline in 3.6 (not deferred) — each directly strengthens the E2E deliverable (AC 03-03). `-race -count=3`, `go vet`, `golangci-lint` (0 issues) all clean post-fix.
 
-### 3.6 [ ] **[Two-Tier Workflow E2E Reproducibility - REFACTOR](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
+### 3.6 [x] **[Two-Tier Workflow E2E Reproducibility - REFACTOR](plan/user-stories/03-run-second-tier-over-skipped-findings.md)**
    1. Fix CRITICAL/HIGH issues from 3.5.A (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.3 day
 
-### 3.7 [ ] **Phase 3 - DoD Verification**
+### 3.7 [x] **Phase 3 - DoD Verification**
+   **Result:** T3 full suite passing; `internal/verify` coverage 95.2% (≥80%); `golangci-lint run` 0 issues; `go build ./...` OK; `go test -race ./internal/verify/` clean. Phase 3 is test-only (`internal/verify/executor_test.go`) — docs (Story 5, AC 03-02/03-03 doc items) are scheduled Phase 4, not a Phase 3 gap. AC 03-01/03-02/03-03 Auto-Verified + test-based Story-Specific items checked; docs items + Manual Review left for Phase 4 / `/execute-code-review`.
+   ```
+   Story-3 DoD Complete
+   Auto: 3/3 | Story-Specific: 8/12 (4 docs items deferred to Phase 4)
+   Manual Review: [ ] Code reviewed
+   ```
    Run DoD Verification Checklist (T3 tests, coverage, lint, build, docs) against files changed in Phase 3. Report using the DoD Report Template.
    **Duration:** 0.25 day
 
-### 3.8 [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
-   **Scope:** All files changed during Phase 3 (integration-level, not TDD cadence)
+### 3.8 [x] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 3: `internal/verify/executor_test.go` (test-only phase)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
 
@@ -512,16 +514,13 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Gate findings** (2 LOW — no CRITICAL/HIGH). The hostile-integrator gate independently CONFIRMED the phase-exit contract: attribution survives a real second `atcr verify` pass (pipeline.go:140 reads the prior findings.json; no verify stage rewrites `Evidence`), the `recordingExecutor` mutex added in Phase 3 altered no existing test's meaning (full suite green under `-race`), and config back-compat (ceilings default no-op) holds.
+   | Severity | File:Line | Issue | Resolution |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | executor_test.go (determinism comment) | `TestGenerateFixes_TwoTierWorkflowReproducible`'s comment overclaimed the byte-identical re-run "guards against order-dependent fix generation" — but with a constant stub `out` and per-index writes the artifact is order-independent by construction, so the comparison cannot detect dispatch-order effects. Genuinely deterministic behavior; a comment mischaracterization, not a wrong result. | Fixed inline (not deferred — corrects a misleading claim in the deliverable): reworded both comments to state the check proves deterministic findings.json SERIALIZATION (no map-order/timestamp/sentinel instability), while concurrent-dispatch safety is asserted separately by `-race`. |
+   | LOW | executor_test.go (coverage) | No test drives the actual operator command sequence (two `runVerify` passes over one review dir); the two-tier partition is proven at the `generateFixes` level (exactly Story 3's stated scope). The command-level composition is confirmed-by-inference, not asserted end-to-end. | Captured as **TD-002** (beyond Story 3's `generateFixes`-level scope; composition confirmed by the gate to hold, so a regression-guard `runVerify`-twice test is an additive hardening for a follow-up pass). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   **Phase gate passed** — no CRITICAL/HIGH; the determinism-comment LOW is fixed inline, the command-level-coverage LOW is captured as TD-002. Contract-exit, cross-run attribution survival, config back-compat, and Phase 4 consumability (the tests accurately characterize the same-Name partition / distinct-Name gap / ceiling boundaries / findings.json handoff that Phase 4's docs worked-example must describe) all confirmed by the gate.
    **Duration:** 15-30 min
 
 ---
