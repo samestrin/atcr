@@ -789,6 +789,37 @@ func TestRunAutoFix_SandboxFailSurfacesCapturedOutput(t *testing.T) {
 		"the failure error must surface the validation run's captured output")
 }
 
+// TestRunAutoFix_SandboxTimeoutReportsTimeoutNotExitZero: on a validation timeout
+// the translated result leaves ExitCode at 0 and sets TimedOut, so the failure
+// branch must say so — "local validation failed (exit 0)" is a nonsensical message
+// that hides the timeout from the operator.
+func TestRunAutoFix_SandboxTimeoutReportsTimeoutNotExitZero(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	be := &fakeSandboxBackend{result: sandbox.RunResult{Output: "partial before deadline", TimedOut: true}}
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // would PASS on the host path
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: be,
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "timed out", "a timed-out validation must surface AS a timeout")
+	require.NotContains(t, err.Error(), "exit 0", "reporting exit 0 for a timeout is nonsensical and misleading")
+	require.Contains(t, err.Error(), "partial before deadline",
+		"the partial output captured before the deadline must be retained in the error")
+	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
+		"no GitHub call may fire on a validation timeout")
+}
+
 // TestRunAutoFix_SandboxStartErrorRevertsWithCannotValidateWording: a backend fault
 // (Run returns a non-nil error → StartError per AC 01-02) takes the same
 // "cannot run validation" branch as a host-path StartError, reverting the tree with
