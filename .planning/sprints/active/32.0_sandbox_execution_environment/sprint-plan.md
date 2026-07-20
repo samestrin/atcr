@@ -434,210 +434,149 @@ Full index: [plan/documentation/README.md](plan/documentation/README.md)
 
 **Focus:** Wire Phase 1's resolver into `validateAutoFixBackend` as the gate's fourth checked piece (joining the same `missing []string` collection), threading the resolved backend through `autoFixBackend` into `runAutoFix` per Phase 2's dispatch. Register the `--no-sandbox` flag in `addAutoFixFlags` with security-warning help text, short-circuit the resolver call when set, and add the dedicated (non-memoized) `warnNoSandbox` stderr helper called on every `--no-sandbox` code path.
 
-### 3.1 [ ] **[Gate Integration — Sandbox Resolution as the Fourth Piece - RED](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 3.1 [x] **[Gate Integration — Sandbox Resolution as the Fourth Piece - RED](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
    1. Analyze [AC 02-03](plan/acceptance-criteria/02-03-gate-integration-and-combined-error.md), identify testable units
    2. Write tests asserting sandbox resolution/Preflight failure joins the same combined `missing []string` usage error alongside apply-target/validation-command/GitHub-credential failures; resolved backend rides `autoFixBackend` without re-resolution downstream
    3. Verify tests fail correctly
    **Files:** `cmd/atcr/autofix_test.go` | **Duration:** 0.5 day
 
-### 3.2 [ ] **[Gate Integration — Sandbox Resolution as the Fourth Piece - GREEN](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 3.2 [x] **[Gate Integration — Sandbox Resolution as the Fourth Piece - GREEN](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
    GREEN: Call Phase 1's resolver from `validateAutoFixBackend`, join failures into the existing combined error, store the resolved `sandbox.Backend` on `autoFixBackend`, thread it into `runAutoFix` for Phase 2's dispatch to consume (T1), verify all pass (T2), COMMIT
    **Files:** `cmd/atcr/autofix.go` | **Duration:** 0.5 day
 
-### 3.2.A [ ] **[Gate Integration — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.1-3.2]
+### 3.2.A [x] **[Gate Integration — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+   **Changed Files:** `cmd/atcr/autofix.go`, `cmd/atcr/autofix_test.go`
 
-   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.1-3.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
-
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Adversarial review: 3.2`
-   - prompt: Self-contained brief including:
-     - Files to review (absolute paths): [LIST FROM 3.1-3.2]
-     - Checklist (pass verbatim):
-       - SECURITY: Auth bypass, injection, data exposure?
-       - EDGE CASES: Null, empty, boundaries, concurrent access?
-       - ERROR HANDLING: Missing catches, swallowed errors?
-       - PERFORMANCE: N+1, leaks, blocking ops?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-07-19):** No CRITICAL/HIGH. Two MEDIUM + two LOW, all dispositioned inline (not deferred TD): the preflight-deadline concern is a non-issue (the backend wraps each docker subprocess in its own `context.WithTimeout` at `docker.go:421`, and this mirrors `resolveExec`→`ResolveExecBackend`); the sentinel-flatten is AC 02-03's mandated string-join contract.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | autofix.go:212 | Preflight blocking subprocess has no gate-level deadline | No change — `DockerBackend.dockerCmd` sets its own per-command `context.WithTimeout` (docker.go:421); mirrors `resolveExec` precedent (verify.go:54) |
+   | MEDIUM | autofix.go:203 | "local-only, no network" comment overstated — `docker info` honors `DOCKER_HOST`/remote daemons | Applied in 3.3 — softened comment to distinguish the gate's own no-GitHub-network guarantee from Preflight's local docker subprocess (which may contact a configured remote daemon) |
+   | LOW | autofix.go:217 | `fmt.Sprintf("sandbox: %s", err)` flattens the `errors.Is` sentinel chain | No change — AC 02-03 Error Scenario 1 mandates a joined-string usage error; mirrors the other three pieces' `err.Error()` append |
+   | LOW | autofix_test.go | Bare command → `cmd.Context()` always nil; non-nil/production ctx branch untested | Applied in 3.3 — added `TestValidateAutoFixBackend_SandboxUsesSuppliedContext` driving `cmd.SetContext` |
+
+   **Result: No CRITICAL/HIGH. Two doc/test-hardening items applied in 3.3 REFACTOR; two are correct-by-design.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 3.3, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 3.3 [ ] **[Gate Integration — REFACTOR](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
+### 3.3 [x] **[Gate Integration — REFACTOR](plan/user-stories/02-sandbox-resolution-and-preflight-gate.md)**
    1. Fix CRITICAL/HIGH issues from 3.2.A (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.25 day
 
-### 3.4 [ ] **[--no-sandbox Flag Registration and Help Text - RED](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
+### 3.4 [x] **[--no-sandbox Flag Registration and Help Text - RED](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
    1. Analyze [AC 03-01](plan/acceptance-criteria/03-01-flag-registration-and-help-text.md), identify testable units
    2. Write tests asserting the `--no-sandbox` boolean flag exists, defaults to `false`, and its help text contains the required security-warning language
    3. Verify tests fail correctly
    **Files:** `cmd/atcr/autofix_test.go` | **Duration:** 0.25 day
 
-### 3.5 [ ] **[--no-sandbox Flag Registration and Help Text - GREEN](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
+### 3.5 [x] **[--no-sandbox Flag Registration and Help Text - GREEN](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
    GREEN: Register `--no-sandbox` in `addAutoFixFlags` with security-warning help text (T1), verify all pass (T2), COMMIT
    **Files:** `cmd/atcr/autofix.go` | **Duration:** 0.25 day
 
-### 3.5.A [ ] **[--no-sandbox Flag Registration - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.4-3.5]
+### 3.5.A [x] **[--no-sandbox Flag Registration - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
+   **Changed Files:** `cmd/atcr/autofix.go` (flag registration), `cmd/atcr/autofix_test.go`
 
-   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.4-3.5 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
-
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Adversarial review: 3.5`
-   - prompt: Self-contained brief including:
-     - Files to review (absolute paths): [LIST FROM 3.4-3.5]
-     - Checklist (pass verbatim):
-       - SECURITY: Auth bypass, injection, data exposure?
-       - EDGE CASES: Null, empty, boundaries, concurrent access?
-       - ERROR HANDLING: Missing catches, swallowed errors?
-       - PERFORMANCE: N+1, leaks, blocking ops?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-07-19):** No CRITICAL/HIGH. Two MEDIUM + two LOW; the regression-guard gap and help-strength items applied in 3.6, the help-text-tense and duplicate-parse-test items dispositioned as correct-by-design.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | autofix.go (flag help) | Help claims "Prints a security warning to stderr on every run" / present-tense host execution before those paths are wired | No change — help documents the flag's complete Phase-3 contract; bypass (3.8) + warning (3.11) land on the same branch before the phase gate (phase is the merge unit; no interim state ships) |
+   | MEDIUM | autofix_test.go | Tests build synthetic `&cobra.Command{}`; deleting `addAutoFixFlags` at review.go:92 would still pass — real review command's registration unguarded | Applied in 3.6 — added `TestReviewCmd_NoSandboxFlagRegisteredOnReview` driving `newReviewCmd()` + `review --help` |
+   | LOW | autofix_test.go | `HelpNamesTheRisk` asserts only neutral nouns; escalation framing (DANGER/privileges/no isolation) untested | Applied in 3.6 — added escalation-term assertions |
+   | LOW | autofix_test.go | `ParsesTrue` and `ParsesWithoutAutoFix` effectively duplicate | No change — each pins a distinct AC 03-01 scenario (S3 `--auto-fix --no-sandbox` vs EC1 `--no-sandbox` alone); kept for AC traceability |
+
+   **Result: No CRITICAL/HIGH. Regression-guard + help-strength items applied in 3.6 REFACTOR.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 3.6, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 3.6 [ ] **[--no-sandbox Flag Registration - REFACTOR](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
+### 3.6 [x] **[--no-sandbox Flag Registration - REFACTOR](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
    1. Fix CRITICAL/HIGH issues from 3.5.A (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.25 day
 
-### 3.7 [ ] **[--no-sandbox Bypasses Resolver/Preflight Gate - RED](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
+### 3.7 [x] **[--no-sandbox Bypasses Resolver/Preflight Gate - RED](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
    1. Analyze [AC 03-02](plan/acceptance-criteria/03-02-bypass-sandbox-resolver-and-preflight-gate.md), identify testable units
    2. Write tests asserting no `Preflight` call and no Docker requirement when `--no-sandbox` is set; flag is a no-op when `--auto-fix` is not also passed
    3. Verify tests fail correctly
    **Files:** `cmd/atcr/autofix_test.go` | **Duration:** 0.25 day
 
-### 3.8 [ ] **[--no-sandbox Bypasses Resolver/Preflight Gate - GREEN](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
+### 3.8 [x] **[--no-sandbox Bypasses Resolver/Preflight Gate - GREEN](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
    GREEN: Short-circuit the resolver call in `validateAutoFixBackend` when `--no-sandbox` is set (T1), verify all pass (T2), COMMIT
    **Files:** `cmd/atcr/autofix.go` | **Duration:** 0.25 day
 
-### 3.8.A [ ] **[--no-sandbox Bypass - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.7-3.8]
+### 3.8.A [x] **[--no-sandbox Bypass - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
+   **Changed Files:** `cmd/atcr/autofix.go`, `cmd/atcr/autofix_test.go`
 
-   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.7-3.8 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
-
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Adversarial review: 3.8`
-   - prompt: Self-contained brief including:
-     - Files to review (absolute paths): [LIST FROM 3.7-3.8]
-     - Checklist (pass verbatim):
-       - SECURITY: Auth bypass, injection, data exposure?
-       - EDGE CASES: Null, empty, boundaries, concurrent access?
-       - ERROR HANDLING: Missing catches, swallowed errors?
-       - PERFORMANCE: N+1, leaks, blocking ops?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-07-19):** No CRITICAL/HIGH. Reviewer confirmed the bypass is structurally scoped to `if !noSandbox` (other three checks run unconditionally above it), gated strictly on boolean `true`, fail-closed on a swallowed `GetBool` error, and that the spy tests genuinely prove zero resolver invocations (each would fail if the bypass were deleted), leak-free via `t.Cleanup`.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | autofix.go:252 | `be.sandboxBackend` written but never read — `runAutoFix` still runs validation directly on the host on both paths, so the bypass is behaviorally cosmetic at runtime | Captured → TD-005 (Phase 4 owns the `runAutoFix` dispatch wiring per AC 01-03; expected cross-phase gap, backend already threaded onto `run.Backend`) |
+   | LOW | autofix_test.go | Bypass-path coverage only exercises the missing-token check; apply-target/validation-command not proven to still fail closed under `--no-sandbox` | Applied in 3.9 — added apply-target + validation-command bypass cases asserting refusal with `*calls == 0` |
+   | LOW | autofix.go:69 | `resolveAutoFixSandboxFn` is a mutable package-var seam (racy only if a future test uses `t.Parallel()`) | No change — established seam pattern (mirrors `resolveHeadSHAFn`); no parallel test touches it |
+   | LOW | autofix.go:232 | `GetBool("no-sandbox")` error swallowed | No change — fail-closed direction (unregistered → false → resolver runs), consistent with sibling `GetString` swallows |
+
+   **Result: No CRITICAL/HIGH. TD-005 captured for Phase 4; one LOW coverage item applied in 3.9 REFACTOR.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 3.9, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 3.9 [ ] **[--no-sandbox Bypass - REFACTOR](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
+### 3.9 [x] **[--no-sandbox Bypass - REFACTOR](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
    1. Fix CRITICAL/HIGH issues from 3.8.A (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.25 day
 
-### 3.10 [ ] **[Every-Run stderr Security Warning - RED](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
+### 3.10 [x] **[Every-Run stderr Security Warning - RED](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
    1. Analyze [AC 03-03](plan/acceptance-criteria/03-03-every-run-stderr-security-warning.md), identify testable units
    2. Write tests asserting the warning prints on every `--no-sandbox` invocation (never gated behind a "seen once" state, unlike the existing `ATCR_TELEMETRY` one-time-warning precedent at `cmd/atcr/main.go:348`)
    3. Verify tests fail correctly
    **Files:** `cmd/atcr/autofix_test.go` | **Duration:** 0.25 day
 
-### 3.11 [ ] **[Every-Run stderr Security Warning - GREEN](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
+### 3.11 [x] **[Every-Run stderr Security Warning - GREEN](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
    GREEN: Add a dedicated, non-memoized `warnNoSandbox` stderr helper called on every `--no-sandbox` code path (T1), verify all pass (T2), COMMIT
    **Files:** `cmd/atcr/autofix.go` | **Duration:** 0.25 day
 
-### 3.11.A [ ] **[stderr Security Warning - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.10-3.11]
+### 3.11.A [x] **[stderr Security Warning - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
+   **Changed Files:** `cmd/atcr/autofix.go` (warnNoSandbox + call site), `cmd/atcr/autofix_test.go`
 
-   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.10-3.11 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
-
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Adversarial review: 3.11`
-   - prompt: Self-contained brief including:
-     - Files to review (absolute paths): [LIST FROM 3.10-3.11]
-     - Checklist (pass verbatim):
-       - SECURITY: Auth bypass, injection, data exposure?
-       - EDGE CASES: Null, empty, boundaries, concurrent access?
-       - ERROR HANDLING: Missing catches, swallowed errors?
-       - PERFORMANCE: N+1, leaks, blocking ops?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-07-19):** No CRITICAL/HIGH/MEDIUM. Positively verified: the warning call site is unconditionally reachable on every `--no-sandbox` invocation (every prior check appends to `missing` with no early return), strictly gated on `true`, routed to `cmd.ErrOrStderr()` (never stdout), fires before validation executes, and names the risk strongly. Three LOW test-hardening items.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | autofix_test.go | Non-memoization proven by presence per fresh buffer, not occurrence count | Applied in 3.12 — added shared-buffer `strings.Count == 3` test |
+   | LOW | autofix_test.go | No test proves the warning still fires when the gate later FAILS (warn-before-early-return ordering unlocked) | Applied in 3.12 — added `--no-sandbox` + missing-token case asserting error AND warning present (AC 03-03 EC2) |
+   | LOW | autofix.go:81 | `fmt.Fprintln` error swallowed on the sole security warning | No change — deliberate/documented; failing the gate on a stderr write error would be surprising for a warning |
+
+   **Result: No CRITICAL/HIGH/MEDIUM. Two test-hardening items applied in 3.12 REFACTOR; one LOW correct-by-design.**
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 3.12, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 3.12 [ ] **[stderr Security Warning - REFACTOR](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
+### 3.12 [x] **[stderr Security Warning - REFACTOR](plan/user-stories/03-no-sandbox-opt-out-flag.md)**
    1. Fix CRITICAL/HIGH issues from 3.11.A (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 0.25 day
 
-### 3.13 [ ] **Phase 3 - DoD Verification**
+### 3.13 [x] **Phase 3 - DoD Verification**
+   _Result: Tests ✓ (T3 all pass) | Coverage 87.1% pkg (warnNoSandbox 100%, validateAutoFixBackend 98.2%, addAutoFixFlags 100%) ≥80% ✓ | Lint ✓ (0 issues) | Build ✓ | Docs N/A this phase (Phase 5)._
    Run DoD Verification Checklist (T3 tests, coverage, lint, build, docs) against files changed in Phase 3. Report using the DoD Report Template.
    **Duration:** 0.25 day
 
-### 3.14 [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
-   **Scope:** All files changed during Phase 3 (integration-level, not TDD cadence)
+### 3.14 [x] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** `cmd/atcr/autofix.go`, `cmd/atcr/autofix_test.go` (integration-level, not TDD cadence)
 
-   **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
-
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Phase 3 gate review`
-   - prompt: Self-contained brief including:
-     - Files changed during Phase 3 (absolute paths): [LIST]
-     - Checklist (pass verbatim, hostile integrator perspective):
-       - CONTRACT EXIT: All phase-exit contracts honored (signatures, return shapes, error types)?
-       - CONFIG SURFACE: New config keys documented, defaulted, back-compat?
-       - INTEGRATION: Cross-module calls correct, no hidden coupling introduced?
-       - PHASE-EXIT CONTRACT: Downstream phases can consume outputs without rework?
-       - REGRESSION: Earlier-phase behavior still intact?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
-
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Gate result (2026-07-19):** Phase gate passed. No CRITICAL/HIGH/MEDIUM. Reviewer verified: four-piece gate aggregates `sandbox: <err>` into the same `missing` with no early return (pieces 1-3 regression-safe); `sandboxBackend` populated on default success, nil only on the strictly-`true` `--no-sandbox` short-circuit (the exact discriminator Phase 4 needs); `warnNoSandbox` non-memoized and fires before the `len(missing)>0` return; ctx threaded with nil-guard; `RunSandboxedValidation(ctx, be.sandboxBackend, ...)` types line up for Phase 4 with no rework; flag name/warning text stable for Phase 5. One LOW fixed inline.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | autofix.go:46 | `--auto-fix` help enumerated only 3 refusal pieces — omitted the new mandatory `[sandbox]` block and `--no-sandbox` opt-out, misleading an operator debugging the new exit-2 | Fixed inline — help now names the sandbox requirement + `--no-sandbox` opt-out |
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
