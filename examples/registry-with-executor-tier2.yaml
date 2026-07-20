@@ -1,0 +1,70 @@
+# Example registry with an executor model — TIER 2 of a two-tier fix workflow
+# (frontier tier; Sprint 32.1).
+#
+# This is the companion to examples/registry-with-executor.yaml (the cheap tier 1).
+# Its executor uses a frontier model with NO complexity ceiling, so it attempts the
+# hard, high-effort findings the cheap tier skipped-and-logged.
+#
+# TWO-TIER WORKFLOW: run atcr twice against the SAME review directory / findings.json —
+# the cheap tier first, this frontier tier second:
+#
+#   atcr verify --registry examples/registry-with-executor.yaml       ./review-dir   # tier 1 (cheap)
+#   atcr verify --registry examples/registry-with-executor-tier2.yaml ./review-dir   # tier 2 (this file)
+#
+# The second pass reads tier 1's findings.json; fix attribution (both tiers share the
+# executor name "executor") means this tier fixes ONLY the findings tier 1 left
+# unfixed — it never re-attempts a finding tier 1 already fixed. Every finding is
+# fixed by exactly one tier or explicitly skipped-and-logged, never both, never neither.
+# There is no in-process executor chain and no new CLI flag: the "two tiers" are simply
+# two independent runs with two registry files. See docs/registry.md (Executor section).
+providers:
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+  openai:
+    api_key_env: OPENAI_API_KEY
+  google:
+    api_key_env: GOOGLE_API_KEY
+
+agents:
+  bruce:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    persona: bruce
+    role: reviewer
+  greta:
+    provider: openai
+    model: gpt-4-turbo
+    persona: greta
+    role: reviewer
+  kai:
+    provider: google
+    model: gemini-pro
+    persona: kai
+    role: reviewer
+  # Same skeptic as tier 1, so the two registries are directly comparable.
+  skeptic-opus:
+    provider: anthropic
+    model: claude-opus-4-8
+    role: skeptic
+    supports_function_calling: true
+    language: ["go"]
+
+# TIER 2 EXECUTOR — a frontier model with NO ceiling. Spend on fix quality here:
+# it takes on exactly the hard findings tier 1 declined. Omitting max_estimated_minutes
+# (and max_severity_for_fix) means "no ceiling" — every eligible finding is in reach.
+executor:
+  name: executor                 # SAME name as tier 1, so fix attribution prevents this
+                                 # tier from re-fixing a finding tier 1 already handled
+  provider: anthropic
+  model: claude-opus-4-8
+  persona: fixer
+  role: executor
+  min_severity_for_fix: MEDIUM   # MEDIUM | HIGH | CRITICAL | LOW (default MEDIUM)
+  # No max_estimated_minutes / max_severity_for_fix — this frontier tier is unceilinged
+  # and picks up the high-complexity findings tier 1 skipped-and-logged.
+  temperature: 0.0               # API temperature [0,2]; default 0.0 (deterministic fixes)
+  rules:
+    - Use tabs for indentation
+    - Avoid panic() in library code; return errors instead
+  agent_mode: false              # default false
+  max_tool_calls: 10             # agent-mode tool-call budget per finding (1..1000; default 10)

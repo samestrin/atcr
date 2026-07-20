@@ -1,10 +1,27 @@
-# Example registry with an executor model (Epic 7.0).
+# Example registry with an executor model — TIER 1 of a two-tier fix workflow
+# (cheap/local tier; Sprint 32.1).
 #
 # The review panel (agents:) catches bugs with multiple models; the single
 # executor model generates fixes for verified findings only. Fix generation is
 # opt-in: it runs during `atcr verify` / `atcr review --verify` only because an
 # executor: block is present. Remove the block and ATCR behaves exactly as the
 # registry-without-executor.yaml example.
+#
+# TWO-TIER WORKFLOW (Sprint 32.1): this file is the CHEAP first tier. Its
+# executor sets `max_estimated_minutes: 15`, so any verified finding whose
+# EST_MINUTES exceeds 15 is skipped-and-logged (the `executor_ceiling_skip`
+# warning) instead of attempted — a cheap/local model does not burn a hallucinated
+# partial fix on work beyond it. To assemble the full workflow, run atcr twice
+# against the SAME review directory / findings.json:
+#
+#   atcr verify --registry examples/registry-with-executor.yaml       ./review-dir   # tier 1 (this file)
+#   atcr verify --registry examples/registry-with-executor-tier2.yaml ./review-dir   # tier 2 (frontier)
+#
+# The tier-2 pass reads tier 1's findings.json and, via fix attribution, fixes
+# ONLY the findings tier 1 skipped — every finding is fixed by exactly one tier
+# or explicitly skipped-and-logged, never both, never neither. See
+# examples/registry-with-executor-tier2.yaml for the frontier tier and
+# docs/registry.md (Executor section) for the field reference.
 providers:
   anthropic:
     api_key_env: ANTHROPIC_API_KEY
@@ -12,6 +29,11 @@ providers:
     api_key_env: OPENAI_API_KEY
   google:
     api_key_env: GOOGLE_API_KEY
+  # A local, OpenAI-compatible endpoint (e.g. Ollama at /v1). The key env var is
+  # still required by the schema even though a local server ignores it.
+  local:
+    api_key_env: OLLAMA_API_KEY
+    base_url: http://localhost:11434/v1
 
 agents:
   bruce:
@@ -42,20 +64,22 @@ agents:
     # ["go", "ts"]. Omit the field entirely for a generalist skeptic.
     language: ["go"]
 
-# The executor is a SINGLE model run only in the fix phase — not part of the
-# review panel. Use a more capable model here: spend on fix quality, not review
-# breadth. Fixes are generated only for findings that are HIGH-or-better
-# confidence (VERIFIED included) AND at or above min_severity_for_fix.
+# TIER 1 EXECUTOR — a cheap/local model with a low complexity ceiling. It fixes
+# the simple, low-effort findings and hands the hard ones up to the frontier tier.
+# Fixes are generated only for findings that are HIGH-or-better confidence
+# (VERIFIED included) AND at or above min_severity_for_fix AND within the ceilings.
 executor:
-  name: opus
-  provider: anthropic
-  model: claude-opus-4-8
+  name: executor                 # SHARED attribution label across both tiers, so tier 2
+                                 # skips a finding this tier already fixed (fix attribution)
+  provider: local
+  model: llama3.1:8b
   persona: fixer
   role: executor
   min_severity_for_fix: MEDIUM   # MEDIUM | HIGH | CRITICAL | LOW (default MEDIUM)
+  # Complexity ceilings (Sprint 32.1) — the upper bound of fix work this tier attempts.
+  max_estimated_minutes: 15      # skip-and-log any finding whose EST_MINUTES exceeds 15 (1..10080)
+  # max_severity_for_fix: HIGH   # optional severity ceiling; a value below min_severity_for_fix is a load error
   # fix_timeout: 120             # optional per-fix timeout (seconds)
-  # Fix-generation tunables (Epic 7.0.1) — control fix style/determinism here
-  # instead of editing ATCR source.
   temperature: 0.0               # API temperature [0,2]; default 0.0 (deterministic fixes)
   # system_prompt: |             # optional: replaces the default fixer framing verbatim (supersedes persona)
   #   You are a senior Go engineer. Emit only gofmt-clean, idiomatic Go and nothing else.
