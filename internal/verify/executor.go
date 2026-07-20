@@ -115,6 +115,11 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		return
 	}
 	minSev := ex.EffectiveFixMinSeverity()
+	// Complexity ceilings (Sprint 32.1): resolved once, outside the loop, mirroring
+	// minSev. Both are "no ceiling" sentinels when unset (0 / ""), so an executor
+	// without ceilings behaves exactly as before.
+	maxMin := ex.EffectiveMaxEstimatedMinutes()
+	maxSev := ex.EffectiveMaxSeverityForFix()
 	// Bounded worker pool (mirrors the skeptic stage in pipeline.go): the
 	// eligibility filters below are cheap and stay on the calling goroutine, but
 	// each eligible finding's snippet read + executor round-trip + writes run in
@@ -145,6 +150,26 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		// prefix of another ("op" vs "opus") or unrelated evidence prose containing
 		// "fix by <name>" mid-sentence does not silently suppress generation.
 		if hasFixAttribution(f.Evidence, ex.Name) {
+			continue
+		}
+		// Complexity ceiling (Sprint 32.1, original epic T4): the fourth pre-dispatch
+		// gate, after confidence/severity/attribution. Unlike those silent bare-continue
+		// skips, an over-ceiling skip is VISIBLE — it sets FixWarning and logs the
+		// executor_ceiling_skip class — so a cheap tier that leaves a hard finding for a
+		// later frontier tier is never misread as a clean run. It runs before any snippet
+		// read or provider call, so an over-ceiling finding costs no API round-trip. The
+		// estimated-minutes and severity ceilings use distinct reason text so a downstream
+		// consumer can tell which bound was hit.
+		if !withinComplexityCeiling(f.EstMinutes, maxMin) {
+			reason := fmt.Sprintf("skipped: estimated complexity (%dm) exceeds executor ceiling (%dm)", f.EstMinutes, maxMin)
+			logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", fmt.Sprintf("%s:%d: %s", f.File, f.Line, reason))
+			f.FixWarning = reason
+			continue
+		}
+		if !withinSeverityCeiling(f.Severity, maxSev) {
+			reason := fmt.Sprintf("skipped: severity %s exceeds executor ceiling (%s)", f.Severity, maxSev)
+			logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", fmt.Sprintf("%s:%d: %s", f.File, f.Line, reason))
+			f.FixWarning = reason
 			continue
 		}
 		wg.Add(1)

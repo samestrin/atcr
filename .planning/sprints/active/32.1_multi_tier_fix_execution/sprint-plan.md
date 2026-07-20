@@ -266,13 +266,13 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 **Items:** Story 2 (Skip Over-Ceiling Findings Safely)
 **Focus:** Add a `withinComplexityCeiling` predicate in `internal/verify/severity.go`; wire it into `generateFixes`'s existing pre-dispatch skip chain (`internal/verify/executor.go:104-232`) as a fourth condition, alongside confidence/severity/attribution; add the `executor_ceiling_skip` `logPipelineWarning` class and `FixWarning` message; add the self-gating decline branch so an executor that judges a dispatched fix too complex declines through the identical skip-and-log contract rather than returning a partial fix.
 
-### 2.1 [ ] **[Skip Over-Ceiling Findings Before Dispatch - RED](plan/user-stories/02-skip-over-ceiling-findings-safely.md)**
+### 2.1 [x] **[Skip Over-Ceiling Findings Before Dispatch - RED](plan/user-stories/02-skip-over-ceiling-findings-safely.md)**
    1. Analyze [AC 02-01](plan/acceptance-criteria/02-01-ceiling-exceeding-findings-are-skipped-before-dispatch.md) and [AC 02-03](plan/acceptance-criteria/02-03-existing-skip-chain-and-failure-branches-remain-unaffected.md), identify testable units
    2. Write tests: `internal/verify/severity_test.go` — `withinComplexityCeiling` predicate in isolation (at/below ceiling passes, above ceiling fails, zero/unset `EstMinutes` treated as "no estimate provided," unset ceiling means unlimited); `internal/verify/executor_test.go` — `TestGenerateFixes_SkipsAboveComplexityCeiling` plus a regression case proving the existing confidence/severity/attribution skip chain and failure branches (`executor_fix_failed`, `executor_truncated_fix`, `executor_empty_fix`) are unaffected
    3. Verify tests fail correctly
    **Files:** `internal/verify/severity_test.go`, `internal/verify/executor_test.go` | **Duration:** 0.5 day
 
-### 2.2 [ ] **[Skip Over-Ceiling Findings Before Dispatch - GREEN](plan/user-stories/02-skip-over-ceiling-findings-safely.md)**
+### 2.2 [x] **[Skip Over-Ceiling Findings Before Dispatch - GREEN](plan/user-stories/02-skip-over-ceiling-findings-safely.md)**
    GREEN: Add `withinComplexityCeiling(estMinutes, maxMinutes int) bool` to `internal/verify/severity.go` alongside `meetsSeverityFloor`; insert it as a fourth pre-dispatch skip-chain condition in `generateFixes`, calling `logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", "<file>:<line>: ...")` and setting `f.FixWarning` to an explicit reason before `continue` — unlike the existing silent pre-dispatch skips (T1), verify all pass (T2), COMMIT
    **Files:** `internal/verify/severity.go`, `internal/verify/executor.go` | **Duration:** 0.6 day
 

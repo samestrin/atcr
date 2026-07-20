@@ -34,3 +34,55 @@ func TestMeetsSeverityFloor(t *testing.T) {
 		})
 	}
 }
+
+func TestWithinComplexityCeiling(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		estMinutes int
+		maxMinutes int
+		want       bool
+	}{
+		{"no ceiling passes large estimate", 100000, 0, true},
+		{"no ceiling (negative) passes", 100000, -1, true},
+		{"below ceiling passes", 10, 30, true},
+		{"at ceiling passes (inclusive boundary)", 30, 30, true},
+		{"above ceiling fails", 120, 30, false},
+		{"one over ceiling fails", 31, 30, false},
+		{"zero estimate is no-estimate, not skipped", 0, 30, true},
+		{"negative estimate defensively not skipped", -5, 30, true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, withinComplexityCeiling(tt.estMinutes, tt.maxMinutes))
+		})
+	}
+}
+
+func TestWithinSeverityCeiling(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		findingSev string
+		maxSev     string
+		want       bool
+	}{
+		{"no ceiling passes critical", "CRITICAL", "", true},
+		{"below ceiling passes", "LOW", "HIGH", true},
+		{"at ceiling passes (inclusive)", "HIGH", "HIGH", true},
+		{"above ceiling fails", "CRITICAL", "HIGH", false},
+		{"medium ceiling skips high", "HIGH", "MEDIUM", false},
+		{"case-insensitive finding", "critical", "HIGH", false},
+		{"case-insensitive ceiling", "HIGH", "medium", false},
+		{"unknown finding severity not skipped by ceiling", "BLOCKER", "HIGH", true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, withinSeverityCeiling(tt.findingSev, tt.maxSev))
+		})
+	}
+}

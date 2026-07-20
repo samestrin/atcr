@@ -19,3 +19,44 @@ func meetsSeverityFloor(findingSeverity, minSeverity string) bool {
 	}
 	return fr >= mr
 }
+
+// withinComplexityCeiling reports whether a finding's estMinutes estimate is at or
+// below the executor's maxMinutes complexity ceiling and therefore eligible for a
+// fix attempt (Sprint 32.1). It is the upper-bound counterpart to meetsSeverityFloor,
+// kept as its own small pure predicate rather than inlined into generateFixes.
+//
+// Two guards make it a no-op unless there is both a real ceiling AND a real estimate:
+//   - maxMinutes <= 0 means "no ceiling" (the EffectiveMaxEstimatedMinutes sentinel),
+//     so every finding is within it — preserving existing single-tier config behavior
+//     with no explicit opt-in.
+//   - estMinutes <= 0 means "no estimate provided" (a non-numeric model output parses
+//     as 0 per docs/findings-format.md; a negative value is a defensive impossibility).
+//     Such a finding is NOT skipped on the ceiling basis — 0 is neither "trivially
+//     cheap" nor "too complex", so it flows on to the executor rather than being
+//     silently dropped by a routing hint that was never emitted.
+//
+// The comparison is inclusive at the boundary ("at or below"): estMinutes == maxMinutes
+// is within the ceiling. It is an O(1) integer comparison with no allocation.
+func withinComplexityCeiling(estMinutes, maxMinutes int) bool {
+	if maxMinutes <= 0 || estMinutes <= 0 {
+		return true
+	}
+	return estMinutes <= maxMinutes
+}
+
+// withinSeverityCeiling reports whether a finding's severity is at or below the
+// executor's maxSeverity ceiling and therefore eligible for a fix attempt (Sprint
+// 32.1) — the upper-bound counterpart to meetsSeverityFloor's floor. An empty
+// maxSeverity is the "no ceiling" sentinel (EffectiveMaxSeverityForFix), so every
+// finding is within it. Comparison is case-insensitive via the shared
+// reclib.NormalizeSeverity/SeverityRank rubric. A finding whose severity is empty or
+// unknown (rank 0) is treated as within the ceiling here — the floor check
+// (meetsSeverityFloor) already skips such findings before this predicate runs, so
+// this predicate never needs to re-decide them.
+func withinSeverityCeiling(findingSeverity, maxSeverity string) bool {
+	cr := reclib.SeverityRank[reclib.NormalizeSeverity(maxSeverity)]
+	if cr == 0 {
+		return true
+	}
+	return reclib.SeverityRank[reclib.NormalizeSeverity(findingSeverity)] <= cr
+}
