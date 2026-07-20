@@ -9,6 +9,10 @@ import (
 
 func TestSandboxConfig_Validate(t *testing.T) {
 	pid := 0
+	secsValid := 60
+	secsZero := 0
+	secsNeg := -1
+	secsOver := MaxTimeoutSecs + 1
 	cases := []struct {
 		name string
 		cfg  *SandboxConfig
@@ -22,6 +26,10 @@ func TestSandboxConfig_Validate(t *testing.T) {
 		{"missing test command", &SandboxConfig{Backend: "docker", Image: "img"}, false},
 		{"empty test token", &SandboxConfig{Image: "img", TestCommand: []string{"go", ""}}, false},
 		{"non-positive pids", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, PidsLimit: &pid}, false},
+		{"valid timeout_secs", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, TimeoutSecs: &secsValid}, true},
+		{"zero timeout_secs", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, TimeoutSecs: &secsZero}, false},
+		{"negative timeout_secs", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, TimeoutSecs: &secsNeg}, false},
+		{"over-max timeout_secs", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, TimeoutSecs: &secsOver}, false},
 		{"valid memory with unit", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, Memory: "512m"}, true},
 		{"valid memory bare bytes", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, Memory: "512"}, true},
 		{"invalid memory non-numeric", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, Memory: "abc"}, false},
