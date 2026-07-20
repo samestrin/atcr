@@ -960,7 +960,7 @@ func TestOrchestrateAutoFix_SkippedDuplicatesNotice(t *testing.T) {
 		owner:           "o", repo: "r", token: "tok",
 	}
 	err := orchestrateAutoFix(context.Background(), &buf, be, filepath.Join(".atcr", "reviews", id), "", "main")
-	require.Error(t, err) // the live GitHub client fails without network/auth
+	require.NoError(t, err, "orchestration must succeed hermetically — a live network/auth failure must not be load-bearing")
 	require.Contains(t, buf.String(), "skipped", "output must tell the operator that duplicate-path fixes were skipped")
 }
 
