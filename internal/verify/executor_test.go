@@ -24,8 +24,12 @@ import (
 
 // recordingExecutor is a scripted executorCompleter that records every prompt and
 // returns a fixed completion/error, so a test can assert call count and prompt
-// contents without a provider.
+// contents without a provider. generateFixes dispatches eligible findings through a
+// bounded worker pool, so Complete can be called from several goroutines at once
+// (any test with 2+ eligible findings); mu guards the recorded fields against that
+// data race. Post-return reads are already ordered by generateFixes's wg.Wait().
 type recordingExecutor struct {
+	mu      sync.Mutex
 	out     string
 	err     error
 	calls   int
@@ -34,9 +38,11 @@ type recordingExecutor struct {
 }
 
 func (r *recordingExecutor) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
+	r.mu.Lock()
 	r.calls++
 	r.prompts = append(r.prompts, inv.Prompt)
 	r.temps = append(r.temps, inv.Temperature)
+	r.mu.Unlock()
 	return r.out, r.err
 }
 
@@ -730,13 +736,20 @@ func TestGenerateFixes_TwoTierPartitionsFindingsExactlyOnce(t *testing.T) {
 		}
 	}
 
-	// Partition: every eligible finding ends in EXACTLY one terminal state.
+	// Partition: every eligible finding ends in EXACTLY one terminal state. Checked
+	// as three separate impossibilities so the invariant is airtight — a bare
+	// NotEqual(fixed, skipLogged) would miss the "both" case (a Fix carrying a stale
+	// FixWarning), which is exactly the stale-warning hazard generateFixes guards.
 	for i := range findings {
 		f := &findings[i]
 		fixed := f.Fix != ""
 		skipLogged := f.Fix == "" && f.FixWarning != ""
-		assert.NotEqual(t, fixed, skipLogged,
-			"%s must be either fixed XOR skip-logged, never both, never neither", f.File)
+		assert.False(t, f.Fix != "" && f.FixWarning != "",
+			"%s must never carry BOTH a Fix and a FixWarning (stale-warning hazard)", f.File)
+		assert.False(t, f.Fix == "" && f.FixWarning == "",
+			"%s must never be silently dropped (empty Fix AND empty warning)", f.File)
+		assert.True(t, fixed != skipLogged,
+			"%s must be fixed XOR skip-logged", f.File)
 	}
 
 	// Concrete per-finding expectations.
@@ -764,6 +777,36 @@ func keysOf(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// AC 03-01 (severity axis): the partition must also hold when the two tiers differ
+// by MaxSeverityForFix rather than MaxEstimatedMinutes. A tier-1 HIGH severity
+// ceiling skip-logs a CRITICAL finding, which tier 2 (no severity ceiling) then
+// fixes — and tier 2 does not re-touch the HIGH finding tier 1 already fixed.
+func TestGenerateFixes_TwoTierSeverityCeilingPartition(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "CRITICAL", File: "crit.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 5},
+		{Severity: "HIGH", File: "high.go", Line: 2, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 5},
+	}
+	reg := execRegistry("MEDIUM")
+	tier1 := twoTierConfig(registry.RoleExecutor, 0) // no minutes ceiling
+	tier1.MaxSeverityForFix = "HIGH"                 // severity ceiling: skip anything above HIGH
+	tier2 := twoTierConfig(registry.RoleExecutor, 0) // no ceiling on either axis
+
+	rec1 := &recordingExecutor{out: "tier1 fix"}
+	rec2 := &recordingExecutor{out: "tier2 fix"}
+
+	generateFixes(context.Background(), findings, tier1, reg, rec1, nil, okDispatcher(), 0)
+	assert.Equal(t, 1, rec1.calls, "tier 1 fixes only the within-severity-ceiling HIGH finding")
+	assert.NotEmpty(t, findingByFile(t, findings, "high.go").Fix, "HIGH is at tier 1's severity ceiling (inclusive) → fixed")
+	assert.Empty(t, findingByFile(t, findings, "crit.go").Fix, "CRITICAL exceeds tier 1's HIGH severity ceiling → skipped")
+	assert.NotEmpty(t, findingByFile(t, findings, "crit.go").FixWarning, "the severity skip is logged, not silent")
+
+	generateFixes(context.Background(), findings, tier2, reg, rec2, nil, okDispatcher(), 0)
+	require.Equal(t, 1, rec2.calls, "tier 2 fixes exactly the tier-1-severity-skipped CRITICAL finding")
+	assert.Contains(t, rec2.prompts[0], "crit.go:1", "tier 2's call targets the severity-skipped finding")
+	assert.Equal(t, "tier2 fix", findingByFile(t, findings, "crit.go").Fix)
+	assert.Empty(t, findingByFile(t, findings, "crit.go").FixWarning, "tier 2 success clears tier 1's severity-skip warning")
 }
 
 // AC 03-02 Edge Case 1: with DISTINCT tier Names the name-scoped attribution guard
