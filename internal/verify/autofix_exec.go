@@ -44,6 +44,16 @@ var ErrAutoFixSandboxUnconfigured = errors.New("--auto-fix requires a [sandbox] 
 // as the backend's fallback default and can never silently shrink the operator's
 // validation budget.
 //
+// Read-only /work limitation (effectively Go-only today): the validation runs
+// with the patched working tree mounted read-only at /work (internal/sandbox/
+// docker.go). The built-in go build/go test path passes because caches redirect
+// to a writable /scratch, but a validate_command that writes UNDER the project
+// dir — npm run build -> dist/, cargo build -> target/, most non-Go builders and
+// codegen — hits EROFS, exits non-zero, and lands in !res.Passed(), so runAutoFix
+// fails closed and reverts a valid fix with no PR. Until a writable build-output
+// overlay exists, non-Go runners must redirect writes to /scratch, run outside
+// sandboxed validation, or use --no-sandbox. See docs/auto-fix.md.
+//
 // Design tension (open follow-up, deliberately NOT resolved here): SandboxConfig.
 // Validate() unconditionally requires Image + TestCommand because it was written
 // for `--exec`'s run_tests tool. An operator who adds a `[sandbox]` block solely

@@ -59,6 +59,17 @@ into the tree, runs code generation, or does `lint --fix` — cannot do so, beca
 sandbox even though it would succeed on the host. Point those writes at
 `/scratch`, or run that step outside `--auto-fix`'s sandboxed validation.
 
+> **This makes sandboxed `--auto-fix` effectively Go-only today.** The built-in
+> `go build ./...` / `go test ./...` validation writes only to the redirected
+> caches, so it passes. But many common non-Go validators write *under the
+> project directory* — `npm run build` → `dist/`, `cargo build` → `target/`,
+> bundlers, most codegen — and hit `EROFS` on the read-only `/work`. That failure
+> is **indistinguishable from a genuine validation failure**: `--auto-fix` fails
+> closed, reverts the applied patch, and opens no PR, so a perfectly valid fix is
+> silently discarded. Until a writable build-output overlay is added, point such
+> writes at `/scratch`, run that step outside sandboxed validation, or use
+> `--no-sandbox` (accepting the host-execution risk).
+
 ## Configuring auto-fix — the `auto_fix:` block
 
 The optional `auto_fix:` block in `.atcr/config.yaml` supplies the
