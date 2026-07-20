@@ -936,10 +936,14 @@ func TestGenerateFixes_TwoTierWorkflowReproducible(t *testing.T) {
 	// so a JSONFinding schema change breaks compilation rather than silently drifting
 	// (AC 03-03 Error Scenario 1). TWO findings land in each of tier 1 and tier 2's
 	// dispatch set (cheap+cheap2 within tier 1's 30m ceiling; mid+mid2 above 30m but
-	// within tier 2's 240m ceiling) so each tier dispatches ≥2 fixes through the
-	// bounded worker pool concurrently — the byte-identical determinism check below
-	// therefore also guards against order-dependent fix generation, not just a
-	// single-writer path.
+	// within tier 2's 240m ceiling) so each tier dispatches 2 fixes through the
+	// bounded worker pool concurrently — under `-race` this exercises the pool's
+	// data-race-freedom on a real multi-writer path (generateFixes writes each fix to
+	// its own finding index, so the artifact is order-independent by construction).
+	// The byte-identical re-run check below then proves the findings.json
+	// SERIALIZATION is deterministic (no map iteration order, timestamp, or random
+	// sentinel leaking into the artifact), not order-independence — that is a design
+	// property of per-index writes, verified by -race, not by this comparison.
 	seed := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "cheap.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 15, Evidence: "Found by rev"},    // LOW → tier 1
 		{Severity: "HIGH", File: "cheap2.go", Line: 2, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 20, Evidence: "Found by rev"},   // LOW → tier 1
@@ -1014,8 +1018,10 @@ func TestGenerateFixes_TwoTierWorkflowReproducible(t *testing.T) {
 		assert.False(t, f.Fix == "" && f.FixWarning == "", "%s: never neither (silent drop)", f.File)
 	}
 
-	// Reproducibility: the identical sequence from the same seed is deterministic,
-	// including the order in which each tier's two concurrent fixes land.
+	// Reproducibility: the identical sequence from the same seed produces a
+	// byte-identical findings.json — a stable, deterministic serialization an
+	// operator can diff between runs (concurrent-dispatch safety is asserted
+	// separately by `go test -race`).
 	_, finalBytes2, _, _ := runWorkflow(t)
 	assert.Equal(t, string(finalBytes), string(finalBytes2),
 		"re-running the two-tier workflow from the same seed yields byte-identical findings.json")
