@@ -117,6 +117,14 @@ const (
 	// turn budget the engine already caps at MaxAgentTurns — so the executor cannot
 	// exceed the loop's hard ceiling either.
 	MaxExecutorToolCalls = MaxAgentTurns
+	// MaxExecutorEstimatedMinutes caps an explicitly-configured max_estimated_minutes
+	// (Sprint 32.1). It is a typo-guard, NOT a policy opinion: est_minutes is a
+	// best-effort model-emitted estimate of fix effort (typically single/double digits),
+	// so a value above one week of minutes (7*24*60 = 10080) is almost certainly a
+	// mis-typed config (an extra zero) rather than an intended ceiling. Bounding it at
+	// load makes such a mistake fail loudly instead of silently disabling the ceiling's
+	// intent later. A nil pointer (unset) is valid and means "no ceiling".
+	MaxExecutorEstimatedMinutes = 10080
 )
 
 // Verification defaults (Epic 3.0). DefaultVerifyMinSeverity is the floor below
@@ -707,6 +715,34 @@ func (r *Registry) validateExecutor() []error {
 	// early return above).
 	if e.MaxToolCalls != nil && (*e.MaxToolCalls <= 0 || *e.MaxToolCalls > MaxExecutorToolCalls) {
 		errs = append(errs, fmt.Errorf("executor: max_tool_calls must be within 1..%d", MaxExecutorToolCalls))
+	}
+	// Complexity ceilings (Sprint 32.1). max_estimated_minutes is a routing ceiling on
+	// Finding.EstMinutes: an explicit value is bounded 1..MaxExecutorEstimatedMinutes
+	// (non-positive or over-cap is a typo, not a valid ceiling), mirroring the fix_timeout
+	// shape. A nil pointer (unset) is valid and means "no ceiling".
+	if e.MaxEstimatedMinutes != nil && (*e.MaxEstimatedMinutes <= 0 || *e.MaxEstimatedMinutes > MaxExecutorEstimatedMinutes) {
+		errs = append(errs, fmt.Errorf("executor: max_estimated_minutes must be within 1..%d", MaxExecutorEstimatedMinutes))
+	}
+	// max_severity_for_fix is the severity ceiling (upper counterpart of the MinSeverity
+	// floor): a set value must normalize to a canonical review severity, mirroring the
+	// MinSeverity check above. Empty (unset) is valid and means "no ceiling".
+	maxSevNorm := reclib.NormalizeSeverity(e.MaxSeverityForFix)
+	if maxSevNorm != "" && !reviewSeverities[maxSevNorm] {
+		errs = append(errs, fmt.Errorf("executor: max_severity_for_fix must be one of CRITICAL, HIGH, MEDIUM, LOW, got %q", e.MaxSeverityForFix))
+	}
+	// Cross-field floor/ceiling contradiction: a ceiling ranked strictly below the floor
+	// is never eligible for a fix. Only fires when the ceiling is set AND both bounds
+	// normalize to a canonical severity — so it never indexes SeverityRank with an
+	// unranked key and never masks the per-field errors above. validate() runs before
+	// applyDefaults (see LoadRegistry), so the floor is read via EffectiveFixMinSeverity
+	// to compare against the *effective* floor (default MEDIUM) when min_severity_for_fix
+	// is unset, not the empty literal. SeverityRank is the shared canonical map — no new
+	// rank table is introduced.
+	if maxSevNorm != "" && reviewSeverities[maxSevNorm] {
+		floorNorm := reclib.NormalizeSeverity(e.EffectiveFixMinSeverity())
+		if reviewSeverities[floorNorm] && reclib.SeverityRank[maxSevNorm] < reclib.SeverityRank[floorNorm] {
+			errs = append(errs, fmt.Errorf("executor: max_severity_for_fix (%s) must not be below min_severity_for_fix (%s) — this combination is never eligible for a fix", maxSevNorm, floorNorm))
+		}
 	}
 	return errs
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	yaml "gopkg.in/yaml.v3"
 )
 
 // executorBaseProviders is a minimal valid registry the executor block is appended to.
@@ -636,19 +637,23 @@ executor:
 	assert.Equal(t, "", reg.Executor.MaxSeverityForFix, "unset max_severity_for_fix stays empty")
 }
 
-// AC 01-01 Edge Case 1: an explicit max_estimated_minutes: 0 parses to a non-nil
-// pointer dereferencing to 0, distinguishable from unset (pointer convention).
+// AC 01-01 Edge Case 1: at the struct/unmarshal layer an explicit
+// max_estimated_minutes: 0 parses to a non-nil pointer dereferencing to 0,
+// distinguishable from unset (nil) — the pointer convention. This is asserted at the
+// YAML-unmarshal layer, not via LoadRegistry: Story 4's validateExecutor legitimately
+// rejects an explicit 0 at load (see TestExecutor_MaxEstimatedMinutesOutOfRangeRejected),
+// so the distinguishability the pointer provides is a parse-level property, and the
+// "explicit 0 == no ceiling" resolver semantics are covered by the direct-struct-literal
+// TestExecutorConfig_EffectiveMaxEstimatedMinutes.
 func TestExecutor_MaxEstimatedMinutesExplicitZeroParsed(t *testing.T) {
-	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
-executor:
-  provider: anthropic
-  model: claude-opus-4-8
-  max_estimated_minutes: 0
-`))
-	require.NoError(t, err)
-	require.NotNil(t, reg.Executor)
-	require.NotNil(t, reg.Executor.MaxEstimatedMinutes, "explicit 0 parses to a non-nil pointer")
-	assert.Equal(t, 0, *reg.Executor.MaxEstimatedMinutes)
+	var ex ExecutorConfig
+	require.NoError(t, yaml.Unmarshal([]byte("max_estimated_minutes: 0\n"), &ex))
+	require.NotNil(t, ex.MaxEstimatedMinutes, "explicit 0 parses to a non-nil pointer")
+	assert.Equal(t, 0, *ex.MaxEstimatedMinutes)
+
+	var unset ExecutorConfig
+	require.NoError(t, yaml.Unmarshal([]byte("model: m\n"), &unset))
+	assert.Nil(t, unset.MaxEstimatedMinutes, "an omitted max_estimated_minutes stays nil, distinguishable from explicit 0")
 }
 
 // AC 01-02 Scenarios 1 & 3, Edge Cases 1 & 2: EffectiveMaxEstimatedMinutes returns
@@ -675,4 +680,99 @@ func TestExecutorConfig_EffectiveMaxSeverityForFix(t *testing.T) {
 		"a configured value is returned unchanged")
 	assert.Equal(t, "BOGUS", ExecutorConfig{MaxSeverityForFix: "BOGUS"}.EffectiveMaxSeverityForFix(),
 		"the resolver is a pass-through: it does not validate or normalize")
+}
+
+// --- Sprint 32.1: ceiling validation (Story 4) ---
+
+// AC 04-01 Error Scenario 1 / Edge Case 3: a non-positive (0, -1) or over-cap
+// max_estimated_minutes is rejected, mirroring TestExecutor_MaxToolCallsOutOfRangeRejected.
+func TestExecutor_MaxEstimatedMinutesOutOfRangeRejected(t *testing.T) {
+	for _, val := range []string{"0", "-1", fmt.Sprintf("%d", MaxExecutorEstimatedMinutes+1)} {
+		_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_estimated_minutes: `+val+`
+`))
+		require.Error(t, err, "max_estimated_minutes %s must be rejected", val)
+		assert.Contains(t, err.Error(), "max_estimated_minutes")
+	}
+}
+
+// AC 04-01 Edge Case 1: max_estimated_minutes at the exact bounds (1 and
+// MaxExecutorEstimatedMinutes) is accepted.
+func TestExecutor_MaxEstimatedMinutesBoundaryAccepted(t *testing.T) {
+	for _, val := range []int{1, MaxExecutorEstimatedMinutes} {
+		reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_estimated_minutes: `+fmt.Sprintf("%d", val)+`
+`))
+		require.NoError(t, err, "max_estimated_minutes %d must be accepted", val)
+		require.NotNil(t, reg.Executor.MaxEstimatedMinutes)
+		assert.Equal(t, val, *reg.Executor.MaxEstimatedMinutes)
+	}
+}
+
+// AC 04-01 Error Scenario 2: a max_severity_for_fix outside the canonical set is
+// rejected, mirroring TestExecutor_InvalidMinSeverityForFix.
+func TestExecutor_MaxSeverityForFixInvalidRejected(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_severity_for_fix: BLOCKER
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_severity_for_fix")
+}
+
+// AC 04-01 Error Scenario 3: both per-field faults accumulate rather than short-circuit.
+func TestExecutor_CeilingFaultsAccumulate(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_estimated_minutes: -1
+  max_severity_for_fix: BLOCKER
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_estimated_minutes")
+	assert.Contains(t, err.Error(), "max_severity_for_fix")
+}
+
+// AC 04-02 Error Scenario 1 / Edge Case 3: a max_severity_for_fix ranking strictly
+// below min_severity_for_fix is rejected with a distinguishable contradictory-range
+// error naming both values; normalization is not bypassable via case/whitespace.
+func TestExecutor_MaxSeverityForFixBelowMinSeverityRejected(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  min_severity_for_fix: " Critical "
+  max_severity_for_fix: "low"
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_severity_for_fix")
+	assert.Contains(t, err.Error(), "below", "the contradiction error is distinguishable from the plain out-of-set error")
+}
+
+// AC 04-02 Scenario 1 & 2, Edge Case 1: a valid floor/ceiling combination — ceiling
+// above floor, equal floor/ceiling, and ceiling-against-defaulted-floor — loads cleanly.
+func TestExecutor_ValidFloorCeilingCombinationAccepted(t *testing.T) {
+	cases := []struct{ name, block string }{
+		{"ceiling above floor", "  min_severity_for_fix: LOW\n  max_severity_for_fix: HIGH\n"},
+		{"equal floor and ceiling", "  min_severity_for_fix: HIGH\n  max_severity_for_fix: HIGH\n"},
+		{"ceiling equals defaulted floor", "  max_severity_for_fix: MEDIUM\n"}, // min unset → defaults to MEDIUM
+	}
+	for _, c := range cases {
+		reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+`+c.block))
+		require.NoError(t, err, "case %q must load cleanly", c.name)
+		require.NotNil(t, reg.Executor)
+	}
 }
