@@ -1,3 +1,17 @@
+## [32.2.0] - 2026-07-20
+
+Close two deferred defense-in-depth gaps in the `--auto-fix` sandbox path surfaced during Sprint 32.0 review.
+
+### Changed
+
+- `--auto-fix` host validation now requires an explicit `--no-sandbox` opt-out at the dispatch, not merely a nil sandbox backend: a caller that bypasses the setup gate can no longer inherit a silent unsandboxed run on the host — it fails closed, reverting the patch and making no GitHub call.
+
+### Fixed
+
+- A cancelled sandbox validation (parent-context cancellation, e.g. Ctrl-C) is now classified as a timeout in the Docker backend rather than a spurious backend fault, mirroring the host-path timeout handling.
+
+*Shipped via /execute-epic (epic 32.2)*
+
 ## [32.1.0] - 2026-07-20
 
 Add a configurable complexity ceiling to the fix executor so cheap/local models can safely skip findings beyond their capability, enabling a two-tier cheap-then-frontier auto-fix workflow.
