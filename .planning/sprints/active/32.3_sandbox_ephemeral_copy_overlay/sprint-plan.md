@@ -287,14 +287,14 @@ Your goal is to create software that:
    - ✅ No CRITICAL/HIGH → **Adversarial review passed** — proceed to 2.3.
    - MEDIUM/LOW deferred to `tech-debt-captured.md` (MEDIUM = existing TD-001; LOW = new TD-004).
 
-### 2.3 [ ] **[Conditional Writable /work Mount - REFACTOR](plan/user-stories/02-conditional-writable-work-mount.md)**
+### 2.3 [x] **[Conditional Writable /work Mount - REFACTOR](plan/user-stories/02-conditional-writable-work-mount.md)**
    1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
    2. Improve code and tests (T1), validate all still pass (T3): `go test ./internal/sandbox/...`
    3. Confirm `TestDockerRunArgs_HardeningFlagsPresent` and Preflight's argv are byte-identical to pre-story output
    4. COMMIT: `git commit -m "refactor(sandbox): address review + clean up mount branching"`
    **Duration:** 1-2 hours
 
-### 2.4 [ ] **Phase 2 - Definition of Done**
+### 2.4 [x] **Phase 2 - Definition of Done**
    1. `go test ./internal/sandbox/...` — all passing (T3)
    2. Coverage ≥80% on touched files
    3. `golangci-lint run` — no errors
@@ -302,7 +302,7 @@ Your goal is to create software that:
    5. Story-specific: [AC 02-01](plan/acceptance-criteria/02-01-writable-false-argv-byte-identical.md), [AC 02-02](plan/acceptance-criteria/02-02-writable-true-src-and-work-tmpfs-mounts.md) verified; AC 02-03's argv/stdin-level assertions verified (end-state integration scenarios deferred to Phase 3 per sprint-design.md scope note)
    **Report:** `Story-2 DoD Complete / Auto: {X}/5 | Story-Specific: {Y}/3 (02-03 partial — completes in Phase 3)`
 
-### 2.5 [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+### 2.5 [x] **Phase 2 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -321,16 +321,19 @@ Your goal is to create software that:
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Files changed during Phase 2:** `internal/sandbox/docker.go`, `internal/sandbox/sandbox_test.go`
+
+   **Subagent findings (fresh-context hostile-integrator review, 2026-07-21):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | docker.go:71,163 | Default `WorkSize` (512m) == `Memory` (512m); a `--tmpfs` charges the memory cgroup. Once Phase 3 injects `cp -a`, a real tree + build/test working set is billed against 512m (512m /work + 64m /scratch > cap) → OOM (exit 137) → `Run` backend fault → `StartError` → `--auto-fix` reverts a valid fix (the exact npm `dist/` / cargo `target/` case the overlay exists to enable). | Deepens existing **TD-001** — escalate at Phase 3 gate (3.8) once `Writable:true` is live; size `WorkSize` under `Memory` or account for tmpfs in `validateHostCaps`. Deferred (MEDIUM). |
+   | LOW | autofix_exec.go:72-90 | `ResolveAutoFixSandbox` plumbs `Image`/`Memory`/`CPUs`/`PidsLimit`/`Timeout`/`DockerPath` from `SandboxConfig` but not `WorkSize`/`ScratchSize`, so overlay sizing is pinned to the 512m default and unreachable by operator config — making the TD-001 collision unresolvable via config. | Captured — **TD-005**. Add `WorkSize` to `SandboxConfig` with the `if sc.X != ""` override pattern, or document fixed sizing. Deferred (LOW). |
+
+   **Verification notes:** No production caller sets `Writable:true` (grep-confirmed), so the read-only control group (`--exec`, Preflight) is provably untouched and `Writable:false` is byte-identical (golden test). `dockerRunArgs` signature `([]string, error)` unchanged; hardening flags + `--workdir /work` intact for both branches. `/work` is genuinely writable-backed, giving Phase 3 a working substrate to inject `cp -a` into.
 
    **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md` (same pipeline as 2.2.A findings)
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   - ✅ No CRITICAL/HIGH → **Phase gate passed** (no phase-boundary blocker).
+   - MEDIUM/LOW deferred to `tech-debt-captured.md` (MEDIUM deepens TD-001; LOW = new TD-005). TD-001 flagged for **Phase 3 gate escalation** now that the mount consumes `WorkSize`.
    **Duration:** 15-30 min
 
 ---

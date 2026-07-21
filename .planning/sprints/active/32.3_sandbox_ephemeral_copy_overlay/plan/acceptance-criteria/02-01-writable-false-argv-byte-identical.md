@@ -83,16 +83,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/sandbox/...`)
-- [ ] No linting errors (`go vet ./...` / project lint gate)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/sandbox/...`)
+- [x] No linting errors (`go vet ./...` / project lint gate)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `TestDockerRunArgs_HardeningFlagsPresent` passes with zero edits to its assertions, including the `/tmp/snap:/work:ro` check at `sandbox_test.go:55`
-- [ ] The `Writable:false` branch of `dockerRunArgs` is textually unchanged from pre-story code (`-v spec.SnapshotDir + ":/work:ro"`)
-- [ ] `Preflight`'s trivial-run call (`docker.go:308`) produces an argv with no `/src` mount and no second `--tmpfs /work` entry
-- [ ] No existing hardening flag is reordered, weakened, or made conditional by the new branch
-- [ ] A new sibling test asserts the full `Writable:false` argv equals the pre-story golden slice element-for-element (Command mode), and `TestDockerRunArgs_ScriptUsesStdinShell` (`sandbox_test.go:83`) also stays green unmodified (Script mode)
+- [x] `TestDockerRunArgs_HardeningFlagsPresent` passes with zero edits to its assertions, including the `/tmp/snap:/work:ro` check at `sandbox_test.go:55`
+- [x] The `Writable:false` branch of `dockerRunArgs` is textually unchanged from pre-story code (`-v spec.SnapshotDir + ":/work:ro"`)
+- [x] `Preflight`'s trivial-run call (`docker.go:308`) produces an argv with no `/src` mount and no second `--tmpfs /work` entry
+- [x] No existing hardening flag is reordered, weakened, or made conditional by the new branch
+- [x] A new sibling test asserts the full `Writable:false` argv equals the pre-story golden slice element-for-element (Command mode), and `TestDockerRunArgs_ScriptUsesStdinShell` (`sandbox_test.go:83`) also stays green unmodified (Script mode)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

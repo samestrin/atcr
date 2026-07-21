@@ -90,16 +90,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/sandbox/...`)
-- [ ] No linting errors (`go vet ./...` / project lint gate)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/sandbox/...`)
+- [x] No linting errors (`go vet ./...` / project lint gate)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `Writable:true` argv contains `/src:ro` and does not contain `/work:ro` (the old bind form)
-- [ ] `Writable:true` argv contains `--tmpfs /work:rw,exec,size=<cfg.WorkSize>`, mirroring the `/scratch` tmpfs flag pattern exactly
-- [ ] `--tmpfs /scratch:...` and `--workdir /work` remain present and unchanged when `Writable` is `true`
-- [ ] `spec.validate()` behavior (including the `:`-injection guard) is unaffected by the `Writable` branch
-- [ ] The `/work` tmpfs is asserted as two adjacent argv elements (`"--tmpfs"`, `"/work:rw,exec,size=<cfg.WorkSize>"`) and the `/src:ro` bind as two (`"-v"`, `"<SnapshotDir>:/src:ro"`), with all pre-existing flags' relative order unchanged
+- [x] `Writable:true` argv contains `/src:ro` and does not contain `/work:ro` (the old bind form)
+- [x] `Writable:true` argv contains `--tmpfs /work:rw,exec,size=<cfg.WorkSize>`, mirroring the `/scratch` tmpfs flag pattern exactly
+- [x] `--tmpfs /scratch:...` and `--workdir /work` remain present and unchanged when `Writable` is `true`
+- [x] `spec.validate()` behavior (including the `:`-injection guard) is unaffected by the `Writable` branch
+- [x] The `/work` tmpfs is asserted as two adjacent argv elements (`"--tmpfs"`, `"/work:rw,exec,size=<cfg.WorkSize>"`) and the `/src:ro` bind as two (`"-v"`, `"<SnapshotDir>:/src:ro"`), with all pre-existing flags' relative order unchanged
 
 **Manual Review:**
 - [ ] Code reviewed and approved
