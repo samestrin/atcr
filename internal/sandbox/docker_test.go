@@ -118,16 +118,19 @@ func TestRenderCommand_UnaffectedByWritable(t *testing.T) {
 	assert.NotContains(t, renderCommand(scrW), "cp -R")
 }
 
-func TestDockerBackend_Run_WritableOverlayWriteProof(t *testing.T) {
-	// AC 02-03 Scenarios 4-5: prove the Writable:true Run path is reachable and
-	// functional end-to-end (not merely present in argv) for BOTH Command and Script
-	// modes, and that the snapshot side stays read-only. The fake docker shim stands in
-	// for the container: it first refuses to proceed unless Run actually built the
-	// Writable overlay argv (/src:ro bind + /work tmpfs), then emulates the payload's
-	// write under the writable /work overlay by creating a marker file.
-	workMarker := filepath.Join(t.TempDir(), "writable-overlay-marker.txt")
-	t.Setenv("ATCR_WORK_MARKER", workMarker)
-
+func TestDockerBackend_Run_WritableOverlayArgvShapeReachable(t *testing.T) {
+	// AC 02-03 Scenarios 4-5 (argv-shape reachability): prove the Writable:true Run
+	// path is reachable and builds the overlay argv (/src:ro bind + /work tmpfs) for
+	// BOTH Command and Script modes. The fake docker shim refuses (exit 90) unless Run
+	// actually built that argv, so a clean exit 0 proves the shape.
+	//
+	// This is deliberately NOT a write proof: the shim executes no payload and no real
+	// tmpfs is mounted, so it cannot show /work is writable or that a broken overlay
+	// would fail — asserting "payload succeeds, no EROFS" here would be vacuous (the
+	// shim's `exit 0` re-read as a result), which is exactly the overclaim this test
+	// used to make. The genuine end-to-end write proof lives in the daemon-backed
+	// TestIntegration_DockerBackend_WritableOverlayWorkIsWritable (build tag
+	// `integration`) and its /src-read-only EROFS sibling.
 	fake := writeFakeDocker(t, `if [ "$1" = "run" ]; then
   case "$*" in
     *:/src:ro*) : ;;
@@ -137,7 +140,6 @@ func TestDockerBackend_Run_WritableOverlayWriteProof(t *testing.T) {
     *"--tmpfs /work:rw"*) : ;;
     *) echo "missing /work tmpfs" >&2; exit 90 ;;
   esac
-  echo built > "$ATCR_WORK_MARKER" || exit 91
   exit 0
 fi
 exit 0`)
@@ -154,13 +156,9 @@ exit 0`)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_ = os.Remove(workMarker) // reset between modes; absent on first iteration
 			res, err := b.Run(context.Background(), tc.spec)
 			require.NoError(t, err, "a reachable Writable:true run is not a backend fault")
-			require.Equal(t, 0, res.ExitCode, "the Writable:true payload must succeed (ExitCode 0, no EROFS); shim exits 90-92 on a broken overlay")
-			data, rerr := os.ReadFile(workMarker)
-			require.NoError(t, rerr, "the payload's write under the writable /work overlay must be observable, proving the mount path is functional")
-			assert.Equal(t, "built\n", string(data))
+			assert.Equal(t, 0, res.ExitCode, "Run must build the Writable overlay argv (/src:ro bind + /work tmpfs); the shim exits 90 otherwise")
 		})
 	}
 }
