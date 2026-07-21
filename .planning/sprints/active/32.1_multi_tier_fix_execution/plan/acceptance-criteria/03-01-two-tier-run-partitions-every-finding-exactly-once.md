@@ -86,4 +86,4 @@ Running `generateFixes` twice — a tier-1 low-ceiling pass followed by a tier-2
 - [x] Test covers the error path (unknown provider / failed completer call) without misclassifying it as a clean partition (`TestGenerateFixes_TwoTierUnknownProviderLeavesTier1State`)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

@@ -82,4 +82,4 @@
 - [x] Resolvers perform no validation/normalization of out-of-range or invalid input — confirmed by a passthrough test case
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

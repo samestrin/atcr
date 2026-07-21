@@ -79,4 +79,4 @@
 - [x] New field names/defaults/validation wording match Story 1's actual shipped code, verified by diff against `internal/registry/config.go`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

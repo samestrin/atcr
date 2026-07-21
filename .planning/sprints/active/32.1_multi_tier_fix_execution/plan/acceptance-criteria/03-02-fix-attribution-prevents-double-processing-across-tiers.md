@@ -81,4 +81,4 @@ Fix attribution keyed on the executor's `Name` prevents a second tier from re-at
 - [x] `docs/registry.md` updated to tell operators whether to keep `Name` consistent (or what alternate guard exists) across tier configs for correct cross-tier attribution *(Phase 4 / Story 5 — docs scheduled)* — done: two-tier prose states both tiers must share the executor `name`, that attribution is name-scoped, and that distinct names break the partition (no separate cross-tier lock).
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

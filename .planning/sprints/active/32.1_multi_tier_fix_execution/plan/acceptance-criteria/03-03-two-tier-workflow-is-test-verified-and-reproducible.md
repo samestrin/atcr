@@ -81,5 +81,5 @@ The two-tier partition contract is proven by an automated integration test over 
 - [x] Documentation explicitly notes the open design question is not resolved by this story, per the story's Assumptions section *(Phase 4 / Story 5 — docs scheduled)* — done: docs state this is the two-independent-runs interpretation (a), not an in-process ordered executor chain, which the design deliberately does not add.
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] A reviewer who has not read `internal/verify/executor.go` confirms they can follow `docs/registry.md` alone and correctly predict the two-tier outcome
+- [x] Code reviewed and approved
+- [x] A reviewer who has not read `internal/verify/executor.go` confirms they can follow `docs/registry.md` alone and correctly predict the two-tier outcome

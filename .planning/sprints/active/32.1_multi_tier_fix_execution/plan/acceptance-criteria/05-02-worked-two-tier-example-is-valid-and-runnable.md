@@ -80,4 +80,4 @@ The worked two-tier example — a cheap-tier registry config and a frontier-tier
 - [x] `docs/registry.md`'s runnable-examples cross-reference sentence is updated to mention the new two-tier example file(s)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

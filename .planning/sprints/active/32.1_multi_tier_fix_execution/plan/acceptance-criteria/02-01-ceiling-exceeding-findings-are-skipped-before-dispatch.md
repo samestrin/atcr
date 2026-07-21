@@ -86,4 +86,4 @@ A finding whose `EstMinutes` (or severity) exceeds the executor's configured cei
 - [x] Minutes-ceiling and severity-ceiling skip reasons are distinguishable in `FixWarning` text
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

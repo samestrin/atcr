@@ -78,4 +78,4 @@ When both severity bounds are set and each individually normalizes to a canonica
 - [x] A positive-path test confirms a valid ceiling-at-or-above-floor combination (including the equal-value boundary) loads without error
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

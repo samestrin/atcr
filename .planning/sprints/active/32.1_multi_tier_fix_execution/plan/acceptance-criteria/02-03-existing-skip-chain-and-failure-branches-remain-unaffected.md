@@ -81,4 +81,4 @@ The pre-existing skip chain (confidence → severity floor → attribution) keep
 - [x] A run where every finding is ceiling-skipped or self-declined still yields non-empty `FixWarning` on every such finding (no false "clean" run)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

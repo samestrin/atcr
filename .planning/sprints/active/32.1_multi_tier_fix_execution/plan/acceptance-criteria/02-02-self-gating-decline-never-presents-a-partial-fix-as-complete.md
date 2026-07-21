@@ -78,4 +78,4 @@ An executor self-decline — on the single-shot snippet path or the Agent Mode t
 - [x] An ambiguous, non-decline response is never misclassified as a decline (conservative-detector test case passes)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

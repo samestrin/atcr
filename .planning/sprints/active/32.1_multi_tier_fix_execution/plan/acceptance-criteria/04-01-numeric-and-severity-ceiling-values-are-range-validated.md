@@ -91,4 +91,4 @@
 - [x] New tests `TestExecutor_MaxEstimatedMinutesOutOfRangeRejected`, `TestExecutor_MaxEstimatedMinutesBoundaryAccepted`, and `TestExecutor_MaxSeverityForFixInvalidRejected` pass and follow the existing `TestExecutor_*` naming convention
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

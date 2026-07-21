@@ -77,4 +77,4 @@
 - [x] No validation logic (range checks, allowed-value checks) is introduced in this AC — confirmed by diff review against Story 4's scope boundary
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved
