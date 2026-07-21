@@ -77,6 +77,17 @@ func TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec(t *testing.T) 
 	assert.False(t, res.StderrTruncated, "sandbox reports no per-stream truncation signal — flag left false, not guessed")
 }
 
+func TestRunSandboxedValidation_DefaultRunSpecLeavesWritableFalse(t *testing.T) {
+	// Verify that a standard sandbox.RunSpec constructed outside RunSandboxedValidation
+	// (e.g. by --exec or tool handlers) defaults Writable to false.
+	spec := sandbox.RunSpec{
+		Command:     []string{"go", "test", "./..."},
+		Timeout:     30 * time.Second,
+		SnapshotDir: t.TempDir(),
+	}
+	assert.False(t, spec.Writable, "default RunSpec for non-auto-fix callers must leave Writable false")
+}
+
 func TestRunSandboxedValidation_EmptyArgvShortCircuitsBeforeBackend(t *testing.T) {
 	fb := &fakeSandboxBackend{name: "fake"}
 	res, err := RunSandboxedValidation(context.Background(), fb, nil, t.TempDir(), 5*time.Second)
