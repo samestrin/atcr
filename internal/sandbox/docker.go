@@ -147,7 +147,20 @@ func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
 		"-e", "GOCACHE=/scratch/.gocache",
 		"-e", "GOTMPDIR=/scratch",
 		"--workdir", "/work",
-		"-v", spec.SnapshotDir + ":/work:ro",
+	}
+	if spec.Writable {
+		// Writable overlay: the snapshot stays read-only, but at /src instead of
+		// /work, and /work is backed by an ephemeral, memory-backed tmpfs. The tmpfs
+		// gives /work real writable backing under the global --read-only rootfs,
+		// mirroring the /scratch tmpfs above; it — and every write into it — dies
+		// with the --rm container, so no host file is ever mutated. The cp -a setup
+		// step that seeds /work from /src is injected in a later story.
+		args = append(args, "-v", spec.SnapshotDir+":/src:ro")
+		args = append(args, "--tmpfs", "/work:rw,exec,size="+cfg.WorkSize)
+	} else {
+		// Default (read-only): the snapshot binds directly read-only at /work,
+		// byte-identical to pre-overlay behavior — this is --exec's pinned guarantee.
+		args = append(args, "-v", spec.SnapshotDir+":/work:ro")
 	}
 	if spec.Script != "" {
 		// Feed the script over stdin: `docker run -i <image> /bin/sh -s`.

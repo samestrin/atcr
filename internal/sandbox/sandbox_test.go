@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -89,6 +90,97 @@ func TestDockerRunArgs_ScriptUsesStdinShell(t *testing.T) {
 	assert.Contains(t, joined, "-i")
 	assert.Contains(t, joined, "/bin/sh -s")
 	assert.NotContains(t, joined, "echo hi", "script body must not appear in argv")
+}
+
+// assertAdjacent asserts that flag appears in args immediately followed by value
+// as two distinct argv elements, so a malformed single-token "flag value" mount
+// cannot satisfy a mere substring check.
+func assertAdjacent(t *testing.T, args []string, flag, value string) {
+	t.Helper()
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag && args[i+1] == value {
+			return
+		}
+	}
+	t.Fatalf("expected argv to contain adjacent elements %q %q, got %v", flag, value, args)
+}
+
+func TestDockerRunArgs_WritableFalseGoldenArgv(t *testing.T) {
+	// AC 02-01 Scenario 3: the Writable:false (default) argv must equal the
+	// pre-story argv element-for-element — same length, order, and values — so a
+	// future edit to the false branch that drifts the mount is caught as an exact
+	// slice mismatch, not merely a substring miss. This anchors --exec's read-only
+	// guarantee: Writable defaults false, and this path stays byte-identical.
+	cfg := DefaultDockerConfig()
+	spec := RunSpec{Command: []string{"go", "test", "./..."}, SnapshotDir: "/tmp/snap"}
+
+	args, err := dockerRunArgs(cfg, spec)
+	require.NoError(t, err)
+
+	want := []string{
+		"run", "--rm",
+		"--network", "none",
+		"--read-only",
+		"--cap-drop", "ALL",
+		"--security-opt", "no-new-privileges",
+		"--user", cfg.User,
+		"--memory", cfg.Memory,
+		"--cpus", cfg.CPUs,
+		"--pids-limit", strconv.Itoa(cfg.PidsLimit),
+		"--tmpfs", "/scratch:rw,exec,size=" + cfg.ScratchSize,
+		"-e", "HOME=/scratch",
+		"-e", "TMPDIR=/scratch",
+		"-e", "XDG_CACHE_HOME=/scratch/.cache",
+		"-e", "GOCACHE=/scratch/.gocache",
+		"-e", "GOTMPDIR=/scratch",
+		"--workdir", "/work",
+		"-v", "/tmp/snap:/work:ro",
+		cfg.Image,
+		"go", "test", "./...",
+	}
+	assert.Equal(t, want, args, "Writable:false argv must be byte-identical to the pre-story shape")
+}
+
+func TestDockerRunArgs_WritableTrueMountsSrcROAndWorkTmpfs(t *testing.T) {
+	// AC 02-02: Writable:true mounts the snapshot read-only at /src (not /work) and
+	// adds a writable /work tmpfs, mirroring the /scratch tmpfs pattern exactly.
+	cfg := DefaultDockerConfig()
+	cfg.WorkSize = "128m"
+	spec := RunSpec{Command: []string{"npm", "run", "build"}, SnapshotDir: "/tmp/snap", Writable: true}
+
+	args, err := dockerRunArgs(cfg, spec)
+	require.NoError(t, err)
+	joined := strings.Join(args, " ")
+
+	// Snapshot is read-only at /src, and the old /work:ro bind form is gone.
+	assert.Contains(t, joined, "/tmp/snap:/src:ro", "snapshot must be mounted read-only at /src")
+	assert.NotContains(t, joined, "/tmp/snap:/work:ro", "the /work:ro bind must not survive in the writable path")
+
+	// A real writable /work tmpfs backs the overlay under the unchanged --read-only rootfs.
+	assert.Contains(t, joined, "--read-only", "the global read-only rootfs flag stays present")
+	assert.Contains(t, joined, "--tmpfs /work:rw,exec,size=128m", "/work must be a writable tmpfs sized by cfg.WorkSize")
+
+	// The pre-existing /scratch tmpfs and --workdir /work are untouched and additive.
+	assert.Contains(t, joined, "--tmpfs /scratch:rw,exec,size="+cfg.ScratchSize, "the /scratch tmpfs stays unchanged")
+	assert.Contains(t, joined, "--workdir /work", "--workdir still targets the writable /work")
+
+	// Element-form: each mount spec is two adjacent argv elements, so a malformed
+	// single-token mount cannot pass. The /src bind takes the vacated /work:ro slot.
+	assertAdjacent(t, args, "-v", "/tmp/snap:/src:ro")
+	assertAdjacent(t, args, "--tmpfs", "/work:rw,exec,size=128m")
+}
+
+func TestDockerRunArgs_WritableTrueEmptyWorkSize(t *testing.T) {
+	// AC 02-02 Edge Case 3: an empty cfg.WorkSize (a caller bypassing
+	// DefaultDockerConfig) must not panic or error at argv-build time — Docker
+	// rejects the malformed flag at run time, consistent with "no new validation".
+	cfg := DefaultDockerConfig()
+	cfg.WorkSize = ""
+	spec := RunSpec{Command: []string{"true"}, SnapshotDir: "/tmp/snap", Writable: true}
+
+	args, err := dockerRunArgs(cfg, spec)
+	require.NoError(t, err, "empty WorkSize must not error at argv-build time")
+	assert.Contains(t, strings.Join(args, " "), "--tmpfs /work:rw,exec,size=", "emits an empty size, not a crash")
 }
 
 func TestRunSpec_Validate(t *testing.T) {
