@@ -152,7 +152,7 @@ func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
 		"--tmpfs", "/scratch:rw,exec,size=" + cfg.ScratchSize,
 		// Point HOME, temp, and common build caches at the writable scratch tmpfs so
 		// runners that need to write (go test's build cache, mktemp, pip, etc.) work
-		// under the read-only rootfs + read-only /work. Harmless for runners that
+		// under the read-only rootfs. Harmless for runners that
 		// ignore them (e.g. pytest).
 		"-e", "HOME=/scratch",
 		"-e", "TMPDIR=/scratch",
