@@ -25,6 +25,10 @@ This document standardizes the terminology used across ATCR's codebase, marketin
 - **Skeptic:** Adversarial agent that attempts to prove the Reviewer's findings are false positives.
 - **Fixer:** Agent responsible for generating patches (`--auto-fix`).
 
+## Assistant vs Agent (Industry Positioning)
+- **Assistant:** A tool (like GitHub Copilot) that is advisory. It suggests code, but humans must trigger it, read the suggestion, apply it, and verify it.
+- **Agent:** A tool (like ATCR) that acts autonomously. It runs in the background (or in CI), understands deep project context, catches race conditions, and auto-fixes them with explanations without human hand-holding. ATCR is firmly an **Agent**.
+
 ## Key Concepts
 - **Adversarial Verification:** The process of using a Skeptic to refute a finding.
 - **Zero Vendor Lock-in:** The principle that generated outputs (e.g., Playwright UI tests in Epic 44.0) must be standard open-source formats, not proprietary vendor formats.
