@@ -51,7 +51,7 @@ sandbox regression test byte-identical
 
 - **Architecture:** 2/3 - New mechanism (shell-wrap payload injection via `exec "$@"`, conditional `/src`+`/work` mount split) layered onto an existing, mirrored idiom (`ScratchSize`/`--tmpfs` pattern already proven by `/scratch`); not a wholesale architectural overhaul.
 - **Integration:** 2/3 - Three components touched (`internal/sandbox`, `internal/verify`, `docs/`) but all single-repo and funneled through one pure choke point (`dockerRunArgs`), not a multi-system integration.
-- **Story/Task & Test:** 3/3 - 5 stories, 15 ACs, 4 explicitly flagged high-complexity (02-02, 02-03, 03-01, 03-03), spanning unit, integration, and documentation-review test types.
+- **Story/Task & Test:** 3/3 - 5 stories, 15 ACs, 4 high-complexity ACs (02-02, 02-03, 03-01, 03-03), spanning unit, integration, and documentation-review test types.
 - **Risk/Unknowns:** 2/3 - Risks are numerous (shared-infrastructure blast radius, shell-injection surface, distroless-image incompatibility, `WorkSize` sizing) but each already has a specified mitigation from two prior `/refine-epic --deep` passes — minor residual unknowns, not open-ended ones.
 
 **Time Formula:** Sum of per-story effort estimates (S=1 day, M=2 days), sequenced by hard dependency chain (Story 1 → 2 → 3 → 4 → 5)
@@ -78,7 +78,7 @@ Thresholds: adversarial triggered by complexity >= 6/12 or phases >= 3 (met: 9/1
 
 ### Phase 2: Core Mount Mechanism (2 days)
 - **Items:** Story 2 (Conditional Writable /work Mount)
-- **Focus:** Branch `dockerRunArgs` on `spec.Writable`: `false` path stays textually untouched (`-v SnapshotDir:/work:ro`, pinned by `TestDockerRunArgs_HardeningFlagsPresent`); `true` path mounts `SnapshotDir:/src:ro` and adds `--tmpfs /work:rw,exec,size=<cfg.WorkSize>`. This phase makes the writable backing exist; it does not yet populate it.
+- **Focus:** Branch `dockerRunArgs` on `spec.Writable`: `false` path stays textually untouched (`-v SnapshotDir:/work:ro`, pinned by `TestDockerRunArgs_HardeningFlagsPresent`); `true` path mounts `SnapshotDir:/src:ro` and adds `--tmpfs /work:rw,exec,size=<cfg.WorkSize>`. This phase makes the writable backing exist; it does not yet populate it — the populating setup step is Story 3's (Phase 3). Accordingly, Story 2's AC 02-03 closes in two parts: its argv/stdin-level assertions (setup step present only when `Writable:true`, `renderCommand` unaffected) land here with the mount branch, while its end-state integration scenarios (a payload observably writing under `/work`, `ExitCode 0` with no `EROFS`) are verified in Phase 3 once Story 3's injection exists — no Phase 2 exit gate requires them.
 
 ### Phase 3: Setup Injection & Auto-Fix Wiring (3 days)
 - **Items:** Story 3 (Ephemeral-Copy Setup Injection), Story 4 (`--auto-fix` Opts Into the Writable Overlay)
@@ -97,7 +97,7 @@ Thresholds: adversarial triggered by complexity >= 6/12 or phases >= 3 (met: 9/1
 - **Dependencies:** None — first story.
 
 ### Story 2: Conditional Writable /work Mount (M)
-- **Testable elements:** `Writable:false` argv byte-identical (AC 02-01, Unit); `Writable:true` mounts `/src:ro` + `/work` tmpfs (AC 02-02, Unit); setup step populates `/work` before payload runs (AC 02-03, Unit/Integration).
+- **Testable elements:** `Writable:false` argv byte-identical (AC 02-01, Unit); `Writable:true` mounts `/src:ro` + `/work` tmpfs (AC 02-02, Unit); setup step populates `/work` before payload runs (AC 02-03, Unit/Integration — argv/stdin-level assertions in Phase 2; end-state integration scenarios verified in Phase 3 alongside Story 3's injection, per AC 02-03's own scope note naming Story 3 the mechanism authority).
 - **Dependencies:** Story 1.
 
 ### Story 3: Ephemeral-Copy Setup Injection (M)
