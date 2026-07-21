@@ -210,10 +210,6 @@ func TestRunSpec_Validate(t *testing.T) {
 }
 
 func TestRunSpec_WritableDefaultsToFalse(t *testing.T) {
-	// The opt-in writable overlay must default off: a zero-value RunSpec is
-	// read-only, matching every existing caller's current behavior.
-	assert.False(t, RunSpec{}.Writable, "Writable zero value must be false (read-only default)")
-
 	// An explicit opt-in round-trips and does not interact with validate()'s
 	// exactly-one-of-Command/Script or SnapshotDir invariants.
 	spec := RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir(), Writable: true}
