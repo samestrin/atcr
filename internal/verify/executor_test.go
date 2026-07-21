@@ -1074,3 +1074,39 @@ func TestAnyFixEligible_RespectsCeilings(t *testing.T) {
 		})
 	}
 }
+
+// Stale-warning hazard (TD MEDIUM): under DISTINCT tier Names (or a decreasing
+// ceiling) the name-scoped attribution guard does NOT catch a finding tier 1 already
+// fixed, so tier 2's pre-dispatch ceiling-skip branch runs. It must leave tier 1's Fix
+// intact and NOT stamp a FixWarning over it — the "both Fix and FixWarning" state the
+// partition contract asserts is impossible.
+func TestGenerateFixes_LaterTierCeilingSkipPreservesPriorFix(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 60},
+	}
+	reg := execRegistry("MEDIUM")
+	generateFixes(context.Background(), findings, twoTierConfig("tierA", 240), reg, &recordingExecutor{out: "tierA fix"}, nil, okDispatcher(), 0)
+	require.Equal(t, "tierA fix", findings[0].Fix)
+	require.Empty(t, findings[0].FixWarning)
+
+	// Tier 2: DISTINCT name + LOW ceiling → ceiling-skips this finding (60 > 30).
+	generateFixes(context.Background(), findings, twoTierConfig("tierB", 30), reg, &recordingExecutor{out: "tierB fix"}, nil, okDispatcher(), 0)
+	assert.Equal(t, "tierA fix", findings[0].Fix, "a later tier's ceiling-skip must not clobber a prior tier's fix")
+	assert.Empty(t, findings[0].FixWarning, "a later tier's ceiling-skip must not stamp a stale warning over a fixed finding")
+}
+
+// Companion to the ceiling-skip case: a later tier's self-decline branch must also
+// leave a prior tier's Fix intact and not stamp a stale FixWarning.
+func TestGenerateFixes_LaterTierSelfDeclinePreservesPriorFix(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, EstMinutes: 10},
+	}
+	reg := execRegistry("MEDIUM")
+	generateFixes(context.Background(), findings, twoTierConfig("tierA", 240), reg, &recordingExecutor{out: "tierA fix"}, nil, okDispatcher(), 0)
+	require.Equal(t, "tierA fix", findings[0].Fix)
+
+	// Tier 2: distinct name → re-dispatches; the executor self-declines.
+	generateFixes(context.Background(), findings, twoTierConfig("tierB", 240), reg, &recordingExecutor{out: "ATCR_DECLINE: too complex"}, nil, okDispatcher(), 0)
+	assert.Equal(t, "tierA fix", findings[0].Fix, "a later tier's self-decline must not clobber a prior tier's fix")
+	assert.Empty(t, findings[0].FixWarning, "a later tier's self-decline must not stamp a stale warning over a fixed finding")
+}
