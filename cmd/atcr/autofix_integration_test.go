@@ -146,7 +146,8 @@ func TestAutoFixIntegration_HappyPathOpensPR(t *testing.T) {
 		validateArgv:    []string{"true"}, // validation passes
 		validateTimeout: 5 * time.Second,
 		owner:           "o", repo: "r", token: "tok",
-		apiURL: srv.URL,
+		apiURL:    srv.URL,
+		noSandbox: true, // explicit --no-sandbox opt-out (host path)
 	}
 
 	var out strings.Builder
@@ -192,7 +193,8 @@ func TestAutoFixIntegration_ValidationFailRevertsThroughEntryPoint(t *testing.T)
 		validateArgv:    []string{"false"}, // validation fails
 		validateTimeout: 5 * time.Second,
 		owner:           "o", repo: "r", token: "tok",
-		apiURL: srv.URL,
+		apiURL:    srv.URL,
+		noSandbox: true, // explicit --no-sandbox opt-out (host path)
 	}
 
 	err := orchestrateAutoFix(context.Background(), io.Discard, be, reviewDir, "", "main")
@@ -229,6 +231,7 @@ func TestAutoFixIntegration_ZeroHTTPOnValidationFailure(t *testing.T) {
 			validateArgv:    []string{"false"}, // validation fails
 			validateTimeout: 5 * time.Second,
 			owner:           "o", repo: "r", token: "tok", apiURL: srv.URL,
+			noSandbox: true, // explicit --no-sandbox opt-out (host path)
 		},
 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
 		BaseSHA: "basecommitsha", Base: "main", Branch: "atcr/auto-fix",
@@ -261,6 +264,7 @@ func TestAutoFixIntegration_ValidationPassCreatesPRViaRealClient(t *testing.T) {
 			validateArgv:    []string{"true"}, // validation passes
 			validateTimeout: 5 * time.Second,
 			owner:           "o", repo: "r", token: "tok", apiURL: srv.URL,
+			noSandbox: true, // explicit --no-sandbox opt-out (host path)
 		},
 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
 		BaseSHA: "basecommitsha", Base: "main", Branch: "atcr/auto-fix",

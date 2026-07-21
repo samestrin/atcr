@@ -526,6 +526,7 @@ func TestRunAutoFix_ValidationFailRevertsAndSkipsGitHub(t *testing.T) {
 			validateArgv:    []string{"false"}, // always exits non-zero
 			validateTimeout: 5 * time.Second,
 			owner:           "o", repo: "r", token: "tok",
+			noSandbox: true, // explicit --no-sandbox opt-out (host path)
 		},
 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
 		BaseSHA: "base", Branch: "atcr/auto-fix",
@@ -551,6 +552,7 @@ func TestRunAutoFix_ValidationPassCreatesPR(t *testing.T) {
 			validateArgv:    []string{"true"}, // always exits zero
 			validateTimeout: 5 * time.Second,
 			owner:           "o", repo: "r", token: "tok",
+			noSandbox: true, // explicit --no-sandbox opt-out (host path)
 		},
 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
 		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
@@ -581,6 +583,7 @@ func TestRunAutoFix_ValidationPassUpdatesExistingPR(t *testing.T) {
 			validateArgv:    []string{"true"}, // always exits zero
 			validateTimeout: 5 * time.Second,
 			owner:           "o", repo: "r", token: "tok",
+			noSandbox: true, // explicit --no-sandbox opt-out (host path)
 		},
 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
 		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
@@ -608,6 +611,7 @@ func TestRunAutoFix_EmptyBaseRefusesBeforeGitHub(t *testing.T) {
 			validateArgv:    []string{"true"}, // validation passes
 			validateTimeout: 5 * time.Second,
 			owner:           "o", repo: "r", token: "tok",
+			noSandbox: true, // explicit --no-sandbox opt-out (host path)
 		},
 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
 		BaseSHA: "base", Base: "", Branch: "atcr/auto-fix", // no base branch
@@ -657,6 +661,7 @@ func TestRunAutoFix_RemoteLeftoverNotice(t *testing.T) {
 					validateArgv:    []string{"true"},
 					validateTimeout: 5 * time.Second,
 					owner:           "o", repo: "r", token: "tok",
+					noSandbox: true, // explicit --no-sandbox opt-out (host path)
 				},
 				Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
 				BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
@@ -860,10 +865,13 @@ func TestRunAutoFix_SandboxStartErrorRevertsWithCannotValidateWording(t *testing
 	require.Equal(t, "old\n", string(got), "the working tree must be reverted when the sandbox cannot validate")
 }
 
-// TestRunAutoFix_NilSandboxUsesHostPath: with no sandbox backend supplied
-// (--no-sandbox opt-out), validation still runs on the host exactly as before, so
-// the existing host-path tests remain the zero-behavior-change baseline (AC 01-03
-// Edge Case: the routing change must not disturb the nil path).
+// TestRunAutoFix_NilSandboxUsesHostPath: with no sandbox backend BUT the explicit
+// --no-sandbox opt-out (noSandbox=true), validation still runs on the host exactly
+// as before. This supersedes AC 01-03's original nil→host zero-behavior baseline:
+// under epic 32.2 Task 1 a nil backend is no longer sufficient to reach the host
+// path — the opt-out flag is now required, and its absence fails closed (proven by
+// TestRunAutoFix_NilSandboxWithoutOptOutRefuses). The host path itself is otherwise
+// byte-identical when the opt-out IS present.
 func TestRunAutoFix_NilSandboxUsesHostPath(t *testing.T) {
 	root := t.TempDir()
 	rel := "f.txt"
@@ -876,13 +884,51 @@ func TestRunAutoFix_NilSandboxUsesHostPath(t *testing.T) {
 			validateArgv:    []string{"true"}, // host path passes
 			validateTimeout: 5 * time.Second,
 			owner:           "o", repo: "r", token: "tok",
-			sandboxBackend: nil, // opt-out: host path
+			sandboxBackend: nil,  // no sandbox resolved
+			noSandbox:      true, // explicit --no-sandbox opt-out authorizes the host path
 		},
 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
 		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, gh.createPR, "the host path stays byte-identical when no sandbox backend is supplied")
+}
+
+// TestRunAutoFix_NilSandboxWithoutOptOutRefuses: a backend with NO sandbox and NO
+// explicit --no-sandbox opt-out (noSandbox=false) must fail closed — refuse before
+// any host validation or GitHub call and revert the applied patch — rather than
+// silently running unsandboxed on the host (epic 32.2 Task 1, AC1). validateArgv is
+// `true`, which WOULD pass on the host path, so a green PR here would prove a silent
+// host fallback; the required error proves the fail-closed guard fired instead.
+func TestRunAutoFix_NilSandboxWithoutOptOutRefuses(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // WOULD pass on the host path
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: nil,   // no sandbox resolved
+			noSandbox:      false, // and no explicit opt-out
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.Error(t, err, "a nil sandbox backend without --no-sandbox must refuse, not silently run on the host")
+	// Pin the error to the fail-closed guard's own message (autofix.go default arm):
+	// without this, an unrelated earlier failure (e.g. ApplyPatch rejecting the input)
+	// would also satisfy require.Error + reverted tree and the test would pass for the
+	// wrong reason even if the guard arm were silently removed.
+	require.Contains(t, err.Error(), "refusing",
+		"the refusal must come from the fail-closed unsandboxed-validation guard, not an unrelated earlier error")
+	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
+		"no GitHub call may fire on a fail-closed refusal")
+	got, _ := os.ReadFile(filepath.Join(root, rel))
+	require.Equal(t, "old\n", string(got), "the applied patch must be reverted on a fail-closed refusal")
 }
 
 // --- thin finding->entry selection ----------------------------------------
@@ -966,6 +1012,7 @@ func TestOrchestrateAutoFix_SkippedDuplicatesNotice(t *testing.T) {
 		validateArgv:    []string{"true"},
 		validateTimeout: 5 * time.Second,
 		owner:           "o", repo: "r", token: "tok",
+		noSandbox: true, // explicit --no-sandbox opt-out (host path)
 	}
 	err := orchestrateAutoFix(context.Background(), &buf, be, filepath.Join(".atcr", "reviews", id), "", "main")
 	require.NoError(t, err, "orchestration must succeed hermetically — a live network/auth failure must not be load-bearing")
@@ -1194,6 +1241,7 @@ func TestValidateAutoFixBackend_NoSandboxSkipsResolver(t *testing.T) {
 	require.NoError(t, err, "--no-sandbox must let the gate pass without a sandbox config")
 	require.Equal(t, 0, *calls, "the sandbox resolver must be called ZERO times under --no-sandbox")
 	require.Nil(t, be.sandboxBackend, "no sandbox backend is resolved on the --no-sandbox path")
+	require.True(t, be.noSandbox, "the gate must record the explicit opt-out so runAutoFix authorizes the host path (epic 32.2 Task 1); a nil backend without it fails closed")
 }
 
 // TestValidateAutoFixBackend_NoSandboxSkipsEvenWithValidConfig: a working
