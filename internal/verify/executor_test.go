@@ -1042,6 +1042,68 @@ func TestGenerateFixes_NilRegistryNoPanic(t *testing.T) {
 	assert.Equal(t, 0, rec.calls, "no executor calls when registry is nil")
 }
 
+// Story 3's two-tier partition is proven at the generateFixes level, but NOT at the
+// runVerify level — where the verify read → recompute → generateFixes → write ordering
+// could strip executor attribution and silently break the docs' worked two-tier
+// example. This drives runVerify twice over ONE review dir (tier-1 then tier-2 executor
+// registries sharing an attribution Name), asserting the same partition +
+// no-double-processing contract over the real on-disk findings.json handoff.
+func TestRunVerify_TwoTierExecutorPartition(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "cheap.go", Line: 1, Problem: "p", Confidence: "HIGH", Reviewers: []string{"rev"}, Evidence: "Found by rev; confidence HIGH", EstMinutes: 15},
+		{Severity: "HIGH", File: "mid.go", Line: 2, Problem: "p", Confidence: "HIGH", Reviewers: []string{"rev"}, Evidence: "Found by rev; confidence HIGH", EstMinutes: 90},
+		{Severity: "HIGH", File: "hard.go", Line: 3, Problem: "p", Confidence: "HIGH", Reviewers: []string{"rev"}, Evidence: "Found by rev; confidence HIGH", EstMinutes: 100000},
+	})
+
+	// Both tiers share the default executor Name (execConfig → "opus") so tier 2's
+	// attribution guard recognizes a finding tier 1 already fixed.
+	mkReg := func(maxMinutes int) *registry.Registry {
+		ex := execConfig("MEDIUM")
+		ex.MaxEstimatedMinutes = intPtr(maxMinutes)
+		return &registry.Registry{
+			Providers: map[string]registry.Provider{testExecProvider: {BaseURL: "http://x.invalid", APIKeyEnv: "K"}},
+			Executor:  ex,
+		}
+	}
+
+	// Tier 1: low ceiling → fixes only the below-ceiling cheap finding.
+	rec1 := &recordingExecutor{out: "cheap fix"}
+	restore1 := swapExecutorClient(func() executorCompleter { return rec1 })
+	_, err := runVerify(context.Background(), dir, mkReg(30), Options{}, scriptedHarness(`{}`))
+	require.NoError(t, err)
+	restore1()
+	require.Equal(t, 1, rec1.calls, "tier 1 dispatches only the below-ceiling cheap finding")
+
+	// Tier 2: high ceiling → fixes the tier-1-skipped mid finding, never re-touches cheap.
+	rec2 := &recordingExecutor{out: "frontier fix"}
+	restore2 := swapExecutorClient(func() executorCompleter { return rec2 })
+	_, err = runVerify(context.Background(), dir, mkReg(240), Options{}, scriptedHarness(`{}`))
+	require.NoError(t, err)
+	restore2()
+	require.Equal(t, 1, rec2.calls, "tier 2 dispatches only the tier-1-skipped, within-tier-2 mid finding")
+	assert.Contains(t, rec2.prompts[0], "mid.go:2", "tier 2's single call targets the mid finding")
+	for _, p := range rec2.prompts {
+		assert.NotContains(t, p, "cheap.go:", "tier 2 must never re-dispatch the tier-1-fixed finding (attribution survived the findings.json handoff)")
+	}
+
+	// Partition over the on-disk handoff artifact.
+	byFile := map[string]reconcile.JSONFinding{}
+	for _, f := range readFindings(t, dir) {
+		byFile[f.File] = f
+	}
+	assert.Equal(t, "cheap fix", byFile["cheap.go"].Fix, "cheap fixed by tier 1")
+	assert.Contains(t, byFile["cheap.go"].Evidence, "fix by opus")
+	assert.Empty(t, byFile["cheap.go"].FixWarning)
+	assert.Equal(t, "frontier fix", byFile["mid.go"].Fix, "mid fixed by tier 2")
+	assert.Contains(t, byFile["mid.go"].Evidence, "fix by opus")
+	assert.Empty(t, byFile["mid.go"].FixWarning, "tier 2 success clears tier 1's ceiling-skip warning")
+	assert.Empty(t, byFile["hard.go"].Fix, "hard fixed by neither tier")
+	assert.NotEmpty(t, byFile["hard.go"].FixWarning, "hard is skip-logged, not silently dropped")
+	for _, f := range byFile {
+		assert.False(t, f.Fix != "" && f.FixWarning != "", "%s: never both Fix and FixWarning", f.File)
+	}
+}
+
 // anyFixEligible must mirror generateFixes' FULL pre-dispatch gate, including the
 // Sprint 32.1 complexity/severity ceilings. Without the ceiling parity a single-tier
 // config whose every confidence+floor-eligible finding is over-ceiling still reports
