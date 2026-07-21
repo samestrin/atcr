@@ -165,6 +165,28 @@ exit 0`)
 	}
 }
 
+func TestDockerBackend_Run_WritableOverlaySrcIsReadOnly(t *testing.T) {
+	// Verifies that Writable:true mounts SnapshotDir at /src with :ro read-only flag.
+	fake := writeFakeDocker(t, `if [ "$1" = "run" ]; then
+  case "$*" in
+    *:/src:ro*) exit 0 ;;
+    *) echo "missing /src:ro bind" >&2; exit 1 ;;
+  esac
+fi
+exit 0`)
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	b := NewDockerBackend(cfg)
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"touch", "/src/foo"},
+		SnapshotDir: t.TempDir(),
+		Writable:    true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.ExitCode)
+}
+
 func TestDefaultDockerConfig_WorkSizeDefault(t *testing.T) {
 	cfg := DefaultDockerConfig()
 	// WorkSize backs the writable /work overlay's tmpfs; it must have a sane
