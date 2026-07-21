@@ -260,3 +260,5 @@
 {"ts":"2026-07-19T18:31:32.773653-07:00","package":"internal/verify","severity":"MEDIUM","id":"41856bfd063d4dd9","file":"internal/verify/autofix_exec.go","category":"robustness"}
 {"ts":"2026-07-19T18:31:32.773653-07:00","package":"internal/verify","severity":"LOW","id":"194ac4a2df1cd68e","file":"internal/verify/autofix_exec.go","category":"robustness"}
 {"ts":"2026-07-19T18:31:32.773653-07:00","package":"internal/verify","severity":"LOW","id":"2f8c605685ab5bdc","file":"internal/verify/autofix_exec.go","category":"style"}
+{"ts":"2026-07-20T15:46:07.310985-07:00","package":"examples","severity":"MEDIUM","id":"d9bbc6dc307da956","file":"examples/registry-with-executor-tier2.yaml","category":"clarity"}
+{"ts":"2026-07-20T15:46:07.310985-07:00","package":"internal/verify","severity":"MEDIUM","id":"4e1b935b75941370","file":"internal/verify/severity.go","category":"resource"}

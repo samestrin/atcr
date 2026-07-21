@@ -1,9 +1,9 @@
 {
-  "skill": "create-sprint",
-  "args": "@/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/32.1_multi_tier_fix_execution/ --gated",
-  "invocation": "/create-sprint @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/32.1_multi_tier_fix_execution/ --gated",
+  "skill": "execute-epic",
+  "args": "@.planning/epics/active/32.2_auto-fix-sandbox-defense-in-depth.md --multi-agent",
+  "invocation": "/execute-epic @.planning/epics/active/32.2_auto-fix-sandbox-defense-in-depth.md --multi-agent",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "bf241c1d-adab-40a1-a2e6-ad45a11e45d5",
-  "timestamp": "2026-07-20T19:50:36.365Z"
+  "session_id": "7d791e46-edc4-450c-8345-4537e854b6a3",
+  "timestamp": "2026-07-21T00:57:54.825Z"
 }
