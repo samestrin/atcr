@@ -72,17 +72,17 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./...`, with particular attention to `./internal/sandbox/...` and `./internal/tools/...`)
-- [ ] No linting errors (`go vet ./...` / project lint gate)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./...`, with particular attention to `./internal/sandbox/...` and `./internal/tools/...`)
+- [x] No linting errors (`go vet ./...` / project lint gate)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] Zero lines changed in `internal/tools/exec_tools.go` (diff confirms both `RunSpec{...}` call sites at lines 178 and 215 are untouched)
-- [ ] `dockerRunArgs`, `Run`, and `RunSpec.validate()` have zero behavior-affecting diff (only comment/field additions elsewhere in the same files, if any)
-- [ ] Full pre-existing `internal/sandbox/sandbox_test.go` and `internal/sandbox/docker_test.go` suites pass with no modifications to existing test bodies
-- [ ] `dockerRunArgs` output for a `--exec`-shaped `RunSpec` (no `Writable` set) is unchanged from pre-story behavior
-- [ ] `internal/verify` preflight/resolver control-group tests (`internal/verify/autofix_exec_test.go:23,56`) pass unmodified, proving the default (`Writable:false`) argv is untouched
-- [ ] `docs/execution.md` and the `internal/sandbox` package doc remain unedited and textually accurate (PRESERVE anchors in `../documentation/current-sandbox-guarantees.md`)
+- [x] Zero lines changed in `internal/tools/exec_tools.go` (diff confirms both `RunSpec{...}` call sites at lines 178 and 215 are untouched)
+- [x] `dockerRunArgs`, `Run`, and `RunSpec.validate()` have zero behavior-affecting diff (only comment/field additions elsewhere in the same files, if any)
+- [x] Full pre-existing `internal/sandbox/sandbox_test.go` and `internal/sandbox/docker_test.go` suites pass with no modifications to existing test bodies
+- [x] `dockerRunArgs` output for a `--exec`-shaped `RunSpec` (no `Writable` set) is unchanged from pre-story behavior
+- [x] `internal/verify` preflight/resolver control-group tests (`internal/verify/autofix_exec_test.go:23,56`) pass unmodified, proving the default (`Writable:false`) argv is untouched
+- [x] `docs/execution.md` and the `internal/sandbox` package doc remain unedited and textually accurate (PRESERVE anchors in `../documentation/current-sandbox-guarantees.md`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

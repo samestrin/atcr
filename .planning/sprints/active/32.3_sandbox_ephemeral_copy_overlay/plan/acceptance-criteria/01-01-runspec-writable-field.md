@@ -69,16 +69,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/sandbox/... ./internal/tools/...`)
-- [ ] No linting errors (`go vet ./...` / project lint gate)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/sandbox/... ./internal/tools/...`)
+- [x] No linting errors (`go vet ./...` / project lint gate)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `RunSpec` struct in `internal/sandbox/sandbox.go` has a `Writable bool` field (near `SnapshotDir`, sandbox.go:39-40) with a doc comment describing the `false` default and the opt-in writable-overlay effect
-- [ ] The doc comment states the mechanism lands in a later story; narrows (never weakens) the package doc's read-only-snapshot MUST (snapshot stays read-only at `/src`; only the ephemeral `/work` tmpfs copy is writable; no host file is mutated); and flags the implicit `/bin/sh` + `cp -a` image requirement (not distroless/scratch) per plan.md Refinement Decisions (2026-07-21)
-- [ ] `RunSpec{}` zero value has `Writable == false`, verified by a unit test
-- [ ] `RunSpec.validate()` is unmodified and its existing test coverage still passes unchanged
-- [ ] Neither `dockerRunArgs` nor `Backend.Run` reads or branches on `Writable` in this story's diff
+- [x] `RunSpec` struct in `internal/sandbox/sandbox.go` has a `Writable bool` field (near `SnapshotDir`, sandbox.go:39-40) with a doc comment describing the `false` default and the opt-in writable-overlay effect
+- [x] The doc comment states the mechanism lands in a later story; narrows (never weakens) the package doc's read-only-snapshot MUST (snapshot stays read-only at `/src`; only the ephemeral `/work` tmpfs copy is writable; no host file is mutated); and flags the implicit `/bin/sh` + `cp -a` image requirement (not distroless/scratch) per plan.md Refinement Decisions (2026-07-21)
+- [x] `RunSpec{}` zero value has `Writable == false`, verified by a unit test
+- [x] `RunSpec.validate()` is unmodified and its existing test coverage still passes unchanged
+- [x] Neither `dockerRunArgs` nor `Backend.Run` reads or branches on `Writable` in this story's diff
 
 **Manual Review:**
 - [ ] Code reviewed and approved

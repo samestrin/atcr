@@ -154,18 +154,18 @@ Your goal is to create software that:
 
 ## Phase 1: Foundation — Config Surface
 
-### 1.1 [ ] **[Opt-In Writable Configuration Surface - RED](plan/user-stories/01-opt-in-writable-configuration-surface.md)**
+### 1.1 [x] **[Opt-In Writable Configuration Surface - RED](plan/user-stories/01-opt-in-writable-configuration-surface.md)**
    1. Analyze [AC 01-01](plan/acceptance-criteria/01-01-runspec-writable-field.md), [AC 01-02](plan/acceptance-criteria/01-02-dockerconfig-worksize-default.md), [AC 01-03](plan/acceptance-criteria/01-03-zero-behavior-change-for-existing-callers.md); identify testable units
    2. Write tests: `RunSpec.Writable` defaults `false`; `DockerConfig.WorkSize` default set in `DefaultDockerConfig()`; full-suite regression assertion proving both `--exec` call sites and the existing `internal/sandbox` suite are unaffected
    3. Verify tests fail correctly (new fields/assertions do not yet exist)
    **Files:** `internal/sandbox/sandbox_test.go`, `internal/sandbox/docker_test.go` | **Duration:** 2-3 hours
 
-### 1.2 [ ] **[Opt-In Writable Configuration Surface - GREEN](plan/user-stories/01-opt-in-writable-configuration-surface.md)**
+### 1.2 [x] **[Opt-In Writable Configuration Surface - GREEN](plan/user-stories/01-opt-in-writable-configuration-surface.md)**
    Add `Writable bool` to `RunSpec` (`internal/sandbox/sandbox.go`) and `WorkSize string` to `DockerConfig` with a sane default in `DefaultDockerConfig()` (`internal/sandbox/docker.go`), mirroring the `ScratchSize` pattern exactly — no branching logic yet (T1). Verify all pass (T2). COMMIT: `git commit -m "feat(sandbox): add opt-in RunSpec.Writable and DockerConfig.WorkSize fields"`
    **Files:** `internal/sandbox/sandbox.go`, `internal/sandbox/docker.go` | **Duration:** 2-3 hours
 
-### 1.2.A [ ] **[Opt-In Writable Configuration Surface - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-opt-in-writable-configuration-surface.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 1.2]
+### 1.2.A [x] **[Opt-In Writable Configuration Surface - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-opt-in-writable-configuration-surface.md)**
+   **Changed Files:** `internal/sandbox/sandbox.go`, `internal/sandbox/docker.go`, `internal/sandbox/sandbox_test.go`, `internal/sandbox/docker_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
@@ -182,24 +182,23 @@ Your goal is to create software that:
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context review, 2026-07-21):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | - | No findings — change is cleanly additive; no runtime path reads Writable/WorkSize; WorkSize (512m) > ScratchSize (64m); both new tests pin their claims in real terms | - |
 
    **Action Required:**
+   - ✅ None found -> **Adversarial review passed** — proceed to 1.3.
    - CRITICAL/HIGH found -> List issues for 1.3, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
 
-### 1.3 [ ] **[Opt-In Writable Configuration Surface - REFACTOR](plan/user-stories/01-opt-in-writable-configuration-surface.md)**
+### 1.3 [x] **[Opt-In Writable Configuration Surface - REFACTOR](plan/user-stories/01-opt-in-writable-configuration-surface.md)**
    1. Fix CRITICAL/HIGH issues from 1.2.A (if any)
    2. Improve code and tests (T1), validate all still pass (T3): `go test ./internal/sandbox/... ./internal/tools/...`
    3. COMMIT: `git commit -m "refactor(sandbox): address review + clean up config surface"`
    **Duration:** 1 hour
 
-### 1.4 [ ] **Phase 1 - Definition of Done**
+### 1.4 [x] **Phase 1 - Definition of Done**
    1. `go test ./internal/sandbox/... ./internal/tools/...` — all passing (T3)
    2. Coverage ≥80% on touched files
    3. `golangci-lint run` — no errors
@@ -207,7 +206,7 @@ Your goal is to create software that:
    5. Story-specific: [AC 01-01](plan/acceptance-criteria/01-01-runspec-writable-field.md), [AC 01-02](plan/acceptance-criteria/01-02-dockerconfig-worksize-default.md), [AC 01-03](plan/acceptance-criteria/01-03-zero-behavior-change-for-existing-callers.md) all verified
    **Report:** `Story-1 DoD Complete / Auto: {X}/5 | Story-Specific: {Y}/3`
 
-### 1.5 [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+### 1.5 [x] **Phase 1 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -226,16 +225,18 @@ Your goal is to create software that:
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Files changed during Phase 1:** `internal/sandbox/sandbox.go`, `internal/sandbox/docker.go`, `internal/sandbox/sandbox_test.go`, `internal/sandbox/docker_test.go`
+
+   **Subagent findings (fresh-context hostile-integrator review, 2026-07-21):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | docker.go:71 | Default `WorkSize` "512m" equals `Memory` cap "512m"; tmpfs counts against the memory cgroup, so a wired `cp -a` overlay could OOM the run | Reconcile WorkSize vs Memory in Phase 2 → **TD-001** |
+   | MEDIUM | sandbox.go:52 | `Writable` doc comment specifies only Command-mode wrap; Script-mode behavior unstated (already planned in T3/AC 03-02) | Complete doc comment in Phase 3 → **TD-002** |
+   | LOW | docker.go:46 | Image-requirement sentence duplicated across `WorkSize` + `Writable` doc comments (drift risk) | Consolidate in later docs pass → **TD-003** |
 
    **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md` (same pipeline as 1.2.A findings)
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   - No CRITICAL/HIGH → **Phase gate passed** (no phase-boundary blocker).
+   - MEDIUM/LOW deferred to `tech-debt-captured.md` (TD-001, TD-002, TD-003) — all fall into later-phase scope (Phase 2 mount sizing / Phase 3 Script-mode doc / cosmetic).
    **Duration:** 15-30 min
 
 ---

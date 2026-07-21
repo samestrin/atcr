@@ -70,16 +70,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/sandbox/...`)
-- [ ] No linting errors (`go vet ./...` / project lint gate)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/sandbox/...`)
+- [x] No linting errors (`go vet ./...` / project lint gate)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `DockerConfig` struct in `internal/sandbox/docker.go` has a `WorkSize string` field beside `ScratchSize` (docker.go:40), with a doc comment matching the existing field's style
-- [ ] The doc comment states the default is sized for a full source-tree copy (larger than `ScratchSize`'s `"64m"`), names the later consumer (`--tmpfs /work:rw,exec,size=<WorkSize>`), and flags the implicit `/bin/sh` + `cp -a` image requirement (not distroless/scratch) per plan.md Refinement Decisions (2026-07-21)
-- [ ] `DefaultDockerConfig()` (docker.go:53-66) sets `WorkSize` to a value strictly larger than the `ScratchSize` default (`"64m"`) in equivalent bytes, verified by a unit test
-- [ ] `dockerRunArgs`, `Run`, and `Preflight` do not read or branch on `WorkSize` in this story's diff, and `NewDockerBackend` gains no `WorkSize` floor
-- [ ] No `internal/registry` YAML field is added for `WorkSize` (verified: zero `grep` matches for `WorkSize`/`work_size` under `internal/registry/`)
+- [x] `DockerConfig` struct in `internal/sandbox/docker.go` has a `WorkSize string` field beside `ScratchSize` (docker.go:40), with a doc comment matching the existing field's style
+- [x] The doc comment states the default is sized for a full source-tree copy (larger than `ScratchSize`'s `"64m"`), names the later consumer (`--tmpfs /work:rw,exec,size=<WorkSize>`), and flags the implicit `/bin/sh` + `cp -a` image requirement (not distroless/scratch) per plan.md Refinement Decisions (2026-07-21)
+- [x] `DefaultDockerConfig()` (docker.go:53-66) sets `WorkSize` to a value strictly larger than the `ScratchSize` default (`"64m"`) in equivalent bytes, verified by a unit test
+- [x] `dockerRunArgs`, `Run`, and `Preflight` do not read or branch on `WorkSize` in this story's diff, and `NewDockerBackend` gains no `WorkSize` floor
+- [x] No `internal/registry` YAML field is added for `WorkSize` (verified: zero `grep` matches for `WorkSize`/`work_size` under `internal/registry/`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved
