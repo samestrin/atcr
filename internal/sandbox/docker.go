@@ -114,6 +114,21 @@ func (b *DockerBackend) Name() string { return "docker" }
 // since that value is a context deadline and never appears in the docker run argv.
 func (b *DockerBackend) Timeout() time.Duration { return b.cfg.Timeout }
 
+// writableSetupExec is the fixed `sh -c` script text for the Writable:true
+// Command-mode wrap. It seeds the writable /work tmpfs from the read-only /src
+// snapshot, cds into it, then execs the ORIGINAL command via positional "$@"
+// expansion. It contains NO data from spec.Command — the command tokens are passed
+// as distinct trailing argv elements after "--", never interpolated into this
+// string, so RunSpec.Command's "no shell interpolation" invariant holds for the
+// wrapped path (a metacharacter in a command token cannot be re-tokenized here).
+const writableSetupExec = `cp -a /src/. /work/ && cd /work && exec "$@"`
+
+// writableSetupPrefix is the fixed line prepended to a Writable:true Script-mode
+// body before it is streamed to `sh -s` over stdin. It seeds /work from /src and
+// cds into it, then the user's script body runs verbatim after it. It carries no
+// data from spec.Script and is stdin DATA, never argv.
+const writableSetupPrefix = "cp -a /src/. /work/ && cd /work\n"
+
 // dockerRunArgs builds the `docker run` argv for spec. It is pure (no I/O) so the
 // hardening flags can be asserted in a unit test without a daemon. The script
 // body is NOT included here: it is streamed over stdin to `sh -s` by Run.
@@ -163,8 +178,18 @@ func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
 		args = append(args, "-v", spec.SnapshotDir+":/work:ro")
 	}
 	if spec.Script != "" {
-		// Feed the script over stdin: `docker run -i <image> /bin/sh -s`.
+		// Feed the script over stdin: `docker run -i <image> /bin/sh -s`. The
+		// Writable:true copy step is prepended to the stdin body by Run, never here —
+		// so this argv is byte-identical for both Writable values (the setup step
+		// travels as stdin data, not argv).
 		args = append(args, "-i", cfg.Image, "/bin/sh", "-s")
+	} else if spec.Writable {
+		// Writable overlay, Command mode: wrap the original command in a shell that
+		// seeds /work from /src, cds into it, then execs the command via positional
+		// "$@". spec.Command is appended as distinct argv elements after "--" so no
+		// token is interpolated into the -c script text (see writableSetupExec).
+		args = append(args, cfg.Image, "/bin/sh", "-c", writableSetupExec, "--")
+		args = append(args, spec.Command...)
 	} else {
 		args = append(args, cfg.Image)
 		args = append(args, spec.Command...)
@@ -229,7 +254,14 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 		// The script is delivered as stdin DATA to `sh -s` (see dockerRunArgs), never
 		// interpolated into argv or a `sh -c "..."` string, so there is no shell-
 		// injection vector: the script body IS the program source, not an argument.
-		cmd.Stdin = strings.NewReader(spec.Script)
+		script := spec.Script
+		if spec.Writable {
+			// Writable overlay: seed /work from /src and cd into it before the user's
+			// script body runs. The copy step is a fixed literal prepended to the stdin
+			// body (still data, not argv), so the injection-safety property is preserved.
+			script = writableSetupPrefix + script
+		}
+		cmd.Stdin = strings.NewReader(script)
 	}
 	var buf bytes.Buffer
 	// Cap the captured buffer so a chatty workload cannot exhaust host memory

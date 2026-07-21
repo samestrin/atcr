@@ -52,6 +52,52 @@ func TestDockerBackendRun_RuntimeExitCodesAreBackendErrors(t *testing.T) {
 	}
 }
 
+// fakeDockerCatStdinBody makes the fake docker CLI `cat` its stdin to stdout when
+// invoked as `docker run ...`, so a test can observe the exact script body Run
+// streams to `/bin/sh -s` — the only way to assert stdin content daemon-free.
+func fakeDockerCatStdinBody() string {
+	return `if [ "$1" = "run" ]; then
+  cat
+  exit 0
+fi
+exit 0`
+}
+
+func TestDockerBackend_Run_ScriptModeWritablePrependsCopyStep(t *testing.T) {
+	// AC 03-02 Scenario 1: Writable:true Script mode prepends the fixed copy-step line
+	// to the stdin script body — setup line first, then spec.Script verbatim.
+	fake := writeFakeDocker(t, fakeDockerCatStdinBody())
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	b := NewDockerBackend(cfg)
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Script:      "echo hi\nexit 3\n",
+		SnapshotDir: t.TempDir(),
+		Writable:    true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "cp -a /src/. /work/ && cd /work\necho hi\nexit 3\n", res.Output,
+		"Writable:true Script mode must prepend the copy step to the stdin script body")
+}
+
+func TestDockerBackend_Run_ScriptModeReadOnlyStdinUnchanged(t *testing.T) {
+	// AC 03-02 Scenario 2: Writable:false Script mode streams spec.Script verbatim over
+	// stdin — no cp/cd prefix, identical to current behavior (regression anchor).
+	fake := writeFakeDocker(t, fakeDockerCatStdinBody())
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	b := NewDockerBackend(cfg)
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Script:      "echo hi\nexit 3\n",
+		SnapshotDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "echo hi\nexit 3\n", res.Output,
+		"Writable:false Script mode stdin must be the script body verbatim")
+}
+
 func TestDefaultDockerConfig_WorkSizeDefault(t *testing.T) {
 	cfg := DefaultDockerConfig()
 	// WorkSize backs the writable /work overlay's tmpfs; it must have a sane

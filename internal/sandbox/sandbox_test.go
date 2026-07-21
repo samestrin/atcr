@@ -223,6 +223,102 @@ func TestRunSpec_WritableDefaultsToFalse(t *testing.T) {
 	assert.NoError(t, spec.validate(), "Writable:false must not affect validate()")
 }
 
+// imageIndex returns the position of the base image token in argv, so a test can
+// assert on the command tail that follows it (the wrap/exec portion) without
+// hard-coding the length of the preceding hardening/mount flags.
+func imageIndex(t *testing.T, args []string, image string) int {
+	t.Helper()
+	for i, a := range args {
+		if a == image {
+			return i
+		}
+	}
+	t.Fatalf("image %q not found in argv %v", image, args)
+	return -1
+}
+
+func TestDockerRunArgs_CommandModeWritableWrapsInShell(t *testing.T) {
+	// AC 03-01: Writable:true wraps Command mode in a shell that copies /src into the
+	// writable /work tmpfs, cds into it, then execs the ORIGINAL command via positional
+	// "$@" expansion — the command tokens are distinct trailing argv elements after --,
+	// never joined into the -c script text.
+	cfg := DefaultDockerConfig()
+	spec := RunSpec{Command: []string{"npm", "test"}, SnapshotDir: "/tmp/snap", Writable: true}
+
+	args, err := dockerRunArgs(cfg, spec)
+	require.NoError(t, err)
+
+	idx := imageIndex(t, args, cfg.Image)
+	want := []string{
+		cfg.Image,
+		"/bin/sh", "-c", `cp -a /src/. /work/ && cd /work && exec "$@"`, "--",
+		"npm", "test",
+	}
+	require.Equal(t, want, args[idx:],
+		"Writable:true Command mode must wrap as /bin/sh -c <fixed literal> -- <command...>")
+}
+
+func TestDockerRunArgs_CommandModeWritableFalseUnwrapped(t *testing.T) {
+	// AC 03-01 Scenario 2: Writable:false (zero value) leaves Command mode unwrapped —
+	// no /bin/sh, -c, or cp tokens appear anywhere; the argv after the image is exactly
+	// spec.Command verbatim, matching today's behavior.
+	cfg := DefaultDockerConfig()
+	spec := RunSpec{Command: []string{"go", "test", "./..."}, SnapshotDir: "/tmp/snap"}
+
+	args, err := dockerRunArgs(cfg, spec)
+	require.NoError(t, err)
+
+	idx := imageIndex(t, args, cfg.Image)
+	require.Equal(t, []string{cfg.Image, "go", "test", "./..."}, args[idx:],
+		"Writable:false Command mode must append spec.Command verbatim after the image")
+	joined := strings.Join(args, " ")
+	assert.NotContains(t, joined, "/bin/sh", "no shell wrap on the read-only path")
+	assert.NotContains(t, joined, "cp -a", "no copy step on the read-only path")
+}
+
+func TestDockerRunArgs_CommandModeWritable_NoShellInjection(t *testing.T) {
+	// AC 03-03: command tokens carrying shell metacharacters must survive as literal,
+	// unexecuted argv elements — the -c text is a FIXED literal with no payload
+	// concatenated into it. Proves the outer wrapping shell cannot re-tokenize input.
+	cfg := DefaultDockerConfig()
+	const lit = `cp -a /src/. /work/ && cd /work && exec "$@"`
+	cases := [][]string{
+		{"echo", "hi; rm -rf /"},
+		{"echo", "$(cat /etc/passwd)"},
+		{"echo", "`whoami`"},
+		{"printf", "", "a b", "line1\nline2"},
+	}
+	for _, cmd := range cases {
+		spec := RunSpec{Command: cmd, SnapshotDir: "/tmp/snap", Writable: true}
+		args, err := dockerRunArgs(cfg, spec)
+		require.NoError(t, err)
+		idx := imageIndex(t, args, cfg.Image)
+		require.Equal(t, "/bin/sh", args[idx+1])
+		require.Equal(t, "-c", args[idx+2])
+		require.Equal(t, lit, args[idx+3], "the -c text must be the fixed literal, never the command payload")
+		require.Equal(t, "--", args[idx+4])
+		// Each token survives positionally after -- : empty element present, no split on
+		// embedded whitespace/newline, metacharacters intact.
+		assert.Equal(t, cmd, args[idx+5:], "command tokens must pass through positionally, unmodified")
+	}
+}
+
+func TestDockerRunArgs_ScriptModeWritableArgvUnchanged(t *testing.T) {
+	// AC 03-02 Edge Case 1: Script-mode argv is `-i <image> /bin/sh -s` regardless of
+	// Writable — the copy step travels over stdin (asserted separately), never argv.
+	cfg := DefaultDockerConfig()
+	wantTail := []string{"-i", cfg.Image, "/bin/sh", "-s"}
+	for _, w := range []bool{false, true} {
+		spec := RunSpec{Script: "echo hi\nexit 3\n", SnapshotDir: "/tmp/snap", Writable: w}
+		args, err := dockerRunArgs(cfg, spec)
+		require.NoError(t, err)
+		require.Equal(t, wantTail, args[len(args)-4:],
+			"Script-mode command tail must be -i <image> /bin/sh -s regardless of Writable")
+		assert.NotContains(t, strings.Join(args, " "), "cp -a",
+			"the copy step must never appear in Script-mode argv")
+	}
+}
+
 func TestDockerBackend_Name(t *testing.T) {
 	b := NewDockerBackend(DefaultDockerConfig())
 	assert.Equal(t, "docker", b.Name())
