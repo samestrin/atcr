@@ -1,9 +1,9 @@
 {
-  "skill": "create-sprint",
-  "args": "@.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/ --gated",
-  "invocation": "/create-sprint @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/ --gated",
+  "skill": "sprint-complete",
+  "args": "@.planning/sprints/active/32.3_sandbox_ephemeral_copy_overlay",
+  "invocation": "/sprint-complete @.planning/sprints/active/32.3_sandbox_ephemeral_copy_overlay",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "a9e96fd6-fb7e-46ed-813d-cff4b5032ffb",
-  "timestamp": "2026-07-21T18:26:16.912Z"
+  "session_id": "32273164-fb37-4db9-8264-76da3dfe2024",
+  "timestamp": "2026-07-21T23:54:48.093Z"
 }
