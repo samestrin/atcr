@@ -265,6 +265,36 @@ func TestDockerBackend_Preflight_AcceptsCapsWithinHost(t *testing.T) {
 	require.NoError(t, b.Preflight(context.Background()), "caps within host must pass preflight")
 }
 
+func TestDockerBackend_Preflight_RejectsInvalidTmpfsSizes(t *testing.T) {
+	// ScratchSize and WorkSize are interpolated verbatim into the `--tmpfs
+	// ...:size=<v>` mount specs. A malformed value would otherwise fail opaquely at
+	// container-spawn time (or, for WorkSize, only once a Writable overlay run mounts
+	// /work). Preflight validates both against the docker size grammar (digits +
+	// optional b/k/m/g) up front, reusing parseDockerMemory, so a config typo fails
+	// fast with a clear message.
+	cases := []struct {
+		name    string
+		mutate  func(*DockerConfig)
+		wantMsg string
+	}{
+		{"invalid work size", func(c *DockerConfig) { c.WorkSize = "notasize" }, "work_size"},
+		{"invalid scratch size", func(c *DockerConfig) { c.ScratchSize = "12x" }, "scratch_size"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := writeFakeDocker(t, fakeDockerInfoBody(8<<30, 8)) // generous host so the cap-fit check passes
+			cfg := DefaultDockerConfig()
+			cfg.DockerPath = fake
+			tc.mutate(&cfg)
+			b := NewDockerBackend(cfg)
+			err := b.Preflight(context.Background())
+			require.Error(t, err, "a malformed tmpfs size must fail preflight fast")
+			assert.Contains(t, err.Error(), "preflight")
+			assert.Contains(t, err.Error(), tc.wantMsg)
+		})
+	}
+}
+
 func TestDockerBackendRun_SignalDeathsAreBackendErrors(t *testing.T) {
 	fakeDocker := writeFakeDocker(t, fakeDockerExitBody())
 	cfg := DefaultDockerConfig()
