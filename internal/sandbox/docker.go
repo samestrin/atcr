@@ -121,13 +121,13 @@ func (b *DockerBackend) Timeout() time.Duration { return b.cfg.Timeout }
 // as distinct trailing argv elements after "--", never interpolated into this
 // string, so RunSpec.Command's "no shell interpolation" invariant holds for the
 // wrapped path (a metacharacter in a command token cannot be re-tokenized here).
-const writableSetupExec = `cp -a /src/. /work/ && cd /work && exec "$@"`
+const writableSetupExec = `cp -R /src/. /work/ || exit 125; cd /work && exec "$@"`
 
 // writableSetupPrefix is the fixed line prepended to a Writable:true Script-mode
 // body before it is streamed to `sh -s` over stdin. It seeds /work from /src and
 // cds into it, then the user's script body runs verbatim after it. It carries no
 // data from spec.Script and is stdin DATA, never argv.
-const writableSetupPrefix = "cp -a /src/. /work/ && cd /work\n"
+const writableSetupPrefix = "cp -R /src/. /work/ || exit 125; cd /work\n"
 
 // dockerRunArgs builds the `docker run` argv for spec. It is pure (no I/O) so the
 // hardening flags can be asserted in a unit test without a daemon. The script
@@ -168,7 +168,7 @@ func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
 		// /work, and /work is backed by an ephemeral, memory-backed tmpfs. The tmpfs
 		// gives /work real writable backing under the global --read-only rootfs,
 		// mirroring the /scratch tmpfs above; it — and every write into it — dies
-		// with the --rm container, so no host file is ever mutated. The cp -a setup
+		// with the --rm container, so no host file is ever mutated. The cp -R setup
 		// step that seeds /work from /src is injected in a later story.
 		args = append(args, "-v", spec.SnapshotDir+":/src:ro")
 		args = append(args, "--tmpfs", "/work:rw,exec,size="+cfg.WorkSize)

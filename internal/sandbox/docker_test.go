@@ -77,7 +77,7 @@ func TestDockerBackend_Run_ScriptModeWritablePrependsCopyStep(t *testing.T) {
 		Writable:    true,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "cp -a /src/. /work/ && cd /work\necho hi\nexit 3\n", res.Output,
+	assert.Equal(t, "cp -R /src/. /work/ || exit 125; cd /work\necho hi\nexit 3\n", res.Output,
 		"Writable:true Script mode must prepend the copy step to the stdin script body")
 }
 
@@ -100,14 +100,14 @@ func TestDockerBackend_Run_ScriptModeReadOnlyStdinUnchanged(t *testing.T) {
 
 func TestRenderCommand_UnaffectedByWritable(t *testing.T) {
 	// AC 02-03 Scenario 3: renderCommand is display-only evidence — it renders the
-	// caller's ORIGINAL command/script, never the injected cp -a setup step, for both
+	// caller's ORIGINAL command/script, never the injected cp -R setup step, for both
 	// Writable values, so the evidence trail stays readable.
 	cmd := RunSpec{Command: []string{"npm", "run", "build"}, SnapshotDir: "/tmp/snap"}
 	cmdW := cmd
 	cmdW.Writable = true
 	assert.Equal(t, "npm run build", renderCommand(cmd))
 	assert.Equal(t, "npm run build", renderCommand(cmdW), "Writable must not leak the setup step into command evidence")
-	assert.NotContains(t, renderCommand(cmdW), "cp -a")
+	assert.NotContains(t, renderCommand(cmdW), "cp -R")
 
 	scr := RunSpec{Script: "npm test\n", SnapshotDir: "/tmp/snap"}
 	scrW := scr
@@ -115,7 +115,7 @@ func TestRenderCommand_UnaffectedByWritable(t *testing.T) {
 	want := "/bin/sh -s <<'EOF'\nnpm test\n\nEOF"
 	assert.Equal(t, want, renderCommand(scr))
 	assert.Equal(t, want, renderCommand(scrW), "Writable must not alter the Script-mode heredoc evidence")
-	assert.NotContains(t, renderCommand(scrW), "cp -a")
+	assert.NotContains(t, renderCommand(scrW), "cp -R")
 }
 
 func TestDockerBackend_Run_WritableOverlayWriteProof(t *testing.T) {

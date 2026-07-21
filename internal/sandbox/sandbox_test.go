@@ -247,7 +247,7 @@ func TestDockerRunArgs_CommandModeWritableWrapsInShell(t *testing.T) {
 	idx := imageIndex(t, args, cfg.Image)
 	want := []string{
 		cfg.Image,
-		"/bin/sh", "-c", `cp -a /src/. /work/ && cd /work && exec "$@"`, "--",
+		"/bin/sh", "-c", `cp -R /src/. /work/ || exit 125; cd /work && exec "$@"`, "--",
 		"npm", "test",
 	}
 	require.Equal(t, want, args[idx:],
@@ -269,7 +269,7 @@ func TestDockerRunArgs_CommandModeWritableFalseUnwrapped(t *testing.T) {
 		"Writable:false Command mode must append spec.Command verbatim after the image")
 	joined := strings.Join(args, " ")
 	assert.NotContains(t, joined, "/bin/sh", "no shell wrap on the read-only path")
-	assert.NotContains(t, joined, "cp -a", "no copy step on the read-only path")
+	assert.NotContains(t, joined, "cp -R", "no copy step on the read-only path")
 }
 
 func TestDockerRunArgs_CommandModeWritable_NoShellInjection(t *testing.T) {
@@ -277,7 +277,7 @@ func TestDockerRunArgs_CommandModeWritable_NoShellInjection(t *testing.T) {
 	// unexecuted argv elements — the -c text is a FIXED literal with no payload
 	// concatenated into it. Proves the outer wrapping shell cannot re-tokenize input.
 	cfg := DefaultDockerConfig()
-	const lit = `cp -a /src/. /work/ && cd /work && exec "$@"`
+	const lit = `cp -R /src/. /work/ || exit 125; cd /work && exec "$@"`
 	cases := [][]string{
 		{"echo", "hi; rm -rf /"},
 		{"echo", "$(cat /etc/passwd)"},
@@ -310,7 +310,7 @@ func TestDockerRunArgs_ScriptModeWritableArgvUnchanged(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, wantTail, args[len(args)-4:],
 			"Script-mode command tail must be -i <image> /bin/sh -s regardless of Writable")
-		assert.NotContains(t, strings.Join(args, " "), "cp -a",
+		assert.NotContains(t, strings.Join(args, " "), "cp -R",
 			"the copy step must never appear in Script-mode argv")
 	}
 }
@@ -337,7 +337,7 @@ func TestDockerRunArgs_WritableScriptShape(t *testing.T) {
 
 	// Command tail is Writable-invariant: -i <image> /bin/sh -s; the copy step is stdin, not argv.
 	require.Equal(t, []string{"-i", cfg.Image, "/bin/sh", "-s"}, args[len(args)-4:])
-	assert.NotContains(t, joined, "cp -a", "the copy step travels over stdin, never argv")
+	assert.NotContains(t, joined, "cp -R", "the copy step travels over stdin, never argv")
 
 	// Full hardening set is preserved on the Writable:true path (strictly additive overlay).
 	assertAdjacent(t, args, "--network", "none")
