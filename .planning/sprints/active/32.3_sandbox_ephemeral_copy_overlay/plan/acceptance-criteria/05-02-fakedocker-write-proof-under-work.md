@@ -24,11 +24,11 @@
 - **When** `DockerBackend.Run` is called with a `Writable:true` `RunSpec` (Command or Script mode) pointed at the fake docker path
 - **Then** the test reads back the marker file after `Run` returns and asserts its existence and expected content, proving the writable-mount code path is reachable and functional, not just present in the argv string
 
-**Scenario 2: The write-proof test covers at least one of Command or Script mode**
+**Scenario 2: The write-proof test covers Command mode (mandatory), Script mode optional**
 - **Given** the constraint that the fakeDocker shim only sees the argv/stdin `Run` actually constructs
-- **When** the test is written against either Command-mode or Script-mode `Writable:true` (the story does not require both to be covered by this specific test, since AC 05-01 already covers both modes' argv/stdin shape)
-- **Then** the chosen mode's marker-file write is asserted as proof the mechanism works for a real `cp -a`-then-execute sequence
-- **Note:** `codebase-discovery.json` → `files_to_modify` names `internal/sandbox/docker_test.go` as this test's home and contemplates both modes ("for both Command and Script modes"); covering one mode is the story's minimum bar (AC 05-01 already pins both modes' argv/stdin shape), but a table-driven sub-test over both modes is preferred where the shim body supports it cheaply
+- **When** the test is written against Command-mode `Writable:true` — mandatory, because `--auto-fix`'s `RunSandboxedValidation` constructs `RunSpec{Command: argv}` exclusively (pinned invariant, `internal/verify/sandboxvalidate_test.go:71`), so Command mode IS the `--auto-fix` code path this sprint exists to unlock; a write-proof that covered only Script mode would never exercise the mode the objective depends on
+- **Then** the Command-mode marker-file write is asserted as proof the mechanism works for a real `cp -a`-then-execute sequence
+- **Note:** `codebase-discovery.json` → `files_to_modify` names `internal/sandbox/docker_test.go` as this test's home and contemplates both modes ("for both Command and Script modes"); Command-mode coverage is the story's mandatory minimum bar (AC 05-01 already pins both modes' argv/stdin shape), and a table-driven sub-test that additionally covers Script mode is preferred where the shim body supports it cheaply
 
 ## Edge Cases
 **Edge Case 1: Non-POSIX CI runners skip cleanly, not silently pass**
@@ -71,6 +71,7 @@
 **Story-Specific:**
 - [ ] New test reuses `writeFakeDocker` (no new scaffolding/helper introduced)
 - [ ] Test asserts an observable file write (existence + content), not just argv shape or exit code
+- [ ] Command-mode `Writable:true` is covered by the write-proof (mandatory — it is `--auto-fix`'s exclusive `RunSpec` mode); Script-mode coverage is optional/additive
 - [ ] Test skips cleanly (via the existing `t.Skip` in `writeFakeDocker`) on Windows, matching every other caller's skip behavior
 - [ ] Test is additive — no edits to `TestDockerRunArgs_HardeningFlagsPresent`, `TestDockerRunArgs_ScriptUsesStdinShell`, or any other pre-existing test in the file
 - [ ] Test lands in `internal/sandbox/docker_test.go` (per `codebase-discovery.json` → `files_to_modify`) or `sandbox_test.go` — same package either way — and follows the `TestDockerBackend_<Scenario>` naming convention

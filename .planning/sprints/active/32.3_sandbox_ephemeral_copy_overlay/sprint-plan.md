@@ -486,7 +486,7 @@ Your goal is to create software that:
 
 **Note:** This phase adds no new production code — it is the test-and-docs closing pass. It also serves as sprint Validation (see Final Phase below).
 
-### 4.1 [ ] **[Regression Proof and Documentation Parity - RED](plan/user-stories/05-regression-proof-and-docs-parity.md)**
+### 4.1 [x] **[Regression Proof and Documentation Parity - RED](plan/user-stories/05-regression-proof-and-docs-parity.md)**
    1. Analyze [AC 05-01](plan/acceptance-criteria/05-01-writable-true-argv-stdin-shape-tests.md), [AC 05-02](plan/acceptance-criteria/05-02-fakedocker-write-proof-under-work.md), [AC 05-03](plan/acceptance-criteria/05-03-writable-false-regression-test-anchor.md), [AC 05-04](plan/acceptance-criteria/05-04-docs-and-doc-comment-parity-rewrite.md); identify testable units
    2. Write tests: `Writable:true` argv/stdin shape assertions for both modes; a `writeFakeDocker`-based test proving a mock validation script can write a file under `/work` and the write is observable; an explicit `Writable:false` byte-identical regression assertion
    3. Verify tests fail correctly (or, where they already reflect Phase 1-3 behavior, confirm they pass and add the missing gap-closing case for AC 05-02's write-proof)

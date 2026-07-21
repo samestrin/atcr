@@ -319,6 +319,40 @@ func TestDockerRunArgs_ScriptModeWritableArgvUnchanged(t *testing.T) {
 	}
 }
 
+func TestDockerRunArgs_WritableScriptShape(t *testing.T) {
+	// AC 05-01 Scenario 2/3 + Edge Case 3 (Script mode): a Writable:true Script-mode
+	// RunSpec mounts the snapshot read-only at /src, adds the writable /work tmpfs sized
+	// by cfg.WorkSize, keeps the Writable-invariant `-i <image> /bin/sh -s` command tail,
+	// never emits the old /work:ro bind, and preserves the FULL hardening flag set — the
+	// writable overlay is strictly additive. The copy step itself travels over stdin
+	// (proven by TestDockerBackend_Run_ScriptModeWritablePrependsCopyStep), never argv.
+	cfg := DefaultDockerConfig()
+	cfg.WorkSize = "256m"
+	spec := RunSpec{Script: "npm run build\n", SnapshotDir: "/tmp/snap", Writable: true}
+
+	args, err := dockerRunArgs(cfg, spec)
+	require.NoError(t, err)
+	joined := strings.Join(args, " ")
+
+	// Writable mount shape: /src:ro + /work tmpfs, and NOT the read-only /work bind.
+	assertAdjacent(t, args, "-v", "/tmp/snap:/src:ro")
+	assertAdjacent(t, args, "--tmpfs", "/work:rw,exec,size=256m")
+	assert.NotContains(t, joined, "/tmp/snap:/work:ro", "the /work:ro bind must not survive the writable Script path")
+
+	// Command tail is Writable-invariant: -i <image> /bin/sh -s; the copy step is stdin, not argv.
+	require.Equal(t, []string{"-i", cfg.Image, "/bin/sh", "-s"}, args[len(args)-4:])
+	assert.NotContains(t, joined, "cp -a", "the copy step travels over stdin, never argv")
+
+	// Full hardening set is preserved on the Writable:true path (strictly additive overlay).
+	assertAdjacent(t, args, "--network", "none")
+	assert.Contains(t, joined, "--read-only", "the global read-only rootfs flag stays present")
+	assertAdjacent(t, args, "--cap-drop", "ALL")
+	assertAdjacent(t, args, "--security-opt", "no-new-privileges")
+	assertAdjacent(t, args, "--user", cfg.User)
+	assert.Contains(t, joined, "--tmpfs /scratch:rw,exec,size="+cfg.ScratchSize, "the /scratch tmpfs stays unchanged")
+	assert.Contains(t, joined, "--workdir /work", "--workdir still targets the writable /work")
+}
+
 func TestDockerBackend_Name(t *testing.T) {
 	b := NewDockerBackend(DefaultDockerConfig())
 	assert.Equal(t, "docker", b.Name())
