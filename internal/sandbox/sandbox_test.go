@@ -183,6 +183,23 @@ func TestDockerRunArgs_WritableTrueEmptyWorkSize(t *testing.T) {
 	assert.Contains(t, strings.Join(args, " "), "--tmpfs /work:rw,exec,size=", "emits an empty size, not a crash")
 }
 
+func TestDockerRunArgs_TmpfsMountsPinWorldWritableMode(t *testing.T) {
+	// The container runs as a non-root user (cfg.User, default nobody:nogroup), but
+	// docker mounts --tmpfs root-owned. The tmpfs default mode is 1777 on standard
+	// Linux but 0755 on some daemons (observed on Docker Desktop for macOS), which
+	// leaves /work and /scratch unwritable by the sandbox user — silently breaking the
+	// writable overlay (the seeded copy's writes fail EACCES) and the build-cache
+	// scratch. Pin mode=1777 explicitly on both tmpfs specs so the non-root sandbox
+	// user can always write regardless of the daemon's tmpfs-mode default.
+	cfg := DefaultDockerConfig()
+	spec := RunSpec{Command: []string{"true"}, SnapshotDir: "/tmp/snap", Writable: true}
+	args, err := dockerRunArgs(cfg, spec)
+	require.NoError(t, err)
+	joined := strings.Join(args, " ")
+	assert.Contains(t, joined, "/work:rw,exec,size="+cfg.WorkSize+",mode=1777", "/work tmpfs must pin mode=1777 so the non-root sandbox user can write")
+	assert.Contains(t, joined, "/scratch:rw,exec,size="+cfg.ScratchSize+",mode=1777", "/scratch tmpfs must pin mode=1777 so the non-root sandbox user can write")
+}
+
 func TestRunSpec_Validate(t *testing.T) {
 	cases := []struct {
 		name string
