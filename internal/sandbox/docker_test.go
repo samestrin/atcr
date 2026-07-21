@@ -240,3 +240,63 @@ func TestDockerBackend_DockerCmd_ContextCancelNotTimeout(t *testing.T) {
 	assert.Contains(t, err.Error(), "context canceled")
 	assert.NotContains(t, err.Error(), "timed out", "cancellations must not be reported as timeouts")
 }
+
+// TestDockerBackend_Run_CancellationClassIsTimedOut pins that BOTH cancellation-class
+// context ends of a Run() — a deadline exceeded AND a parent-context cancellation —
+// are folded into a TimedOut RunResult (exit 124, nil error), never a spurious
+// program exit or backend fault/StartError. It mirrors the host path's
+// belt-and-suspenders handling in localvalidate.go:127 and is the Run()-level
+// counterpart to TestDockerBackend_DockerCmd_ContextCancelNotTimeout above (which
+// pins the DIFFERENT dockerCmd/Preflight error-string path, unchanged here). The
+// "deadline exceeded" row already passed before epic 32.2 Task 2; the "context
+// canceled" row is the one the fold added (AC3).
+func TestDockerBackend_Run_CancellationClassIsTimedOut(t *testing.T) {
+	cases := []struct {
+		name    string
+		setup   func(t *testing.T) context.Context
+		timeout time.Duration
+	}{
+		{
+			// A short RunSpec timeout: the backend's own deadline fires first.
+			name:    "deadline exceeded",
+			setup:   func(*testing.T) context.Context { return context.Background() },
+			timeout: 150 * time.Millisecond,
+		},
+		{
+			// A long RunSpec timeout but the parent context is cancelled mid-run, so
+			// runCtx.Err() is context.Canceled (not DeadlineExceeded).
+			name: "context canceled",
+			setup: func(t *testing.T) context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				t.Cleanup(cancel)
+				go func() {
+					time.Sleep(50 * time.Millisecond)
+					cancel()
+				}()
+				return ctx
+			},
+			timeout: 5 * time.Second,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// The fake answers `kill` instantly so the on-timeout container reap does
+			// not itself block on the sleeping `run`.
+			fake := writeFakeDocker(t, `if [ "$1" = "kill" ]; then exit 0; fi
+if [ "$1" = "run" ]; then sleep 5; fi
+exit 0`)
+			cfg := DefaultDockerConfig()
+			cfg.DockerPath = fake
+			b := NewDockerBackend(cfg)
+
+			res, err := b.Run(tc.setup(t), RunSpec{
+				Command:     []string{"x"},
+				SnapshotDir: t.TempDir(),
+				Timeout:     tc.timeout,
+			})
+			require.NoError(t, err, "a cancellation-class run end must not surface as a backend fault/StartError")
+			require.True(t, res.TimedOut, "deadline OR cancellation must be folded into TimedOut")
+			require.Equal(t, timeoutExitCode, res.ExitCode, "the timeout exit code (124) must be set, not a signal-death code")
+		})
+	}
+}
