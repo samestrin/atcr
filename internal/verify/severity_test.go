@@ -77,6 +77,12 @@ func TestWithinSeverityCeiling(t *testing.T) {
 		{"case-insensitive finding", "critical", "HIGH", false},
 		{"case-insensitive ceiling", "HIGH", "medium", false},
 		{"unknown finding severity not skipped by ceiling", "BLOCKER", "HIGH", true},
+		// Empty finding severity (rank 0) pins the deliberate fail-OPEN branch: the
+		// meetsSeverityFloor gate `continue`s such findings before this predicate runs
+		// (see the ordering-contract comment at the executor.go call site), so this
+		// predicate treats a rank-0 finding as within the ceiling. A hostile flip to
+		// fail-closed here would break this case (and the BLOCKER case above).
+		{"empty finding severity within ceiling (floor gate handles it)", "", "HIGH", true},
 		{"bogus non-empty ceiling fails closed", "LOW", "BOGUS", false},
 		{"bogus ceiling skips critical", "CRITICAL", "BOGUS", false},
 	}
