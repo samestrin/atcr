@@ -38,6 +38,22 @@ type RunSpec struct {
 	Timeout time.Duration
 	// SnapshotDir is the host directory mounted read-only as the working tree.
 	SnapshotDir string
+	// Writable opts into an ephemeral writable /work overlay. It defaults to
+	// false, preserving the read-only behavior every current caller relies on.
+	//
+	// When true, the snapshot itself STAYS read-only — it is mounted at /src
+	// instead of /work — and /work is backed by an ephemeral tmpfs seeded with a
+	// `cp -a /src/. /work/` copy. Only that throwaway copy is writable; it (and
+	// every write into it) dies with the container, so no host file is ever
+	// mutated. The package-level read-only-snapshot MUST is thereby narrowed, not
+	// weakened. The overlay MECHANISM (the /src+/work mount branch and the copy-
+	// step injection) lands in a later story; this field only carries the opt-in.
+	//
+	// Image requirement: the Writable:true path wraps Command-mode execution in
+	// `/bin/sh -c 'cp -a /src/. /work/ && cd /work && exec "$@"'`, so the run
+	// image must ship /bin/sh and a `cp` supporting `-a` (true for alpine/golang-
+	// family images, false for distroless/scratch).
+	Writable bool
 }
 
 func (s RunSpec) validate() error {

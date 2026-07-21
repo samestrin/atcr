@@ -52,6 +52,19 @@ func TestDockerBackendRun_RuntimeExitCodesAreBackendErrors(t *testing.T) {
 	}
 }
 
+func TestDefaultDockerConfig_WorkSizeDefault(t *testing.T) {
+	cfg := DefaultDockerConfig()
+	// WorkSize backs the writable /work overlay's tmpfs; it must have a sane
+	// non-empty default sized for a full source-tree copy, strictly larger than
+	// ScratchSize's build-cache-sized "64m".
+	assert.NotEmpty(t, cfg.WorkSize, "WorkSize must have a sane default")
+	work, err := parseDockerMemory(cfg.WorkSize)
+	require.NoError(t, err, "WorkSize must be a valid docker size string")
+	scratch, err := parseDockerMemory(cfg.ScratchSize)
+	require.NoError(t, err, "ScratchSize must be a valid docker size string")
+	assert.Greater(t, work, scratch, "WorkSize must be larger than ScratchSize for a full source-tree copy")
+}
+
 func TestDockerBackend_Preflight_CatchesInvalidCPUs(t *testing.T) {
 	// Fake docker that fails the `run` subcommand only when it sees `--cpus abc`.
 	// It answers `info` with a generous host so the cap-fit check (which skips the

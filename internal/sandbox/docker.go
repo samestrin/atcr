@@ -38,6 +38,15 @@ type DockerConfig struct {
 	User string
 	// ScratchSize bounds the writable tmpfs scratch overlay (docker --tmpfs size).
 	ScratchSize string
+	// WorkSize bounds the writable tmpfs backing the /work overlay when
+	// RunSpec.Writable is true (consumed as `--tmpfs /work:rw,exec,size=<WorkSize>`,
+	// mirroring the existing `--tmpfs /scratch:rw,exec,size=<cfg.ScratchSize>`
+	// pattern in dockerRunArgs). It is sized for a full source-tree copy rather
+	// than just a build cache, so its default is deliberately larger than
+	// ScratchSize's "64m". The writable-overlay path requires the run image to
+	// ship /bin/sh and a `cp` supporting `-a` (true for alpine/golang-family
+	// images, false for distroless/scratch).
+	WorkSize string
 	// Timeout is the default per-run wall-clock budget when RunSpec.Timeout is 0.
 	Timeout time.Duration
 	// MaxOutputBytes truncates captured combined stdout+stderr.
@@ -59,6 +68,7 @@ func DefaultDockerConfig() DockerConfig {
 		PidsLimit:      256,
 		User:           "65534:65534", // nobody:nogroup
 		ScratchSize:    "64m",
+		WorkSize:       "512m",
 		Timeout:        60 * time.Second,
 		MaxOutputBytes: 64 * 1024,
 		MaxConcurrent:  4,
