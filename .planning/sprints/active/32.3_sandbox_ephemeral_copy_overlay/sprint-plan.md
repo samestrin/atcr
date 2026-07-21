@@ -247,18 +247,18 @@ Your goal is to create software that:
 
 ## Phase 2: Core Mount Mechanism
 
-### 2.1 [ ] **[Conditional Writable /work Mount - RED](plan/user-stories/02-conditional-writable-work-mount.md)**
+### 2.1 [x] **[Conditional Writable /work Mount - RED](plan/user-stories/02-conditional-writable-work-mount.md)**
    1. Analyze [AC 02-01](plan/acceptance-criteria/02-01-writable-false-argv-byte-identical.md), [AC 02-02](plan/acceptance-criteria/02-02-writable-true-src-and-work-tmpfs-mounts.md), [AC 02-03](plan/acceptance-criteria/02-03-writable-setup-step-copies-src-into-work.md) (argv/stdin-level scope only — end-state integration scenarios verified in Phase 3 alongside Story 3); identify testable units
    2. Write tests: `Writable:false` argv stays exactly `-v SnapshotDir:/work:ro` (byte-identical to today, including `TestDockerRunArgs_HardeningFlagsPresent` staying green unmodified); `Writable:true` argv contains `SnapshotDir:/src:ro` plus `--tmpfs /work:rw,exec,size=<cfg.WorkSize>` and does NOT contain the old `/work:ro` bind form
    3. Verify tests fail correctly
    **Files:** `internal/sandbox/sandbox_test.go`, `internal/sandbox/docker_test.go` | **Duration:** 3-4 hours
 
-### 2.2 [ ] **[Conditional Writable /work Mount - GREEN](plan/user-stories/02-conditional-writable-work-mount.md)**
+### 2.2 [x] **[Conditional Writable /work Mount - GREEN](plan/user-stories/02-conditional-writable-work-mount.md)**
    Branch `dockerRunArgs` (`internal/sandbox/docker.go`) on `spec.Writable`: `false` path stays textually untouched; `true` path mounts `SnapshotDir:/src:ro` and adds `--tmpfs /work:rw,exec,size=<cfg.WorkSize>` (T1). Verify all pass (T2): `go test ./internal/sandbox/...`. COMMIT: `git commit -m "feat(sandbox): branch dockerRunArgs mount on spec.Writable"`
    **Files:** `internal/sandbox/docker.go` | **Duration:** 4-5 hours
 
-### 2.2.A [ ] **[Conditional Writable /work Mount - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-conditional-writable-work-mount.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.2]
+### 2.2.A [x] **[Conditional Writable /work Mount - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-conditional-writable-work-mount.md)**
+   **Changed Files:** `internal/sandbox/docker.go`, `internal/sandbox/sandbox_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
@@ -275,16 +275,17 @@ Your goal is to create software that:
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context review, 2026-07-21):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | docker.go:163 | `/work` tmpfs pages charge the `--memory` cgroup, yet default `WorkSize` (512m) equals `Memory` (512m) — a `Writable:true` run filling `/work` toward `WorkSize` (or the later `cp -a` seed) leaves no process headroom → OOM (exit 137). Latent today (no opt-in caller). | Already captured — **TD-001**. Size `WorkSize` below `Memory`, or enforce `WorkSize + ScratchSize < Memory`. Deferred (MEDIUM). |
+   | LOW | docker.go:163 | `cfg.WorkSize` interpolated into `--tmpfs /work:...size=<WorkSize>` with no grammar check; `,`/`:` could alter tmpfs options. Single argv token — cannot inject an argv element or host mount; mirrors the pre-existing unvalidated `ScratchSize`. | Captured — **TD-004**. Optionally validate both sizes via `parseDockerMemory` grammar. Deferred (LOW). |
+
+   **Verification notes:** `Writable:false` read-only guarantee proven intact (`TestDockerRunArgs_WritableFalseGoldenArgv` pins the false-path argv byte-for-byte incl. `-v /tmp/snap:/work:ro`); `spec.validate()` runs before the branch so the colon/absolute guards apply equally to the new `/src:ro` position — no new unguarded caller-controlled string reaches a host mount.
 
    **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   - ✅ No CRITICAL/HIGH → **Adversarial review passed** — proceed to 2.3.
+   - MEDIUM/LOW deferred to `tech-debt-captured.md` (MEDIUM = existing TD-001; LOW = new TD-004).
 
 ### 2.3 [ ] **[Conditional Writable /work Mount - REFACTOR](plan/user-stories/02-conditional-writable-work-mount.md)**
    1. Fix CRITICAL/HIGH issues from 2.2.A (if any)

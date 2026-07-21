@@ -22,3 +22,10 @@ Captured during `/execute-sprint`. Read by `/execute-code-review` (pre-seeded, `
 **Issue:** The `/bin/sh` + `cp -a` image-requirement sentence (alpine/golang vs distroless/scratch) is repeated verbatim on both `DockerConfig.WorkSize` (docker.go:46) and `RunSpec.Writable` (sandbox.go:64), creating a drift risk if the mechanism's requirements change.
 **Why accepted:** Deliberate minor duplication for discoverability — a reader of either field sees the constraint without a cross-file jump. Both fields are independently documented today; consolidating is cosmetic and not worth restructuring mid-sprint.
 **Fix in:** Deferrable to `/reconcile-code-review` or a later docs pass — state the requirement once (on `Writable`) and cross-reference from `WorkSize` if drift becomes a concern.
+
+## TD-004 — cfg.WorkSize is interpolated into the tmpfs mount spec without validation (LOW)
+**Origin:** Phase 2, task 2.2.A ADVERSARIAL review, 2026-07-21
+**File:** internal/sandbox/docker.go:163
+**Issue:** `cfg.WorkSize` is interpolated into `--tmpfs /work:rw,exec,size=<WorkSize>` with no grammar check. An empty value yields a malformed `size=` flag (deferred to Docker at run time, per `TestDockerRunArgs_WritableTrueEmptyWorkSize`); a value containing `,` or `:` could append or alter tmpfs mount options (e.g. `1m,noexec`). It is a single argv token, so it can neither inject a new argv element nor mount a host path, and it mirrors the pre-existing unvalidated `ScratchSize` — risk is low and operator-scoped (config-controlled, not caller/request-controlled).
+**Why accepted:** Story 1 documented a deliberate "no new validation layer" decision (AC 02-02 Edge Case 3); `WorkSize` carries the same trust level as the existing unvalidated `ScratchSize`, so adding validation for one and not the other would be inconsistent, and the value is operator-owned rather than attacker-reachable.
+**Fix in:** Deferrable — optionally validate both `WorkSize` and `ScratchSize` against the docker size grammar (digits + optional b/k/m/g) at config/Preflight time, reusing the existing `parseDockerMemory` parser, if operator-config hardening becomes a priority.
