@@ -46,13 +46,18 @@ type RunSpec struct {
 	// `cp -a /src/. /work/` copy. Only that throwaway copy is writable; it (and
 	// every write into it) dies with the container, so no host file is ever
 	// mutated. The package-level read-only-snapshot MUST is thereby narrowed, not
-	// weakened. The overlay MECHANISM (the /src+/work mount branch and the copy-
-	// step injection) lands in a later story; this field only carries the opt-in.
+	// weakened.
 	//
-	// Image requirement: the Writable:true path wraps Command-mode execution in
-	// `/bin/sh -c 'cp -a /src/. /work/ && cd /work && exec "$@"'`, so the run
-	// image must ship /bin/sh and a `cp` supporting `-a` (true for alpine/golang-
-	// family images, false for distroless/scratch).
+	// The copy step is injected differently per mode. Command mode wraps the argv as
+	// `/bin/sh -c 'cp -a /src/. /work/ && cd /work && exec "$@"' -- <command...>`,
+	// passing the original command positionally so no token is interpolated into the
+	// shell text. Script mode instead prepends `cp -a /src/. /work/ && cd /work\n` to
+	// the script body before it is streamed to `sh -s` over stdin, so the copy step
+	// travels as stdin data and the Script-mode argv is unchanged.
+	//
+	// Image requirement: both paths need a POSIX shell, so the run image must ship
+	// /bin/sh and a `cp` supporting `-a` (true for alpine/golang-family images,
+	// false for distroless/scratch).
 	Writable bool
 }
 
