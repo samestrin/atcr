@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 7 | 0 |
 | MEDIUM | 0 | 26 | 7 |
-| LOW | 0 | 43 | 14 |
+| LOW | 2 | 43 | 14 |
 
 
-**Last Modified:** 2026-07-20 | **Open Items:** 0 | **Deferred Items:** 76 | **Resolved Items:** 21 | **Total Items:** 97
+**Last Modified:** 2026-07-20 | **Open Items:** 2 | **Deferred Items:** 76 | **Resolved Items:** 21 | **Total Items:** 99
 
 ## Directory Structure
 
@@ -63,6 +63,13 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table â†’ shards â
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-20] From Sprint: epic-32.2
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/sandbox/docker.go:236 | Folding context.Canceled into TimedOut reports an operator SIGINT/Ctrl-C as "local validation timed out after Ns", which misstates the cause; intended for localvalidate.go:127 consistency and fail-closed-safe, but the wording can mislead triage. | Distinguish the two runCtx.Err() cases so a cancellation surfaces as "validation cancelled" wording while still folding into a failing result, or document the tradeoff in the operator-facing error string. | OBSERVABILITY | 30 | execute-epic-independent |
+| U | [ ] | LOW | internal/sandbox/docker_test.go:312 | The "context canceled" docker Run table row is timing-coupled: it relies on a 50ms goroutine cancel firing before the 5s RunSpec timeout; robust today but could theoretically flake under extreme CI load (still classifies as Canceled, so it stays green). | Optionally construct a context that is already cancelled before Run to make the test intent time-independent rather than timing-dependent. | EDGE_CASES | 15 | execute-epic-independent |
 
 ### [2026-07-20] From Sprint: 32.1_multi_tier_fix_execution
 
