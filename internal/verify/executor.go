@@ -104,6 +104,25 @@ func parseSelfDecline(fix string) (string, bool) {
 	return reason, true
 }
 
+// sanitizeDeclineReason scrubs a model-generated decline reason before it lands in
+// FixWarning / findings.json (Sprint 32.1 security follow-up). parseSelfDecline strips
+// only the LEADING marker token, so a reason may still embed declineMarker again
+// ("ATCR_DECLINE is not needed") or span multiple lines; both would otherwise ride
+// verbatim into the artifact. It removes every residual marker occurrence and flattens
+// CR/LF to spaces (mirroring logPipelineWarning's newline flattening), falling back to
+// the same generic reason parseSelfDecline uses if the scrub empties the text so the
+// warning is never a bare "executor declined: ".
+func sanitizeDeclineReason(reason string) string {
+	reason = strings.ReplaceAll(reason, declineMarker, "")
+	reason = strings.ReplaceAll(reason, "\r", " ")
+	reason = strings.ReplaceAll(reason, "\n", " ")
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "fix exceeds safe complexity for this executor"
+	}
+	return reason
+}
+
 // fixAttributionPrefix is the marker appended to a finding's Evidence after a fix
 // is generated; it doubles as the idempotency guard (a finding already carrying it
 // is not re-generated on a verify re-run).
@@ -319,6 +338,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// response; an ambiguous non-marker response falls through to the syntax guard
 			// below unchanged.
 			if reason, declined := parseSelfDecline(fix); declined {
+				reason = sanitizeDeclineReason(reason)
 				logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", fmt.Sprintf("%s:%d: self-declined: %s", f.File, f.Line, reason))
 				// Same prior-tier-success guard as the pre-dispatch ceiling skips: a later
 				// tier's decline must not stamp a warning over a finding an earlier tier
