@@ -41,7 +41,7 @@ type RunSpec struct {
 	// Writable opts into an ephemeral writable /work overlay. It defaults to
 	// false, preserving the read-only behavior every current caller relies on.
 	//
-	// When true, the snapshot itself STAYS read-only — it is mounted at /src
+	// When true, the snapshot itself stays read-only — it is mounted at /src
 	// instead of /work — and /work is backed by an ephemeral tmpfs seeded with a
 	// `cp -a /src/. /work/` copy. Only that throwaway copy is writable; it (and
 	// every write into it) dies with the container, so no host file is ever
