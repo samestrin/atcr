@@ -1,0 +1,1262 @@
+diff --git a/.planning/epics/active/32.2_auto-fix-sandbox-defense-in-depth.md b/.planning/epics/completed/32.2_auto-fix-sandbox-defense-in-depth.md
+similarity index 100%
+rename from .planning/epics/active/32.2_auto-fix-sandbox-defense-in-depth.md
+rename to .planning/epics/completed/32.2_auto-fix-sandbox-defense-in-depth.md
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index 9bf1fa0a..e354912e 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -3,17 +3,17 @@
+ This file is a staging area for small technical debt items discovered during development. Items are triaged and moved to individual sprint documents in `sprints/` as they are prioritized.
+ 
+ ## Stats
+ 
+ | Severity | Open | Deferred | Resolved |
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 7 | 0 |
+ | MEDIUM | 0 | 26 | 7 |
+-| LOW | 0 | 43 | 14 |
++| LOW | 2 | 43 | 14 |
+ 
+ 
+-**Last Modified:** 2026-07-20 | **Open Items:** 0 | **Deferred Items:** 76 | **Resolved Items:** 21 | **Total Items:** 97
++**Last Modified:** 2026-07-20 | **Open Items:** 2 | **Deferred Items:** 76 | **Resolved Items:** 21 | **Total Items:** 99
+ 
+ ## Directory Structure
+ 
+ ```
+@@ -63,143 +63,150 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards 
+ table with zero data loss) is proven by the Go test suite in
+ `internal/tdmigrate/`, not by a committed generated artifact.
+ 
+ 
++### [2026-07-20] From Sprint: epic-32.2
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| U | [ ] | LOW | internal/sandbox/docker.go:236 | Folding context.Canceled into TimedOut reports an operator SIGINT/Ctrl-C as "local validation timed out after Ns", which misstates the cause; intended for localvalidate.go:127 consistency and fail-closed-safe, but the wording can mislead triage. | Distinguish the two runCtx.Err() cases so a cancellation surfaces as "validation cancelled" wording while still folding into a failing result, or document the tradeoff in the operator-facing error string. | OBSERVABILITY | 30 | execute-epic-independent |
++| U | [ ] | LOW | internal/sandbox/docker_test.go:312 | The "context canceled" docker Run table row is timing-coupled: it relies on a 50ms goroutine cancel firing before the 5s RunSpec timeout; robust today but could theoretically flake under extreme CI load (still classifies as Canceled, so it stays green). | Optionally construct a context that is already cancelled before Run to make the test intent time-independent rather than timing-dependent. | EDGE_CASES | 15 | execute-epic-independent |
++
+ ### [2026-07-20] From Sprint: 32.1_multi_tier_fix_execution
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [x] | LOW | internal/verify/executor.go:67-75 | `anyFixEligible` gates whether the executor harness (snapshot + client) is built using only the confidence + severity-floor check; it does not consult the new `withinComplexityCeiling`/`withinSeverityCeiling` bounds | extend `anyFixEligible` to also require `withinComplexityCeiling`/`withinSeverityCeiling` so a single-tier all-over-ceiling config skips the snapshot/client build entirely; alternatively document that the harness build intentionally ignores ceilings | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 1 | [x] | LOW | internal/verify/executor.go:77 | parseSelfDecline calls strings.Trim(trimmed, "\"'") which strips ALL leading/trailing quote and apostrophe characters, contradicting its own comment ("Tolerate a single pair of surrounding quotes"). A fix response whose entire content is a quoted marker literal (e.g. 'ATCR_DECLINE') is trimmed to the bare marker and misclassified as a self-decline, dropping a would-be fix. The marker is synthetic so real-world collision is unlikely, but the over-broad trim is an uncovered latent false-positive. | Strip at most one matching leading/trailing quote pair, or update the comment to state arbitrary surrounding quotes are stripped, and add a TestParseSelfDecline case for a code fix that is exactly a quoted marker literal to pin the intended behavior. | maintainability | 15 | code-review | claude | MEDIUM |
+ | 1 | [x] | MEDIUM | internal/verify/executor.go:208 | In generateFixes, both the pre-dispatch ceiling-skip branches (205-220) and the post-dispatch self-decline branch (293-297) assign f.FixWarning without guarding a pre-existing f.Fix. The only thing preventing a finding from carrying BOTH a Fix and a FixWarning across two tiers is the name-scoped hasFixAttribution guard, which TestGenerateFixes_TwoTierDistinctNamesReprocesses documents as bypassable under distinct tier Names. A distinct-name (or decreasing-ceiling) two-tier run where tier 1 fixes a finding then tier 2 ceiling-skips or self-declines it produces the "both Fix and FixWarning" stale-warning state the partition tests assert is impossible. It ships as a documented-but-unenforced precondition (shared Name / non-decreasing ceilings). | In the ceiling-skip and self-decline branches, only set FixWarning when f.Fix=="" (or skip the finding when f.Fix!=""), so a prior tier's success is never overwritten with a skip warning regardless of Name. Verify with a test: tier1 fixes under name A, tier2 (distinct name B, lower ceiling) leaves the finding fixed with empty FixWarning, never both. | error-handling | 60 | code-review | claude | MEDIUM |
+ | 1 | [x] | LOW | internal/verify/executor.go:295 | The self-decline branch builds f.FixWarning="executor declined: "+reason where reason is model-generated text stripped only of the LEADING marker token. A decline like "ATCR_DECLINE: ATCR_DECLINE is not needed" yields a reason still containing the raw sentinel, defeating TestGenerateFixes_SelfGatingDeclineNotPartialFix's NotContains(FixWarning,"ATCR_DECLINE") claim for adversarial inputs; the reason is also not newline-flattened (unlike the log detail), so multi-line model text rides into findings.json. | Sanitize the decline reason before it reaches FixWarning — strip any residual marker occurrences and flatten newlines (mirroring logPipelineWarning) — and add a generateFixes case with a reason embedding the sentinel and a newline to prove neither leaks. | security | 30 | code-review | claude | MEDIUM |
+ | 1 | [x] | LOW | internal/verify/executor_test.go | Story 3's two-tier partition is proven at the `generateFixes` level (called twice directly, or via a manual `findings.json` round-trip), which is exactly the story's stated test scope | add `TestRunVerify_TwoTierExecutorPartition` running `runVerify` twice over one review dir with a tier-1 then a tier-2 executor registry (reusing the `pipelineReview`/`swapExecutorClient`/`readFindings` harness), asserting the same partition + no-double-processing contract, so a future change to the verify read/recompute/write ordering that strips attribution is caught before the docs' worked example silently breaks | testing | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 1 | [x] | LOW | internal/verify/severity.go:57 | withinSeverityCeiling fails OPEN on a non-empty but non-canonical ceiling: SeverityRank[NormalizeSeverity(maxSeverity)] yields 0 for both "" (intended no-ceiling) and a typo like "BOGUS", so the cr==0 guard returns true for both, silently disabling the severity ceiling and routing every finding (including CRITICALs) to a cheap tier. Load-time validation covers the YAML path, but the resolver+predicate seam (documented as the consumer contract, exercised directly on in-memory Registry structs per executor.go's defense-in-depth comment) runs no validation. | Have withinSeverityCeiling distinguish empty from unknown: treat normalized maxSeverity=="" as no-ceiling but a non-empty token whose rank is 0 as fail-CLOSED (skip), mirroring meetsSeverityFloor's rank-0 handling. Verify with withinSeverityCeiling("LOW","BOGUS")==false. | error-handling | 30 | code-review | claude | MEDIUM |
+ | 1 | [x] | LOW | internal/verify/severity.go:58 | withinSeverityCeiling fails OPEN on an unknown/empty FINDING severity (rank 0 -> 0<=cr -> true -> eligible), the exact inverse of its sibling meetsSeverityFloor which fails CLOSED. The docstring excuses this via an implicit ordering contract (the floor gate runs first) enforced only by the call sequence in executor.go, not co-located. If the ceiling gate is ever reordered before the floor gate, or the predicate reused standalone, an unknown-severity finding sails past the ceiling into a fix attempt. Two sibling predicates with opposite fail directions on the same rank-0 input is a latent trap. | Make the direction explicit and self-contained: either fail-closed on rank-0 finding severity here too, or add an assertion/comment referencing the enforced ordering at the call site. Verify with a withinSeverityCeiling("","HIGH") test case pinning the intended result. | maintainability | 15 | code-review | claude | MEDIUM |
+ | 1 | [x] | LOW | internal/verify/severity_test.go:75 | TestWithinSeverityCeiling never exercises the fail-open branches: the only cr==0 case uses maxSev=="" (no ceiling), so the silent-ceiling-disable behavior (non-empty unknown ceiling) is untested; and the finding side tests only "BLOCKER" but never an EMPTY finding severity against a real ceiling, leaving the rank-0-finding fail-open unpinned. A hostile change flipping either branch passes the suite. | Add cases for a bogus non-empty ceiling ("LOW","BOGUS" -> should skip) and an empty finding severity ("","HIGH") with the intended fail-closed expectations once the semantics are decided; verify the new cases fail against current code, proving branch coverage. | testing | 15 | code-review | claude | MEDIUM |
+ | U | [x] | MEDIUM | internal/registry/config.go:287 | EffectiveFixMinSeverity (config.go:287-292) uses a literal e.MinSeverity=="" empty-check that does NOT catch whitespace-only values, so an unvalidated in-memory ExecutorConfig{MinSeverity:"   "} returns "   " which meetsSeverityFloor normalizes to rank 0, turning the floor into "no floor" (everything passes) instead of the intended MEDIUM. The sprint's new contradiction check (config.go:753) works around this with a THIRD divergent empty->MEDIUM fallback, so the "empty->MEDIUM" rule now lives in three places (resolver, applyDefaults, contradiction check) with three different empty-detections. | Centralize effective-floor resolution in one helper that trims before the empty check and reuse it in all three sites; fix EffectiveFixMinSeverity to use NormalizeSeverity(e.MinSeverity)=="". Verify with an in-memory ExecutorConfig{MinSeverity:"   "}.EffectiveFixMinSeverity()=="MEDIUM" test. | maintainability | 30 | code-review | claude | MEDIUM |
+ | U | [x] | LOW | internal/registry/config.go:722 | validateExecutor hard-rejects max_estimated_minutes > MaxExecutorEstimatedMinutes (10080) at load, failing the ENTIRE registry load for a value only marginally over an arbitrary one-week boundary (e.g. a deliberate 20160=two weeks), same treatment as a negative typo. The load-fail is loud and recoverable (defensible), but the boundary is arbitrary and the 10080 constant hard-codes the "one week of minutes" assumption in a comment rather than a computed 7*24*60. | Either widen/justify the cap or clamp-and-warn instead of hard-rejecting so a too-large ceiling degrades to the max rather than bricking load; compute the constant as 7*24*60 for self-documentation. Verify negatives stay rejected and over-cap behaves as chosen. | maintainability | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-19] From Sprint: 32.0_sandbox_execution_environment
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [x] | MEDIUM | cmd/atcr/autofix.go:263 | validateAutoFixBackend runs the sandbox Preflight (gate check 4) unconditionally with no early return, so it fires even when checks 1-3 (apply-target, validate-command, repo/token) already failed. Preflight shells out to docker version/image-inspect/docker-info AND spawns a real throwaway container (internal/sandbox/docker.go:270-305) — seconds of latency, exceeding the design's sub-second Preflight budget — so a trivially-misconfigured --auto-fix (e.g. missing token) still pays the full container-spawn cost before refusing with exit 2. | Resolve the sandbox backend LAST, gated behind len(missing)==0 for the other three cheap local checks, so a half-configured run refuses without spawning a container. Verify by asserting resolveAutoFixSandboxFn is not invoked when the token/repo is absent. | performance | 30 | code-review | claude | MEDIUM |
+ | 2 | [x] | LOW | cmd/atcr/autofix.go:354 | When validation fails, runAutoFix discards all captured output: the !res.Passed() error names only the exit code, and the sandbox path has collapsed stdout+stderr into res.Stdout (Stderr empty) per the documented stream-collapse. The operator whose LLM fix failed validation gets zero diagnostic bytes about WHY, forcing a blind retry — strictly worse to reconstruct on the sandbox path. | Include a bounded tail of res.Stdout (already capped at 1 MiB) in the validation-failed error, or write it to stderr before reverting. Verify a failing validation surfaces its captured output. | error-handling | 15 | code-review | claude | MEDIUM |
+ | 2 | [x] | LOW | cmd/atcr/autofix.go:358 | On a validation timeout, translateRunResult and the host path leave ExitCode at 0 while setting TimedOut, and Passed() fails via the TimedOut clause. But runAutoFix's !res.Passed() branch reports only res.ExitCode, so a timed-out validation surfaces to the operator as "local validation failed (exit 0)" — a nonsensical, misleading message that hides that it was a timeout. | In the res.Passed()==false branch, special-case res.TimedOut to print "validation timed out after <timeout>" instead of "exit 0". Verify with a ValidationResult{TimedOut:true} fed through runAutoFix asserting the message. | error-handling | 15 | code-review | claude | MEDIUM |
+ | 2 | [x] | MEDIUM | cmd/atcr/autofix_test.go:669 | The cmd-level fakeSandboxBackend.Run discards the RunSpec and the runAutoFix routing tests assert only runCalls==1. The sprint's core claim — Backend.Run receives RunSpec{Command,Timeout,SnapshotDir} — is verified one layer down in RunSandboxedValidation's own fake, but the runAutoFix->adapter forwarding of validateArgv/validateTimeout/applyTarget is never asserted, so a regression forwarding the wrong argv or a zero timeout out of runAutoFix would still pass. | Have the cmd-level fake record gotSpec and assert Command==validateArgv, Timeout==validateTimeout, SnapshotDir==applyTarget in TestRunAutoFix_SandboxPassDrivesIdenticalPRSequence, closing the forwarding gap at the integration seam. | testing | 30 | code-review | claude | MEDIUM |
+ | 2 | [x] | LOW | cmd/atcr/autofix_test.go:875 | TestOrchestrateAutoFix_SkippedDuplicatesNotice asserts require.Error(t, err) with the comment that the live GitHub client fails without network/auth. The Error assertion is satisfied by an incidental network/auth failure unrelated to the duplicate-skip behavior under test, coupling the test to network conditions and passing for the wrong reason; only the buf "skipped" check exercises the real path. | Stub the GitHub client seam (as sibling tests stub resolveHeadSHAFn) so the test does not depend on a live network failure, and assert the "skipped" notice deterministically. | testing | 30 | code-review | claude | MEDIUM |
+ | U | [/] | LOW | internal/verify/autofix_exec.go:56 | ResolveAutoFixSandbox returns (nil, nil) when enabled==false, and runAutoFix treats a nil sandboxBackend as "run validation directly on the host" (autofix.go:342-345). The only thing preventing a silent unsandboxed host fallback is that validateAutoFixBackend hard-codes enabled=true and sets nil only on the warned --no-sandbox path. This couples the fail-closed guarantee to a single literal true at one call site; a future caller passing enabled=false would get a silent host fallback with no warning and no error. (Deferred: Epic Plan 32.2) | Have the nil-backend host dispatch in runAutoFix require an explicit be.noSandbox bool set only on the warned opt-out path, rather than inferring host-is-fine from a nil backend. Verify a resolver returning (nil,nil) without the opt-out flag causes a refusal, not host execution. | maintainability | 30 | code-review | claude | MEDIUM |
+ | 3 | [x] | LOW | internal/verify/autofix_exec_test.go | `ResolveAutoFixSandbox` applies `sc.TimeoutSecs` to `cfg.Timeout`, but that value never appears in the `docker run` argv (it is a context deadline) and the resolver signature is pinned to `(sandbox.Backend, error)` by AC 02-02, so no test directly asserts the TimeoutSecs override reached the backend | add an exported test accessor or a returned resolved-timeout value, then assert `120*time.Second` per AC 02-01 Edge Case 2 | performance | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 3 | [/] | LOW | internal/verify/sandboxvalidate.go:62 | The host path enforces its timeout belt-and-suspenders (`context.WithTimeout` + process-group SIGKILL + `cmd.WaitDelay`) so an LLM-authored command can never stall `--auto-fix` indefinitely (Deferred: Epic Plan 32.2) | would require a backstop that distinguishes ctx-timeout from a spawn fault before mapping to StartError vs TimedOut | performance | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 3 | [x] | MEDIUM | internal/verify/sandboxvalidate.go:62 | RunSandboxedValidation mounts applyTarget as /work:ro (internal/sandbox/docker.go:133). GOCACHE/GOTMPDIR/HOME redirect to writable /scratch so the built-in go build ./... works, but common non-Go validate_commands this feature exists to sandbox (npm run build -> dist/, cargo build -> target/, most commands writing under the project dir) hit EROFS on read-only /work, exit non-zero, and land in !res.Passed() — silently reverting a valid fix and never opening a PR, making sandboxed auto-fix effectively Go-only. (docs/auto-fix.md notes the write-into-tree limitation but not that non-Go builds fail.) | Document the read-only-/work constraint prominently on the --auto-fix flag and in ResolveAutoFixSandbox, or provide a writable build-output overlay/env redirection for common runners. Verify by sandbox-validating sh -c 'touch out.txt' against a repo root and observing the spurious failure. | maintainability | 60 | code-review | claude | MEDIUM |
+ | 3 | [x] | LOW | internal/verify/sandboxvalidate.go:100 | Host-vs-sandbox exit-code taxonomy diverges for exits 125-127. On the host path a validation command exiting 125/126/127 is a normal non-zero exit -> !res.Passed() -> "validation failed (exit N)". On the sandbox path docker.go:251-254 reclassifies every exit >=125 as a runtime fault -> StartError -> the "cannot validate" (verr!=nil) branch. Same command/intent, different taxonomy and operator message. AC 01-02 documents 125-127 -> StartError as intentional, but the host divergence is not called out. | Document this as an accepted sandbox-specific divergence in runAutoFix's branch comment, or map docker's 125-127 back to an ExitCode-carrying ValidationResult in translateRunResult so both paths land on !Passed(). Verify with a table test feeding a 127 fault to both paths. | error-handling | 30 | code-review | claude | MEDIUM |
+ | 3 | [x] | LOW | internal/verify/sandboxvalidate_test.go | The adapter delegates empty/relative `dir` rejection to the backend's unexported `RunSpec.validate()` | add an integration test driving `dir=""` and a relative dir through a real `DockerBackend` (fake-docker shim) asserting the `RunSpec.validate()` StartError / `!Passed()` fail-closed outcome | testing | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [x] | MEDIUM | internal/registry/sandbox_test.go:12 | Production Validate() rejects TimeoutSecs <= 0 and TimeoutSecs > MaxTimeoutSecs (internal/registry/sandbox.go:64-65) but the TestSandboxConfig_Validate table has zero TimeoutSecs cases. PidsLimit has a non-positive case yet the symmetric TimeoutSecs bound is untested, so deleting the entire timeout-bounds check in production would not fail a single test — coverage theater on a security-relevant resource cap. | Add rows for a valid TimeoutSecs (e.g. 60 -> ok), a non-positive one (0 or negative -> error), and an over-MaxTimeoutSecs one (-> error), mirroring the existing PidsLimit coverage. | testing | 15 | code-review | claude | MEDIUM |
+ | U | [x] | MEDIUM | internal/registry/sandbox_test.go:39 | Every failing row in TestSandboxConfig_Validate asserts only require.Error(t, err) with no message check. Production Validate() (internal/registry/sandbox.go:51,54,62,65) returns a distinct error per root cause, so a refactor that short-circuits on the wrong field or reorders checks stays fully green — the negative table proves "some error" not "the right error". | Add a wantSub string per failing case and require.Contains(t, err.Error(), wantSub); the companion AutoFixTensionUnchanged test already does this for two cases — extend the pattern to the whole table. | testing | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-19] From Sprint: 31.1_content_first_home_view
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | LOW | cmd/atcr/home.go:44 | relHome is a third hand-rolled copy of the "relativize against home, fall back to verbatim on .." idiom, alongside internal/tools/dispatch.go relDisplay and internal/log/redact.go relativizePaths (the code comment openly admits copying them). Three copies of the rel==".." vs ".."+sep boundary guard mean a fix to one will not propagate — the maintainability cost the existing expandHome TD in quickstart.go already gestures at. (Deferred: Epic Plan 49) | Cross-reference TD (extraction is out of this epic's cmd/atcr-only scope per sprint-plan; recorded for future design work). Sibling copies of the relativize-against-home idiom: internal/tools/dispatch.go:371 relDisplay, internal/log/redact.go:144 relativizePaths (uses strings.ReplaceAll, NOT filepath.Rel), and cmd/atcr/quickstart.go:281 expandHome (the inverse direction: ~ -> home). These are not drop-in identical (differing signatures and algorithms), so a real unification into a shared internal/pathutil helper is future cross-package work, not a mechanical extraction. Verify TestRelHome still passes if ever unified. | maintainability | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-17] From Sprint: 30.0_community_prompt_quality_signal
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | MEDIUM | internal/localdebt/lock.go:47 | Staleness is a fixed 30s wall-clock threshold against an epoch stamped once at acquire, with no heartbeat. A legitimately long Compact (folding+rewriting every month shard on a large/slow store) exceeding 30s is judged stale by a new waiter, which reclaims and runs concurrently with the live holder. Also clock-sensitive: a backward clock jump makes time.Since negative (never stale), a forward jump makes healthy locks look stale. (Deferred: .planning/epics/active/43.0_localdebt-store-compaction.md — flock rework, Task T2; the prescribed atomic-rename is provably insufficient, so a single OS-advisory-lock primitive resolves this with 43.0.) | Reclaim atomically: os.Rename(lockDir, lockDir+".stale-<nonce>") and only the process whose rename succeeds may remove the renamed dir and retry; a rename of an already-replaced dir fails and that loser re-loops. Add a stress test spawning N concurrent withLock callers against a pre-seeded stale lock asserting fn never overlaps. | correctness | 120 | code-review | claude | MEDIUM |
+ | 2 | [/] | HIGH | internal/localdebt/lock.go:47 | Stale-lock reclamation is racy: when a lock is judged stale (owner epoch >30s old), withLock does os.RemoveAll(lockDir) then continue with no ownership token. Two concurrent waiters can both RemoveAll and both re-Mkdir; if waiter A acquires and writes a fresh owner before waiter B's RemoveAll runs, B deletes A's live lock and also acquires — both then run fn() (Append/Compact) concurrently, breaking mutual exclusion and risking torn/lost records in the append-only debt store. Reachable only via the stale-recovery path (a prior crashed/hung holder plus concurrent access). (Deferred: .planning/epics/active/43.0_localdebt-store-compaction.md — flock rework, Task T2; the prescribed atomic-rename is provably insufficient, so a single OS-advisory-lock primitive resolves this with 43.0.) | Reclaim atomically: os.Rename(lockDir, lockDir+".stale-<nonce>") and only the process whose rename succeeds may remove the renamed dir and retry; a rename of an already-replaced dir fails and that loser re-loops. Add a stress test spawning N concurrent withLock callers against a pre-seeded stale lock asserting fn never overlaps. | correctness | 120 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-17] From Sprint: 29.0_anti_slop_persona
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | MEDIUM | personas/community/simon.md:50 | The `## Output Format` block constrains CATEGORY to "one lowercase word" (the shared house style across all 13 personas) rather than pinning it to `bloat` (deferred per sprint-plan TD-001; sprint's own 1.2.A adversarial review already captured this exact gap as accepted debt — see tech-debt-captured.md) (Deferred: won't-fix now — pinning CATEGORY is a roster-wide convention decision for a dedicated persona-authoring polish sprint; editing simon.md alone would break the byte-for-byte 7-column contract per AC 01-02 Scenario 1) | decide house-wide whether single-lens personas should pin their output CATEGORY column, and apply uniformly across the roster rather than to simon in isolation. | correctness | 10 | execute-sprint | execute-sprint, brad | HIGH |
+ 
+ ### [2026-07-16] From Sprint: 28.0_telemetry_expansion_cloud_sync
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | MEDIUM | cmd/atcr/main.go:52 | Telemetry Send dispatches a detached goroutine (WithoutCancel + 3s timeout) but nothing drains it before process exit: main.go calls os.Exit immediately after the command returns and production never calls client.Wait (Wait/wg exist but are test-only). Send fires at the very end of the run right before return then os.Exit, so once a real endpoint is wired the 3s request almost never completes and pings are dropped on essentially every run (latent now only because defaultTelemetryEndpoint is empty). Found by two independent reviewers. (Deferred: Epic Plan 28.1) | Wire a bounded telemetryClient.Wait() (short cap ~1-2s) into main() before os.Exit (or the shutdown path) so an in-flight ping can complete without blocking indefinitely; the existing Wait()/wg seam was built for exactly this. | correctness | 60 | code-review | claude | MEDIUM |
+ | 1 | [/] | LOW | cmd/atcr/telemetry.go:61 | telemetryGate calls registry.LoadTelemetrySetting("."), re-reading and re-parsing .atcr/config.yaml a second time per run. On the review path fanout.LoadReviewConfig(".") already parsed the full project config including Telemetry *bool (project.go:95), and on reconcile resolveGateThreshold already read the config; the already-parsed value is discarded and the file re-read. (Won't fix: reconcile.go loads no ProjectConfig, so threading would ADD a config read, not remove one — net-negative churn for a LOW perf gain) | Thread the already-loaded cfg.Project.Telemetry (review) / single config read (reconcile) into the gate and call telemetryEnabled(env, cfg.Project.Telemetry) directly, eliminating the redundant disk read and YAML parse. | performance | 30 | code-review | claude | MEDIUM |
+ | U | [/] | LOW | internal/registry/telemetry_setting.go:190 | configMapping treats any document with len(doc.Content) == 0 as empty and synthesizes a fresh mapping. A config file containing only comments unmarshals to a null document with text in HeadComment and empty Content, so the synthesized mapping discards those comments, contradicting the every other key and its comments survive promise for that stub case. (Won't fix: yaml.v3 v3.0.1 discards comment-only-file comments at Unmarshal — verified empirically; raw-line-retention rewrite not justified for a LOW-severity edge case) | When Content is empty but the parsed doc carries head/foot comments, preserve them by attaching to the synthesized mapping node rather than replacing the document wholesale. | maintainability | 30 | code-review | claude | MEDIUM |
+ | 3 | [/] | HIGH | internal/scorecard/telemetry.go:12 | HashPersonaID claims pseudonymization but unsalted SHA-256 over a small enumerable set is dictionary-reversible; the privacy contract is misleading and the Leaderboard cannot claim anonymized aggregation (disagreement: MEDIUM vs HIGH) (Deferred: Epic Plan 28.1) | Add HMAC-SHA256 with a provisioned, rotatable application secret (server-side keyed hash acceptable per KB entry); add TD-007 tracking label to the function | cryptography | 120 | code-review | dax, kai, mira, pace | HIGH |
+ 
+ ### [2026-07-15] From Sprint: 28.0_telemetry_expansion_cloud_sync
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 5 | [/] | MEDIUM | cmd/atcr/main.go:46 | (Deferred until 40.0) `Client.Send` fires the POST on a detached goroutine at the end of `runReview`/`runReconcile`, then `main()` returns or calls `os.Exit(code)` immediately. (intent_note: deferred per sprint-plan §2.2/2.3 (TD-006)). | add a bounded drain (`telemetryClient.Wait()` under a short ~1s timeout) in `main()` before `os.Exit`/return so a configured endpoint actually receives the ping without risking a hang. | performance | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 5 | [/] | LOW | cmd/atcr/review.go:397 | (Deferred until 40.0) Only the reconcile call site has a counting-send end-to-end test (`TestReconcile_TelemetryGate_EndToEnd`). (intent_note: deferred per sprint-plan §3.2 (TD-011)). | add a review-path end-to-end test mirroring the reconcile one once a lightweight `runReview` harness (stubbed fanout) exists, or lift the gate check into a shared helper both call sites invoke so one test covers both. | testing | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 5 | [/] | MEDIUM | cmd/atcr/review.go:409 | (Deferred until 40.0) The review telemetry `status` is derived from `err` at review.go:408, but at that point `err` is only the `fanout.ExecuteReview` result — the in-process reconcile/verify/debate and the `--fail-on` gate all run AFTER this Send. A review where all agents succeed but the `--fail-on` gate later fails (exit 1) still emits `review_run status="success"`, so telemetry status and the process exit code disagree. This is the review-path analog of the reconcile hardcoded-success case (TD-009), but here the value looks outcome-derived while silently predating the gate. | Move the telemetry Send after the gate resolution (or defer it like the sync-cloud push and read the finalized `err`), so `status` reflects the run's final outcome. Alternatively rename the field to `fanout_status` so it is not mistaken for the final result. | maintainability | 15 | code-review | claude | MEDIUM |
+ | 5 | [/] | LOW | cmd/atcr/telemetry.go:60 | (Deferred until 40.0) On the review path `telemetryGate` calls `registry.LoadTelemetrySetting(".")` — a second, independent read/parse of `.atcr/config.yaml` after `fanout.LoadReviewConfig` already loaded the same project config. Beyond the redundant disk read, the opt-out is resolved through a different parse path than the strict roster load, so the two could disagree on the persisted telemetry value after a future schema change, with no test binding them. | Thread the already-loaded project config's telemetry field into `telemetryGate` instead of re-reading, so a single load is the source of truth for both the roster and the opt-out. | performance | 30 | code-review | claude | MEDIUM |
+ | 7 | [/] | HIGH | internal/scorecard/telemetry.go:18 | (Deferred until 40.0) `HashPersonaID` is a bare, unsalted hex SHA-256 of `Record.Reviewer`. (intent_note: deferred per sprint-plan §2.6 (TD-007)). | A backend architecture decision owned by the (still-undefined) `atcr.dev` team — the same dependency already blocking TD-003's real endpoint. Note: interim mitigation is already complete — the pseudonymous/dictionary-reversible guarantee is documented in internal/scorecard/telemetry.go:19-26,44-45 and docs/telemetry.md:106-127 — and remaining keyed-HMAC-pepper work is blocked on a backend secret and revision to AC 03-01/03-04's plain-SHA-256 pins. | security | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 7 | [/] | LOW | internal/scorecard/telemetry.go:30 | (Deferred until 40.0) `NewTelemetryPersonaRecord` copies `Record.Model` into the telemetry payload unhashed on the asserted assumption that a model identifier is non-PII and already public. (intent_note: deferred per sprint-plan §2.6 (TD-008)). | enforce the assumption (validate `Model` against a known non-sensitive enum at the payload boundary, or scrub it) rather than asserting it in a comment. | performance | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-14] From Sprint: 25.0_sarif_output_integration
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/report/sarif.go:143 | An empty Category yields a rule with id:"" and results with ruleId:"" (intent_note: deferred per sprint-plan §1.2.A — AC 01-03 EC2 mandates empty-Category pass-through). | add category normalization/defaulting ("uncategorized") upstream or in renderSarif, coordinated with an AC 01-03 update [Clarified: pass-through (empty string verbatim) is correct per AC 01-03 EC2; no code change.] | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 2 | [/] | MEDIUM | internal/report/sarif.go:178 | A finding with an empty File emits artifactLocation.uri:"" (intent_note: deferred per sprint-plan §1.2.A — AC 03-01 EC3 mandates empty-File pass-through). | post-4.3 smoke test / future sprint — if GitHub rejects empty-uri results, add a placeholder-uri or location-omission branch and update AC 03-01 accordingly. [Clarified: TD row had copy-pasted FIX from row 77; no production change.] | error-handling | 30 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-14] From Sprint: 24.0_false_positive_wontfix_dismissal
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/localdebt/store.go:67 | The store is append-only with no compaction; every resolve/wontfix appends a full record copy, and every ReadAll/selectOpenDebt/persistLocalDebt re-reads and folds the entire history on each invocation. Combined with the line-sensitive id (record.go StampID), a churny false positive accumulates: each line drift appends a fresh open record plus a fresh wontfix record, growing shards unbounded while every command pays the full O(total-records) scan. There is no cap or GC path. (Deferred: Epic Plan 43.0) | Add a compaction/GC command (or periodic fold-and-rewrite that drops superseded closed records) so shard size tracks live findings, not total history. Verify by simulating many resolve cycles and asserting bounded on-disk size after compaction. | performance | 240 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-12] From Sprint: 20.1_public_td_resolve_skill
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | U | [/] | LOW | internal/scorecard/store.go | Systemic symlink exposure across all five append-only ledgers (localdebt, scorecard, history, audit, debate/tools): each opens its shard with O_CREATE/O_WRONLY/O_APPEND and no O_NOFOLLOW, and MkdirAll follows symlinked path components, so a pre-planted symlink at the ledger path or a parent redirects appends outside the store. LOW: exploiting requires pre-existing local write access to a 0700 per-user/per-repo dir (same-uid, no trust-boundary crossing). localdebt already documents this as an accepted won't-fix (internal/localdebt/doc.go); tracked here so the systemic posture is visible, not localdebt-only. (intent_note: surfaced during 20.1 resolve-td; bundle into a future FS-safety pass, do not fix localdebt in isolation) | Do NOT harden localdebt alone (inconsistent, false security). Bundle into a future filesystem-safety epic: a shared GOOS-guarded O_NOFOLLOW append helper (precedent: internal/tools/open_unix.go and open_other.go) swapped across all five ledgers, plus symlink-planted unix-only tests. Prioritize only if a ledger moves to a shared/multi-user dir or a pentest/supply-chain audit flags it. Final-component only; parent-symlink resistance (openat2/RESOLVE_NO_SYMLINKS) is out of scope. | security | 480 | resolve-td | claude | MEDIUM |
+ 
+ ### [2026-07-11] From Sprint: 20.0_standalone_skill_release
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | go.mod:41 | `go install github.com/samestrin/atcr/cmd/atcr@latest` cannot work for external users. Two layered causes: the root go.mod carries a `replace ... => ./reconcile` directive (Go refuses to install any module whose published go.mod has a replace), and the binding cause is that the samestrin/atcr repo is PRIVATE so the module is not on the public proxy. Makes AC1 (go install), install.sh (AC4), and the go-install lines in README/docs unsatisfiable until the repo is public. (Deferred: .planning/epics/active/33.2_public_launch.md) | Resolve in Epic 33.2 (Public Launch): external `go install` is gated on the repo going public, which happens at launch (Epic 33 cluster). 33.2 makes the repo public, publishes `reconcile` + drops the replace directive, and delivers install.sh + a real-install integration test. | security | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-09] From Sprint: 19.7_live_model_resolution
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | LOW | internal/personas/drift.go | For a bound persona the `family` JSON field is the bare binding token (glm); for a bindingless persona it is the derived vendor/tier prefix (anthropic/claude-opus) — two shapes under one key that a 19.8 agent grouping on `family` would see inconsistently. (intent_note: deferred per sprint-plan §5.6 — shape documented as advisory; normalization deferred to 19.8 (TD-008)) | Phase 8/later: when wiring `models refresh` against the live catalog, confirm the `~…-latest` ids are present; else skip the `missing` check for a lock slug equal to an `aliasTable` value (or resolve alias locks through the passthrough before the catalog lookup) and add a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | 2 | [/] | LOW | internal/personas/upgrade.go | `resolveNewestInPrefix` selects the newest-by-`created` catalog member, but the lock gate advances only when the extracted semver is a version-advance (`isNewer`), so a newer-created-but-lower-semver hotfix slug is selected by the resolver yet blocked by the gate and silently not adopted. | Deferred (Story 6/later, semver philosophy): keep the semver isNewer gate authoritative for the lock-advance decision (consistent with the major-bump re-validation gate and the explicit-upgrade/reproducibility posture), but emit a visible signal in the personas upgrade before→after report or a models check finding when resolveNewestInPrefix's created-order pick diverges from what the gate accepts, rather than silently leaving the lock stale; cover the divergent hotfix case with a test. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | U | [/] | LOW | docs/personas-authoring.md | AC 08-03 Scenario 3 links the shipped persona doc sections to `../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/*.md`; those links resolve now but `/finalize-sprint` moves the sprint active/→completed/, after which the active/ path 404s in the shipped docs. | Future docs-stabilization pass: update the two links to the completed/ path after archival, or promote the durable plan documentation into a stable home (docs/ or .planning/specifications/) and point the persona docs there; add a link-check that fails on a dangling docs→.planning link. | docs | 0 | execute-sprint | execute-sprint | MEDIUM |
+ 
+ ### [2026-07-08] From Sprint: 19.6_community_registry_hub
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | HIGH | cmd/atcr/init.go:47 / cmd/atcr/quickstart.go:102 | `init`/`quickstart` fetch-and-pin the roster `builtins.Names()` (the 9 model-agnostic built-ins: bruce/greta/kai/mira/dax/otto/sasha/penny/ingrid), but the shipped `personas/community/index.json` publishes only the 10 model-indexed library personas (anthony…glenna) — a fully disjoint set. (intent_note: deferred per sprint-plan TD-011) (Deferred: Epic Plan .planning/epics/active/19.7_live_model_resolution.md — design-sprint decision; lean toward publishing built-ins into the community channel behind a model-agnostic tag/gate) | rebuild init/quickstart model enablement so online `init`/`quickstart` deliver a working, non-noisy persona set: either publish the built-in lenses into the community channel behind a model-agnostic gate carve-out (keeps C2), or align the roster with what the index publishes and drop the misleading skip-warning. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+ | u | [/] | LOW | cmd/atcr/init.go:142 | installCommunityPersonas records each candidate's preExisted flag then, on a later roster failure, rollback() removes any candidate path where !preExisted && fileExists. If another process creates <name>.yaml/.md between candidate recording (line 142) and the eventual rollback, the rollback deletes that not-ours file believing this run created it. The window is narrow and needs concurrency; the actual overwrite protection lives in InstallUnit. (Accepted LOW-severity risk — atcr is a single-user local CLI; if ever addressed, add an inode+mtime re-stat guard to the rollback rather than changing InstallUnit's return contract.) | Have rollback delete only files it observed itself successfully create (capture created paths from InstallUnit's result rather than re-deriving from candidates), or re-stat and skip if inode/mtime differs from what this run wrote. Verify with a concurrency test that plants a file mid-roster and asserts it survives rollback. | error-handling | 30 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-06] From Sprint: 19.5_response_truncation_failover
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 1 | [/] | LOW | internal/fanout/artifacts.go:214 | The TD-019 memo short-circuit only fires for parsedFindingCount==0, so a truncated-with-findings result (memo set to >=1 by the failover gate) re-runs stream.ParseModelOutput at line 217 — the redundant parse the refactor aimed to remove, though bounded to the rare truncated-with-findings path. | Cache the parsed []Finding slice on Result rather than only its length so findingsFor can reuse it, or accept the bounded cost. (Won't fix 2026-07-06: accepted the bounded re-parse cost — the parsedFindingCount memo already avoids the redundant parse on the common truncated+zero-finding path; caching the full slice risks aliasing via findingsFor's in-place Finding.Reviewer mutation and downstream grounding/constraint filtering.) | performance | 15 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: 19.4_history_time_sharding
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+ | 2 | [/] | HIGH | cmd/atcr/review.go:285 | Multiple concurrent atcr review processes will append to the same YYYY-MM.jsonl simultaneously without synchronization, causing interleaved JSON lines and ledger corruption (Accepted 2026-07-06: won't-fix — concurrent-append O_APPEND safety is a project-wide TD-004 tradeoff shared by all 5 append-only ledgers (audit, debate, scorecard, tools, history), outside epic 19.4's scope; matches the identical writer.go precedent accepted 2026-07-04 at README:112. Low probability (small per-batch writes are atomic on Linux/macOS O_APPEND) and low impact (a torn line is skipped by Load, no cross-data corruption); a cross-platform lock dependency is not justified for one ledger.) | Acquire a file lock (flock) on the shard or a dedicated lockfile before opening for append | concurrency | 40 | code-review | brad | MEDIUM |
+ | 3 | [/] | MEDIUM | internal/history/shard.go:32 | LoadAll/LoadShards read and JSON-unmarshal every monthly shard on disk, then Filter discards records older than the --since cutoff. The justification for monthly sharding is the YYYY-MM filenames, but the read path throws that structure away: a repo with years of history running the common --since 30d (or the 90d default) still parses every archived month it will immediately drop. (Deferred 2026-07-06: not worth doing now — LOW-value perf optimization; the epic's 1-2yr history bound caps the scan at 12-24 small files. If revisited, add an additive LoadShardsSince(dir, cutoff) variant rather than changing LoadShards/LoadAll signatures, which would ripple into 7+ existing test call sites for no measured benefit.) | Prune glob results in LoadShards by comparing each shard's YYYY-MM stem against the cutoff month before calling Load; pass a lower-bound month into LoadShards/LoadAll (or add a windowed variant) so shards entirely before the window are never opened. Verify with a benchmark over 60 seeded shards and --since 30d reading at most 1-2 files. | performance | 60 | code-review | claude, dax, brad | HIGH |
+ | 3 | [/] | LOW | internal/history/writer.go:39 | Append does an unlocked O_APPEND write and documents that a large buffer split across multiple write() syscalls can be torn by a concurrent append. Epic 19.4 does not change the mechanism but changes exposure: history is now git-tracked and the project is run as multiple concurrent sessions appending to the same YYYY-MM.jsonl within a month. A torn line is silently dropped by Load's malformed-line skip, so lost findings are invisible; sharding by month did not reduce intra-month contention. (Accepted 2026-07-06: won't-fix — same history.Append write site and same decision as cmd/atcr/review.go:285 (resolved in lockstep); no cross-platform lock dependency added. Mirrors the 2026-07-04 accepted precedent for this exact O_APPEND pattern.) | If a hard guarantee is wanted wrap the shard write in an advisory file lock (flock) consistent with the mkdir-flock pattern used in the planning tooling; otherwise document that concurrent same-month runs can lose records. Verify with a stress test of N concurrent Appends and a line-count assertion. | error-handling | 60 | code-review | claude | MEDIUM |
+ 
+ ### [2026-07-05] From Sprint: epic-19.4
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | internal/history/shard.go:32 | LoadShards loads every shard into memory before Filter applies --since, so a narrow window still reads all shards (acceptable within the stated 1-2yr bound; no month-prefix pruning) (Deferred 2026-07-06: duplicate of the MEDIUM month-pruning item at this same line; same decision — defer, add LoadShardsSince additively if ever picked up.) | Skip shard files whose YYYY-MM stem is entirely older than now-since before loading, to keep long histories fast | UNDER_ENGINEERING | 30 | execute-epic-independent |
+ 
+ ### [2026-07-05] From Sprint: epic-19.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+ |-------|---|----------|------|---------|-----|----------|-------------|--------|
+ | 1 | [/] | LOW | cmd/atcr/review.go:384 | The audit hook re-reads sources/pool/findings.txt that the history hook read moments earlier in the same review, so the pool file is parsed twice per review run | Parse the pool findings once in the CLI layer and pass the finding set to both history.RecordReview and audit.RecordReview, or expose a shared parse result (Won't-fix: accepted — the duplicate parse mirrors internal/history's independent capture pattern per epic design; not worth a cross-package signature refactor for a sub-ms, once-per-run gain.) | PERFORMANCE | 30 | execute-epic-cumulative |
+ 
+ ### [2026-07-05] From Review: pr-105-recovery
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index beadaf10..7dbbecbd 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,17 @@
++## [32.2.0] - 2026-07-20
++
++Close two deferred defense-in-depth gaps in the `--auto-fix` sandbox path surfaced during Sprint 32.0 review.
++
++### Changed
++
++- `--auto-fix` host validation now requires an explicit `--no-sandbox` opt-out at the dispatch, not merely a nil sandbox backend: a caller that bypasses the setup gate can no longer inherit a silent unsandboxed run on the host — it fails closed, reverting the patch and making no GitHub call.
++
++### Fixed
++
++- A cancelled sandbox validation (parent-context cancellation, e.g. Ctrl-C) is now classified as a timeout in the Docker backend rather than a spurious backend fault, mirroring the host-path timeout handling.
++
++*Shipped via /execute-epic (epic 32.2)*
++
+ ## [32.1.0] - 2026-07-20
+ 
+ Add a configurable complexity ceiling to the fix executor so cheap/local models can safely skip findings beyond their capability, enabling a two-tier cheap-then-frontier auto-fix workflow.
+diff --git a/cmd/atcr/autofix.go b/cmd/atcr/autofix.go
+index 2e7cc991..3b8e0f73 100644
+--- a/cmd/atcr/autofix.go
++++ b/cmd/atcr/autofix.go
+@@ -88,23 +88,33 @@ func warnNoSandbox(out io.Writer) {
+ // autoFixBackend holds the fully-resolved backend the gate validated, so
+ // runAutoFix consumes it without re-resolving any piece (AC 06-03).
+ type autoFixBackend struct {
+ 	applyTarget     string // absolute working-tree path the patch is applied to
+ 	validateArgv    []string
+ 	validateTimeout time.Duration
+ 	owner           string
+ 	repo            string
+ 	token           string
+ 	apiURL          string
+ 	// sandboxBackend is the resolved-and-preflighted container backend the
+ 	// validation step runs inside (the gate's fourth checked piece, AC 02-03).
+-	// nil means validation runs directly on the host — the --no-sandbox opt-out
+-	// path (AC 03-02), never a silent fallback: under the default sandboxed-on
+-	// posture an unresolvable sandbox is a hard gate refusal, so a nil here only
+-	// ever reflects an explicit operator opt-out.
++	// When non-nil, validation is sandboxed. A nil here is NOT sufficient to run
++	// on the host: host execution additionally requires noSandbox (below) to be
++	// true, so a nil backend without the explicit opt-out is a fail-closed refusal
++	// rather than a silent unsandboxed fallback (epic 32.2 Task 1). Under the
++	// default sandboxed-on posture an unresolvable sandbox is a hard gate refusal,
++	// so in production a nil here only ever accompanies noSandbox==true.
+ 	sandboxBackend sandbox.Backend
++	// noSandbox records that the operator explicitly passed --no-sandbox: it is the
++	// ONLY thing that authorizes runAutoFix to run validation unsandboxed on the
++	// host. It is set true solely on the warned opt-out path in
++	// validateAutoFixBackend; a directly-constructed backend (a future caller or a
++	// test) that leaves it false and supplies no sandboxBackend is refused at the
++	// dispatch, decoupling the fail-closed guarantee from the gate hard-coding
++	// enabled=true (epic 32.2 Task 1, replacing AC 01-03's nil→host baseline).
++	noSandbox bool
+ }
+ 
+ // resolveValidateTimeout picks the effective validation timeout: an operator-
+ // configured auto_fix.validate_timeout wins; otherwise defaultValidationTimeout.
+ // The value is validated at config load (AutoFixConfig.Validate), so a parse
+ // error here is defensive.
+@@ -127,161 +137,166 @@ func resolveValidateTimeout(af *registry.AutoFixConfig) (time.Duration, error) {
+ // validateAutoFixBackend is the single, all-or-nothing gate for `--auto-fix`. It
+ // resolves and shape-checks, in one pass, the three required backend pieces —
+ // (1) an apply target (an existing directory), (2) a validation command (Story
+ // 2's config or Go default), and (3) GitHub token + owner/name repo (flags or
+ // env) — plus the validation timeout. It performs only local checks (env/flag
+ // reads, config-shape parsing, one os.Stat); it never makes a network call or
+ // executes the validation command.
+ //
+ // Precondition it CANNOT verify (TD-001): the token must carry contents:write +
+ // pull_requests:write. Confirming that needs a live API call, which this
+ // local-only gate deliberately avoids, so the scope is a documented precondition
+ // (here and on the --auto-fix flag) rather than a runtime smoke-check; an
+ // under-scoped token surfaces only as a GitHub 403 at the first mutating call.
+ //
+ // Any missing/malformed piece makes the whole
+ // run refuse: every failure is collected and returned as one usage error (exit
+ // 2) naming every missing piece, so a half-configured backend fails fast before
+ // any file is touched. The one exception is the sandbox check (4): it shells out
+ // to docker and spawns a throwaway container, so it runs only when the cheap
+ // local checks (1-3) passed — a run already refusing does not pay that cost.
+ // On success it returns the fully-resolved backend and nil.
+ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, repoRoot string) (autoFixBackend, error) {
+ 	var be autoFixBackend
+ 	var missing []string
+ 
+ 	var af *registry.AutoFixConfig
+ 	if proj != nil {
+ 		af = proj.AutoFix
+ 	}
+ 
+ 	// (1) Apply target — must be an existing directory that resolves to the repo
+ 	// root itself. The resolved path is made absolute so it is independent of the
+ 	// caller's CWD (runReview passes repoRoot="."; TD-019). A subdirectory target
+ 	// is refused: the patch is applied and validated under applyTarget but the
+ 	// commit sends repo-root-relative paths, so a non-root target would certify a
+ 	// file GitHub never receives (autofix.go:274 commit-path mismatch). Until path
+ 	// translation is implemented, only the repo root is accepted.
+ 	applyTarget := "."
+ 	if af != nil && strings.TrimSpace(af.ApplyTarget) != "" {
+ 		applyTarget = strings.TrimSpace(af.ApplyTarget)
+ 	}
+ 	absTarget := applyTarget
+ 	if !filepath.IsAbs(absTarget) {
+ 		absTarget = filepath.Join(repoRoot, applyTarget)
+ 	}
+ 	absTarget, absErr := filepath.Abs(absTarget)
+ 	absRoot, rootErr := filepath.Abs(repoRoot)
+ 	info, statErr := os.Stat(absTarget)
+ 	switch {
+ 	case absErr != nil || rootErr != nil:
+ 		missing = append(missing, fmt.Sprintf(
+ 			"apply target: cannot resolve %q to an absolute path (set auto_fix.apply_target in .atcr/config.yaml)", applyTarget))
+ 	case statErr != nil || !info.IsDir():
+ 		missing = append(missing, fmt.Sprintf(
+ 			"apply target: working tree path %q not found or not a directory (set auto_fix.apply_target in .atcr/config.yaml)", applyTarget))
+ 	case absTarget != absRoot:
+ 		missing = append(missing, fmt.Sprintf(
+ 			"apply target: %q must resolve to the repository root; a subdirectory apply_target is not supported because fixes are committed with repo-root-relative paths (set auto_fix.apply_target to the repo root)", applyTarget))
+ 	default:
+ 		be.applyTarget = absTarget
+ 	}
+ 
+ 	// (2) Validation command — configured argv wins, else Story 2's Go default;
+ 	// a project with neither is a hard refusal (never validate silently).
+ 	var configured []string
+ 	if af != nil {
+ 		configured = af.ValidateCommand
+ 	}
+ 	if argv, err := verify.ResolveValidateCommand(configured, repoRoot); err != nil {
+ 		missing = append(missing,
+ 			"validation command: no command configured and no default for this project type (set auto_fix.validate_command in .atcr/config.yaml)")
+ 	} else {
+ 		be.validateArgv = argv
+ 	}
+ 	if to, err := resolveValidateTimeout(af); err != nil {
+ 		missing = append(missing, err.Error())
+ 	} else {
+ 		be.validateTimeout = to
+ 	}
+ 
+ 	// (3) GitHub repo + token — flags win over env (envOr), shape-only checks.
+ 	repoFlag, _ := cmd.Flags().GetString("repo")
+ 	if owner, repo, err := parseRepo(envOr(repoFlag, "GITHUB_REPOSITORY")); err != nil {
+ 		missing = append(missing, err.Error())
+ 	} else {
+ 		be.owner, be.repo = owner, repo
+ 	}
+ 	tokenFlag, _ := cmd.Flags().GetString("token")
+ 	if token := envOr(tokenFlag, "GITHUB_TOKEN"); token == "" {
+ 		missing = append(missing, "a GitHub token is required (pass --token or set GITHUB_TOKEN)")
+ 	} else {
+ 		be.token = token
+ 	}
+ 	apiURLFlag, _ := cmd.Flags().GetString("api-url")
+ 	be.apiURL = envOr(apiURLFlag, "GITHUB_API_URL")
+ 	// Shape-check the api-url now (local, no network) so a malformed or insecure
+ 	// value is a fail-closed refusal before any file is touched, rather than
+ 	// surfacing lazily at the first HTTP call in ghaction.Client.baseURL (TD-014).
+ 	if err := ghaction.ValidateAPIURL(be.apiURL); err != nil {
+ 		missing = append(missing, err.Error())
+ 	}
+ 
+ 	// (4) Sandbox backend — the validation step's container isolation, resolved and
+ 	// preflighted here so an unconfigured/unreachable sandbox refuses at the gate
+ 	// alongside the other pieces rather than surfacing mid-run. Under the default
+ 	// sandboxed-on posture `enabled` is true, so a nil/failing sandbox is a hard
+ 	// refusal that joins the same `missing` slice (append-or-assign, no early
+ 	// return) — mirroring resolveExec's ResolveExecBackend call but inverting the
+ 	// polarity (verify.go:54). Preflight shells out to the local `docker` binary
+ 	// only (no GitHub/HTTP call of the gate's own), so the "no GitHub network before
+ 	// the gate passes" invariant holds; note that `docker` itself honors DOCKER_HOST
+ 	// and may contact a remote/DinD daemon, so "local" here means "no direct network
+ 	// I/O by this gate", not "docker never talks to a remote daemon". The
+ 	// --no-sandbox opt-out (Story 3) short-circuits this whole check before resolution.
+ 	var sandboxConfig *registry.SandboxConfig
+ 	if proj != nil {
+ 		sandboxConfig = proj.Sandbox
+ 	}
+ 	// The --no-sandbox opt-out short-circuits the entire sandbox check BEFORE any
+ 	// resolution: the resolver is never called (not even to no-op on a disabled
+ 	// flag), so no Docker/`sandbox:` config is required and be.sandboxBackend stays
+ 	// nil — validation will run directly on the host (AC 03-02). The bypass is
+ 	// scoped to sandbox resolution only; the other three checks above already ran
+ 	// and stay enforced. It is gated strictly on true (not "flag was set"), so
+ 	// --no-sandbox=false is identical to the flag being absent.
+ 	noSandbox, _ := cmd.Flags().GetBool("no-sandbox")
+ 	if noSandbox {
++		// Record the explicit opt-out on the backend: it is the ONLY thing that
++		// authorizes runAutoFix to run validation unsandboxed on the host — a nil
++		// sandboxBackend alone is refused at the dispatch (epic 32.2 Task 1). This is
++		// the single setter of be.noSandbox.
++		be.noSandbox = true
+ 		// Fire the security warning the moment the bypass is chosen — unconditional
+ 		// and non-memoized (every invocation), so the operator can never lose sight
+ 		// of running untrusted LLM-generated validation on the host (AC 03-03).
+ 		warnNoSandbox(cmd.ErrOrStderr())
+ 	} else if len(missing) == 0 {
+ 		// Resolve/preflight the sandbox only when the cheap local checks above
+ 		// passed: resolution shells out to docker and spawns a throwaway
+ 		// container, so a run already refusing on a missing apply-target /
+ 		// validate-command / repo / token must not pay that cost before exit 2.
+ 		// cmd.Context() is nil on a bare command that was never executed (cobra
+ 		// does not default it); production always reaches here via ExecuteContext,
+ 		// so this guard only backstops direct callers and tests. Preflight (a local
+ 		// `docker` subprocess) needs a real ctx.
+ 		ctx := cmd.Context()
+ 		if ctx == nil {
+ 			ctx = context.Background()
+ 		}
+ 		if backend, err := resolveAutoFixSandboxFn(ctx, true, sandboxConfig); err != nil {
+ 			missing = append(missing, fmt.Sprintf("sandbox: %s", err.Error()))
+ 		} else {
+ 			be.sandboxBackend = backend
+ 		}
+ 	}
+ 
+ 	if len(missing) > 0 {
+ 		return autoFixBackend{}, usageError(fmt.Errorf("--auto-fix cannot run: %s", strings.Join(missing, "; ")))
+ 	}
+ 	return be, nil
+ }
+ 
+ // autoFixGitHub is the subset of ghaction.Client runAutoFix drives, extracted as
+ // an interface so the orchestration's sequencing guarantee can be tested with a
+ // call-recording fake (and the Phase 6 httptest stub) without a live client.
+ // *ghaction.Client satisfies it.
+@@ -341,115 +356,135 @@ func validationOutputTail(stdout string) string {
+ // runAutoFix executes the gated pipeline: apply → validate → revert-or-continue →
+ // branch/commit/PR. Its single invariant: no GitHub-mutating call is reachable
+ // until local validation has PASSED. On an apply failure or a validation failure
+ // (non-zero exit, timeout, or a command that cannot start) it reverts every
+ // touched file and returns without making any GitHub call. Only after a clean
+ // validation does it clean up the backups and open (or update) the PR.
+ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFixRun) error {
+ 	be := run.Backend
+ 
+ 	bm, applyErr := autofix.ApplyPatch(be.applyTarget, run.Entries)
+ 	if applyErr != nil {
+ 		// Some files may have landed before the failure; restore the tree and
+ 		// never touch GitHub.
+ 		if rerr := autofix.RevertPatch(ctx, bm); rerr != nil {
+ 			return fmt.Errorf("auto-fix: applying patch failed AND revert failed: %w; original apply error: %v", rerr, applyErr)
+ 		}
+ 		return fmt.Errorf("auto-fix: applying patch (working tree reverted, no GitHub changes made): %w", applyErr)
+ 	}
+ 
+ 	// Route validation through the resolved sandbox backend when one is present
+-	// (the default sandboxed-on posture), else run it directly on the host — the
+-	// --no-sandbox opt-out, which leaves be.sandboxBackend nil (AC 01-03/03-02).
+-	// Both paths return the identical verify.ValidationResult contract, so the three
+-	// post-call branches below (verr != nil / !res.Passed() / success) are consumed
+-	// unchanged regardless of which path produced the result.
++	// (the default sandboxed-on posture), else run it directly on the host ONLY when
++	// the operator explicitly opted out via --no-sandbox (be.noSandbox). A nil
++	// backend WITHOUT that opt-out fails closed rather than falling back to the host:
++	// this supersedes AC 01-03's original nil→host zero-behavior baseline, decoupling
++	// the fail-closed guarantee from the gate hard-coding enabled=true so a
++	// gate-bypassing caller cannot inherit a silent unsandboxed run (epic 32.2 Task 1;
++	// AC 03-02 still governs the opt-out path). Both non-refusing paths return the
++	// identical verify.ValidationResult contract, so the three post-call branches
++	// below (verr != nil / !res.Passed() / success) are consumed unchanged regardless
++	// of which path produced the result.
+ 	//
+ 	// Accepted taxonomy divergence for exits 125-127: on the host path a validation
+ 	// command exiting 125/126/127 is an ordinary non-zero program exit and lands in
+ 	// the !res.Passed() branch as "validation failed (exit N)". On the sandbox path
+ 	// docker reserves 125-127 for its own launch faults (daemon/exec/permission), so
+ 	// the backend reclassifies exit >=125 as a runtime fault (docker.go:258) ->
+ 	// StartError -> the verr != nil "cannot run validation" branch instead (AC 01-02
+ 	// documents 125-127 -> StartError as intentional). Same command intent, different
+ 	// branch and operator wording — deliberate, since docker cannot tell a program's
+ 	// 125-127 apart from its own, not a divergence in the shared contract.
+ 	var res verify.ValidationResult
+ 	var verr error
+-	if be.sandboxBackend != nil {
++	switch {
++	case be.sandboxBackend != nil:
+ 		res, verr = verify.RunSandboxedValidation(ctx, be.sandboxBackend, be.validateArgv, be.applyTarget, be.validateTimeout)
+-	} else {
++	case be.noSandbox:
++		// Host path — reachable ONLY via the explicit --no-sandbox opt-out, which is
++		// the sole setter of be.noSandbox (validateAutoFixBackend). AC 01-03/03-02.
+ 		res, verr = verify.RunConfiguredValidation(ctx, be.validateArgv, be.applyTarget, be.validateTimeout)
++	default:
++		// Fail closed: a nil sandbox backend WITHOUT the --no-sandbox opt-out must
++		// never silently run unsandboxed on the host. This decouples the fail-closed
++		// guarantee from the gate hard-coding enabled=true — a future/test caller that
++		// constructs autoFixBackend directly and bypasses the gate is refused here, not
++		// silently run on the host (epic 32.2 Task 1). The patch has already been
++		// applied above, so revert it and make no GitHub call, exactly like a
++		// validation failure.
++		if rerr := autofix.RevertPatch(ctx, bm); rerr != nil {
++			return fmt.Errorf("auto-fix: refusing unsandboxed host validation without --no-sandbox AND revert failed: %w", rerr)
++		}
++		return fmt.Errorf("auto-fix: refusing to run validation unsandboxed on the host without an explicit --no-sandbox opt-out (no sandbox backend was resolved); working tree reverted, no GitHub changes made")
+ 	}
+ 	if verr != nil {
+ 		// Could not even validate: fail closed exactly like a validation failure.
+ 		if rerr := autofix.RevertPatch(ctx, bm); rerr != nil {
+ 			return fmt.Errorf("auto-fix: cannot validate AND revert failed: %w; validation error: %v", rerr, verr)
+ 		}
+ 		return fmt.Errorf("auto-fix: cannot run validation (working tree reverted, no GitHub changes made): %w", verr)
+ 	}
+ 	if !res.Passed() {
+ 		if rerr := autofix.RevertPatch(ctx, bm); rerr != nil {
+ 			return fmt.Errorf("auto-fix: validation failed AND revert failed: %w", rerr)
+ 		}
+ 		if res.TimedOut {
+ 			// A timeout leaves ExitCode at 0 (both translation paths), so the
+ 			// generic exit-code wording would read "failed (exit 0)" — name the
+ 			// timeout explicitly instead.
+ 			return fmt.Errorf("auto-fix: local validation timed out after %s; working tree reverted, no GitHub changes made%s",
+ 				be.validateTimeout, validationOutputTail(res.Stdout))
+ 		}
+ 		return fmt.Errorf("auto-fix: local validation failed (exit %d); working tree reverted, no GitHub changes made%s",
+ 			res.ExitCode, validationOutputTail(res.Stdout))
+ 	}
+ 
+ 	// Validation passed — the tree is trustworthy. Drop the now-redundant backups
+ 	// (best-effort) and proceed to the remote mutation, which is unreachable above.
+ 	autofix.CleanupBackups(ctx, bm)
+ 
+ 	// A pull request needs a non-empty base branch to merge into. Guard it BEFORE
+ 	// creating the branch/commit so a missing base can never leave an orphan
+ 	// branch and commit behind on the remote (GitHub 422s an empty base).
+ 	if strings.TrimSpace(run.Base) == "" {
+ 		return fmt.Errorf("auto-fix: no base branch resolved for the pull request; no GitHub changes made")
+ 	}
+ 
+ 	files, err := commitFilesFrom(be.applyTarget, run.Entries)
+ 	if err != nil {
+ 		return fmt.Errorf("auto-fix: preparing commit files: %w", err)
+ 	}
+ 
+ 	if err := gh.CreateBranch(ctx, be.owner, be.repo, run.Branch, run.BaseSHA); err != nil {
+ 		return fmt.Errorf("auto-fix: creating branch %q: %w", run.Branch, err)
+ 	}
+ 	if _, err := gh.CreateCommit(ctx, be.owner, be.repo, ghaction.CommitRequest{
+ 		Branch:    run.Branch,
+ 		Message:   run.Message,
+ 		ParentSHA: run.BaseSHA,
+ 		Files:     files,
+ 	}); err != nil {
+ 		return fmt.Errorf("auto-fix: committing fix to %q: %w%s", run.Branch, err, remoteLeftoverNotice(run.Branch))
+ 	}
+ 
+ 	prReq := ghaction.PullRequestRequest{Head: run.Branch, Base: run.Base, Title: run.Title, Body: run.Body}
+ 	num, found, err := gh.FindOpenPullRequest(ctx, be.owner, be.repo, run.Branch)
+ 	if err != nil {
+ 		return fmt.Errorf("auto-fix: checking for an existing pull request on branch %q: %w%s", run.Branch, err, remoteLeftoverNotice(run.Branch))
+ 	}
+ 	if found {
+ 		if err := gh.UpdatePullRequest(ctx, be.owner, be.repo, num, prReq); err != nil {
+ 			return fmt.Errorf("auto-fix: updating pull request #%d: %w%s", num, err, remoteLeftoverNotice(run.Branch))
+ 		}
+ 		_, _ = fmt.Fprintf(out, "auto-fix: updated pull request #%d on %s/%s\n", num, be.owner, be.repo)
+ 		return nil
+ 	}
+ 	created, err := gh.CreatePullRequest(ctx, be.owner, be.repo, prReq)
+ 	if err != nil {
+ 		return fmt.Errorf("auto-fix: opening pull request for branch %q: %w%s", run.Branch, err, remoteLeftoverNotice(run.Branch))
+ 	}
+ 	_, _ = fmt.Fprintf(out, "auto-fix: opened pull request #%d on %s/%s\n", created, be.owner, be.repo)
+ 	return nil
+ }
+ 
+ // commitFilesFrom reads the post-validation content of each applied entry into a
+ // CommitFile. A file that no longer exists after apply is a deletion (null-SHA
+ // tree entry); otherwise its current on-disk bytes are the commit content.
+diff --git a/cmd/atcr/autofix_integration_test.go b/cmd/atcr/autofix_integration_test.go
+index 2581b437..4f08bded 100644
+--- a/cmd/atcr/autofix_integration_test.go
++++ b/cmd/atcr/autofix_integration_test.go
+@@ -124,153 +124,157 @@ func stubHeadSHA(t *testing.T, sha string) {
+ // TestAutoFixIntegration_HappyPathOpensPR (Task 6.1, validation-PASS branch):
+ // drives the real `--auto-fix` entry point orchestrateAutoFix end-to-end against
+ // the GitHub stub. A reconciled finding carrying a fix diff is applied, local
+ // validation passes, and the full branch→commit→PR sequence fires over real HTTP,
+ // producing a PR against the stub. The applied content stays on disk.
+ func TestAutoFixIntegration_HappyPathOpensPR(t *testing.T) {
+ 	isolate(t) // fresh cwd + isolated HOME; verifyFixture writes under ./.atcr
+ 
+ 	applyDir := t.TempDir()
+ 	rel := "f.txt"
+ 	require.NoError(t, os.WriteFile(filepath.Join(applyDir, rel), []byte("old\n"), 0o644))
+ 
+ 	srv, stub := newGHStub(t)
+ 	stubHeadSHA(t, "basecommitsha")
+ 
+ 	id := verifyFixture(t, "af-happy", []reconcile.JSONFinding{
+ 		{Severity: "HIGH", File: rel, Line: 1, Problem: "x", Confidence: "HIGH", Fix: diffFor(rel)},
+ 	})
+ 	reviewDir := filepath.Join(".atcr", "reviews", id)
+ 
+ 	be := autoFixBackend{
+ 		applyTarget:     applyDir,
+ 		validateArgv:    []string{"true"}, // validation passes
+ 		validateTimeout: 5 * time.Second,
+ 		owner:           "o", repo: "r", token: "tok",
+-		apiURL: srv.URL,
++		apiURL:    srv.URL,
++		noSandbox: true, // explicit --no-sandbox opt-out (host path)
+ 	}
+ 
+ 	var out strings.Builder
+ 	err := orchestrateAutoFix(context.Background(), &out, be, reviewDir, "", "main")
+ 	require.NoError(t, err)
+ 
+ 	// A PR was opened against the stub.
+ 	require.Contains(t, out.String(), "opened pull request #42")
+ 	require.True(t, stub.saw("POST /repos/o/r/git/refs"), "branch must be created")
+ 	require.True(t, stub.saw("POST /repos/o/r/git/commits"), "commit must be created")
+ 	require.True(t, stub.saw("PATCH /repos/o/r/git/refs/heads/"), "branch ref must be advanced")
+ 	require.True(t, stub.saw("GET /repos/o/r/pulls"), "existence check (create-vs-update) must run before opening a PR")
+ 	require.True(t, stub.saw("POST /repos/o/r/pulls"), "PR must be opened")
+ 
+ 	// The validated fix stays applied to the working tree.
+ 	got, rerr := os.ReadFile(filepath.Join(applyDir, rel))
+ 	require.NoError(t, rerr)
+ 	require.Equal(t, "new\n", string(got))
+ }
+ 
+ // TestAutoFixIntegration_ValidationFailRevertsThroughEntryPoint (Task 6.1,
+ // validation-FAIL branch): the same real entry point, but validation fails. The
+ // working tree is reverted to its pre-patch content and the GitHub stub receives
+ // ZERO requests — proving no remote mutation is reachable before validation
+ // passes, exercised end-to-end through orchestrateAutoFix.
+ func TestAutoFixIntegration_ValidationFailRevertsThroughEntryPoint(t *testing.T) {
+ 	isolate(t)
+ 
+ 	applyDir := t.TempDir()
+ 	rel := "f.txt"
+ 	require.NoError(t, os.WriteFile(filepath.Join(applyDir, rel), []byte("old\n"), 0o644))
+ 
+ 	srv, stub := newGHStub(t)
+ 	stubHeadSHA(t, "basecommitsha")
+ 
+ 	id := verifyFixture(t, "af-fail", []reconcile.JSONFinding{
+ 		{Severity: "HIGH", File: rel, Line: 1, Problem: "x", Confidence: "HIGH", Fix: diffFor(rel)},
+ 	})
+ 	reviewDir := filepath.Join(".atcr", "reviews", id)
+ 
+ 	be := autoFixBackend{
+ 		applyTarget:     applyDir,
+ 		validateArgv:    []string{"false"}, // validation fails
+ 		validateTimeout: 5 * time.Second,
+ 		owner:           "o", repo: "r", token: "tok",
+-		apiURL: srv.URL,
++		apiURL:    srv.URL,
++		noSandbox: true, // explicit --no-sandbox opt-out (host path)
+ 	}
+ 
+ 	err := orchestrateAutoFix(context.Background(), io.Discard, be, reviewDir, "", "main")
+ 	require.Error(t, err)
+ 	// Pin the intended non-zero-exit validation-failure branch specifically (not
+ 	// the cannot-start branch, which also says "reverted"), so the test can't
+ 	// green while exercising the wrong path.
+ 	require.Contains(t, err.Error(), "local validation failed (exit")
+ 	require.Equal(t, 0, stub.count(), "no GitHub call may fire when validation fails")
+ 
+ 	got, rerr := os.ReadFile(filepath.Join(applyDir, rel))
+ 	require.NoError(t, rerr)
+ 	require.Equal(t, "old\n", string(got), "working tree must be reverted to pre-patch content")
+ }
+ 
+ // TestAutoFixIntegration_ZeroHTTPOnValidationFailure (Task 6.2): an INDEPENDENT
+ // cross-check of the zero-HTTP guarantee via a different route — runAutoFix
+ // driven directly with a real *ghaction.Client (injected entries), rather than
+ // through orchestrateAutoFix. Two independent paths reaching the same assertion
+ // guard against a false-green from httptest mis-routing in either one. When
+ // validation fails, the stub's request counter must be exactly 0 and the tree
+ // must be restored.
+ func TestAutoFixIntegration_ZeroHTTPOnValidationFailure(t *testing.T) {
+ 	root := t.TempDir()
+ 	rel := "f.txt"
+ 	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+ 
+ 	srv, stub := newGHStub(t)
+ 	gh := &ghaction.Client{APIURL: srv.URL, Token: "tok"}
+ 
+ 	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+ 		Backend: autoFixBackend{
+ 			applyTarget:     root,
+ 			validateArgv:    []string{"false"}, // validation fails
+ 			validateTimeout: 5 * time.Second,
+ 			owner:           "o", repo: "r", token: "tok", apiURL: srv.URL,
++			noSandbox: true, // explicit --no-sandbox opt-out (host path)
+ 		},
+ 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+ 		BaseSHA: "basecommitsha", Base: "main", Branch: "atcr/auto-fix",
+ 		Title: "fix", Body: "b", Message: "m",
+ 	})
+ 	require.Error(t, err)
+ 	require.Equal(t, 0, stub.count(), "the GitHub stub must receive zero requests on the validation-failure path")
+ 
+ 	got, rerr := os.ReadFile(filepath.Join(root, rel))
+ 	require.NoError(t, rerr)
+ 	require.Equal(t, "old\n", string(got), "the working tree must be reverted")
+ }
+ 
+ // TestAutoFixIntegration_ValidationPassCreatesPRViaRealClient (Task 6.1 support):
+ // the validation-PASS branch through runAutoFix with a real *ghaction.Client,
+ // confirming the real HTTP client (not the fake) drives the full sequence and
+ // decodes the stub's PR number. Complements the orchestrateAutoFix happy path.
+ func TestAutoFixIntegration_ValidationPassCreatesPRViaRealClient(t *testing.T) {
+ 	root := t.TempDir()
+ 	rel := "f.txt"
+ 	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+ 
+ 	srv, stub := newGHStub(t)
+ 	gh := &ghaction.Client{APIURL: srv.URL, Token: "tok"}
+ 
+ 	var out strings.Builder
+ 	err := runAutoFix(context.Background(), &out, gh, autoFixRun{
+ 		Backend: autoFixBackend{
+ 			applyTarget:     root,
+ 			validateArgv:    []string{"true"}, // validation passes
+ 			validateTimeout: 5 * time.Second,
+ 			owner:           "o", repo: "r", token: "tok", apiURL: srv.URL,
++			noSandbox: true, // explicit --no-sandbox opt-out (host path)
+ 		},
+ 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+ 		BaseSHA: "basecommitsha", Base: "main", Branch: "atcr/auto-fix",
+ 		Title: "fix", Body: "b", Message: "m",
+ 	})
+ 	require.NoError(t, err)
+ 	require.Contains(t, out.String(), "opened pull request #42")
+ 	require.True(t, stub.saw("POST /repos/o/r/pulls"), "PR must be opened over real HTTP")
+ 	require.Greater(t, stub.count(), 4, "the full Git Data API sequence must fire")
+ 
+ 	got, _ := os.ReadFile(filepath.Join(root, rel))
+ 	require.Equal(t, "new\n", string(got), "validated content stays applied")
+ }
+diff --git a/cmd/atcr/autofix_test.go b/cmd/atcr/autofix_test.go
+index 1a78fc2c..c98c20d3 100644
+--- a/cmd/atcr/autofix_test.go
++++ b/cmd/atcr/autofix_test.go
+@@ -514,168 +514,173 @@ func diffFor(rel string) string {
+ // TestRunAutoFix_ValidationFailRevertsAndSkipsGitHub: when local validation
+ // fails, the tree is reverted and ZERO GitHub calls fire (the core AC4/AC5
+ // sequencing guarantee).
+ func TestRunAutoFix_ValidationFailRevertsAndSkipsGitHub(t *testing.T) {
+ 	root := t.TempDir()
+ 	rel := "f.txt"
+ 	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+ 
+ 	gh := &fakeGitHub{}
+ 	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+ 		Backend: autoFixBackend{
+ 			applyTarget:     root,
+ 			validateArgv:    []string{"false"}, // always exits non-zero
+ 			validateTimeout: 5 * time.Second,
+ 			owner:           "o", repo: "r", token: "tok",
++			noSandbox: true, // explicit --no-sandbox opt-out (host path)
+ 		},
+ 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+ 		BaseSHA: "base", Branch: "atcr/auto-fix",
+ 	})
+ 	require.Error(t, err)
+ 	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR, "no GitHub call may fire on validation failure")
+ 	got, rerr := os.ReadFile(filepath.Join(root, rel))
+ 	require.NoError(t, rerr)
+ 	require.Equal(t, "old\n", string(got), "the working tree must be reverted to pre-patch content")
+ }
+ 
+ // TestRunAutoFix_ValidationPassCreatesPR: on validation success, the flow creates
+ // a branch/commit and opens a PR (no existing one).
+ func TestRunAutoFix_ValidationPassCreatesPR(t *testing.T) {
+ 	root := t.TempDir()
+ 	rel := "f.txt"
+ 	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+ 
+ 	gh := &fakeGitHub{}
+ 	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+ 		Backend: autoFixBackend{
+ 			applyTarget:     root,
+ 			validateArgv:    []string{"true"}, // always exits zero
+ 			validateTimeout: 5 * time.Second,
+ 			owner:           "o", repo: "r", token: "tok",
++			noSandbox: true, // explicit --no-sandbox opt-out (host path)
+ 		},
+ 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+ 		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+ 	})
+ 	require.NoError(t, err)
+ 	require.Equal(t, 1, gh.branchCalls)
+ 	require.Equal(t, 1, gh.commitCalls)
+ 	require.Equal(t, 1, gh.createPR)
+ 	require.Equal(t, 0, gh.updatePR)
+ 	got, _ := os.ReadFile(filepath.Join(root, rel))
+ 	require.Equal(t, "new\n", string(got), "validated content stays applied")
+ }
+ 
+ // TestRunAutoFix_ValidationPassUpdatesExistingPR: on validation success, when an
+ // open PR already exists for the branch, runAutoFix UPDATES it and never opens a
+ // duplicate — the create-vs-update decision (AC 05-02) verified at the
+ // orchestration seam. The fakeGitHub reports an existing open PR so runAutoFix
+ // takes the found=true branch (the create-path test above exercises found=false).
+ func TestRunAutoFix_ValidationPassUpdatesExistingPR(t *testing.T) {
+ 	root := t.TempDir()
+ 	rel := "f.txt"
+ 	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+ 
+ 	gh := &fakeGitHub{findFound: true, findNumber: 17}
+ 	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+ 		Backend: autoFixBackend{
+ 			applyTarget:     root,
+ 			validateArgv:    []string{"true"}, // always exits zero
+ 			validateTimeout: 5 * time.Second,
+ 			owner:           "o", repo: "r", token: "tok",
++			noSandbox: true, // explicit --no-sandbox opt-out (host path)
+ 		},
+ 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+ 		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+ 	})
+ 	require.NoError(t, err)
+ 	require.Equal(t, 1, gh.findCalls, "the existence check must run")
+ 	require.Equal(t, 1, gh.updatePR, "an existing open PR must be updated")
+ 	require.Equal(t, 0, gh.createPR, "no duplicate PR may be created when one is already open")
+ 	got, _ := os.ReadFile(filepath.Join(root, rel))
+ 	require.Equal(t, "new\n", string(got), "validated content stays applied")
+ }
+ 
+ // TestRunAutoFix_EmptyBaseRefusesBeforeGitHub: a missing PR base branch must be
+ // caught AFTER a clean validation but BEFORE any GitHub call, so no orphan
+ // branch/commit is ever pushed (adversarial 5.2.A HIGH regression guard).
+ func TestRunAutoFix_EmptyBaseRefusesBeforeGitHub(t *testing.T) {
+ 	root := t.TempDir()
+ 	rel := "f.txt"
+ 	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+ 
+ 	gh := &fakeGitHub{}
+ 	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+ 		Backend: autoFixBackend{
+ 			applyTarget:     root,
+ 			validateArgv:    []string{"true"}, // validation passes
+ 			validateTimeout: 5 * time.Second,
+ 			owner:           "o", repo: "r", token: "tok",
++			noSandbox: true, // explicit --no-sandbox opt-out (host path)
+ 		},
+ 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+ 		BaseSHA: "base", Base: "", Branch: "atcr/auto-fix", // no base branch
+ 	})
+ 	require.Error(t, err)
+ 	require.Contains(t, err.Error(), "base branch")
+ 	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
+ 		"no GitHub call may fire when the PR base is unresolved")
+ }
+ 
+ // TestRunAutoFix_RemoteLeftoverNotice: after CreateBranch succeeds, any failure
+ // in CreateCommit / FindOpenPullRequest / CreatePullRequest must tell the
+ // operator that a remote branch (and possibly commit) was left behind and must
+ // be deleted manually — the local RevertPatch cannot undo remote state.
+ func TestRunAutoFix_RemoteLeftoverNotice(t *testing.T) {
+ 	cases := []struct {
+ 		name      string
+ 		gh        *fakeGitHub
+ 		wantCalls int
+ 	}{
+ 		{
+ 			name:      "CreateCommit fails",
+ 			gh:        &fakeGitHub{commitErr: errors.New("boom")},
+ 			wantCalls: 2, // branch created, commit attempted and failed
+ 		},
+ 		{
+ 			name:      "FindOpenPullRequest fails",
+ 			gh:        &fakeGitHub{findErr: errors.New("boom")},
+ 			wantCalls: 2, // branch + commit created, find attempted
+ 		},
+ 		{
+ 			name:      "CreatePullRequest fails",
+ 			gh:        &fakeGitHub{createPRErr: errors.New("boom")},
+ 			wantCalls: 2, // branch + commit created, find succeeded, create attempted
+ 		},
+ 	}
+ 
+ 	for _, tc := range cases {
+ 		t.Run(tc.name, func(t *testing.T) {
+ 			root := t.TempDir()
+ 			rel := "f.txt"
+ 			require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+ 
+ 			err := runAutoFix(context.Background(), io.Discard, tc.gh, autoFixRun{
+ 				Backend: autoFixBackend{
+ 					applyTarget:     root,
+ 					validateArgv:    []string{"true"},
+ 					validateTimeout: 5 * time.Second,
+ 					owner:           "o", repo: "r", token: "tok",
++					noSandbox: true, // explicit --no-sandbox opt-out (host path)
+ 				},
+ 				Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+ 				BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+ 			})
+ 			require.Error(t, err)
+ 			require.Contains(t, err.Error(), "atcr/auto-fix")
+ 			require.Contains(t, err.Error(), "remote branch", "error must warn that a remote branch was created")
+ 			require.Contains(t, err.Error(), "delete", "error must tell the operator to delete the remote branch manually")
+ 			require.Equal(t, tc.wantCalls, tc.gh.branchCalls+tc.gh.commitCalls,
+ 				"branch and optional commit calls must match the failure point")
+ 		})
+ 	}
+ }
+ 
+ // --- 01-03: zero behavior change to runAutoFix, validation routed through a
+ // supplied sandbox.Backend --------------------------------------------------
+ 
+ // fakeSandboxBackend is a sandbox.Backend stand-in for runAutoFix pipeline tests:
+ // it records that Run was invoked (and the RunSpec it received, so a test can
+ // assert the runAutoFix→adapter forwarding of argv/timeout/apply-target) and
+ // returns a preconfigured RunResult/error so a test can drive the sandbox-routed
+ // validation path without a live container (AC 01-03).
+@@ -830,62 +835,97 @@ func TestRunAutoFix_SandboxTimeoutReportsTimeoutNotExitZero(t *testing.T) {
+ // TestRunAutoFix_SandboxStartErrorRevertsWithCannotValidateWording: a backend fault
+ // (Run returns a non-nil error → StartError per AC 01-02) takes the same
+ // "cannot run validation" branch as a host-path StartError, reverting the tree with
+ // zero GitHub calls (AC 01-03 Scenario 3). validateArgv is `true` so the host path
+ // would have passed.
+ func TestRunAutoFix_SandboxStartErrorRevertsWithCannotValidateWording(t *testing.T) {
+ 	root := t.TempDir()
+ 	rel := "f.txt"
+ 	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+ 
+ 	be := &fakeSandboxBackend{runErr: errors.New("docker daemon unreachable")}
+ 	gh := &fakeGitHub{}
+ 	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+ 		Backend: autoFixBackend{
+ 			applyTarget:     root,
+ 			validateArgv:    []string{"true"}, // would PASS on the host path
+ 			validateTimeout: 5 * time.Second,
+ 			owner:           "o", repo: "r", token: "tok",
+ 			sandboxBackend: be,
+ 		},
+ 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+ 		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+ 	})
+ 	require.Error(t, err)
+ 	require.Equal(t, 1, be.runCalls, "validation must route through the sandbox backend")
+ 	require.Contains(t, err.Error(), "cannot run validation",
+ 		"a sandbox backend fault must take the same cannot-validate branch as a host StartError")
+ 	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
+ 		"no GitHub call may fire when the sandbox cannot validate")
+ 	got, _ := os.ReadFile(filepath.Join(root, rel))
+ 	require.Equal(t, "old\n", string(got), "the working tree must be reverted when the sandbox cannot validate")
+ }
+ 
+-// TestRunAutoFix_NilSandboxUsesHostPath: with no sandbox backend supplied
+-// (--no-sandbox opt-out), validation still runs on the host exactly as before, so
+-// the existing host-path tests remain the zero-behavior-change baseline (AC 01-03
+-// Edge Case: the routing change must not disturb the nil path).
++// TestRunAutoFix_NilSandboxUsesHostPath: with no sandbox backend BUT the explicit
++// --no-sandbox opt-out (noSandbox=true), validation still runs on the host exactly
++// as before. This supersedes AC 01-03's original nil→host zero-behavior baseline:
++// under epic 32.2 Task 1 a nil backend is no longer sufficient to reach the host
++// path — the opt-out flag is now required, and its absence fails closed (proven by
++// TestRunAutoFix_NilSandboxWithoutOptOutRefuses). The host path itself is otherwise
++// byte-identical when the opt-out IS present.
+ func TestRunAutoFix_NilSandboxUsesHostPath(t *testing.T) {
+ 	root := t.TempDir()
+ 	rel := "f.txt"
+ 	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+ 
+ 	gh := &fakeGitHub{}
+ 	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+ 		Backend: autoFixBackend{
+ 			applyTarget:     root,
+ 			validateArgv:    []string{"true"}, // host path passes
+ 			validateTimeout: 5 * time.Second,
+ 			owner:           "o", repo: "r", token: "tok",
+-			sandboxBackend: nil, // opt-out: host path
++			sandboxBackend: nil,  // no sandbox resolved
++			noSandbox:      true, // explicit --no-sandbox opt-out authorizes the host path
+ 		},
+ 		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+ 		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+ 	})
+ 	require.NoError(t, err)
+ 	require.Equal(t, 1, gh.createPR, "the host path stays byte-identical when no sandbox backend is supplied")
+ }
+ 
++// TestRunAutoFix_NilSandboxWithoutOptOutRefuses: a backend with NO sandbox and NO
++// explicit --no-sandbox opt-out (noSandbox=false) must fail closed — refuse before
++// any host validation or GitHub call and revert the applied patch — rather than
++// silently running unsandboxed on the host (epic 32.2 Task 1, AC1). validateArgv is
++// `true`, which WOULD pass on the host path, so a green PR here would prove a silent
++// host fallback; the required error proves the fail-closed guard fired instead.
++func TestRunAutoFix_NilSandboxWithoutOptOutRefuses(t *testing.T) {
++	root := t.TempDir()
++	rel := "f.txt"
++	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
++
++	gh := &fakeGitHub{}
++	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
++		Backend: autoFixBackend{
++			applyTarget:     root,
++			validateArgv:    []string{"true"}, // WOULD pass on the host path
++			validateTimeout: 5 * time.Second,
++			owner:           "o", repo: "r", token: "tok",
++			sandboxBackend: nil,   // no sandbox resolved
++			noSandbox:      false, // and no explicit opt-out
++		},
++		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
++		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
++	})
++	require.Error(t, err, "a nil sandbox backend without --no-sandbox must refuse, not silently run on the host")
++	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
++		"no GitHub call may fire on a fail-closed refusal")
++	got, _ := os.ReadFile(filepath.Join(root, rel))
++	require.Equal(t, "old\n", string(got), "the applied patch must be reverted on a fail-closed refusal")
++}
++
+ // --- thin finding->entry selection ----------------------------------------
+ 
+ // TestSelectAutoFixEntries_FiltersByThresholdAndFix: only findings carrying a Fix
+ // at/above the threshold are turned into entries.
+@@ -936,44 +976,45 @@ func TestSelectAutoFixEntries_CountsSkippedDuplicates(t *testing.T) {
+ // TestOrchestrateAutoFix_SkippedDuplicatesNotice: when duplicate-path fixes are
+ // dropped, orchestrateAutoFix surfaces the count before proceeding.
+ func TestOrchestrateAutoFix_SkippedDuplicatesNotice(t *testing.T) {
+ 	isolate(t)
+ 	root := t.TempDir()
+ 	writeGoMod(t, root)
+ 	rel := "same.txt"
+ 	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+ 
+ 	// Stub HEAD resolution so the test does not need a real git repo.
+ 	oldResolve := resolveHeadSHAFn
+ 	resolveHeadSHAFn = func(context.Context, string) (string, error) { return "deadbeef", nil }
+ 	t.Cleanup(func() { resolveHeadSHAFn = oldResolve })
+ 
+ 	// Stub the GitHub client seam so the run is hermetic: the pre-stub version's
+ 	// require.Error was satisfied by an incidental network/auth failure unrelated
+ 	// to the duplicate-skip behavior under test.
+ 	gh := &fakeGitHub{}
+ 	oldClient := newAutoFixGitHubFn
+ 	newAutoFixGitHubFn = func(string, string) autoFixGitHub { return gh }
+ 	t.Cleanup(func() { newAutoFixGitHubFn = oldClient })
+ 
+ 	id := verifyFixture(t, "dup", []reconcile.JSONFinding{
+ 		{Severity: "HIGH", File: "same.txt", Line: 1, Fix: diffFor("same.txt")},
+ 		{Severity: "HIGH", File: "same.txt", Line: 9, Fix: diffFor("same.txt")},
+ 	})
+ 
+ 	var buf strings.Builder
+ 	be := autoFixBackend{
+ 		applyTarget:     root,
+ 		validateArgv:    []string{"true"},
+ 		validateTimeout: 5 * time.Second,
+ 		owner:           "o", repo: "r", token: "tok",
++		noSandbox: true, // explicit --no-sandbox opt-out (host path)
+ 	}
+ 	err := orchestrateAutoFix(context.Background(), &buf, be, filepath.Join(".atcr", "reviews", id), "", "main")
+ 	require.NoError(t, err, "orchestration must succeed hermetically — a live network/auth failure must not be load-bearing")
+ 	require.Contains(t, buf.String(), "skipped", "output must tell the operator that duplicate-path fixes were skipped")
+ 	require.Equal(t, 1, gh.createPR, "the run must drive the full PR sequence against the stubbed client")
+ }
+ 
+ // --- 03-01: --no-sandbox flag registration and help text -------------------
+ 
+ // TestNoSandboxFlag_Registered: --no-sandbox is a bool flag defaulting to false,
+ // present and readable even before any parsing (AC 03-01 Scenario 1/2).
+@@ -1182,20 +1223,21 @@ func noSandboxCmd(t *testing.T, repo, token string) *cobra.Command {
+ // TestValidateAutoFixBackend_NoSandboxSkipsResolver: with --no-sandbox set and NO
+ // sandbox config and no Docker, the resolver is never called, no sandbox entry is
+ // appended to missing, and the gate passes with a nil sandboxBackend (AC 03-02
+ // Scenario 1). Proven by a zero-invocation spy, not merely "no docker error".
+ func TestValidateAutoFixBackend_NoSandboxSkipsResolver(t *testing.T) {
+ 	clearGitHubEnv(t)
+ 	calls := spyResolveSandbox(t)
+ 	root := t.TempDir()
+ 	writeGoMod(t, root)
+ 	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+ 	cmd := noSandboxCmd(t, "o/r", "tok")
+ 	be, err := validateAutoFixBackend(cmd, proj, root)
+ 	require.NoError(t, err, "--no-sandbox must let the gate pass without a sandbox config")
+ 	require.Equal(t, 0, *calls, "the sandbox resolver must be called ZERO times under --no-sandbox")
+ 	require.Nil(t, be.sandboxBackend, "no sandbox backend is resolved on the --no-sandbox path")
++	require.True(t, be.noSandbox, "the gate must record the explicit opt-out so runAutoFix authorizes the host path (epic 32.2 Task 1); a nil backend without it fails closed")
+ }
+ 
+ // TestValidateAutoFixBackend_NoSandboxSkipsEvenWithValidConfig: a working
+ // sandbox config does not override an explicit --no-sandbox — the operator's
+ // choice wins and the resolver is still never called (AC 03-02 Scenario 3).
+diff --git a/internal/sandbox/docker.go b/internal/sandbox/docker.go
+index 98a9794e..c7b688ae 100644
+--- a/internal/sandbox/docker.go
++++ b/internal/sandbox/docker.go
+@@ -160,117 +160,121 @@ func renderCommand(spec RunSpec) string {
+ // Run implements Backend.
+ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
+ 	args, err := dockerRunArgs(b.cfg, spec)
+ 	if err != nil {
+ 		return RunResult{}, err
+ 	}
+ 	// Name the container so a timeout can target it directly. exec.CommandContext
+ 	// only SIGKILLs the `docker run` CLI client on timeout, not the container the
+ 	// daemon runs; without an explicit kill the workload keeps consuming CPU/mem/
+ 	// PIDs until it self-exits. The name is generated before the spawn so it is
+ 	// known regardless of daemon timing (a --cidfile would race a slow start).
+ 	containerName := "atcr-sbx-" + randHex(8)
+ 	named := make([]string, 0, len(args)+2)
+ 	named = append(named, args[0], "--name", containerName) // args[0] == "run"
+ 	args = append(named, args[1:]...)
+ 	// Bound concurrent container spawns; block until a slot frees or ctx is done.
+ 	// Lazily allocate the semaphore so a struct-literal backend (nil sem) still
+ 	// enforces MaxConcurrent — the mitigation for the Critical-rated resource-abuse
+ 	// risk — rather than silently spawning unlimited containers.
+ 	b.semOnce.Do(func() {
+ 		if b.sem == nil {
+ 			n := b.cfg.MaxConcurrent
+ 			if n <= 0 {
+ 				n = 4
+ 			}
+ 			b.sem = make(chan struct{}, n)
+ 		}
+ 	})
+ 	select {
+ 	case b.sem <- struct{}{}:
+ 		defer func() { <-b.sem }()
+ 	case <-ctx.Done():
+ 		return RunResult{}, ctx.Err()
+ 	}
+ 	timeout := spec.Timeout
+ 	if timeout <= 0 {
+ 		timeout = b.cfg.Timeout
+ 	}
+ 	logger := log.FromContext(ctx)
+ 	cmdStr := renderCommand(spec)
+ 	logger.Info("sandbox exec start", "backend", "docker", "command", cmdStr)
+ 	runCtx, cancel := context.WithTimeout(ctx, timeout)
+ 	defer cancel()
+ 
+ 	cmd := exec.CommandContext(runCtx, b.cfg.DockerPath, args...)
+ 	if spec.Script != "" {
+ 		// The script is delivered as stdin DATA to `sh -s` (see dockerRunArgs), never
+ 		// interpolated into argv or a `sh -c "..."` string, so there is no shell-
+ 		// injection vector: the script body IS the program source, not an argument.
+ 		cmd.Stdin = strings.NewReader(spec.Script)
+ 	}
+ 	var buf bytes.Buffer
+ 	// Cap the captured buffer so a chatty workload cannot exhaust host memory
+ 	// before truncation. Allow a small headroom for rune-boundary backup.
+ 	maxBuf := int64(b.cfg.MaxOutputBytes) + 4096
+ 	lw := &limitedWriter{w: &buf, n: maxBuf}
+ 	cmd.Stdout = lw
+ 	cmd.Stderr = lw
+ 
+ 	runErr := cmd.Run()
+ 	res := RunResult{
+ 		Command: cmdStr,
+ 		Output:  truncate(buf.String(), b.cfg.MaxOutputBytes),
+ 	}
+ 	logger.Info("sandbox exec",
+ 		"backend", b.Name(),
+ 		"command", res.Command,
+ 		"exit_code", res.ExitCode,
+ 		"timed_out", res.TimedOut,
+ 	)
+ 
+-	// Distinguish a timeout (deadline exceeded) from a real program exit.
+-	if runCtx.Err() == context.DeadlineExceeded {
++	// Distinguish a cancellation-class end (a deadline exceeded OR a parent-context
++	// cancellation) from a real program exit. Both are folded into TimedOut so a
++	// cancelled run is never misreported as a spurious non-zero program exit or a
++	// backend fault/StartError, mirroring the host path's belt-and-suspenders
++	// handling in internal/verify/localvalidate.go:127 (epic 32.2 Task 2).
++	if errors.Is(runCtx.Err(), context.DeadlineExceeded) || errors.Is(runCtx.Err(), context.Canceled) {
+ 		res.TimedOut = true
+ 		res.ExitCode = timeoutExitCode
+ 		// The killed CLI does not stop the container; kill it explicitly so its
+ 		// caps are reclaimed. --rm (in args) removes it once it stops. Use a fresh
+ 		// background context so the kill is not itself cut short by the dead runCtx.
+ 		killCtx, killCancel := context.WithTimeout(context.Background(), 5*time.Second)
+ 		if killErr := exec.CommandContext(killCtx, b.cfg.DockerPath, "kill", containerName).Run(); killErr != nil {
+ 			logger.Warn("sandbox exec kill-on-timeout failed", "backend", "docker", "container", containerName, "error", killErr)
+ 		}
+ 		killCancel()
+ 		logger.Warn("sandbox exec timed out", "backend", "docker", "command", cmdStr, "timeout", timeout)
+ 		return res, nil
+ 	}
+ 	if runErr != nil {
+ 		var ee *exec.ExitError
+ 		if errors.As(runErr, &ee) {
+ 			ec := ee.ExitCode()
+ 			// Docker reserved exit codes (125-127) and signal deaths (128+N, including
+ 			// 137 SIGKILL/OOM-kill) originate from the runtime or kernel, not the
+ 			// workload. Treat them as backend faults so they are not misreported as a
+ 			// program result.
+ 			if ec >= 128 {
+ 				logger.Error("sandbox exec container killed", "backend", "docker", "command", cmdStr, "exit_code", ec, "signal", ec-128, "error", runErr)
+ 				return res, fmt.Errorf("docker run: container killed by signal %d (OOM or daemon kill, exit %d): %w", ec-128, ec, runErr)
+ 			}
+ 			if ec >= 125 {
+ 				logger.Error("sandbox exec runtime error", "backend", "docker", "command", cmdStr, "exit_code", ec, "error", runErr)
+ 				return res, fmt.Errorf("docker run: runtime error (exit %d): %w", ec, runErr)
+ 			}
+ 			res.ExitCode = ec
+ 			logger.Info("sandbox exec done", "backend", "docker", "command", cmdStr, "exit_code", res.ExitCode)
+ 			return res, nil
+ 		}
+ 		// Not an exit status: spawn failure, binary missing, etc. — a backend fault.
+ 		logger.Error("sandbox exec backend fault", "backend", "docker", "command", cmdStr, "error", runErr)
+ 		return res, fmt.Errorf("docker run: %w", runErr)
+ 	}
+ 	logger.Info("sandbox exec done", "backend", "docker", "command", cmdStr, "exit_code", res.ExitCode)
+ 	return res, nil
+ }
+ 
+ // Preflight implements Backend. It verifies, in order: the docker binary is
+ // runnable, the daemon is reachable, the base image is present, and a trivial
+ // network-isolated container runs to completion.
+diff --git a/internal/sandbox/docker_test.go b/internal/sandbox/docker_test.go
+index 8f2f9c9e..fa5eb957 100644
+--- a/internal/sandbox/docker_test.go
++++ b/internal/sandbox/docker_test.go
+@@ -240,3 +240,63 @@ func TestDockerBackend_DockerCmd_ContextCancelNotTimeout(t *testing.T) {
+ 	assert.Contains(t, err.Error(), "context canceled")
+ 	assert.NotContains(t, err.Error(), "timed out", "cancellations must not be reported as timeouts")
+ }
++
++// TestDockerBackend_Run_CancellationClassIsTimedOut pins that BOTH cancellation-class
++// context ends of a Run() — a deadline exceeded AND a parent-context cancellation —
++// are folded into a TimedOut RunResult (exit 124, nil error), never a spurious
++// program exit or backend fault/StartError. It mirrors the host path's
++// belt-and-suspenders handling in localvalidate.go:127 and is the Run()-level
++// counterpart to TestDockerBackend_DockerCmd_ContextCancelNotTimeout above (which
++// pins the DIFFERENT dockerCmd/Preflight error-string path, unchanged here). The
++// "deadline exceeded" row already passed before epic 32.2 Task 2; the "context
++// canceled" row is the one the fold added (AC3).
++func TestDockerBackend_Run_CancellationClassIsTimedOut(t *testing.T) {
++	cases := []struct {
++		name    string
++		setup   func(t *testing.T) context.Context
++		timeout time.Duration
++	}{
++		{
++			// A short RunSpec timeout: the backend's own deadline fires first.
++			name:    "deadline exceeded",
++			setup:   func(*testing.T) context.Context { return context.Background() },
++			timeout: 150 * time.Millisecond,
++		},
++		{
++			// A long RunSpec timeout but the parent context is cancelled mid-run, so
++			// runCtx.Err() is context.Canceled (not DeadlineExceeded).
++			name: "context canceled",
++			setup: func(t *testing.T) context.Context {
++				ctx, cancel := context.WithCancel(context.Background())
++				t.Cleanup(cancel)
++				go func() {
++					time.Sleep(50 * time.Millisecond)
++					cancel()
++				}()
++				return ctx
++			},
++			timeout: 5 * time.Second,
++		},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			// The fake answers `kill` instantly so the on-timeout container reap does
++			// not itself block on the sleeping `run`.
++			fake := writeFakeDocker(t, `if [ "$1" = "kill" ]; then exit 0; fi
++if [ "$1" = "run" ]; then sleep 5; fi
++exit 0`)
++			cfg := DefaultDockerConfig()
++			cfg.DockerPath = fake
++			b := NewDockerBackend(cfg)
++
++			res, err := b.Run(tc.setup(t), RunSpec{
++				Command:     []string{"x"},
++				SnapshotDir: t.TempDir(),
++				Timeout:     tc.timeout,
++			})
++			require.NoError(t, err, "a cancellation-class run end must not surface as a backend fault/StartError")
++			require.True(t, res.TimedOut, "deadline OR cancellation must be folded into TimedOut")
++			require.Equal(t, timeoutExitCode, res.ExitCode, "the timeout exit code (124) must be set, not a signal-death code")
++		})
++	}
++}

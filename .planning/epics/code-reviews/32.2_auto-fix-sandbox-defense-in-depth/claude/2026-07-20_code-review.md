@@ -1,0 +1,77 @@
+# Code Review Report: 32.2_auto-fix-sandbox-defense-in-depth
+
+## 1. Executive Summary
+- **Overall Result:** Pass
+- **Items Checked:** 4 / 4
+- **Approval Status:** Approved
+- **Review Date:** July 20, 2026 06:39:18PM
+- **Review Mode:** Epic (Acceptance Criteria + Adversarial) + Tests
+
+## 2. Checklist Changes Applied
+
+- **.planning/epics/completed/32.2_auto-fix-sandbox-defense-in-depth.md** – AC1: nil backend without --no-sandbox refuses (fail closed)
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `cmd/atcr/autofix.go:398-415`, `cmd/atcr/autofix_test.go:897-926`
+- **.planning/epics/completed/32.2_auto-fix-sandbox-defense-in-depth.md** – AC2: --no-sandbox opt-out host path unchanged
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `cmd/atcr/autofix.go:262-266`, `cmd/atcr/autofix.go:388-391`
+- **.planning/epics/completed/32.2_auto-fix-sandbox-defense-in-depth.md** – AC3: docker context.Canceled → TimedOut with table test
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `internal/sandbox/docker.go:231-236`, `internal/sandbox/docker_test.go:250-302`
+- **.planning/epics/completed/32.2_auto-fix-sandbox-defense-in-depth.md** – AC4: AC 01-03 note reconciled with opt-out contract
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `cmd/atcr/autofix.go:375-386`, commit d568b966
+
+## 3. Evidence Map
+
+- **AC1 — fail-closed dispatch guard**
+  - Evidence: `cmd/atcr/autofix.go:398-415`, `cmd/atcr/autofix_test.go:897-926`
+  - Summary: runAutoFix dispatch became a 3-way switch; the `default` arm (nil backend, noSandbox=false) reverts the applied patch and returns an error before any GitHub call. Test asserts error + zero GitHub calls + reverted tree with validateArgv=`true` (would otherwise pass on host), proving the guard fired.
+- **AC2 — opt-out host path preserved**
+  - Evidence: `cmd/atcr/autofix.go:262-266`, `cmd/atcr/autofix.go:388-391`, `cmd/atcr/autofix_test.go:1238`
+  - Summary: be.noSandbox is set only on the warned --no-sandbox path (sole setter). Host dispatch gated on `case be.noSandbox`. ~6 host-path test constructions updated to set noSandbox:true; gate test asserts be.noSandbox==true. All green.
+- **AC3 — docker Canceled folds into TimedOut**
+  - Evidence: `internal/sandbox/docker.go:231-236`, `internal/sandbox/docker_test.go:250-302`
+  - Summary: `errors.Is(runCtx.Err(), DeadlineExceeded) || errors.Is(..., Canceled)` → res.TimedOut=true, ExitCode=124, nil error. Table test pins both "deadline exceeded" and "context canceled" rows. errors.Is is wrap-safe (upgrade over prior ==). Adjacent Preflight/dockerCmd test untouched.
+- **AC4 — AC 01-03 note reconciled**
+  - Evidence: `cmd/atcr/autofix.go:375-386`, `cmd/atcr/autofix_test.go:868-877`, commit d568b966
+  - Summary: The stale nil→host zero-behavior-change note is reconciled in-code (AC 01-03 lives in Sprint 32.0); the comment now states the opt-out flag is required and its absence fails closed.
+
+## 4. Remaining Unchecked Items
+
+No remaining unchecked items — all 4 acceptance criteria verified.
+
+## 5. Manual Review Status
+- **Code Reviewed and Approved:** Checked
+- **Rationale:** Surgical, well-documented defense-in-depth change (2 source files, ~16 net source lines). Both hardening tasks map cleanly to their ACs with dedicated tests. Two independent adversarial passes actively probed the security-critical dispatch guard and the docker fold and confirmed both sound; only 2 LOW nuances surfaced, neither blocking.
+
+## 6. Coverage Analysis
+- **Coverage:** 89.2%
+- **Baseline:** 80%
+- **Delta:** ↑9.2%
+- **Status:** PASSING
+- **Changed packages:** cmd/atcr 87.1%, internal/sandbox 85.5% (both above baseline)
+
+## 7. Quality Checks
+| Check | Status | Command |
+|-------|--------|---------|
+| Lint | PASSING | golangci-lint run |
+| Types | PASSING | go vet ./... |
+| Format | PASSING | go fmt ./... |
+
+## 8. Adversarial Analysis
+- **Files Reviewed:** 5
+- **Issues Found:** 2 (Critical: 0, High: 0, Medium: 0, Low: 2)
+- **Mode:** Discovery (no sprint-design.md risk profile — epic)
+
+### Issues by Severity
+
+**LOW**
+- `cmd/atcr/autofix_test.go:921` (testing) — TestRunAutoFix_NilSandboxWithoutOptOutRefuses asserts only require.Error + reverted tree, never pinning the error to the guard's message; could pass for the wrong reason if a future refactor errors earlier. Fix: add require.Contains(err, "refusing"). Not a live false-pass today. Est: 5 min.
+- `internal/sandbox/docker.go:236` (correctness) — folding context.Canceled into TimedOut reclassifies a genuinely-successful exit-0 run as a timeout in the microsecond race where the process exits 0 just as the parent context is cancelled. Minimal impact (cancelled caller discards the result) and in tension with the epic's own Canceled→TimedOut intent; captured as a documented nuance. Est: 30 min.
+
+## 9. Follow-ups
+Two LOW items written to the code-review td-stream; run `/reconcile-code-review` to merge into the TD README. Neither blocks merge. No other follow-ups required.
+
+---
+*Generated by /execute-code-review on July 20, 2026 06:39:18PM*

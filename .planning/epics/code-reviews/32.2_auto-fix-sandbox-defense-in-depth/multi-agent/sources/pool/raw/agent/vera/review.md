@@ -1,0 +1,1 @@
+HIGH|internal/sandbox/docker.go:226|DockerBackend.Run now treats context.Canceled as TimedOut and returns nil error, changing error contract|Keep behavior consistent with host path or document change|compatibility|10|runCtx.Err() now includes context.Canceled, previously only DeadlineExceeded, affecting error contract

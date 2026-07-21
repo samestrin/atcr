@@ -1,0 +1,3 @@
+LOW|cmd/atcr/autofix.go:140|Comment block for `validateAutoFixBackend` is excessively verbose|Move detailed architectural justifications to a design doc or simplify the comment to describe the function's purpose and preconditions|style|5|lines 138-153 contain prose-heavy justifications rather than functional documentation
+
+LOW|cmd/atcr/autofix.go:220|Comment for `noSandbox` is overly detailed|Simplify to "noSandbox indicates an explicit operator opt-out via --no-sandbox, authorizing host execution"|style|2|lines 221-225 repeat a long explanation already present in the struct definition
