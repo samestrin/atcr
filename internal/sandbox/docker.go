@@ -44,6 +44,8 @@ type DockerConfig struct {
 	// pattern in dockerRunArgs). It is sized for a full source-tree copy rather
 	// than just a build cache, so its default is deliberately larger than
 	// ScratchSize's "64m" (see RunSpec.Writable for run-image shell requirements).
+	// Note: tmpfs memory is charged against `--memory`, so Memory must be raised
+	// above WorkSize + build-working-set for real builds.
 	WorkSize string
 	// Timeout is the default per-run wall-clock budget when RunSpec.Timeout is 0.
 	Timeout time.Duration
