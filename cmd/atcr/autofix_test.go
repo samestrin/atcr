@@ -919,6 +919,12 @@ func TestRunAutoFix_NilSandboxWithoutOptOutRefuses(t *testing.T) {
 		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
 	})
 	require.Error(t, err, "a nil sandbox backend without --no-sandbox must refuse, not silently run on the host")
+	// Pin the error to the fail-closed guard's own message (autofix.go default arm):
+	// without this, an unrelated earlier failure (e.g. ApplyPatch rejecting the input)
+	// would also satisfy require.Error + reverted tree and the test would pass for the
+	// wrong reason even if the guard arm were silently removed.
+	require.Contains(t, err.Error(), "refusing",
+		"the refusal must come from the fail-closed unsandboxed-validation guard, not an unrelated earlier error")
 	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
 		"no GitHub call may fire on a fail-closed refusal")
 	got, _ := os.ReadFile(filepath.Join(root, rel))
