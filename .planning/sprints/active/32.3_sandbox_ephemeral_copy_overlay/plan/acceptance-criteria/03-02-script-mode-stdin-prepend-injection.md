@@ -78,17 +78,17 @@ Reference documentation: [Docker tmpfs and read-only mounts](../documentation/do
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/sandbox/...`)
-- [ ] No linting errors (`go vet ./...` / project lint gate)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/sandbox/...`)
+- [x] No linting errors (`go vet ./...` / project lint gate)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `Run`'s Script-mode stdin content is `"cp -a /src/. /work/ && cd /work\n" + spec.Script` when `spec.Writable` is `true`
-- [ ] `Run`'s Script-mode stdin content is `spec.Script` verbatim when `spec.Writable` is `false` (zero value), verified against `TestDockerRunArgs_ScriptUsesStdinShell` passing unmodified
-- [ ] `dockerRunArgs`'s Script-mode argv (`-i <image> /bin/sh -s`) is identical regardless of `spec.Writable` — the setup step never appears in argv
-- [ ] The setup step's `cd /work` follows the `cp -a` copy so the script body runs from the populated, writable `/work` directory
-- [ ] The prepended setup line is a fixed Go string literal (`"cp -a /src/. /work/ && cd /work\n"`) containing no data derived from `spec.Script`, `spec.Command`, or any external input
-- [ ] `renderCommand` (`docker.go:153-158`) remains display-only — the prepend is not added there; it still returns only the human-readable evidence string
+- [x] `Run`'s Script-mode stdin content is `"cp -a /src/. /work/ && cd /work\n" + spec.Script` when `spec.Writable` is `true`
+- [x] `Run`'s Script-mode stdin content is `spec.Script` verbatim when `spec.Writable` is `false` (zero value), verified against `TestDockerRunArgs_ScriptUsesStdinShell` passing unmodified
+- [x] `dockerRunArgs`'s Script-mode argv (`-i <image> /bin/sh -s`) is identical regardless of `spec.Writable` — the setup step never appears in argv
+- [x] The setup step's `cd /work` follows the `cp -a` copy so the script body runs from the populated, writable `/work` directory
+- [x] The prepended setup line is a fixed Go string literal (`"cp -a /src/. /work/ && cd /work\n"`) containing no data derived from `spec.Script`, `spec.Command`, or any external input
+- [x] `renderCommand` (`docker.go:153-158`) remains display-only — the prepend is not added there; it still returns only the human-readable evidence string
 
 **Manual Review:**
 - [ ] Code reviewed and approved

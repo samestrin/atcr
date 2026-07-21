@@ -71,16 +71,16 @@ Reference documentation: [Docker tmpfs and read-only mounts](../documentation/do
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/sandbox/...`)
-- [ ] No linting errors (`go vet ./...` / project lint gate)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/sandbox/...`)
+- [x] No linting errors (`go vet ./...` / project lint gate)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] A command token containing `;` survives as a single literal trailing argv element, never split or interpreted as a command separator by the wrapping shell
-- [ ] A command token containing `$(...)` or backticks survives as a single literal trailing argv element, never evaluated by the wrapping shell
-- [ ] The `-c` script argv element is asserted, for every adversarial case, to be exactly the fixed literal `cp -a /src/. /work/ && cd /work && exec "$@"` with no trace of the adversarial payload concatenated into it
-- [ ] The `Writable:false` path (no wrap, no shell) is reconfirmed unaffected for the same adversarial inputs
-- [ ] No `fmt.Sprintf`, `strings.Join`, or other string interpolation of `spec.Command` data appears anywhere in the wrap construction path — the `-c` text is a fixed Go string literal (grep-verifiable in the implementation diff, in addition to the runtime argv assertions above)
+- [x] A command token containing `;` survives as a single literal trailing argv element, never split or interpreted as a command separator by the wrapping shell
+- [x] A command token containing `$(...)` or backticks survives as a single literal trailing argv element, never evaluated by the wrapping shell
+- [x] The `-c` script argv element is asserted, for every adversarial case, to be exactly the fixed literal `cp -a /src/. /work/ && cd /work && exec "$@"` with no trace of the adversarial payload concatenated into it
+- [x] The `Writable:false` path (no wrap, no shell) is reconfirmed unaffected for the same adversarial inputs
+- [x] No `fmt.Sprintf`, `strings.Join`, or other string interpolation of `spec.Command` data appears anywhere in the wrap construction path — the `-c` text is a fixed Go string literal (grep-verifiable in the implementation diff, in addition to the runtime argv assertions above)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

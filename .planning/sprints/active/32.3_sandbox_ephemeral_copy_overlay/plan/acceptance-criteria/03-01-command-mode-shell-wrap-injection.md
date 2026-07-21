@@ -78,18 +78,18 @@ Reference documentation: [Docker tmpfs and read-only mounts](../documentation/do
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/sandbox/...`)
-- [ ] No linting errors (`go vet ./...` / project lint gate)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/sandbox/...`)
+- [x] No linting errors (`go vet ./...` / project lint gate)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `dockerRunArgs`'s Command-mode branch wraps argv in `/bin/sh -c "cp -a /src/. /work/ && cd /work && exec \"$@\"" --` followed by `spec.Command...` when `spec.Writable` is `true`
-- [ ] `dockerRunArgs`'s Command-mode branch is byte-for-byte unchanged from current behavior when `spec.Writable` is `false` (zero value), verified against `TestDockerRunArgs_HardeningFlagsPresent` passing unmodified
-- [ ] `spec.Command`'s tokens are appended as separate argv elements after `--`, never joined into the `-c` script string
-- [ ] `Preflight`'s trivial-run `RunSpec` (Writable unset) continues to produce unwrapped argv
-- [ ] The `-c` argv element is asserted byte-equal to the fixed literal `cp -a /src/. /work/ && cd /work && exec "$@"` (exact-element equality, not merely substring containment)
-- [ ] `renderCommand` (`docker.go:153-158`) remains display-only — no injection logic is added there; it still returns only the human-readable evidence string
-- [ ] The implicit image requirement (`/bin/sh` + `cp -a`; false for distroless/scratch) is acknowledged as a diagnosable constraint consistent with the `Writable` field doc comment (Story 1) — no runtime detection added by this AC
+- [x] `dockerRunArgs`'s Command-mode branch wraps argv in `/bin/sh -c "cp -a /src/. /work/ && cd /work && exec \"$@\"" --` followed by `spec.Command...` when `spec.Writable` is `true`
+- [x] `dockerRunArgs`'s Command-mode branch is byte-for-byte unchanged from current behavior when `spec.Writable` is `false` (zero value), verified against `TestDockerRunArgs_HardeningFlagsPresent` passing unmodified
+- [x] `spec.Command`'s tokens are appended as separate argv elements after `--`, never joined into the `-c` script string
+- [x] `Preflight`'s trivial-run `RunSpec` (Writable unset) continues to produce unwrapped argv
+- [x] The `-c` argv element is asserted byte-equal to the fixed literal `cp -a /src/. /work/ && cd /work && exec "$@"` (exact-element equality, not merely substring containment)
+- [x] `renderCommand` (`docker.go:153-158`) remains display-only — no injection logic is added there; it still returns only the human-readable evidence string
+- [x] The implicit image requirement (`/bin/sh` + `cp -a`; false for distroless/scratch) is acknowledged as a diagnosable constraint consistent with the `Writable` field doc comment (Story 1) — no runtime detection added by this AC
 
 **Manual Review:**
 - [ ] Code reviewed and approved

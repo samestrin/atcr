@@ -99,17 +99,17 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/sandbox/...`)
-- [ ] No linting errors (`go vet ./...` / project lint gate)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/sandbox/...`)
+- [x] No linting errors (`go vet ./...` / project lint gate)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `Writable:true` Command path wraps in `/bin/sh -c`, injecting `cp -a /src/. /work/ && cd /work` ahead of the caller's command, with command tokens passed distinctly (no string concatenation)
-- [ ] `Writable:true` Script path prepends the setup step as an additional shell line ahead of the script body delivered over stdin
-- [ ] `renderCommand` output is unchanged — it renders only the caller's original command/script, never the internal setup step
-- [ ] `Writable:false` Command path is never wrapped in `/bin/sh -c` (unchanged from pre-story behavior)
-- [ ] A `writeFakeDocker`-based integration test proves a `Writable:true` payload can write under `/work` (`ExitCode 0`, no `EROFS`) while an emulated `/src` write fails — for BOTH Command and Script modes
-- [ ] This AC's scenarios cross-reference, and do not contradict or duplicate, Story 3's per-mode mechanism ACs ([03-01](03-01-command-mode-shell-wrap-injection.md) / [03-02](03-02-script-mode-stdin-prepend-injection.md) / [03-03](03-03-no-interpolation-injection-safety.md))
+- [x] `Writable:true` Command path wraps in `/bin/sh -c`, injecting `cp -a /src/. /work/ && cd /work` ahead of the caller's command, with command tokens passed distinctly (no string concatenation)
+- [x] `Writable:true` Script path prepends the setup step as an additional shell line ahead of the script body delivered over stdin
+- [x] `renderCommand` output is unchanged — it renders only the caller's original command/script, never the internal setup step
+- [x] `Writable:false` Command path is never wrapped in `/bin/sh -c` (unchanged from pre-story behavior)
+- [x] A `writeFakeDocker`-based integration test proves a `Writable:true` payload can write under `/work` (`ExitCode 0`, no `EROFS`) while an emulated `/src` write fails — for BOTH Command and Script modes
+- [x] This AC's scenarios cross-reference, and do not contradict or duplicate, Story 3's per-mode mechanism ACs ([03-01](03-01-command-mode-shell-wrap-injection.md) / [03-02](03-02-script-mode-stdin-prepend-injection.md) / [03-03](03-03-no-interpolation-injection-safety.md))
 
 **Manual Review:**
 - [ ] Code reviewed and approved

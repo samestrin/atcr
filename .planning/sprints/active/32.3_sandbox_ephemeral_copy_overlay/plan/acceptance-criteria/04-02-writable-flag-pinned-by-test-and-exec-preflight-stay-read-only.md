@@ -73,15 +73,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec` asserts `fb.gotSpec.Writable == true`
-- [ ] `git diff` confirms `internal/tools/exec_tools.go` is unchanged by this story
-- [ ] `git diff` confirms `internal/verify/autofix_exec.go` is unchanged by this story
-- [ ] The existing `assert.Empty(t, fb.gotSpec.Script, ...)` assertion (line 71) still passes alongside the new `Writable` assertion
+- [x] `TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec` asserts `fb.gotSpec.Writable == true`
+- [x] `git diff` confirms `internal/tools/exec_tools.go` is unchanged by this story
+- [x] `git diff` confirms `internal/verify/autofix_exec.go` is unchanged by this story
+- [x] The existing `assert.Empty(t, fb.gotSpec.Script, ...)` assertion (line 71) still passes alongside the new `Writable` assertion
 
 **Manual Review:**
 - [ ] Code reviewed and approved

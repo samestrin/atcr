@@ -68,15 +68,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `sandboxvalidate.go`'s `RunSpec` literal at lines 62-66 includes `Writable: true`
-- [ ] `go build ./...` succeeds with zero new failures
-- [ ] `go test ./internal/verify/...` passes with zero new failures
-- [ ] `translateRunResult` and the pre-flight guards (empty argv, missing dir) remain byte-identical to their pre-change behavior
+- [x] `sandboxvalidate.go`'s `RunSpec` literal at lines 62-66 includes `Writable: true`
+- [x] `go build ./...` succeeds with zero new failures
+- [x] `go test ./internal/verify/...` passes with zero new failures
+- [x] `translateRunResult` and the pre-flight guards (empty argv, missing dir) remain byte-identical to their pre-change behavior
 
 **Manual Review:**
 - [ ] Code reviewed and approved
