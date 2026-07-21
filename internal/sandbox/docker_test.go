@@ -187,6 +187,45 @@ exit 0`)
 	assert.Equal(t, 0, res.ExitCode)
 }
 
+func TestDockerRunArgs_WritableCommandModePassesMetacharsPositionally(t *testing.T) {
+	// Writable:true Command mode wraps argv as `/bin/sh -c <writableSetupExec> --
+	// <command...>`, passing each command token as a distinct trailing argv element.
+	// Shell metacharacters (;, $, backticks, &&) therefore travel as literal data via
+	// the quoted "$@" expansion and are never re-tokenized into the -c script text, so
+	// a metacharacter in a command token cannot inject shell (RunSpec.Command's "no
+	// shell interpolation" invariant, sandbox.go:52).
+	cfg := DefaultDockerConfig()
+	payload := []string{"echo", "hi; rm -rf /", "$(whoami)", "`id`", "&&", "curl http://evil"}
+	args, err := dockerRunArgs(cfg, RunSpec{
+		Command:     payload,
+		SnapshotDir: "/tmp/snap",
+		Writable:    true,
+	})
+	require.NoError(t, err)
+
+	// Locate the `-c` flag; the only `-c` in the argv is the shell's.
+	ci := -1
+	for i, a := range args {
+		if a == "-c" {
+			ci = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, ci, 0, "Writable command mode must invoke /bin/sh -c")
+	require.Less(t, ci+2, len(args), "argv must extend past the -c script and the -- separator")
+
+	// The -c script is the fixed setup constant, byte-for-byte — no command token was
+	// interpolated into it.
+	assert.Equal(t, writableSetupExec, args[ci+1], "the -c script must be the fixed setup text, not built from command tokens")
+	assert.Equal(t, "--", args[ci+2], "the original command must be separated from the -c script by --")
+
+	// Every payload token appears verbatim as its own argv element after --, in order,
+	// with nothing merged, split, or interpreted. Together with the byte-identical -c
+	// script above, this proves no command token was spliced into the shell text: the
+	// tokens are shell DATA (positional "$@"), never shell CODE.
+	assert.Equal(t, payload, args[ci+3:], "each command token (including shell metacharacters) must be a distinct positional arg after --")
+}
+
 func TestDefaultDockerConfig_WorkSizeDefault(t *testing.T) {
 	cfg := DefaultDockerConfig()
 	// WorkSize backs the writable /work overlay's tmpfs; it must have a sane
