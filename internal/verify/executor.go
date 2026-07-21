@@ -110,13 +110,24 @@ func parseSelfDecline(fix string) (string, bool) {
 const fixAttributionPrefix = "fix by "
 
 // anyFixEligible reports whether at least one finding qualifies for fix generation
-// on the executor's confidence+severity gate (the same per-finding gate
-// generateFixes applies). The pipeline uses it to avoid building BOTH the snapshot
-// harness and the executor client for a registry whose findings yield zero fixes.
+// on the same per-finding pre-dispatch gate generateFixes applies: confidence,
+// severity floor, AND the Sprint 32.1 complexity/severity ceilings. The pipeline uses
+// it to avoid building BOTH the snapshot harness and the executor client for a
+// registry whose findings yield zero fixes — including a single-tier config whose
+// every confidence+floor-eligible finding is over-ceiling (which generateFixes would
+// otherwise skip after the harness was already built). The ceilings are "no ceiling"
+// sentinels when unset (0 / ""), so an executor without ceilings behaves exactly as
+// before. Attribution is deliberately NOT consulted here: it is a re-run idempotency
+// concern, whereas this gate answers "could any finding ever get a fix".
 func anyFixEligible(findings []reconcile.JSONFinding, ex *registry.ExecutorConfig) bool {
 	fixMinSev := ex.EffectiveFixMinSeverity()
+	maxMin := ex.EffectiveMaxEstimatedMinutes()
+	maxSev := ex.EffectiveMaxSeverityForFix()
 	for i := range findings {
-		if reclib.ConfidenceAtOrAbove(findings[i].Confidence, reclib.ConfHigh) && meetsSeverityFloor(findings[i].Severity, fixMinSev) {
+		if reclib.ConfidenceAtOrAbove(findings[i].Confidence, reclib.ConfHigh) &&
+			meetsSeverityFloor(findings[i].Severity, fixMinSev) &&
+			withinComplexityCeiling(findings[i].EstMinutes, maxMin) &&
+			withinSeverityCeiling(findings[i].Severity, maxSev) {
 			return true
 		}
 	}
