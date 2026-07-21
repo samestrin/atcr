@@ -30,13 +30,18 @@
 - **Relevant:** This is the payoff story — the point where Stories 1-3's mechanism actually reaches `--auto-fix`'s real code path and fixes the user-visible bug: non-Go `validate_command`s no longer produce a false-negative `EROFS` failure and a silently-discarded PR.
 - **Time-bound:** Deliverable within this story's implementation session as a single self-contained, test-verified change to `internal/verify/sandboxvalidate.go` and `internal/verify/sandboxvalidate_test.go`.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-auto-fix-validation-requests-writable-overlay.md) | Auto-Fix Validation Requests the Writable Overlay | Unit |
+| [04-02](../acceptance-criteria/04-02-writable-flag-pinned-by-test-and-exec-preflight-stay-read-only.md) | `Writable` Flag Is Pinned by Test, `--exec`/Preflight Stay Read-Only | Unit |
+
+## Original Criteria Overview
 
 1. `RunSandboxedValidation` sets `Writable: true` on the `sandbox.RunSpec` it constructs for every dispatch — `Script` remains empty per the existing pinned invariant, and the pre-flight guards (empty argv, missing dir) still short-circuit before any `Backend.Run` call.
 2. `TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec` is extended with an assertion that `fb.gotSpec.Writable` is `true`, so a future refactor cannot silently drop the field without a failing test.
 3. `--exec`'s call sites (`exec_tools.go`) and `ResolveAutoFixSandbox`'s Preflight `RunSpec` remain textually unchanged and continue to default to `Writable: false`, verified by inspection/existing tests showing no regression in `--exec`'s read-only behavior.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`_
 
 ## Technical Considerations
 

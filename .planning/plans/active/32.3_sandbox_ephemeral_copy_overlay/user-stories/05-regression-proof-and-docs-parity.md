@@ -30,13 +30,20 @@
 - **Relevant:** This is the story that proves the plan's core promise — `--exec` sees zero behavior change — is actually true, not just asserted, and it removes the last artifact of the bug (the stale "Go-only" claim) that this whole plan exists to fix.
 - **Time-bound:** Deliverable within this story's implementation session as a single self-contained addition of test cases and a documentation edit, requiring no new production code.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-writable-true-argv-stdin-shape-tests.md) | Writable:true Argv/Stdin Shape Tests for Both RunSpec Modes | Unit |
+| [05-02](../acceptance-criteria/05-02-fakedocker-write-proof-under-work.md) | fakeDocker-Based Proof a Script Can Write Under /work | Unit |
+| [05-03](../acceptance-criteria/05-03-writable-false-regression-test-anchor.md) | Writable:false Regression Test Anchor Stays Unmodified | Unit |
+| [05-04](../acceptance-criteria/05-04-docs-and-doc-comment-parity-rewrite.md) | docs/auto-fix.md and autofix_exec.go Doc-Comment Parity Rewrite | Documentation |
+
+## Original Criteria Overview
 
 1. New unit tests in `internal/sandbox/docker_test.go`/`sandbox_test.go` assert the `Writable:true` argv/stdin shape for both `Command` and `Script` modes (the `/src:ro` mount, `--tmpfs /work:rw,exec,size=`, and the wrapped `cp -a` setup step), and a `writeFakeDocker`-based test proves a mock validation script can successfully write a file under `/work` when `Writable:true`.
 2. A regression assertion proves `Writable:false` produces byte-identical mount/argv output to pre-story behavior, and `TestDockerRunArgs_HardeningFlagsPresent` (plus `TestResolveAutoFixSandbox_BuildsAndPreflights`'s Preflight control group) passes unmodified.
 3. `docs/auto-fix.md`'s "mount mode is still read-only" claim, its "Limitation (read-only /work)" paragraph, and its EROFS "effectively Go-only" blockquote are all rewritten to describe the opt-in writable overlay and the `/bin/sh`/`cp -a` image requirement; `internal/verify/autofix_exec.go`'s `ResolveAutoFixSandbox` doc comment is rewritten in the same pass so it no longer disagrees with the docs.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`_
 
 ## Technical Considerations
 

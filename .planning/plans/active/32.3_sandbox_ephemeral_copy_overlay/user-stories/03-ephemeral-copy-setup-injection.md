@@ -30,13 +30,20 @@
 - **Relevant:** This is the story that makes the writable mount (Story 2) actually useful — without the copy step, `/work` is an empty tmpfs and every polyglot toolchain command still fails, just with a different error (missing files) instead of `EROFS`. This directly satisfies the epic's first acceptance criterion: a validation command/script that writes into its working directory succeeds under `Writable:true`, for both dispatch modes.
 - **Time-bound:** Completed as the third story of this plan, after Stories 1-2 land the data model and mount branching, and before Story 4 (wait — no further story; this plan's `--auto-fix` opt-in is item 5 of the epic and may be a separate story or the closing wiring of this one per the plan's actual story split) sets `Writable: true` on the `--auto-fix` path.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-command-mode-shell-wrap-injection.md) | Command-Mode Shell-Wrap Injection | Unit |
+| [03-02](../acceptance-criteria/03-02-script-mode-stdin-prepend-injection.md) | Script-Mode Stdin-Prepend Injection | Unit |
+| [03-03](../acceptance-criteria/03-03-no-interpolation-injection-safety.md) | No-Interpolation Injection-Safety Invariant | Unit |
+
+## Original Criteria Overview
 
 1. Command mode: when `spec.Writable` is true, `dockerRunArgs` produces argv of the shape `... <image> /bin/sh -c 'cp -a /src/. /work/ && cd /work && exec "$@"' -- <spec.Command...>`, with `spec.Command`'s tokens passed as separate argv elements after `--` (positional `$@` expansion), never concatenated into the `-c` script string; when `Writable` is false, argv is unchanged from current behavior (`<image> <spec.Command...>`, no shell).
 2. Script mode: when `spec.Writable` is true, `Run` (or `dockerRunArgs`'s caller) prepends the literal setup line `cp -a /src/. /work/ && cd /work` to `spec.Script`'s content before it is written to `cmd.Stdin`, with the setup step never appearing in argv (argv stays `-i <image> /bin/sh -s` exactly as today, per `TestDockerRunArgs_ScriptUsesStdinShell`); when `Writable` is false, stdin content is unchanged (`spec.Script` verbatim).
 3. Both modes' wrapped payload runs `cd /work` after the copy so the process's working directory is the writable copy, not the read-only `/src` snapshot, and the copy step (`cp -a`) is asserted present in unit tests as a literal substring of the constructed argv (Command mode) or stdin reader content (Script mode) — not merely inferred from a passing end-to-end container run, since `internal/sandbox` tests are argv/stdin-level and daemon-free per the package's existing test pattern (`dockerRunArgs` is documented pure/I-O-free specifically so hardening flags can be asserted without a daemon).
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`_
 
 ## Technical Considerations
 
@@ -56,4 +63,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/32.3_sandbox_
 ---
 
 **Created:** July 21, 2026
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Complete

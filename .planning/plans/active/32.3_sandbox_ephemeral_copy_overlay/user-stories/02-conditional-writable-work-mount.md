@@ -30,13 +30,21 @@
 - **Relevant:** This is the mechanism that actually unlocks `--auto-fix` for Node/Rust/Python ecosystems — without a real writable-backed `/work`, the opt-in flag from Story 1 has nothing to attach to and `EROFS` persists.
 - **Time-bound:** Deliverable within this story's implementation session as a single self-contained, test-verified change to `internal/sandbox/docker.go` and `internal/sandbox/docker_test.go`/`sandbox_test.go`.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-writable-false-argv-byte-identical.md) | Writable:false Argv Stays Byte-Identical | Unit |
+| [02-02](../acceptance-criteria/02-02-writable-true-src-and-work-tmpfs-mounts.md) | Writable:true Mounts /src Read-Only and /work as a tmpfs | Unit |
+| [02-03](../acceptance-criteria/02-03-writable-setup-step-copies-src-into-work.md) | Writable Setup Step Populates /work Before the Real Payload Runs | Unit/Integration |
+
+## Original Criteria Overview
 
 1. When `spec.Writable` is `false` (including Preflight's control-group call and every existing `--exec` call site), `dockerRunArgs`'s output argv and mount list are byte-identical to pre-story behavior — `TestDockerRunArgs_HardeningFlagsPresent`'s `/tmp/snap:/work:ro` assertion passes with no test edits.
 2. When `spec.Writable` is `true`, the built argv mounts `spec.SnapshotDir` read-only at `/src` and adds `--tmpfs /work:rw,exec,size=<cfg.WorkSize>`, giving `/work` real writable backing under the container's existing `--read-only` rootfs flag.
 3. When `spec.Writable` is `true`, a `cp -a /src/. /work/ && cd /work` setup step runs before the caller's real command/script, so a validation tool that writes into its working directory (e.g. `npm run build` → `dist/`) succeeds instead of failing with `EROFS`, while `/src` itself remains read-only for the container's entire lifetime and no host file under `SnapshotDir` is ever mutated.
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`_
+
 
 ## Technical Considerations
 

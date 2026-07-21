@@ -6,7 +6,7 @@ Fixes the `EROFS` limitation in the ATCR Docker sandbox that makes `--auto-fix` 
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`
 

@@ -30,13 +30,19 @@
 - **Relevant:** Every later story in this plan (mount branching, setup-step injection, `--auto-fix` opt-in) depends on `Writable` and `WorkSize` existing as named, documented fields first — this is the foundational data-model story the plan's Story Theme explicitly assigns to it.
 - **Time-bound:** Completed as the first story of Sprint 32.3, before any mount-argument or setup-step story begins.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-runspec-writable-field.md) | RunSpec Gains an Opt-In Writable Field | Unit |
+| [01-02](../acceptance-criteria/01-02-dockerconfig-worksize-default.md) | DockerConfig Gains a WorkSize Tunable with a Sane Default | Unit |
+| [01-03](../acceptance-criteria/01-03-zero-behavior-change-for-existing-callers.md) | Zero Behavior Change for Existing `--exec` Callers and Test Suite | Integration |
+
+## Original Criteria Overview
 
 1. `RunSpec` (`internal/sandbox/sandbox.go`) declares a new `Writable bool` field with a doc comment describing its effect (a writable `/work` overlay is layered in when true), defaulting to `false` via Go's zero value with no constructor change required.
 2. `DockerConfig` (`internal/sandbox/docker.go`) declares a new `WorkSize string` field alongside `ScratchSize`, and `DefaultDockerConfig()` sets it to a sane default sized for a full source-tree copy (larger than `ScratchSize`'s 64m build-cache default), following the exact same field-plus-default pattern.
 3. No other file changes: `dockerRunArgs`, `Run`, `RunSpec.validate()`, and both `--exec` call sites in `internal/tools/exec_tools.go` are untouched, and the full existing `internal/sandbox` test suite passes unmodified, proving zero behavior change for every current caller.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`_
 
 ## Technical Considerations
 
@@ -55,4 +61,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/32.3_sandbox_
 ---
 
 **Created:** July 21, 2026
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Complete
