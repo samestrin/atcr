@@ -74,17 +74,17 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/sandbox/...`)
-- [ ] No linting errors (`go vet ./...` / project lint gate)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/sandbox/...`)
+- [x] No linting errors (`go vet ./...` / project lint gate)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] New Command-mode `Writable:true` test asserts `/src:ro`, `--tmpfs /work:rw,exec,size=`, and the shell-wrap with positional `-- "$@"` argument passing
-- [ ] New Script-mode `Writable:true` test asserts `/src:ro`, `--tmpfs /work:rw,exec,size=`, `-i <image> /bin/sh -s`, and a prepended `cp -a` setup line in the stdin body
-- [ ] New cases are added as additive table rows or sibling test functions — no existing assertion in `TestDockerRunArgs_HardeningFlagsPresent` or `TestDockerRunArgs_ScriptUsesStdinShell` is edited
-- [ ] `go test -run TestDockerRunArgs_HardeningFlagsPresent` and `go test -run TestDockerRunArgs_ScriptUsesStdinShell` show zero behavior diff before/after this AC's additions
-- [ ] New `Writable:true` cases also assert the full hardening flag set (`--network none`, `--read-only`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user`, `--tmpfs /scratch`) is preserved alongside the new `/src:ro` + `/work` tmpfs mounts
-- [ ] New test names follow `TestDockerRunArgs_<Scenario>` (or `TestDockerBackend_<Scenario>` at backend level)
+- [x] New Command-mode `Writable:true` test asserts `/src:ro`, `--tmpfs /work:rw,exec,size=`, and the shell-wrap with positional `-- "$@"` argument passing (`TestDockerRunArgs_CommandModeWritableWrapsInShell` + `TestDockerRunArgs_WritableTrueMountsSrcROAndWorkTmpfs`)
+- [x] New Script-mode `Writable:true` test asserts `/src:ro`, `--tmpfs /work:rw,exec,size=`, `-i <image> /bin/sh -s`, and a prepended `cp -a` setup line in the stdin body (`TestDockerRunArgs_WritableScriptShape` for mount+tail; `TestDockerBackend_Run_ScriptModeWritablePrependsCopyStep` for the stdin prepend)
+- [x] New cases are added as additive table rows or sibling test functions — no existing assertion in `TestDockerRunArgs_HardeningFlagsPresent` or `TestDockerRunArgs_ScriptUsesStdinShell` is edited
+- [x] `go test -run TestDockerRunArgs_HardeningFlagsPresent` and `go test -run TestDockerRunArgs_ScriptUsesStdinShell` show zero behavior diff before/after this AC's additions
+- [x] New `Writable:true` cases also assert the full hardening flag set (`--network none`, `--read-only`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user`, `--tmpfs /scratch`) is preserved alongside the new `/src:ro` + `/work` tmpfs mounts (`TestDockerRunArgs_WritableScriptShape`)
+- [x] New test names follow `TestDockerRunArgs_<Scenario>` (or `TestDockerBackend_<Scenario>` at backend level)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

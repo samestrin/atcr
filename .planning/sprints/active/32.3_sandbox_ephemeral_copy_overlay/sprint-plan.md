@@ -492,13 +492,13 @@ Your goal is to create software that:
    3. Verify tests fail correctly (or, where they already reflect Phase 1-3 behavior, confirm they pass and add the missing gap-closing case for AC 05-02's write-proof)
    **Files:** `internal/sandbox/docker_test.go`, `internal/sandbox/sandbox_test.go` | **Duration:** 2-3 hours
 
-### 4.2 [ ] **[Regression Proof and Documentation Parity - GREEN](plan/user-stories/05-regression-proof-and-docs-parity.md)**
+### 4.2 [x] **[Regression Proof and Documentation Parity - GREEN](plan/user-stories/05-regression-proof-and-docs-parity.md)**
    1. Land the new test cases from 4.1 using existing helpers (`writeFakeDocker`, `fakeDockerRecording`, `runArgsLine`) — no new scaffolding (T1). Verify all pass (T2): `go test ./internal/sandbox/... ./internal/verify/...`. COMMIT: `git commit -m "test(sandbox): add Writable regression and write-proof coverage"`
    2. Rewrite `docs/auto-fix.md`'s three stale passages (the unconditional "mount mode is still read-only" claim at line ~47, the "Limitation (read-only /work)" paragraph at lines ~55-60, and the EROFS "effectively Go-only" blockquote at lines ~62-71) plus `internal/verify/autofix_exec.go`'s duplicate `ResolveAutoFixSandbox` doc comment (lines ~47-55) to describe the opt-in writable overlay, including a note on the `/bin/sh` + `cp -a` image requirement. `grep -i "read-only\|go-only"` both files post-edit to confirm no stale phrasing survives. COMMIT: `git commit -m "docs(auto-fix): update EROFS limitation notes for the writable overlay"`
    **Files:** `internal/sandbox/docker_test.go`, `internal/sandbox/sandbox_test.go`, `docs/auto-fix.md`, `internal/verify/autofix_exec.go` | **Duration:** 3-4 hours
 
-### 4.2.A [ ] **[Regression Proof and Documentation Parity - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-regression-proof-and-docs-parity.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 4.2]
+### 4.2.A [x] **[Regression Proof and Documentation Parity - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-regression-proof-and-docs-parity.md)**
+   **Changed Files:** `internal/sandbox/sandbox_test.go` (new `TestDockerRunArgs_WritableScriptShape`), `docs/auto-fix.md`, `internal/verify/autofix_exec.go` (doc comment)
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 4.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
@@ -515,33 +515,32 @@ Your goal is to create software that:
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context review, 2026-07-21):** No findings. Independently verified against code: `TestDockerRunArgs_WritableScriptShape` asserts real `dockerRunArgs` behavior non-vacuously and is strictly additive (no edits to `TestDockerRunArgs_HardeningFlagsPresent` or `TestResolveAutoFixSandbox_BuildsAndPreflights`). Docs (`auto-fix.md` 38-78) and the `ResolveAutoFixSandbox` doc comment match the code (`/src:ro` mount, `cp -a` seed, tmpfs-only writes with read-only `/src` → no host mutation, `/bin/sh`+`cp` image requirement, WorkSize internal default, tmpfs charged to `--memory`, overlay runner-internal not operator-config). No stale "read-only /work" limitation / "Go-only" / "Until a writable overlay" phrasing remains.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | — | Additive test proven accurate; docs/doc-comment agree with code; no stale phrasing | — |
 
    **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 4.3, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   - ✅ None found → **Adversarial review passed** — proceed to 4.3.
 
-### 4.3 [ ] **[Regression Proof and Documentation Parity - REFACTOR](plan/user-stories/05-regression-proof-and-docs-parity.md)**
+### 4.3 [x] **[Regression Proof and Documentation Parity - REFACTOR](plan/user-stories/05-regression-proof-and-docs-parity.md)**
+   _No CRITICAL/HIGH from 4.2.A (NONE finding); the test and docs are already clean — no refactor changes needed. Full T3 (`go test ./...`) green; anchor tests `TestDockerRunArgs_HardeningFlagsPresent`, `TestDockerRunArgs_ScriptUsesStdinShell`, and `TestResolveAutoFixSandbox_BuildsAndPreflights` confirmed unmodified (zero diff since 32c2a515) and passing. No empty commit created (GREEN commits already captured the clean state)._
    1. Fix CRITICAL/HIGH issues from 4.2.A (if any)
    2. Improve tests and docs wording (T1), validate all still pass (T3): `go test ./...`
    3. Confirm `TestDockerRunArgs_HardeningFlagsPresent` and `TestResolveAutoFixSandbox_BuildsAndPreflights` remain unmodified and green
    4. COMMIT: `git commit -m "refactor(sandbox): address review + polish regression/docs pass"`
    **Duration:** 1 hour
 
-### 4.4 [ ] **Phase 4 - Definition of Done**
+### 4.4 [x] **Phase 4 - Definition of Done**
+   **Story-5 DoD Complete / Auto: 5/5 | Story-Specific: 4/4** — T3 (`go test ./...`) all passing; coverage 87.2% (sandbox) / 95.3% (verify), both ≥80%; `golangci-lint run` 0 issues; `go build ./...` succeeds. ACs 05-01/05-02/05-03/05-04 all verified and their Auto-Verified + Story-Specific DoD boxes checked. Anchor tests (`HardeningFlagsPresent`, `ScriptUsesStdinShell`, `ResolveAutoFixSandbox_BuildsAndPreflights`) confirmed unmodified and green. Docs parity greps clean (`effectively Go-only`, `still read-only`, `Until a writable build-output overlay` → 0 matches); `docs/execution.md` + `internal/sandbox` package doc untouched.
    1. `go test ./...` — all passing (T3)
    2. Coverage ≥80% overall
    3. `golangci-lint run` — no errors
    4. `go build ./...` — succeeds
    5. Story-specific: [AC 05-01](plan/acceptance-criteria/05-01-writable-true-argv-stdin-shape-tests.md), [AC 05-02](plan/acceptance-criteria/05-02-fakedocker-write-proof-under-work.md), [AC 05-03](plan/acceptance-criteria/05-03-writable-false-regression-test-anchor.md), [AC 05-04](plan/acceptance-criteria/05-04-docs-and-doc-comment-parity-rewrite.md) all verified
-   **Report:** `Story-5 DoD Complete / Auto: {X}/5 | Story-Specific: {Y}/4`
+   **Report:** `Story-5 DoD Complete / Auto: 5/5 | Story-Specific: 4/4`
 
-### 4.5 [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+### 4.5 [x] **Phase 4 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 4 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline. This is the sprint's final gate — treat it as a full end-to-end sanity check of the entire ephemeral-copy overlay mechanism, not just this phase's diff.
@@ -560,16 +559,16 @@ Your goal is to create software that:
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Files changed during Phase 4:** `internal/sandbox/sandbox_test.go` (new `TestDockerRunArgs_WritableScriptShape`), `docs/auto-fix.md`, `internal/verify/autofix_exec.go` (doc comment). Full-mechanism files (docker.go, sandbox.go, sandboxvalidate.go, exec_tools.go) reviewed as reference for end-to-end regression.
+
+   **Subagent findings (fresh-context hostile-integrator FINAL gate, 2026-07-21):** Gate verdict **PASS**. Independently verified: `go build ./...`, full `sandbox`/`verify`/`tools` suites, targeted Writable/golden/anchor/write-proof/`ResolveAutoFixSandbox` runs all pass; `golangci-lint` 0 issues; `go vet` clean. `Writable`/`WorkSize` purely additive (zero-value = byte-identical read-only argv); `--exec`'s two call sites (`exec_tools.go:178,215`) + Preflight leave `Writable` unset; `RunSandboxedValidation` sets `Writable:true` and BOTH the `/src:ro`+`/work` tmpfs mount branch and the Command-wrap + Script-stdin `cp -a` injections fire end-to-end (write-proof, both modes); `WorkSize` is an internal default with no operator config surface (docs state so correctly); no residual "effectively Go-only"/"until a writable overlay"/stale "read-only /work limitation" phrasing in the docs or doc comment.
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | LOW | docker.go:157 | `/scratch` env-redirect block comment still cites "read-only /work" as rationale; on the `Writable:true` path `/work` is now a writable tmpfs so that half of the rationale holds only for the `--exec` path. Cosmetic comment staleness, no runtime effect. | Captured — **TD-008**. Outside AC 05-04's named docs-parity scope (docker.go inline comments not in scope); LOW/deferred. |
 
    **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md` (same pipeline as 4.2.A findings)
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   - ✅ No CRITICAL/HIGH → **Phase gate passed** — proceed to phase stop / Final Validation.
+   - LOW dispositioned to `tech-debt-captured.md` (TD-008).
    **Duration:** 15-30 min
 
 ---
@@ -577,18 +576,18 @@ Your goal is to create software that:
 ## Final Phase: Validation
 
 ### Validation Checklist
-- [ ] All tests passing (T3): `go test ./...`
-- [ ] Coverage meets threshold (≥80%, `go test -coverprofile=coverage.out ./...`)
-- [ ] Lint/format clean: `golangci-lint run`, `go fmt ./...` / `goimports`
-- [ ] Build succeeds: `go build ./...`
+- [x] All tests passing (T3): `go test ./...` — full suite green
+- [x] Coverage meets threshold (≥80%): sandbox 87.2%, verify 95.3%
+- [x] Lint/format clean: `golangci-lint run` 0 issues, `gofmt -l` clean
+- [x] Build succeeds: `go build ./...`
 
 ### Optional: Targeted Mutation Testing
 No mutation testing tool detected in this environment (`stryker-mutator`, `mutmut`, `cargo-mutants` all unavailable) — skip this step. If one becomes available, target only `internal/sandbox/docker.go`'s mount-branch and setup-injection logic (the highest-risk changed code); do NOT run full-codebase mutation testing.
 
 ### Drift Analysis
 Compare final state against `plan/original-requirements.md`:
-- [ ] `RunSpec.Writable` defaults `false`; every existing caller (both `--exec` call sites, full existing `internal/sandbox` suite including `TestDockerRunArgs_HardeningFlagsPresent`) provably unaffected
-- [ ] `Writable:true` lets a validation command/script write into its working directory (Node/Rust/Python), for both Command-mode and Script-mode `RunSpec`s
-- [ ] `RunSandboxedValidation` sets `Writable: true`, so non-Go `validate_command`s no longer produce a false-negative `EROFS` failure
-- [ ] The `/src` snapshot remains read-only for the container's entire lifetime; only the ephemeral `/work` tmpfs (and its writes) dies with the container — no host file is ever mutated
-- [ ] `docs/auto-fix.md`'s EROFS/read-only note and `internal/verify/autofix_exec.go`'s duplicate doc comment are both updated to match the new behavior
+- [x] `RunSpec.Writable` defaults `false`; every existing caller (both `--exec` call sites, full existing `internal/sandbox` suite including `TestDockerRunArgs_HardeningFlagsPresent`) provably unaffected — anchored by `TestDockerRunArgs_WritableFalseGoldenArgv` (byte-identical false-path argv) and the unmodified hardening test
+- [x] `Writable:true` lets a validation command/script write into its working directory (Node/Rust/Python), for both Command-mode and Script-mode `RunSpec`s — proven by `TestDockerBackend_Run_WritableOverlayWriteProof` (table-driven over both modes, observable file write)
+- [x] `RunSandboxedValidation` sets `Writable: true`, so non-Go `validate_command`s no longer produce a false-negative `EROFS` failure — pinned by `sandboxvalidate_test.go`
+- [x] The `/src` snapshot remains read-only for the container's entire lifetime; only the ephemeral `/work` tmpfs (and its writes) dies with the container — no host file is ever mutated — write-proof asserts a read-only `/src` stand-in rejects writes
+- [x] `docs/auto-fix.md`'s EROFS/read-only note and `internal/verify/autofix_exec.go`'s duplicate doc comment are both updated to match the new behavior (Story 5 / AC 05-04)

@@ -79,16 +79,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/sandbox/... ./internal/verify/...`)
-- [ ] No linting errors (`go vet ./...` / project lint gate)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/sandbox/... ./internal/verify/...`)
+- [x] No linting errors (`go vet ./...` / project lint gate)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] New byte-identical `Writable:false` regression case added (table row or standalone snapshot test)
-- [ ] `TestDockerRunArgs_HardeningFlagsPresent` (`sandbox_test.go:35`, assertion `:55`) shows zero diff in `git diff` for this story
-- [ ] `TestResolveAutoFixSandbox_BuildsAndPreflights` (`autofix_exec_test.go:56`) and `TestResolveAutoFixSandbox_FullFieldOverrideAppliedBeforePreflight` (`:70`) pass unmodified, confirming no `Writable:true` leakage into the Preflight control group
-- [ ] `go test -run TestDockerRunArgs_HardeningFlagsPresent` run in isolation shows identical behavior before and after this story's changes
-- [ ] New regression coverage also pins the Script-mode `Writable:false` path: argv byte-identical to the pre-story shape and the stdin script body free of any prepended `cp -a` setup line
+- [x] New byte-identical `Writable:false` regression case added (`TestDockerRunArgs_WritableFalseGoldenArgv`, element-for-element golden slice)
+- [x] `TestDockerRunArgs_HardeningFlagsPresent` (`sandbox_test.go:35`, assertion `:55`) shows zero diff in `git diff` for this story
+- [x] `TestResolveAutoFixSandbox_BuildsAndPreflights` (`autofix_exec_test.go:56`) and `TestResolveAutoFixSandbox_FullFieldOverrideAppliedBeforePreflight` (`:70`) pass unmodified, confirming no `Writable:true` leakage into the Preflight control group
+- [x] `go test -run TestDockerRunArgs_HardeningFlagsPresent` run in isolation shows identical behavior before and after this story's changes
+- [x] New regression coverage also pins the Script-mode `Writable:false` path: argv byte-identical to the pre-story shape (`TestDockerRunArgs_ScriptModeWritableArgvUnchanged`) and the stdin script body free of any prepended `cp -a` setup line (`TestDockerBackend_Run_ScriptModeReadOnlyStdinUnchanged`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

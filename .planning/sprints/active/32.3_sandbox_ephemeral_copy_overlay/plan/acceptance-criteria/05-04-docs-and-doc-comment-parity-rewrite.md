@@ -78,19 +78,19 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] Build succeeds (`go build ./...`) — the doc-comment edit must not break Go syntax
-- [ ] No linting errors (`go vet ./...` / project lint gate)
-- [ ] `git diff` on `docs/auto-fix.md` touches only the three identified passages (lines ~47, ~55-60, ~62-71) plus the new image-requirement note; `git diff` on `internal/verify/autofix_exec.go` touches only the `ResolveAutoFixSandbox` doc comment (lines 47-55), no executable code
+- [x] Build succeeds (`go build ./...`) — the doc-comment edit must not break Go syntax
+- [x] No linting errors (`go vet ./...` / project lint gate)
+- [x] `git diff` on `docs/auto-fix.md` touches only the "What runs in the sandbox" section (the three identified passages — line ~47 claim, ~55-60 limitation, ~62-71 blockquote — plus the new image-requirement note); `git diff` on `internal/verify/autofix_exec.go` touches only the `ResolveAutoFixSandbox` doc comment, no executable code. **Scope note:** the section's opening sentence ("it mounts … at `/work`" → "it works against …") also received a two-word coherence fix, because leaving "mounts … at `/work`" would contradict the rewritten `/src`-mount description directly below it; the change stays inside the same 38-53 section the AC names for the line-47 passage and touches no other section.
 
 **Story-Specific:**
-- [ ] `grep -n "effectively Go-only" docs/auto-fix.md internal/verify/autofix_exec.go` returns no matches
-- [ ] `grep -n "still read-only" docs/auto-fix.md internal/verify/autofix_exec.go` returns no unconditional match in either file (a correctly-scoped "read-only by default, writable when Writable:true" phrasing is acceptable)
-- [ ] `docs/auto-fix.md` states non-Go `validate_command`s (npm, cargo, etc.) are now supported via the ephemeral `/src:ro` + `/work` tmpfs copy
-- [ ] `docs/auto-fix.md` documents the `/bin/sh` + `cp -a` image requirement for Command-mode `Writable:true`
-- [ ] `internal/verify/autofix_exec.go`'s doc comment no longer disagrees with `docs/auto-fix.md`'s description of the same mechanism
-- [ ] `docs/execution.md` and the `internal/sandbox` package doc receive zero edits and remain textually accurate for `--exec`'s `Writable:false`-only usage
-- [ ] Both rewritten files state that the `/src` snapshot remains read-only for the container's entire lifetime, writes into `/work` die with the container, and no host file is ever mutated
-- [ ] `grep -n "Until a writable build-output overlay" docs/auto-fix.md internal/verify/autofix_exec.go` returns no matches (the stale workaround phrasing is gone from both)
+- [x] `grep -n "effectively Go-only" docs/auto-fix.md internal/verify/autofix_exec.go` returns no matches
+- [x] `grep -n "still read-only" docs/auto-fix.md internal/verify/autofix_exec.go` returns no unconditional match in either file (a correctly-scoped "read-only by default, writable when Writable:true" phrasing is acceptable)
+- [x] `docs/auto-fix.md` states non-Go `validate_command`s (npm, cargo, etc.) are now supported via the ephemeral `/src:ro` + `/work` tmpfs copy
+- [x] `docs/auto-fix.md` documents the `/bin/sh` + `cp -a` image requirement for Command-mode `Writable:true`
+- [x] `internal/verify/autofix_exec.go`'s doc comment no longer disagrees with `docs/auto-fix.md`'s description of the same mechanism
+- [x] `docs/execution.md` and the `internal/sandbox` package doc receive zero edits and remain textually accurate for `--exec`'s `Writable:false`-only usage
+- [x] Both rewritten files state that the `/src` snapshot remains read-only for the container's entire lifetime, writes into `/work` die with the container, and no host file is ever mutated
+- [x] `grep -n "Until a writable build-output overlay" docs/auto-fix.md internal/verify/autofix_exec.go` returns no matches (the stale workaround phrasing is gone from both)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

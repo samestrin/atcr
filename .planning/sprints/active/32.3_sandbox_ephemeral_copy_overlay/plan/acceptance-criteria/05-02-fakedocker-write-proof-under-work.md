@@ -64,17 +64,17 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/sandbox/...`)
-- [ ] No linting errors (`go vet ./...` / project lint gate)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/sandbox/...`)
+- [x] No linting errors (`go vet ./...` / project lint gate)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] New test reuses `writeFakeDocker` (no new scaffolding/helper introduced)
-- [ ] Test asserts an observable file write (existence + content), not just argv shape or exit code
-- [ ] Command-mode `Writable:true` is covered by the write-proof (mandatory — it is `--auto-fix`'s exclusive `RunSpec` mode); Script-mode coverage is optional/additive
-- [ ] Test skips cleanly (via the existing `t.Skip` in `writeFakeDocker`) on Windows, matching every other caller's skip behavior
-- [ ] Test is additive — no edits to `TestDockerRunArgs_HardeningFlagsPresent`, `TestDockerRunArgs_ScriptUsesStdinShell`, or any other pre-existing test in the file
-- [ ] Test lands in `internal/sandbox/docker_test.go` (per `codebase-discovery.json` → `files_to_modify`) or `sandbox_test.go` — same package either way — and follows the `TestDockerBackend_<Scenario>` naming convention
+- [x] New test reuses `writeFakeDocker` (no new scaffolding/helper introduced)
+- [x] Test asserts an observable file write (existence + content), not just argv shape or exit code
+- [x] Command-mode `Writable:true` is covered by the write-proof (mandatory — it is `--auto-fix`'s exclusive `RunSpec` mode); Script-mode coverage is optional/additive — `TestDockerBackend_Run_WritableOverlayWriteProof` is table-driven over BOTH modes
+- [x] Test skips cleanly (via the existing `t.Skip` in `writeFakeDocker`) on Windows, matching every other caller's skip behavior
+- [x] Test is additive — no edits to `TestDockerRunArgs_HardeningFlagsPresent`, `TestDockerRunArgs_ScriptUsesStdinShell`, or any other pre-existing test in the file
+- [x] Test lands in `internal/sandbox/docker_test.go` (per `codebase-discovery.json` → `files_to_modify`) or `sandbox_test.go` — same package either way — and follows the `TestDockerBackend_<Scenario>` naming convention
 
 **Manual Review:**
 - [ ] Code reviewed and approved
