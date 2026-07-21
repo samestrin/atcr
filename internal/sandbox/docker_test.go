@@ -98,6 +98,81 @@ func TestDockerBackend_Run_ScriptModeReadOnlyStdinUnchanged(t *testing.T) {
 		"Writable:false Script mode stdin must be the script body verbatim")
 }
 
+func TestRenderCommand_UnaffectedByWritable(t *testing.T) {
+	// AC 02-03 Scenario 3: renderCommand is display-only evidence — it renders the
+	// caller's ORIGINAL command/script, never the injected cp -a setup step, for both
+	// Writable values, so the evidence trail stays readable.
+	cmd := RunSpec{Command: []string{"npm", "run", "build"}, SnapshotDir: "/tmp/snap"}
+	cmdW := cmd
+	cmdW.Writable = true
+	assert.Equal(t, "npm run build", renderCommand(cmd))
+	assert.Equal(t, "npm run build", renderCommand(cmdW), "Writable must not leak the setup step into command evidence")
+	assert.NotContains(t, renderCommand(cmdW), "cp -a")
+
+	scr := RunSpec{Script: "npm test\n", SnapshotDir: "/tmp/snap"}
+	scrW := scr
+	scrW.Writable = true
+	want := "/bin/sh -s <<'EOF'\nnpm test\n\nEOF"
+	assert.Equal(t, want, renderCommand(scr))
+	assert.Equal(t, want, renderCommand(scrW), "Writable must not alter the Script-mode heredoc evidence")
+	assert.NotContains(t, renderCommand(scrW), "cp -a")
+}
+
+func TestDockerBackend_Run_WritableOverlayWriteProof(t *testing.T) {
+	// AC 02-03 Scenarios 4-5: prove the Writable:true Run path is reachable and
+	// functional end-to-end (not merely present in argv) for BOTH Command and Script
+	// modes, and that the snapshot side stays read-only. The fake docker shim stands in
+	// for the container: it first refuses to proceed unless Run actually built the
+	// Writable overlay argv (/src:ro bind + /work tmpfs), then emulates the payload's
+	// write under the writable /work overlay by creating a marker file, and proves the
+	// /src snapshot is read-only by requiring a write into a read-only stand-in to fail.
+	workMarker := filepath.Join(t.TempDir(), "dist-out")
+	srcRO := t.TempDir()
+	require.NoError(t, os.Chmod(srcRO, 0o555), "make the /src stand-in read-only")
+	t.Cleanup(func() { _ = os.Chmod(srcRO, 0o755) })
+	t.Setenv("ATCR_WORK_MARKER", workMarker)
+	t.Setenv("ATCR_SRC_RO", srcRO)
+
+	fake := writeFakeDocker(t, `if [ "$1" = "run" ]; then
+  case "$*" in
+    *:/src:ro*) : ;;
+    *) echo "missing /src:ro bind" >&2; exit 90 ;;
+  esac
+  case "$*" in
+    *"--tmpfs /work:rw"*) : ;;
+    *) echo "missing /work tmpfs" >&2; exit 90 ;;
+  esac
+  echo built > "$ATCR_WORK_MARKER" || exit 91
+  if echo x > "$ATCR_SRC_RO/should-not-exist" 2>/dev/null; then
+    echo "the /src snapshot stand-in was writable" >&2; exit 92
+  fi
+  exit 0
+fi
+exit 0`)
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	b := NewDockerBackend(cfg)
+
+	cases := []struct {
+		name string
+		spec RunSpec
+	}{
+		{"command mode", RunSpec{Command: []string{"npm", "run", "build"}, SnapshotDir: t.TempDir(), Writable: true}},
+		{"script mode", RunSpec{Script: "mkdir -p target && echo built > target/out\n", SnapshotDir: t.TempDir(), Writable: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_ = os.Remove(workMarker) // reset between modes; absent on first iteration
+			res, err := b.Run(context.Background(), tc.spec)
+			require.NoError(t, err, "a reachable Writable:true run is not a backend fault")
+			require.Equal(t, 0, res.ExitCode, "the Writable:true payload must succeed (ExitCode 0, no EROFS); shim exits 90-92 on a broken overlay")
+			data, rerr := os.ReadFile(workMarker)
+			require.NoError(t, rerr, "the payload's write under the writable /work overlay must be observable, proving the mount path is functional")
+			assert.Equal(t, "built\n", string(data))
+		})
+	}
+}
+
 func TestDefaultDockerConfig_WorkSizeDefault(t *testing.T) {
 	cfg := DefaultDockerConfig()
 	// WorkSize backs the writable /work overlay's tmpfs; it must have a sane
