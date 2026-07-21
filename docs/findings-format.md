@@ -59,7 +59,7 @@ MEDIUM|internal/store/cache.go:88|Unbounded map grows without eviction (disagree
 | 3 | `PROBLEM` | What is wrong | On merge: the longest/most-detailed wins; severity disagreements are appended inline. |
 | 4 | `FIX` | Suggested remediation | Longest wins on merge. |
 | 5 | `CATEGORY` | Free-text tag (`security`, `performance`, `correctness`, …) | Modal value wins on merge. |
-| 6 | `EST_MINUTES` | Integer effort estimate | Best-effort; non-numeric parses as `0`. Max wins on merge. |
+| 6 | `EST_MINUTES` | Integer effort estimate | Best-effort; non-numeric parses as `0`. Max wins on merge. Also consumed as a routing input by the executor's complexity ceiling (`max_estimated_minutes`) — see [registry.md](registry.md#executor-fix-generation-active-in-70). |
 | 7 | `EVIDENCE` | Supporting snippet or rationale | In reconciled rows, prefixed with the reviewer name. |
 | 8 | `REVIEWER` (per-source) / `REVIEWERS` (reconciled) | Source attribution | Single name vs. comma-joined set. |
 | 9 | `CONFIDENCE` (reconciled only) | `HIGH` / `MEDIUM` / `LOW` | Reviewer-agreement signal, refined by per-run PageRank authority (an isolated finding from an above-`1/N`-authority model is promoted to `HIGH`; never demoted). |

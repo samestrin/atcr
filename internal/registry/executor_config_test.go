@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	yaml "gopkg.in/yaml.v3"
 )
 
 // executorBaseProviders is a minimal valid registry the executor block is appended to.
@@ -217,6 +218,8 @@ func TestExecutorConfig_EffectiveFixMinSeverity(t *testing.T) {
 		"unset min_severity_for_fix falls back to the MEDIUM default")
 	assert.Equal(t, "HIGH", ExecutorConfig{MinSeverity: "HIGH"}.EffectiveFixMinSeverity(),
 		"an explicit floor is returned unchanged")
+	assert.Equal(t, DefaultFixMinSeverity, ExecutorConfig{MinSeverity: "   "}.EffectiveFixMinSeverity(),
+		"a whitespace-only floor counts as unset and falls back to the MEDIUM default")
 }
 
 // The executor name is interpolated into the "fix by <name>" attribution appended
@@ -589,4 +592,222 @@ func TestExecutor_AbsentBlockValid_AC8(t *testing.T) {
 	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders))
 	require.NoError(t, err, "a registry with no executor block must be valid")
 	assert.Nil(t, reg.Executor, "no executor block leaves Registry.Executor nil; agent_mode cannot be set")
+}
+
+// --- Sprint 32.1: complexity-ceiling fields (Story 1) ---
+
+// AC 01-01 Scenario 1: both ceiling fields parse to their exact configured values.
+func TestExecutor_ComplexityCeilingFieldsParsed(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_estimated_minutes: 30
+  max_severity_for_fix: HIGH
+`))
+	require.NoError(t, err)
+	require.NotNil(t, reg.Executor)
+	require.NotNil(t, reg.Executor.MaxEstimatedMinutes, "max_estimated_minutes parses to a non-nil pointer")
+	assert.Equal(t, 30, *reg.Executor.MaxEstimatedMinutes)
+	assert.Equal(t, "HIGH", reg.Executor.MaxSeverityForFix)
+}
+
+// AC 01-01 Scenario 2: max_severity_for_fix is normalized to canonical upper-case,
+// mirroring min_severity_for_fix.
+func TestExecutor_MaxSeverityForFixNormalized(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_severity_for_fix: high
+`))
+	require.NoError(t, err)
+	require.NotNil(t, reg.Executor)
+	assert.Equal(t, "HIGH", reg.Executor.MaxSeverityForFix)
+}
+
+// AC 01-01 Scenario 3: both fields are absent-safe when omitted (backward compat).
+func TestExecutor_ComplexityCeilingFieldsAbsentSafe(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+`))
+	require.NoError(t, err)
+	require.NotNil(t, reg.Executor)
+	assert.Nil(t, reg.Executor.MaxEstimatedMinutes, "unset max_estimated_minutes stays nil")
+	assert.Equal(t, "", reg.Executor.MaxSeverityForFix, "unset max_severity_for_fix stays empty")
+}
+
+// AC 01-01 Edge Case 1: at the struct/unmarshal layer an explicit
+// max_estimated_minutes: 0 parses to a non-nil pointer dereferencing to 0,
+// distinguishable from unset (nil) — the pointer convention. This is asserted at the
+// YAML-unmarshal layer, not via LoadRegistry: Story 4's validateExecutor legitimately
+// rejects an explicit 0 at load (see TestExecutor_MaxEstimatedMinutesOutOfRangeRejected),
+// so the distinguishability the pointer provides is a parse-level property, and the
+// "explicit 0 == no ceiling" resolver semantics are covered by the direct-struct-literal
+// TestExecutorConfig_EffectiveMaxEstimatedMinutes.
+func TestExecutor_MaxEstimatedMinutesExplicitZeroParsed(t *testing.T) {
+	var ex ExecutorConfig
+	require.NoError(t, yaml.Unmarshal([]byte("max_estimated_minutes: 0\n"), &ex))
+	require.NotNil(t, ex.MaxEstimatedMinutes, "explicit 0 parses to a non-nil pointer")
+	assert.Equal(t, 0, *ex.MaxEstimatedMinutes)
+
+	var unset ExecutorConfig
+	require.NoError(t, yaml.Unmarshal([]byte("model: m\n"), &unset))
+	assert.Nil(t, unset.MaxEstimatedMinutes, "an omitted max_estimated_minutes stays nil, distinguishable from explicit 0")
+}
+
+// AC 01-02 Scenarios 1 & 3, Edge Cases 1 & 2: EffectiveMaxEstimatedMinutes returns
+// the configured positive ceiling, and the 0 "no ceiling" sentinel when nil, zero,
+// or negative — a pure pass-through/fallback resolver, no validation.
+func TestExecutorConfig_EffectiveMaxEstimatedMinutes(t *testing.T) {
+	assert.Equal(t, 0, ExecutorConfig{}.EffectiveMaxEstimatedMinutes(),
+		"unset (nil) max_estimated_minutes resolves to 0 (no ceiling)")
+	assert.Equal(t, 0, ExecutorConfig{MaxEstimatedMinutes: intPtr(0)}.EffectiveMaxEstimatedMinutes(),
+		"explicit 0 resolves to 0 (no ceiling), identical to unset")
+	assert.Equal(t, 0, ExecutorConfig{MaxEstimatedMinutes: intPtr(-5)}.EffectiveMaxEstimatedMinutes(),
+		"a negative ceiling resolves to 0 (no ceiling), mirroring EffectiveMaxToolCalls")
+	assert.Equal(t, 45, ExecutorConfig{MaxEstimatedMinutes: intPtr(45)}.EffectiveMaxEstimatedMinutes(),
+		"an explicit positive ceiling is returned unchanged")
+}
+
+// AC 01-02 Scenarios 2 & 4, Edge Case 3: EffectiveMaxSeverityForFix returns the
+// configured value when non-empty and "" (no ceiling) when unset — pass-through,
+// no validation or normalization of its own (a bogus value is returned verbatim).
+func TestExecutorConfig_EffectiveMaxSeverityForFix(t *testing.T) {
+	assert.Equal(t, "", ExecutorConfig{}.EffectiveMaxSeverityForFix(),
+		"unset max_severity_for_fix resolves to \"\" (no ceiling)")
+	assert.Equal(t, "HIGH", ExecutorConfig{MaxSeverityForFix: "HIGH"}.EffectiveMaxSeverityForFix(),
+		"a configured value is returned unchanged")
+	assert.Equal(t, "BOGUS", ExecutorConfig{MaxSeverityForFix: "BOGUS"}.EffectiveMaxSeverityForFix(),
+		"the resolver is a pass-through: it does not validate or normalize")
+}
+
+// --- Sprint 32.1: ceiling validation (Story 4) ---
+
+// AC 04-01 Error Scenario 1 / Edge Case 3: a non-positive (0, -1) or over-cap
+// max_estimated_minutes is rejected, mirroring TestExecutor_MaxToolCallsOutOfRangeRejected.
+func TestExecutor_MaxEstimatedMinutesOutOfRangeRejected(t *testing.T) {
+	for _, val := range []string{"0", "-1", fmt.Sprintf("%d", MaxExecutorEstimatedMinutes+1)} {
+		_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_estimated_minutes: `+val+`
+`))
+		require.Error(t, err, "max_estimated_minutes %s must be rejected", val)
+		assert.Contains(t, err.Error(), "max_estimated_minutes")
+	}
+}
+
+// AC 04-01 Edge Case 1: max_estimated_minutes at the exact bounds (1 and
+// MaxExecutorEstimatedMinutes) is accepted.
+func TestExecutor_MaxEstimatedMinutesBoundaryAccepted(t *testing.T) {
+	for _, val := range []int{1, MaxExecutorEstimatedMinutes} {
+		reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_estimated_minutes: `+fmt.Sprintf("%d", val)+`
+`))
+		require.NoError(t, err, "max_estimated_minutes %d must be accepted", val)
+		require.NotNil(t, reg.Executor.MaxEstimatedMinutes)
+		assert.Equal(t, val, *reg.Executor.MaxEstimatedMinutes)
+	}
+}
+
+// AC 04-01 Error Scenario 2: a max_severity_for_fix outside the canonical set is
+// rejected, mirroring TestExecutor_InvalidMinSeverityForFix.
+func TestExecutor_MaxSeverityForFixInvalidRejected(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_severity_for_fix: BLOCKER
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_severity_for_fix")
+}
+
+// AC 04-01 Error Scenario 3: both per-field faults accumulate rather than short-circuit.
+func TestExecutor_CeilingFaultsAccumulate(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_estimated_minutes: -1
+  max_severity_for_fix: BLOCKER
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_estimated_minutes")
+	assert.Contains(t, err.Error(), "max_severity_for_fix")
+}
+
+// AC 04-02 Error Scenario 1 / Edge Case 3: a max_severity_for_fix ranking strictly
+// below min_severity_for_fix is rejected with a distinguishable contradictory-range
+// error naming both values; normalization is not bypassable via case/whitespace.
+func TestExecutor_MaxSeverityForFixBelowMinSeverityRejected(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  min_severity_for_fix: " Critical "
+  max_severity_for_fix: "low"
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_severity_for_fix")
+	assert.Contains(t, err.Error(), "below", "the contradiction error is distinguishable from the plain out-of-set error")
+}
+
+// AC 04-02 Edge Case 1 (negative side): min unset (defaults to MEDIUM) with a ceiling
+// below that default (LOW) is a contradiction and must be rejected — the check reads the
+// EFFECTIVE floor, not just an explicitly-written one. Also covers the whitespace-only
+// floor leak (a min that normalizes to empty must resolve to the MEDIUM default too).
+func TestExecutor_MaxSeverityForFixBelowDefaultedFloorRejected(t *testing.T) {
+	for _, minLine := range []string{"", "  min_severity_for_fix: \"   \"\n"} {
+		_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_severity_for_fix: LOW
+`+minLine))
+		require.Error(t, err, "max_severity_for_fix LOW below the effective MEDIUM floor must be rejected (min line %q)", minLine)
+		assert.Contains(t, err.Error(), "below")
+	}
+}
+
+// AC 04-02 Edge Case 2: an individually-invalid min_severity_for_fix with a valid
+// max_severity_for_fix accumulates only the per-field floor error — the cross-field
+// contradiction check must NOT fire a false "below" error nor panic on the unranked key.
+func TestExecutor_InvalidFloorDoesNotMaskOrFalseContradict(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  min_severity_for_fix: BOGUS
+  max_severity_for_fix: HIGH
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "min_severity_for_fix", "the per-field floor error is surfaced")
+	assert.NotContains(t, err.Error(), "below", "the cross-field check must not fire on an invalid floor")
+}
+
+// AC 04-02 Scenario 1 & 2, Edge Case 1: a valid floor/ceiling combination — ceiling
+// above floor, equal floor/ceiling, and ceiling-against-defaulted-floor — loads cleanly.
+func TestExecutor_ValidFloorCeilingCombinationAccepted(t *testing.T) {
+	cases := []struct{ name, block string }{
+		{"ceiling above floor", "  min_severity_for_fix: LOW\n  max_severity_for_fix: HIGH\n"},
+		{"equal floor and ceiling", "  min_severity_for_fix: HIGH\n  max_severity_for_fix: HIGH\n"},
+		{"ceiling equals defaulted floor", "  max_severity_for_fix: MEDIUM\n"}, // min unset → defaults to MEDIUM
+	}
+	for _, c := range cases {
+		reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+`+c.block))
+		require.NoError(t, err, "case %q must load cleanly", c.name)
+		require.NotNil(t, reg.Executor)
+	}
 }

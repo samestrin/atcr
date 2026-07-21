@@ -1,3 +1,16 @@
+## [32.1.0] - 2026-07-20
+
+Add a configurable complexity ceiling to the fix executor so cheap/local models can safely skip findings beyond their capability, enabling a two-tier cheap-then-frontier auto-fix workflow.
+
+### Added
+
+- `max_estimated_minutes` / `max_severity_for_fix` executor config fields: findings above the configured complexity ceiling are skipped (and logged) before dispatch instead of attempted, with full range/cross-field validation at load time.
+- Self-gating decline: the executor can now decline a fix it judges too complex mid-generation, surfacing as an explicit skip rather than a hallucinated partial fix.
+- Two-tier auto-fix workflow: a second, independently-configured executor run picks up exactly the findings a lower-ceiling tier skipped, with fix attribution preventing double-processing across tiers.
+- `docs/registry.md` / `docs/findings-format.md` documentation and a worked cheap-tier + frontier-tier example (`examples/registry-with-executor.yaml`, `examples/registry-with-executor-tier2.yaml`).
+
+*Shipped via /init-plan + /execute-sprint + /execute-code-review (sprint 32.1)*
+
 ## [32.0.0] - 2026-07-20
 
 Route `--auto-fix` validation through the existing `internal/sandbox` container isolation so LLM-generated build/test commands never run directly on the host, sandboxed by default with a loudly-warned `--no-sandbox` opt-out.

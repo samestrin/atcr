@@ -55,19 +55,98 @@ var newFanoutEngine = func(cc fanout.ChatCompleter, opts ...fanout.EngineOption)
 // give the executor real code context (Epic 7.0 snippet tier).
 const fixSnippetRadius = 30
 
+// declineMarker is the documented self-gating decline sentinel (Sprint 32.1): an
+// executor that judges a dispatched fix beyond its capability emits a completion
+// whose leading token is this exact marker (optionally followed by ": <reason>")
+// instead of a partial patch.
+const declineMarker = "ATCR_DECLINE"
+
+// parseSelfDecline reports whether a fix response is a self-gating decline and, if
+// so, its human-readable reason (Sprint 32.1). Detection is CONSERVATIVE: the
+// trimmed response must either equal declineMarker exactly or begin with
+// "declineMarker:" — a leading-token match on the executor's OWN documented signal,
+// never a substring scan, so crafted finding/reviewer text embedded mid-response
+// (or a prose fix that merely mentions "decline") cannot force or suppress a decline
+// (AC 02-02 security note; Error Scenario 2 conservative-detector requirement). A
+// bare marker with no reason falls back to a generic reason so FixWarning is never
+// empty.
+func parseSelfDecline(fix string) (string, bool) {
+	trimmed := strings.TrimSpace(fix)
+	// Tolerate a single pair of surrounding quotes: a literal-minded model may echo
+	// the sentinel example verbatim including quotes. Strip AT MOST one matching
+	// pair ("x" or 'x') — never an arbitrary run of quote characters — so a response
+	// wrapped in nested or mismatched quotes is not trimmed into a bare marker and
+	// misclassified as a decline.
+	if len(trimmed) >= 2 {
+		if q := trimmed[0]; (q == '"' || q == '\'') && trimmed[len(trimmed)-1] == q {
+			trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+		}
+	}
+	if !strings.HasPrefix(trimmed, declineMarker) {
+		return "", false
+	}
+	rest := trimmed[len(declineMarker):]
+	// The marker must be the WHOLE leading token: what follows (if anything) must be a
+	// separator (":" or whitespace), never an identifier char — so "ATCR_DECLINED" is
+	// NOT a decline. This keeps detection conservative against reviewer/finding text
+	// while accepting the reason separators the prompt invites (":" or a space/newline).
+	if rest != "" {
+		switch rest[0] {
+		case ':', ' ', '\t', '\n', '\r':
+		default:
+			return "", false
+		}
+	}
+	reason := strings.TrimSpace(strings.TrimPrefix(rest, ":"))
+	if reason == "" {
+		reason = "fix exceeds safe complexity for this executor"
+	}
+	return reason, true
+}
+
+// sanitizeDeclineReason scrubs a model-generated decline reason before it lands in
+// FixWarning / findings.json (Sprint 32.1 security follow-up). parseSelfDecline strips
+// only the LEADING marker token, so a reason may still embed declineMarker again
+// ("ATCR_DECLINE is not needed") or span multiple lines; both would otherwise ride
+// verbatim into the artifact. It removes every residual marker occurrence and flattens
+// CR/LF to spaces (mirroring logPipelineWarning's newline flattening), falling back to
+// the same generic reason parseSelfDecline uses if the scrub empties the text so the
+// warning is never a bare "executor declined: ".
+func sanitizeDeclineReason(reason string) string {
+	reason = strings.ReplaceAll(reason, declineMarker, "")
+	reason = strings.ReplaceAll(reason, "\r", " ")
+	reason = strings.ReplaceAll(reason, "\n", " ")
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "fix exceeds safe complexity for this executor"
+	}
+	return reason
+}
+
 // fixAttributionPrefix is the marker appended to a finding's Evidence after a fix
 // is generated; it doubles as the idempotency guard (a finding already carrying it
 // is not re-generated on a verify re-run).
 const fixAttributionPrefix = "fix by "
 
 // anyFixEligible reports whether at least one finding qualifies for fix generation
-// on the executor's confidence+severity gate (the same per-finding gate
-// generateFixes applies). The pipeline uses it to avoid building BOTH the snapshot
-// harness and the executor client for a registry whose findings yield zero fixes.
+// on the same per-finding pre-dispatch gate generateFixes applies: confidence,
+// severity floor, AND the Sprint 32.1 complexity/severity ceilings. The pipeline uses
+// it to avoid building BOTH the snapshot harness and the executor client for a
+// registry whose findings yield zero fixes — including a single-tier config whose
+// every confidence+floor-eligible finding is over-ceiling (which generateFixes would
+// otherwise skip after the harness was already built). The ceilings are "no ceiling"
+// sentinels when unset (0 / ""), so an executor without ceilings behaves exactly as
+// before. Attribution is deliberately NOT consulted here: it is a re-run idempotency
+// concern, whereas this gate answers "could any finding ever get a fix".
 func anyFixEligible(findings []reconcile.JSONFinding, ex *registry.ExecutorConfig) bool {
 	fixMinSev := ex.EffectiveFixMinSeverity()
+	maxMin := ex.EffectiveMaxEstimatedMinutes()
+	maxSev := ex.EffectiveMaxSeverityForFix()
 	for i := range findings {
-		if reclib.ConfidenceAtOrAbove(findings[i].Confidence, reclib.ConfHigh) && meetsSeverityFloor(findings[i].Severity, fixMinSev) {
+		if reclib.ConfidenceAtOrAbove(findings[i].Confidence, reclib.ConfHigh) &&
+			meetsSeverityFloor(findings[i].Severity, fixMinSev) &&
+			withinComplexityCeiling(findings[i].EstMinutes, maxMin) &&
+			withinSeverityCeiling(findings[i].Severity, maxSev) {
 			return true
 		}
 	}
@@ -115,6 +194,11 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		return
 	}
 	minSev := ex.EffectiveFixMinSeverity()
+	// Complexity ceilings (Sprint 32.1): resolved once, outside the loop, mirroring
+	// minSev. Both are "no ceiling" sentinels when unset (0 / ""), so an executor
+	// without ceilings behaves exactly as before.
+	maxMin := ex.EffectiveMaxEstimatedMinutes()
+	maxSev := ex.EffectiveMaxSeverityForFix()
 	// Bounded worker pool (mirrors the skeptic stage in pipeline.go): the
 	// eligibility filters below are cheap and stay on the calling goroutine, but
 	// each eligible finding's snippet read + executor round-trip + writes run in
@@ -145,6 +229,48 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		// prefix of another ("op" vs "opus") or unrelated evidence prose containing
 		// "fix by <name>" mid-sentence does not silently suppress generation.
 		if hasFixAttribution(f.Evidence, ex.Name) {
+			continue
+		}
+		// Complexity ceiling (Sprint 32.1, original epic T4): the fourth pre-dispatch
+		// gate, after confidence/severity/attribution. Unlike those silent bare-continue
+		// skips, an over-ceiling skip is VISIBLE — it sets FixWarning and logs the
+		// executor_ceiling_skip class — so a cheap tier that leaves a hard finding for a
+		// later frontier tier is never misread as a clean run. It runs before any snippet
+		// read or provider call, so an over-ceiling finding costs no API round-trip. The
+		// estimated-minutes and severity ceilings use distinct reason text so a downstream
+		// consumer can tell which bound was hit.
+		if !withinComplexityCeiling(f.EstMinutes, maxMin) {
+			reason := fmt.Sprintf("skipped: estimated complexity (%dm) exceeds executor ceiling (%dm)", f.EstMinutes, maxMin)
+			logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", fmt.Sprintf("%s:%d: %s", f.File, f.Line, reason))
+			// Never clobber a prior tier's success: under distinct tier Names (or a
+			// decreasing ceiling across tiers) the name-scoped attribution guard above
+			// misses a finding an earlier tier already fixed, so only stamp the skip
+			// warning when this finding carries no fix yet — never "both Fix and
+			// FixWarning" (the stale-warning state the partition contract forbids).
+			if f.Fix == "" {
+				f.FixWarning = reason
+			}
+			continue
+		}
+		// Ordering contract (co-located here because withinSeverityCeiling relies on it
+		// but cannot enforce it): the meetsSeverityFloor gate above has already
+		// `continue`d every finding whose severity is empty/unknown (rank 0), so
+		// f.Severity is guaranteed a real, ranked level by the time it reaches this
+		// ceiling gate. That guarantee is precisely what lets withinSeverityCeiling fail
+		// OPEN on a rank-0 finding severity (unlike its sibling meetsSeverityFloor, which
+		// fails CLOSED) without risk — it never re-decides a rank-0 finding. Do NOT
+		// reorder this ceiling gate before the floor gate above.
+		if !withinSeverityCeiling(f.Severity, maxSev) {
+			// Display the canonical (normalized) severity so the reason reads
+			// consistently (e.g. "CRITICAL exceeds ... (HIGH)") regardless of the
+			// casing the reviewer emitted; the comparison itself is already
+			// case-insensitive inside withinSeverityCeiling.
+			reason := fmt.Sprintf("skipped: severity %s exceeds executor ceiling (%s)", reclib.NormalizeSeverity(f.Severity), maxSev)
+			logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", fmt.Sprintf("%s:%d: %s", f.File, f.Line, reason))
+			// Same prior-tier-success guard as the complexity ceiling above.
+			if f.Fix == "" {
+				f.FixWarning = reason
+			}
 			continue
 		}
 		wg.Add(1)
@@ -205,6 +331,29 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			if fix == "" {
 				logPipelineWarning(log.FromContext(ctx), "executor_empty_fix", fmt.Sprintf("%s:%d", f.File, f.Line))
 				f.FixWarning = "fix generation returned an empty completion"
+				return
+			}
+			// Self-gating decline (Sprint 32.1): the executor may judge a dispatched fix
+			// beyond its capability and emit the documented decline sentinel instead of a
+			// partial patch — on the snippet path (out) or the agent path (the parsed fix
+			// flowing through out). Record it through the SAME FixWarning +
+			// executor_ceiling_skip contract as a pre-dispatch ceiling skip, returning
+			// BEFORE any f.Fix/f.Evidence assignment so a decline never lands as content
+			// (the stale-Fix-plus-warning risk the story flags). The class is distinct from
+			// executor_fix_failed (a provider/transport error), executor_truncated_fix, and
+			// executor_empty_fix — a decline is a deliberate choice, not a failure. Placed
+			// after the empty check so it classifies only a non-empty, marker-shaped
+			// response; an ambiguous non-marker response falls through to the syntax guard
+			// below unchanged.
+			if reason, declined := parseSelfDecline(fix); declined {
+				reason = sanitizeDeclineReason(reason)
+				logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", fmt.Sprintf("%s:%d: self-declined: %s", f.File, f.Line, reason))
+				// Same prior-tier-success guard as the pre-dispatch ceiling skips: a later
+				// tier's decline must not stamp a warning over a finding an earlier tier
+				// already fixed (distinct-Name / decreasing-ceiling case).
+				if f.Fix == "" {
+					f.FixWarning = "executor declined: " + reason
+				}
 				return
 			}
 			f.Fix = fix
@@ -333,7 +482,11 @@ func buildFixPrompt(f reconcile.JSONFinding, snippet string, ex *registry.Execut
 		// applyDefaults already resolves an empty persona to DefaultExecutorPersona at
 		// registry load, so buildFixPrompt should not re-derive it here.
 		persona := strings.TrimSpace(ex.Persona)
-		fmt.Fprintf(&b, "You are %s, a code-fix executor. Generate the minimal code change that fixes the finding below. Preserve the existing style and conventions. Output only the fix (corrected code or a precise change instruction); do not restate the problem.\n\n", persona)
+		fmt.Fprintf(&b, "You are %s, a code-fix executor. Generate the minimal code change that fixes the finding below. Preserve the existing style and conventions. Output only the fix (corrected code or a precise change instruction); do not restate the problem.\n", persona)
+		// Self-gating (Sprint 32.1): give the executor an explicit, structured way to
+		// decline rather than emit a guessed/partial patch. parseSelfDecline detects this
+		// exact leading token and records a skip instead of a fix.
+		fmt.Fprintf(&b, "If the fix is genuinely beyond your capability or too complex to complete safely, reply with exactly %s followed by a brief reason (for example, %s) instead of a partial or guessed fix.\n\n", declineMarker, declineMarker+": requires cross-module refactor beyond this pass")
 	}
 	if len(ex.Rules) > 0 {
 		b.WriteString("Coding rules to follow (apply these to your fix):\n")
@@ -524,6 +677,9 @@ func buildExecutorAgentPromptWithSentinel(finding reconcile.JSONFinding, sentine
 	b.WriteString("```json\n")
 	b.WriteString(`{"fix": "the minimal change that fixes the problem", "explanation": "why this fixes it"}`)
 	b.WriteString("\n```\n")
+	// Self-gating (Sprint 32.1): if the fix is beyond your capability, set "fix" to
+	// exactly the decline sentinel rather than guessing a partial patch.
+	fmt.Fprintf(&b, "If the fix is genuinely beyond your capability or too complex to complete safely, set the \"fix\" field to exactly %s followed by a brief reason instead of a partial or guessed fix.\n", declineMarker+": <reason>")
 	return b.String()
 }
 
