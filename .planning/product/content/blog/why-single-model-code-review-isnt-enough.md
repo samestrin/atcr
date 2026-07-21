@@ -29,6 +29,14 @@ Then we reconcile their findings:
 
 The result isn't just "more findings" — it's **higher-quality findings with measurable confidence.**
 
+## The Danger of "Context Collapse"
+
+If you ask a single AI agent to write a function, and then immediately ask it to review that *same* function in the same context window, it will almost always agree with itself. It won't find the off-by-one error it just introduced because it has already committed to the reasoning that produced it. 
+
+The industry calls this **Context Collapse** (or Context Rot). In long, single-agent sessions, the model starts to "remember" its earlier flawed decisions in ways that quietly skew its judgment. 
+
+You cannot fix Context Collapse with a better prompt (e.g., typing *"Look harder!"*). The fix must be **structural, not prompt-based.** You need completely separate agents, in isolated context windows, acting adversarially. That is exactly what ATCR provides.
+
 ## The 3-Layer AI Review Architecture
 
 When you look at modern AI code review, the ecosystem is breaking into three distinct layers:

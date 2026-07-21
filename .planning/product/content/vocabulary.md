@@ -35,3 +35,4 @@ This document standardizes the terminology used across ATCR's codebase, marketin
 - **Adversarial Verification:** The specific ATCR mechanism of using a Skeptic to refute a finding.
 - **Zero Vendor Lock-in:** The principle that generated outputs (e.g., Playwright UI tests in Epic 44.0) must be standard open-source formats, not proprietary vendor formats.
 - **Managerial Velocity Metrics:** Enterprise analytics (Epic 42.0) focusing on "Time-to-Merge" and "Pushed vs Landed Coding Time".
+- **Context Collapse (or Context Rot):** The phenomenon where a single AI agent, operating in a long session, becomes saturated with its own assumptions and blind spots. It prevents an agent from objectively reviewing its own generated code. ATCR solves this with a structural fix: completely isolated context windows for every persona.
