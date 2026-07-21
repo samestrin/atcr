@@ -43,9 +43,7 @@ type DockerConfig struct {
 	// mirroring the existing `--tmpfs /scratch:rw,exec,size=<cfg.ScratchSize>`
 	// pattern in dockerRunArgs). It is sized for a full source-tree copy rather
 	// than just a build cache, so its default is deliberately larger than
-	// ScratchSize's "64m". The writable-overlay path requires the run image to
-	// ship /bin/sh and a `cp` supporting `-a` (true for alpine/golang-family
-	// images, false for distroless/scratch).
+	// ScratchSize's "64m" (see RunSpec.Writable for run-image shell requirements).
 	WorkSize string
 	// Timeout is the default per-run wall-clock budget when RunSpec.Timeout is 0.
 	Timeout time.Duration
