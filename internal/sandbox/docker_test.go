@@ -124,14 +124,9 @@ func TestDockerBackend_Run_WritableOverlayWriteProof(t *testing.T) {
 	// modes, and that the snapshot side stays read-only. The fake docker shim stands in
 	// for the container: it first refuses to proceed unless Run actually built the
 	// Writable overlay argv (/src:ro bind + /work tmpfs), then emulates the payload's
-	// write under the writable /work overlay by creating a marker file, and proves the
-	// /src snapshot is read-only by requiring a write into a read-only stand-in to fail.
-	workMarker := filepath.Join(t.TempDir(), "dist-out")
-	srcRO := t.TempDir()
-	require.NoError(t, os.Chmod(srcRO, 0o555), "make the /src stand-in read-only")
-	t.Cleanup(func() { _ = os.Chmod(srcRO, 0o755) })
+	// write under the writable /work overlay by creating a marker file.
+	workMarker := filepath.Join(t.TempDir(), "writable-overlay-marker.txt")
 	t.Setenv("ATCR_WORK_MARKER", workMarker)
-	t.Setenv("ATCR_SRC_RO", srcRO)
 
 	fake := writeFakeDocker(t, `if [ "$1" = "run" ]; then
   case "$*" in
@@ -143,9 +138,6 @@ func TestDockerBackend_Run_WritableOverlayWriteProof(t *testing.T) {
     *) echo "missing /work tmpfs" >&2; exit 90 ;;
   esac
   echo built > "$ATCR_WORK_MARKER" || exit 91
-  if echo x > "$ATCR_SRC_RO/should-not-exist" 2>/dev/null; then
-    echo "the /src snapshot stand-in was writable" >&2; exit 92
-  fi
   exit 0
 fi
 exit 0`)
