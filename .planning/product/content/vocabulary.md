@@ -30,6 +30,8 @@ This document standardizes the terminology used across ATCR's codebase, marketin
 - **Agent:** A tool (like ATCR) that acts autonomously. It runs in the background (or in CI), understands deep project context, catches race conditions, and auto-fixes them with explanations without human hand-holding. ATCR is firmly an **Agent**.
 
 ## Key Concepts
-- **Adversarial Verification:** The process of using a Skeptic to refute a finding.
+- **Automated Red Teaming:** The process of adversarially testing code (and AI outputs) continuously on every PR. In ATCR, the Skeptic persona performs this role, acting as an automated red team against the Auto-Fixer to ensure it doesn't bypass security filters or write vulnerable code.
+- **Inter-agent Attacks:** A critical security risk in multi-agent systems where a compromised agent feeds malicious instructions or context to a downstream agent. ATCR's orchestrator must strictly sanitize context passed between the Fixer and the Skeptic.
+- **Adversarial Verification:** The specific ATCR mechanism of using a Skeptic to refute a finding.
 - **Zero Vendor Lock-in:** The principle that generated outputs (e.g., Playwright UI tests in Epic 44.0) must be standard open-source formats, not proprietary vendor formats.
 - **Managerial Velocity Metrics:** Enterprise analytics (Epic 42.0) focusing on "Time-to-Merge" and "Pushed vs Landed Coding Time".
