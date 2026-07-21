@@ -223,7 +223,14 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		if !withinComplexityCeiling(f.EstMinutes, maxMin) {
 			reason := fmt.Sprintf("skipped: estimated complexity (%dm) exceeds executor ceiling (%dm)", f.EstMinutes, maxMin)
 			logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", fmt.Sprintf("%s:%d: %s", f.File, f.Line, reason))
-			f.FixWarning = reason
+			// Never clobber a prior tier's success: under distinct tier Names (or a
+			// decreasing ceiling across tiers) the name-scoped attribution guard above
+			// misses a finding an earlier tier already fixed, so only stamp the skip
+			// warning when this finding carries no fix yet — never "both Fix and
+			// FixWarning" (the stale-warning state the partition contract forbids).
+			if f.Fix == "" {
+				f.FixWarning = reason
+			}
 			continue
 		}
 		if !withinSeverityCeiling(f.Severity, maxSev) {
@@ -233,7 +240,10 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// case-insensitive inside withinSeverityCeiling.
 			reason := fmt.Sprintf("skipped: severity %s exceeds executor ceiling (%s)", reclib.NormalizeSeverity(f.Severity), maxSev)
 			logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", fmt.Sprintf("%s:%d: %s", f.File, f.Line, reason))
-			f.FixWarning = reason
+			// Same prior-tier-success guard as the complexity ceiling above.
+			if f.Fix == "" {
+				f.FixWarning = reason
+			}
 			continue
 		}
 		wg.Add(1)
@@ -310,7 +320,12 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// below unchanged.
 			if reason, declined := parseSelfDecline(fix); declined {
 				logPipelineWarning(log.FromContext(ctx), "executor_ceiling_skip", fmt.Sprintf("%s:%d: self-declined: %s", f.File, f.Line, reason))
-				f.FixWarning = "executor declined: " + reason
+				// Same prior-tier-success guard as the pre-dispatch ceiling skips: a later
+				// tier's decline must not stamp a warning over a finding an earlier tier
+				// already fixed (distinct-Name / decreasing-ceiling case).
+				if f.Fix == "" {
+					f.FixWarning = "executor declined: " + reason
+				}
 				return
 			}
 			f.Fix = fix
