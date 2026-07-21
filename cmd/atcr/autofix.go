@@ -373,11 +373,16 @@ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFi
 	}
 
 	// Route validation through the resolved sandbox backend when one is present
-	// (the default sandboxed-on posture), else run it directly on the host — the
-	// --no-sandbox opt-out, which leaves be.sandboxBackend nil (AC 01-03/03-02).
-	// Both paths return the identical verify.ValidationResult contract, so the three
-	// post-call branches below (verr != nil / !res.Passed() / success) are consumed
-	// unchanged regardless of which path produced the result.
+	// (the default sandboxed-on posture), else run it directly on the host ONLY when
+	// the operator explicitly opted out via --no-sandbox (be.noSandbox). A nil
+	// backend WITHOUT that opt-out fails closed rather than falling back to the host:
+	// this supersedes AC 01-03's original nil→host zero-behavior baseline, decoupling
+	// the fail-closed guarantee from the gate hard-coding enabled=true so a
+	// gate-bypassing caller cannot inherit a silent unsandboxed run (epic 32.2 Task 1;
+	// AC 03-02 still governs the opt-out path). Both non-refusing paths return the
+	// identical verify.ValidationResult contract, so the three post-call branches
+	// below (verr != nil / !res.Passed() / success) are consumed unchanged regardless
+	// of which path produced the result.
 	//
 	// Accepted taxonomy divergence for exits 125-127: on the host path a validation
 	// command exiting 125/126/127 is an ordinary non-zero program exit and lands in
