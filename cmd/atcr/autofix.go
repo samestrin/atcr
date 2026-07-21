@@ -97,11 +97,21 @@ type autoFixBackend struct {
 	apiURL          string
 	// sandboxBackend is the resolved-and-preflighted container backend the
 	// validation step runs inside (the gate's fourth checked piece, AC 02-03).
-	// nil means validation runs directly on the host — the --no-sandbox opt-out
-	// path (AC 03-02), never a silent fallback: under the default sandboxed-on
-	// posture an unresolvable sandbox is a hard gate refusal, so a nil here only
-	// ever reflects an explicit operator opt-out.
+	// When non-nil, validation is sandboxed. A nil here is NOT sufficient to run
+	// on the host: host execution additionally requires noSandbox (below) to be
+	// true, so a nil backend without the explicit opt-out is a fail-closed refusal
+	// rather than a silent unsandboxed fallback (epic 32.2 Task 1). Under the
+	// default sandboxed-on posture an unresolvable sandbox is a hard gate refusal,
+	// so in production a nil here only ever accompanies noSandbox==true.
 	sandboxBackend sandbox.Backend
+	// noSandbox records that the operator explicitly passed --no-sandbox: it is the
+	// ONLY thing that authorizes runAutoFix to run validation unsandboxed on the
+	// host. It is set true solely on the warned opt-out path in
+	// validateAutoFixBackend; a directly-constructed backend (a future caller or a
+	// test) that leaves it false and supplies no sandboxBackend is refused at the
+	// dispatch, decoupling the fail-closed guarantee from the gate hard-coding
+	// enabled=true (epic 32.2 Task 1, replacing AC 01-03's nil→host baseline).
+	noSandbox bool
 }
 
 // resolveValidateTimeout picks the effective validation timeout: an operator-

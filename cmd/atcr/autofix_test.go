@@ -885,6 +885,37 @@ func TestRunAutoFix_NilSandboxUsesHostPath(t *testing.T) {
 	require.Equal(t, 1, gh.createPR, "the host path stays byte-identical when no sandbox backend is supplied")
 }
 
+// TestRunAutoFix_NilSandboxWithoutOptOutRefuses: a backend with NO sandbox and NO
+// explicit --no-sandbox opt-out (noSandbox=false) must fail closed — refuse before
+// any host validation or GitHub call and revert the applied patch — rather than
+// silently running unsandboxed on the host (epic 32.2 Task 1, AC1). validateArgv is
+// `true`, which WOULD pass on the host path, so a green PR here would prove a silent
+// host fallback; the required error proves the fail-closed guard fired instead.
+func TestRunAutoFix_NilSandboxWithoutOptOutRefuses(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"}, // WOULD pass on the host path
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			sandboxBackend: nil,   // no sandbox resolved
+			noSandbox:      false, // and no explicit opt-out
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	})
+	require.Error(t, err, "a nil sandbox backend without --no-sandbox must refuse, not silently run on the host")
+	require.Equal(t, 0, gh.branchCalls+gh.commitCalls+gh.createPR+gh.updatePR,
+		"no GitHub call may fire on a fail-closed refusal")
+	got, _ := os.ReadFile(filepath.Join(root, rel))
+	require.Equal(t, "old\n", string(got), "the applied patch must be reverted on a fail-closed refusal")
+}
+
 // --- thin finding->entry selection ----------------------------------------
 
 // TestSelectAutoFixEntries_FiltersByThresholdAndFix: only findings carrying a Fix
