@@ -196,9 +196,10 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// including ones skipped for verification — so a verified-but-skipped finding
 	// still gets a fix.
 	//
-	// anyFixEligible mirrors generateFixes' full eligibility (confidence AND
-	// severity) so a registry with an executor but only low-confidence findings does
-	// not build a snapshot that yields zero fixes. This branch runs only when no
+	// anyFixEligible mirrors generateFixes' full eligibility (confidence, severity
+	// floor, AND complexity/severity ceilings) so a registry with an executor but only
+	// low-confidence or over-ceiling findings does not build a snapshot that yields zero
+	// fixes. This branch runs only when no
 	// skeptic needs the tool harness, so no finding here will be promoted to VERIFIED
 	// by verification — current confidence is the final confidence for the gate.
 	if reg.Executor != nil && !needTool && anyFixEligible(findings, reg.Executor) {

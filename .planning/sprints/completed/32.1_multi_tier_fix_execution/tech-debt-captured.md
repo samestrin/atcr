@@ -1,0 +1,15 @@
+# Tech Debt Captured — Sprint 32.1 (Multi-Tier Fix Execution)
+
+## TD-001 — anyFixEligible ignores complexity ceilings (LOW)
+**Origin:** Phase 2, task 2.2.A adversarial review, 2026-07-20
+**File:** internal/verify/executor.go:67-75
+**Issue:** `anyFixEligible` gates whether the executor harness (snapshot + client) is built using only the confidence + severity-floor check; it does not consult the new `withinComplexityCeiling`/`withinSeverityCeiling` bounds. For a single-executor config where every floor-eligible finding is over-ceiling, the full harness is built and then `generateFixes` skips all findings, so the ceiling's cost-avoidance intent is bypassed one layer up. No incorrect output — purely an efficiency gap.
+**Why accepted:** Benign in the intended multi-tier flow (over-ceiling findings are meant for a later tier, and the harness/client are shared across the run). Out of Story 2's scope, which owns the per-finding skip mechanics, not harness-build gating. Fixing it here would broaden the change surface beyond the AC.
+**Fix in:** A later optimization pass (or a follow-up sprint) — extend `anyFixEligible` to also require `withinComplexityCeiling`/`withinSeverityCeiling` so a single-tier all-over-ceiling config skips the snapshot/client build entirely; alternatively document that the harness build intentionally ignores ceilings.
+
+## TD-002 — no command-level runVerify-twice two-tier integration test (LOW)
+**Origin:** Phase 3, task 3.8 gate review, 2026-07-20
+**File:** internal/verify/executor_test.go
+**Issue:** Story 3's two-tier partition is proven at the `generateFixes` level (called twice directly, or via a manual `findings.json` round-trip), which is exactly the story's stated test scope. No test drives the actual operator command sequence — two `runVerify` passes over one review dir (tier-1 registry then tier-2 registry) — so the command-level composition (verify reads the prior findings.json at pipeline.go:140 → recomputes confidence → the attribution guard fires on the second invocation, preventing double-processing) is characterized only by inference, not asserted end-to-end.
+**Why accepted:** Not a live defect — the Phase 3 gate independently confirmed the composition holds (pipeline.go:140 reads the prior findings.json; no verify stage rewrites `Evidence`, so tier-1 attribution survives a real second pass). It is beyond Story 3's stated scope (`generateFixes`-level integration), and Phase 4's docs worked example rests on this confirmed-holding composition. Adding it now would broaden the change surface past the AC.
+**Fix in:** A follow-up test-hardening pass — add `TestRunVerify_TwoTierExecutorPartition` running `runVerify` twice over one review dir with a tier-1 then a tier-2 executor registry (reusing the `pipelineReview`/`swapExecutorClient`/`readFindings` harness), asserting the same partition + no-double-processing contract, so a future change to the verify read/recompute/write ordering that strips attribution is caught before the docs' worked example silently breaks.
