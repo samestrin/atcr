@@ -352,6 +352,23 @@ func (b *DockerBackend) Preflight(ctx context.Context) error {
 	if err := b.validateHostCaps(ctx); err != nil {
 		return err
 	}
+	// 2.6. The tmpfs size caps (ScratchSize, WorkSize) are interpolated verbatim into
+	//      the `--tmpfs .../scratch|work:...,size=<v>` mount specs. Validate them
+	//      against the docker size grammar (digits + optional b/k/m/g) up front via the
+	//      same parser the memory cap uses, so an operator config typo fails preflight
+	//      here instead of at container-spawn time (or, for WorkSize, only once a
+	//      Writable overlay run mounts /work).
+	for _, sz := range []struct{ name, val string }{
+		{"scratch_size", b.cfg.ScratchSize},
+		{"work_size", b.cfg.WorkSize},
+	} {
+		if sz.val == "" {
+			continue
+		}
+		if _, err := parseDockerMemory(sz.val); err != nil {
+			return fmt.Errorf("sandbox preflight: invalid %s %q: %w", sz.name, sz.val, err)
+		}
+	}
 	// 3. A trivial hardened container actually runs, using the SAME docker run
 	//    args as real executions so malformed caps (memory/cpus/pids-limit) are
 	//    caught here instead of failing mid-review.
