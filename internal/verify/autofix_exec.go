@@ -64,6 +64,10 @@ var ErrAutoFixSandboxUnconfigured = errors.New("--auto-fix requires a [sandbox] 
 // `--exec`'s existing contract, so this sprint keeps Validate() unchanged (pinned
 // by a regression test) and leaves a split-validation / parallel-light-validation
 // path as future work.
+//
+// Overlay sizing note: WorkSize ("512m") and ScratchSize ("64m") rely on
+// DefaultDockerConfig defaults and are bounded by the operator's Memory cap;
+// they are deliberately not exposed as separate YAML knobs on SandboxConfig.
 func ResolveAutoFixSandbox(ctx context.Context, enabled bool, sc *registry.SandboxConfig) (sandbox.Backend, error) {
 	if !enabled {
 		return nil, nil
