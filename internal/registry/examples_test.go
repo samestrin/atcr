@@ -58,3 +58,35 @@ func TestRegistryExamples_Valid(t *testing.T) {
 		assert.Truef(t, hasLanguage, "%s must declare a language scope on at least one agent", name)
 	}
 }
+
+// TestTwoTierExecutorExamples_Load guards the worked two-tier example (Sprint
+// 32.1, Story 5 / AC 05-02): the cheap-tier and frontier-tier example registries
+// must both load and validate clean through the real loader (the AC's "dry-run
+// load", not a hand-rolled YAML check), and must demonstrate a meaningful ceiling
+// contrast — the cheap tier carries a positive max_estimated_minutes ceiling, the
+// frontier tier none. This is what an operator copy-pastes to assemble the
+// two-independent-runs workflow, so a drift in field name, default, or validation
+// range fails here before it becomes a copy-paste trap.
+func TestTwoTierExecutorExamples_Load(t *testing.T) {
+	examples := filepath.Join("..", "..", "examples")
+
+	// Tier 1 — cheap/local tier: loads clean and resolves a positive ceiling.
+	tier1, err := LoadRegistry(filepath.Join(examples, "registry-with-executor.yaml"))
+	require.NoError(t, err, "tier-1 (cheap) example must load and validate")
+	require.NotNil(t, tier1.Executor, "tier-1 example must define an executor")
+	tier1Ceiling := tier1.Executor.EffectiveMaxEstimatedMinutes()
+	assert.Positive(t, tier1Ceiling, "tier-1 (cheap) example must set a positive max_estimated_minutes ceiling")
+
+	// Tier 2 — frontier tier: loads clean and resolves "no ceiling" (unlimited).
+	tier2, err := LoadRegistry(filepath.Join(examples, "registry-with-executor-tier2.yaml"))
+	require.NoError(t, err, "tier-2 (frontier) example must load and validate")
+	require.NotNil(t, tier2.Executor, "tier-2 example must define an executor")
+	tier2Ceiling := tier2.Executor.EffectiveMaxEstimatedMinutes()
+	assert.Zero(t, tier2Ceiling, "tier-2 (frontier) example must set no ceiling (unlimited)")
+
+	// The two tiers must demonstrate a meaningful contrast, not the same value
+	// (AC 05-02 Error Scenario 2): the cheap tier is bounded while the frontier
+	// tier is unlimited, so their effective ceilings must differ.
+	assert.NotEqual(t, tier1Ceiling, tier2Ceiling,
+		"the two tiers must show a meaningful ceiling contrast, not the same value")
+}
