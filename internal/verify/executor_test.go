@@ -1110,3 +1110,20 @@ func TestGenerateFixes_LaterTierSelfDeclinePreservesPriorFix(t *testing.T) {
 	assert.Equal(t, "tierA fix", findings[0].Fix, "a later tier's self-decline must not clobber a prior tier's fix")
 	assert.Empty(t, findings[0].FixWarning, "a later tier's self-decline must not stamp a stale warning over a fixed finding")
 }
+
+// Security (TD LOW): parseSelfDecline strips only the LEADING marker token, so a
+// decline reason that embeds the sentinel again ("ATCR_DECLINE is not needed") or
+// spans multiple lines would ride the raw sentinel / newlines straight into
+// FixWarning and findings.json. The recorded warning must carry neither, yet still
+// read as a decline.
+func TestGenerateFixes_SelfDeclineReasonSanitized(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	rec := &recordingExecutor{out: "ATCR_DECLINE: ATCR_DECLINE is not needed\nsecond line"}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+	assert.Empty(t, findings[0].Fix, "a decline lands no fix content")
+	assert.NotContains(t, findings[0].FixWarning, declineMarker, "the raw decline sentinel must not leak into FixWarning")
+	assert.NotContains(t, findings[0].FixWarning, "\n", "the decline reason must be newline-flattened")
+	assert.Contains(t, findings[0].FixWarning, "executor declined:", "it is still recorded as a decline")
+}
