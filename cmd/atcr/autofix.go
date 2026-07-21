@@ -261,6 +261,11 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 	// --no-sandbox=false is identical to the flag being absent.
 	noSandbox, _ := cmd.Flags().GetBool("no-sandbox")
 	if noSandbox {
+		// Record the explicit opt-out on the backend: it is the ONLY thing that
+		// authorizes runAutoFix to run validation unsandboxed on the host — a nil
+		// sandboxBackend alone is refused at the dispatch (epic 32.2 Task 1). This is
+		// the single setter of be.noSandbox.
+		be.noSandbox = true
 		// Fire the security warning the moment the bypass is chosen — unconditional
 		// and non-memoized (every invocation), so the operator can never lose sight
 		// of running untrusted LLM-generated validation on the host (AC 03-03).
@@ -385,10 +390,25 @@ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFi
 	// 125-127 apart from its own, not a divergence in the shared contract.
 	var res verify.ValidationResult
 	var verr error
-	if be.sandboxBackend != nil {
+	switch {
+	case be.sandboxBackend != nil:
 		res, verr = verify.RunSandboxedValidation(ctx, be.sandboxBackend, be.validateArgv, be.applyTarget, be.validateTimeout)
-	} else {
+	case be.noSandbox:
+		// Host path — reachable ONLY via the explicit --no-sandbox opt-out, which is
+		// the sole setter of be.noSandbox (validateAutoFixBackend). AC 01-03/03-02.
 		res, verr = verify.RunConfiguredValidation(ctx, be.validateArgv, be.applyTarget, be.validateTimeout)
+	default:
+		// Fail closed: a nil sandbox backend WITHOUT the --no-sandbox opt-out must
+		// never silently run unsandboxed on the host. This decouples the fail-closed
+		// guarantee from the gate hard-coding enabled=true — a future/test caller that
+		// constructs autoFixBackend directly and bypasses the gate is refused here, not
+		// silently run on the host (epic 32.2 Task 1). The patch has already been
+		// applied above, so revert it and make no GitHub call, exactly like a
+		// validation failure.
+		if rerr := autofix.RevertPatch(ctx, bm); rerr != nil {
+			return fmt.Errorf("auto-fix: refusing unsandboxed host validation without --no-sandbox AND revert failed: %w", rerr)
+		}
+		return fmt.Errorf("auto-fix: refusing to run validation unsandboxed on the host without an explicit --no-sandbox opt-out (no sandbox backend was resolved); working tree reverted, no GitHub changes made")
 	}
 	if verr != nil {
 		// Could not even validate: fail closed exactly like a validation failure.
