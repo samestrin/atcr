@@ -14,6 +14,12 @@
 - `internal/sandbox/sandbox_test.go` - modify: add a test asserting `RunSpec{}` zero value has `Writable == false`
 - `internal/tools/exec_tools.go` - reference only (not modified): lines 178 and 215 construct `RunSpec{...}` literals that do not set `Writable`, and must keep compiling and behaving identically
 
+### Related Files (from codebase-discovery.json)
+- `internal/sandbox/sandbox.go:28` (`RunSpec` struct) — modify: add `Writable bool` near `SnapshotDir` (sandbox.go:39-40) with the doc comment described in the scenarios below
+- `internal/sandbox/sandbox.go:43` (`RunSpec.validate()`) — reference-only: untouched by this story; must not read or branch on `Writable`
+- `internal/sandbox/sandbox_test.go:35` (home of `TestDockerRunArgs_HardeningFlagsPresent`) — extend (additive only): new zero-value test; no existing test body modified
+- `internal/tools/exec_tools.go:178,215` — reference-only control group: both `RunSpec{...}` literals leave `Writable` unset and keep the zero value `false` with zero code change
+
 ## Happy Path Scenarios
 **Scenario 1: Zero-value RunSpec defaults to read-only**
 - **Given** a `RunSpec` literal that does not set `Writable` (e.g. `RunSpec{Command: []string{"true"}, SnapshotDir: "/tmp/x"}`)
@@ -36,6 +42,11 @@
 - **When** they check its described behavior against the code
 - **Then** the comment explicitly states the writable-overlay mechanism is implemented in a later story, avoiding a misleading "this already works" impression
 
+**Edge Case 3: Doc comment narrows — never weakens — the package-level read-only guarantee, and flags the image requirement**
+- **Given** the package doc (`internal/sandbox/sandbox.go:1-15`) states a hard MUST for every `Backend.Run`: "a read-only view of the snapshot (the run cannot mutate the work tree)" (PRESERVE anchor, see `../documentation/current-sandbox-guarantees.md`)
+- **When** the `Writable` field doc comment describes the opt-in
+- **Then** it makes the narrowing explicit: under `Writable:true` the snapshot itself stays read-only (mounted at `/src` by the later mount story), only the ephemeral `/work` tmpfs copy is writable, and no host file is ever mutated — the package-level MUST is preserved, not edited. The comment also flags the new implicit image requirement recorded in plan.md's Refinement Decisions (2026-07-21) and `codebase-discovery.json` → `integration_gaps`: `Writable:true` Command mode will wrap execution in `/bin/sh -c 'cp -a /src/. /work/ && cd /work && exec "$@"'`, so the run image must ship `/bin/sh` and a `cp` supporting `-a` (true for `alpine`/`golang`-family images via busybox/coreutils, false for distroless/scratch images)
+
 ## Error Conditions
 **Error Scenario 1: N/A — no new error paths**
 - This story adds a passive data field with no validation branch; `RunSpec.validate()` (`internal/sandbox/sandbox.go:43`) is untouched and must continue to return its existing errors (`"sandbox: RunSpec must set exactly one of Command or Script..."`, `"sandbox: RunSpec.SnapshotDir is required"`, etc.) unchanged for every existing input.
@@ -54,6 +65,7 @@
 **Test Type:** UNIT
 **Test Data Requirements:** No fixtures beyond in-memory `RunSpec{}` literals; reuse existing `sandbox_test.go` patterns (see `TestDockerRunArgs_HardeningFlagsPresent`).
 **Mock/Stub Requirements:** None — this is a pure struct/zero-value assertion, no `docker` shim or filesystem needed.
+**Suggested Test Name / Assertions:** `TestRunSpec_WritableDefaultsToFalse` (new, in `internal/sandbox/sandbox_test.go`, same package so it may call `validate()` directly): assert `RunSpec{}.Writable == false`; assert an explicit `RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir(), Writable: true}` round-trips `Writable == true`; and assert `validate()` returns `nil` for that spec with `Writable` set to both `true` and `false` (pinning that the field does not interact with the exactly-one-of-Command/Script or `SnapshotDir` checks). Daemon-free — no `writeFakeDocker` (sandbox_test.go:24) needed for this AC.
 
 ## Definition of Done
 **Auto-Verified:**
@@ -62,7 +74,8 @@
 - [ ] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `RunSpec` struct in `internal/sandbox/sandbox.go` has a `Writable bool` field with a doc comment describing the `false` default and the opt-in writable-overlay effect
+- [ ] `RunSpec` struct in `internal/sandbox/sandbox.go` has a `Writable bool` field (near `SnapshotDir`, sandbox.go:39-40) with a doc comment describing the `false` default and the opt-in writable-overlay effect
+- [ ] The doc comment states the mechanism lands in a later story; narrows (never weakens) the package doc's read-only-snapshot MUST (snapshot stays read-only at `/src`; only the ephemeral `/work` tmpfs copy is writable; no host file is mutated); and flags the implicit `/bin/sh` + `cp -a` image requirement (not distroless/scratch) per plan.md Refinement Decisions (2026-07-21)
 - [ ] `RunSpec{}` zero value has `Writable == false`, verified by a unit test
 - [ ] `RunSpec.validate()` is unmodified and its existing test coverage still passes unchanged
 - [ ] Neither `dockerRunArgs` nor `Backend.Run` reads or branches on `Writable` in this story's diff

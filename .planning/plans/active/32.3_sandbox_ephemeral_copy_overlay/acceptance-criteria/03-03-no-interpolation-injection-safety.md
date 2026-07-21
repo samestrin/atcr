@@ -14,6 +14,15 @@
 - `internal/sandbox/sandbox_test.go` - modify: add `TestDockerRunArgs_CommandModeWritable_NoShellInjection` (or equivalent) that feeds `spec.Command` tokens containing shell metacharacters (`;`, `` ` ``, `$(...)`) and asserts they survive as literal, unexecuted argv elements rather than being concatenated into the `-c` script string
 - `internal/sandbox/sandbox.go` - reference only (not modified): `RunSpec.Command`'s doc comment (`sandbox.go:29-30`, "No shell interpolation is performed") is the pre-existing invariant this AC extends to the `Writable:true` wrapped path
 
+### Related Files (from codebase-discovery.json)
+- `internal/sandbox/docker.go:145-147` (`dockerRunArgs` Command-mode branch) — reference/verify (implemented by AC 03-01, not re-implemented here): the structural source of the invariant this AC tests
+- `internal/sandbox/docker.go:153-158` (`renderCommand`) — reference-only: joins `spec.Command` with `strings.Join` into a display-only evidence string that is never executed, so its joining is not an injection vector; do not "fix" it by routing it into execution
+- `internal/sandbox/sandbox.go:28-35` (`RunSpec.Command`/`Script` doc comments) — reference-only: "No shell interpolation is performed" (`sandbox.go:30`) and "never interpolated into argv" (`sandbox.go:33`) are the pre-existing invariants extended to the wrapped path
+- `internal/sandbox/sandbox_test.go` — extend: new adversarial `TestDockerRunArgs_CommandModeWritable_NoShellInjection` (or equivalent), following the package's daemon-free argv-level assertion pattern
+- `internal/verify/sandboxvalidate_test.go:71` — reference-only: `--auto-fix`'s Command-mode-only invariant; the adversarial inputs that matter most are operator/model-configured `validate_command` argv tokens flowing through this path
+
+Reference documentation: [Docker tmpfs and read-only mounts](../documentation/docker-tmpfs-and-read-only-mounts.md), [Current sandbox guarantees](../documentation/current-sandbox-guarantees.md).
+
 ## Happy Path Scenarios
 **Scenario 1: A benign multi-token command passes through the wrap unmodified**
 - **Given** `RunSpec{Command: []string{"npm", "run", "build"}, SnapshotDir: "/tmp/snap", Writable: true}`
@@ -35,6 +44,11 @@
 - **Given** the same adversarial commands from Edge Cases 1-2 with `Writable: false` (or omitted)
 - **When** `dockerRunArgs` builds argv
 - **Then** the command tokens are appended directly as `spec.Command...` (today's unwrapped shape, per AC 03-01 Scenario 2) — there is no shell in the loop at all, so the injection question is moot for this path, and this must remain true after this AC's changes land
+
+**Edge Case 4: Empty, whitespace-only, and newline-containing tokens survive positionally**
+- **Given** `RunSpec{Command: []string{"printf", "", "a b", "line1\nline2"}, SnapshotDir: "/tmp/snap", Writable: true}`
+- **When** `dockerRunArgs` builds the wrapped argv
+- **Then** all four tokens appear after `--` as exactly four distinct argv elements — the empty string is a present, empty argv element (not dropped or filtered), and no token is split on its embedded whitespace or newline; `$@` positional expansion preserves each element as a single literal argument, and the `-c` script element remains exactly the fixed literal
 
 ## Error Conditions
 **Error Scenario 1: N/A — this AC is a safety-property test, not a new error path**
@@ -66,6 +80,7 @@
 - [ ] A command token containing `$(...)` or backticks survives as a single literal trailing argv element, never evaluated by the wrapping shell
 - [ ] The `-c` script argv element is asserted, for every adversarial case, to be exactly the fixed literal `cp -a /src/. /work/ && cd /work && exec "$@"` with no trace of the adversarial payload concatenated into it
 - [ ] The `Writable:false` path (no wrap, no shell) is reconfirmed unaffected for the same adversarial inputs
+- [ ] No `fmt.Sprintf`, `strings.Join`, or other string interpolation of `spec.Command` data appears anywhere in the wrap construction path — the `-c` text is a fixed Go string literal (grep-verifiable in the implementation diff, in addition to the runtime argv assertions above)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

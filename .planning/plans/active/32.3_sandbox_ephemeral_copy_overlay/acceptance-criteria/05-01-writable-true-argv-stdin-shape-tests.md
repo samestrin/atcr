@@ -14,11 +14,16 @@
 - `internal/sandbox/docker_test.go` - modify: alternative/additional location for `DockerBackend`-level `Writable:true` argv assertions if the case is expressed at the backend level rather than the pure `dockerRunArgs` level
 - `internal/sandbox/docker.go` - reference only: `dockerRunArgs` (line 110), the function under test; Story 2/3 add the `spec.Writable` branch here (the `/src:ro` mount, the `--tmpfs /work:rw,exec,size=` flag, and the `cp -a`/shell-wrap setup injection) that this AC's tests assert against, without this AC modifying that function itself
 
+### Related Files (from codebase-discovery.json)
+- `internal/sandbox/sandbox_test.go:24,35,55,83` (`writeFakeDocker`, `TestDockerRunArgs_HardeningFlagsPresent` + its `/tmp/snap:/work:ro` assertion, `TestDockerRunArgs_ScriptUsesStdinShell`) — extend (additive cases only; existing anchors unmodified)
+- `internal/sandbox/docker_test.go` — extend (optional sibling location for `DockerBackend`-level `Writable:true` cases; same package, same helpers)
+- `internal/sandbox/docker.go:110` (`dockerRunArgs`) — reference-only (function under test; the `Writable` branch is Stories 2-3's scope, not this story's)
+
 ## Happy Path Scenarios
 **Scenario 1: Command-mode Writable:true argv shape**
 - **Given** `RunSpec{Command: []string{"npm", "run", "build"}, SnapshotDir: "/tmp/snap", Writable: true}`
 - **When** `dockerRunArgs(cfg, spec)` is called
-- **Then** the joined argv contains `/tmp/snap:/src:ro` (the read-only source mount), a `--tmpfs /work:rw,exec,size=` flag (the writable overlay), and a shell-wrap invocation (`/bin/sh -c` with `cp -a` and `exec "$@"`) that carries the original `npm run build` argv positionally rather than interpolated into the wrap string
+- **Then** the joined argv contains the literal `/tmp/snap:/src:ro` (the read-only source mount), the literal `--tmpfs /work:rw,exec,size=<cfg.WorkSize>` (the writable overlay, matching the configured `WorkSize` byte-for-byte — assert via `assert.Contains` on the exact `/work:rw,exec,size=` prefix), and the Command-mode shell wrap `/bin/sh -c 'cp -a /src/. /work/ && cd /work && exec "$@"' -- npm run build`: assert each of `/bin/sh -c`, `cp -a /src/. /work/`, `exec "$@"`, and the `--` positional separator, with the original `npm run build` tokens carried positionally after `--` rather than interpolated into the wrap string
 
 **Scenario 2: Script-mode Writable:true stdin shape**
 - **Given** `RunSpec{Script: "npm run build\n", SnapshotDir: "/tmp/snap", Writable: true}`
@@ -41,6 +46,11 @@
 - **When** `dockerRunArgs` builds the shell-wrapped argv
 - **Then** every original token is still present and in order after the `--` positional-args separator, so the wrap injects no token reordering or loss
 
+**Edge Case 3: The Writable:true branch preserves the full hardening flag set**
+- **Given** a Command-mode or Script-mode `Writable:true` RunSpec
+- **When** `dockerRunArgs` builds the argv
+- **Then** the argv still contains `--network none`, the global `--read-only` rootfs flag, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user <cfg.User>`, and the existing `--tmpfs /scratch` mount — the writable overlay is strictly additive (`/src:ro` + `/work` tmpfs) and must not displace any `Writable:false` hardening flag, per the mount semantics in `../documentation/docker-tmpfs-and-read-only-mounts.md` and the epic criterion that the snapshot remains read-only for the container's entire lifetime
+
 ## Error Conditions
 **Error Scenario 1: N/A for this AC — no new error path**
 - These are pure-function argv-shape assertions; `spec.validate()` (`internal/sandbox/sandbox.go`) is unchanged by `Writable` and its existing validation errors (missing `SnapshotDir`, both/neither `Command`/`Script` set, colon-injection in `SnapshotDir`) apply identically regardless of `Writable`.
@@ -59,6 +69,8 @@
 **Test Type:** UNIT
 **Test Data Requirements:** New `RunSpec` literals with `Writable: true` for both Command and Script modes, following the existing fixture shapes (`SnapshotDir: "/tmp/snap"`) used by `TestDockerRunArgs_HardeningFlagsPresent` and `TestDockerRunArgs_ScriptUsesStdinShell`.
 **Mock/Stub Requirements:** None — `dockerRunArgs` is pure (no `docker` shim, no filesystem, no daemon needed) for the argv-shape assertions in this AC; the functional write-proof lives in AC 05-02.
+**Naming Convention:** `TestDockerRunArgs_<Scenario>` for pure-builder cases (e.g. `TestDockerRunArgs_WritableCommandShape`, `TestDockerRunArgs_WritableScriptShape`) / `TestDockerBackend_<Scenario>` if expressed at the backend level — per `codebase-discovery.json` → `test_patterns.naming_convention`.
+**Purity Invariant:** assertions stay daemon-free at the argv/stdin level, per `codebase-discovery.json` → `architecture_notes` — the `Writable` branch must remain inside the pure `dockerRunArgs` builder and introduce no new I/O, keeping every case in this AC sub-millisecond.
 
 ## Definition of Done
 **Auto-Verified:**
@@ -71,6 +83,8 @@
 - [ ] New Script-mode `Writable:true` test asserts `/src:ro`, `--tmpfs /work:rw,exec,size=`, `-i <image> /bin/sh -s`, and a prepended `cp -a` setup line in the stdin body
 - [ ] New cases are added as additive table rows or sibling test functions — no existing assertion in `TestDockerRunArgs_HardeningFlagsPresent` or `TestDockerRunArgs_ScriptUsesStdinShell` is edited
 - [ ] `go test -run TestDockerRunArgs_HardeningFlagsPresent` and `go test -run TestDockerRunArgs_ScriptUsesStdinShell` show zero behavior diff before/after this AC's additions
+- [ ] New `Writable:true` cases also assert the full hardening flag set (`--network none`, `--read-only`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--user`, `--tmpfs /scratch`) is preserved alongside the new `/src:ro` + `/work` tmpfs mounts
+- [ ] New test names follow `TestDockerRunArgs_<Scenario>` (or `TestDockerBackend_<Scenario>` at backend level)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

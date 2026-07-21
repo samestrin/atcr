@@ -1,9 +1,9 @@
 {
-  "skill": "find-documentation",
+  "skill": "design-sprint",
   "args": "@.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/",
-  "invocation": "/find-documentation @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/",
+  "invocation": "/design-sprint @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "f93de68a-3e31-4434-acec-efae72f6be17",
-  "timestamp": "2026-07-21T05:50:24.169Z"
+  "session_id": "74eb1c51-0534-441f-a9d3-91c09deeaadf",
+  "timestamp": "2026-07-21T17:50:31.135Z"
 }

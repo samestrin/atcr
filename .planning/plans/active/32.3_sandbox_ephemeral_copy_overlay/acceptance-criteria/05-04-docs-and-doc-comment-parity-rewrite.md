@@ -14,6 +14,12 @@
 - `internal/verify/autofix_exec.go` - modify: `ResolveAutoFixSandbox`'s doc comment (lines 47-55), which verbatim-duplicates the "Read-only /work limitation (effectively Go-only today)" claim, rewritten in the same pass so it no longer disagrees with `docs/auto-fix.md`
 - `docs/execution.md` - reference only (not modified): lines 51-62 ("What the sandbox guarantees") and lines 86-90 describe `--exec`'s read-only guarantee, which must remain textually accurate and unchanged by this story since `--exec`'s two call sites in `internal/tools/exec_tools.go` never set `Writable: true`
 
+### Related Files (from codebase-discovery.json)
+- `docs/auto-fix.md:38-53,47,55-60,62-71` — modify (the three stale passages plus the new `/bin/sh` + `cp -a` image-requirement note)
+- `internal/verify/autofix_exec.go:47-55` (`ResolveAutoFixSandbox` doc comment) — modify (doc comment only; no executable code touched)
+- `docs/execution.md:51-62,86-90` — reference-only (PRESERVE per `../documentation/current-sandbox-guarantees.md`; zero edits)
+- `internal/sandbox/sandbox.go:1-15` (package doc) — reference-only (outside this story's named edit scope; the `Writable:false` guarantee it pins remains true)
+
 ## Happy Path Scenarios
 **Scenario 1: docs/auto-fix.md's "still read-only" claim is corrected**
 - **Given** `docs/auto-fix.md:47` currently states unconditionally "The **mount mode is still read-only**"
@@ -23,7 +29,7 @@
 **Scenario 2: The "Limitation (read-only /work)" paragraph and EROFS blockquote are replaced**
 - **Given** `docs/auto-fix.md:55-60` (the limitation paragraph) and `:62-71` (the EROFS "effectively Go-only" blockquote) both describe a permanent limitation that no longer exists
 - **When** the rewrite lands
-- **Then** both are replaced with a description of the ephemeral `/src:ro` + `/work` tmpfs copy mechanism (the `cp -a` setup step), stating plainly that non-Go `validate_command`s (`npm run build`, `cargo build`, code generation, etc.) are now supported because they write into the ephemeral `/work` copy rather than a read-only mount
+- **Then** both are replaced with a description of the ephemeral `/src:ro` + `/work` tmpfs copy mechanism (the `cp -a` setup step), stating plainly that non-Go `validate_command`s (`npm run build`, `cargo build`, code generation, etc.) are now supported because they write into the ephemeral `/work` copy rather than a read-only mount — and that the snapshot stays read-only at `/src` for the container's entire lifetime, writes into `/work` die with the container, and no host file is ever mutated
 
 **Scenario 3: New image-requirement note is added**
 - **Given** Command-mode `Writable:true` wraps execution in `/bin/sh -c '... && exec "$@"'` (per plan.md's Implementation Strategy)
@@ -78,11 +84,13 @@
 
 **Story-Specific:**
 - [ ] `grep -n "effectively Go-only" docs/auto-fix.md internal/verify/autofix_exec.go` returns no matches
-- [ ] `grep -n "still read-only" docs/auto-fix.md` returns no unconditional match (a correctly-scoped "read-only by default, writable when Writable:true" phrasing is acceptable)
+- [ ] `grep -n "still read-only" docs/auto-fix.md internal/verify/autofix_exec.go` returns no unconditional match in either file (a correctly-scoped "read-only by default, writable when Writable:true" phrasing is acceptable)
 - [ ] `docs/auto-fix.md` states non-Go `validate_command`s (npm, cargo, etc.) are now supported via the ephemeral `/src:ro` + `/work` tmpfs copy
 - [ ] `docs/auto-fix.md` documents the `/bin/sh` + `cp -a` image requirement for Command-mode `Writable:true`
 - [ ] `internal/verify/autofix_exec.go`'s doc comment no longer disagrees with `docs/auto-fix.md`'s description of the same mechanism
 - [ ] `docs/execution.md` and the `internal/sandbox` package doc receive zero edits and remain textually accurate for `--exec`'s `Writable:false`-only usage
+- [ ] Both rewritten files state that the `/src` snapshot remains read-only for the container's entire lifetime, writes into `/work` die with the container, and no host file is ever mutated
+- [ ] `grep -n "Until a writable build-output overlay" docs/auto-fix.md internal/verify/autofix_exec.go` returns no matches (the stale workaround phrasing is gone from both)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

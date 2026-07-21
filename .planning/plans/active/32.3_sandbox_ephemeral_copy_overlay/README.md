@@ -7,7 +7,7 @@ Fixes the `EROFS` limitation in the ATCR Docker sandbox that makes `--auto-fix` 
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/32.3_sandbox_ephemeral_copy_overlay/`
 
 ## Timeline & Milestones
@@ -30,5 +30,7 @@ Shared-infrastructure blast radius (`internal/sandbox/docker.go` also serves `--
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
 - [Documentation](documentation/) — sandbox mount semantics + guarantee contract map
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)
+- [Test Planning Matrix](test-planning-matrix.md)
+- [Sprint Design](sprint-design.md) — Complexity 9/12 (COMPLEX), 4 phases, 8 days
