@@ -1041,3 +1041,36 @@ func TestGenerateFixes_NilRegistryNoPanic(t *testing.T) {
 	}, "a nil registry must be a graceful no-op, not a panic")
 	assert.Equal(t, 0, rec.calls, "no executor calls when registry is nil")
 }
+
+// anyFixEligible must mirror generateFixes' FULL pre-dispatch gate, including the
+// Sprint 32.1 complexity/severity ceilings. Without the ceiling parity a single-tier
+// config whose every confidence+floor-eligible finding is over-ceiling still reports
+// "some finding eligible" — so runVerify builds the snapshot harness and executor
+// client only for generateFixes to ceiling-skip every finding (wasted setup).
+func TestAnyFixEligible_RespectsCeilings(t *testing.T) {
+	t.Parallel()
+	severityCeiling := twoTierConfig("t", 0)
+	severityCeiling.MaxSeverityForFix = "HIGH"
+	tests := []struct {
+		name string
+		ex   *registry.ExecutorConfig
+		f    reconcile.JSONFinding
+		want bool
+	}{
+		{"within both ceilings is eligible", twoTierConfig("t", 30),
+			reconcile.JSONFinding{Severity: "HIGH", Confidence: ConfidenceVerified, EstMinutes: 10}, true},
+		{"over complexity ceiling is not eligible", twoTierConfig("t", 30),
+			reconcile.JSONFinding{Severity: "HIGH", Confidence: ConfidenceVerified, EstMinutes: 60}, false},
+		{"over severity ceiling is not eligible", severityCeiling,
+			reconcile.JSONFinding{Severity: "CRITICAL", Confidence: ConfidenceVerified, EstMinutes: 5}, false},
+		{"no ceilings preserves confidence+floor behavior", twoTierConfig("t", 0),
+			reconcile.JSONFinding{Severity: "HIGH", Confidence: ConfidenceVerified, EstMinutes: 100000}, true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, anyFixEligible([]reconcile.JSONFinding{tt.f}, tt.ex))
+		})
+	}
+}
