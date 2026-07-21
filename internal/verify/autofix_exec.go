@@ -44,15 +44,17 @@ var ErrAutoFixSandboxUnconfigured = errors.New("--auto-fix requires a [sandbox] 
 // as the backend's fallback default and can never silently shrink the operator's
 // validation budget.
 //
-// Read-only /work limitation (effectively Go-only today): the validation runs
-// with the patched working tree mounted read-only at /work (internal/sandbox/
-// docker.go). The built-in go build/go test path passes because caches redirect
-// to a writable /scratch, but a validate_command that writes UNDER the project
-// dir — npm run build -> dist/, cargo build -> target/, most non-Go builders and
-// codegen — hits EROFS, exits non-zero, and lands in !res.Passed(), so runAutoFix
-// fails closed and reverts a valid fix with no PR. Until a writable build-output
-// overlay exists, non-Go runners must redirect writes to /scratch, run outside
-// sandboxed validation, or use --no-sandbox. See docs/auto-fix.md.
+// Writable /work overlay (non-Go validators supported): the validation runs with
+// the patched working tree mounted read-only at /src and copied via `cp -a` into a
+// writable /work tmpfs (RunSandboxedValidation sets RunSpec.Writable; see internal/
+// sandbox/docker.go). A validate_command that writes UNDER the project dir — npm
+// run build -> dist/, cargo build -> target/, Python __pycache__, most non-Go
+// builders and codegen — writes into that ephemeral /work copy instead of hitting
+// EROFS, so a valid non-Go fix is validated and its PR opened rather than reverted.
+// The /src snapshot stays read-only for the container's lifetime and the /work copy
+// dies with the container, so no host file is mutated. The validation image must
+// provide /bin/sh and cp (alpine/golang-family images do; distroless/scratch do
+// not). See docs/auto-fix.md.
 //
 // Design tension (open follow-up, deliberately NOT resolved here): SandboxConfig.
 // Validate() unconditionally requires Image + TestCommand because it was written
