@@ -29,6 +29,15 @@ Then we reconcile their findings:
 
 The result isn't just "more findings" — it's **higher-quality findings with measurable confidence.**
 
+## The 3-Layer AI Review Architecture
+
+When you look at modern AI code review, the ecosystem is breaking into three distinct layers:
+1. **The Reviewers (Content Generation):** The agents that look at code and write comments.
+2. **The Workflow (Coordination):** The engine that routes findings, deduplicates them, and decides when to block a PR.
+3. **The Plumbing (Integrations):** The scripts that push these findings to Jira, Slack, or GitHub comments.
+
+Most single-model tools are just "Reviewers" wrapped in a basic CLI. ATCR is an entire **Workflow Engine**.
+
 ## Why This Matters
 
 Think about how code review actually works in practice:
