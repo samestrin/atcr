@@ -39,8 +39,8 @@ type DockerConfig struct {
 	// ScratchSize bounds the writable tmpfs scratch overlay (docker --tmpfs size).
 	ScratchSize string
 	// WorkSize bounds the writable tmpfs backing the /work overlay when
-	// RunSpec.Writable is true (consumed as `--tmpfs /work:rw,exec,size=<WorkSize>`,
-	// mirroring the existing `--tmpfs /scratch:rw,exec,size=<cfg.ScratchSize>`
+	// RunSpec.Writable is true (consumed as `--tmpfs /work:rw,exec,size=<WorkSize>,mode=1777`,
+	// mirroring the existing `--tmpfs /scratch:rw,exec,size=<cfg.ScratchSize>,mode=1777`
 	// pattern in dockerRunArgs). It is sized for a full source-tree copy rather
 	// than just a build cache, so its default is deliberately larger than
 	// ScratchSize's "64m" (see RunSpec.Writable for run-image shell requirements).
@@ -151,7 +151,13 @@ func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
 		// would be defense theater anyway — run_script already pipes arbitrary sh
 		// into the container, so the real containment is --network none, --cap-drop
 		// ALL, --security-opt no-new-privileges, and the read-only rootfs.
-		"--tmpfs", "/scratch:rw,exec,size=" + cfg.ScratchSize,
+		// mode=1777 (world-writable + sticky, like /tmp) is pinned explicitly: the
+		// container runs as a non-root user (cfg.User) but docker mounts tmpfs
+		// root-owned, and the daemon's default tmpfs mode is 1777 on standard Linux but
+		// 0755 on some daemons (Docker Desktop for macOS) — under 0755 the sandbox user
+		// cannot write, silently breaking the scratch build-cache. Pinning the mode
+		// makes writability independent of the daemon default.
+		"--tmpfs", "/scratch:rw,exec,size=" + cfg.ScratchSize + ",mode=1777",
 		// Point HOME, temp, and common build caches at the writable scratch tmpfs so
 		// runners that need to write (go test's build cache, mktemp, pip, etc.) work
 		// under the read-only rootfs. Harmless for runners that
@@ -171,7 +177,11 @@ func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
 		// with the --rm container, so no host file is ever mutated. The cp -R setup
 		// step that seeds /work from /src is injected in a later story.
 		args = append(args, "-v", spec.SnapshotDir+":/src:ro")
-		args = append(args, "--tmpfs", "/work:rw,exec,size="+cfg.WorkSize)
+		// mode=1777 for the same reason as /scratch above: the non-root sandbox user
+		// must be able to write the seeded copy into /work regardless of the daemon's
+		// tmpfs-mode default (0755 on Docker Desktop macOS would make the overlay
+		// unwritable — the whole point of the writable overlay).
+		args = append(args, "--tmpfs", "/work:rw,exec,size="+cfg.WorkSize+",mode=1777")
 	} else {
 		// Default (read-only): the snapshot binds directly read-only at /work,
 		// byte-identical to pre-overlay behavior — this is --exec's pinned guarantee.

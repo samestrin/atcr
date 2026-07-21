@@ -127,7 +127,7 @@ func TestDockerRunArgs_WritableFalseGoldenArgv(t *testing.T) {
 		"--memory", cfg.Memory,
 		"--cpus", cfg.CPUs,
 		"--pids-limit", strconv.Itoa(cfg.PidsLimit),
-		"--tmpfs", "/scratch:rw,exec,size=" + cfg.ScratchSize,
+		"--tmpfs", "/scratch:rw,exec,size=" + cfg.ScratchSize + ",mode=1777",
 		"-e", "HOME=/scratch",
 		"-e", "TMPDIR=/scratch",
 		"-e", "XDG_CACHE_HOME=/scratch/.cache",
@@ -167,7 +167,7 @@ func TestDockerRunArgs_WritableTrueMountsSrcROAndWorkTmpfs(t *testing.T) {
 	// Element-form: each mount spec is two adjacent argv elements, so a malformed
 	// single-token mount cannot pass. The /src bind takes the vacated /work:ro slot.
 	assertAdjacent(t, args, "-v", "/tmp/snap:/src:ro")
-	assertAdjacent(t, args, "--tmpfs", "/work:rw,exec,size=128m")
+	assertAdjacent(t, args, "--tmpfs", "/work:rw,exec,size=128m,mode=1777")
 }
 
 func TestDockerRunArgs_WritableTrueEmptyWorkSize(t *testing.T) {
@@ -349,7 +349,7 @@ func TestDockerRunArgs_WritableScriptShape(t *testing.T) {
 
 	// Writable mount shape: /src:ro + /work tmpfs, and NOT the read-only /work bind.
 	assertAdjacent(t, args, "-v", "/tmp/snap:/src:ro")
-	assertAdjacent(t, args, "--tmpfs", "/work:rw,exec,size=256m")
+	assertAdjacent(t, args, "--tmpfs", "/work:rw,exec,size=256m,mode=1777")
 	assert.NotContains(t, joined, "/tmp/snap:/work:ro", "the /work:ro bind must not survive the writable Script path")
 
 	// Command tail is Writable-invariant: -i <image> /bin/sh -s; the copy step is stdin, not argv.
