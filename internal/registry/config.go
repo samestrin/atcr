@@ -123,8 +123,10 @@ const (
 	// so a value above one week of minutes (7*24*60 = 10080) is almost certainly a
 	// mis-typed config (an extra zero) rather than an intended ceiling. Bounding it at
 	// load makes such a mistake fail loudly instead of silently disabling the ceiling's
-	// intent later. A nil pointer (unset) is valid and means "no ceiling".
-	MaxExecutorEstimatedMinutes = 10080
+	// intent later. A nil pointer (unset) is valid and means "no ceiling". The value is
+	// written as the computed 7*24*60 so the "one week of minutes" rationale in the
+	// comment above is self-documenting in the constant itself (= 10080).
+	MaxExecutorEstimatedMinutes = 7 * 24 * 60
 )
 
 // Verification defaults (Epic 3.0). DefaultVerifyMinSeverity is the floor below
