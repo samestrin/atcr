@@ -1,0 +1,3 @@
+
+
+No performance findings were identified in the changed code that meet the criteria for a performance review. The changes primarily involve control flow adjustments (adding a fail-closed guard and context cancellation handling) and test updates, none of which introduce algorithmic inefficiencies, unnecessary allocations, repeated work, N+1 queries, large copies, or other measurable runtime costs in hot paths. All modifications are either structural (adding fields, updating conditionals) or confined to test files without performance implications. Thus, no findings are emitted.

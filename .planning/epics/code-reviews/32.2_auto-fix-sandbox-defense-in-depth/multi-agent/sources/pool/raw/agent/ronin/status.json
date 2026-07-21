@@ -1,0 +1,19 @@
+{
+  "agent": "ronin",
+  "status": "failed",
+  "findings_count": 0,
+  "duration_ms": 1294,
+  "payload_mode": "blocks",
+  "truncated": true,
+  "files_dropped": [
+    ".planning/technical-debt/README.md"
+  ],
+  "error": "provider returned an empty completion (no content or reasoning_content)",
+  "response_truncated": true,
+  "dropped_by_min_severity": 0,
+  "truncated_by_max_findings": 0,
+  "effective_budget": 62977,
+  "resolved_window": 32768,
+  "reserved_output_tokens": 8192,
+  "degradation_action": "truncate"
+}

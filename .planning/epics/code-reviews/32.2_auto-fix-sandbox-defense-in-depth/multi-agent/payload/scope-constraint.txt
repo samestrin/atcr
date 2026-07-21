@@ -1,3 +1,7 @@
+## SCOPE CONSTRAINT
+The sprint/epic plan below defines the active work items for this review. Constrain your findings to files and changes directly related to these work items. Suppress findings for unrelated changes that merely happen to appear in the diff — for example dependency bumps, formatter or whitespace-only reformatting, and mechanical refactors not described in the plan. This is a scope hint, not a hard limit: still report any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.
+
+----- BEGIN SPRINT PLAN -----
 # Epic 32.2: Auto-Fix Sandbox Defense-in-Depth
 
 - **Estimated time**: 0.5 day
@@ -117,3 +121,5 @@ None remaining — both citation corrections above were confirmed and applied.
 - Deep discovery match count: 15
 - Deep discovery snapshot: `/Users/samestrin/Documents/GitHub/atcr/.planning/.temp/refine-epic/codebase-discovery.json` (temp-only — not committed)
 - Deep discovery also surfaced two recorded Sprint 32.0 clarification memories (`.planning/.knowledge/clarifications-32.0_sandbox_execution_environment-Q1.md` and `-Q2.md`) that independently confirm both tasks' approach (dispatch-side check for Task 1, fold-into-backend for Task 2) — no discrepancy found against this epic plan's design.
+----- END SPRINT PLAN -----
+

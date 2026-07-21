@@ -262,3 +262,8 @@
 {"ts":"2026-07-19T18:31:32.773653-07:00","package":"internal/verify","severity":"LOW","id":"2f8c605685ab5bdc","file":"internal/verify/autofix_exec.go","category":"style"}
 {"ts":"2026-07-20T15:46:07.310985-07:00","package":"examples","severity":"MEDIUM","id":"d9bbc6dc307da956","file":"examples/registry-with-executor-tier2.yaml","category":"clarity"}
 {"ts":"2026-07-20T15:46:07.310985-07:00","package":"internal/verify","severity":"MEDIUM","id":"4e1b935b75941370","file":"internal/verify/severity.go","category":"resource"}
+{"ts":"2026-07-20T18:39:52.97878-07:00","package":"cmd/atcr","severity":"HIGH","id":"192841c53aa75fbb","file":"cmd/atcr/autofix.go","category":"testing"}
+{"ts":"2026-07-20T18:39:52.97878-07:00","package":"internal/sandbox","severity":"MEDIUM","id":"67b14b3f326cca32","file":"internal/sandbox/docker_test.go","category":"testing"}
+{"ts":"2026-07-20T18:39:52.97878-07:00","package":"internal/sandbox","severity":"LOW","id":"ad6c00813550fab7","file":"internal/sandbox/docker.go","category":"performance"}
+{"ts":"2026-07-20T18:39:52.97878-07:00","package":"internal/sandbox","severity":"MEDIUM","id":"fb75551e94fb9f04","file":"internal/sandbox/docker.go","category":"reliability"}
+{"ts":"2026-07-20T18:39:52.97878-07:00","package":"cmd/atcr","severity":"LOW","id":"e8be273cc754b58e","file":"cmd/atcr/autofix.go","category":"state"}

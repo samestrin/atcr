@@ -228,8 +228,12 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 		"timed_out", res.TimedOut,
 	)
 
-	// Distinguish a timeout (deadline exceeded) from a real program exit.
-	if runCtx.Err() == context.DeadlineExceeded {
+	// Distinguish a cancellation-class end (a deadline exceeded OR a parent-context
+	// cancellation) from a real program exit. Both are folded into TimedOut so a
+	// cancelled run is never misreported as a spurious non-zero program exit or a
+	// backend fault/StartError, mirroring the host path's belt-and-suspenders
+	// handling in internal/verify/localvalidate.go:127 (epic 32.2 Task 2).
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) || errors.Is(runCtx.Err(), context.Canceled) {
 		res.TimedOut = true
 		res.ExitCode = timeoutExitCode
 		// The killed CLI does not stop the container; kill it explicitly so its

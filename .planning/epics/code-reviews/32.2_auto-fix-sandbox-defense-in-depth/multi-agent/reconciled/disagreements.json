@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "severity_split",
+      "file": "cmd/atcr/autofix.go",
+      "line": 380,
+      "severity": "HIGH",
+      "problem": "(runAutoFix) Fail-closed default path wraps revert failure with %w, masking the original refusal reason and leaving the tree in an undefined partial-revert state without a clear operator recovery path",
+      "score": 4,
+      "spread": 2,
+      "independence": 2,
+      "reviewers": [
+        "brad",
+        "dax"
+      ],
+      "disagreement": "LOW vs HIGH"
+    },
+    {
+      "kind": "severity_split",
+      "file": "internal/sandbox/docker.go",
+      "line": 232,
+      "severity": "MEDIUM",
+      "problem": "(Run) errors.Is check for context.Canceled folded into TimedOut but the kill-on-timeout path still runs `docker kill` for a cancellation — killing a container that may have already exited on cancel is harmless but wastes a subprocess spawn",
+      "score": 2,
+      "spread": 1,
+      "independence": 2,
+      "reviewers": [
+        "brad",
+        "dax"
+      ],
+      "disagreement": "LOW vs MEDIUM"
+    },
+    {
+      "kind": "solo_finding",
+      "file": "internal/sandbox/docker_test.go",
+      "line": 243,
+      "severity": "MEDIUM",
+      "problem": "TestDockerBackend_Run_CancellationClassIsTimedOut uses a fake docker script that sleeps 5s but the test only waits 50ms before cancel — the fake `run` subprocess may not have started yet, making the cancellation racy",
+      "score": 2,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "dax"
+      ]
+    }
+  ]
+}
