@@ -252,6 +252,14 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			}
 			continue
 		}
+		// Ordering contract (co-located here because withinSeverityCeiling relies on it
+		// but cannot enforce it): the meetsSeverityFloor gate above has already
+		// `continue`d every finding whose severity is empty/unknown (rank 0), so
+		// f.Severity is guaranteed a real, ranked level by the time it reaches this
+		// ceiling gate. That guarantee is precisely what lets withinSeverityCeiling fail
+		// OPEN on a rank-0 finding severity (unlike its sibling meetsSeverityFloor, which
+		// fails CLOSED) without risk — it never re-decides a rank-0 finding. Do NOT
+		// reorder this ceiling gate before the floor gate above.
 		if !withinSeverityCeiling(f.Severity, maxSev) {
 			// Display the canonical (normalized) severity so the reason reads
 			// consistently (e.g. "CRITICAL exceeds ... (HIGH)") regardless of the
