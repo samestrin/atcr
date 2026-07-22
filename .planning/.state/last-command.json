@@ -1,9 +1,9 @@
 {
-  "skill": "sprint-complete",
-  "args": "@.planning/sprints/active/32.3_sandbox_ephemeral_copy_overlay",
-  "invocation": "/sprint-complete @.planning/sprints/active/32.3_sandbox_ephemeral_copy_overlay",
+  "skill": "design-sprint",
+  "args": "@.planning/plans/active/32.4_workspace_integrity_sanitization/",
+  "invocation": "/design-sprint @.planning/plans/active/32.4_workspace_integrity_sanitization/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "32273164-fb37-4db9-8264-76da3dfe2024",
-  "timestamp": "2026-07-21T23:54:48.093Z"
+  "session_id": "dd546ffb-e243-4afe-8ec3-3648f26d88cd",
+  "timestamp": "2026-07-22T02:07:05.850Z"
 }
