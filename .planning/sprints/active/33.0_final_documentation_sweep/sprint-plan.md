@@ -65,6 +65,25 @@ This is a **Technical Debt** plan (task-based, not user-story/TDD-element based)
 
 ---
 
+## Clarifications
+
+### Phase 1 Clarifications (recorded 2026-07-22)
+
+**Key Decisions:**
+- **Task 1 review range:** Single full-tree `atcr review`, `--base 4b825dc642cb6eb9a060e54bf8d69288fbee4904` (git empty-tree SHA) `--head HEAD`, with `--byte-budget 0` on that one invocation only (NOT a `.atcr/config.yaml` change). Rationale: the default 512 KB payload budget (`internal/payload/budget.go:46`) would drop ~90% of the ~6.1 MB `cmd/`+`internal/`+`reconcile/`+`skill/` tree before any reviewer sees it. A single review id keeps Task 3's single-artifact handoff intact.
+- **Do NOT split by commit range** — fragmenting across multiple review IDs would break Task 3's single reconciled-artifact handoff.
+- **Cost:** Full dogfood run over the 11-persona panel is explicitly authorized by the maintainer.
+- **Secret-in-history (Task 2):** Detect-and-ESCALATE only. Report any committed-secret finding and STOP for user approval. Never rewrite history (`git filter-repo`/BFG out of scope).
+
+**Scope Boundaries:**
+- IS in scope: full-tree review, fix CRITICAL/HIGH via RED→GREEN→ADVERSARIAL→REFACTOR, route MEDIUM/LOW to TD, docs audit, persona verification, `atcr.dev` docs validation, final guard run.
+- NOT in scope: git-history secret remediation, the `atcr.dev` website repo itself, Epic 33.1/33.2 launch content.
+
+**Technical Approach:**
+- `atcr` binary builds green; 11-persona panel + provider API keys configured; `golangci-lint` installed at `/opt/homebrew/bin/golangci-lint`. Both prior unvalidated assumptions resolved empirically before execution.
+
+---
+
 ## Sprint Conventions
 
 ### Testing Tiers
@@ -142,7 +161,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 **Duration:** 1 day | **Items:** Task 1, Task 2 (run in parallel — no dependency between them)
 
-### 1.1 [ ] **🔧 Task 01: Multi-Agent Code Review — Dogfood atcr Against Its Own Production Codebase**
+### 1.1 [x] **🔧 Task 01: Multi-Agent Code Review — Dogfood atcr Against Its Own Production Codebase** — review id `33.0-dogfood`, deliverable `.atcr/reviews/33.0-dogfood/` (partial:true, 9/11 agents + host; 25 reconciled findings)
    **Task:** Run the `/atcr` skill's 7-step review orchestration (range → review → poll status → host review → reconcile → report → path output) against `cmd/`, `internal/`, `reconcile/`, `skill/`, dogfooding atcr's own multi-agent reviewer.
    **Priority:** P1 | **Effort:** M
    1. Resolve the review range (`atcr range`), covering the full current state of the four target directories.
@@ -155,8 +174,16 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    **Success Criteria:** (see [task-01](plan/tasks/task-01-multi-agent-code-review.md))
    **Files:** `.atcr/reviews/<id>/sources/host/findings.txt`, `.atcr/reviews/<id>/reconciled/`, `.atcr/reviews/<id>/report.md` | **Duration:** 1 day
 
-### 1.1.A [ ] **Adversarial Review (subagent): Task 1**
-   **Changed Files:** `.atcr/reviews/<id>/sources/host/findings.txt`, `.atcr/reviews/<id>/reconciled/`, `.atcr/reviews/<id>/report.md`
+### 1.1.A [x] **Adversarial Review (subagent): Task 1**
+   **Changed Files:** `.atcr/reviews/33.0-dogfood/sources/host/findings.txt`, `.atcr/reviews/33.0-dogfood/reconciled/`, `.atcr/reviews/33.0-dogfood/report.md`
+
+   **Subagent findings (fresh context, 2026-07-22):** COVERAGE ✅ (diff = exactly cmd/101 + internal/571 + reconcile/46 + skill/9, zero files outside the four dirs), GROUNDING/host ✅ (both host findings cite real code), RECONCILE INTEGRITY ✅ (ran against this id, sources_scanned=[host,pool], report.md 277 lines), COMPLETENESS ✅ (partial:true; the 2 failed agents kai/ronin recorded status:failed with error strings, not silently clean). **2 MEDIUM defects** (both = `archer` scraping a golden-testdata fixture fence):
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | MEDIUM | reconciled/findings.txt:4 | Hallucinated `legacy.go:7` finding (file does not exist) scraped by the pool parser from a fenced golden-testdata example block in archer/review.md; carried into reconciled output as HIGH, inflating HIGH to 4 | Parser: ignore fenced example blocks; drop findings whose cited file is absent from head tree → **TD-002** |
+   | MEDIUM | reconciled/findings.txt:4-5 | Dedup failure: the `legacy.go:7` row appears twice byte-identical; reconcile FILE:LINE±3 clustering did not collapse the identical pair, inflating total_findings to 25 | Collapse byte-identical/same-FILE:LINE findings in reconcile clustering → **TD-003** |
+
+   **Result:** ✅ No CRITICAL/HIGH. 2 MEDIUM routed to `tech-debt-captured.md` (TD-002, TD-003). Proceed.
 
    **Spawn a fresh subagent** via the Agent tool. The subagent has no memory of Task 1's execution — this is intentional, to avoid "I ran it, it's fine" bias.
 
@@ -184,7 +211,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 1.2 [ ] **🔧 Task 02: Adversarial/Security Pass — Manual Review for Secrets, Dead Code, Unsafe Patterns, TODO/FIXME**
+### 1.2 [x] **🔧 Task 02: Adversarial/Security Pass — Manual Review for Secrets, Dead Code, Unsafe Patterns, TODO/FIXME**
    **Task:** Manual, repo-wide adversarial security sweep (broader scope than Task 1) across secrets/credentials, tracked sensitive files, git history, TODO/FIXME/HACK/XXX, dead code, and unsafe command/path-handling patterns.
    **Priority:** P1 | **Effort:** M
    1. Grep repo-wide for hardcoded secrets/credentials (AWS keys, API tokens, private key blocks, credential variable assignments).
@@ -193,13 +220,13 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    4. Repo-wide TODO/FIXME/HACK/XXX sweep, all file types.
    5. `go vet ./...` / `golangci-lint run` + manual dead-code grep.
    6. Grep for command-injection/path-traversal-prone constructs; confirm untrusted-path call sites route through `internal/security/pathguard.go`.
-   7. Compile all findings into `code-review/adversarial-findings.txt` in reconciled `atcr-findings/v1` 9-column format (`REVIEWERS=adversarial-pass`, `CONFIDENCE=HIGH`).
+   7. Compile all findings into `.planning/sprints/active/33.0_final_documentation_sweep/code-review/adversarial-findings.txt` in reconciled `atcr-findings/v1` 9-column format (`REVIEWERS=adversarial-pass`, `CONFIDENCE=HIGH`).
    8. Filter "sentinel"/"idiomatic" hits against legitimate-usage examples before logging (avoid duplicating Task 5's scope).
    **Success Criteria:** (see [task-02](plan/tasks/task-02-adversarial-security-pass.md))
-   **Files:** `.planning/plans/completed/33.0_final_documentation_sweep/code-review/adversarial-findings.txt` | **Duration:** 1 day
+   **Files:** `.planning/sprints/active/33.0_final_documentation_sweep/code-review/adversarial-findings.txt` | **Duration:** 1 day
 
-### 1.2.A [ ] **Adversarial Review (subagent): Task 2**
-   **Changed Files:** `code-review/adversarial-findings.txt`
+### 1.2.A [x] **Adversarial Review (subagent): Task 2**
+   **Changed Files:** `.planning/sprints/active/33.0_final_documentation_sweep/code-review/adversarial-findings.txt`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of Task 2's execution.
 
@@ -207,7 +234,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    - subagent_type: `general-purpose`
    - description: `Adversarial review: Task 2`
    - prompt: Self-contained brief including:
-     - Files to review (absolute paths): `code-review/adversarial-findings.txt`, plus a spot-check of the 6 sweep commands' actual reproducibility
+     - Files to review (absolute paths): `.planning/sprints/active/33.0_final_documentation_sweep/code-review/adversarial-findings.txt`, plus a spot-check of the 6 sweep commands' actual reproducibility
      - Checklist (pass verbatim):
        - SECURITY: Any secret/credential hit left unescalated or unlogged?
        - COMPLETENESS: All 6 sweep categories actually executed, not assumed clean?
@@ -216,30 +243,36 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh context, re-ran all 6 sweep commands independently — 2026-07-22):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | _(none)_ | | | |
+
+   Independently verified: security (tree+history) clean — AWS EXAMPLE key + `glpat-abcDEF123` + `ghp_SECRETTOKEN...` + `super-secret-api-key-xyz` all confirmed test fixtures; TODO/FIXME/HACK/XXX=0; `go vet` (root+reconcile)=0; `golangci-lint`=0 issues; no tracked secret files; `nolint`=0; no false positives logged; format valid + mergeable.
+
+   **Result:** ✅ Adversarial review passed (no CRITICAL/HIGH/MEDIUM/LOW). Proceed.
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues, fix before proceeding to Task 3
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 1.3 [ ] **Phase 1 DoD Check**
-   1. Both Task 1 and Task 2 findings artifacts exist and are non-empty or documented clean-review outcomes.
-   2. `go test ./personas/... ./internal/personas/...` passes.
-   3. No unescalated secret findings remain from Task 2.
+### 1.3 [x] **Phase 1 DoD Check**
+   1. ✅ Both artifacts exist & non-empty: `.atcr/reviews/33.0-dogfood/reconciled/findings.txt` (25 findings) + `code-review/adversarial-findings.txt` (documented clean outcome).
+   2. ✅ `go test ./personas/... ./internal/personas/...` passes (both packages `ok`).
+   3. ✅ No unescalated secret findings — Task 2 + 1.2.A confirmed zero real secrets (only EXAMPLE/synthetic fixtures).
    **Report:**
    ```
    Phase-1 DoD Complete
-   Auto: {X}/5 | Task-Specific: {Y}/2
-   Manual Review: [ ] Code reviewed
+   Auto: 5/5 (persona/vet/lint/build green; coverage+docs N/A — review-only phase, no code changed) | Task-Specific: 2/2
+   Manual Review: [ ] Code reviewed  (→ /execute-code-review)
    ```
 
-### 1.4 [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
-   **Scope:** All files/artifacts changed during Phase 1 (`.atcr/reviews/<id>/`, `code-review/adversarial-findings.txt`)
+### 1.4 [x] **Phase 1 - GATE: Integration & Exit Review (subagent)** — ✅ Phase gate passed (0 findings)
+
+   **Gate result (fresh hostile-integrator subagent, 2026-07-22):** CONTRACT EXIT ✅ (stream A = 25 rows × 9 cols valid; stream B = valid CLEAN outcome; both concatenation-mergeable), CONFIG SURFACE ✅ (`.atcr/config.yaml` untouched), INTEGRATION ✅ (stream B zero findings → no file:line conflict), PHASE-EXIT CONTRACT ✅ (`legacy.go:7` hallucination grounded-out via TD-002/TD-003, both artifacts parser-clean & directly consumable by Task 3), REGRESSION ✅ (`git status`/`git diff --stat` show only `.planning/` + review artifacts — zero production `.go` files changed). No CRITICAL/HIGH/MEDIUM/LOW. Proceed to phase stop.
+
+   **Scope:** All files/artifacts changed during Phase 1 (`.atcr/reviews/33.0-dogfood/`, `.planning/sprints/active/33.0_final_documentation_sweep/code-review/adversarial-findings.txt`)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. No memory of Phase 1's implementation.
 
@@ -282,14 +315,14 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    2. Re-verify/re-classify severity against actual impact (not just the reviewer's raw label); log re-classifications.
    3. Per CRITICAL/HIGH finding: (0) pre-fix evaluation, (1) RED — failing test/repro in co-located `*_test.go`, (2) GREEN — minimal fix, (3) ADVERSARIAL — non-overridable self-check (test-only changes, weakened assertions, lint suppressions, stubbed bodies), (4) REFACTOR — cleanup, re-verify green.
    4. Apply coding-standards.md to every fix; run `golangci-lint run` + `go vet ./...` after each fix/batch.
-   5. Write every MEDIUM/LOW finding to `code-review/triaged-findings-medium-low.md` (9-column format + GROUP label) — do not fix inline.
-   6. Write `code-review/triage-summary.md` (counts, re-classifications, CRITICAL/HIGH fix evidence, MEDIUM/LOW routing count).
+   5. Write every MEDIUM/LOW finding to `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md` (9-column format + GROUP label) — do not fix inline.
+   6. Write `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triage-summary.md` (counts, re-classifications, CRITICAL/HIGH fix evidence, MEDIUM/LOW routing count).
    7. Run `go test ./...`, `golangci-lint run`, `go vet ./...` across the repo.
    **Success Criteria:** (see [task-03](plan/tasks/task-03-findings-triage.md))
-   **Files:** `cmd/**`, `internal/**`, `reconcile/**`, `skill/**` (CRITICAL/HIGH fix targets, not enumerable ahead of the review run), co-located `*_test.go` files, `code-review/triaged-findings-medium-low.md`, `code-review/triage-summary.md` | **Duration:** 3 days (includes 1-day risk buffer for unknown finding volume)
+   **Files:** `cmd/**`, `internal/**`, `reconcile/**`, `skill/**` (CRITICAL/HIGH fix targets, not enumerable ahead of the review run), co-located `*_test.go` files, `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md`, `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triage-summary.md` | **Duration:** 3 days (includes 1-day risk buffer for unknown finding volume)
 
 ### 2.1.A [ ] **Adversarial Review (subagent): Task 3**
-   **Changed Files:** [LIST — every file fixed for a CRITICAL/HIGH finding, plus `code-review/triaged-findings-medium-low.md`, `code-review/triage-summary.md`]
+   **Changed Files:** [LIST — every file fixed for a CRITICAL/HIGH finding, plus `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md`, `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triage-summary.md`]
 
    **Spawn a fresh subagent** via the Agent tool. No memory of Task 3's implementation — this is intentional given Task 3's own internal ADVERSARIAL stage is already non-overridable per-finding; this is the cumulative cross-finding review.
 
@@ -327,7 +360,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 ### 2.2 [ ] **Phase 2 DoD Check**
    1. `go test ./...`, `golangci-lint run`, `go vet ./...` all pass with zero failures.
    2. Every CRITICAL/HIGH finding fixed with no NEEDS_REVIEW-flagged item unresolved.
-   3. `code-review/triaged-findings-medium-low.md` and `code-review/triage-summary.md` exist.
+   3. `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md` and `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triage-summary.md` exist.
    **Report:**
    ```
    Phase-2 DoD Complete
@@ -346,7 +379,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    - prompt: Self-contained brief including:
      - Files changed during Phase 2 (absolute paths): [LIST]
      - Checklist (pass verbatim, hostile integrator perspective):
-       - CONTRACT EXIT: Are `code-review/triaged-findings-medium-low.md`'s rows in the exact format Task 7 expects?
+       - CONTRACT EXIT: Are `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md`'s rows in the exact format Task 7 expects?
        - CONFIG SURFACE: No new config keys introduced without documentation?
        - INTEGRATION: Do the CRITICAL/HIGH fixes touch any file Phase 3's docs audit (Task 4) will need to describe differently?
        - PHASE-EXIT CONTRACT: Can Phase 3 (docs audit) proceed against a truly finalized codebase, or are there loose ends?
@@ -459,7 +492,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    - None found -> Note "Adversarial review passed" and proceed
 
 ### 3.3 [ ] **🔧 Task 07: Technical Debt Capture — Shard MEDIUM/LOW Findings into `.planning/technical-debt/README.md`**
-   **Task:** Read Task 3's `code-review/triaged-findings-medium-low.md` handoff artifact and shard it into `.planning/technical-debt/README.md`'s existing dated-section format.
+   **Task:** Read Task 3's `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md` handoff artifact and shard it into `.planning/technical-debt/README.md`'s existing dated-section format.
    **Priority:** P1 | **Effort:** S
    1. Read Task 3's handoff artifact (9-column format + GROUP label).
    2. Map fields onto the TD README's table columns; `Status` starts `[ ]` for every new row; preserve any pre-existing `(symbolName)` anchor verbatim.
@@ -479,7 +512,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    - subagent_type: `general-purpose`
    - description: `Adversarial review: Task 7`
    - prompt: Self-contained brief including:
-     - Files to review (absolute paths): `.planning/technical-debt/README.md`, `code-review/triaged-findings-medium-low.md`
+     - Files to review (absolute paths): `.planning/technical-debt/README.md`, `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md`
      - Checklist (pass verbatim):
        - INTEGRITY: Does the new section's row count exactly match the Task 3 artifact's finding count (no drops/dupes)?
        - FORMAT: Column order/delimiter byte-consistent with adjacent existing dated sections?

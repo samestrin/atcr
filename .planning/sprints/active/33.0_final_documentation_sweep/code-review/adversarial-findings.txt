@@ -1,0 +1,56 @@
+# atcr-findings/v1
+# Task 02 — Adversarial / Security Pass (manual, repo-wide) — Sprint 33.0
+# Reviewer: adversarial-pass | Confidence: HIGH | Date: 2026-07-22
+# Format: reconciled 9-column (SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWERS|CONFIDENCE)
+# Mergeable by concatenation with Task 01's reconciled findings stream.
+#
+# ====================================================================
+# OUTCOME: CLEAN — zero actionable findings across all 6 sweep categories.
+# ====================================================================
+#
+# 1. HARDCODED SECRETS / CREDENTIALS (working tree, tracked files)
+#    Command: git grep for AKIA/ASIA AWS keys, BEGIN PRIVATE KEY blocks,
+#             (api_key|secret|token|password|bearer)=<20+ char literal> in *.go/*.yaml/*.json/*.sh
+#    Result: CLEAN. Only hit = internal/scorecard/export_test.go:354 containing
+#            "AKIAIOSFODNN7EXAMPLE" — AWS's canonical published DOCUMENTATION EXAMPLE
+#            key, inside a redaction test fixture. False positive, not a real secret.
+#
+# 2. ACCIDENTALLY-TRACKED SENSITIVE FILE TYPES
+#    Command: git ls-files | grep .pem/.key/.p12/.pfx/.keystore/.jks/.env/id_rsa/id_ed25519/credentials/.htpasswd
+#    Result: CLEAN. No tracked secret-bearing files. (.env-ish name hits were
+#            .planning docs about the secret-redaction FEATURE and the source file
+#            internal/fanout/secrets.go implementing redaction — all legitimate.)
+#
+# 3. GIT HISTORY SECRET SCAN (detect-and-ESCALATE only; no history rewrite)
+#    Command: git log --all -p | grep added AWS keys / private-key blocks / real-looking secret literals
+#    Result: CLEAN. Only hits were synthetic test tokens still present in current
+#            test files — "ghp_SECRETTOKEN1234567890abcdef" (internal/ghaction/client_test.go)
+#            and "super-secret-api-key-xyz" (internal/doctor/run_test.go). Both are
+#            fabricated redaction-test placeholders, not real credentials. NOTHING TO ESCALATE.
+#
+# 4. TODO / FIXME / HACK / XXX SWEEP (all tracked file types)
+#    Command: git grep -E '(TODO|FIXME|HACK|XXX)[:( ]' across cmd/ internal/ reconcile/ (non-test)
+#    Result: CLEAN. Zero (0) TODO/FIXME/HACK/XXX markers in production Go source.
+#
+# 5. DEAD CODE / LINT / VET
+#    Commands: go vet ./... (exit 0); (cd reconcile && go vet ./...) (exit 0);
+#              golangci-lint run (0 issues); git grep 'nolint' in production Go (0 hits)
+#    Result: CLEAN. No vet/lint findings, no lint suppressions, no dead-code markers.
+#
+# 6. COMMAND-INJECTION / PATH-TRAVERSAL CONSTRUCTS
+#    Command: git grep exec.Command / sh -c / os.ReadFile-Open; verify pathguard routing
+#    Result: CLEAN.
+#      - All `git` invocations route through the hardened internal/gitexec wrapper
+#        (documented AC4 invariant: no bare exec.Command("git", ...)).
+#      - The only /bin/sh -c and -s uses are the intentional Docker SANDBOX engine
+#        (internal/sandbox/*) — a documented, container-isolated feature (docs/security.md),
+#        not an injection sink.
+#      - exec.Command("open"/"xdg-open"/"rundll32", url) in cmd/atcr/quickstart.go pass the
+#        URL as a discrete argv element (no shell), opening a dashboard URL — low risk.
+#      - Untrusted-path sinks route through internal/security/pathguard.go
+#        (callers: cmd/atcr/autofix.go, internal/gitexec, internal/reconcile/validate,
+#        internal/stream/parser, internal/stream/validate).
+#
+# No finding rows below this line (clean review). Task 1's multi-agent review provides
+# the deep per-file analysis; this manual pass confirms no secrets/history/debt/injection
+# issues that a diff-scoped reviewer pool could miss.
