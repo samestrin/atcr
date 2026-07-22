@@ -12,6 +12,7 @@ import (
 
 	"github.com/cli/go-gh/v2"
 	"github.com/cli/go-gh/v2/pkg/repository"
+	"github.com/samestrin/atcr/internal/gitexec"
 )
 
 // canonicalRepo is the upstream target every community submission forks and opens
@@ -292,7 +293,7 @@ func (ghSubmitter) PushBranch(ctx context.Context, branch, personasDir, name str
 	if !hasChanges {
 		return "", fmt.Errorf("no changes to submit; persona %q already matches the fork", name)
 	}
-	if err := runGit(ctx, workDir, "commit", "-m", "Submit community persona: "+name); err != nil {
+	if err := commitPersona(ctx, workDir, owner, name); err != nil {
 		return "", err
 	}
 	// --force-with-lease is preferred over --force, but this is a fresh --depth 1
@@ -389,7 +390,7 @@ func gitInvocation(args ...string) []string {
 // runGit runs a git subcommand under a bounded context, capturing stderr for a
 // step-specific error message. dir is the working tree ("" for repo-less clone).
 func runGit(ctx context.Context, dir string, args ...string) error {
-	c := exec.CommandContext(ctx, "git", gitInvocation(args...)...)
+	c := gitexec.CommandContextFn(ctx, gitInvocation(args...)...)
 	if dir != "" {
 		c.Dir = dir
 	}
@@ -399,6 +400,28 @@ func runGit(ctx context.Context, dir string, args ...string) error {
 		return fmt.Errorf("git %s: %w", strings.Join(args, " "), ghError(err, stderr.String()))
 	}
 	return nil
+}
+
+// commitIdentityArgs supplies the committer identity explicitly on the commit
+// invocation instead of relying on git's global/system config. gitexec hardening sets
+// GIT_CONFIG_GLOBAL=/dev/null + GIT_CONFIG_NOSYSTEM=1 on every subprocess, so the fresh
+// fork clone (which has no local user.name/user.email) would otherwise either fail with
+// "Author identity unknown" or fabricate a user@hostname author on the public PR. login
+// is the authenticated gh user; the paired address is that user's GitHub noreply email.
+// The -c flags precede the subcommand so git consumes them as config overrides.
+func commitIdentityArgs(login string) []string {
+	return []string{
+		"-c", "user.name=" + login,
+		"-c", "user.email=" + login + "@users.noreply.github.com",
+	}
+}
+
+// commitPersona commits the staged persona unit in the fork working tree with an
+// explicit committer identity (see commitIdentityArgs), so the community-persona PR
+// carries a stable, correct author independent of the operator's global git config.
+func commitPersona(ctx context.Context, workDir, login, name string) error {
+	args := append(commitIdentityArgs(login), "commit", "-m", "Submit community persona: "+name)
+	return runGit(ctx, workDir, args...)
 }
 
 // cloneFork clones the user's fork with a short bounded retry. gh repo fork is
@@ -432,7 +455,7 @@ func cloneFork(ctx context.Context, forkURL, dest string) error {
 // gitHasStagedChanges reports whether there are staged changes in dir. It returns
 // an error only if git itself fails.
 func gitHasStagedChanges(ctx context.Context, dir string) (bool, error) {
-	c := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet")
+	c := gitexec.CommandContextFn(ctx, "diff", "--no-ext-diff", "--cached", "--quiet")
 	c.Dir = dir
 	if err := c.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {

@@ -5,11 +5,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/log"
 )
 
@@ -184,8 +184,19 @@ func (g *gitRunner) output(args ...string) ([]byte, error) {
 	// core.quotePath=false keeps non-ASCII paths unquoted so the path strings
 	// parsed out of --name-status round-trip back into `git show`/`git diff`.
 	g.execCount++
-	full := append([]string{"-C", g.dir, "-c", "core.quotePath=false"}, args...)
-	cmd := exec.CommandContext(g.ctx, "git", full...)
+	// diff-family subcommands (diff/show) take --no-ext-diff immediately after
+	// the subcommand name — the only argv position git accepts it — so a poisoned
+	// diff.external in a leftover .git/config cannot substitute an attacker's diff
+	// driver. rev-parse is also routed through this method (via run) and rejects
+	// the flag, so it is injected conditionally, not into the shared prefix.
+	full := []string{"-C", g.dir, "-c", "core.quotePath=false"}
+	if len(args) > 0 && (args[0] == "diff" || args[0] == "show") {
+		full = append(full, args[0], "--no-ext-diff")
+		full = append(full, args[1:]...)
+	} else {
+		full = append(full, args...)
+	}
+	cmd := gitexec.CommandContextFn(g.ctx, full...)
 	cmd.Env = append(cmd.Environ(), "LC_ALL=C", "LANG=C")
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out

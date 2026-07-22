@@ -17,6 +17,7 @@ import (
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 	"github.com/samestrin/atcr/internal/atomicfs"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/security"
 )
 
 // BackupMap records, for each successfully-applied entry, the mapping from the
@@ -31,6 +32,19 @@ import (
 // Absolute paths are stored so Revert is self-contained and needs no working-tree
 // root of its own.
 type BackupMap map[string]string
+
+// ReviewFlag records, for a single successfully-applied entry, that the patch did
+// something a human reviewer should notice before approving the generated PR — an
+// executable-bit change or a build-script touch (security.FlagsForReview). It is
+// purely advisory: unlike the protected-path gate it never blocks an apply, it only
+// annotates the PR body. Path is the repo-relative entry path; Reason names why it
+// was flagged. Only successfully-applied entries are recorded (a flagged-but-failed
+// entry never appears — see ApplyPatch), so a warning never names a file that was
+// reverted.
+type ReviewFlag struct {
+	Path   string
+	Reason string
+}
 
 // removeFn is the file-removal primitive ApplyPatch uses for deletion entries,
 // indirected through a package var so a test can drive the removal-failure branch
@@ -56,26 +70,51 @@ var writeFileAtomicFn = atomicfs.WriteFileAtomic
 // non-nil, aggregates every per-file failure (via errors.Join), not just the
 // first — callers map it to a non-zero exit code.
 //
+// The returned []ReviewFlag is a non-blocking advisory list: one entry per
+// SUCCESSFULLY-applied file whose patch flipped an executable bit or touched a
+// build-script path (security.FlagsForReview). It never affects success/failure —
+// it is collected per-entry and merged into the result only when that entry
+// applied cleanly, so a flagged-but-failed (and reverted) entry is never reported.
+// The caller (cmd/atcr auto-fix) surfaces it as a "## Review Warnings" PR-body
+// section; an empty slice leaves the PR body unchanged.
+//
 // root is the working-tree root every FileEntry.Path is resolved against. As
 // defense-in-depth (the primary traversal guard is payload.BuildEntriesFromDiff's
 // isSafeDiffContentPath upstream), ApplyPatch re-checks at the write boundary that
 // each cleaned path stays inside root and refuses any entry that escapes it.
-func ApplyPatch(root string, entries []payload.FileEntry) (BackupMap, error) {
+//
+// allowConfigEdits controls the workspace-integrity gate: by default (false) any
+// entry whose path targets a protected host-execution or configuration artifact
+// (security.IsProtectedPath — .git/, .githooks/, .github/workflows/, .vscode/,
+// .idea/, .env*, .planning/, .atcr, CI defs) is refused with a security error
+// wrapping security.ErrProtectedPath, closing the Host Trust Transposition gap
+// where an LLM-generated patch writes a trigger a host-side tool later executes.
+// Passing true bypasses that gate (the --allow-config-edits operator escape valve);
+// it does not relax the traversal/symlink guards, which always apply. The refusal
+// is per-entry like every other failure, so a protected entry never blocks a clean
+// sibling in the same batch.
+func ApplyPatch(root string, entries []payload.FileEntry, allowConfigEdits bool) (BackupMap, []ReviewFlag, error) {
 	bm := make(BackupMap)
+	var flags []ReviewFlag
 	var errs []error
 	for i := range entries {
-		abs, bak, err := applyOne(root, entries[i])
+		// Collect this entry's advisory flags into a per-entry buffer so they are
+		// merged into the returned slice ONLY when the entry applies cleanly — a
+		// flagged-but-failed entry (reverted below) must not surface in the PR body.
+		var entryFlags []ReviewFlag
+		abs, bak, err := applyOne(root, entries[i], allowConfigEdits, &entryFlags)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
 		bm[abs] = bak
+		flags = append(flags, entryFlags...)
 	}
 	if len(errs) > 0 {
-		return bm, fmt.Errorf("autofix: %d of %d entries failed: %w",
+		return bm, flags, fmt.Errorf("autofix: %d of %d entries failed: %w",
 			len(errs), len(entries), errors.Join(errs...))
 	}
-	return bm, nil
+	return bm, flags, nil
 }
 
 // applyOne applies a single entry and returns the absolute target path plus the
@@ -83,10 +122,20 @@ func ApplyPatch(root string, entries []payload.FileEntry) (BackupMap, error) {
 // Path so the aggregated batch error names each failing file. No disk write
 // happens until parse+apply have succeeded, so a parse/apply failure leaves no
 // backup and no partial write behind.
-func applyOne(root string, e payload.FileEntry) (absTarget, backupPath string, err error) {
+func applyOne(root string, e payload.FileEntry, allowConfigEdits bool, flags *[]ReviewFlag) (absTarget, backupPath string, err error) {
 	abs, err := containedPath(root, e.Path)
 	if err != nil {
 		return "", "", err
+	}
+	// Workspace-integrity gate (fail-closed): refuse a patch whose path — though
+	// contained within root — targets a protected host-execution/config artifact
+	// that a host-side tool would later execute (Host Trust Transposition). Placed
+	// immediately after containment and before refuseSymlinkLeaf/parse/backup/write
+	// so the refusal fires before any filesystem effect. Checks e.Path (the repo-
+	// relative, diff-declared path) because security.IsProtectedPath matches on
+	// repo-relative segments; containedPath has already validated it against root.
+	if !allowConfigEdits && security.IsProtectedPath(e.Path, root) {
+		return "", "", fmt.Errorf("autofix: refusing to write %q: path is protected by workspace-integrity policy (pass --allow-config-edits to override): %w", e.Path, security.ErrProtectedPath)
 	}
 	if serr := refuseSymlinkLeaf(abs, e.Path); serr != nil {
 		return "", "", serr
@@ -100,6 +149,18 @@ func applyOne(root string, e payload.FileEntry) (absTarget, backupPath string, e
 		return "", "", fmt.Errorf("autofix: parsing diff for %q: expected exactly one file section, got %d", e.Path, len(files))
 	}
 	f := files[0]
+
+	// Non-blocking advisory flags (epic 32.4 Task 6): record a build-script touch so
+	// runAutoFix can surface a "## Review Warnings" PR-body section. This never blocks
+	// the apply — FlagsForReview only reports. It evaluates e.Path only (no file mode):
+	// the apply pipeline writes every file through atomicfs.WriteFileAtomic (fixed 0644)
+	// and the GitHub commit hardcodes blob mode 100644, so a diff's exec-bit change
+	// never lands and flagging it would warn about a change that does not happen. The
+	// append lands in the per-entry buffer ApplyPatch only keeps when this entry
+	// ultimately applies cleanly.
+	if flagged, reason := security.FlagsForReview(e.Path); flagged {
+		*flags = append(*flags, ReviewFlag{Path: e.Path, Reason: reason})
+	}
 
 	// Deletion (+++ /dev/null): back up then remove. Branched on the delete
 	// marker, never inferred from an empty apply result, so it routes to file

@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/samestrin/atcr/internal/gitexec"
 )
 
 // shaPattern bounds the head argument before it reaches any git command,
@@ -143,9 +145,18 @@ func (m *SnapshotManager) worktreeAdd(gitPath, leaf, head string) error {
 }
 
 // git runs a git subcommand in the repo root with explicit argument arrays
-// (never shell-interpolated) and returns trimmed stdout.
+// (never shell-interpolated) and returns trimmed stdout. The subprocess is built
+// through gitexec so it carries the GIT_CONFIG_NOSYSTEM/GLOBAL hardening against a
+// poisoned system/global gitconfig; cmd.Path is pinned to the pre-resolved gitPath
+// so the exact binary validated by exec.LookPath in SnapshotFor is the one run.
 func (m *SnapshotManager) git(gitPath string, args ...string) (string, error) {
-	cmd := exec.Command(gitPath, args...)
+	cmd := gitexec.CommandFn(args...)
+	cmd.Path = gitPath
+	// gitexec.CommandFn ran exec.LookPath("git") at construction and stored any
+	// failure in cmd.Err; clear it so the pinned absolute gitPath is authoritative
+	// regardless of whether "git" is still on PATH at call time (matches the
+	// pre-migration exec.Command(gitPath, ...) which did no call-time lookup).
+	cmd.Err = nil
 	cmd.Dir = m.repoRoot
 	out, err := cmd.Output()
 	if err != nil {

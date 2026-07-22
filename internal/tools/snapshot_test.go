@@ -53,6 +53,28 @@ func TestSnapshotFor_FastPathLive(t *testing.T) {
 	assert.Equal(t, repo, root, "clean + head==HEAD uses the live worktree")
 }
 
+// TestSnapshotManagerGit_PinnedPathRunsWithoutPATHLookup proves the pinned gitPath is
+// authoritative even when "git" is not resolvable on PATH at call time. gitexec.CommandFn
+// runs exec.LookPath("git") at construction and stashes any failure in cmd.Err; git()
+// overrides cmd.Path with the pre-validated absolute gitPath and must also clear that
+// stale cmd.Err, or cmd.Output() returns the lookup error instead of running the binary.
+func TestSnapshotManagerGit_PinnedPathRunsWithoutPATHLookup(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not available")
+	}
+	repo := setupGitRepo(t)
+	m := NewSnapshotManager(repo)
+	t.Setenv("PATH", "") // exec.Command("git", ...) now fails LookPath and sets cmd.Err
+	out, err := m.git(gitPath, "rev-parse", "--verify", "-q", "HEAD")
+	if err != nil {
+		t.Fatalf("git() with pinned path must run despite empty PATH: %v", err)
+	}
+	if out == "" {
+		t.Fatal("expected a HEAD sha, got empty output")
+	}
+}
+
 func TestSnapshotFor_SlowPathDifferentHead(t *testing.T) {
 	repo := setupGitRepo(t)
 	old := gitHead(t, repo)
