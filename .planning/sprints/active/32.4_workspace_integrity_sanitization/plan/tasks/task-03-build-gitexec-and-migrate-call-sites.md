@@ -46,17 +46,17 @@ Create a new package `internal/gitexec` that exposes a single hardened way to co
 - `internal/autofix/apply.go` (package-var testability precedent — `removeFn`/`writeFileAtomicFn`)
 
 ## Success Criteria
-- [ ] `internal/gitexec/gitexec.go` exists, compiles, and exports `CommandFn(arg ...string) *exec.Cmd` and `CommandContextFn(ctx context.Context, arg ...string) *exec.Cmd` as package-level vars.
-- [ ] Every `*exec.Cmd` returned by `CommandFn`/`CommandContextFn` carries `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null` in `cmd.Env`, additively over `cmd.Environ()` (AC2).
-- [ ] All six call sites (`cmd/atcr/autofix.go`, `internal/fanout/review.go`, `internal/gitrange/resolver.go`, `internal/payload/diff.go`, `internal/personas/submit.go` ×2, `internal/stream/fileindex.go`) construct their git subprocess exclusively through `gitexec.CommandFn`/`gitexec.CommandContextFn`.
-- [ ] `internal/payload/diff.go`'s `gitRunner.output` and `internal/personas/submit.go`'s `gitHasStagedChanges` include `--no-ext-diff` in their git invocation argv.
-- [ ] A repo-wide grep for `exec.Command("git"` / `exec.CommandContext(ctx, "git"` (and equivalents) outside `internal/gitexec/` returns zero matches (AC4).
-- [ ] `internal/verify/localvalidate.go` and `internal/sandbox/docker.go` are unmodified.
-- [ ] All pre-existing behavior (working directory via `-C`, `LC_ALL=C`/`LANG=C`, `-c credential.helper=...`, exit-code-1-is-true semantics in `gitHasStagedChanges`) is preserved exactly.
-- [ ] Existing tests for all six call sites pass unmodified (or with only the minimal changes required by the constructor swap, not behavior changes).
+- [x] `internal/gitexec/gitexec.go` exists, compiles, and exports `CommandFn(arg ...string) *exec.Cmd` and `CommandContextFn(ctx context.Context, arg ...string) *exec.Cmd` as package-level vars.
+- [x] Every `*exec.Cmd` returned by `CommandFn`/`CommandContextFn` carries `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null` in `cmd.Env`, additively over `cmd.Environ()` (AC2).
+- [x] All six call sites (`cmd/atcr/autofix.go`, `internal/fanout/review.go`, `internal/gitrange/resolver.go`, `internal/payload/diff.go`, `internal/personas/submit.go` ×2, `internal/stream/fileindex.go`) construct their git subprocess exclusively through `gitexec.CommandFn`/`gitexec.CommandContextFn`.
+- [x] `internal/payload/diff.go`'s `gitRunner.output` and `internal/personas/submit.go`'s `gitHasStagedChanges` include `--no-ext-diff` in their git invocation argv.
+- [x] A repo-wide grep for `exec.Command("git"` / `exec.CommandContext(ctx, "git"` (and equivalents) outside `internal/gitexec/` returns zero matches (AC4).
+- [x] `internal/verify/localvalidate.go` and `internal/sandbox/docker.go` are unmodified.
+- [x] All pre-existing behavior (working directory via `-C`, `LC_ALL=C`/`LANG=C`, `-c credential.helper=...`, exit-code-1-is-true semantics in `gitHasStagedChanges`) is preserved exactly.
+- [x] Existing tests for all six call sites pass unmodified (or with only the minimal changes required by the constructor swap, not behavior changes).
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -81,10 +81,10 @@ Create a new package `internal/gitexec` that exposes a single hardened way to co
 - None (independent of T1/T2)
 
 ## Definition of Done
-- [ ] `internal/gitexec/gitexec.go` created and compiles cleanly.
-- [ ] All six call sites migrated to `gitexec.CommandFn`/`gitexec.CommandContextFn`; no behavior change beyond the added environment hardening and the two `--no-ext-diff` insertions.
-- [ ] Repo-wide grep confirms zero remaining bare `exec.Command("git",...)`/`exec.CommandContext(ctx, "git",...)` call sites outside `internal/gitexec/` (AC4).
-- [ ] `internal/verify/localvalidate.go` and `internal/sandbox/docker.go` confirmed untouched.
-- [ ] `internal/gitexec/gitexec_test.go` added and passing.
-- [ ] Full existing test suites for `cmd/atcr`, `internal/fanout`, `internal/gitrange`, `internal/payload`, `internal/personas`, and `internal/stream` pass unmodified (or with only mechanical constructor-swap updates, never assertion-weakening changes).
-- [ ] `gofmt -l` and `go vet ./...` clean across all seven touched files.
+- [x] `internal/gitexec/gitexec.go` created and compiles cleanly.
+- [x] All six call sites migrated to `gitexec.CommandFn`/`gitexec.CommandContextFn`; no behavior change beyond the added environment hardening and the two `--no-ext-diff` insertions.
+- [x] Repo-wide grep confirms zero remaining bare `exec.Command("git",...)`/`exec.CommandContext(ctx, "git",...)` call sites outside `internal/gitexec/` (AC4).
+- [x] `internal/verify/localvalidate.go` and `internal/sandbox/docker.go` confirmed untouched.
+- [x] `internal/gitexec/gitexec_test.go` added and passing.
+- [x] Full existing test suites for `cmd/atcr`, `internal/fanout`, `internal/gitrange`, `internal/payload`, `internal/personas`, and `internal/stream` pass unmodified (or with only mechanical constructor-swap updates, never assertion-weakening changes).
+- [x] `gofmt -l` and `go vet ./...` clean across all seven touched files.

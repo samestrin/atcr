@@ -49,14 +49,14 @@ Write `docs/security.md` documenting the workspace-integrity security architectu
 - `cmd/atcr/autofix.go`
 
 ## Success Criteria
-- [ ] `--allow-config-edits` is registered in `addAutoFixFlags`, off by default, and absent from every existing `--auto-fix` invocation leaves behavior byte-identical.
-- [ ] Passing `--allow-config-edits` prints the security warning to stderr on every invocation (non-memoized, matching `warnNoSandbox`'s unconditional behavior).
-- [ ] The resolved flag value is available on `autoFixBackend` (or equivalent) for T2's `applyOne`/`ApplyPatch` gate to consume — no flag re-parsing needed downstream.
-- [ ] `docs/security.md` exists and documents the pathguard blocklist, `--allow-config-edits`, `internal/gitexec` hardening, and `FlagsForReview`.
-- [ ] `docs/README.md` links `docs/security.md` in its index — the doc is no longer invisible to the website build.
+- [x] `--allow-config-edits` is registered in `addAutoFixFlags`, off by default, and absent from every existing `--auto-fix` invocation leaves behavior byte-identical.
+- [x] Passing `--allow-config-edits` prints the security warning to stderr on every invocation (non-memoized, matching `warnNoSandbox`'s unconditional behavior).
+- [x] The resolved flag value is available on `autoFixBackend` (or equivalent) for T2's `applyOne`/`ApplyPatch` gate to consume — no flag re-parsing needed downstream.
+- [x] `docs/security.md` exists and documents the pathguard blocklist, `--allow-config-edits`, `internal/gitexec` hardening, and `FlagsForReview`.
+- [x] `docs/README.md` links `docs/security.md` in its index — the doc is no longer invisible to the website build.
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -79,10 +79,10 @@ Write `docs/security.md` documenting the workspace-integrity security architectu
 - Task-02 (AllowConfigEdits threading target must exist)
 
 ## Definition of Done
-- [ ] `--allow-config-edits` flag registered, off by default, help text documents the risk.
-- [ ] `warnAllowConfigEdits` implemented and wired into `validateAutoFixBackend`, firing unconditionally on every `true` invocation.
-- [ ] `docs/security.md` created covering pathguard, `--allow-config-edits`, `internal/gitexec`, and `FlagsForReview`.
-- [ ] `docs/README.md` updated with a working index entry for `docs/security.md`.
-- [ ] `go build ./...` and `go vet ./...` pass.
-- [ ] `gofmt -l` reports no issues for `cmd/atcr/autofix.go`.
-- [ ] All unit tests in `cmd/atcr/autofix_test.go` covering the new flag pass.
+- [x] `--allow-config-edits` flag registered, off by default, help text documents the risk.
+- [x] `warnAllowConfigEdits` implemented and wired into `validateAutoFixBackend`, firing unconditionally on every `true` invocation.
+- [x] `docs/security.md` created covering pathguard, `--allow-config-edits`, `internal/gitexec`, and `FlagsForReview`.
+- [x] `docs/README.md` updated with a working index entry for `docs/security.md`.
+- [x] `go build ./...` and `go vet ./...` pass.
+- [x] `gofmt -l` reports no issues for `cmd/atcr/autofix.go`.
+- [x] All unit tests in `cmd/atcr/autofix_test.go` covering the new flag pass.

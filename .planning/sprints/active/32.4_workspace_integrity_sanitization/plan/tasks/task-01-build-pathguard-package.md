@@ -42,15 +42,15 @@ Create a new package `internal/security/` containing `pathguard.go`, which expor
 - `internal/validation/validation.go`
 
 ## Success Criteria
-- [ ] `internal/security/pathguard.go` exists, compiles, and exports `IsProtectedPath(path string) bool`.
-- [ ] Blocklist covers `.git/`, `.githooks/`, `.github/workflows/`, `.gitlab-ci.yml`/CI definitions, `.vscode/`, `.idea/`, `.env*`, `.planning/`, and `.atcr`.
-- [ ] `IsProtectedPath` correctly matches canonical paths, relative paths (`./`, bare relative), path-traversal forms (`../`), and symlink-traversal cases (a symlink pointing into a protected dir resolves to `true`).
-- [ ] Directory-boundary matching prevents false positives (e.g. `.gitignore`, `.githubx/`, `.vscode-custom/` are NOT flagged as protected).
-- [ ] No I/O performed except the necessary `filepath.EvalSymlinks` resolution; function has no side effects.
-- [ ] `go vet ./internal/security/...` and `gofmt -l internal/security/pathguard.go` are clean.
+- [x] `internal/security/pathguard.go` exists, compiles, and exports `IsProtectedPath(path string) bool`.
+- [x] Blocklist covers `.git/`, `.githooks/`, `.github/workflows/`, `.gitlab-ci.yml`/CI definitions, `.vscode/`, `.idea/`, `.env*`, `.planning/`, and `.atcr`.
+- [x] `IsProtectedPath` correctly matches canonical paths, relative paths (`./`, bare relative), path-traversal forms (`../`), and symlink-traversal cases (a symlink pointing into a protected dir resolves to `true`).
+- [x] Directory-boundary matching prevents false positives (e.g. `.gitignore`, `.githubx/`, `.vscode-custom/` are NOT flagged as protected).
+- [x] No I/O performed except the necessary `filepath.EvalSymlinks` resolution; function has no side effects.
+- [x] `go vet ./internal/security/...` and `gofmt -l internal/security/pathguard.go` are clean.
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -74,9 +74,9 @@ Create a new package `internal/security/` containing `pathguard.go`, which expor
 - None (foundational task)
 
 ## Definition of Done
-- [ ] `internal/security/pathguard.go` implemented and committed.
-- [ ] `internal/security/pathguard_test.go` implemented with full coverage of AC3 (canonical, relative, symlink-traversal path formats).
-- [ ] `go build ./...` and `go vet ./...` pass.
-- [ ] `gofmt -l` reports no issues for the new files.
-- [ ] All unit tests pass (`go test ./internal/security/...`).
-- [ ] Package doc comment and function doc comments follow the style of `internal/validation/validation.go`.
+- [x] `internal/security/pathguard.go` implemented and committed.
+- [x] `internal/security/pathguard_test.go` implemented with full coverage of AC3 (canonical, relative, symlink-traversal path formats).
+- [x] `go build ./...` and `go vet ./...` pass.
+- [x] `gofmt -l` reports no issues for the new files.
+- [x] All unit tests pass (`go test ./internal/security/...`).
+- [x] Package doc comment and function doc comments follow the style of `internal/validation/validation.go`.

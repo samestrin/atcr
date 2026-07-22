@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/autofix"
 	"github.com/samestrin/atcr/internal/ghaction"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -473,6 +474,10 @@ type fakeGitHub struct {
 	commitErr   error
 	findErr     error
 	createPRErr error
+	// lastPRReq records the PullRequestRequest passed to the most recent
+	// Create/UpdatePullRequest call so a test can assert on the resolved PR body
+	// (epic 32.4 Task 6 "## Review Warnings" section).
+	lastPRReq ghaction.PullRequestRequest
 }
 
 func (f *fakeGitHub) CreateBranch(_ context.Context, _, _, _, _ string) error {
@@ -493,15 +498,17 @@ func (f *fakeGitHub) FindOpenPullRequest(_ context.Context, _, _, _ string) (int
 	}
 	return f.findNumber, f.findFound, nil
 }
-func (f *fakeGitHub) CreatePullRequest(_ context.Context, _, _ string, _ ghaction.PullRequestRequest) (int, error) {
+func (f *fakeGitHub) CreatePullRequest(_ context.Context, _, _ string, req ghaction.PullRequestRequest) (int, error) {
 	f.createPR++
+	f.lastPRReq = req
 	if f.createPRErr != nil {
 		return 0, f.createPRErr
 	}
 	return 7, nil
 }
-func (f *fakeGitHub) UpdatePullRequest(_ context.Context, _, _ string, _ int, _ ghaction.PullRequestRequest) error {
+func (f *fakeGitHub) UpdatePullRequest(_ context.Context, _, _ string, _ int, req ghaction.PullRequestRequest) error {
 	f.updatePR++
+	f.lastPRReq = req
 	return nil
 }
 
@@ -564,6 +571,81 @@ func TestRunAutoFix_ValidationPassCreatesPR(t *testing.T) {
 	require.Equal(t, 0, gh.updatePR)
 	got, _ := os.ReadFile(filepath.Join(root, rel))
 	require.Equal(t, "new\n", string(got), "validated content stays applied")
+}
+
+// TestRunAutoFix_FlaggedEntryAddsReviewWarnings: a build-script path touch
+// (deploy.sh) surfaces a "## Review Warnings" section in the PR body (epic 32.4
+// Task 6), naming the path and reason, while preserving the original body prefix.
+func TestRunAutoFix_FlaggedEntryAddsReviewWarnings(t *testing.T) {
+	root := t.TempDir()
+	rel := "deploy.sh"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"},
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			noSandbox: true,
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "original body", Message: "m",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, gh.createPR)
+	body := gh.lastPRReq.Body
+	require.True(t, strings.HasPrefix(body, "original body"), "the original body must be preserved as the prefix")
+	require.Contains(t, body, "## Review Warnings")
+	require.Contains(t, body, "deploy.sh")
+	require.Contains(t, body, "build-script path")
+}
+
+// TestWithReviewWarnings_SanitizesBacktickPath proves a diff-derived (LLM-controlled)
+// path containing a backtick + markdown cannot break out of the inline-code span in the
+// generated PR body — the injection vector at autofix.go's "## Review Warnings" builder.
+func TestWithReviewWarnings_SanitizesBacktickPath(t *testing.T) {
+	flags := []autofix.ReviewFlag{{Path: "evil`](http://x)`.sh", Reason: "build-script path"}}
+	body := withReviewWarnings("orig body", flags)
+
+	require.True(t, strings.HasPrefix(body, "orig body"), "original body must be the prefix")
+	require.Contains(t, body, "## Review Warnings")
+	// The path renders inside exactly one inline-code span: the only backticks in the
+	// warning line are the two delimiters we emit; none are contributed by the path.
+	warnLine := body[strings.Index(body, "- "):]
+	require.Equal(t, 2, strings.Count(warnLine, "`"), "path backtick not sanitized — span unbalanced: %q", warnLine)
+	require.NotContains(t, body, "`](http://x)`", "markdown-injection payload survived sanitization")
+}
+
+// TestWithReviewWarnings_EmptyFlagsUnchanged: no flags returns the body byte-identical.
+func TestWithReviewWarnings_EmptyFlagsUnchanged(t *testing.T) {
+	require.Equal(t, "orig", withReviewWarnings("orig", nil))
+}
+
+// TestRunAutoFix_UnflaggedEntryLeavesBodyUnchanged: a run with no flagged entries
+// produces a PR body byte-identical to run.Body (no "## Review Warnings" section).
+func TestRunAutoFix_UnflaggedEntryLeavesBodyUnchanged(t *testing.T) {
+	root := t.TempDir()
+	rel := "f.txt"
+	require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+
+	gh := &fakeGitHub{}
+	err := runAutoFix(context.Background(), io.Discard, gh, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{"true"},
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			noSandbox: true,
+		},
+		Entries: []payload.FileEntry{{Path: rel, Body: diffFor(rel)}},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "original body", Message: "m",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, gh.createPR)
+	require.Equal(t, "original body", gh.lastPRReq.Body, "unflagged run must leave the PR body byte-identical")
+	require.NotContains(t, gh.lastPRReq.Body, "## Review Warnings")
 }
 
 // TestRunAutoFix_ValidationPassUpdatesExistingPR: on validation success, when an
@@ -1439,4 +1521,204 @@ func TestValidateAutoFixBackend_NoSandboxFalseKeepsGate(t *testing.T) {
 	require.Error(t, err, "--no-sandbox=false must leave the sandbox gate intact")
 	require.Equal(t, 2, exitCode(err))
 	require.Contains(t, err.Error(), "[sandbox] block", "the resolver's unconfigured refusal must run when --no-sandbox is false")
+}
+
+// --- Task 04: --allow-config-edits flag registration and help text ----------
+
+// TestAllowConfigEditsFlag_Registered: --allow-config-edits is a bool flag
+// defaulting to false, present and readable even before any parsing (mirrors
+// TestNoSandboxFlag_Registered).
+func TestAllowConfigEditsFlag_Registered(t *testing.T) {
+	c := &cobra.Command{Use: "review"}
+	addAutoFixFlags(c)
+
+	f := c.Flags().Lookup("allow-config-edits")
+	require.NotNil(t, f, "--allow-config-edits must be registered by addAutoFixFlags")
+	require.Equal(t, "bool", f.Value.Type(), "--allow-config-edits must be a bool flag")
+	require.Equal(t, "false", f.DefValue, "--allow-config-edits must default to false")
+
+	v, err := c.Flags().GetBool("allow-config-edits")
+	require.NoError(t, err)
+	require.False(t, v, "--allow-config-edits must read false when unset (present, not merely absent)")
+}
+
+// TestAllowConfigEditsFlag_ParsesTrue: passing --allow-config-edits on the command
+// line sets it to true.
+func TestAllowConfigEditsFlag_ParsesTrue(t *testing.T) {
+	c := &cobra.Command{Use: "review"}
+	addAutoFixFlags(c)
+	require.NoError(t, c.Flags().Parse([]string{"--auto-fix", "--allow-config-edits"}))
+	v, err := c.Flags().GetBool("allow-config-edits")
+	require.NoError(t, err)
+	require.True(t, v)
+}
+
+// TestAllowConfigEditsFlag_ParsesWithoutAutoFix: the flag parses cleanly even
+// without --auto-fix (cobra never rejects an unused bool); its meaningless-without-
+// auto-fix behavior is enforced at the call site, not by registration.
+func TestAllowConfigEditsFlag_ParsesWithoutAutoFix(t *testing.T) {
+	c := &cobra.Command{Use: "review"}
+	addAutoFixFlags(c)
+	require.NoError(t, c.Flags().Parse([]string{"--allow-config-edits"}))
+	v, err := c.Flags().GetBool("allow-config-edits")
+	require.NoError(t, err)
+	require.True(t, v)
+}
+
+// TestAllowConfigEditsFlag_HelpNamesTheRisk: the help text is a security control —
+// it must plainly state that the flag lets --auto-fix write to protected host-
+// execution/config paths and that a patch landing there can execute on the host.
+func TestAllowConfigEditsFlag_HelpNamesTheRisk(t *testing.T) {
+	c := &cobra.Command{Use: "review"}
+	addAutoFixFlags(c)
+	usage := c.Flags().Lookup("allow-config-edits").Usage
+	require.NotEmpty(t, usage)
+	for _, want := range []string{"DANGER", "protected", ".git/", "host"} {
+		require.Contains(t, usage, want,
+			"--allow-config-edits help must name the risk (protected paths, execution on the host)")
+	}
+}
+
+// TestReviewCmd_AllowConfigEditsFlagRegisteredOnReview: guards the actual wiring —
+// deleting addAutoFixFlags(cmd) from newReviewCmd would leave the real `review`
+// command with no --allow-config-edits flag while the synthetic-command tests still
+// passed. Mirrors TestReviewCmd_NoSandboxFlagRegisteredOnReview.
+func TestReviewCmd_AllowConfigEditsFlagRegisteredOnReview(t *testing.T) {
+	_, help := execCmdCapture(t, "review", "--help")
+	require.Contains(t, help, "--allow-config-edits")
+
+	v, err := newReviewCmd().Flags().GetBool("allow-config-edits")
+	require.NoError(t, err)
+	require.False(t, v, "--allow-config-edits must default to false on the real review command")
+}
+
+// --- Task 04: every-run (non-memoized) stderr security warning --------------
+
+const allowConfigEditsWarnMarker = "protected host-execution/config paths"
+
+// allowConfigEditsCmd builds a gate-passing command with BOTH --no-sandbox (so the
+// sandbox check is bypassed without Docker) and --allow-config-edits set, letting a
+// test drive validateAutoFixBackend to success while exercising the warning.
+func allowConfigEditsCmd(t *testing.T, repo, token string) *cobra.Command {
+	t.Helper()
+	c := noSandboxCmd(t, repo, token)
+	require.NoError(t, c.Flags().Set("allow-config-edits", "true"))
+	return c
+}
+
+// runAllowConfigEditsGate drives validateAutoFixBackend once on the
+// --allow-config-edits path against a fresh stderr buffer and returns what was
+// written to stderr. Other pieces are valid so the gate passes; the warning must
+// fire regardless.
+func runAllowConfigEditsGate(t *testing.T) string {
+	t.Helper()
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := allowConfigEditsCmd(t, "o/r", "tok")
+	var errBuf, outBuf strings.Builder
+	cmd.SetErr(&errBuf)
+	cmd.SetOut(&outBuf)
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err, "the --allow-config-edits gate should pass with all other pieces valid")
+	require.NotContains(t, outBuf.String(), allowConfigEditsWarnMarker, "the warning must go to stderr, never stdout")
+	return errBuf.String()
+}
+
+// TestWarnAllowConfigEdits_PrintsOnEveryConsecutiveCall: the warning fires on the
+// first AND every subsequent in-process invocation — the load-bearing
+// non-memoization guard. A sync.Once/package-bool implementation would fail the
+// 2nd/3rd call. Exercised through the real call site.
+func TestWarnAllowConfigEdits_PrintsOnEveryConsecutiveCall(t *testing.T) {
+	for i := 1; i <= 3; i++ {
+		got := runAllowConfigEditsGate(t)
+		require.Contains(t, got, allowConfigEditsWarnMarker,
+			"the --allow-config-edits warning must print on consecutive call #%d (no memoization)", i)
+	}
+}
+
+// TestWarnAllowConfigEdits_PrintsExactlyOncePerCallToSharedWriter: three
+// consecutive gate calls writing to ONE shared stderr buffer must yield exactly
+// three warning occurrences — occurrence count, not mere presence, is what a
+// sync.Once or package-level "seen" bool would fail (it would show 1).
+func TestWarnAllowConfigEdits_PrintsExactlyOncePerCallToSharedWriter(t *testing.T) {
+	clearGitHubEnv(t)
+	var shared strings.Builder
+	for i := 0; i < 3; i++ {
+		root := t.TempDir()
+		writeGoMod(t, root)
+		proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+		cmd := allowConfigEditsCmd(t, "o/r", "tok")
+		cmd.SetErr(&shared)
+		_, err := validateAutoFixBackend(cmd, proj, root)
+		require.NoError(t, err)
+	}
+	require.Equal(t, 3, strings.Count(shared.String(), allowConfigEditsWarnMarker),
+		"the warning must appear exactly once per invocation (no memoization across calls)")
+}
+
+// TestWarnAllowConfigEdits_FiresEvenWhenGateFails: the warning fires the moment the
+// bypass is chosen, BEFORE the combined missing-piece early return — so a run that
+// ALSO fails another check (missing token) still emits the warning. Locks the
+// "warn before the len(missing)>0 return" ordering against a refactor that moves the
+// warning into the success path.
+func TestWarnAllowConfigEdits_FiresEvenWhenGateFails(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := allowConfigEditsCmd(t, "o/r", "") // token missing -> gate fails
+	var errBuf strings.Builder
+	cmd.SetErr(&errBuf)
+	_, err := validateAutoFixBackend(cmd, proj, root)
+	require.Error(t, err, "the gate must still fail on the missing token")
+	require.Contains(t, errBuf.String(), allowConfigEditsWarnMarker,
+		"the warning must fire even when the --allow-config-edits run fails another gate check")
+}
+
+// TestWarnAllowConfigEdits_NamesTheRisk: the warning is explicit about the risk —
+// protected host-execution/config paths may be written and can execute on the host.
+func TestWarnAllowConfigEdits_NamesTheRisk(t *testing.T) {
+	got := runAllowConfigEditsGate(t)
+	for _, want := range []string{"WARNING", allowConfigEditsWarnMarker, ".git/", "host"} {
+		require.Contains(t, got, want, "the --allow-config-edits warning must name the specific risk")
+	}
+}
+
+// TestWarnAllowConfigEdits_AbsentWhenFlagUnset: the default path prints NO
+// --allow-config-edits warning — the warning is strictly conditional on the flag
+// being true (regression guard against an inverted condition). runNoSandboxGate does
+// NOT set --allow-config-edits.
+func TestWarnAllowConfigEdits_AbsentWhenFlagUnset(t *testing.T) {
+	got := runNoSandboxGate(t)
+	require.NotContains(t, got, allowConfigEditsWarnMarker,
+		"no --allow-config-edits warning may appear when the flag is unset")
+}
+
+// TestValidateAutoFixBackend_AllowConfigEditsStoredOnBackend: with the flag set, the
+// gate stores the resolved value on autoFixBackend.allowConfigEdits so runAutoFix
+// can pass it to ApplyPatch without re-parsing the flag.
+func TestValidateAutoFixBackend_AllowConfigEditsStoredOnBackend(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := allowConfigEditsCmd(t, "o/r", "tok")
+	be, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err)
+	require.True(t, be.allowConfigEdits, "the resolved --allow-config-edits value must be stored on the backend")
+}
+
+// TestValidateAutoFixBackend_AllowConfigEditsDefaultsFalseOnBackend: without the
+// flag, the backend field stays false — byte-identical to today's fail-closed gate.
+func TestValidateAutoFixBackend_AllowConfigEditsDefaultsFalseOnBackend(t *testing.T) {
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{Agents: []string{"a"}, AutoFix: &registry.AutoFixConfig{ApplyTarget: "."}}
+	cmd := noSandboxCmd(t, "o/r", "tok") // no --allow-config-edits
+	be, err := validateAutoFixBackend(cmd, proj, root)
+	require.NoError(t, err)
+	require.False(t, be.allowConfigEdits, "allowConfigEdits must default false when the flag is unset")
 }

@@ -36,15 +36,15 @@ Add a single, non-bypassable-by-default gate in `applyOne` immediately after `co
 - `internal/atomicfs/`
 
 ## Success Criteria
-- [ ] `applyOne` calls `security.IsProtectedPath(e.Path)` immediately after `containedPath` succeeds and before `refuseSymlinkLeaf`/the delete-modify-create branches — verified by reading the diff, not just tests passing.
-- [ ] A patch entry whose `Path` matches a protected pattern (`.git/*`, `.githooks/*`, `.github/workflows/*`, `.gitlab-ci.yml`, `.vscode/*`, `.idea/*`, `.env*`, `.planning/`, `.atcr`) is refused with a security error when `allowConfigEdits` is `false`, for all three entry kinds (create, modify, delete).
-- [ ] The same protected-path entry succeeds (falls through to the existing delete/modify/create logic unchanged) when `allowConfigEdits` is `true`.
-- [ ] An entry targeting a non-protected path is completely unaffected — no new error, no new backup-cleanup path, byte-identical behavior to before this task for every existing passing test.
-- [ ] `ApplyPatch`'s existing per-entry error-isolation contract (one entry's rejection does not block or roll back sibling entries) holds for the new protected-path rejection exactly as it does for existing rejections (traversal, symlink-leaf, parse failure).
-- [ ] `go build ./...` and `go vet ./...` pass with the new `internal/security` import wired in (Task 01 must have already landed `IsProtectedPath`; this task depends on it and will not compile standalone).
+- [x] `applyOne` calls `security.IsProtectedPath(e.Path)` immediately after `containedPath` succeeds and before `refuseSymlinkLeaf`/the delete-modify-create branches — verified by reading the diff, not just tests passing.
+- [x] A patch entry whose `Path` matches a protected pattern (`.git/*`, `.githooks/*`, `.github/workflows/*`, `.gitlab-ci.yml`, `.vscode/*`, `.idea/*`, `.env*`, `.planning/`, `.atcr`) is refused with a security error when `allowConfigEdits` is `false`, for all three entry kinds (create, modify, delete).
+- [x] The same protected-path entry succeeds (falls through to the existing delete/modify/create logic unchanged) when `allowConfigEdits` is `true`.
+- [x] An entry targeting a non-protected path is completely unaffected — no new error, no new backup-cleanup path, byte-identical behavior to before this task for every existing passing test.
+- [x] `ApplyPatch`'s existing per-entry error-isolation contract (one entry's rejection does not block or roll back sibling entries) holds for the new protected-path rejection exactly as it does for existing rejections (traversal, symlink-leaf, parse failure).
+- [x] `go build ./...` and `go vet ./...` pass with the new `internal/security` import wired in (Task 01 must have already landed `IsProtectedPath`; this task depends on it and will not compile standalone).
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -70,8 +70,8 @@ Add a single, non-bypassable-by-default gate in `applyOne` immediately after `co
 - Task-01 (pathguard.IsProtectedPath must exist)
 
 ## Definition of Done
-- [ ] `internal/security.IsProtectedPath` is called at the specified choke point in `applyOne`, confirmed by reading the diff.
-- [ ] `ApplyPatch`/`applyOne` signatures carry the new `allowConfigEdits bool` parameter and the sole caller in `cmd/atcr/autofix.go` is updated to match.
-- [ ] All new and existing tests in `internal/autofix/apply_test.go` pass.
-- [ ] `go build ./...`, `go vet ./...`, and the project's standard lint pass with no new warnings.
-- [ ] No behavior change for any existing non-protected-path entry or any caller not yet passing `allowConfigEdits=true` (regression-safe merge point for Task 04).
+- [x] `internal/security.IsProtectedPath` is called at the specified choke point in `applyOne`, confirmed by reading the diff.
+- [x] `ApplyPatch`/`applyOne` signatures carry the new `allowConfigEdits bool` parameter and the sole caller in `cmd/atcr/autofix.go` is updated to match.
+- [x] All new and existing tests in `internal/autofix/apply_test.go` pass.
+- [x] `go build ./...`, `go vet ./...`, and the project's standard lint pass with no new warnings.
+- [x] No behavior change for any existing non-protected-path entry or any caller not yet passing `allowConfigEdits=true` (regression-safe merge point for Task 04).

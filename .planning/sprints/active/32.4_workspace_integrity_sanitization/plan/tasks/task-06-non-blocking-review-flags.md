@@ -61,17 +61,17 @@ Thread the result out of `internal/autofix.ApplyPatch` as a new collected slice 
 - `cmd/atcr/autofix.go`
 
 ## Success Criteria
-- [ ] `internal/security.FlagsForReview(path string, oldMode, newMode int) (bool, string)` exists, compiles, and never returns an error or panics for any input — purely advisory.
-- [ ] An executable-bit change (`oldMode&0111 != newMode&0111`) is flagged, including the create-diff case where `oldMode == 0` and the new file is executable.
-- [ ] A path matching the soft build-script list (`Makefile`, `*.sh`, `package.json`, `Dockerfile`, non-`.github` CI configs) is flagged, using boundary-safe matching (no false positive on e.g. `not-a-Makefile.txt` or `mySh.go`).
-- [ ] A patch with neither condition is not flagged.
-- [ ] `ApplyPatch`'s new `[]ReviewFlag` return value contains one entry per successfully-applied, flagged path — never for a path whose apply failed.
-- [ ] `applyOne`'s call to `security.IsProtectedPath` (T2) still fires before `FlagsForReview`, and `FlagsForReview` only ever evaluates a path that already passed T2's gate (fell through as unprotected, or protected-and-allowed via `--allow-config-edits`) — verified by reading the diff, not just tests passing.
-- [ ] A generated `--auto-fix` PR whose entries include at least one flagged path has a `## Review Warnings` section in the PR body naming each flagged path and its reason; a run with zero flagged paths leaves the PR body byte-identical to today's static body.
-- [ ] `go build ./...` and `go vet ./...` pass.
+- [x] `internal/security.FlagsForReview(path string, oldMode, newMode int) (bool, string)` exists, compiles, and never returns an error or panics for any input — purely advisory.
+- [x] An executable-bit change (`oldMode&0111 != newMode&0111`) is flagged, including the create-diff case where `oldMode == 0` and the new file is executable.
+- [x] A path matching the soft build-script list (`Makefile`, `*.sh`, `package.json`, `Dockerfile`, non-`.github` CI configs) is flagged, using boundary-safe matching (no false positive on e.g. `not-a-Makefile.txt` or `mySh.go`).
+- [x] A patch with neither condition is not flagged.
+- [x] `ApplyPatch`'s new `[]ReviewFlag` return value contains one entry per successfully-applied, flagged path — never for a path whose apply failed.
+- [x] `applyOne`'s call to `security.IsProtectedPath` (T2) still fires before `FlagsForReview`, and `FlagsForReview` only ever evaluates a path that already passed T2's gate (fell through as unprotected, or protected-and-allowed via `--allow-config-edits`) — verified by reading the diff, not just tests passing.
+- [x] A generated `--auto-fix` PR whose entries include at least one flagged path has a `## Review Warnings` section in the PR body naming each flagged path and its reason; a run with zero flagged paths leaves the PR body byte-identical to today's static body.
+- [x] `go build ./...` and `go vet ./...` pass.
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -98,9 +98,9 @@ Thread the result out of `internal/autofix.ApplyPatch` as a new collected slice 
 - Task-01 (pathguard.go must exist), Task-02 (applyOne integration point and `allowConfigEdits` threading must exist)
 
 ## Definition of Done
-- [ ] `internal/security.FlagsForReview` implemented and exported, called from `applyOne` at the documented choke point (after `f := files[0]`, before the delete/modify/create branches).
-- [ ] `ApplyPatch`'s signature carries the new `[]ReviewFlag` return value; `cmd/atcr/autofix.go`'s sole call site is updated to match.
-- [ ] `runAutoFix`'s PR-body construction appends a `## Review Warnings` section exactly when the returned flag slice is non-empty, and leaves the body unchanged otherwise.
-- [ ] All new and existing tests in `internal/security/pathguard_test.go`, `internal/autofix/apply_test.go`, and `cmd/atcr/autofix_test.go` pass.
-- [ ] `go build ./...`, `go vet ./...`, and the project's standard lint pass with no new warnings.
-- [ ] `gofmt -l` reports no issues for the three modified files.
+- [x] `internal/security.FlagsForReview` implemented and exported, called from `applyOne` at the documented choke point (after `f := files[0]`, before the delete/modify/create branches).
+- [x] `ApplyPatch`'s signature carries the new `[]ReviewFlag` return value; `cmd/atcr/autofix.go`'s sole call site is updated to match.
+- [x] `runAutoFix`'s PR-body construction appends a `## Review Warnings` section exactly when the returned flag slice is non-empty, and leaves the body unchanged otherwise.
+- [x] All new and existing tests in `internal/security/pathguard_test.go`, `internal/autofix/apply_test.go`, and `cmd/atcr/autofix_test.go` pass.
+- [x] `go build ./...`, `go vet ./...`, and the project's standard lint pass with no new warnings.
+- [x] `gofmt -l` reports no issues for the three modified files.
