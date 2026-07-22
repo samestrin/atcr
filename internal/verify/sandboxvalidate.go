@@ -63,6 +63,13 @@ func RunSandboxedValidation(ctx context.Context, backend sandbox.Backend, argv [
 		Command:     argv,
 		Timeout:     timeout,
 		SnapshotDir: dir,
+		// Opt --auto-fix validation into the ephemeral writable /work overlay: a non-Go
+		// validate_command (npm run build -> dist/, cargo build -> target/, Python ->
+		// __pycache__) must be able to write into its working directory, which the
+		// default read-only /work mount blocks with EROFS. The snapshot stays read-only
+		// (mounted at /src); only the throwaway /work tmpfs copy is writable, and it dies
+		// with the container. --exec's call sites leave Writable false, unchanged.
+		Writable: true,
 	}
 
 	start := time.Now()

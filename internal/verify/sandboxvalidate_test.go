@@ -69,11 +69,23 @@ func TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec(t *testing.T) 
 	assert.Equal(t, dir, fb.gotSpec.SnapshotDir, "dir must be forwarded byte-for-byte into RunSpec.SnapshotDir")
 	assert.Equal(t, timeout, fb.gotSpec.Timeout, "timeout must be forwarded exactly, not silently defaulted here")
 	assert.Empty(t, fb.gotSpec.Script, "Script must never be populated on the argv path (RunSpec exactly-one invariant)")
+	assert.True(t, fb.gotSpec.Writable, "--auto-fix validation must opt into the writable overlay so non-Go validate_commands can write into their working dir (AC 04-01)")
 	assert.True(t, res.Passed(), "exit 0 with no timeout and no fault must pass")
 	assert.Equal(t, "build ok", res.Stdout, "combined RunResult.Output routes into Stdout")
 	assert.Empty(t, res.Stderr, "Stderr is left empty on the sandbox path (documented stream-collapse)")
 	assert.False(t, res.StdoutTruncated, "sandbox reports no per-stream truncation signal — flag left false, not guessed")
 	assert.False(t, res.StderrTruncated, "sandbox reports no per-stream truncation signal — flag left false, not guessed")
+}
+
+func TestRunSandboxedValidation_DefaultRunSpecLeavesWritableFalse(t *testing.T) {
+	// Verify that a standard sandbox.RunSpec constructed outside RunSandboxedValidation
+	// (e.g. by --exec or tool handlers) defaults Writable to false.
+	spec := sandbox.RunSpec{
+		Command:     []string{"go", "test", "./..."},
+		Timeout:     30 * time.Second,
+		SnapshotDir: t.TempDir(),
+	}
+	assert.False(t, spec.Writable, "default RunSpec for non-auto-fix callers must leave Writable false")
 }
 
 func TestRunSandboxedValidation_EmptyArgvShortCircuitsBeforeBackend(t *testing.T) {

@@ -1,9 +1,9 @@
 {
-  "skill": "execute-epic",
-  "args": "@.planning/epics/active/32.2_auto-fix-sandbox-defense-in-depth.md --multi-agent",
-  "invocation": "/execute-epic @.planning/epics/active/32.2_auto-fix-sandbox-defense-in-depth.md --multi-agent",
+  "skill": "sprint-complete",
+  "args": "@.planning/sprints/active/32.3_sandbox_ephemeral_copy_overlay",
+  "invocation": "/sprint-complete @.planning/sprints/active/32.3_sandbox_ephemeral_copy_overlay",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "7d791e46-edc4-450c-8345-4537e854b6a3",
-  "timestamp": "2026-07-21T00:57:54.825Z"
+  "session_id": "32273164-fb37-4db9-8264-76da3dfe2024",
+  "timestamp": "2026-07-21T23:54:48.093Z"
 }

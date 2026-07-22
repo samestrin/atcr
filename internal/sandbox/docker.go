@@ -38,6 +38,15 @@ type DockerConfig struct {
 	User string
 	// ScratchSize bounds the writable tmpfs scratch overlay (docker --tmpfs size).
 	ScratchSize string
+	// WorkSize bounds the writable tmpfs backing the /work overlay when
+	// RunSpec.Writable is true (consumed as `--tmpfs /work:rw,exec,size=<WorkSize>,mode=1777`,
+	// mirroring the existing `--tmpfs /scratch:rw,exec,size=<cfg.ScratchSize>,mode=1777`
+	// pattern in dockerRunArgs). It is sized for a full source-tree copy rather
+	// than just a build cache, so its default is deliberately larger than
+	// ScratchSize's "64m" (see RunSpec.Writable for run-image shell requirements).
+	// Note: tmpfs memory is charged against `--memory`, so Memory must be raised
+	// above WorkSize + build-working-set for real builds.
+	WorkSize string
 	// Timeout is the default per-run wall-clock budget when RunSpec.Timeout is 0.
 	Timeout time.Duration
 	// MaxOutputBytes truncates captured combined stdout+stderr.
@@ -59,6 +68,7 @@ func DefaultDockerConfig() DockerConfig {
 		PidsLimit:      256,
 		User:           "65534:65534", // nobody:nogroup
 		ScratchSize:    "64m",
+		WorkSize:       "512m",
 		Timeout:        60 * time.Second,
 		MaxOutputBytes: 64 * 1024,
 		MaxConcurrent:  4,
@@ -104,6 +114,21 @@ func (b *DockerBackend) Name() string { return "docker" }
 // since that value is a context deadline and never appears in the docker run argv.
 func (b *DockerBackend) Timeout() time.Duration { return b.cfg.Timeout }
 
+// writableSetupExec is the fixed `sh -c` script text for the Writable:true
+// Command-mode wrap. It seeds the writable /work tmpfs from the read-only /src
+// snapshot, cds into it, then execs the ORIGINAL command via positional "$@"
+// expansion. It contains NO data from spec.Command — the command tokens are passed
+// as distinct trailing argv elements after "--", never interpolated into this
+// string, so RunSpec.Command's "no shell interpolation" invariant holds for the
+// wrapped path (a metacharacter in a command token cannot be re-tokenized here).
+const writableSetupExec = `cp -R /src/. /work/ || exit 125; cd /work && exec "$@"`
+
+// writableSetupPrefix is the fixed line prepended to a Writable:true Script-mode
+// body before it is streamed to `sh -s` over stdin. It seeds /work from /src and
+// cds into it, then the user's script body runs verbatim after it. It carries no
+// data from spec.Script and is stdin DATA, never argv.
+const writableSetupPrefix = "cp -R /src/. /work/ || exit 125; cd /work\n"
+
 // dockerRunArgs builds the `docker run` argv for spec. It is pure (no I/O) so the
 // hardening flags can be asserted in a unit test without a daemon. The script
 // body is NOT included here: it is streamed over stdin to `sh -s` by Run.
@@ -126,10 +151,16 @@ func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
 		// would be defense theater anyway — run_script already pipes arbitrary sh
 		// into the container, so the real containment is --network none, --cap-drop
 		// ALL, --security-opt no-new-privileges, and the read-only rootfs.
-		"--tmpfs", "/scratch:rw,exec,size=" + cfg.ScratchSize,
+		// mode=1777 (world-writable + sticky, like /tmp) is pinned explicitly: the
+		// container runs as a non-root user (cfg.User) but docker mounts tmpfs
+		// root-owned, and the daemon's default tmpfs mode is 1777 on standard Linux but
+		// 0755 on some daemons (Docker Desktop for macOS) — under 0755 the sandbox user
+		// cannot write, silently breaking the scratch build-cache. Pinning the mode
+		// makes writability independent of the daemon default.
+		"--tmpfs", "/scratch:rw,exec,size=" + cfg.ScratchSize + ",mode=1777",
 		// Point HOME, temp, and common build caches at the writable scratch tmpfs so
 		// runners that need to write (go test's build cache, mktemp, pip, etc.) work
-		// under the read-only rootfs + read-only /work. Harmless for runners that
+		// under the read-only rootfs. Harmless for runners that
 		// ignore them (e.g. pytest).
 		"-e", "HOME=/scratch",
 		"-e", "TMPDIR=/scratch",
@@ -137,11 +168,38 @@ func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
 		"-e", "GOCACHE=/scratch/.gocache",
 		"-e", "GOTMPDIR=/scratch",
 		"--workdir", "/work",
-		"-v", spec.SnapshotDir + ":/work:ro",
+	}
+	if spec.Writable {
+		// Writable overlay: the snapshot stays read-only, but at /src instead of
+		// /work, and /work is backed by an ephemeral, memory-backed tmpfs. The tmpfs
+		// gives /work real writable backing under the global --read-only rootfs,
+		// mirroring the /scratch tmpfs above; it — and every write into it — dies
+		// with the --rm container, so no host file is ever mutated. The cp -R setup
+		// step that seeds /work from /src is injected in a later story.
+		args = append(args, "-v", spec.SnapshotDir+":/src:ro")
+		// mode=1777 for the same reason as /scratch above: the non-root sandbox user
+		// must be able to write the seeded copy into /work regardless of the daemon's
+		// tmpfs-mode default (0755 on Docker Desktop macOS would make the overlay
+		// unwritable — the whole point of the writable overlay).
+		args = append(args, "--tmpfs", "/work:rw,exec,size="+cfg.WorkSize+",mode=1777")
+	} else {
+		// Default (read-only): the snapshot binds directly read-only at /work,
+		// byte-identical to pre-overlay behavior — this is --exec's pinned guarantee.
+		args = append(args, "-v", spec.SnapshotDir+":/work:ro")
 	}
 	if spec.Script != "" {
-		// Feed the script over stdin: `docker run -i <image> /bin/sh -s`.
+		// Feed the script over stdin: `docker run -i <image> /bin/sh -s`. The
+		// Writable:true copy step is prepended to the stdin body by Run, never here —
+		// so this argv is byte-identical for both Writable values (the setup step
+		// travels as stdin data, not argv).
 		args = append(args, "-i", cfg.Image, "/bin/sh", "-s")
+	} else if spec.Writable {
+		// Writable overlay, Command mode: wrap the original command in a shell that
+		// seeds /work from /src, cds into it, then execs the command via positional
+		// "$@". spec.Command is appended as distinct argv elements after "--" so no
+		// token is interpolated into the -c script text (see writableSetupExec).
+		args = append(args, cfg.Image, "/bin/sh", "-c", writableSetupExec, "--")
+		args = append(args, spec.Command...)
 	} else {
 		args = append(args, cfg.Image)
 		args = append(args, spec.Command...)
@@ -206,7 +264,14 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 		// The script is delivered as stdin DATA to `sh -s` (see dockerRunArgs), never
 		// interpolated into argv or a `sh -c "..."` string, so there is no shell-
 		// injection vector: the script body IS the program source, not an argument.
-		cmd.Stdin = strings.NewReader(spec.Script)
+		script := spec.Script
+		if spec.Writable {
+			// Writable overlay: seed /work from /src and cd into it before the user's
+			// script body runs. The copy step is a fixed literal prepended to the stdin
+			// body (still data, not argv), so the injection-safety property is preserved.
+			script = writableSetupPrefix + script
+		}
+		cmd.Stdin = strings.NewReader(script)
 	}
 	var buf bytes.Buffer
 	// Cap the captured buffer so a chatty workload cannot exhaust host memory
@@ -296,6 +361,23 @@ func (b *DockerBackend) Preflight(ctx context.Context) error {
 	//      before any container spawn, to fail fast instead of OOM-killing the host.
 	if err := b.validateHostCaps(ctx); err != nil {
 		return err
+	}
+	// 2.6. The tmpfs size caps (ScratchSize, WorkSize) are interpolated verbatim into
+	//      the `--tmpfs .../scratch|work:...,size=<v>` mount specs. Validate them
+	//      against the docker size grammar (digits + optional b/k/m/g) up front via the
+	//      same parser the memory cap uses, so an operator config typo fails preflight
+	//      here instead of at container-spawn time (or, for WorkSize, only once a
+	//      Writable overlay run mounts /work).
+	for _, sz := range []struct{ name, val string }{
+		{"scratch_size", b.cfg.ScratchSize},
+		{"work_size", b.cfg.WorkSize},
+	} {
+		if sz.val == "" {
+			continue
+		}
+		if _, err := parseDockerMemory(sz.val); err != nil {
+			return fmt.Errorf("sandbox preflight: invalid %s %q: %w", sz.name, sz.val, err)
+		}
 	}
 	// 3. A trivial hardened container actually runs, using the SAME docker run
 	//    args as real executions so malformed caps (memory/cpus/pids-limit) are

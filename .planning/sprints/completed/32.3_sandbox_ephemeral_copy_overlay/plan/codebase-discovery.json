@@ -1,0 +1,365 @@
+{
+  "generated": "2026-07-20",
+  "refined": "2026-07-21",
+  "refinement_queries": [
+    "writable tmpfs mount docker run argv",
+    "shell wrap command execution stdin script",
+    "sandbox validation RunSpec construction auto-fix",
+    "ephemeral copy working tree read-only snapshot",
+    "docker backend config default size limits"
+  ],
+  "discovery_method": "semantic",
+  "queries": [
+    "docker sandbox writable overlay mount work directory",
+    "RunSpec Command Script dispatch dockerRunArgs",
+    "sandbox validation auto-fix RunSandboxedValidation",
+    "tmpfs mount ScratchSize DockerConfig defaults",
+    "read-only work directory EROFS snapshot mount"
+  ],
+  "match_count": 14,
+  "build_from": {
+    "primary_file": "internal/sandbox/docker.go",
+    "reason": "dockerRunArgs (line 110) builds the docker run argv including the current `-v spec.SnapshotDir:/work:ro` mount (line 140) and the global `--read-only` rootfs flag (line 117); this is the exact function the epic's Task 2/3 must modify. Run (line 161) is the only place spec.Command (Command mode, no shell) vs spec.Script (Script mode, piped to `sh -s` over stdin) diverge, confirming Command mode has no shell to interpret a prepended `cp` step.",
+    "suggested_approach": "Add RunSpec.Writable (sandbox.go) and DockerConfig.WorkSize (docker.go), then branch dockerRunArgs's mount block and argv/stdin construction on spec.Writable: writable mounts SnapshotDir at /src:ro plus a new --tmpfs /work:rw,exec,size=<WorkSize>, and wraps Command mode in an explicit `/bin/sh -c '...' -- <argv>` shell while Script mode prepends the copy step to the script body before it is written to cmd.Stdin."
+  },
+  "semantic_matches": [
+    {
+      "file": "internal/sandbox/docker.go",
+      "symbol": "dockerRunArgs",
+      "type": "function",
+      "line": 110,
+      "score": 0.9,
+      "query": "docker sandbox writable overlay mount work directory",
+      "relevance": "Builds the docker run argv; owns the -v SnapshotDir:/work:ro mount, the --read-only rootfs flag, and the Command-vs-Script branch that appends the final payload to argv or switches to `/bin/sh -s`."
+    },
+    {
+      "file": "internal/sandbox/docker.go",
+      "symbol": "DockerBackend.Run",
+      "type": "method",
+      "line": 161,
+      "score": 0.88,
+      "query": "RunSpec Command Script dispatch dockerRunArgs",
+      "relevance": "Calls dockerRunArgs then, for Script mode only, sets cmd.Stdin = strings.NewReader(spec.Script); Command mode's argv already contains the full exec, confirming there is no shell to inject a setup step into without wrapping."
+    },
+    {
+      "file": "internal/sandbox/docker.go",
+      "symbol": "renderCommand",
+      "type": "function",
+      "line": 153,
+      "score": 0.82,
+      "query": "RunSpec Command Script dispatch dockerRunArgs",
+      "relevance": "Display-only human-readable command string for evidence/logging; confirmed to have zero effect on actual execution (res.Command), so setup-injection must NOT be placed here (this was a corrected assumption from the epic's first /refine-epic pass)."
+    },
+    {
+      "file": "internal/sandbox/sandbox.go",
+      "symbol": "RunSpec",
+      "type": "struct",
+      "line": 28,
+      "score": 0.85,
+      "query": "RunSpec Command Script dispatch dockerRunArgs",
+      "relevance": "Target for the new Writable bool field; validate() (line 43) already enforces the exactly-one-of Command/Script invariant and absolute-path/no-colon SnapshotDir checks that any new field must not disturb."
+    },
+    {
+      "file": "internal/sandbox/sandbox.go",
+      "symbol": "Backend (package doc)",
+      "type": "doc-comment",
+      "line": 1,
+      "score": 0.8,
+      "query": "read-only work directory EROFS snapshot mount",
+      "relevance": "Package doc states as a hard MUST for every Backend.Run: 'a read-only view of the snapshot (the run cannot mutate the work tree)'. The opt-in design must keep this true for Writable:false (the default, used by --exec) and narrow the exception to the ephemeral /work tmpfs copy only when Writable:true."
+    },
+    {
+      "file": "internal/verify/sandboxvalidate.go",
+      "symbol": "RunSandboxedValidation",
+      "type": "function",
+      "line": 43,
+      "score": 0.87,
+      "query": "sandbox validation auto-fix RunSandboxedValidation",
+      "relevance": "The --auto-fix validation entry point; constructs sandbox.RunSpec{Command: argv, Timeout: timeout, SnapshotDir: dir} exclusively in Command mode (never Script) — this is where Writable: true must be set (Task 4)."
+    },
+    {
+      "file": "internal/verify/autofix_exec.go",
+      "symbol": "ResolveAutoFixSandbox",
+      "type": "function",
+      "line": 65,
+      "score": 0.78,
+      "query": "sandbox validation auto-fix RunSandboxedValidation",
+      "relevance": "Builds and preflights the sandbox.Backend used by --auto-fix; its doc comment (lines 47-55) duplicates the stale 'read-only /work limitation (effectively Go-only today)' note that docs/auto-fix.md also carries — both need updating per Task 6."
+    },
+    {
+      "file": "internal/sandbox/docker.go",
+      "symbol": "DefaultDockerConfig",
+      "type": "function",
+      "line": 53,
+      "score": 0.83,
+      "query": "tmpfs mount ScratchSize DockerConfig defaults",
+      "relevance": "Sets ScratchSize: \"64m\" as the pattern to mirror for the new WorkSize field, sized larger since it holds a full source-tree copy rather than a build cache."
+    },
+    {
+      "file": "internal/tools/exec_tools.go",
+      "symbol": "runTestsHandler / runScriptHandler / runInSandbox",
+      "type": "function",
+      "line": 160,
+      "score": 0.75,
+      "query": "RunSpec Command Script dispatch dockerRunArgs",
+      "relevance": "The two --exec call sites (Epic 11.0) that construct sandbox.RunSpec{...} without ever setting a Writable field today, confirming they will silently keep Writable:false (zero value) once the field is added, per the epic's opt-in design."
+    },
+    {
+      "file": "internal/sandbox/sandbox_test.go",
+      "symbol": "TestDockerRunArgs_HardeningFlagsPresent",
+      "type": "test",
+      "line": 35,
+      "score": 0.79,
+      "query": "read-only work directory EROFS snapshot mount",
+      "relevance": "Asserts joined argv contains \"/tmp/snap:/work:ro\" (line 55) — the exact contract that must remain byte-identical for Writable:false and is the regression anchor for Task 5(c)."
+    },
+    {
+      "file": "internal/sandbox/sandbox_test.go",
+      "symbol": "TestDockerRunArgs_WritableTempEnv",
+      "type": "test",
+      "line": 64,
+      "score": 0.6,
+      "query": "tmpfs mount ScratchSize DockerConfig defaults",
+      "relevance": "Pre-existing test whose name coincidentally contains 'Writable' but tests the unrelated HOME/TMPDIR env-var redirection to /scratch — confirmed no naming collision with the new Writable field or its tests."
+    },
+    {
+      "file": "internal/verify/sandboxvalidate_test.go",
+      "symbol": "TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec",
+      "type": "test",
+      "line": 58,
+      "score": 0.85,
+      "query": "sandbox validation RunSpec construction auto-fix",
+      "relevance": "Asserts each RunSpec field RunSandboxedValidation forwards (Command, SnapshotDir, Timeout, and Script-empty at lines 68-71) via the recording fakeSandboxBackend — this is where Task 4's Writable: true must gain a pinning assertion. Surfaced by refinement gap analysis; the file was absent from the original discovery."
+    },
+    {
+      "file": "internal/verify/autofix_exec_test.go",
+      "symbol": "fakeDockerRecording / TestResolveAutoFixSandbox_BuildsAndPreflights",
+      "type": "test",
+      "line": 23,
+      "score": 0.82,
+      "query": "sandbox validation RunSpec construction auto-fix",
+      "relevance": "Recording docker-shim helper (:23) plus runArgsLine (:43) let resolver tests assert the exact `docker run` argv Preflight built from a SandboxConfig (:56). Because Preflight always runs with Writable:false, these tests are a control group proving Task 2's branch does not leak into default runs — and the natural pin-site if a SandboxConfig work_size knob is ever added."
+    },
+    {
+      "file": "internal/sandbox/sandbox_test.go",
+      "symbol": "TestDockerRunArgs_ScriptUsesStdinShell",
+      "type": "test",
+      "line": 83,
+      "score": 0.8,
+      "query": "shell wrap command execution stdin script",
+      "relevance": "Pins the Script-mode argv shape (`-i <image> /bin/sh -s`) and that the script body never appears in argv — the pattern anchor for Task 5(a)'s Writable:true Script-mode assertions, where the prepended copy step must still travel over stdin, never interpolated into argv."
+    }
+  ],
+  "existing_patterns": [
+    {
+      "name": "Config-field-with-DefaultDockerConfig-mirror",
+      "description": "New tunables are added as a DockerConfig field with a sane constant default set inside DefaultDockerConfig() (e.g. ScratchSize: \"64m\"), never a package-level var.",
+      "files": ["internal/sandbox/docker.go"],
+      "follow_for": "WorkSize should follow the exact same pattern as ScratchSize."
+    },
+    {
+      "name": "Opt-in-bool-RunSpec-field-defaulting-false",
+      "description": "RunSpec fields default to their Go zero value and every existing caller that does not set them gets today's behavior unchanged (e.g. Timeout: 0 defers to the backend default).",
+      "files": ["internal/sandbox/sandbox.go", "internal/tools/exec_tools.go"],
+      "follow_for": "Writable bool should default to false and --exec's two call sites should require zero code changes."
+    },
+    {
+      "name": "Pure-argv-builder-separate-from-I/O",
+      "description": "dockerRunArgs is deliberately pure (no I/O) so hardening flags can be asserted in a unit test without a daemon; Run does the actual exec.CommandContext spawn.",
+      "files": ["internal/sandbox/docker.go"],
+      "follow_for": "The Writable-mode mount/argv changes belong inside dockerRunArgs (pure, testable); only the Command-mode shell-wrap and Script-mode stdin-prepend touch spec.Command/spec.Script content, which also flows through dockerRunArgs's pure construction before Run consumes it."
+    },
+    {
+      "name": "Fake-docker-shim-test-pattern",
+      "description": "Tests exercise Run/Preflight without a daemon via a POSIX shell shim impersonating the docker CLI: writeFakeDocker (internal/sandbox/sandbox_test.go:24) writes an env-var-driven shim into t.TempDir(); fakeDockerRecording (internal/verify/autofix_exec_test.go:23) is the recording variant that appends every invocation's argv to a capture file. Both skip on Windows.",
+      "files": ["internal/sandbox/sandbox_test.go", "internal/verify/autofix_exec_test.go"],
+      "follow_for": "Task 5(b)'s proof that a mock validation script can write under /work when Writable:true should reuse writeFakeDocker with a body that simulates the mount layout (e.g. checks the argv carries the /work tmpfs and the cp setup, or emulates a writable /work), not a real daemon."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/sandbox/docker.go",
+      "relevance": "high",
+      "purpose": "DockerConfig, DefaultDockerConfig, dockerRunArgs, renderCommand, DockerBackend.Run — the entire mount/argv/exec construction this epic modifies.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/sandbox/sandbox.go",
+      "relevance": "high",
+      "purpose": "RunSpec struct, validate(), Backend interface, package doc pinning the read-only guarantee.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/verify/sandboxvalidate.go",
+      "relevance": "high",
+      "purpose": "RunSandboxedValidation — the --auto-fix validation entry point that must opt into Writable: true.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/verify/sandboxvalidate_test.go",
+      "relevance": "high",
+      "purpose": "fakeSandboxBackend records the RunSpec it receives; TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec (:58) pins each forwarded field (Command/SnapshotDir/Timeout/Script-empty at :68-71) — must gain a Writable:true assertion so Task 4 is pinned by a test, not just code.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/verify/autofix_exec.go",
+      "relevance": "medium",
+      "purpose": "ResolveAutoFixSandbox builds/preflights the backend --auto-fix uses; its doc comment duplicates the stale EROFS limitation note.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/verify/autofix_exec_test.go",
+      "relevance": "medium",
+      "purpose": "Home of fakeDockerRecording (:23) and the resolver tests (TestResolveAutoFixSandbox_BuildsAndPreflights, :56) that assert the exact `docker run` argv Preflight builds from a SandboxConfig. Preflight always runs Writable:false, so these are control-group proof Task 2's branch does not alter default runs; also the pin-site if a SandboxConfig work_size field is ever mapped.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/tools/exec_tools.go",
+      "relevance": "medium",
+      "purpose": "The --exec call sites (runTestsHandler, runScriptHandler via runInSandbox) that construct RunSpec without Writable — must remain behaviorally unchanged.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/tools/exec_tools_test.go",
+      "relevance": "low",
+      "purpose": "Handler-level tests asserting the RunSpecs the two --exec call sites build (e.g. TestRunScript_Handler_PassesContentAndTimeout, :148); the Writable zero value keeps them green untouched, and they are the optional site for an explicit Writable:false assertion on the --exec control group.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/sandbox/sandbox_test.go",
+      "relevance": "high",
+      "purpose": "TestDockerRunArgs_HardeningFlagsPresent pins the current /work:ro mount contract; TestDockerRunArgs_ScriptUsesStdinShell (:83) pins the Script-mode argv shape; writeFakeDocker (:24) is the package's docker-CLI shim helper; TestDockerRunArgs_WritableTempEnv is an unrelated pre-existing test (name collision checked, none found).",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/sandbox/docker_test.go",
+      "relevance": "medium",
+      "purpose": "DockerBackend-level behavior tests (exit-code classification, preflight host-cap checks, timeout kill) built on the shared writeFakeDocker shim — verified split: the shim itself is defined in sandbox_test.go:24, this file consumes it.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "docs/auto-fix.md",
+      "relevance": "high",
+      "purpose": "\"What runs in the sandbox\" section (lines 38-53), the standalone \"Limitation (read-only /work)\" paragraph (lines 55-60), and the EROFS blockquote (lines 62-71) all document the current always-read-only-/work behavior that Task 6 must update.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "docs/execution.md",
+      "relevance": "low",
+      "purpose": "Documents --exec's read-only /work guarantee (lines 56-57, 86, 89); referenced by the epic's refinement as a guarantee that must remain textually accurate since --exec's default behavior is untouched, but the epic's Components Touched list does not include it — flagged as an open question below, not auto-included.",
+      "likely_modification": "reference-only"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "internal/sandbox/docker.go:dockerRunArgs",
+      "type": "hook",
+      "description": "Single conditional branch point for both the mount-list construction (SnapshotDir target + optional /work tmpfs) and the argv/stdin setup-step wrapping, keyed on spec.Writable."
+    },
+    {
+      "location": "internal/verify/sandboxvalidate.go:RunSandboxedValidation",
+      "type": "entry-point",
+      "description": "Sole production call site that must flip Writable: true for --auto-fix; --exec's call sites in internal/tools/exec_tools.go are the control group that must NOT change."
+    }
+  ],
+  "integration_gaps": [
+    {
+      "gap": "docs/auto-fix.md's standalone \"Limitation (read-only /work)\" paragraph (lines 55-60) is not covered by Task 6's cited ranges",
+      "impact": "T6 names the section lines 38-53 and the EROFS blockquote lines 62-70; the paragraph between them tells operators writes into the working tree 'cannot' succeed and to redirect to /scratch or skip sandboxed validation — equally stale once RunSandboxedValidation sets Writable:true, and easy to miss because it falls in the gap between the two cited ranges.",
+      "recommendation": "Extend T6's docs scope (and the files_to_modify entry for docs/auto-fix.md) to rewrite lines 55-60 alongside line 47 and the blockquote."
+    },
+    {
+      "gap": "internal/verify/sandboxvalidate_test.go was absent from the discovery; Task 4 has no pinning test site listed",
+      "impact": "T4 is a one-line change (Writable: true) with no listed test asserting it; the existing per-field forwarding assertions (:68-71) would still pass if the line were dropped in a future refactor.",
+      "recommendation": "Add a Writable:true assertion to TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec (file added to files_to_modify as scope: extend)."
+    },
+    {
+      "gap": "No operator-facing config surface exists for WorkSize (registry.SandboxConfig has no ScratchSize analog either)",
+      "impact": "The plan's risk mitigation says to 'document the config knob so operators with larger trees can raise it', but SandboxConfig (internal/registry/sandbox.go:20-38) maps only DockerPath/Image/Memory/CPUs/PidsLimit/TimeoutSecs — following the ScratchSize pattern strictly means WorkSize is a code-level default only, with no YAML knob to document.",
+      "recommendation": "Decide explicitly during design: accept a code-only default (consistent with ScratchSize, which is also not operator-configurable) or add a sandbox YAML field plus a mapping in ResolveAutoFixSandbox (pinned in autofix_exec_test.go). Either way, T6's docs text should state whichever knob exists."
+    },
+    {
+      "gap": "Writable:true Command mode introduces a new implicit container-image requirement (/bin/sh and cp -a)",
+      "impact": "Today's Command mode execs the image's argv directly with no shell at all; the /bin/sh -c 'cp -a /src/. /work/ && cd /work && exec \"$@\"' wrap requires the operator's image to ship a POSIX shell and a cp supporting -a (busybox in the alpine:3.20 default, coreutils in golang:* — but NOT distroless/scratch images).",
+      "recommendation": "Note the image requirement in docs/auto-fix.md as part of T6 and in the WorkSize/Writable field doc comments; failure mode on a shell-less image is a container start/exec failure, which surfaces as a backend fault (StartError) — acceptable but should be diagnosable."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "DefaultDockerConfig / ScratchSize pattern (internal/sandbox/docker.go:53)",
+      "path": "internal/sandbox/docker.go",
+      "can_extend": true,
+      "usage_example": "Add `WorkSize: \"<default>\"` alongside `ScratchSize: \"64m\"` inside the same struct literal in DefaultDockerConfig() (docker.go:53-66)."
+    },
+    {
+      "name": "writeFakeDocker shim helper (internal/sandbox/sandbox_test.go:24)",
+      "path": "internal/sandbox/sandbox_test.go",
+      "can_extend": true,
+      "usage_example": "writeFakeDocker(t, body) installs a POSIX docker-CLI shim; Task 5(b) reuses it with a body keyed on the Writable:true argv (presence of the /work tmpfs flag and the cp wrap) to emulate a writable /work without a daemon."
+    },
+    {
+      "name": "limitedWriter / truncate output handling (internal/sandbox/docker.go:318-339)",
+      "path": "internal/sandbox/docker.go",
+      "can_extend": false,
+      "usage_example": "Unrelated to this epic's mount/argv work; no change needed."
+    }
+  ],
+  "architecture_notes": [
+    "dockerRunArgs is pure and unit-testable without a Docker daemon — the epic's new mount/argv logic should stay inside it rather than moving into Run, preserving that testability.",
+    "The container's rootfs already runs under a global --read-only flag; only --tmpfs mounts (e.g. /scratch today) are writable. A Writable:true /work must be added as a NEW --tmpfs mount — renaming the existing -v bind target alone leaves /work with no writable backing and would still EROFS.",
+    "Command mode currently execs the image's argv directly with no shell (`args = append(args, cfg.Image); args = append(args, spec.Command...)`), confirmed at internal/sandbox/docker.go:146-147 — any setup step ahead of the real command requires an explicit `/bin/sh -c '... && exec \"$@\"' -- <command...>` wrap for Command mode specifically; Script mode already goes through `/bin/sh -s` so prepending to the script body is sufficient there.",
+    "RunSpec.validate() (sandbox.go:43) is the single choke point enforcing the exactly-one-of Command/Script invariant and SnapshotDir safety checks (absolute path, no ':'); Writable is an independent field and does not interact with these checks, so validate() likely needs no change unless Writable:true should require a non-empty SnapshotDir stricter than today (it already does).",
+    "Preflight (internal/sandbox/docker.go:281-316) builds its trivial-run argv via dockerRunArgs with RunSpec{Command: []string{\"true\"}} — Writable stays at its zero value, so the preflight path needs no change and its existing tests (docker_test.go:55-118) plus the resolver argv tests (autofix_exec_test.go:56) form a control group proving the Writable:false argv is byte-identical after the branch lands.",
+    "The Writable:true Command-mode shell wrap adds an implicit requirement that the container image provide /bin/sh and a cp supporting -a (busybox in the alpine:3.20 default, coreutils in golang:*); a distroless operator image would fail at container start. Surface this in the Writable/WorkSize doc comments and docs/auto-fix.md (see integration_gaps).",
+    "ScratchSize has no registry.SandboxConfig counterpart (grep-verified: it appears only in internal/sandbox/docker.go); strictly mirroring the ScratchSize pattern means WorkSize is a code-level default with no operator YAML knob — a deliberate decision point recorded in integration_gaps, not an oversight to fix silently."
+  ],
+  "files_to_modify": [
+    {
+      "path": "internal/sandbox/sandbox.go",
+      "reason": "Add `Writable bool` to RunSpec, defaulting to false via Go zero value.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/sandbox/docker.go",
+      "reason": "Add `WorkSize string` to DockerConfig + default in DefaultDockerConfig(); branch dockerRunArgs's mount block and Command/Script setup-injection on spec.Writable.",
+      "scope": "major"
+    },
+    {
+      "path": "internal/verify/sandboxvalidate.go",
+      "reason": "Set Writable: true on the RunSpec built for --auto-fix validation.",
+      "scope": "trivial"
+    },
+    {
+      "path": "internal/verify/sandboxvalidate_test.go",
+      "reason": "Extend TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec (:58) with a Writable:true assertion on the recorded spec, pinning Task 4 alongside the existing Command/SnapshotDir/Timeout/Script-empty forwarding assertions.",
+      "scope": "trivial"
+    },
+    {
+      "path": "internal/verify/autofix_exec.go",
+      "reason": "Update ResolveAutoFixSandbox's doc comment to remove the stale 'Read-only /work limitation (effectively Go-only today)' note.",
+      "scope": "trivial"
+    },
+    {
+      "path": "internal/sandbox/sandbox_test.go",
+      "reason": "Add Writable:true mount/argv assertions and the Writable:false regression assertion (byte-identical to today); TestDockerRunArgs_HardeningFlagsPresent's /work:ro assertion is the anchor, TestDockerRunArgs_ScriptUsesStdinShell (:83) is the Script-mode pattern, and writeFakeDocker (:24) is the shim Task 5(b) reuses.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/sandbox/docker_test.go",
+      "reason": "Add a fakeDocker-based test proving a mock validation script can write a file under /work when Writable:true, for both Command and Script modes.",
+      "scope": "minor"
+    },
+    {
+      "path": "docs/auto-fix.md",
+      "reason": "Update the unconditional 'mount mode is still read-only' claim (line 47), the standalone 'Limitation (read-only /work)' paragraph (lines 55-60 — sits between T6's cited ranges and is equally stale), and the EROFS blockquote (lines 62-71) to describe the opt-in writable overlay; also note the new implicit /bin/sh + cp -a image requirement for Writable Command mode.",
+      "scope": "minor"
+    }
+  ],
+  "files_to_create": [],
+  "test_patterns": {
+    "framework": "go test (testify assert/require, per sandbox_test.go)",
+    "test_location": "internal/sandbox/*_test.go",
+    "naming_convention": "TestDockerRunArgs_<Scenario> / TestDockerBackend_<Scenario>",
+    "example_test": "internal/sandbox/sandbox_test.go:35 (TestDockerRunArgs_HardeningFlagsPresent); shim helper writeFakeDocker at internal/sandbox/sandbox_test.go:24"
+  }
+}
