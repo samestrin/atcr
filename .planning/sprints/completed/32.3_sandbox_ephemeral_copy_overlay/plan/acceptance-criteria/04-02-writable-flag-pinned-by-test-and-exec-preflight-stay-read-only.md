@@ -1,0 +1,87 @@
+# Acceptance Criteria: `Writable` Flag Is Pinned by Test, `--exec`/Preflight Stay Read-Only
+
+**Related User Story:** [04: `--auto-fix` Opts Into the Writable Overlay](../user-stories/04-auto-fix-opts-into-writable-overlay.md)
+
+## Implementation Technology
+| Component | Technology | Notes |
+|-----------|------------|-------|
+| Component Type | Go unit test assertion + control-group regression pin | `internal/verify/sandboxvalidate_test.go`; no production code beyond AC 04-01's one-line change |
+| Test Framework | `go test` + `testify/assert` + `fakeSandboxBackend` (`gotSpec` recording) | Same fake used by `TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec` |
+| Key Dependencies | `internal/sandbox.RunSpec.Writable` (Story 1), `internal/tools/exec_tools.go` (`runTestsHandler`/`runScriptHandler`), `internal/verify/autofix_exec.go` (`ResolveAutoFixSandbox` -> `backend.Preflight`) | Control-group files must remain textually unchanged |
+
+## Related Files
+- `internal/verify/sandboxvalidate_test.go` - modify: `TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec` (line 58) gains `assert.True(t, fb.gotSpec.Writable, "auto-fix validation must request the writable overlay")` alongside its existing Command/SnapshotDir/Timeout/Script assertions (lines 68-71)
+- `internal/tools/exec_tools.go` - control group, must NOT change: `runTestsHandler`'s `d.runInSandbox(ctx, sandbox.RunSpec{Command: cmd, SnapshotDir: d.root, Timeout: d.execTimeout})` (line 178) and `runScriptHandler`'s `d.runInSandbox(ctx, sandbox.RunSpec{Script: a.Content, SnapshotDir: d.root, Timeout: timeout})` (line 215) — neither sets `Writable`, both stay at the zero value `false`
+- `internal/verify/autofix_exec.go` - control group, must NOT change: `ResolveAutoFixSandbox` (line 65) calls `backend.Preflight(ctx)` (line 92), whose trivial-run `RunSpec{Command: []string{"true"}, SnapshotDir: tmpDir}` (`internal/sandbox/docker.go:308`) never sets `Writable` either
+
+### Related Files (from codebase-discovery.json)
+- `internal/verify/sandboxvalidate_test.go:58` (`TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec`; existing assertions at `:68-71`) — extend: add the `Writable:true` assertion; the only file this AC modifies
+- `internal/tools/exec_tools.go:160` (`runTestsHandler`), `:178` (Command-mode `RunSpec` literal), `:215` (Script-mode `RunSpec` literal; both dispatch via `runInSandbox` at `:222`) — reference-only control group: never set `Writable`, keep the zero value `false`
+- `internal/verify/autofix_exec.go:65` (`ResolveAutoFixSandbox`; `backend.Preflight(ctx)` at `:92`; trivial-run `RunSpec{Command: []string{"true"}}` built inside `internal/sandbox/docker.go:308`) — reference-only control group: stays `Writable:false`
+- `internal/verify/autofix_exec_test.go:23` (`fakeDockerRecording`), `:43` (`runArgsLine`), `:56` (`TestResolveAutoFixSandbox_BuildsAndPreflights`) — reference-only control-group proof: these resolver tests assert the exact `docker run` argv Preflight builds and must pass unmodified, proving the `Writable:true` branch never leaks into default/preflight runs
+- `internal/tools/exec_tools_test.go:148` (`TestRunScript_Handler_PassesContentAndTimeout`) — reference-only: handler-level pin on the `RunSpec`s `--exec` builds; the `Writable` zero value keeps it green untouched, and it is the optional site for an explicit `Writable:false` assertion on the `--exec` control group
+
+## Happy Path Scenarios
+**Scenario 1: The pinning assertion catches a future accidental removal of `Writable: true`**
+- **Given** `TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec` now asserts `fb.gotSpec.Writable == true`
+- **When** a future refactor of `sandboxvalidate.go` accidentally drops `Writable: true` from the `RunSpec` literal
+- **Then** this test fails immediately with the assertion message, giving CI-level signal before the regression ships and the `EROFS` false-negative silently reintroduces itself
+
+**Scenario 2: `--exec`'s call sites keep defaulting to `Writable: false` with zero code changes**
+- **Given** `runTestsHandler` and `runScriptHandler` in `exec_tools.go` never set `Writable` on their `RunSpec` literals
+- **When** this story's change lands (touching only `sandboxvalidate.go` and `sandboxvalidate_test.go`)
+- **Then** `git diff` shows `exec_tools.go` and `autofix_exec.go` as byte-identical to their pre-change state, and both call sites continue to construct a `RunSpec` whose `Writable` field is the Go zero value `false`, preserving `--exec`'s documented hard read-only-`/work` guarantee
+
+## Edge Cases
+**Edge Case 1: `ResolveAutoFixSandbox`'s Preflight call is a separate control group from `--exec`**
+- **Given** `ResolveAutoFixSandbox` calls `backend.Preflight(ctx)`, which internally builds `RunSpec{Command: []string{"true"}, SnapshotDir: tmpDir}` in `internal/sandbox/docker.go` (not in `verify` package code touched by this story)
+- **When** this story's `Writable: true` change lands in `RunSandboxedValidation`
+- **Then** the Preflight trivial-run spec is unaffected — it is a distinct code path in `internal/sandbox/docker.go` that this story does not modify — and continues to default `Writable` to `false`, proving the writable-mount opt-in does not leak into the preflight check that runs before every sandboxed `--auto-fix`/`--exec` session
+
+**Edge Case 2: The new assertion sits alongside, not instead of, the existing `Script`-empty assertion**
+- **Given** the existing assertion `assert.Empty(t, fb.gotSpec.Script, ...)` (line 71) pins the exactly-one Command/Script invariant
+- **When** the new `Writable` assertion is added
+- **Then** both assertions coexist in the same test function and both must pass — the new assertion does not replace or weaken the pinned `Script`-empty invariant
+
+**Edge Case 3: The existing Preflight argv tests stay green, unmodified, as recorded-argv control-group proof**
+- **Given** the resolver tests (`TestResolveAutoFixSandbox_BuildsAndPreflights` at `internal/verify/autofix_exec_test.go:56` and its siblings) capture the exact `docker run` argv the Preflight trivial run builds, via `fakeDockerRecording` (`:23`) and `runArgsLine` (`:43`)
+- **When** this story's `Writable: true` change lands in `RunSandboxedValidation` only
+- **Then** `go test ./internal/verify/...` passes with those resolver tests and their assertions byte-for-byte unmodified, and the shim-recorded preflight `docker run` line contains no `/src` mount and no `--tmpfs /work` flag — because Preflight's trivial-run spec never sets `Writable`, its argv stays on the default branch, proving the writable overlay does not leak into the preflight path
+
+## Error Conditions
+**Error Scenario 1: Test failure output on regression**
+- Error message: `"auto-fix validation must request the writable overlay"` (the custom `testify` assertion message on `fb.gotSpec.Writable`)
+- HTTP status / error code: N/A — `go test` non-zero exit / failed test case, surfaced through CI, not a runtime HTTP error
+
+## Performance Requirements
+- **Response Time:** N/A — no production runtime path affected; this is a test-only addition plus verification that two other files are untouched
+- **Throughput:** N/A
+
+## Security Considerations
+- **Authentication/Authorization:** N/A
+- **Input Validation:** This AC is the regression guard for `--exec`'s read-only-`/work` guarantee: by pinning `--auto-fix`'s opt-in (`Writable: true`) with an explicit test assertion and confirming `--exec`'s two call sites plus the Preflight trivial-run remain unchanged, it ensures the container-isolation boundary for LLM-authored `--exec` commands is not weakened as a side effect of unlocking `--auto-fix`'s writable overlay. The full PRESERVE/UPDATE map of the read-only-`/work` claims this guard protects is in [documentation/current-sandbox-guarantees.md](../documentation/current-sandbox-guarantees.md): `docs/execution.md:51-62` and `:86-90` and the `internal/sandbox` package doc (`sandbox.go:1-15`) must stay textually true — which holds exactly because `--exec` and Preflight keep `Writable:false`.
+
+## Test Implementation Guidance
+**Test Type:** UNIT (with a manual/reviewer-verified `git diff` check as a companion control-group gate)
+**Test Data Requirements:** No new fixtures — reuses the existing `dir := t.TempDir()`, `argv := []string{"go", "build", "./..."}`, and `timeout := 90 * time.Second` already set up in `TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec`.
+**Mock/Stub Requirements:** `fakeSandboxBackend.gotSpec` (already records the full `RunSpec` it received) — no new mock needed, only a new assertion against the existing recorded field. The control-group side reuses the existing `fakeDockerRecording` shim (`internal/verify/autofix_exec_test.go:23`) and `runArgsLine` (`:43`) through the already-existing resolver tests — no new shim or daemon.
+**Assertion to Add:** `assert.True(t, fb.gotSpec.Writable, "auto-fix validation must request the writable overlay")` inside the existing test — no new test function is required; if a future split is preferred, follow the file's `TestRunSandboxedValidation_<Scenario>` naming convention. Daemon-free, Go-level assertion on the recorded spec, per this package's existing pattern (no Docker daemon anywhere in `sandboxvalidate_test.go`).
+**Companion Control-Group Gates (binary, CI/reviewer-verified):**
+- `git diff --exit-code -- internal/tools/exec_tools.go internal/verify/autofix_exec.go` exits 0 across this story's change (both files are byte-identical control groups).
+- `go test ./internal/verify/... ./internal/tools/...` passes with zero modifications to the control-group test files (`autofix_exec_test.go`, `exec_tools_test.go`) — the existing resolver/handler assertions are the regression proof (Edge Case 3).
+
+## Definition of Done
+
+**Auto-Verified:**
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
+
+**Story-Specific:**
+- [x] `TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec` asserts `fb.gotSpec.Writable == true`
+- [x] `git diff` confirms `internal/tools/exec_tools.go` is unchanged by this story
+- [x] `git diff` confirms `internal/verify/autofix_exec.go` is unchanged by this story
+- [x] The existing `assert.Empty(t, fb.gotSpec.Script, ...)` assertion (line 71) still passes alongside the new `Writable` assertion
+
+**Manual Review:**
+- [ ] Code reviewed and approved

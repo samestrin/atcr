@@ -1,0 +1,593 @@
+# Sprint 32.3: sandbox ephemeral copy overlay
+
+---
+executor: /execute-sprint
+execution_mode: gated
+context_recovery: On context compaction, read .planning/.temp/execute-sprint/context.env for phase state. Resume at first unchecked phase below.
+---
+
+**Directions:** Work through Sprint 32.3 step-by-step. Complete each step, check off work immediately. After completing a phase, proceed to the next without waiting.
+
+Before each phase, review `/CLAUDE.md` (or AGENTS.md).
+
+---
+
+## Sprint Overview
+
+**Metadata:** See [metadata.md](metadata.md) for complete plan and sprint tracking details.
+
+**Original Request:** [Full details in plan/original-requirements.md](plan/original-requirements.md)
+
+### What We're Building
+
+An opt-in ephemeral-copy writable overlay for the ATCR Docker sandbox: a new `RunSpec.Writable` field and `DockerConfig.WorkSize` tunable that, when set, mount the project snapshot read-only at `/src` and back `/work` with a writable tmpfs populated by a `cp -a` setup step — unlocking `--auto-fix` validation for Node, Rust, and Python projects that need to write into their working directory during testing.
+
+### Why This Matters
+
+Today's read-only `/work` mount silently fails non-Go `--auto-fix` validation runs with `EROFS`, causing valid fixes to be discarded as invalid. This sprint fixes that without weakening `--exec`'s existing read-only guarantee, which stays byte-identical and opt-out by default.
+
+### Key Deliverables
+
+- `RunSpec.Writable bool` and `DockerConfig.WorkSize string` config surface, defaulting to today's behavior
+- Conditional `dockerRunArgs` mount branch: `/src:ro` + `/work` tmpfs when `Writable:true`, unchanged `/work:ro` otherwise
+- Shell-wrapped (Command mode) and stdin-prepended (Script mode) `cp -a /src/. /work/ && cd /work` setup injection, with no shell interpolation of the real payload
+- `RunSandboxedValidation` opts `--auto-fix` into `Writable: true`
+- Regression tests proving `Writable:false` stays byte-identical, plus `docs/auto-fix.md` and `autofix_exec.go` doc-comment parity updates
+
+### Success Criteria
+
+- Full existing `internal/sandbox` test suite and both `--exec` call sites pass unmodified with zero behavior change
+- A non-Go validation command/script that writes into its working directory succeeds under `Writable:true` for both Command and Script modes
+- `--auto-fix` validation no longer produces a false-negative `EROFS` failure
+- The `/src` snapshot remains read-only for the container's entire lifetime; only the ephemeral `/work` tmpfs is writable and dies with the container
+- `docs/auto-fix.md` and `autofix_exec.go`'s doc comment are updated to match the new behavior
+
+**CRITICAL REMINDER:** Every task in this sprint must contribute to fulfilling the original request. If a task seems unrelated to what the user actually asked for, STOP and validate before proceeding. Do not add scope beyond the original request.
+
+---
+
+## TDD Strategy
+
+**Mode:** Moderate 🔄 (RED, then GREEN, ADVERSARIAL, REFACTOR) across all 5 stories — driven by sprint complexity 9/12 (COMPLEX). `--gated` implies `--adversarial`: every story's GREEN task is followed by a fresh-subagent adversarial review before REFACTOR, and every phase ends with a phase-boundary GATE review before `/execute-sprint` stops.
+
+**Inline-fix bar:** CRITICAL/HIGH findings are fixed inline in the following REFACTOR/GATE task. MEDIUM/LOW findings are deferred to `clarifications/tech-debt-captured.md`.
+
+---
+
+## About This Document
+
+| Document | Purpose |
+|----------|---------|
+| [sprint-design.md](plan/sprint-design.md) | Architecture, decomposition, test strategy |
+| [original-requirements.md](plan/original-requirements.md) | User's actual request (source of truth) |
+| [user-stories/](plan/user-stories/) | Feature requirements |
+| [acceptance-criteria/](plan/acceptance-criteria/) | Validation requirements with DoD |
+
+---
+
+## Sprint Conventions
+
+### Testing Tiers
+
+| Tier | When | Command Pattern |
+|------|------|-----------------|
+| T1: Focused | After each small change | `go test ./internal/sandbox/... -run <TestName>` |
+| T2: Module | After completing element | `go test ./internal/sandbox/...` or `./internal/verify/...` |
+| T3: Full | DoD validation, pre-commit | `go test ./...` |
+
+### DoD Verification Checklist
+1. Tests (T3): All passing
+2. Coverage: ≥80%
+3. Lint: No errors (`golangci-lint run`)
+4. Build: Succeeds (`go build ./...`)
+5. Docs: Updated
+
+### DoD Report Template
+```
+Story-{N} DoD Complete
+Auto: {X}/5 | Story-Specific: {Y}/{Z}
+Manual Review: [ ] Code reviewed
+```
+
+### Commit Process
+Stage only files changed by this phase — do NOT use `git add .` or `git add -A` (other sessions may have uncommitted work).
+`git add [specific files] && git commit -m "<type>(<scope>): <message>"`
+
+---
+
+## Development Standards
+
+## Core Philosophy
+
+**"It's faster to write five lines of code today than to write one line today and then have to edit it in the future."**
+
+Your goal is to create software that:
+- Maintains constant developer velocity regardless of project size.
+- Can be understood and maintained by any developer.
+- Has modules that can be completely replaced without breaking the system.
+- Optimizes for human cognitive load, not code cleverness.
+
+### Architecture Principles
+- **Black Box Interfaces:** Every module should be a black box with a clean, documented API; implementation details hidden.
+- **Replaceable Components:** Any module should be rewritable from scratch using only its interface.
+- **Single Responsibility Modules:** One module, one clear purpose.
+- **Primitive-First Design:** Identify core primitives; build complexity through composition, not complicated primitives.
+
+### Go & MCP Specific Guidelines
+- **Panic Safety:** Ensure goroutines and worker tasks handle recovery.
+- **Defer Cleanup:** Always use `defer` to close resources immediately after creation.
+- **Interface Segregation:** Return concrete types (struct pointers) from constructors; consume interfaces.
+- **Robust Protocol Handling:** Validate input parameters thoroughly.
+
+## Coding Standards (Go)
+- **Naming:** Packages lowercase single-word; exported `PascalCase`; unexported `camelCase`; functions `PascalCase`; files snake_case or lowercase.
+- **Imports:** stdlib, then third-party, then internal (`github.com/samestrin/atcr/`) — `goimports` auto-arranges.
+- **Error Handling:** Return `error` as last param; never ignore errors; wrap with `fmt.Errorf("doing action: %w", err)`; no `panic` for normal error conditions.
+- **Context:** Accept `context.Context` as first param for long-running/I/O operations.
+- **Testing:** Table-driven tests; `*_test.go` co-located with code under test; `testify` for assertions; integration tests behind `//go:build integration`.
+- **Quality Gates:** `go fmt`/`goimports`, `golangci-lint run`, `go vet ./...` before commit.
+
+## Git Strategy
+- **Branching:** `feature/short-description` from `main`; GitHub Flow / trunk-based.
+- **Commits:** Conventional Commits (`type(scope): description`); small and atomic.
+- **PRs:** One logical change, <400 lines ideally, squash-merged, CI (`Go CI`: fmt/vet/lint/tests) must pass.
+
+---
+
+## External Resources
+
+**[current-sandbox-guarantees.md](plan/documentation/current-sandbox-guarantees.md)** — Contract map of every existing doc/code-comment claim about `--exec`'s read-only `/work` guarantee, each annotated PRESERVE (`--exec` control group, must stay true for `Writable:false`) or UPDATE (T6/Story 5 docs-parity scope): `docs/execution.md`, `docs/auto-fix.md`, the `internal/sandbox` package doc, `internal/verify/autofix_exec.go`.
+
+**[docker-tmpfs-and-read-only-mounts.md](plan/documentation/docker-tmpfs-and-read-only-mounts.md)** — Official Docker reference excerpts for `--tmpfs` syntax (`rw`/`exec`/`size=`), the global `--read-only` rootfs flag, and `:ro` bind mounts — the exact mount semantics the `Writable:true` overlay mirrors from the existing `/scratch` pattern.
+
+**Scope note:** `.planning/specifications/` has no standard covering Docker/container mount internals; the Docker docs above are the source of truth for the mechanism. Stdlib (`os/exec`, `context`) and test (`testify`) idioms follow `.planning/specifications/packages/standard-library.md` and `.../testify.md`.
+
+---
+
+## Sprint Phases
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 1: Foundation — Config Surface
+
+### 1.1 [x] **[Opt-In Writable Configuration Surface - RED](plan/user-stories/01-opt-in-writable-configuration-surface.md)**
+   1. Analyze [AC 01-01](plan/acceptance-criteria/01-01-runspec-writable-field.md), [AC 01-02](plan/acceptance-criteria/01-02-dockerconfig-worksize-default.md), [AC 01-03](plan/acceptance-criteria/01-03-zero-behavior-change-for-existing-callers.md); identify testable units
+   2. Write tests: `RunSpec.Writable` defaults `false`; `DockerConfig.WorkSize` default set in `DefaultDockerConfig()`; full-suite regression assertion proving both `--exec` call sites and the existing `internal/sandbox` suite are unaffected
+   3. Verify tests fail correctly (new fields/assertions do not yet exist)
+   **Files:** `internal/sandbox/sandbox_test.go`, `internal/sandbox/docker_test.go` | **Duration:** 2-3 hours
+
+### 1.2 [x] **[Opt-In Writable Configuration Surface - GREEN](plan/user-stories/01-opt-in-writable-configuration-surface.md)**
+   Add `Writable bool` to `RunSpec` (`internal/sandbox/sandbox.go`) and `WorkSize string` to `DockerConfig` with a sane default in `DefaultDockerConfig()` (`internal/sandbox/docker.go`), mirroring the `ScratchSize` pattern exactly — no branching logic yet (T1). Verify all pass (T2). COMMIT: `git commit -m "feat(sandbox): add opt-in RunSpec.Writable and DockerConfig.WorkSize fields"`
+   **Files:** `internal/sandbox/sandbox.go`, `internal/sandbox/docker.go` | **Duration:** 2-3 hours
+
+### 1.2.A [x] **[Opt-In Writable Configuration Surface - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-opt-in-writable-configuration-surface.md)**
+   **Changed Files:** `internal/sandbox/sandbox.go`, `internal/sandbox/docker.go`, `internal/sandbox/sandbox_test.go`, `internal/sandbox/docker_test.go`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 1.2`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FROM 1.2]
+     - Checklist (pass verbatim):
+       - SECURITY: Auth bypass, injection, data exposure?
+       - EDGE CASES: Null, empty, boundaries, concurrent access?
+       - ERROR HANDLING: Missing catches, swallowed errors?
+       - PERFORMANCE: N+1, leaks, blocking ops?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Subagent findings (fresh-context review, 2026-07-21):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | NONE | - | No findings — change is cleanly additive; no runtime path reads Writable/WorkSize; WorkSize (512m) > ScratchSize (64m); both new tests pin their claims in real terms | - |
+
+   **Action Required:**
+   - ✅ None found -> **Adversarial review passed** — proceed to 1.3.
+   - CRITICAL/HIGH found -> List issues for 1.3, do NOT proceed until fixed
+   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
+
+### 1.3 [x] **[Opt-In Writable Configuration Surface - REFACTOR](plan/user-stories/01-opt-in-writable-configuration-surface.md)**
+   1. Fix CRITICAL/HIGH issues from 1.2.A (if any)
+   2. Improve code and tests (T1), validate all still pass (T3): `go test ./internal/sandbox/... ./internal/tools/...`
+   3. COMMIT: `git commit -m "refactor(sandbox): address review + clean up config surface"`
+   **Duration:** 1 hour
+
+### 1.4 [x] **Phase 1 - Definition of Done**
+   1. `go test ./internal/sandbox/... ./internal/tools/...` — all passing (T3)
+   2. Coverage ≥80% on touched files
+   3. `golangci-lint run` — no errors
+   4. `go build ./...` — succeeds
+   5. Story-specific: [AC 01-01](plan/acceptance-criteria/01-01-runspec-writable-field.md), [AC 01-02](plan/acceptance-criteria/01-02-dockerconfig-worksize-default.md), [AC 01-03](plan/acceptance-criteria/01-03-zero-behavior-change-for-existing-callers.md) all verified
+   **Report:** `Story-1 DoD Complete / Auto: {X}/5 | Story-Specific: {Y}/3`
+
+### 1.5 [x] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence)
+
+   **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 1 gate review`
+   - prompt: Self-contained brief including:
+     - Files changed during Phase 1 (absolute paths): [LIST]
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: All phase-exit contracts honored (signatures, return shapes, error types)?
+       - CONFIG SURFACE: New config keys documented, defaulted, back-compat?
+       - INTEGRATION: Cross-module calls correct, no hidden coupling introduced?
+       - PHASE-EXIT CONTRACT: Downstream phases can consume outputs without rework?
+       - REGRESSION: Earlier-phase behavior still intact?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Files changed during Phase 1:** `internal/sandbox/sandbox.go`, `internal/sandbox/docker.go`, `internal/sandbox/sandbox_test.go`, `internal/sandbox/docker_test.go`
+
+   **Subagent findings (fresh-context hostile-integrator review, 2026-07-21):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | MEDIUM | docker.go:71 | Default `WorkSize` "512m" equals `Memory` cap "512m"; tmpfs counts against the memory cgroup, so a wired `cp -a` overlay could OOM the run | Reconcile WorkSize vs Memory in Phase 2 → **TD-001** |
+   | MEDIUM | sandbox.go:52 | `Writable` doc comment specifies only Command-mode wrap; Script-mode behavior unstated (already planned in T3/AC 03-02) | Complete doc comment in Phase 3 → **TD-002** |
+   | LOW | docker.go:46 | Image-requirement sentence duplicated across `WorkSize` + `Writable` doc comments (drift risk) | Consolidate in later docs pass → **TD-003** |
+
+   **Action Required:**
+   - No CRITICAL/HIGH → **Phase gate passed** (no phase-boundary blocker).
+   - MEDIUM/LOW deferred to `tech-debt-captured.md` (TD-001, TD-002, TD-003) — all fall into later-phase scope (Phase 2 mount sizing / Phase 3 Script-mode doc / cosmetic).
+   **Duration:** 15-30 min
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 2: Core Mount Mechanism
+
+### 2.1 [x] **[Conditional Writable /work Mount - RED](plan/user-stories/02-conditional-writable-work-mount.md)**
+   1. Analyze [AC 02-01](plan/acceptance-criteria/02-01-writable-false-argv-byte-identical.md), [AC 02-02](plan/acceptance-criteria/02-02-writable-true-src-and-work-tmpfs-mounts.md), [AC 02-03](plan/acceptance-criteria/02-03-writable-setup-step-copies-src-into-work.md) (argv/stdin-level scope only — end-state integration scenarios verified in Phase 3 alongside Story 3); identify testable units
+   2. Write tests: `Writable:false` argv stays exactly `-v SnapshotDir:/work:ro` (byte-identical to today, including `TestDockerRunArgs_HardeningFlagsPresent` staying green unmodified); `Writable:true` argv contains `SnapshotDir:/src:ro` plus `--tmpfs /work:rw,exec,size=<cfg.WorkSize>` and does NOT contain the old `/work:ro` bind form
+   3. Verify tests fail correctly
+   **Files:** `internal/sandbox/sandbox_test.go`, `internal/sandbox/docker_test.go` | **Duration:** 3-4 hours
+
+### 2.2 [x] **[Conditional Writable /work Mount - GREEN](plan/user-stories/02-conditional-writable-work-mount.md)**
+   Branch `dockerRunArgs` (`internal/sandbox/docker.go`) on `spec.Writable`: `false` path stays textually untouched; `true` path mounts `SnapshotDir:/src:ro` and adds `--tmpfs /work:rw,exec,size=<cfg.WorkSize>` (T1). Verify all pass (T2): `go test ./internal/sandbox/...`. COMMIT: `git commit -m "feat(sandbox): branch dockerRunArgs mount on spec.Writable"`
+   **Files:** `internal/sandbox/docker.go` | **Duration:** 4-5 hours
+
+### 2.2.A [x] **[Conditional Writable /work Mount - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-conditional-writable-work-mount.md)**
+   **Changed Files:** `internal/sandbox/docker.go`, `internal/sandbox/sandbox_test.go`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 2.2`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FROM 2.2]
+     - Checklist (pass verbatim):
+       - SECURITY: Auth bypass, injection, data exposure?
+       - EDGE CASES: Null, empty, boundaries, concurrent access?
+       - ERROR HANDLING: Missing catches, swallowed errors?
+       - PERFORMANCE: N+1, leaks, blocking ops?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Subagent findings (fresh-context review, 2026-07-21):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | MEDIUM | docker.go:163 | `/work` tmpfs pages charge the `--memory` cgroup, yet default `WorkSize` (512m) equals `Memory` (512m) — a `Writable:true` run filling `/work` toward `WorkSize` (or the later `cp -a` seed) leaves no process headroom → OOM (exit 137). Latent today (no opt-in caller). | Already captured — **TD-001**. Size `WorkSize` below `Memory`, or enforce `WorkSize + ScratchSize < Memory`. Deferred (MEDIUM). |
+   | LOW | docker.go:163 | `cfg.WorkSize` interpolated into `--tmpfs /work:...size=<WorkSize>` with no grammar check; `,`/`:` could alter tmpfs options. Single argv token — cannot inject an argv element or host mount; mirrors the pre-existing unvalidated `ScratchSize`. | Captured — **TD-004**. Optionally validate both sizes via `parseDockerMemory` grammar. Deferred (LOW). |
+
+   **Verification notes:** `Writable:false` read-only guarantee proven intact (`TestDockerRunArgs_WritableFalseGoldenArgv` pins the false-path argv byte-for-byte incl. `-v /tmp/snap:/work:ro`); `spec.validate()` runs before the branch so the colon/absolute guards apply equally to the new `/src:ro` position — no new unguarded caller-controlled string reaches a host mount.
+
+   **Action Required:**
+   - ✅ No CRITICAL/HIGH → **Adversarial review passed** — proceed to 2.3.
+   - MEDIUM/LOW deferred to `tech-debt-captured.md` (MEDIUM = existing TD-001; LOW = new TD-004).
+
+### 2.3 [x] **[Conditional Writable /work Mount - REFACTOR](plan/user-stories/02-conditional-writable-work-mount.md)**
+   1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
+   2. Improve code and tests (T1), validate all still pass (T3): `go test ./internal/sandbox/...`
+   3. Confirm `TestDockerRunArgs_HardeningFlagsPresent` and Preflight's argv are byte-identical to pre-story output
+   4. COMMIT: `git commit -m "refactor(sandbox): address review + clean up mount branching"`
+   **Duration:** 1-2 hours
+
+### 2.4 [x] **Phase 2 - Definition of Done**
+   1. `go test ./internal/sandbox/...` — all passing (T3)
+   2. Coverage ≥80% on touched files
+   3. `golangci-lint run` — no errors
+   4. `go build ./...` — succeeds
+   5. Story-specific: [AC 02-01](plan/acceptance-criteria/02-01-writable-false-argv-byte-identical.md), [AC 02-02](plan/acceptance-criteria/02-02-writable-true-src-and-work-tmpfs-mounts.md) verified; AC 02-03's argv/stdin-level assertions verified (end-state integration scenarios deferred to Phase 3 per sprint-design.md scope note)
+   **Report:** `Story-2 DoD Complete / Auto: {X}/5 | Story-Specific: {Y}/3 (02-03 partial — completes in Phase 3)`
+
+### 2.5 [x] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 2 (integration-level, not TDD cadence)
+
+   **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 2 gate review`
+   - prompt: Self-contained brief including:
+     - Files changed during Phase 2 (absolute paths): [LIST]
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: All phase-exit contracts honored (signatures, return shapes, error types)?
+       - CONFIG SURFACE: New config keys documented, defaulted, back-compat?
+       - INTEGRATION: Cross-module calls correct, no hidden coupling introduced?
+       - PHASE-EXIT CONTRACT: Downstream phases can consume outputs without rework?
+       - REGRESSION: Earlier-phase behavior still intact (Phase 1's config surface, `TestDockerRunArgs_HardeningFlagsPresent`)?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Files changed during Phase 2:** `internal/sandbox/docker.go`, `internal/sandbox/sandbox_test.go`
+
+   **Subagent findings (fresh-context hostile-integrator review, 2026-07-21):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | MEDIUM | docker.go:71,163 | Default `WorkSize` (512m) == `Memory` (512m); a `--tmpfs` charges the memory cgroup. Once Phase 3 injects `cp -a`, a real tree + build/test working set is billed against 512m (512m /work + 64m /scratch > cap) → OOM (exit 137) → `Run` backend fault → `StartError` → `--auto-fix` reverts a valid fix (the exact npm `dist/` / cargo `target/` case the overlay exists to enable). | Deepens existing **TD-001** — escalate at Phase 3 gate (3.8) once `Writable:true` is live; size `WorkSize` under `Memory` or account for tmpfs in `validateHostCaps`. Deferred (MEDIUM). |
+   | LOW | autofix_exec.go:72-90 | `ResolveAutoFixSandbox` plumbs `Image`/`Memory`/`CPUs`/`PidsLimit`/`Timeout`/`DockerPath` from `SandboxConfig` but not `WorkSize`/`ScratchSize`, so overlay sizing is pinned to the 512m default and unreachable by operator config — making the TD-001 collision unresolvable via config. | Captured — **TD-005**. Add `WorkSize` to `SandboxConfig` with the `if sc.X != ""` override pattern, or document fixed sizing. Deferred (LOW). |
+
+   **Verification notes:** No production caller sets `Writable:true` (grep-confirmed), so the read-only control group (`--exec`, Preflight) is provably untouched and `Writable:false` is byte-identical (golden test). `dockerRunArgs` signature `([]string, error)` unchanged; hardening flags + `--workdir /work` intact for both branches. `/work` is genuinely writable-backed, giving Phase 3 a working substrate to inject `cp -a` into.
+
+   **Action Required:**
+   - ✅ No CRITICAL/HIGH → **Phase gate passed** (no phase-boundary blocker).
+   - MEDIUM/LOW deferred to `tech-debt-captured.md` (MEDIUM deepens TD-001; LOW = new TD-005). TD-001 flagged for **Phase 3 gate escalation** now that the mount consumes `WorkSize`.
+   **Duration:** 15-30 min
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 3: Setup Injection & Auto-Fix Wiring
+
+### 3.1 [x] **[Ephemeral-Copy Setup Injection - RED](plan/user-stories/03-ephemeral-copy-setup-injection.md)**
+   1. Analyze [AC 03-01](plan/acceptance-criteria/03-01-command-mode-shell-wrap-injection.md), [AC 03-02](plan/acceptance-criteria/03-02-script-mode-stdin-prepend-injection.md), [AC 03-03](plan/acceptance-criteria/03-03-no-interpolation-injection-safety.md), and Phase 2's deferred end-state scenarios for [AC 02-03](plan/acceptance-criteria/02-03-writable-setup-step-copies-src-into-work.md); identify testable units
+   2. Write tests: Command-mode `Writable:true` argv contains `/bin/sh`, `-c`, the copy-step string, and `--` followed by the original command tokens (never string-interpolated); Script-mode `Writable:true` has the copy step in `cmd.Stdin` content preceding the original script body; a metacharacter-bearing command token (`;`, `$(...)`, backticks) survives as a literal argv element
+   3. Verify tests fail correctly
+   **Files:** `internal/sandbox/docker_test.go`, `internal/sandbox/sandbox_test.go` | **Duration:** 3-4 hours
+
+### 3.2 [x] **[Ephemeral-Copy Setup Injection - GREEN](plan/user-stories/03-ephemeral-copy-setup-injection.md)**
+   When `spec.Writable` is true: wrap Command-mode argv as `/bin/sh -c 'cp -a /src/. /work/ && cd /work && exec "$@"' -- <original command...>` in `dockerRunArgs`; prepend `cp -a /src/. /work/ && cd /work\n` to Script-mode's script body before it is written to `cmd.Stdin` in `Run` (T1). Verify all pass (T2): `go test ./internal/sandbox/...`. COMMIT: `git commit -m "feat(sandbox): inject ephemeral-copy setup step for Writable:true"`
+   **Files:** `internal/sandbox/docker.go` | **Duration:** 4-5 hours
+
+### 3.2.A [x] **[Ephemeral-Copy Setup Injection - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-ephemeral-copy-setup-injection.md)**
+   **Changed Files:** `internal/sandbox/docker.go`, `internal/sandbox/sandbox_test.go`, `internal/sandbox/docker_test.go`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline. This review carries extra weight: the setup injection is the sprint's primary shell-injection surface.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 3.2`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FROM 3.2]
+     - Checklist (pass verbatim, with extra emphasis on SECURITY given the shell wrap):
+       - SECURITY: Auth bypass, injection, data exposure? Specifically: is `spec.Command`/`spec.Script` ever string-concatenated into shell text, or exclusively passed via positional `-- "$@"` / stdin?
+       - EDGE CASES: Null, empty, boundaries, concurrent access?
+       - ERROR HANDLING: Missing catches, swallowed errors?
+       - PERFORMANCE: N+1, leaks, blocking ops?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Subagent findings (fresh-context review, 2026-07-21):** No CRITICAL/HIGH. Injection surface proven clean — `writableSetupExec` is a fixed literal, command tokens pass positionally after `--` (`exec "$@"`, never re-tokenized); `writableSetupPrefix` is stdin DATA, not argv; `Writable:false` byte-identical (golden test); Script-mode argv Writable-invariant; `renderCommand` untouched.
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | LOW | docker.go:118 | Command-mode wrap fails closed but a failed `cp -a` seed exits 1, misreported by `Run` as a workload exit rather than a backend fault (observability gap; no containment breach) → **TD-006** | Suggested `\|\| exit 125` sentinel would break AC 03-01's pinned literal — deferred |
+   | LOW | docker.go:126 | Script-mode prepend fails OPEN (user script runs against empty/partial `/work` if seed fails), inconsistent with Command mode's fail-closed → **TD-007** | AC 03-02 Edge Case 4 pins this literal and documents the fail-open as accepted — deferred |
+
+   **Action Required:**
+   - ✅ No CRITICAL/HIGH → **Adversarial review passed** — proceed to 3.3.
+   - MEDIUM/LOW deferred to `tech-debt-captured.md` (TD-006, TD-007). Both suggested fixes would violate byte-for-byte pinned AC literals (03-01 / 03-02 Edge Case 4), so they belong to a follow-up that revisits the pinned literals, not this AC.
+
+### 3.3 [x] **[Ephemeral-Copy Setup Injection - REFACTOR](plan/user-stories/03-ephemeral-copy-setup-injection.md)**
+   1. Fix CRITICAL/HIGH issues from 3.2.A (if any)
+   2. Improve code and tests (T1), validate all still pass (T3): `go test ./internal/sandbox/...`
+   3. Confirm `TestDockerRunArgs_ScriptUsesStdinShell` stays green unmodified
+   4. COMMIT: `git commit -m "refactor(sandbox): address review + clean up setup injection"`
+   **Duration:** 1-2 hours
+
+### 3.4 [x] **[`--auto-fix` Opts Into the Writable Overlay - RED](plan/user-stories/04-auto-fix-opts-into-writable-overlay.md)**
+   1. Analyze [AC 04-01](plan/acceptance-criteria/04-01-auto-fix-validation-requests-writable-overlay.md), [AC 04-02](plan/acceptance-criteria/04-02-writable-flag-pinned-by-test-and-exec-preflight-stay-read-only.md); identify testable units
+   2. Extend `TestRunSandboxedValidation_RoutesThroughBackendWithBuiltSpec` with `assert.True(t, fb.gotSpec.Writable, ...)`, alongside its existing Command/SnapshotDir/Timeout/Script checks
+   3. Verify test fails correctly (assertion not yet satisfied)
+   **Files:** `internal/verify/sandboxvalidate_test.go` | **Duration:** 1 hour
+
+### 3.5 [x] **[`--auto-fix` Opts Into the Writable Overlay - GREEN](plan/user-stories/04-auto-fix-opts-into-writable-overlay.md)**
+   Set `Writable: true` on the `sandbox.RunSpec` constructed by `RunSandboxedValidation` (`internal/verify/sandboxvalidate.go`) — a single field addition to an existing struct literal. `--exec`'s call sites and `ResolveAutoFixSandbox`'s Preflight call remain unmodified (T1). Verify all pass (T2): `go test ./internal/verify/...`. COMMIT: `git commit -m "feat(verify): opt --auto-fix validation into the writable overlay"`
+   **Files:** `internal/verify/sandboxvalidate.go` | **Duration:** 1 hour
+
+### 3.5.A [x] **[`--auto-fix` Opts Into the Writable Overlay - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-auto-fix-opts-into-writable-overlay.md)**
+   **Changed Files:** `internal/verify/sandboxvalidate.go`, `internal/verify/sandboxvalidate_test.go`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.5 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 3.5`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FROM 3.5]
+     - Checklist (pass verbatim, with emphasis on the `--exec`/Preflight control group remaining untouched):
+       - SECURITY: Auth bypass, injection, data exposure?
+       - EDGE CASES: Null, empty, boundaries, concurrent access?
+       - ERROR HANDLING: Missing catches, swallowed errors?
+       - PERFORMANCE: N+1, leaks, blocking ops?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Subagent findings (fresh-context review, 2026-07-21):** Control group verified untouched — `exec_tools.go:178,215` (--exec) and `docker.go:363` (Preflight trivial run) carry no `Writable` field (zero-value `false`); `autofix_exec.go` constructs no `RunSpec`. The only flipped production site is `sandboxvalidate.go`. `dockerRunArgs`'s Writable branch confirms the ephemeral-copy design bounds the writable surface to a throwaway `/work` tmpfs (dies with `--rm`); empty-argv/missing-dir guards short-circuit before `Backend.Run`, independent of the flag.
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | NONE | — | Single opt-in `Writable: true`; control group provably stays false, no other RunSpec site flipped, guards unaffected, no attack-surface widening | — |
+
+   **Action Required:**
+   - ✅ **Adversarial review passed** — proceed to 3.6.
+
+### 3.6 [x] **[`--auto-fix` Opts Into the Writable Overlay - REFACTOR](plan/user-stories/04-auto-fix-opts-into-writable-overlay.md)**
+   _No CRITICAL/HIGH from 3.5.A; the opt-in is a single documented field — no refactor changes needed. T3 (`go test ./internal/verify/... ./internal/sandbox/...`) green. No empty commit created (GREEN commit 0fef96f6 already captured the clean state)._
+   1. Fix CRITICAL/HIGH issues from 3.5.A (if any)
+   2. Improve code and tests (T1), validate all still pass (T3): `go test ./internal/verify/... ./internal/sandbox/...`
+   3. COMMIT: `git commit -m "refactor(verify): address review + clean up auto-fix opt-in"`
+   **Duration:** 30-60 min
+
+### 3.7 [x] **Phase 3 - Definition of Done**
+   **Story-3/4 DoD Complete / Auto: 5/5 | Story-Specific: 5/5 (+ AC 02-03 closed)** — T3 (`go test ./internal/sandbox/... ./internal/verify/...`) green; coverage 87.2% (sandbox) / 95.3% (verify), both ≥80%; `golangci-lint run` 0 issues; `go build ./...` succeeds. ACs 03-01/03-02/03-03/04-01/04-02 verified and their Auto-Verified + Story-Specific DoD boxes checked; AC 02-03's deferred end-state scenarios (renderCommand-unaffected + both-mode write-proof with `/src` read-only) now closed. Control group confirmed: `git diff main` empty for `exec_tools.go` + `autofix_exec.go`, no `Writable` present in either.
+   1. `go test ./internal/sandbox/... ./internal/verify/...` — all passing (T3)
+   2. Coverage ≥80% on touched files
+   3. `golangci-lint run` — no errors
+   4. `go build ./...` — succeeds
+   5. Story-specific: [AC 03-01](plan/acceptance-criteria/03-01-command-mode-shell-wrap-injection.md), [AC 03-02](plan/acceptance-criteria/03-02-script-mode-stdin-prepend-injection.md), [AC 03-03](plan/acceptance-criteria/03-03-no-interpolation-injection-safety.md), [AC 04-01](plan/acceptance-criteria/04-01-auto-fix-validation-requests-writable-overlay.md), [AC 04-02](plan/acceptance-criteria/04-02-writable-flag-pinned-by-test-and-exec-preflight-stay-read-only.md) verified; [AC 02-03](plan/acceptance-criteria/02-03-writable-setup-step-copies-src-into-work.md)'s deferred end-state integration scenarios now closed
+   **Report:** `Story-3/4 DoD Complete / Auto: {X}/5 | Story-Specific: {Y}/5 (+ AC 02-03 closed)`
+
+### 3.8 [x] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 3 (integration-level, not TDD cadence)
+
+   **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline. This is the highest-stakes gate in the sprint: it is the first point the full end-to-end mechanism (mount + injection + auto-fix wiring) exists together.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 3 gate review`
+   - prompt: Self-contained brief including:
+     - Files changed during Phase 3 (absolute paths): [LIST]
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: All phase-exit contracts honored (signatures, return shapes, error types)?
+       - CONFIG SURFACE: New config keys documented, defaulted, back-compat?
+       - INTEGRATION: Cross-module calls correct, no hidden coupling introduced? Does `RunSandboxedValidation`'s `Writable: true` actually reach a working `/src`+`/work` overlay end-to-end?
+       - PHASE-EXIT CONTRACT: Downstream phases (Phase 4 regression/docs) can consume outputs without rework?
+       - REGRESSION: Earlier-phase behavior still intact (`TestDockerRunArgs_HardeningFlagsPresent`, `--exec` call sites, Preflight)?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Files changed during Phase 3:** `internal/sandbox/docker.go`, `internal/sandbox/sandbox.go`, `internal/sandbox/sandbox_test.go`, `internal/sandbox/docker_test.go`, `internal/verify/sandboxvalidate.go`, `internal/verify/sandboxvalidate_test.go`
+
+   **Subagent findings (fresh-context hostile-integrator review, 2026-07-21):** Gate verdict **PASS**. All phase-exit contracts hold (additive `Writable`/`WorkSize`, unchanged `Backend`/`RunSandboxedValidation`/`translateRunResult` signatures). End-to-end integration verified: `RunSandboxedValidation` → `RunSpec{Command, Writable:true}` fires BOTH the mount branch (`/src:ro` + `/work` tmpfs) and the Command-mode wrap, covered by `TestDockerBackend_Run_WritableOverlayWriteProof`. Regression anchors intact and unmodified (`WritableFalseGoldenArgv`, `HardeningFlagsPresent`, `ScriptUsesStdinShell`); `--exec` + Preflight stay `Writable:false`.
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | MEDIUM | autofix_exec.go:46-55 | `ResolveAutoFixSandbox` godoc still says read-only `/work` / EROFS / "until a writable overlay exists" — now contradicts the live `Writable:true` behavior | **Already Phase 4 scope** (task 4.2 / AC 05-04 docs parity) — no new TD |
+   | MEDIUM | autofix_exec.go:72-90 | `WorkSize` not operator-reachable; pinned at 512m default; also hard-caps `/work` so an output tree >512m hits ENOSPC regardless of `Memory` | Re-confirms **TD-005** (updated with ENOSPC angle) |
+   | LOW | docker.go:126 | Command/Script seed-copy failure asymmetry (Command fails closed, Script fails open) | Re-confirms **TD-007** |
+
+   **TD-001 re-rating (mandated escalation):** RE-RATED **MEDIUM → DEFER**. The OOM is visible (StartError carries the exit-137 "killed by signal 9 (OOM...)" message, not a silent revert); the 512m default cannot run a real npm/cargo build regardless, so any operator using the feature must already raise `Memory` (opening headroom over the tmpfs); narrow trigger band, fail-closed, no security/host-mutation impact → below the CRITICAL/HIGH inline bar. Full outcome recorded in TD-001. Phase 4 docs should state the `Memory ≥ WorkSize + working-set` relationship.
+
+   **Action Required:**
+   - ✅ No CRITICAL/HIGH → **Phase gate passed** — proceed to phase stop. No inline fixes required.
+   - MEDIUM/LOW dispositioned: one is planned Phase 4 docs-parity work (4.2/AC 05-04), the others re-confirm existing TD-005/TD-007; TD-001 re-rated MEDIUM/DEFER per the mandated escalation.
+   **Duration:** 15-30 min
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 4: Regression Proof & Docs Parity
+
+**Note:** This phase adds no new production code — it is the test-and-docs closing pass. It also serves as sprint Validation (see Final Phase below).
+
+### 4.1 [x] **[Regression Proof and Documentation Parity - RED](plan/user-stories/05-regression-proof-and-docs-parity.md)**
+   1. Analyze [AC 05-01](plan/acceptance-criteria/05-01-writable-true-argv-stdin-shape-tests.md), [AC 05-02](plan/acceptance-criteria/05-02-fakedocker-write-proof-under-work.md), [AC 05-03](plan/acceptance-criteria/05-03-writable-false-regression-test-anchor.md), [AC 05-04](plan/acceptance-criteria/05-04-docs-and-doc-comment-parity-rewrite.md); identify testable units
+   2. Write tests: `Writable:true` argv/stdin shape assertions for both modes; a `writeFakeDocker`-based test proving a mock validation script can write a file under `/work` and the write is observable; an explicit `Writable:false` byte-identical regression assertion
+   3. Verify tests fail correctly (or, where they already reflect Phase 1-3 behavior, confirm they pass and add the missing gap-closing case for AC 05-02's write-proof)
+   **Files:** `internal/sandbox/docker_test.go`, `internal/sandbox/sandbox_test.go` | **Duration:** 2-3 hours
+
+### 4.2 [x] **[Regression Proof and Documentation Parity - GREEN](plan/user-stories/05-regression-proof-and-docs-parity.md)**
+   1. Land the new test cases from 4.1 using existing helpers (`writeFakeDocker`, `fakeDockerRecording`, `runArgsLine`) — no new scaffolding (T1). Verify all pass (T2): `go test ./internal/sandbox/... ./internal/verify/...`. COMMIT: `git commit -m "test(sandbox): add Writable regression and write-proof coverage"`
+   2. Rewrite `docs/auto-fix.md`'s three stale passages (the unconditional "mount mode is still read-only" claim at line ~47, the "Limitation (read-only /work)" paragraph at lines ~55-60, and the EROFS "effectively Go-only" blockquote at lines ~62-71) plus `internal/verify/autofix_exec.go`'s duplicate `ResolveAutoFixSandbox` doc comment (lines ~47-55) to describe the opt-in writable overlay, including a note on the `/bin/sh` + `cp -a` image requirement. `grep -i "read-only\|go-only"` both files post-edit to confirm no stale phrasing survives. COMMIT: `git commit -m "docs(auto-fix): update EROFS limitation notes for the writable overlay"`
+   **Files:** `internal/sandbox/docker_test.go`, `internal/sandbox/sandbox_test.go`, `docs/auto-fix.md`, `internal/verify/autofix_exec.go` | **Duration:** 3-4 hours
+
+### 4.2.A [x] **[Regression Proof and Documentation Parity - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-regression-proof-and-docs-parity.md)**
+   **Changed Files:** `internal/sandbox/sandbox_test.go` (new `TestDockerRunArgs_WritableScriptShape`), `docs/auto-fix.md`, `internal/verify/autofix_exec.go` (doc comment)
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 4.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 4.2`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FROM 4.2]
+     - Checklist (pass verbatim, plus: do `TestDockerRunArgs_HardeningFlagsPresent` and `TestResolveAutoFixSandbox_BuildsAndPreflights` show zero diffs to their own assertions? Does the docs rewrite leave any "read-only"/"Go-only" stale phrasing?):
+       - SECURITY: Auth bypass, injection, data exposure?
+       - EDGE CASES: Null, empty, boundaries, concurrent access?
+       - ERROR HANDLING: Missing catches, swallowed errors?
+       - PERFORMANCE: N+1, leaks, blocking ops?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Subagent findings (fresh-context review, 2026-07-21):** No findings. Independently verified against code: `TestDockerRunArgs_WritableScriptShape` asserts real `dockerRunArgs` behavior non-vacuously and is strictly additive (no edits to `TestDockerRunArgs_HardeningFlagsPresent` or `TestResolveAutoFixSandbox_BuildsAndPreflights`). Docs (`auto-fix.md` 38-78) and the `ResolveAutoFixSandbox` doc comment match the code (`/src:ro` mount, `cp -a` seed, tmpfs-only writes with read-only `/src` → no host mutation, `/bin/sh`+`cp` image requirement, WorkSize internal default, tmpfs charged to `--memory`, overlay runner-internal not operator-config). No stale "read-only /work" limitation / "Go-only" / "Until a writable overlay" phrasing remains.
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | NONE | — | Additive test proven accurate; docs/doc-comment agree with code; no stale phrasing | — |
+
+   **Action Required:**
+   - ✅ None found → **Adversarial review passed** — proceed to 4.3.
+
+### 4.3 [x] **[Regression Proof and Documentation Parity - REFACTOR](plan/user-stories/05-regression-proof-and-docs-parity.md)**
+   _No CRITICAL/HIGH from 4.2.A (NONE finding); the test and docs are already clean — no refactor changes needed. Full T3 (`go test ./...`) green; anchor tests `TestDockerRunArgs_HardeningFlagsPresent`, `TestDockerRunArgs_ScriptUsesStdinShell`, and `TestResolveAutoFixSandbox_BuildsAndPreflights` confirmed unmodified (zero diff since 32c2a515) and passing. No empty commit created (GREEN commits already captured the clean state)._
+   1. Fix CRITICAL/HIGH issues from 4.2.A (if any)
+   2. Improve tests and docs wording (T1), validate all still pass (T3): `go test ./...`
+   3. Confirm `TestDockerRunArgs_HardeningFlagsPresent` and `TestResolveAutoFixSandbox_BuildsAndPreflights` remain unmodified and green
+   4. COMMIT: `git commit -m "refactor(sandbox): address review + polish regression/docs pass"`
+   **Duration:** 1 hour
+
+### 4.4 [x] **Phase 4 - Definition of Done**
+   **Story-5 DoD Complete / Auto: 5/5 | Story-Specific: 4/4** — T3 (`go test ./...`) all passing; coverage 87.2% (sandbox) / 95.3% (verify), both ≥80%; `golangci-lint run` 0 issues; `go build ./...` succeeds. ACs 05-01/05-02/05-03/05-04 all verified and their Auto-Verified + Story-Specific DoD boxes checked. Anchor tests (`HardeningFlagsPresent`, `ScriptUsesStdinShell`, `ResolveAutoFixSandbox_BuildsAndPreflights`) confirmed unmodified and green. Docs parity greps clean (`effectively Go-only`, `still read-only`, `Until a writable build-output overlay` → 0 matches); `docs/execution.md` + `internal/sandbox` package doc untouched.
+   1. `go test ./...` — all passing (T3)
+   2. Coverage ≥80% overall
+   3. `golangci-lint run` — no errors
+   4. `go build ./...` — succeeds
+   5. Story-specific: [AC 05-01](plan/acceptance-criteria/05-01-writable-true-argv-stdin-shape-tests.md), [AC 05-02](plan/acceptance-criteria/05-02-fakedocker-write-proof-under-work.md), [AC 05-03](plan/acceptance-criteria/05-03-writable-false-regression-test-anchor.md), [AC 05-04](plan/acceptance-criteria/05-04-docs-and-doc-comment-parity-rewrite.md) all verified
+   **Report:** `Story-5 DoD Complete / Auto: 5/5 | Story-Specific: 4/4`
+
+### 4.5 [x] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 4 (integration-level, not TDD cadence)
+
+   **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline. This is the sprint's final gate — treat it as a full end-to-end sanity check of the entire ephemeral-copy overlay mechanism, not just this phase's diff.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 4 gate review`
+   - prompt: Self-contained brief including:
+     - Files changed during Phase 4 (absolute paths): [LIST]
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: All phase-exit contracts honored (signatures, return shapes, error types)?
+       - CONFIG SURFACE: New config keys documented, defaulted, back-compat?
+       - INTEGRATION: Cross-module calls correct, no hidden coupling introduced?
+       - PHASE-EXIT CONTRACT: Sprint-level Final Phase Validation can run cleanly against this state?
+       - REGRESSION: All four phases' behavior still intact end-to-end (`--exec`, Preflight, `--auto-fix`, docs)?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Files changed during Phase 4:** `internal/sandbox/sandbox_test.go` (new `TestDockerRunArgs_WritableScriptShape`), `docs/auto-fix.md`, `internal/verify/autofix_exec.go` (doc comment). Full-mechanism files (docker.go, sandbox.go, sandboxvalidate.go, exec_tools.go) reviewed as reference for end-to-end regression.
+
+   **Subagent findings (fresh-context hostile-integrator FINAL gate, 2026-07-21):** Gate verdict **PASS**. Independently verified: `go build ./...`, full `sandbox`/`verify`/`tools` suites, targeted Writable/golden/anchor/write-proof/`ResolveAutoFixSandbox` runs all pass; `golangci-lint` 0 issues; `go vet` clean. `Writable`/`WorkSize` purely additive (zero-value = byte-identical read-only argv); `--exec`'s two call sites (`exec_tools.go:178,215`) + Preflight leave `Writable` unset; `RunSandboxedValidation` sets `Writable:true` and BOTH the `/src:ro`+`/work` tmpfs mount branch and the Command-wrap + Script-stdin `cp -a` injections fire end-to-end (write-proof, both modes); `WorkSize` is an internal default with no operator config surface (docs state so correctly); no residual "effectively Go-only"/"until a writable overlay"/stale "read-only /work limitation" phrasing in the docs or doc comment.
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | LOW | docker.go:157 | `/scratch` env-redirect block comment still cites "read-only /work" as rationale; on the `Writable:true` path `/work` is now a writable tmpfs so that half of the rationale holds only for the `--exec` path. Cosmetic comment staleness, no runtime effect. | Captured — **TD-008**. Outside AC 05-04's named docs-parity scope (docker.go inline comments not in scope); LOW/deferred. |
+
+   **Action Required:**
+   - ✅ No CRITICAL/HIGH → **Phase gate passed** — proceed to phase stop / Final Validation.
+   - LOW dispositioned to `tech-debt-captured.md` (TD-008).
+   **Duration:** 15-30 min
+
+---
+
+## Final Phase: Validation
+
+### Validation Checklist
+- [x] All tests passing (T3): `go test ./...` — full suite green
+- [x] Coverage meets threshold (≥80%): sandbox 87.2%, verify 95.3%
+- [x] Lint/format clean: `golangci-lint run` 0 issues, `gofmt -l` clean
+- [x] Build succeeds: `go build ./...`
+
+### Optional: Targeted Mutation Testing
+No mutation testing tool detected in this environment (`stryker-mutator`, `mutmut`, `cargo-mutants` all unavailable) — skip this step. If one becomes available, target only `internal/sandbox/docker.go`'s mount-branch and setup-injection logic (the highest-risk changed code); do NOT run full-codebase mutation testing.
+
+### Drift Analysis
+Compare final state against `plan/original-requirements.md`:
+- [x] `RunSpec.Writable` defaults `false`; every existing caller (both `--exec` call sites, full existing `internal/sandbox` suite including `TestDockerRunArgs_HardeningFlagsPresent`) provably unaffected — anchored by `TestDockerRunArgs_WritableFalseGoldenArgv` (byte-identical false-path argv) and the unmodified hardening test
+- [x] `Writable:true` lets a validation command/script write into its working directory (Node/Rust/Python), for both Command-mode and Script-mode `RunSpec`s — proven by `TestDockerBackend_Run_WritableOverlayWriteProof` (table-driven over both modes, observable file write)
+- [x] `RunSandboxedValidation` sets `Writable: true`, so non-Go `validate_command`s no longer produce a false-negative `EROFS` failure — pinned by `sandboxvalidate_test.go`
+- [x] The `/src` snapshot remains read-only for the container's entire lifetime; only the ephemeral `/work` tmpfs (and its writes) dies with the container — no host file is ever mutated — write-proof asserts a read-only `/src` stand-in rejects writes
+- [x] `docs/auto-fix.md`'s EROFS/read-only note and `internal/verify/autofix_exec.go`'s duplicate doc comment are both updated to match the new behavior (Story 5 / AC 05-04)

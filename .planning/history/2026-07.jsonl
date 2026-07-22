@@ -267,3 +267,16 @@
 {"ts":"2026-07-20T18:39:52.97878-07:00","package":"internal/sandbox","severity":"LOW","id":"ad6c00813550fab7","file":"internal/sandbox/docker.go","category":"performance"}
 {"ts":"2026-07-20T18:39:52.97878-07:00","package":"internal/sandbox","severity":"MEDIUM","id":"fb75551e94fb9f04","file":"internal/sandbox/docker.go","category":"reliability"}
 {"ts":"2026-07-20T18:39:52.97878-07:00","package":"cmd/atcr","severity":"LOW","id":"e8be273cc754b58e","file":"cmd/atcr/autofix.go","category":"state"}
+{"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/sandbox","severity":"MEDIUM","id":"977c2a7408c61cfc","file":"internal/sandbox/sandbox.go","category":"reliability"}
+{"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/sandbox","severity":"MEDIUM","id":"faa01f08134a703e","file":"internal/sandbox/sandbox.go","category":"reliability"}
+{"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/sandbox","severity":"MEDIUM","id":"e08666ad6cb51d89","file":"internal/sandbox/sandbox.go","category":"reliability"}
+{"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/sandbox","severity":"MEDIUM","id":"24f2992efaa32c01","file":"internal/sandbox/sandbox.go","category":"configuration"}
+{"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/sandbox","severity":"HIGH","id":"c071870cb6e7a3fa","file":"internal/sandbox/sandbox.go","category":"reliability"}
+{"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/verify","severity":"MEDIUM","id":"f5385319bf55fbf9","file":"internal/verify/sandboxvalidate_test.go","category":"testing"}
+{"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/sandbox","severity":"HIGH","id":"98f1a7de9f32ff56","file":"internal/sandbox/sandbox.go","category":"testing"}
+{"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/sandbox","severity":"MEDIUM","id":"7d3d9d894fc604f8","file":"internal/sandbox/sandbox.go","category":"testing"}
+{"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/sandbox","severity":"MEDIUM","id":"3139beb87527b3ec","file":"internal/sandbox/sandbox.go","category":"testing"}
+{"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/sandbox","severity":"LOW","id":"8cf4938ea6350c60","file":"internal/sandbox/sandbox.go","category":"documentation"}
+{"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/sandbox","severity":"HIGH","id":"36bdef3da45d10d4","file":"internal/sandbox/sandbox.go","category":"reliability"}
+{"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/sandbox","severity":"MEDIUM","id":"54886ff933513deb","file":"internal/sandbox/sandbox.go","category":"resource"}
+{"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/verify","severity":"HIGH","id":"6eff57121b447e5b","file":"internal/verify/sandboxvalidate_test.go","category":"correctness"}
