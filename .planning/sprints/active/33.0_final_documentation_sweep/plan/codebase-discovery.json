@@ -1,0 +1,198 @@
+{
+  "generated": "2026-07-22",
+  "discovery_method": "semantic+keyword+deep_verification",
+  "queries": [
+    "multi agent reviewer CLI codebase review",
+    "persona name retired slugs sasha penny ingrid",
+    "documentation sweep website source of truth markdown",
+    "secrets TODO FIXME debt scanning production code",
+    "technical debt README triage severity categories"
+  ],
+  "keywords_searched": ["sentinel", "tracer", "idiomatic", "sasha", "penny", "ingrid", "ian", "TODO", "FIXME", "CRITICAL", "HIGH", "MEDIUM", "LOW"],
+  "match_count": 16,
+  "build_from": {
+    "primary_file": "personas/retired_slugs_test.go",
+    "reason": "Existing test from Epic 19.6/23.0 already enforces a repo-wide guard that no persona identifier uses the retired role slugs (sentinel, tracer, idiomatic) anywhere in the active persona set (personas/, community personas, index.json). This is the authoritative automated mechanism for AC3.",
+    "suggested_approach": "Run the existing test suite (`go test ./personas/... ./internal/personas/...`) as the automated gate for AC3, then conduct a targeted human-readable sweep of docs/, README.md, skill/SKILL.md, and CLI command help strings for any prose mentions the automated test's regex cannot catch."
+  },
+  "semantic_matches": [
+    {
+      "file": "README.md",
+      "symbol": "README > atcr — Agent Team Code Review",
+      "type": "doc",
+      "line": 1,
+      "score": 0.997,
+      "query": "documentation sweep website source of truth markdown",
+      "relevance": "Primary repository entry point and website content source of truth; must reflect finalized persona names and CLI commands"
+    },
+    {
+      "file": "skill/SKILL.md",
+      "symbol": "SKILL:frontmatter",
+      "type": "doc",
+      "line": 1,
+      "score": 0.993,
+      "query": "multi agent reviewer CLI codebase review",
+      "relevance": "Skill-level documentation surface consumed by Claude Code — must reflect finalized persona names and command set"
+    },
+    {
+      "file": "personas/_base.md",
+      "symbol": "{{.AgentName}} — code reviewer",
+      "type": "template",
+      "line": 1,
+      "score": 0.978,
+      "query": "persona name retired slugs sasha penny ingrid",
+      "relevance": "Shared persona prompt template — base structure all persona docs inherit"
+    },
+    {
+      "file": "personas/ingrid.md",
+      "symbol": "ingrid persona",
+      "type": "persona-doc",
+      "line": 1,
+      "score": 0.75,
+      "query": "persona sasha penny ingrid ian",
+      "relevance": "Renamed successor to `idiomatic`; contains legitimate uses of the adjective 'idiomatic' in its prompt text that must not be misflagged"
+    },
+    {
+      "file": "docs/README.md",
+      "symbol": "Documentation Index",
+      "type": "doc-index",
+      "line": 1,
+      "score": 0.88,
+      "query": "documentation sweep website source of truth markdown",
+      "relevance": "Canonical index of the 29-file documentation set under docs/ for atcr.dev import"
+    }
+  ],
+  "existing_patterns": [
+    {
+      "name": "Retired-slug guard test",
+      "description": "personas/retired_slugs_test.go asserts zero references to retired role-based slugs (sentinel, tracer, idiomatic) as persona identifiers across the active persona set. Uses a regex (idiomaticIdentRe) scoped to persona-identifier context.",
+      "files": ["personas/retired_slugs_test.go", "internal/personas/community_schema_test.go", "internal/personas/list_test.go"],
+      "follow_for": "Automated validation gate for AC3; extend or run as first-line check before prose audit."
+    },
+    {
+      "name": "Sentinel error / sentinel value (Go idiom)",
+      "description": "Distinct from retired persona slug: internal files (internal/verify/severity.go, internal/security/pathguard.go, docs/payload-modes.md, docs/cross-examination.md) use 'sentinel' in the standard Go sense (sentinel error value, sentinel delimiter line). These are NOT stale persona references.",
+      "files": ["internal/verify/severity.go", "internal/security/pathguard.go", "docs/payload-modes.md", "docs/cross-examination.md"],
+      "follow_for": "Filter out generic 'sentinel error'/'sentinel line' usages when auditing for AC3; only flag 'sentinel' when used as a persona name."
+    },
+    {
+      "name": "Sharded technical debt README format",
+      "description": ".planning/technical-debt/README.md holds all tracked technical debt sharded by severity, group, and status ([ ] open, [/] deferred, [x] resolved).",
+      "files": [".planning/technical-debt/README.md"],
+      "follow_for": "Destination for MEDIUM/LOW findings triaged during the codebase review pass per AC1."
+    },
+    {
+      "name": "Website source of truth formatting",
+      "description": "docs/ directory contains 29 self-contained markdown files indexed by docs/README.md, designed to be imported into atcr.dev.",
+      "files": ["docs/README.md", "docs/personas-authoring.md", "docs/personas-install.md"],
+      "follow_for": "Formatting standards and link resolution for atcr.dev website compatibility."
+    }
+  ],
+  "related_files": [
+    {"path": "README.md", "relevance": "high", "purpose": "Top-level project README — primary user-facing entry point", "likely_modification": "modify"},
+    {"path": "docs/README.md", "relevance": "high", "purpose": "Docs directory index — canonical source of truth for atcr.dev import", "likely_modification": "modify"},
+    {"path": "docs/personas-authoring.md", "relevance": "high", "purpose": "Documents how to author new personas, including naming convention", "likely_modification": "modify"},
+    {"path": "docs/personas-install.md", "relevance": "high", "purpose": "Documents installing built-in and community personas", "likely_modification": "modify"},
+    {"path": "skill/SKILL.md", "relevance": "high", "purpose": "Claude Code skill definition surfaced to users invoking atcr as a skill", "likely_modification": "modify"},
+    {"path": "cmd/atcr/root.go", "relevance": "high", "purpose": "CLI root command definition and help text string", "likely_modification": "modify"},
+    {"path": ".planning/technical-debt/README.md", "relevance": "high", "purpose": "Destination for MEDIUM/LOW findings triaged out of code review per AC1", "likely_modification": "modify"},
+    {"path": "personas/retired_slugs_test.go", "relevance": "high", "purpose": "Automated guard against retired persona slugs reappearing", "likely_modification": "reference-only"}
+  ],
+  "integration_points": [
+    {
+      "location": "personas/retired_slugs_test.go:TestNoRetiredSlugs",
+      "type": "test-gate",
+      "description": "CI-enforced check that covers AC3 persona identifier rules"
+    },
+    {
+      "location": "docs/README.md",
+      "type": "doc-index",
+      "description": "Entry point docs index for atcr.dev import (AC5)"
+    },
+    {
+      "location": ".planning/technical-debt/README.md",
+      "type": "debt-triage",
+      "description": "Target file for recording MEDIUM/LOW review findings (AC1)"
+    }
+  ],
+  "integration_gaps": [
+    {
+      "gap": "Comprehensive multi-agent code review run over production codebase",
+      "affected_component": "cmd/, internal/, reconcile/, skill/",
+      "resolution": "Dogfood atcr's multi-agent reviewer across production directories and triage findings into CRITICAL/HIGH (must fix) and MEDIUM/LOW (technical debt)"
+    },
+    {
+      "gap": "Adversarial security audit for secrets, TODO/FIXME debt, and dead code",
+      "affected_component": "Entire repository",
+      "resolution": "Conduct manual security pass targeting hardcoded credentials, sensitive artifacts, and leftover TODOs before public release"
+    },
+    {
+      "gap": "Prose documentation audit for legacy persona names and command drift",
+      "affected_component": "README.md, docs/, skill/SKILL.md, cmd/atcr/ inline help",
+      "resolution": "Audit all user-facing documentation to ensure sasha/penny/ingrid/ian are used consistently and no legacy names (sentinel/tracer/idiomatic) remain"
+    },
+    {
+      "gap": "Website compatibility validation for atcr.dev import",
+      "affected_component": "docs/*.md (27 files)",
+      "resolution": "Validate all markdown files in docs/ for clean formatting, working relative links, and self-contained structure"
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "retired_slugs_test.go regex guard",
+      "path": "personas/retired_slugs_test.go",
+      "can_extend": true,
+      "usage_example": "Run go test ./personas/... to verify zero retired persona slugs exist as identifiers"
+    }
+  ],
+  "architecture_notes": [
+    "The code review pass (Phase 1) MUST precede the documentation sweep (Phase 2) so documentation reflects the finalized, hardened codebase.",
+    "CRITICAL/HIGH findings from the multi-agent and adversarial review must be fixed in the codebase before launch; MEDIUM/LOW findings must be sharded into .planning/technical-debt/README.md.",
+    "Distinguish technical uses of 'sentinel' (Go error sentinels, payload delimiters) and 'idiomatic' (plain English adjective in prompt prose) from stale persona names to prevent false positives.",
+    "The docs/ directory contains 29 markdown files that serve as the canonical source of truth for the atcr.dev website build; all paths and links must be relative and self-contained."
+  ],
+  "files_to_modify": [
+    {
+      "path": "README.md",
+      "reason": "Primary user-facing entry point; audit for accuracy, persona names, and command flags",
+      "scope": "minor"
+    },
+    {
+      "path": "docs/README.md",
+      "reason": "Docs directory index; verify links to all 27 docs for atcr.dev import",
+      "scope": "minor"
+    },
+    {
+      "path": "docs/personas-authoring.md",
+      "reason": "Verify persona naming conventions and examples reference sasha/penny/ingrid/ian",
+      "scope": "minor"
+    },
+    {
+      "path": "docs/personas-install.md",
+      "reason": "Verify persona installation instructions and default panel definitions",
+      "scope": "minor"
+    },
+    {
+      "path": "skill/SKILL.md",
+      "reason": "Verify skill frontmatter and usage instructions match finalized CLI behavior",
+      "scope": "minor"
+    },
+    {
+      "path": "cmd/atcr/root.go",
+      "reason": "Audit inline CLI help text strings and command descriptions for accuracy",
+      "scope": "minor"
+    },
+    {
+      "path": ".planning/technical-debt/README.md",
+      "reason": "Record MEDIUM/LOW findings triaged from the code review pass",
+      "scope": "major"
+    }
+  ],
+  "files_to_create": [],
+  "test_patterns": {
+    "framework": "go test (stdlib testing + testify)",
+    "test_location": "co-located *_test.go files (e.g. personas/retired_slugs_test.go)",
+    "naming_convention": "*_test.go",
+    "example_test": "personas/retired_slugs_test.go"
+  }
+}
