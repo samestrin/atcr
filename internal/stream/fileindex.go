@@ -2,11 +2,11 @@ package stream
 
 import (
 	"context"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
 
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/metrics"
 )
 
@@ -48,7 +48,7 @@ func BuildFileIndex(ctx context.Context, root string) *FileIndex {
 		return nil
 	}
 	// -z gives NUL-delimited paths so filenames with spaces/newlines survive.
-	cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "-z")
+	cmd := gitexec.CommandContextFn(ctx, "-C", root, "ls-files", "-z")
 	out, err := cmd.Output()
 	if err != nil {
 		// Not a git repo, git missing, or other failure: graceful degradation.

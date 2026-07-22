@@ -9,6 +9,9 @@ single source of truth the website build consumes, so it links every doc in
 
 - [Architecture Overview](architecture.md) — how the multi-model reviewer panel
   and the deterministic reconciler pipeline fit together, stage by stage.
+- [Security Architecture](security.md) — the pathguard protected-path blocklist,
+  `--allow-config-edits`, `internal/gitexec` host-git hardening, and the
+  non-blocking executable-bit/build-script review warnings.
 - [Configuration Reference](registry.md) — `.atcr/config.yaml`, the registry
   files, resolution tiers, and the persona resolution chain.
 - [Providers](providers.md) — configuring OpenAI-compatible model providers.

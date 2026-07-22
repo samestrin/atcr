@@ -45,7 +45,7 @@ const (
 // returning the resulting BackupMap. Fails the test on any apply error.
 func applyClean(t *testing.T, root string, entries ...payload.FileEntry) BackupMap {
 	t.Helper()
-	bm, err := ApplyPatch(root, entries)
+	bm, _, err := ApplyPatch(root, entries, false)
 	require.NoError(t, err)
 	return bm
 }
@@ -131,11 +131,11 @@ func TestRevertPatch_PartialApplyRestoresOnlyBackedUp(t *testing.T) {
 	writeFile(t, driftAbs, "totally\ndifferent\ncontent\nhere\n")
 
 	// drift entry fails to apply -> never backed up, never in the map.
-	bm, err := ApplyPatch(root, []payload.FileEntry{
+	bm, _, err := ApplyPatch(root, []payload.FileEntry{
 		fe("foo.txt", fixtureModify),
 		fe("drift.txt", fixtureDrift),
 		fe("bar.txt", fixtureModifyBar),
-	})
+	}, false)
 	require.Error(t, err)
 	require.Len(t, bm, 2)
 
@@ -478,7 +478,7 @@ func TestApplyPatch_InTreeSymlinkLeafModifyRefused(t *testing.T) {
 	writeFile(t, realAbs, fooPre)
 	require.NoError(t, os.Symlink(realAbs, linkAbs))
 
-	bm, err := ApplyPatch(root, []payload.FileEntry{fe("link.txt", fixtureModify)})
+	bm, _, err := ApplyPatch(root, []payload.FileEntry{fe("link.txt", fixtureModify)}, false)
 	require.Error(t, err)
 	assert.Contains(t, strings.ToLower(err.Error()), "symlink")
 	assert.Empty(t, bm, "refused symlink-leaf entry is not recorded as a success")
@@ -501,10 +501,10 @@ func TestRevertPatch_SymlinkLeafNeverAmbiguousWithCreate(t *testing.T) {
 	writeFile(t, realAbs, fooPre)
 	require.NoError(t, os.Symlink(realAbs, linkAbs))
 
-	bm, err := ApplyPatch(root, []payload.FileEntry{
+	bm, _, err := ApplyPatch(root, []payload.FileEntry{
 		fe("link.txt", fixtureModify), // refused
 		fe("new.txt", fixtureCreate),  // genuine create
-	})
+	}, false)
 	require.Error(t, err) // the symlink entry failed
 	require.Len(t, bm, 1, "only the genuine create is recorded")
 	require.Equal(t, "", bm[newAbs])
