@@ -52,6 +52,191 @@ func TestDockerBackendRun_RuntimeExitCodesAreBackendErrors(t *testing.T) {
 	}
 }
 
+// fakeDockerCatStdinBody makes the fake docker CLI `cat` its stdin to stdout when
+// invoked as `docker run ...`, so a test can observe the exact script body Run
+// streams to `/bin/sh -s` — the only way to assert stdin content daemon-free.
+func fakeDockerCatStdinBody() string {
+	return `if [ "$1" = "run" ]; then
+  cat
+  exit 0
+fi
+exit 0`
+}
+
+func TestDockerBackend_Run_ScriptModeWritablePrependsCopyStep(t *testing.T) {
+	// AC 03-02 Scenario 1: Writable:true Script mode prepends the fixed copy-step line
+	// to the stdin script body — setup line first, then spec.Script verbatim.
+	fake := writeFakeDocker(t, fakeDockerCatStdinBody())
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	b := NewDockerBackend(cfg)
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Script:      "echo hi\nexit 3\n",
+		SnapshotDir: t.TempDir(),
+		Writable:    true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "cp -R /src/. /work/ || exit 125; cd /work\necho hi\nexit 3\n", res.Output,
+		"Writable:true Script mode must prepend the copy step to the stdin script body")
+}
+
+func TestDockerBackend_Run_ScriptModeReadOnlyStdinUnchanged(t *testing.T) {
+	// AC 03-02 Scenario 2: Writable:false Script mode streams spec.Script verbatim over
+	// stdin — no cp/cd prefix, identical to current behavior (regression anchor).
+	fake := writeFakeDocker(t, fakeDockerCatStdinBody())
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	b := NewDockerBackend(cfg)
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Script:      "echo hi\nexit 3\n",
+		SnapshotDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "echo hi\nexit 3\n", res.Output,
+		"Writable:false Script mode stdin must be the script body verbatim")
+}
+
+func TestRenderCommand_UnaffectedByWritable(t *testing.T) {
+	// AC 02-03 Scenario 3: renderCommand is display-only evidence — it renders the
+	// caller's ORIGINAL command/script, never the injected cp -R setup step, for both
+	// Writable values, so the evidence trail stays readable.
+	cmd := RunSpec{Command: []string{"npm", "run", "build"}, SnapshotDir: "/tmp/snap"}
+	cmdW := cmd
+	cmdW.Writable = true
+	assert.Equal(t, "npm run build", renderCommand(cmd))
+	assert.Equal(t, "npm run build", renderCommand(cmdW), "Writable must not leak the setup step into command evidence")
+	assert.NotContains(t, renderCommand(cmdW), "cp -R")
+
+	scr := RunSpec{Script: "npm test\n", SnapshotDir: "/tmp/snap"}
+	scrW := scr
+	scrW.Writable = true
+	want := "/bin/sh -s <<'EOF'\nnpm test\n\nEOF"
+	assert.Equal(t, want, renderCommand(scr))
+	assert.Equal(t, want, renderCommand(scrW), "Writable must not alter the Script-mode heredoc evidence")
+	assert.NotContains(t, renderCommand(scrW), "cp -R")
+}
+
+func TestDockerBackend_Run_WritableOverlayArgvShapeReachable(t *testing.T) {
+	// AC 02-03 Scenarios 4-5 (argv-shape reachability): prove the Writable:true Run
+	// path is reachable and builds the overlay argv (/src:ro bind + /work tmpfs) for
+	// BOTH Command and Script modes. The fake docker shim refuses (exit 90) unless Run
+	// actually built that argv, so a clean exit 0 proves the shape.
+	//
+	// This is deliberately NOT a write proof: the shim executes no payload and no real
+	// tmpfs is mounted, so it cannot show /work is writable or that a broken overlay
+	// would fail — asserting "payload succeeds, no EROFS" here would be vacuous (the
+	// shim's `exit 0` re-read as a result), which is exactly the overclaim this test
+	// used to make. The genuine end-to-end write proof lives in the daemon-backed
+	// TestIntegration_DockerBackend_WritableOverlayWorkIsWritable (build tag
+	// `integration`) and its /src-read-only EROFS sibling.
+	fake := writeFakeDocker(t, `if [ "$1" = "run" ]; then
+  case "$*" in
+    *:/src:ro*) : ;;
+    *) echo "missing /src:ro bind" >&2; exit 90 ;;
+  esac
+  case "$*" in
+    *"--tmpfs /work:rw"*) : ;;
+    *) echo "missing /work tmpfs" >&2; exit 90 ;;
+  esac
+  exit 0
+fi
+exit 0`)
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	b := NewDockerBackend(cfg)
+
+	cases := []struct {
+		name string
+		spec RunSpec
+	}{
+		{"command mode", RunSpec{Command: []string{"npm", "run", "build"}, SnapshotDir: t.TempDir(), Writable: true}},
+		{"script mode", RunSpec{Script: "mkdir -p target && echo built > target/out\n", SnapshotDir: t.TempDir(), Writable: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := b.Run(context.Background(), tc.spec)
+			require.NoError(t, err, "a reachable Writable:true run is not a backend fault")
+			assert.Equal(t, 0, res.ExitCode, "Run must build the Writable overlay argv (/src:ro bind + /work tmpfs); the shim exits 90 otherwise")
+		})
+	}
+}
+
+func TestDockerBackend_Run_WritableOverlaySrcIsReadOnly(t *testing.T) {
+	// Verifies that Writable:true mounts SnapshotDir at /src with :ro read-only flag.
+	fake := writeFakeDocker(t, `if [ "$1" = "run" ]; then
+  case "$*" in
+    *:/src:ro*) exit 0 ;;
+    *) echo "missing /src:ro bind" >&2; exit 1 ;;
+  esac
+fi
+exit 0`)
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	b := NewDockerBackend(cfg)
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"touch", "/src/foo"},
+		SnapshotDir: t.TempDir(),
+		Writable:    true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.ExitCode)
+}
+
+func TestDockerRunArgs_WritableCommandModePassesMetacharsPositionally(t *testing.T) {
+	// Writable:true Command mode wraps argv as `/bin/sh -c <writableSetupExec> --
+	// <command...>`, passing each command token as a distinct trailing argv element.
+	// Shell metacharacters (;, $, backticks, &&) therefore travel as literal data via
+	// the quoted "$@" expansion and are never re-tokenized into the -c script text, so
+	// a metacharacter in a command token cannot inject shell (RunSpec.Command's "no
+	// shell interpolation" invariant, sandbox.go:52).
+	cfg := DefaultDockerConfig()
+	payload := []string{"echo", "hi; rm -rf /", "$(whoami)", "`id`", "&&", "curl http://evil"}
+	args, err := dockerRunArgs(cfg, RunSpec{
+		Command:     payload,
+		SnapshotDir: "/tmp/snap",
+		Writable:    true,
+	})
+	require.NoError(t, err)
+
+	// Locate the `-c` flag; the only `-c` in the argv is the shell's.
+	ci := -1
+	for i, a := range args {
+		if a == "-c" {
+			ci = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, ci, 0, "Writable command mode must invoke /bin/sh -c")
+	require.Less(t, ci+2, len(args), "argv must extend past the -c script and the -- separator")
+
+	// The -c script is the fixed setup constant, byte-for-byte — no command token was
+	// interpolated into it.
+	assert.Equal(t, writableSetupExec, args[ci+1], "the -c script must be the fixed setup text, not built from command tokens")
+	assert.Equal(t, "--", args[ci+2], "the original command must be separated from the -c script by --")
+
+	// Every payload token appears verbatim as its own argv element after --, in order,
+	// with nothing merged, split, or interpreted. Together with the byte-identical -c
+	// script above, this proves no command token was spliced into the shell text: the
+	// tokens are shell DATA (positional "$@"), never shell CODE.
+	assert.Equal(t, payload, args[ci+3:], "each command token (including shell metacharacters) must be a distinct positional arg after --")
+}
+
+func TestDefaultDockerConfig_WorkSizeDefault(t *testing.T) {
+	cfg := DefaultDockerConfig()
+	// WorkSize backs the writable /work overlay's tmpfs; it must have a sane
+	// non-empty default sized for a full source-tree copy, strictly larger than
+	// ScratchSize's build-cache-sized "64m".
+	assert.NotEmpty(t, cfg.WorkSize, "WorkSize must have a sane default")
+	work, err := parseDockerMemory(cfg.WorkSize)
+	require.NoError(t, err, "WorkSize must be a valid docker size string")
+	scratch, err := parseDockerMemory(cfg.ScratchSize)
+	require.NoError(t, err, "ScratchSize must be a valid docker size string")
+	assert.Greater(t, work, scratch, "WorkSize must be larger than ScratchSize for a full source-tree copy")
+}
+
 func TestDockerBackend_Preflight_CatchesInvalidCPUs(t *testing.T) {
 	// Fake docker that fails the `run` subcommand only when it sees `--cpus abc`.
 	// It answers `info` with a generous host so the cap-fit check (which skips the
@@ -115,6 +300,36 @@ func TestDockerBackend_Preflight_AcceptsCapsWithinHost(t *testing.T) {
 	cfg.DockerPath = fake
 	b := NewDockerBackend(cfg)
 	require.NoError(t, b.Preflight(context.Background()), "caps within host must pass preflight")
+}
+
+func TestDockerBackend_Preflight_RejectsInvalidTmpfsSizes(t *testing.T) {
+	// ScratchSize and WorkSize are interpolated verbatim into the `--tmpfs
+	// ...:size=<v>` mount specs. A malformed value would otherwise fail opaquely at
+	// container-spawn time (or, for WorkSize, only once a Writable overlay run mounts
+	// /work). Preflight validates both against the docker size grammar (digits +
+	// optional b/k/m/g) up front, reusing parseDockerMemory, so a config typo fails
+	// fast with a clear message.
+	cases := []struct {
+		name    string
+		mutate  func(*DockerConfig)
+		wantMsg string
+	}{
+		{"invalid work size", func(c *DockerConfig) { c.WorkSize = "notasize" }, "work_size"},
+		{"invalid scratch size", func(c *DockerConfig) { c.ScratchSize = "12x" }, "scratch_size"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := writeFakeDocker(t, fakeDockerInfoBody(8<<30, 8)) // generous host so the cap-fit check passes
+			cfg := DefaultDockerConfig()
+			cfg.DockerPath = fake
+			tc.mutate(&cfg)
+			b := NewDockerBackend(cfg)
+			err := b.Preflight(context.Background())
+			require.Error(t, err, "a malformed tmpfs size must fail preflight fast")
+			assert.Contains(t, err.Error(), "preflight")
+			assert.Contains(t, err.Error(), tc.wantMsg)
+		})
+	}
 }
 
 func TestDockerBackendRun_SignalDeathsAreBackendErrors(t *testing.T) {

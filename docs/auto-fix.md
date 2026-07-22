@@ -39,36 +39,43 @@ The only way to run `--auto-fix` validation directly on the host is the explicit
 
 `--exec` mounts a **pristine, read-only snapshot** of the review's code at
 `/work` and demonstrates a finding against it. `--auto-fix`'s validation is
-different in *what* it mounts: because validation must confirm the patch you just
-applied, it mounts the **already-patched live working tree** at `/work` — not a
+different in *what* it validates: because validation must confirm the patch you
+just applied, it works against the **already-patched live working tree** — not a
 snapshot. The distinction matters: you are validating the mutated tree, not a
 clean copy.
 
-The **mount mode is still read-only**. `/work` is mounted `:ro`, exactly as
-`--exec` mounts its snapshot; the patch is applied to your working tree on the
-host *before* the container starts, and the container validates that
-already-mutated tree without being able to mutate it further. Build caches and
-temp files still work because `HOME`, `TMPDIR`, `GOCACHE`, `GOTMPDIR`, and
-`XDG_CACHE_HOME` are redirected into a writable `/scratch` tmpfs overlay, so the
-default `go build` / `go test` validation path never needs to write into `/work`.
+**`/work` is writable for `--auto-fix` validation, via an ephemeral copy.** The
+patched working tree is mounted **read-only at `/src`**, and `/work` is backed by
+a fresh writable `tmpfs` that the container seeds with `cp -a /src/. /work/`
+before your `validate_command` runs; the command then executes against that
+writable `/work` copy. Because the snapshot side (`/src`) stays read-only for the
+container's entire lifetime and every write lands in the throwaway `/work` tmpfs
+— which, along with everything written into it, dies with the container — **no
+host file is ever mutated** by validation, exactly as with `--exec`. This is an
+internal behavior of `--auto-fix`'s validation path (the overlay is requested by
+the validation runner, not an operator-facing config option); `--exec` keeps its
+strict read-only `/work` mount unchanged. Build caches and temp files still
+redirect into a separate writable `/scratch` tmpfs (`HOME`, `TMPDIR`, `GOCACHE`,
+`GOTMPDIR`, `XDG_CACHE_HOME`), so the `go build` / `go test` validation path keeps
+working exactly as before.
 
-**Limitation (read-only `/work`):** a validation command that needs to write
-*into the working tree itself* — for example one that emits a coverage profile
-into the tree, runs code generation, or does `lint --fix` — cannot do so, because
-`/work` is read-only inside the container. Such a command fails inside the
-sandbox even though it would succeed on the host. Point those writes at
-`/scratch`, or run that step outside `--auto-fix`'s sandboxed validation.
+**Non-Go validators are supported.** Because a `validate_command` runs against
+the writable `/work` copy, commands that write *under the project directory* —
+`npm run build` → `dist/`, `cargo build` → `target/`, Python `__pycache__`,
+bundlers, most codegen — now succeed instead of failing with `EROFS`. Those
+writes land in the ephemeral `/work` tmpfs and are discarded with the container,
+so a valid non-Go fix is validated and its PR opened rather than silently
+reverted.
 
-> **This makes sandboxed `--auto-fix` effectively Go-only today.** The built-in
-> `go build ./...` / `go test ./...` validation writes only to the redirected
-> caches, so it passes. But many common non-Go validators write *under the
-> project directory* — `npm run build` → `dist/`, `cargo build` → `target/`,
-> bundlers, most codegen — and hit `EROFS` on the read-only `/work`. That failure
-> is **indistinguishable from a genuine validation failure**: `--auto-fix` fails
-> closed, reverts the applied patch, and opens no PR, so a perfectly valid fix is
-> silently discarded. Until a writable build-output overlay is added, point such
-> writes at `/scratch`, run that step outside sandboxed validation, or use
-> `--no-sandbox` (accepting the host-execution risk).
+> **Image requirement.** The ephemeral-copy overlay runs your `validate_command`
+> inside `/bin/sh -c 'cp -a /src/. /work/ && cd /work && exec "$@"'`, so the
+> validation image must provide **`/bin/sh` and `cp`** — true for `alpine`- and
+> `golang`-family images, but **not** for `distroless`/`scratch` images, which
+> ship neither. If your image has no shell, base it on one that does. The `/work`
+> tmpfs is sized by an internal default and, like every tmpfs, counts against the
+> container's `--memory` cap, so a validation that copies a large source tree or
+> emits a large build output may need a higher `sandbox.memory` (as a rule of
+> thumb, `memory ≥ /work size + build working set`).
 
 ## Configuring auto-fix — the `auto_fix:` block
 

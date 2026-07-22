@@ -1,3 +1,20 @@
+## [32.3.0] - 2026-07-21
+
+Add an opt-in ephemeral-copy writable overlay to the Docker sandbox so `--auto-fix` validation works for non-Go ecosystems (Node, Rust, Python) that need to write into their working directory during testing.
+
+### Added
+
+- `RunSpec.Writable` / `DockerConfig.WorkSize`: an opt-in writable overlay that mounts the project snapshot read-only at `/src` and backs `/work` with a writable tmpfs seeded from the snapshot, defaulting to today's read-only behavior for every existing caller.
+- `--auto-fix` validation now opts into the writable overlay, so `npm run build`, `cargo build`, and similar non-Go commands no longer fail closed with `EROFS`.
+
+### Fixed
+
+- The overlay's seed copy no longer fails on file-ownership mismatches (switched from `cp -a` to `cp -R` with a sentinel exit on failure).
+- `/work` and `/scratch` tmpfs mounts now pin a mode that the non-root sandbox user can write to.
+- Sandbox preflight now rejects malformed `WorkSize`/`ScratchSize` values instead of passing them through to Docker unchecked.
+
+*Shipped via /init-plan + /execute-sprint + /execute-code-review (sprint 32.3)*
+
 ## [32.2.0] - 2026-07-20
 
 Close two deferred defense-in-depth gaps in the `--auto-fix` sandbox path surfaced during Sprint 32.0 review.
