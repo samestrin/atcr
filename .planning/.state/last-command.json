@@ -1,9 +1,9 @@
 {
-  "skill": "execute-code-review",
-  "args": "@.planning/sprints/active/32.4_workspace_integrity_sanitization/ --multi-agent",
-  "invocation": "/execute-code-review @.planning/sprints/active/32.4_workspace_integrity_sanitization/ --multi-agent",
+  "skill": "design-sprint",
+  "args": "@.planning/plans/active/33.0_final_documentation_sweep/",
+  "invocation": "/design-sprint @.planning/plans/active/33.0_final_documentation_sweep/",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "1d810ab3-d06d-47d4-974f-c9ad00621cbb",
-  "timestamp": "2026-07-22T17:50:58.011Z"
+  "session_id": "ee16795b-99ad-4d5b-8df5-a3c5f78e4f3a",
+  "timestamp": "2026-07-22T22:04:35.102Z"
 }
