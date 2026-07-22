@@ -1,9 +1,9 @@
 {
-  "skill": "design-sprint",
-  "args": "@.planning/plans/active/32.4_workspace_integrity_sanitization/",
-  "invocation": "/design-sprint @.planning/plans/active/32.4_workspace_integrity_sanitization/",
+  "skill": "create-sprint",
+  "args": "@.planning/plans/active/32.4_workspace_integrity_sanitization/ --gated",
+  "invocation": "/create-sprint @.planning/plans/active/32.4_workspace_integrity_sanitization/ --gated",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "dd546ffb-e243-4afe-8ec3-3648f26d88cd",
-  "timestamp": "2026-07-22T02:07:05.850Z"
+  "session_id": "0ac3fdf2-03a1-468a-ab50-584af19451d7",
+  "timestamp": "2026-07-22T02:15:07.943Z"
 }
