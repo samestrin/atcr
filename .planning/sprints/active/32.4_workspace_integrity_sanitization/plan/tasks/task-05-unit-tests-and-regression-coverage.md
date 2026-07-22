@@ -35,15 +35,15 @@ Add `internal/security/pathguard_test.go` with table-driven unit tests covering 
 - `internal/autofix/apply_test.go`
 
 ## Success Criteria
-- [ ] `internal/security/pathguard_test.go` exists and exercises `IsProtectedPath` across canonical, relative, `../`-traversal, and symlink-traversal path formats for every blocklist category, plus negative/boundary cases.
-- [ ] `internal/gitexec/gitexec_test.go` exists and confirms the wrapper injects `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, and `--no-ext-diff` (where applicable) on every constructed command.
-- [ ] A regression test greps the tree (excluding `internal/gitexec`, `internal/verify/localvalidate.go`, `internal/sandbox/docker.go`) and fails if any bare `exec.Command("git",...)` / `exec.CommandContext(ctx, "git",...)` call site remains.
-- [ ] The same regression test positively confirms all six migrated call sites (`cmd/atcr/autofix.go`, `internal/fanout/review.go`, `internal/gitrange/resolver.go`, `internal/payload/diff.go`, `internal/personas/submit.go` — both `runGit` and `gitHasStagedChanges` — `internal/stream/fileindex.go`) reference `internal/gitexec`.
-- [ ] `go test ./internal/security/... ./internal/gitexec/...` passes; `go test ./...` passes tree-wide with no regression-test false positives.
-- [ ] `go vet` and `gofmt -l` are clean for both new test files.
+- [x] `internal/security/pathguard_test.go` exists and exercises `IsProtectedPath` across canonical, relative, `../`-traversal, and symlink-traversal path formats for every blocklist category, plus negative/boundary cases.
+- [x] `internal/gitexec/gitexec_test.go` exists and confirms the wrapper injects `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, and `--no-ext-diff` (where applicable) on every constructed command.
+- [x] A regression test greps the tree (excluding `internal/gitexec`, `internal/verify/localvalidate.go`, `internal/sandbox/docker.go`) and fails if any bare `exec.Command("git",...)` / `exec.CommandContext(ctx, "git",...)` call site remains.
+- [x] The same regression test positively confirms all six migrated call sites (`cmd/atcr/autofix.go`, `internal/fanout/review.go`, `internal/gitrange/resolver.go`, `internal/payload/diff.go`, `internal/personas/submit.go` — both `runGit` and `gitHasStagedChanges` — `internal/stream/fileindex.go`) reference `internal/gitexec`.
+- [x] `go test ./internal/security/... ./internal/gitexec/...` passes; `go test ./...` passes tree-wide with no regression-test false positives.
+- [x] `go vet` and `gofmt -l` are clean for both new test files.
 
 ## Manual Code Review
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 **Unit Tests:**
@@ -67,9 +67,9 @@ Add `internal/security/pathguard_test.go` with table-driven unit tests covering 
 - Task-01 (`internal/security/pathguard.go` must exist and be stable), Task-03 (`internal/gitexec/gitexec.go` plus the six-site migration must be complete)
 
 ## Definition of Done
-- [ ] `internal/security/pathguard_test.go` implemented and passing, covering AC3's canonical/relative/symlink-traversal requirement in full.
-- [ ] `internal/gitexec/gitexec_test.go` implemented and passing, covering AC2's env/flag hardening requirement.
-- [ ] AC4 regression test implemented, passing against the current tree, and asserting both the negative (no stray bare git exec calls) and positive (all six sites reference gitexec) conditions.
-- [ ] `go build ./...`, `go vet ./...`, and `gofmt -l` all pass with no new issues.
-- [ ] `go test ./...` passes tree-wide.
-- [ ] All three new/expanded test files committed alongside the rest of the epic's work.
+- [x] `internal/security/pathguard_test.go` implemented and passing, covering AC3's canonical/relative/symlink-traversal requirement in full.
+- [x] `internal/gitexec/gitexec_test.go` implemented and passing, covering AC2's env/flag hardening requirement.
+- [x] AC4 regression test implemented, passing against the current tree, and asserting both the negative (no stray bare git exec calls) and positive (all six sites reference gitexec) conditions.
+- [x] `go build ./...`, `go vet ./...`, and `gofmt -l` all pass with no new issues.
+- [x] `go test ./...` passes tree-wide.
+- [x] All three new/expanded test files committed alongside the rest of the epic's work.

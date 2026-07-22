@@ -12,6 +12,24 @@ Before each phase, review `/CLAUDE.md` (or AGENTS.md).
 
 ---
 
+## Clarifications
+
+### Phase 2 Clarifications (recorded 2026-07-21)
+
+**Key Decisions:**
+- Phase 1 shipped `internal/security` with `IsProtectedPath(path string) bool` but **no exported sentinel error**. Task-02 anticipates this case; since there is no error shape to match, a sentinel `ErrProtectedPath` is added to `internal/security` (additive) so the protected-path refusal is `errors.Is`-distinguishable from traversal/symlink-leaf rejections (required by task-02's test strategy).
+- Signature threading: `ApplyPatch(root string, entries []payload.FileEntry, allowConfigEdits bool)` and `applyOne(root, e, allowConfigEdits bool)` — `allowConfigEdits` appended last, matching task-02's `applyOne` example.
+- Gate placement: `security.IsProtectedPath(e.Path)` fires immediately after `containedPath` succeeds and before `refuseSymlinkLeaf`, checking `e.Path` (repo-relative, diff-declared) not the resolved `abs`.
+
+**Scope Boundaries:**
+- IN: gate insertion, signature threading, the single production caller update (`cmd/atcr/autofix.go:365`, passing `false`), tests, doc-comment update.
+- NOT IN: the `--allow-config-edits` cobra flag + stderr warning (T4/Phase 3); `FlagsForReview` (T6/Phase 4).
+
+**Technical Approach:**
+- The sole production caller passes `false` (fail-closed) until T4 lands the flag. All test call sites are migrated mechanically to the 3-arg form with `false`, preserving byte-identical behavior for non-protected paths.
+
+---
+
 ## Sprint Overview
 
 **Metadata:** See [metadata.md](metadata.md) for complete plan and sprint tracking details.
@@ -155,7 +173,7 @@ No specifications in `.planning/specifications/` scored above the configured sem
 
 *Build both foundational, mutually-independent primitives in parallel. T1 has zero dependencies; T3 is explicitly independent of T1/T2 per the plan's Risk Mitigation notes. Landing both first unblocks every downstream task.*
 
-### 1.1 [ ] **🔧 Build `internal/security/pathguard.go` Protected-Path Blocklist**
+### 1.1 [x] **🔧 Build `internal/security/pathguard.go` Protected-Path Blocklist**
    **Task:** Create the new `internal/security` package exporting `IsProtectedPath(path string) bool`, normalizing the input (`filepath.Clean` + conditional `filepath.EvalSymlinks` with existing-ancestor fallback for not-yet-created paths) and matching it via boundary-safe prefix comparison (never bare `strings.HasPrefix`) against a blocklist covering `.git/`, `.githooks/`, `.github/workflows/`, `.gitlab-ci.yml`/CI defs, `.vscode/`, `.idea/`, `.env*`, `.planning/`, and `.atcr` — mirroring `internal/validation/validation.go`'s `FilePath` denylist-matcher shape.
    **Priority:** P1 | **Effort:** S
    1. Read `internal/validation/validation.go`'s `FilePath`/`windowsSystemPath` pattern for boundary-safe matching precedent
@@ -167,7 +185,7 @@ No specifications in `.planning/specifications/` scored above the configured sem
    **Files:** `internal/security/pathguard.go` | **Duration:** ~1 day
    **Task File:** [task-01](plan/tasks/task-01-build-pathguard-package.md)
 
-### 1.2 [ ] **🔧 Build `internal/gitexec` and Migrate All Six Host Git Call Sites**
+### 1.2 [x] **🔧 Build `internal/gitexec` and Migrate All Six Host Git Call Sites**
    **Task:** Create `internal/gitexec/gitexec.go` exposing `CommandFn`/`CommandContextFn` as swappable package-level vars (mirroring the existing `resolveHeadSHAFn`/`removeFn`/`writeFileAtomicFn` testability pattern) that unconditionally inject `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null` additively over `cmd.Environ()`. Migrate all six production call sites (`cmd/atcr/autofix.go`, `internal/fanout/review.go`, `internal/gitrange/resolver.go`, `internal/payload/diff.go`, `internal/personas/submit.go` ×2, `internal/stream/fileindex.go`) to construct their `*exec.Cmd` exclusively through it, adding `--no-ext-diff` to the two diff-family invocations.
    **Priority:** P1 | **Effort:** M
    1. Understand the six existing call sites and the package-var testability precedent (`internal/autofix/apply.go`)
@@ -179,15 +197,15 @@ No specifications in `.planning/specifications/` scored above the configured sem
    **Files:** `internal/gitexec/gitexec.go`, `cmd/atcr/autofix.go`, `internal/fanout/review.go`, `internal/gitrange/resolver.go`, `internal/payload/diff.go`, `internal/personas/submit.go`, `internal/stream/fileindex.go` | **Duration:** ~2.5 days
    **Task File:** [task-03](plan/tasks/task-03-build-gitexec-and-migrate-call-sites.md)
 
-### 1.3 [ ] **Phase 1 — DoD Validation**
-   - [ ] `go test ./internal/security/... ./internal/gitexec/... ./cmd/atcr/... ./internal/fanout/... ./internal/gitrange/... ./internal/payload/... ./internal/personas/... ./internal/stream/...` passing (T3 scoped)
-   - [ ] Coverage ≥80% on new code
-   - [ ] `golangci-lint run` clean
-   - [ ] `go build ./...` succeeds
-   - [ ] `internal/security` and `internal/gitexec` package/function doc comments complete
-   - [ ] DoD report emitted
+### 1.3 [x] **Phase 1 — DoD Validation**
+   - [x] `go test ./internal/security/... ./internal/gitexec/... ./cmd/atcr/... ./internal/fanout/... ./internal/gitrange/... ./internal/payload/... ./internal/personas/... ./internal/stream/...` passing (T3 scoped)
+   - [x] Coverage ≥80% on new code
+   - [x] `golangci-lint run` clean
+   - [x] `go build ./...` succeeds
+   - [x] `internal/security` and `internal/gitexec` package/function doc comments complete
+   - [x] DoD report emitted
 
-### 1.4 [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+### 1.4 [x] **Phase 1 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -206,11 +224,13 @@ No specifications in `.planning/specifications/` scored above the configured sem
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (initial review):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | internal/tools/snapshot.go:147 | 7th unmigrated git call site: `git()` ran `exec.Command(gitPath, ...)` (gitPath from `exec.LookPath("git")`) without gitexec hardening — escaped both greps via variable-indirected git invocation. Violates AC2 "ALL Git subprocesses". | Route through `gitexec.CommandFn`. **FIXED** in-gate: migrated + `cmd.Path` pinned to pre-resolved gitPath. |
+   | LOW | internal/security/pathguard.go:101 | `.env*` glob (`HasPrefix ".env"`) also blocks `.environments/`, `.envoy/` — over-broad but spec-compliant/fail-closed. | Captured as TD-002. |
+
+   **Resolution:** HIGH fixed before boundary (snapshot.go migrated to gitexec; build/vet/lint/tests clean; broadened sweep confirms no other variable-based git site). Gate re-run with a fresh subagent → **Phase gate passed** (`| NONE | | Phase gate passed | |`). LOW → TD-002; forward-looking Phase 5 AC4-test-scope note → TD-001 (both in `tech-debt-captured.md`).
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
@@ -228,7 +248,7 @@ No specifications in `.planning/specifications/` scored above the configured sem
 
 *Wire the T1 gate into the single host-repo write choke point in `internal/autofix/apply.go`, immediately after `containedPath` and before `refuseSymlinkLeaf`/the delete-modify-create branches. Depends on T1 only.*
 
-### 2.1 [ ] **🔧 Wire pathguard into `internal/autofix/apply.go`'s `applyOne`**
+### 2.1 [x] **🔧 Wire pathguard into `internal/autofix/apply.go`'s `applyOne`**
    **Task:** Extend `ApplyPatch`/`applyOne` with a new `allowConfigEdits bool` parameter. Insert `security.IsProtectedPath(e.Path)` immediately after `containedPath` succeeds and before `refuseSymlinkLeaf`, refusing with a wrapped security error when the path is protected and `allowConfigEdits` is false. Update the sole call site (`cmd/atcr/autofix.go:365`) to pass the new parameter, defaulted `false` until T4 lands the flag.
    **Priority:** P1 | **Effort:** S | **Depends on:** 1.1 (T1)
    1. Understand `applyOne`'s existing choke-point ordering (`containedPath` → `refuseSymlinkLeaf` → delete/modify/create branches)
@@ -240,15 +260,15 @@ No specifications in `.planning/specifications/` scored above the configured sem
    **Files:** `internal/autofix/apply.go`, `cmd/atcr/autofix.go` | **Duration:** ~1 day
    **Task File:** [task-02](plan/tasks/task-02-wire-pathguard-into-apply.md)
 
-### 2.2 [ ] **Phase 2 — DoD Validation**
-   - [ ] `go test ./internal/autofix/... ./cmd/atcr/...` passing (full `go test ./...` exit=0)
-   - [ ] Coverage ≥80% on new code
-   - [ ] `golangci-lint run` clean
-   - [ ] `go build ./...` succeeds
-   - [ ] `ApplyPatch` doc comment updated
-   - [ ] DoD report emitted
+### 2.2 [x] **Phase 2 — DoD Validation**
+   - [x] `go test ./internal/autofix/... ./cmd/atcr/...` passing (full `go test ./...` exit=0)
+   - [x] Coverage ≥80% on new code
+   - [x] `golangci-lint run` clean
+   - [x] `go build ./...` succeeds
+   - [x] `ApplyPatch` doc comment updated
+   - [x] DoD report emitted
 
-### 2.3 [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+### 2.3 [x] **Phase 2 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -267,11 +287,15 @@ No specifications in `.planning/specifications/` scored above the configured sem
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context integration review, 2026-07-21):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | internal/security/pathguard.go:127 | Layer-2 symlink resolution anchors to CWD, not the apply `root`; a pre-planted symlinked interior component (`root/link -> .git`, entry `link/config`) escapes the symlink layer when CWD≠root. Non-LLM-reachable; lexical layer already blocks direct/`..` forms. | Captured as TD-003. |
+   | LOW | cmd/atcr/autofix.go:368 | `allowConfigEdits` hard-wired as literal `false` rather than a zero-valued `AllowConfigEdits` field; T4 will edit the literal into a field read. Spec-permitted, contract-conformant. | T4 coordination note (below) — not debt. |
+
+   **Resolution:** Zero CRITICAL/HIGH — **Phase gate passed**. Both findings LOW. TD-003 captured in `tech-debt-captured.md` (symlink-layer CWD anchoring, pre-existing Phase-1 behavior, defense-in-depth only). The second LOW is not deferred debt: passing literal `false` at the sole caller IS Phase 2's spec-mandated deliverable (task-02 step 4); **T4 coordination note** — Phase 3/T4 should add `AllowConfigEdits bool` to `autoFixBackend` (set in `validateAutoFixBackend` from the cobra flag, mirroring `noSandbox`) and change `cmd/atcr/autofix.go`'s `ApplyPatch(be.applyTarget, run.Entries, false)` to read `be.AllowConfigEdits`.
+
+   Gate verified (by fresh subagent, read-only): gate placed immediately after `containedPath` and before `refuseSymlinkLeaf`/parse/backup/write; refusal wraps `security.ErrProtectedPath` via `%w` (`errors.Is`-testable); fail-closed default at the sole caller; per-entry isolation intact; `e.Path` bypass vectors (case-insensitive, `./`, trailing slash, `..`-into-protected) all closed by `IsProtectedPath`; non-protected paths byte-identical; `boundaries_test.go` allowlist correctly extended; `go build`/`go vet` clean.
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
@@ -289,7 +313,7 @@ No specifications in `.planning/specifications/` scored above the configured sem
 
 *Land the operator escape valve and its mandatory warning, plus the security architecture doc and its `docs/README.md` index entry. Depends on T2's `AllowConfigEdits` threading target existing.*
 
-### 3.1 [ ] **🔧 Add `--allow-config-edits` Flag and Document Security Architecture**
+### 3.1 [x] **🔧 Add `--allow-config-edits` Flag and Document Security Architecture**
    **Task:** Register `--allow-config-edits` in `addAutoFixFlags` mirroring the `--no-sandbox` precedent (off by default, help text documents the risk), add `warnAllowConfigEdits` (non-memoized stderr warning firing on every use), thread the resolved bool onto `autoFixBackend` for T2's gate to consume. Write `docs/security.md` covering the threat model, pathguard blocklist, `--allow-config-edits`, `internal/gitexec` hardening, and `FlagsForReview`; add its index entry to `docs/README.md`.
    **Priority:** P1 | **Effort:** S | **Depends on:** 2.1 (T2)
    1. Understand the `--no-sandbox`/`warnNoSandbox` precedent in `cmd/atcr/autofix.go`
@@ -301,15 +325,15 @@ No specifications in `.planning/specifications/` scored above the configured sem
    **Files:** `cmd/atcr/autofix.go`, `docs/security.md`, `docs/README.md` | **Duration:** ~1 day
    **Task File:** [task-04](plan/tasks/task-04-allow-config-edits-flag-and-docs.md)
 
-### 3.2 [ ] **Phase 3 — DoD Validation**
-   - [ ] `go test ./cmd/atcr/...` passing (full `go test ./...` exit=0)
-   - [ ] Coverage ≥80% on new code
-   - [ ] `golangci-lint run` clean
-   - [ ] `go build ./...` succeeds
-   - [ ] `docs/security.md` written; `docs/README.md` index entry present and link verified
-   - [ ] DoD report emitted
+### 3.2 [x] **Phase 3 — DoD Validation**
+   - [x] `go test ./cmd/atcr/...` passing (full `go test ./...` exit=0)
+   - [x] Coverage ≥80% on new code
+   - [x] `golangci-lint run` clean
+   - [x] `go build ./...` succeeds
+   - [x] `docs/security.md` written; `docs/README.md` index entry present and link verified
+   - [x] DoD report emitted
 
-### 3.3 [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+### 3.3 [x] **Phase 3 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -328,11 +352,12 @@ No specifications in `.planning/specifications/` scored above the configured sem
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context integration review, 2026-07-21):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | docs/security.md:124-141,149 | Security doc describes `FlagsForReview` and the `## Review Warnings` PR-body section in definitive present tense, but neither exists yet as of Phase 3 (T6/Phase 4 deliverables). Doc-vs-code accuracy gap only; does NOT block Phase 4. | Captured as TD-004 — resolves in Phase 4 when `FlagsForReview` lands (same sprint/PR); re-verify doc wording there. |
+
+   **Resolution:** Zero CRITICAL/HIGH — **Phase gate passed**. The `--allow-config-edits` flag mirrors the `--no-sandbox` precedent exactly: off by default, single `be.allowConfigEdits=true` setter in `validateAutoFixBackend`, `warnAllowConfigEdits` non-memoized to `cmd.ErrOrStderr()` firing before the missing-piece early return (surfaces even on an otherwise-refused run), threaded end-to-end onto `autoFixBackend` and consumed by the sole production `autofix.ApplyPatch(be.applyTarget, run.Entries, be.allowConfigEdits)` caller. Phase 1/2's pathguard gate (`!allowConfigEdits && security.IsProtectedPath`) intact and fail-closed; zero behavior change when the flag is absent. `go build`/`go vet`/`gofmt` clean; `cmd/atcr` tests green (coverage 87.6%; `warnAllowConfigEdits` 100%). The single LOW is a transient intra-sprint doc forward-reference → TD-004 (resolves in Phase 4).
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
@@ -350,7 +375,7 @@ No specifications in `.planning/specifications/` scored above the configured sem
 
 *Extend `pathguard.go` with the advisory-only check, thread `[]ReviewFlag` out of `ApplyPatch` via an out-parameter (no signature churn on `applyOne`'s dozen existing returns), and append the `## Review Warnings` PR-body section in `runAutoFix`. Depends on T1 (pathguard exists) and T2 (the `applyOne` choke point and `f.OldMode`/`f.NewMode` availability post-`gitdiff.Parse` are already wired).*
 
-### 4.1 [ ] **🔧 Non-Blocking `FlagsForReview` — Executable-Bit and Build-Script PR Warnings**
+### 4.1 [x] **🔧 Non-Blocking `FlagsForReview` — Executable-Bit and Build-Script PR Warnings**
    **Task:** Add `FlagsForReview(path string, oldMode, newMode int) (bool, string)` to `internal/security/pathguard.go` (executable-bit change via `oldMode&0111 != newMode&0111`, plus a soft build-script path list). Add `ReviewFlag{Path, Reason}` to `internal/autofix/apply.go`, threaded through `applyOne` via an out-parameter (`flags *[]ReviewFlag`) so no existing `return` statement needs editing. Append a `## Review Warnings` section to the PR body in `runAutoFix` when the returned flag slice is non-empty.
    **Priority:** P2 | **Effort:** M | **Depends on:** 1.1 (T1), 2.1 (T2)
    1. Understand the T1/T2 choke point and where `f.OldMode`/`f.NewMode` become available post-`gitdiff.Parse`
@@ -362,15 +387,15 @@ No specifications in `.planning/specifications/` scored above the configured sem
    **Files:** `internal/security/pathguard.go`, `internal/autofix/apply.go`, `cmd/atcr/autofix.go` | **Duration:** ~2 days
    **Task File:** [task-06](plan/tasks/task-06-non-blocking-review-flags.md)
 
-### 4.2 [ ] **Phase 4 — DoD Validation**
-   - [ ] `go test ./internal/security/... ./internal/autofix/... ./cmd/atcr/...` passing (full `go test ./...` exit=0)
-   - [ ] Coverage ≥80% on new code
-   - [ ] `golangci-lint run` clean
-   - [ ] `go build ./...` succeeds
-   - [ ] `ApplyPatch` doc comment reflects the new `[]ReviewFlag` return value
-   - [ ] DoD report emitted
+### 4.2 [x] **Phase 4 — DoD Validation**
+   - [x] `go test ./internal/security/... ./internal/autofix/... ./cmd/atcr/...` passing (full `go test ./...` exit=0)
+   - [x] Coverage ≥80% on new code
+   - [x] `golangci-lint run` clean
+   - [x] `go build ./...` succeeds
+   - [x] `ApplyPatch` doc comment reflects the new `[]ReviewFlag` return value
+   - [x] DoD report emitted
 
-### 4.3 [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+### 4.3 [x] **Phase 4 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 4 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -389,11 +414,16 @@ No specifications in `.planning/specifications/` scored above the configured sem
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (initial fresh-context integration review, 2026-07-22):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM→HIGH | internal/autofix/apply.go:161 (via security.FlagsForReview) | Exec-bit check false-positived on a content-only edit (or delete) of an already-executable file: real git rides the mode on the index line (`index a..b 100755`) with no `new mode` header, so go-gitdiff parses `OldMode=0100755, NewMode=0` → `(0100755&0111) != (0&0111)` → reported "executable bit changed (0755 -> 0000)" on a common input, with factually-wrong text. Reassessed HIGH (undermines AC5's requirement that the warning be trustworthy). | **FIXED in-gate:** normalize at the `applyOne` call site — when `f.NewMode==0 && !f.IsNew`, treat `newMode=oldMode` (unchanged); genuine `old mode/new mode` transitions and executable creates (NewMode≠0) still flag. Added regression test `TestApplyPatch_ReviewFlags_ContentEditOfExecutableNotFlagged`. |
+   | LOW | internal/autofix/apply_test.go | Test-coverage gap: no case exercised the go-gitdiff `NewMode==0` content-only-modify diff, so Phase 5 regression could not catch the false positive. | **FIXED in-gate:** added `fixtureModifyExecContentOnly` + the regression test above (asserts `flags` empty). |
+   | LOW | docs/security.md:127-129 | Doc under-described the shipped build-script soft list (omitted `Jenkinsfile` and `.circleci/`). | **FIXED in-gate:** doc now names `Jenkinsfile`, `.gitlab-ci.yml`, `.circleci/`, matching `pathguard.go`'s `buildScriptBasenames`/`buildScriptCISegments`. |
+
+   **Resolution:** The single elevated finding (exec-bit false positive) was reassessed HIGH and FIXED before the boundary, not deferred; the two LOWs were fixed inline as part of the same remediation (the test gap IS the regression test the fix required; the doc drift a one-line accuracy touch-up in this phase's own deliverable). Build/vet/gofmt/lint clean; security 96.4% / autofix 93.3% / cmd/atcr 87.2% coverage; full `go test ./...` green.
+
+   **Gate re-run (fresh subagent, 2026-07-22):** empirically verified all seven mode-parsing cases (content-edit-exec, content-edit-regular, genuine mode change, executable create, mode-only chmod, executable delete, build-script/only-applied contracts) against go-gitdiff — every case correct, no false negative possible (git omits the `new mode` header only when the exec bit is genuinely unchanged). Result: **Phase gate passed** (`| NONE | | Phase gate passed | |`).
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
@@ -411,7 +441,7 @@ No specifications in `.planning/specifications/` scored above the configured sem
 
 *Table-driven coverage for every blocklist category (canonical/relative/traversal/symlink forms per AC3), gitexec env/flag assertions (AC2), and the binary whole-tree AC4 regression test. This phase also serves as the sprint's overall Definition-of-Done validation gate.*
 
-### 5.1 [ ] **🔧 Unit Tests for pathguard + gitexec, and Six-Site Migration Regression Coverage**
+### 5.1 [x] **🔧 Unit Tests for pathguard + gitexec, and Six-Site Migration Regression Coverage**
    **Task:** Read the finished T1/T3 implementations first (no guessed signatures), then write `internal/security/pathguard_test.go` (table-driven per blocklist category: exact, nested, canonical, relative, traversal, symlink, plus negatives) and `internal/gitexec/gitexec_test.go` (env/flag hardening assertions). Add the AC4 whole-tree regression test: greps/ASTs every `.go` file (excluding `internal/gitexec/`, `internal/verify/localvalidate.go`, `internal/sandbox/docker.go`) for bare `exec.Command("git",...)`/`exec.CommandContext(ctx,"git",...)`, failing on any match, and positively confirms all six known call sites reference `gitexec.`.
    **Priority:** P1 | **Effort:** M | **Depends on:** 1.1 (T1), 1.2 (T3)
    1. Read the finished `internal/security/pathguard.go` and `internal/gitexec/gitexec.go` to confirm exact exported names/signatures before writing assertions
@@ -423,16 +453,16 @@ No specifications in `.planning/specifications/` scored above the configured sem
    **Files:** `internal/security/pathguard_test.go`, `internal/gitexec/gitexec_test.go` | **Duration:** ~2.5 days
    **Task File:** [task-05](plan/tasks/task-05-unit-tests-and-regression-coverage.md)
 
-### 5.2 [ ] **Phase 5 — DoD Validation**
-   - [ ] `go test ./...` passing (full suite)
-   - [ ] AC4 whole-tree regression test present and passing (both negative and positive assertions)
-   - [ ] Coverage ≥80% overall
-   - [ ] `golangci-lint run` clean; `gofmt -l` clean
-   - [ ] `go build ./...` succeeds
-   - [ ] All five ACs (AC1–AC5) traced to a passing test or documented manual verification
-   - [ ] DoD report emitted
+### 5.2 [x] **Phase 5 — DoD Validation**
+   - [x] `go test ./...` passing (full suite)
+   - [x] AC4 whole-tree regression test present and passing (both negative and positive assertions)
+   - [x] Coverage ≥80% overall (security 96.4%, gitexec 100%, autofix 93.5%, cmd/atcr 87.2%)
+   - [x] `golangci-lint run` clean; `gofmt -l` clean
+   - [x] `go build ./...` succeeds
+   - [x] All five ACs (AC1–AC5) traced to a passing test or documented manual verification
+   - [x] DoD report emitted
 
-### 5.3 [ ] **Phase 5 - GATE: Integration & Exit Review (subagent)**
+### 5.3 [x] **Phase 5 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 5 + full-sprint integration (final gate)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline. This is the sprint's final gate — treat it as a full end-to-end sanity check of the entire workspace-integrity mechanism, not just this phase's diff.
@@ -451,11 +481,17 @@ No specifications in `.planning/specifications/` scored above the configured sem
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (initial fresh-context final gate, 2026-07-22):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | internal/gitexec/gitexec_test.go (AC4 matcher) | AC4 regression test only matched the string-literal `exec.Command("git",...)` form; a variable-indirected git call (`exec.Command(gitPath,...)`, exactly snapshot.go's pre-migration pattern) evaded it — the gate did not guard against reintroducing the very form it exists to catch. | **FIXED in-gate:** rewrote the negative scan as an AST classifier — a NON-literal command name is an offender outside internal/gitexec unless the file is a documented non-git exec site (`localvalidate.go`/`docker.go`); a literal `"git"` is an offender even there; `os/exec` import aliases are resolved. Added `TestAC4_MatcherDetectsIndirectedGit` proving the indirected + aliased cases are caught. Resolves TD-001. |
+   | MEDIUM | internal/gitexec/gitexec_test.go (exclusions) | Whole-file exclusion excused a hypothetical literal `"git"` added inside an excluded file. | **FIXED in-gate:** literal `"git"` now flagged regardless of the indirect allowlist. |
+   | LOW | internal/gitexec/gitexec_test.go (positive check) | Substring `gitexec.` positive check could pass an indirected partial revert in a multi-call file. | **FIXED in-gate:** an indirected revert (e.g. in `submit.go`, not indirect-allowlisted) is now caught by the negative AST scan. |
+   | LOW | internal/gitexec/gitexec_test.go (alias) | Aliased `xexec "os/exec"` import evaded the hard-coded `pkg.Name=="exec"` check. | **FIXED in-gate:** `execPkgLocalName` resolves the import alias; self-test asserts `xexec.*` calls are caught. |
+
+   **Resolution:** The HIGH (and the MEDIUM + two LOWs the same rewrite subsumed) were FIXED before the boundary, not deferred; a fresh-subagent gate RE-RUN confirmed **Phase gate passed** — HIGH genuinely fixed, no CRITICAL/HIGH remain, no false positives on the current tree (`quickstart.go`'s `open`/`rundll32`/`xdg-open` literals clean; docker/localvalidate allowlisted; full `go test ./...` green uncached; `go vet`/`gofmt`/`golangci-lint` clean). Three documented LOW residuals captured as TD-005 (file-granular allowlist), TD-006 (self-test allowlist-branch coverage), TD-007 (`exec.Cmd` struct-literal / `.Path` mutation not matched) — each an acceptable, pre-existing or narrow scope boundary with no live exposure on the tree.
+
+   **Re-run gate finding:** `| NONE | | Phase gate passed | |` (+ documented LOW residuals TD-005/006/007).
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
@@ -468,22 +504,22 @@ No specifications in `.planning/specifications/` scored above the configured sem
 ## Final Phase: Validation
 
 ### Validation Checklist
-- [ ] All tests passing (T3): `go test ./...`
-- [ ] Coverage meets threshold (≥80%)
-- [ ] Lint/format clean: `golangci-lint run` + `gofmt -l`
-- [ ] Build succeeds: `go build ./...`
-- [ ] All 6 tasks checked off; all 5 phase gates passed
-- [ ] Every AC (AC1–AC5) traced to a passing test or documented manual verification
+- [x] All tests passing (T3): `go test ./...` (exit=0, 44 packages, no failures)
+- [x] Coverage meets threshold (≥80%) (security 96.4%, gitexec 100%, autofix 93.5%, cmd/atcr 87.2%)
+- [x] Lint/format clean: `golangci-lint run` (0 issues) + `gofmt -l` (clean)
+- [x] Build succeeds: `go build ./...`
+- [x] All 6 tasks checked off; all 5 phase gates passed
+- [x] Every AC (AC1–AC5) traced to a passing test or documented manual verification
 
 ### Optional: Targeted Mutation Testing
 No mutation testing tool detected in this environment (`stryker-mutator`, `mutmut`, `cargo-mutants` all unavailable) — skip this step. If one becomes available, target only `internal/security/pathguard.go` and `internal/gitexec/gitexec.go` (the highest-risk changed code); do NOT run full-codebase mutation testing.
 
 ### Drift Analysis
 Compare final state against [plan/original-requirements.md](plan/original-requirements.md):
-- [ ] `--auto-fix` refuses protected-path writes by default; `--allow-config-edits` is the sole documented bypass (AC1)
-- [ ] Every host git subprocess carries the hardened environment (AC2), across all six call sites with no stray bare `exec.Command("git",...)` remaining (AC4)
-- [ ] `pathguard_test.go` proves 100% path-format matching (canonical/relative/symlink-traversal) (AC3)
-- [ ] `FlagsForReview` surfaces executable-bit/build-script changes as a non-blocking PR-body warning, never blocking the apply (AC5)
-- [ ] `docs/security.md` documents the full security architecture and is indexed from `docs/README.md`
-- [ ] Out-of-scope items NOT implemented: no LLM-based risk-scoring persona (the "Skeptic" AC3 idea dropped/replaced during `/refine-epic`); no changes to `internal/verify/localvalidate.go` or `internal/sandbox/docker.go`
-- [ ] No scope added beyond the original request
+- [x] `--auto-fix` refuses protected-path writes by default; `--allow-config-edits` is the sole documented bypass (AC1)
+- [x] Every host git subprocess carries the hardened environment (AC2), across all seven call sites (six named + snapshot.go) with no stray bare `exec.Command("git",...)` remaining (AC4) — now also guarded against variable-indirected reintroduction
+- [x] `pathguard_test.go` proves 100% path-format matching (canonical/relative/symlink-traversal) (AC3)
+- [x] `FlagsForReview` surfaces executable-bit/build-script changes as a non-blocking PR-body warning, never blocking the apply (AC5)
+- [x] `docs/security.md` documents the full security architecture and is indexed from `docs/README.md`
+- [x] Out-of-scope items NOT implemented: no LLM-based risk-scoring persona (the "Skeptic" AC3 idea dropped/replaced during `/refine-epic`); no changes to `internal/verify/localvalidate.go` or `internal/sandbox/docker.go` (both remain unmodified — only referenced as AC4 exclusions)
+- [x] No scope added beyond the original request
