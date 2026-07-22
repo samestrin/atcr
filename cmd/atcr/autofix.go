@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/samestrin/atcr/internal/autofix"
 	"github.com/samestrin/atcr/internal/ghaction"
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -58,6 +58,14 @@ func addAutoFixFlags(cmd *cobra.Command) {
 			"cannot touch the host. Passing --no-sandbox runs that LLM-generated validation directly on the host "+
 			"machine with your privileges, with no isolation — only use it where Docker is unavailable and you "+
 			"accept the risk. Meaningless without --auto-fix. Prints a security warning to stderr on every run.")
+	cmd.Flags().Bool("allow-config-edits", false,
+		"DANGER: allows --auto-fix to create or modify files under protected host-execution/config paths "+
+			"(.git/, .githooks/, .github/workflows/, .gitlab-ci.yml and other CI definitions, .vscode/, .idea/, "+
+			".env*, .planning/, .atcr). By default these paths are refused (see docs/security.md) because a patch "+
+			"landing there can plant a trigger that executes on the host the next time git, a CI runner, or an "+
+			"editor reads it — even though the validation step itself was sandboxed. Only pass this when you are "+
+			"intentionally reviewing an --auto-fix change to a build/CI/editor config and accept that risk. "+
+			"Meaningless without --auto-fix. Prints a security warning to stderr on every run.")
 	cmd.Flags().String("repo", "", "owner/name target repository for --auto-fix (default: $GITHUB_REPOSITORY)")
 	cmd.Flags().String("token", "", "GitHub token with contents:write + pull_requests:write for --auto-fix (default: $GITHUB_TOKEN)")
 	cmd.Flags().String("api-url", "", "GitHub REST API base for --auto-fix (default: $GITHUB_API_URL or https://api.github.com)")
@@ -83,6 +91,23 @@ func warnNoSandbox(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "WARNING: --no-sandbox is set — auto-fix validation is running WITHOUT container isolation. "+
 		"Untrusted, LLM-generated validation commands execute directly on this host with your privileges. "+
 		"Only pass --no-sandbox where Docker is unavailable and you accept that risk.")
+}
+
+// warnAllowConfigEdits writes the --allow-config-edits security warning to out. Like
+// warnNoSandbox it is deliberately NOT memoized — no sync.Once, no package-level
+// "seen" bool, no state gate — so it fires on EVERY --allow-config-edits invocation.
+// The flag disables the pathguard protected-path gate (internal/security), letting an
+// --auto-fix patch land under .git/, .githooks/, .github/workflows/, .vscode/, .idea/,
+// .env*, .planning/, or .atcr; a write there can plant a trigger that executes on the
+// host the next time git, a CI runner, or an editor reads it (Indirect Sandbox Escape),
+// so the operator must be reminded every single run. It writes to stderr (via the
+// caller's cmd.ErrOrStderr()) so it never corrupts structured stdout payloads.
+func warnAllowConfigEdits(out io.Writer) {
+	_, _ = fmt.Fprintln(out, "WARNING: --allow-config-edits is set — auto-fix may now create or modify files under "+
+		"protected host-execution/config paths (.git/, .githooks/, .github/workflows/, CI definitions, .vscode/, "+
+		".idea/, .env*, .planning/, .atcr). A patch landing there can plant a trigger that executes on your host the "+
+		"next time git, a CI runner, or an editor reads it. Only pass --allow-config-edits when you are intentionally "+
+		"reviewing such a change and accept that risk.")
 }
 
 // autoFixBackend holds the fully-resolved backend the gate validated, so
@@ -112,6 +137,14 @@ type autoFixBackend struct {
 	// dispatch, decoupling the fail-closed guarantee from the gate hard-coding
 	// enabled=true (epic 32.2 Task 1, replacing AC 01-03's nil→host baseline).
 	noSandbox bool
+	// allowConfigEdits records that the operator explicitly passed
+	// --allow-config-edits: it is the ONLY thing that bypasses the pathguard
+	// protected-path gate in internal/autofix.ApplyPatch/applyOne (epic 32.4 Task 4).
+	// It is threaded onto the backend here so runAutoFix consumes the resolved value
+	// without re-reading the flag; a directly-constructed backend that leaves it false
+	// keeps the fail-closed default (protected paths refused). Set true solely on the
+	// warned opt-in path in validateAutoFixBackend.
+	allowConfigEdits bool
 }
 
 // resolveValidateTimeout picks the effective validation timeout: an operator-
@@ -290,6 +323,20 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 		}
 	}
 
+	// --allow-config-edits opt-in (epic 32.4 Task 4): records the operator's explicit
+	// bypass of the pathguard protected-path gate so runAutoFix passes it into
+	// ApplyPatch without re-parsing the flag. Gated strictly on true (an unset or
+	// --allow-config-edits=false flag leaves the fail-closed default). The warning
+	// fires here, before the missing-piece early return below, so a run that also
+	// fails another gate check still surfaces it — mirroring warnNoSandbox. It never
+	// affects whether the gate passes; the protected-path refusal is enforced later in
+	// internal/autofix.applyOne.
+	allowConfigEdits, _ := cmd.Flags().GetBool("allow-config-edits")
+	if allowConfigEdits {
+		be.allowConfigEdits = true
+		warnAllowConfigEdits(cmd.ErrOrStderr())
+	}
+
 	if len(missing) > 0 {
 		return autoFixBackend{}, usageError(fmt.Errorf("--auto-fix cannot run: %s", strings.Join(missing, "; ")))
 	}
@@ -362,7 +409,12 @@ func validationOutputTail(stdout string) string {
 func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFixRun) error {
 	be := run.Backend
 
-	bm, applyErr := autofix.ApplyPatch(be.applyTarget, run.Entries)
+	// allowConfigEdits carries the operator's explicit --allow-config-edits opt-in,
+	// resolved once by validateAutoFixBackend (epic 32.4 Task 4). It defaults false, so
+	// every --auto-fix apply is fail-closed against protected host-execution/config
+	// paths (workspace-integrity gate) unless the operator opted in and accepted the
+	// warned risk.
+	bm, flags, applyErr := autofix.ApplyPatch(be.applyTarget, run.Entries, be.allowConfigEdits)
 	if applyErr != nil {
 		// Some files may have landed before the failure; restore the tree and
 		// never touch GitHub.
@@ -465,7 +517,14 @@ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFi
 		return fmt.Errorf("auto-fix: committing fix to %q: %w%s", run.Branch, err, remoteLeftoverNotice(run.Branch))
 	}
 
-	prReq := ghaction.PullRequestRequest{Head: run.Branch, Base: run.Base, Title: run.Title, Body: run.Body}
+	// Append a non-blocking "Review Warnings" section when the apply flagged any
+	// executable-bit change or build-script touch (epic 32.4 Task 6). With zero
+	// flags the body is byte-identical to run.Body, so an ordinary --auto-fix PR is
+	// unchanged; the warning only makes elevated-risk patches visible in the review
+	// that already gates every --auto-fix change (this flow never auto-merges).
+	body := withReviewWarnings(run.Body, flags)
+
+	prReq := ghaction.PullRequestRequest{Head: run.Branch, Base: run.Base, Title: run.Title, Body: body}
 	num, found, err := gh.FindOpenPullRequest(ctx, be.owner, be.repo, run.Branch)
 	if err != nil {
 		return fmt.Errorf("auto-fix: checking for an existing pull request on branch %q: %w%s", run.Branch, err, remoteLeftoverNotice(run.Branch))
@@ -483,6 +542,37 @@ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFi
 	}
 	_, _ = fmt.Fprintf(out, "auto-fix: opened pull request #%d on %s/%s\n", created, be.owner, be.repo)
 	return nil
+}
+
+// withReviewWarnings appends the non-blocking "## Review Warnings" section to a PR
+// body when flags is non-empty, returning body unchanged otherwise so an ordinary
+// --auto-fix PR is byte-identical to run.Body. Each flagged path is diff-derived and
+// therefore LLM-controlled, so it is passed through sanitizeInlineCode before being
+// embedded in the inline-code span — a backtick (or newline) in the path can otherwise
+// break out of the span and inject live markdown into the auto-generated PR body.
+func withReviewWarnings(body string, flags []autofix.ReviewFlag) string {
+	if len(flags) == 0 {
+		return body
+	}
+	var b strings.Builder
+	b.WriteString(body)
+	b.WriteString("\n\n## Review Warnings\n\nThe following change(s) are flagged for extra reviewer attention (non-blocking):\n\n")
+	for _, f := range flags {
+		fmt.Fprintf(&b, "- `%s` — %s\n", sanitizeInlineCode(f.Path), f.Reason)
+	}
+	return b.String()
+}
+
+// sanitizeInlineCode strips backticks and control characters (including newlines)
+// from s so an untrusted value embedded between backticks cannot break out of the
+// Markdown inline-code span or inject additional lines.
+func sanitizeInlineCode(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '`' || r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // commitFilesFrom reads the post-validation content of each applied entry into a
@@ -509,7 +599,7 @@ func commitFilesFrom(root string, entries []payload.FileEntry) ([]ghaction.Commi
 // A package var so a test can substitute it (the real thing shells out to git,
 // which is not hermetic in a bare temp dir). In production it reads HEAD.
 var resolveHeadSHAFn = func(ctx context.Context, dir string) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD").Output()
+	out, err := gitexec.CommandContextFn(ctx, "-C", dir, "rev-parse", "HEAD").Output()
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse HEAD in %q: %w", dir, err)
 	}

@@ -1,3 +1,16 @@
+## [32.4.0] - 2026-07-22
+
+Harden `--auto-fix` against Indirect Sandbox Escape / Host Trust Transposition attacks by blocking writes to protected host-configuration paths and hardening every host git subprocess invocation.
+
+### Added
+
+- `internal/security/pathguard.go`: blocks `--auto-fix` from writing to `.git/`, `.githooks/`, `.github/workflows/`, `.gitlab-ci.yml`, `.vscode/`, `.idea/`, `.env*`, `.planning/`, and `.atcr` unless the new `--allow-config-edits` flag is set.
+- `internal/gitexec`: shared git subprocess wrapper injecting `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`, migrated across all host git call sites to close config-hijacking exposure.
+- Non-blocking `FlagsForReview` check surfaces executable-bit and build-script changes as a `## Review Warnings` section in generated `--auto-fix` PR bodies.
+- `docs/security.md` documenting the security architecture, indexed from `docs/README.md`.
+
+*Shipped via /init-plan + /execute-sprint + /execute-code-review (sprint 32.4)*
+
 ## [32.3.0] - 2026-07-21
 
 Add an opt-in ephemeral-copy writable overlay to the Docker sandbox so `--auto-fix` validation works for non-Go ecosystems (Node, Rust, Python) that need to write into their working directory during testing.

@@ -280,3 +280,4 @@
 {"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/sandbox","severity":"HIGH","id":"36bdef3da45d10d4","file":"internal/sandbox/sandbox.go","category":"reliability"}
 {"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/sandbox","severity":"MEDIUM","id":"54886ff933513deb","file":"internal/sandbox/sandbox.go","category":"resource"}
 {"ts":"2026-07-21T13:45:26.530181-07:00","package":"internal/verify","severity":"HIGH","id":"6eff57121b447e5b","file":"internal/verify/sandboxvalidate_test.go","category":"correctness"}
+{"ts":"2026-07-22T10:51:28.705434-07:00","package":".planning/sprints/active/32.4_workspace_integrity_sanitization","severity":"HIGH","id":"2c6bc3913b787914","file":".planning/sprints/active/32.4_workspace_integrity_sanitization/dod-completion-summary.md","category":"correctness"}

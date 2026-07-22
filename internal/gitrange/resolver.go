@@ -5,10 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/samestrin/atcr/internal/gitexec"
 )
 
 // Detection mode strings recorded in Resolution.DetectionMode and written to
@@ -159,7 +160,7 @@ type gitRunner struct {
 // context surfaces as ctx.Err() rather than a generic git failure.
 func (g *gitRunner) run(args ...string) (string, error) {
 	full := append([]string{"-C", g.dir}, args...)
-	cmd := exec.CommandContext(g.ctx, "git", full...)
+	cmd := gitexec.CommandContextFn(g.ctx, full...)
 	cmd.Env = append(cmd.Environ(), "LC_ALL=C", "LANG=C")
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out

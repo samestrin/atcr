@@ -7,8 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -334,6 +337,34 @@ func swapPreconditionSeams(t *testing.T, path func() (string, error), auth func(
 }
 
 // TestGitHasStagedChanges exercises the empty-diff guard used by PushBranch.
+// TestCommitPersona_PassesExplicitIdentity proves the persona commit supplies the
+// committer identity via -c flags rather than depending on the global git config that
+// gitexec nulls out (GIT_CONFIG_GLOBAL=/dev/null) — the "Author identity unknown" /
+// fabricated-author regression the gitexec migration would otherwise introduce on the
+// fresh fork clone.
+func TestCommitPersona_PassesExplicitIdentity(t *testing.T) {
+	orig := gitexec.CommandContextFn
+	defer func() { gitexec.CommandContextFn = orig }()
+	var got []string
+	gitexec.CommandContextFn = func(_ context.Context, arg ...string) *exec.Cmd {
+		got = arg
+		return exec.Command("true")
+	}
+	if err := commitPersona(context.Background(), "", "octocat", "web/react"); err != nil {
+		t.Fatalf("commitPersona: %v", err)
+	}
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "-c user.name=octocat") {
+		t.Errorf("commit missing explicit user.name: %v", got)
+	}
+	if !strings.Contains(joined, "-c user.email=octocat@users.noreply.github.com") {
+		t.Errorf("commit missing explicit user.email: %v", got)
+	}
+	if !slices.Contains(got, "commit") {
+		t.Errorf("expected a commit invocation, got: %v", got)
+	}
+}
+
 func TestGitHasStagedChanges(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")

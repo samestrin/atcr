@@ -1,0 +1,228 @@
+{
+  "generated": "2026-07-21",
+  "discovery_method": "semantic",
+  "queries": [
+    "protected path blocklist validation before write",
+    "git subprocess exec command wrapper",
+    "autofix apply patch working tree host path",
+    "CLI flag definition and parsing autofix",
+    "gitdiff file OldMode NewMode executable bit"
+  ],
+  "match_count": 15,
+  "build_from": {
+    "primary_file": "internal/autofix/apply.go",
+    "reason": "applyOne is the single host-repo write choke point for --auto-fix: it already runs containedPath (a defense-in-depth path-containment check) immediately before branching into delete/modify/create. This is the exact integration point T2 wires pathguard.IsProtectedPath into, and T6's FlagsForReview into, since go-gitdiff's parsed File (f) already carries OldMode/NewMode at this point.",
+    "suggested_approach": "Add a pathguard.IsProtectedPath(e.Path) check in applyOne right after containedPath succeeds and before refuseSymlinkLeaf/the delete-modify-create branches; thread an AllowConfigEdits bool into ApplyPatch's signature (or a package-level option struct) so cmd/atcr can pass the --allow-config-edits flag value through. For T6, call pathguard.FlagsForReview(e.Path, f.OldMode, f.NewMode) in the same place and collect flagged entries into a new return value alongside BackupMap."
+  },
+  "existing_patterns": [
+    {
+      "name": "Denylist-style path validator returning typed ValidationError",
+      "description": "internal/validation/validation.go's FilePath function rejects paths under system directories (/etc, /proc, /sys plus macOS/Windows equivalents) with pure string/prefix matching, no I/O, returning a *ValidationError with Field/Value/Message. windowsSystemPath shows the pattern for a host-independent secondary check appended to the primary Unix check.",
+      "files": ["internal/validation/validation.go"],
+      "follow_for": "Shape/testing convention for internal/security/pathguard.go's IsProtectedPath — same no-I/O, prefix-boundary-matching, typed-error style, though pathguard blocks repo-relative config dirs (.git/, .github/, etc.) rather than absolute system dirs, so it stays a separate package per the epic's refinement notes."
+    },
+    {
+      "name": "Package-var indirection for testability of a production primitive",
+      "description": "internal/autofix/apply.go uses removeFn/writeFileAtomicFn package vars so tests can drive failure branches deterministically without touching real I/O. cmd/atcr/autofix.go uses resolveHeadSHAFn/newAutoFixGitHubFn the same way for git/GitHub calls.",
+      "files": ["internal/autofix/apply.go", "cmd/atcr/autofix.go"],
+      "follow_for": "internal/gitexec's design: expose the wrapped exec.Command/exec.CommandContext constructor as a var-swappable function so the six migrated call sites (and their existing tests) can substitute a fake without spawning real git."
+    },
+    {
+      "name": "Fail-closed CLI flag gating with an explicit opt-out",
+      "description": "cmd/atcr/autofix.go's --no-sandbox flag is the precedent for --allow-config-edits: off by default, requires an explicit true value to bypass a safety gate, and validateAutoFixBackend documents the risk in the flag's help text plus an unconditional (non-memoized) warning on every use (warnNoSandbox).",
+      "files": ["cmd/atcr/autofix.go"],
+      "follow_for": "Registering --allow-config-edits in addAutoFixFlags with the same off-by-default, explicit-opt-out shape and a security-implication warning, then documenting it in docs/security.md per T4."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/autofix/apply.go",
+      "relevance": "high",
+      "purpose": "ApplyPatch/applyOne — the host-repo write path for --auto-fix; already has containedPath (path-containment defense-in-depth) as the single choke point before delete/modify/create branching.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/validation/validation.go",
+      "relevance": "medium",
+      "purpose": "Existing denylist-style path validator (FilePath) with no I/O, typed ValidationError, and a Windows-path secondary check — a structural precedent for pathguard.go, not something pathguard.go calls into.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "cmd/atcr/autofix.go",
+      "relevance": "high",
+      "purpose": "CLI-level gate/orchestration for --auto-fix: addAutoFixFlags registers flags (T4's --allow-config-edits goes here), resolveHeadSHAFn is one of the six git subprocess call sites (line ~512), and runAutoFix's PR-body construction (near CreatePullRequest) is where T6's flagged-path warning section gets appended.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/personas/submit.go",
+      "relevance": "high",
+      "purpose": "Two git subprocess call sites in one file: runGit (line 392, used by checkout/add/commit/push/clone) and gitHasStagedChanges (line 435, a direct exec.CommandContext not routed through runGit). Both must migrate to internal/gitexec for AC4.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/fanout/review.go",
+      "relevance": "high",
+      "purpose": "git subprocess call site at line 1611 (exec.Command(\"git\", \"-C\", repo, \"rev-parse\", ...)) — one of the six AC4 migration targets.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/gitrange/resolver.go",
+      "relevance": "high",
+      "purpose": "git subprocess call site at line 162 (exec.CommandContext(g.ctx, \"git\", full...)) — one of the six AC4 migration targets.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/payload/diff.go",
+      "relevance": "high",
+      "purpose": "git subprocess call site at line 188 (exec.CommandContext(g.ctx, \"git\", full...)) — one of the six AC4 migration targets.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/stream/fileindex.go",
+      "relevance": "high",
+      "purpose": "git subprocess call site at line 51 (exec.CommandContext(ctx, \"git\", \"-C\", root, \"ls-files\", \"-z\")) — one of the six AC4 migration targets.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/verify/localvalidate.go",
+      "relevance": "low",
+      "purpose": "Runs the operator-configured validate_command via exec.CommandContext(runCtx, argv[0], argv[1:]...) — argv[0] is whatever the project configures, not necessarily \"git\", so it is out of scope for the git-specific gitexec migration despite matching the exec.CommandContext grep.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/sandbox/docker.go",
+      "relevance": "low",
+      "purpose": "Runs docker (b.cfg.DockerPath), not git, via exec.CommandContext — out of scope for gitexec despite matching the same grep pattern.",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/atomicfs/",
+      "relevance": "medium",
+      "purpose": "Generic atomic-write/backup primitives (WriteFileAtomic, BackupToDotBak) that internal/autofix/apply.go wraps. Confirmed NOT the right T2 integration point per refine-epic's finding — it has no concept of an --auto-fix write or AllowConfigEdits, and is shared by ~8 unrelated packages.",
+      "likely_modification": "reference-only"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "internal/autofix/apply.go:applyOne",
+      "type": "hook",
+      "description": "Single choke point after containedPath succeeds, before the delete/modify/create branches. T2's pathguard.IsProtectedPath check and T6's FlagsForReview check both attach here."
+    },
+    {
+      "location": "cmd/atcr/autofix.go:addAutoFixFlags",
+      "type": "entry-point",
+      "description": "Where --allow-config-edits is registered (T4), following the --no-sandbox off-by-default/explicit-opt-out precedent already in this function."
+    },
+    {
+      "location": "cmd/atcr/autofix.go:runAutoFix (near the gh.CreatePullRequest call)",
+      "type": "hook",
+      "description": "PR-body construction point where T6's visible warning section (naming flagged paths + reasons) gets appended when ApplyPatch's flagged-entries return value is non-empty."
+    }
+  ],
+  "integration_gaps": [
+    {
+      "gap": "Host write path blocklist enforcement before atomic write",
+      "affected_component": "internal/autofix/apply.go",
+      "resolution": "Wire pathguard.IsProtectedPath into applyOne choke point"
+    },
+    {
+      "gap": "Host git subprocess invocations lack environment hardening (GIT_CONFIG_NOSYSTEM=1, GIT_CONFIG_GLOBAL=/dev/null)",
+      "affected_component": "cmd/atcr/autofix.go, internal/personas/submit.go, internal/fanout/review.go, internal/gitrange/resolver.go, internal/payload/diff.go, internal/stream/fileindex.go",
+      "resolution": "Migrate all six git subprocess call sites to internal/gitexec wrapper"
+    },
+    {
+      "gap": "Executable-bit and build-script changes bypass visual review surfacing in PR body",
+      "affected_component": "internal/security/pathguard.go, internal/autofix/apply.go, cmd/atcr/autofix.go",
+      "resolution": "Implement non-blocking FlagsForReview and thread warning entries into PR body"
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "validation.ValidationError",
+      "path": "internal/validation/validation.go",
+      "can_extend": false,
+      "usage_example": "Not reused directly (different path domain — repo-relative config dirs vs. absolute system dirs per the epic's refinement), but its Field/Value/Message shape and no-I/O testing convention should be mirrored in pathguard.go's own error type."
+    }
+  ],
+  "architecture_notes": [
+    "internal/gitexec does not exist yet; it is a genuinely new package, not an extension of an existing helper — all six call sites currently construct exec.Command/exec.CommandContext independently with no shared env handling.",
+    "internal/atomicfs is a low-level, auto-fix-agnostic primitive shared by ~8 packages; gating logic must NOT go there (confirmed by refine-epic finding — would require a signature change threaded through every unrelated caller).",
+    "go-gitdiff's parsed File struct (from gitdiff.Parse in applyOne) already exposes OldMode/NewMode fields needed for T6's executable-bit detection — no additional parsing step required.",
+    "--auto-fix never auto-merges: runAutoFix always ends at gh.CreatePullRequest/UpdatePullRequest, never a merge call, confirming human review is already the terminal gate T6's warning surfaces into."
+  ],
+  "files_to_modify": [
+    {
+      "path": "internal/autofix/apply.go",
+      "reason": "Wire pathguard.IsProtectedPath (T2) and pathguard.FlagsForReview (T6) into applyOne's single choke point; thread an AllowConfigEdits option and a flagged-entries return value out of ApplyPatch.",
+      "scope": "major"
+    },
+    {
+      "path": "cmd/atcr/autofix.go",
+      "reason": "Register --allow-config-edits (T4); migrate resolveHeadSHAFn's git subprocess call to internal/gitexec (T3); append T6's flagged-path warning section to the PR body near CreatePullRequest.",
+      "scope": "major"
+    },
+    {
+      "path": "internal/fanout/review.go",
+      "reason": "Migrate the git subprocess call at line 1611 to internal/gitexec (T3/AC4).",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/gitrange/resolver.go",
+      "reason": "Migrate the git subprocess call at line 162 to internal/gitexec (T3/AC4).",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/payload/diff.go",
+      "reason": "Migrate the git subprocess call at line 188 to internal/gitexec (T3/AC4).",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/personas/submit.go",
+      "reason": "Migrate both git subprocess call sites (runGit at line 392, gitHasStagedChanges at line 435) to internal/gitexec (T3/AC4).",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/stream/fileindex.go",
+      "reason": "Migrate the git subprocess call at line 51 to internal/gitexec (T3/AC4).",
+      "scope": "minor"
+    },
+    {
+      "path": "docs/README.md",
+      "reason": "Add an index entry for the new docs/security.md so it is linked in the canonical doc list the website build consumes (T4).",
+      "scope": "trivial"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "internal/security/pathguard.go",
+      "purpose": "IsProtectedPath(path string) bool blocklist check (T1) plus the non-blocking FlagsForReview(path string, oldMode, newMode int) (bool, reason string) check (T6).",
+      "based_on": "internal/validation/validation.go (structural precedent — denylist matching, typed error, no I/O)"
+    },
+    {
+      "path": "internal/security/pathguard_test.go",
+      "purpose": "Unit tests for IsProtectedPath and FlagsForReview covering canonical, relative, and symlink-traversal path formats (T5/AC3).",
+      "based_on": null
+    },
+    {
+      "path": "internal/gitexec/gitexec.go",
+      "purpose": "Shared wrapper around exec.Command/exec.CommandContext for git invocations, injecting GIT_CONFIG_NOSYSTEM=1, GIT_CONFIG_GLOBAL=/dev/null, and --no-ext-diff where applicable (T3).",
+      "based_on": "internal/autofix/apply.go's removeFn/writeFileAtomicFn package-var indirection pattern, for testability"
+    },
+    {
+      "path": "internal/gitexec/gitexec_test.go",
+      "purpose": "Unit tests for the gitexec wrapper plus regression coverage confirming each of the six migrated call sites invokes git through internal/gitexec rather than a bare exec.Command (T5/AC4).",
+      "based_on": null
+    },
+    {
+      "path": "docs/security.md",
+      "purpose": "Document --allow-config-edits and its security implications (T4).",
+      "based_on": null
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test",
+    "test_location": "co-located _test.go files per package",
+    "naming_convention": "*_test.go",
+    "example_test": "internal/autofix/apply_test.go (not read in this pass, but the package convention per internal/autofix/apply.go's doc comments)"
+  }
+}
