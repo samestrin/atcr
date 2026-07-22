@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/samestrin/atcr/internal/cache"
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -1608,7 +1608,7 @@ func resolveHeadSHA(repo, ref string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("empty ref")
 	}
-	cmd := exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
+	cmd := gitexec.CommandFn("-C", repo, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("resolving %q: %w", ref, err)
