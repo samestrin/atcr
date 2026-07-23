@@ -24,6 +24,44 @@ func TestReconcile_TwoReviewersAgreeHighConfidence(t *testing.T) {
 	deepEq(t, res.Summary.PerSourceCounts, map[string]int{"pool": 1, "host": 1}, "per-source counts")
 }
 
+// TestReconcile_LowHostMergesIntoHighPoolUnionsReviewer is the cross-source,
+// cross-severity regression for the reviewer-union + confidence-lift contract: a
+// LOW-severity host finding and a HIGH-severity pool finding at the same location
+// merge into one cluster whose REVIEWERS unions both names and whose CONFIDENCE
+// lifts to HIGH (2 distinct reviewers) regardless of the severity mix. Guards the
+// flatten-before-cluster path (AllFindings → Merge/distinctReviewers) against a
+// future source- or severity-scoped reviewer filter.
+func TestReconcile_LowHostMergesIntoHighPoolUnionsReviewer(t *testing.T) {
+	sources := []Source{
+		{Name: "pool", Findings: []Finding{
+			mf("HIGH", "pay.go", 88, "unbounded retry loop", "add a cap", "correctness", 20, "e", "greta"),
+		}},
+		{Name: "host", Findings: []Finding{
+			mf("LOW", "pay.go", 88, "unbounded retry loop", "add a cap", "correctness", 20, "e", "host"),
+		}},
+	}
+	res := Reconcile(sources, recAt())
+	length(t, res.Findings, 1, "co-located cross-severity findings collapse into one")
+	eq(t, res.Findings[0].Severity, "HIGH", "max severity wins the merge")
+	eq(t, res.Findings[0].Confidence, ConfHigh, "two distinct reviewers → HIGH regardless of severity mix")
+	deepEq(t, res.Findings[0].Reviewers, []string{"greta", "host"}, "a lower-severity host finding unions its reviewer")
+}
+
+// TestReconcile_ByteIdenticalDuplicatesCollapse proves the pre-cluster collapse
+// pass drops a perfect duplicate — every field equal, reviewer included — so a
+// source that emits the exact same row twice yields ONE finding, not two, in the
+// output. Distinct from TestDedupeCluster_SameSourceDuplicatesDoNotMerge: there
+// the rows differ in text (legitimate separate findings); here they are
+// byte-identical noise, and a self-duplicate is not corroboration.
+func TestReconcile_ByteIdenticalDuplicatesCollapse(t *testing.T) {
+	dup := mf("MEDIUM", "util.go", 12, "same problem", "same fix", "testing", 5, "same evidence", "greta")
+	sources := []Source{{Name: "pool", Findings: []Finding{dup, dup}}}
+	res := Reconcile(sources, recAt())
+	length(t, res.Findings, 1, "byte-identical duplicate collapses to a single finding")
+	eq(t, res.Findings[0].Confidence, ConfMedium, "a self-duplicate is not corroboration — stays single-reviewer MEDIUM")
+	deepEq(t, res.Findings[0].Reviewers, []string{"greta"}, "one reviewer, not double-counted")
+}
+
 func TestReconcile_SortedBySeverityThenLocation(t *testing.T) {
 	// All findings share one reviewer so the panel stays below the consensus-filter
 	// floor (consensusMinReviewers): this test isolates sort order, so the epic-14.2
