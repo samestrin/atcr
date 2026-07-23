@@ -9,7 +9,7 @@
 
 For a large class of teams, the entire category of "AI code review" is a non-starter for one reason: it means shipping proprietary source code to a third-party API. If you're in defense, health, finance, or anywhere with a data-residency clause in the contract, "just send your diffs to a frontier model" isn't a trade-off discussion — it's an immediate no.
 
-ATCR's answer isn't a privacy policy or a checkbox. It's a review that makes no external network calls at all.
+ATCR's answer isn't a privacy policy or a checkbox. Point it at a local endpoint and the review makes no external network calls.
 
 ## The Technical Challenge
 
@@ -25,7 +25,7 @@ ATCR ships a **"zero data egress" persona pack** built specifically for local en
 
 They run against a local Ollama / llama.cpp / vLLM endpoint. **`local`** is a sanctioned provider routing key alongside `openrouter`, so a local persona is a first-class citizen, not a hack — and once your registry points at `localhost`, the review runs entirely on your own hardware with **no external network calls**. ATCR even knows the difference: `atcr models check` no longer flags a `local/<model>` slug as drift `missing`, because that slug is resolved by *your* endpoint, not an external catalog snapshot. The install docs include a Local / Privacy-First zero-egress walkthrough (including the `api_key_env` placeholder requirement — a non-empty value is needed even for a keyless local endpoint).
 
-Your code stays on your machines. The reviewer is tuned to actually be useful on the hardware you have. The guarantee is architectural, not contractual.
+Your code stays on your machines. The reviewer is tuned to actually be useful on the hardware you have. That's a property of pointing the registry at your own endpoint, not a privacy policy you have to take on faith.
 
 ## Call to Action
 
