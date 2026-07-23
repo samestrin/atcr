@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 8 | 6 |
-| MEDIUM | 20 | 28 | 12 |
-| LOW | 4 | 44 | 17 |
+| MEDIUM | 19 | 28 | 16 |
+| LOW | 5 | 44 | 18 |
 
 
-**Last Modified:** 2026-07-22 | **Open Items:** 24 | **Deferred Items:** 80 | **Resolved Items:** 35 | **Total Items:** 139
+**Last Modified:** 2026-07-22 | **Open Items:** 24 | **Deferred Items:** 80 | **Resolved Items:** 40 | **Total Items:** 144
 
 ## Directory Structure
 
@@ -64,17 +64,27 @@ table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
 
+### [2026-07-22] From Sprint: 33.0_final_documentation_sweep
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| U | [ ] | MEDIUM | docs/personas-install.md:225 | All relative links resolve correctly inside the atcr repo (Task 06 fixed the 6 broken `.planning/` `active/`->`completed/` targets), but ~30 links escape `docs/` via `../` into repo internals (`.planning/`, `skill/`, `examples/`, `internal/`, `.github/`, `CHANGELOG.md`, `README.md`, `reconcile/`). (deferred per sprint-plan TD-004) | the website-import step must rewrite or prune `../`-escaping links (map `../README.md`, `../skill/*`, `../examples/*` to public equivalents; strip or replace the `.planning/...` internal-planning refs). | docs | 0 | execute-sprint | execute-sprint | MEDIUM |
+| U | [ ] | MEDIUM | internal/fanout/ | In review `33.0-dogfood`, the `archer` agent's prose review quoted a fenced example block mirroring `internal/reconcile/testdata/golden/findings.txt` (which lists example rows for db.go/auth.go/legacy.go/pay.go/util.go — none exist in the repo). (deferred per sprint-plan TD-002) | make the pool parser ignore fenced code/example blocks inside an agent's prose `review.md`, and/or drop findings whose cited file does not exist in the head tree (demote `file not found` out of the counted/HIGH set). | testing | 0 | execute-sprint | execute-sprint | MEDIUM |
+| U | [ ] | LOW | internal/reconcile/ | In review `33.0-dogfood`, `sources/host/findings.txt` contributed 2 grounded findings (`summary.json` shows `per_source_counts.host: 2`, `sources_scanned: [host, pool]`), and both merged into existing pool clusters (total stayed 25, `clusters_collapsed: 4`). | confirm whether a lower-severity host finding merging into a higher-severity pool cluster should union its reviewer into REVIEWERS (and thus lift CONFIDENCE), add a reconcile test covering cross-source reviewer-union, and fix if confirmed. | correctness | 0 | execute-sprint | execute-sprint | MEDIUM |
+| U | [ ] | MEDIUM | internal/reconcile/ | In review `33.0-dogfood`, the bogus `legacy.go:7` row appears TWICE, byte-identical, in `reconciled/findings.txt` (and twice in `report.md`). (deferred per sprint-plan TD-003) | collapse byte-identical / same-FILE:LINE findings during reconcile clustering before writing findings.txt, findings.json, and report.md. | testing | 0 | execute-sprint | execute-sprint | MEDIUM |
+| U | [ ] | LOW | skill/SKILL.md:60 | Documentation for `atcr report` output options includes “sarif, axi” which are not documented in the code’s flag parser. (refuted per sprint-plan Task 4 §3.1A — sarif/axi confirmed supported via --help; SKILL.md corrected to include them) | Update the docs to match the supported outputs or add the missing output handling in the code | doc | 5 | code-review | vera | MEDIUM |
+
 ### [2026-07-22] From Review: 33.0_final_documentation_sweep
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
 | 1 | [ ] | MEDIUM | cmd/atcr/anchor_test.go:20 | (TestAnchorDir_CorruptLatestPointerSurfacesCause) TestAnchorDir_SeparatorDetectionIsPlatformUniform only tests explicit paths; no test covers the bare review-id path (no separator) | Add a case for a bare review-id string like "2026-06-11_x" to verify it is treated as an id, not a path | testing | 10 | code-review | dax | HIGH |
 | 1 | [ ] | MEDIUM | cmd/atcr/debt_compact.go:23 | (newDebtCompactCmd) No test covers the Compact error path (return fmt.Errorf("compact: %w", err)) | Add a test where localdebt.Compact returns an error and assert the wrapped error message | testing | 15 | code-review | dax | HIGH |
-| 1 | [ ] | MEDIUM | cmd/atcr/debt_compact.go:29 | (runDebtCompact) No test covers the StoreFound==false branch where compact prints "No local TD store to compact." | Add a test case where Compact returns StoreFound==false and assert stdout message | testing | 15 | code-review | dax | HIGH |
-| 1 | [ ] | MEDIUM | cmd/atcr/root.go:19 | (repoRoot) os.Stat follows symlinks, so a .git symlink to an arbitrary directory bypasses the repo-root check and misidentifies the working directory as a repo root | Use os.Lstat and verify the marker is a real directory or explicitly resolve and validate the target path | correctness | 15 | code-review | brad,dax | HIGH |
-| 1 | [ ] | MEDIUM | cmd/atcr/root.go:22 | (repoRoot) repoRoot fallback to cwd when no .git or .atcr marker found is untested | Add a test in a temp dir with no markers asserting repoRoot returns cwd | testing | 10 | code-review | dax | HIGH |
-| 2 | [ ] | MEDIUM | internal/personas/remove_test.go:10 | (TestIsBuiltin_KnownAndUnknown) TestIsBuiltin_KnownAndUnknown tests builtin names but doesn't test community persona names (which should return false) | Add a community persona name (e.g. "community/go-concurrency") and assert isBuiltin returns false | testing | 5 | code-review | dax | HIGH |
-| 2 | [ ] | LOW | internal/personas/community_fixture_test.go:18 | (TestTemplateFixtureRunner_CommunityPersonasPass) TestTemplateFixtureRunner_CommunityPersonasPass asserts each community persona has exactly 1 passing fixture case; if a persona has multiple fixtures, this test will fail | Clarify in test name or comment that the expectation is exactly 1, or make it >=1 | testing | 5 | code-review | dax | HIGH |
+| 1 | [x] | MEDIUM | cmd/atcr/debt_compact.go:29 | (runDebtCompact) No test covers the StoreFound==false branch where compact prints "No local TD store to compact." | Add a test case where Compact returns StoreFound==false and assert stdout message | testing | 15 | code-review | dax | HIGH |
+| 1 | [x] | MEDIUM | cmd/atcr/root.go:19 | (repoRoot) os.Stat follows symlinks, so a .git symlink to an arbitrary directory bypasses the repo-root check and misidentifies the working directory as a repo root | Use os.Lstat and verify the marker is a real directory or explicitly resolve and validate the target path | correctness | 15 | code-review | brad,dax | HIGH |
+| 1 | [x] | MEDIUM | cmd/atcr/root.go:22 | (repoRoot) repoRoot fallback to cwd when no .git or .atcr marker found is untested | Add a test in a temp dir with no markers asserting repoRoot returns cwd | testing | 10 | code-review | dax | HIGH |
+| 2 | [x] | MEDIUM | internal/personas/remove_test.go:10 | (TestIsBuiltin_KnownAndUnknown) TestIsBuiltin_KnownAndUnknown tests builtin names but doesn't test community persona names (which should return false) | Add a community persona name (e.g. "community/go-concurrency") and assert isBuiltin returns false | testing | 5 | code-review | dax | HIGH |
+| 2 | [x] | LOW | internal/personas/community_fixture_test.go:18 | (TestTemplateFixtureRunner_CommunityPersonasPass) TestTemplateFixtureRunner_CommunityPersonasPass asserts each community persona has exactly 1 passing fixture case; if a persona has multiple fixtures, this test will fail | Clarify in test name or comment that the expectation is exactly 1, or make it >=1 | testing | 5 | code-review | dax | HIGH |
 | 3 | [ ] | MEDIUM | internal/tools/open_other_test.go:17 | (TestOpenReadOnly_OtherPlatform_SymlinkDetected) TestOpenReadOnly_OtherPlatform_SymlinkDetected tests symlink detection but doesn't test the case where preStat and postStat differ by something other than symlink (e.g. file replaced) | This is hard to trigger but consider a comment acknowledging the limitation | testing | 5 | code-review | dax | HIGH |
 | 3 | [ ] | LOW | internal/tools/open_other.go:13 | (openReadOnly) Non-unix openReadOnly does not explicitly reject directory paths (Lstat+OpenFile(O_RDONLY)+SameFile all succeed for a directory, returning an *os.File a content-reader later fails on). NOTE: the reviewer's HIGH symlink-swap TOCTOU claim is REFUTED — preStat is captured by os.Lstat BEFORE OpenFile, so a swap in the window yields preStat!=postStat and os.SameFile rejects it; SameFile(pre-open Lstat, post-open Fstat) is the correct non-O_NOFOLLOW mitigation. | Optionally reject non-regular files: after Lstat, if !preStat.Mode().IsRegular() return an error before OpenFile | correctness | 10 | code-review | brad,mira | LOW |
 | 4 | [ ] | MEDIUM | reconcile/severity.go:18 | SeverityRank map keys are uppercase but NormalizeSeverity does ToUpper; future non-uppercase keys would cause silent lookup failures | Add a comment documenting that keys must be uppercase, or normalize on write | correctness | 10 | code-review | bruce,dax | HIGH |
