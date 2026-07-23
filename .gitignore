@@ -51,14 +51,10 @@ Thumbs.db
 .classpath
 
 # Planning Specific Files
-.planning/.temp/
-.planning/.memory/
-.planning/**/*.lock
-.planning/**/sprint-complete.md
-.planning/**/code-review.md
-.planning/.locks/
-.planning/.config/.active_sprint
-.planning/.active_sprint
+# Entire internal planning tree — kept locally, but never committed. Removed from
+# the repo and scrubbed from git history (git-filter-repo) ahead of the public
+# launch (Sprint 33.2). The blanket rule below subsumes the former granular rules.
+.planning/
 
 # atcr workspace runtime outputs (diff cache + reviewer outputs, never committed).
 # Committed here (not just .git/info/exclude) so the rule travels to every clone
