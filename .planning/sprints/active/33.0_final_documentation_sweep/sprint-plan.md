@@ -82,6 +82,21 @@ This is a **Technical Debt** plan (task-based, not user-story/TDD-element based)
 **Technical Approach:**
 - `atcr` binary builds green; 11-persona panel + provider API keys configured; `golangci-lint` installed at `/opt/homebrew/bin/golangci-lint`. Both prior unvalidated assumptions resolved empirically before execution.
 
+### Phase 2 Clarifications (recorded 2026-07-22)
+
+**Key Decisions:**
+- **Findings inventory:** Merged stream = 25 reconciled rows (Task 1) + Task 2 CLEAN (0 rows). 2 rows are the hallucinated `legacy.go:7` duplicates already grounded-out as TD-002/TD-003 → dropped. 23 real findings remain.
+- **Severity re-verification (task-03 Step 2 mandate):** Only 2 rows carry HIGH in the SEVERITY column; the rest of the "HIGH" values sit in the CONFIDENCE column, not severity. Both HIGH-severity rows re-classify DOWN against actual impact:
+  - `internal/tools/open_other.go:19` (labeled HIGH/correctness): **REFUTED.** The symlink-swap TOCTOU claim misreads the code — `preStat` is captured by `os.Lstat` BEFORE `os.OpenFile`, so a swap in the window yields `preStat != postStat` and `os.SameFile` rejects it. The `mira` sub-claim "preStat never used" is factually wrong (used at line 27). Code is correct as written. A single residual LOW nit (directory paths not explicitly rejected) routes to TD.
+  - `internal/atomicwrite/atomicwrite_test.go:1` (labeled HIGH/testing): re-classify to MEDIUM — a missing test case, not a production correctness/security bug.
+- **Net result:** ZERO genuine CRITICAL/HIGH production-code findings. No RED→GREEN production fix required in Phase 2; every finding routes to `code-review/triaged-findings-medium-low.md`. This is the documented outcome of Task 3 Step 2 (re-verify against actual impact), not scope reduction.
+
+**Scope Boundaries:**
+- Every re-classification logged with reasoning in `triage-summary.md`. Fresh-context Phase 2 adversarial (2.1.A) + gate (2.3) subagents independently re-check the refutations.
+
+**Technical Approach:**
+- Merge = direct concatenation (shared 9-column `atcr-findings/v1` shape). Dedupe already effectively done (only the `legacy.go:7` pair duplicated; dropped). Baseline `go test ./...`/`go vet`/`golangci-lint` verified green before and after.
+
 ---
 
 ## Sprint Conventions
@@ -308,7 +323,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 **Duration:** 3 days | **Items:** Task 3
 
-### 2.1 [ ] **🔧 Task 03: Findings Triage — Classify, Fix CRITICAL/HIGH, Route MEDIUM/LOW to Technical Debt**
+### 2.1 [x] **🔧 Task 03: Findings Triage — Classify, Fix CRITICAL/HIGH, Route MEDIUM/LOW to Technical Debt** — 23 findings triaged (2 hallucinated `legacy.go:7` dropped); 0 CRITICAL/HIGH after re-verification (both HIGH rows re-classified down, `open_other.go` symlink-swap claim REFUTED); 20 MEDIUM + 3 LOW routed to `code-review/triaged-findings-medium-low.md`; `triage-summary.md` written; full gate green, zero production `.go` changes
    **Task:** Merge and deduplicate Phase 1's two findings streams, re-verify severity, and run the RED → GREEN → ADVERSARIAL → REFACTOR cycle against every CRITICAL/HIGH finding directly in the production codebase.
    **Priority:** P1 | **Effort:** L
    1. Merge Task 1 + Task 2 findings streams; dedupe by FILE:LINE ±3 lines and PROBLEM theme.
@@ -321,8 +336,10 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    **Success Criteria:** (see [task-03](plan/tasks/task-03-findings-triage.md))
    **Files:** `cmd/**`, `internal/**`, `reconcile/**`, `skill/**` (CRITICAL/HIGH fix targets, not enumerable ahead of the review run), co-located `*_test.go` files, `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md`, `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triage-summary.md` | **Duration:** 3 days (includes 1-day risk buffer for unknown finding volume)
 
-### 2.1.A [ ] **Adversarial Review (subagent): Task 3**
-   **Changed Files:** [LIST — every file fixed for a CRITICAL/HIGH finding, plus `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md`, `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triage-summary.md`]
+### 2.1.A [x] **Adversarial Review (subagent): Task 3** — ✅ Passed (0 findings)
+   **Changed Files:** (no CRITICAL/HIGH fix files — zero fixed) `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md`, `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triage-summary.md`
+
+   **Subagent findings (fresh context, independently read `open_other.go` + `atomicwrite.go` + git status — 2026-07-22):** Triage confirmed legitimate, NOT a reward-hack. (1) `open_other.go` symlink-swap HIGH correctly REFUTED — `preStat` is a frozen `os.Lstat` snapshot taken before `OpenFile` and never re-evaluated; `SameFile(pre-open Lstat, post-open Fstat)` rejects all four swap cases; the `mira` "preStat never used" sub-claim is factually false (used at line 27); unix build additionally uses `O_NOFOLLOW`; residual directory-not-rejected LOW nit fairly characterized. (2) `atomicwrite_test.go` HIGH→MEDIUM correct — pure test-coverage gap; production error path handled at `atomicwrite.go:36-38`. (3) Zero `.go` files changed (git status verified). (4) Dropped `legacy.go:7` rows justified (no such file exists anywhere; 25−2=23 row math checks out). (5) No mis-routed HIGH in the MEDIUM list; `root.go:19` `.git`-symlink + severity-map rows genuinely low-blast-radius. Verdict: **legitimate triage, not a reward-hack.**
 
    **Spawn a fresh subagent** via the Agent tool. No memory of Task 3's implementation — this is intentional given Task 3's own internal ADVERSARIAL stage is already non-overridable per-finding; this is the cumulative cross-finding review.
 
@@ -340,16 +357,16 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings table (none):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | _(none)_ | | | |
 
    **Action Required:**
    - CRITICAL/HIGH found -> List issues for 2.1.R, do NOT proceed until fixed
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
+   → **Adversarial review passed** (0 findings). Proceed.
 
 ### 2.1.R [ ] **Task 03 - REFACTOR: Address Cumulative Review Findings**
    1. Fix CRITICAL/HIGH issues from 2.1.A (if any)
