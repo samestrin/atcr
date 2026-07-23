@@ -3,7 +3,7 @@
 **Status:** Draft
 **Target:** Compliance Leads, CISOs, Engineering Directors in regulated environments
 **Publication Phase:** 3 — Enterprise Trust & Security
-**Grounded in:** Epic 19.1 (tamper-evident audit ledger + `audit-report`), 19.4 (time-sharded, version-controllable findings history)
+**Grounded in:** Epic 19.1 (append-only audit ledger + `audit-report`), 19.4 (time-sharded, version-controllable findings history)
 
 ## The Hook
 
@@ -19,7 +19,7 @@ Compliance evidence has requirements ordinary logs don't. It has to be **append-
 
 ATCR writes the compliance trail as a side effect of doing the review — there's nothing extra to remember to run.
 
-- **Tamper-evident audit ledger (19.1):** every `atcr review` run appends one record — run timestamp, resolved base/head SHA, PR number, and a findings-by-severity summary — to an append-only `.atcr/audit.log.jsonl`. It's a repo-level accumulator written *regardless of* `--output-dir`, and resumed reviews (`--resume`) record too, so the ledger can't be sidestepped by a flag.
+- **Append-only audit ledger (19.1):** every `atcr review` run appends one record — run timestamp, resolved base/head SHA, PR number, and a findings-by-severity summary — to an append-only `.atcr/audit.log.jsonl`. It's a repo-level accumulator written *regardless of* `--output-dir`, and resumed reviews (`--resume`) record too, so the ledger can't be sidestepped by a flag.
 - **Per-PR compliance report:** `atcr audit-report --pr <n>` renders a one-page markdown report of a pull request's recorded review runs — SHAs, timestamps, findings summary. A PR with no recorded runs exits non-zero with a clear message, so "no evidence" is itself a loud, detectable state.
 - **Shareable trend history (19.4):** findings history is sharded by month into `.planning/history/YYYY-MM.jsonl`, derived from run time in UTC. Once a month rolls over its shard stops receiving writes — so old shards stop churning new git blobs — and the directory is version-controlled, so a whole team can commit and share trend data. `atcr history` queries transparently across every shard before applying `--since` / `--package` filters.
 
@@ -32,5 +32,5 @@ Before your next audit, run `atcr audit-report --pr <n>` against a recent PR and
 ## Next Steps (drafting notes)
 
 - [ ] Include a sample `audit-report` markdown output.
-- [ ] Clarify the honest scope of "tamper-evident" (append-only ledger, CLI-hook scope).
+- [ ] Keep the claim honest: it's an append-only ledger with CLI-only hook scope — do NOT market it as cryptographically tamper-proof (a guarantee the implementation does not make).
 - [ ] Show a findings-history trend chart built from the monthly shards.
