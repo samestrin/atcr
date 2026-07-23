@@ -44,8 +44,7 @@ var knownBlockerSignatures = []string{
 	"replace directives",                              // Go's refusal: fetched go.mod has a replace directive
 	"could not read username for 'https://github.com", // private repo, no git credentials
 	"terminal prompts disabled",                       // git ls-remote auth prompt suppressed
-	"404 not found",                                   // proxy/sumdb 404 for the private module
-	"not found: github.com/samestrin/atcr",            // "not found: github.com/samestrin/atcr@..."
+	"not found: github.com/samestrin/atcr",            // proxy/VCS not-found for THIS module (not a transitive dep)
 }
 
 func matchesKnownBlocker(output string) bool {
