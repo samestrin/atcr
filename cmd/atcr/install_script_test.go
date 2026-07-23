@@ -1,0 +1,176 @@
+//go:build integration
+
+// Integration tests for the repo-root install.sh wrapper.
+//
+// The happy-path test runs a REAL, unstubbed
+// `go install github.com/samestrin/atcr/cmd/atcr@latest` via install.sh, per the
+// project's recorded convention (.planning/.knowledge/kb-2026-07-11-9e4bcd.md): no
+// mocked Go environment for the happy path.
+//
+// PRECONDITION / SKIP-GUARD (Sprint 33.2, Phase 1): until the repo is public
+// (Phase 3) and the reconcile `replace` directive is dropped (Phase 4), a true
+// `@latest` install cannot succeed — the module is private/untagged and the fetched
+// go.mod still carries a filesystem `replace` directive that Go refuses to install.
+// So this test runs the real install and calls t.Skip ONLY when the failure matches
+// a known pre-public blocking signature (private/unreachable or replace-directive
+// refusal). Any OTHER failure is a genuine test failure. Post-Phase-4 the same test
+// exercises the real install for real — no env-var gate to remember to flip.
+//
+// Run with: go test -tags=integration ./cmd/atcr/...
+
+package main
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// exact stderr line install.sh must print when the Go toolchain is absent.
+const wantPreflightMsg = "error: go toolchain not found. Install Go 1.25+ from https://go.dev/dl/ and re-run this script."
+
+// modulePath must co-occur with a signature for a failure to count as a known
+// pre-public blocker. This scopes the skip-guard to *this* module's unreachability,
+// so a generic post-public install regression (a 404 on some dependency, a typo'd
+// import path) fails loudly instead of being silently skipped as a false pass.
+const modulePath = "github.com/samestrin/atcr"
+
+// Substrings (lower-cased) identifying an expected pre-public install failure that
+// should skip rather than fail. Captured empirically against the current repo state
+// and deliberately narrow — a generic fragment like "not found:" alone is not enough.
+var knownBlockerSignatures = []string{
+	"replace directives",                              // Go's refusal: fetched go.mod has a replace directive
+	"could not read username for 'https://github.com", // private repo, no git credentials
+	"terminal prompts disabled",                       // git ls-remote auth prompt suppressed
+	"404 not found",                                   // proxy/sumdb 404 for the private module
+	"not found: github.com/samestrin/atcr",            // "not found: github.com/samestrin/atcr@..."
+}
+
+func matchesKnownBlocker(output string) bool {
+	low := strings.ToLower(output)
+	if !strings.Contains(low, modulePath) {
+		return false
+	}
+	for _, sig := range knownBlockerSignatures {
+		if strings.Contains(low, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// installScriptPath resolves the repo-root install.sh relative to this test file.
+func installScriptPath(t *testing.T) string {
+	t.Helper()
+	p, err := filepath.Abs(filepath.Join("..", "..", "install.sh"))
+	if err != nil {
+		t.Fatalf("resolving install.sh path: %v", err)
+	}
+	return p
+}
+
+// TestInstallScriptExists confirms install.sh is present and executable.
+func TestInstallScriptExists(t *testing.T) {
+	p := installScriptPath(t)
+	info, err := os.Stat(p)
+	if err != nil {
+		t.Fatalf("install.sh not found at %s: %v", p, err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Fatalf("install.sh at %s is not executable (mode %v)", p, info.Mode())
+	}
+}
+
+// TestInstallScriptRealInstall runs the real go install via install.sh into an
+// isolated temp GOPATH, asserting exit 0, the binary landing at GOPATH/bin/atcr, and
+// the non-fatal PATH-remediation warning. Skips on a known pre-public blocker.
+func TestInstallScriptRealInstall(t *testing.T) {
+	script := installScriptPath(t)
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatalf("bash not found: %v", err)
+	}
+
+	// Share the real module cache so t.TempDir() cleanup never fights Go's
+	// read-only module cache under a temp GOPATH.
+	modCache, err := exec.Command("go", "env", "GOMODCACHE").Output()
+	if err != nil {
+		t.Fatalf("resolving GOMODCACHE: %v", err)
+	}
+
+	tmp := t.TempDir()
+	gopath := filepath.Join(tmp, "gopath")
+	gobin := filepath.Join(gopath, "bin")
+
+	cmd := exec.Command(bash, script)
+	// Isolated GOPATH (binary lands in GOPATH/bin), shared module cache, and a PATH
+	// that deliberately excludes GOPATH/bin so the non-fatal warning path is exercised.
+	cmd.Env = append(scrubEnv(os.Environ(), "GOPATH", "GOBIN", "GOMODCACHE"),
+		"GOPATH="+gopath,
+		"GOMODCACHE="+strings.TrimSpace(string(modCache)),
+	)
+	out, _ := cmd.CombinedOutput()
+	combined := string(out)
+	code := cmd.ProcessState.ExitCode()
+
+	if code != 0 {
+		if matchesKnownBlocker(combined) {
+			t.Skipf("skipping real-install assertion: repo not yet publicly installable (Phase 3/4 pending)\n%s", combined)
+		}
+		t.Fatalf("install.sh exited %d with an unexpected failure:\n%s", code, combined)
+	}
+
+	// Success path: binary present at GOPATH/bin/atcr.
+	bin := filepath.Join(gobin, "atcr")
+	if _, err := os.Stat(bin); err != nil {
+		t.Fatalf("expected installed binary at %s: %v\noutput:\n%s", bin, err, combined)
+	}
+	// Non-fatal PATH warning must appear because GOPATH/bin is not on PATH.
+	if !strings.Contains(combined, "export PATH=") {
+		t.Errorf("expected PATH-remediation warning (export PATH=...) in output:\n%s", combined)
+	}
+}
+
+// TestInstallScriptMissingToolchain runs install.sh with a PATH that excludes go and
+// asserts a non-zero exit and the exact preflight stderr message before any install.
+func TestInstallScriptMissingToolchain(t *testing.T) {
+	script := installScriptPath(t)
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatalf("bash not found: %v", err)
+	}
+
+	empty := t.TempDir() // a PATH dir containing neither go nor anything else
+	cmd := exec.Command(bash, script)
+	cmd.Env = append(scrubEnv(os.Environ(), "PATH"), "PATH="+empty)
+	out, _ := cmd.CombinedOutput()
+	combined := string(out)
+	code := cmd.ProcessState.ExitCode()
+
+	if code == 0 {
+		t.Fatalf("expected non-zero exit when go is absent, got 0:\n%s", combined)
+	}
+	if !strings.Contains(combined, wantPreflightMsg) {
+		t.Fatalf("expected exact preflight message %q, got:\n%s", wantPreflightMsg, combined)
+	}
+}
+
+// scrubEnv returns env with every KEY=... entry for the given keys removed.
+func scrubEnv(env []string, keys ...string) []string {
+	out := env[:0:0]
+	for _, e := range env {
+		drop := false
+		for _, k := range keys {
+			if strings.HasPrefix(e, k+"=") {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			out = append(out, e)
+		}
+	}
+	return out
+}

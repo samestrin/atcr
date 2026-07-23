@@ -40,6 +40,8 @@ The deterministic Go reconciler — cluster → dedupe → merge → confidence 
 ```bash
 # 1. Install (Go 1.25+)
 go install github.com/samestrin/atcr/cmd/atcr@latest
+# ...or, from a clone, run the wrapper (same go install, plus a Go preflight + PATH check):
+./install.sh
 
 # 2. One-command onboarding: scaffold .atcr/ + set up the Synthetic provider
 atcr quickstart
