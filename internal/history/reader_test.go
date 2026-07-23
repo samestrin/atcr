@@ -40,3 +40,15 @@ func TestLoad_SkipsOversizedLine(t *testing.T) {
 	assert.Equal(t, rec1.ID, got[0].ID)
 	assert.Equal(t, rec2.ID, got[1].ID)
 }
+
+func TestLoad_OnlyOversizedLineReturnsEmpty(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "findings-history.jsonl")
+
+	content := strings.Repeat("x", 2*1024*1024) + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	got, err := Load(path)
+	require.NoError(t, err)
+	assert.Empty(t, got, "file with only oversized line must return empty slice")
+}

@@ -15,6 +15,12 @@ func openReadOnly(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Reject non-regular files (directories, devices, etc.) before OpenFile.
+	// On non-unix platforms without O_NOFOLLOW, OpenFile(O_RDONLY) succeeds on
+	// directories, returning an *os.File that a content-reader later fails on.
+	if !preStat.Mode().IsRegular() {
+		return nil, &os.PathError{Op: "open", Path: path, Err: os.ErrInvalid}
+	}
 	f, err := os.OpenFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err

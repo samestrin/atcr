@@ -48,6 +48,25 @@ func parseEnvelope(t *testing.T, data []byte) ExportEnvelope {
 	return env
 }
 
+// TestExport_AtcrVersionReflectsLinkTimeOverride proves the envelope's
+// atcr_version is sourced live from internal/version rather than a baked-in
+// constant: overriding version.Version — as a release `-ldflags "-X ...Version="`
+// build does at link time — changes the exported atcr_version. Restores the
+// default so other tests still observe the neutral 0.0.0.
+func TestExport_AtcrVersionReflectsLinkTimeOverride(t *testing.T) {
+	orig := version.Version
+	t.Cleanup(func() { version.Version = orig })
+
+	version.Version = "9.9.9-override"
+	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
+		FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+
+	env := parseEnvelope(t, data)
+	assert.Equal(t, "9.9.9-override", env.AtcrVersion,
+		"atcr_version must reflect a link-time override of version.Version")
+}
+
 func TestExport_EnvelopeMatchesSpec(t *testing.T) {
 	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
 		FilterOpts{Since: "30d"}, fixedExportNow)

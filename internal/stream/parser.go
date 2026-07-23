@@ -120,8 +120,23 @@ const ModelColumns = 7 // SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EV
 // skipped; short rows are padded. The returned findings have an empty Reviewer.
 func ParseModelOutput(data []byte) []Finding {
 	var out []Finding
+	inFence := false
 	for _, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimRight(raw, "\r")
+		// A markdown code fence toggles "inside a fenced block" state. Rows a model
+		// quotes inside a fence — e.g. a sample findings table it shows while
+		// explaining the format — are examples, never real findings, yet they carry
+		// a leading severity token and would otherwise parse as findings and inflate
+		// the count with rows whose cited files do not exist. Skip everything between
+		// fences. Mirrors internal/verify/syntaxguard's fence handling; a fence
+		// marker is a line whose first non-space content is a run of >=3 backticks.
+		if isFenceMarker(line) {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -151,6 +166,14 @@ func ParseModelOutput(data []byte) []Finding {
 		out = append(out, fieldsToFinding(fields, PerSourceColumns))
 	}
 	return out
+}
+
+// isFenceMarker reports whether line opens or closes a markdown code fence: its
+// first non-space content is a run of three or more backticks (```lang, ```, or a
+// CommonMark 4+ backtick fence). Used by ParseModelOutput to toggle fenced-block
+// state so quoted example rows are not parsed as findings.
+func isFenceMarker(line string) bool {
+	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
 }
 
 // ParseSource parses a per-source (8-column) findings file.

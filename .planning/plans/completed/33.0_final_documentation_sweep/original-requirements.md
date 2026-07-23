@@ -1,0 +1,83 @@
+# Original Requirements
+
+**Date:** July 22, 2026 01:59:51PM
+**Command:** `/init-plan @.planning/epics/active/33.0_final_documentation_sweep.md`
+**Target:** `.planning/epics/active/33.0_final_documentation_sweep.md`
+
+## Purpose
+
+This document preserves the original request as the source of truth for this plan. All downstream planning artifacts (plan.md, user-stories/, tasks/, sprint-design.md, etc.) must trace back to the content below. If ambiguity arises during planning, refer back to this document rather than reinterpreting secondhand summaries.
+
+## Original Content
+
+# Feature Request: Final Code Review + Documentation Sweep
+
+- **Estimated time**: 2-3 days
+- **Tasks/Components**: 7 / 7
+- **Execution**: init-plan
+
+## Context
+
+Following the completion of the core engine documentation updates (Epic 22.0) and the built-in reviewer persona renaming/generalization (Epic 23.0), the `atcr` repository needs a final hardening pass before launch — first a **comprehensive code review** of the production codebase, then a documentation sweep. This is the first epic in the launch cluster (`33.0` review + docs → `33.1` launch content → `33.2` go-public + install + atcr.dev launch), and it runs before the repo is made public (Epic 33.2), so the code and history are reviewed and hardened before public exposure. It also ensures all CLI commands, configurations, and renamed personas (Sasha, Penny, Ingrid/Ian) are perfectly documented against a finalized codebase.
+
+## Problem Statement
+
+Going public (Epic 33.2) exposes the entire codebase and git history to the world, and updating `atcr.dev` makes the repo's docs the public source of truth. Two risks must be closed first: (1) latent correctness/security/quality issues shipping into a public release with no final review gate, and (2) documentation discrepancies or stale references (such as lingering mentions of `sentinel`, `tracer`, or `idiomatic` in user manuals or help commands) misleading users or the website. Both must be resolved against the *final* production code, in that order — review and fix the code, then document it.
+
+## Proposed Solution
+
+1.  **Comprehensive Code Review (dogfood + adversarial):** Run `atcr`'s own multi-agent reviewer over the production codebase (dogfooding the tool on itself) plus a thorough adversarial/human pass, with emphasis on security and anything embarrassing to expose publicly (secrets, TODO/FIXME debt, dead code, unsafe patterns). Triage findings by severity; fix CRITICAL/HIGH before launch, route MEDIUM/LOW to technical debt. This precedes the docs audit so documentation describes the finalized, hardened code.
+2.  **Code-to-Docs Audit:** Conduct a final audit of all user-facing documentation (`README.md`, `docs/`, inline command help text, and schemas) against the final production codebase.
+3.  **Verify Persona References:** Ensure that all documentation references the new human persona names (`sasha`, `penny`, `ingrid`/`ian`) and their generalized multi-language capabilities.
+4.  **Ensure Website Compatibility:** Verify that the markdown files under `docs/` are formatted cleanly and are ready to be used as the source of truth for the `atcr.dev` website repository.
+
+## Acceptance Criteria
+
+- [ ] AC1: A comprehensive code review (atcr multi-agent reviewer + adversarial pass) has been run over the production codebase; all CRITICAL/HIGH findings are fixed and MEDIUM/LOW are captured as technical debt.
+- [ ] AC2: No secrets, credentials, or embarrassing artifacts remain that would be problematic to expose in a public repository/history.
+- [ ] AC3: No legacy persona names (`sentinel`, `tracer`, `idiomatic`) remain in any documentation or command help screens.
+- [ ] AC4: All new features up to Epic 23.0 are fully and accurately documented in the core `atcr` repository.
+- [ ] AC5: Documentation files are validated and ready to be imported into the `atcr.dev` repository.
+
+## Components Touched
+
+- Production codebase (review + fixes across `cmd/`, `internal/`, `reconcile/`, `skill/`)
+- `README.md`, `docs/`, inline command help text, schemas
+- `.planning/technical-debt/` (findings triage output)
+
+## Dependencies
+
+- **Epic 22.0** (core engine documentation) and **Epic 23.0** (persona renaming) — completed prerequisites.
+- **Epic 33.1 / 33.2** — consume this epic's finalized, reviewed code + docs (content generation and go-public/atcr.dev launch).
+
+## Refinements (2026-07-15)
+
+This section records findings from `/refine-epic` run on 2026-07-15. It is additive — original plan content above is preserved.
+
+### Auto-applied corrections (2)
+
+- ✅ **Task count mismatch:** Plan claims `TBD` task(s); derived `7`. Updated to "Task Count: 7".
+- ✅ **Component count mismatch:** Plan claims `TBD` components; derived `7`. Updated to "Components: 7".
+
+### Items needing user confirmation (0)
+
+### Advisory observations (2)
+
+- ℹ️ **Scope-guard violation:** Derived TASK_COUNT=7, COMPONENT_COUNT=7 — exceeds the execute-epic skill's ≤6 tasks / ≤2 components limit. This plan will be rejected by the execute-epic skill and should run through `the init-plan skill @.planning/epics/active/33.0_final_documentation_sweep.md` for the full sprint pipeline. Refining alone will not unblock /execute-epic.
+- ℹ️ **Hidden gated work:** This epic describes a repo-wide, open-ended triage and audit phase (running multi-agent review over the entire codebase, triaging findings, and fixing criticals). This is structurally different from a typical feature epic and introduces heavy, unbounded gated work before the docs sweep can even begin.
+
+### Verification context
+
+- Refinement depth: deep
+- Derived TASK_COUNT: 7 (limit: 6)
+- Derived COMPONENT_COUNT: 7 (limit: 2)
+- COMPONENTS_TOUCHED: `cmd/`, `internal/`, `reconcile/`, `skill/`, `README.md`, `docs/`, `.planning/technical-debt/`
+- VISUAL_SURFACE: false
+- HAS_GATED_WORK: true
+- HAS_CROSS_SYSTEM: false
+- Cited references checked: 0
+- Codebase search queries (spot-check): ["sentinel", "tracer", "idiomatic"]
+- Deep discovery method: keyword
+- Deep discovery queries: sentinel, tracer, idiomatic
+- Deep discovery match count: 5
+- Deep discovery snapshot: /Users/samestrin/Documents/GitHub/atcr/.planning/.temp/refine-epic/codebase-discovery.json (temp-only — not committed)
