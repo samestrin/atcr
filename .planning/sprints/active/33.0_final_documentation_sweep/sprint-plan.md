@@ -368,25 +368,28 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    - None found -> Note "Adversarial review passed" and proceed
    → **Adversarial review passed** (0 findings). Proceed.
 
-### 2.1.R [ ] **Task 03 - REFACTOR: Address Cumulative Review Findings**
+### 2.1.R [x] **Task 03 - REFACTOR: Address Cumulative Review Findings** — no 2.1.A findings; nothing to fix. Gate re-confirmed green (`go test`/`vet`/`golangci-lint` all pass). Committed as `a1ead65c` (`docs(33.0): Phase 2 findings triage …`) — honest message: no code fixed, so not `fix(review)`.
    1. Fix CRITICAL/HIGH issues from 2.1.A (if any)
    2. Re-run `go test ./...`, `golangci-lint run`, `go vet ./...` to confirm still green
    3. COMMIT: `git commit -m "fix(review): address cumulative adversarial findings from Task 3"`
    **Duration:** (estimate, dependent on 2.1.A findings volume)
 
-### 2.2 [ ] **Phase 2 DoD Check**
-   1. `go test ./...`, `golangci-lint run`, `go vet ./...` all pass with zero failures.
-   2. Every CRITICAL/HIGH finding fixed with no NEEDS_REVIEW-flagged item unresolved.
-   3. `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md` and `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triage-summary.md` exist.
+### 2.2 [x] **Phase 2 DoD Check**
+   1. ✅ `go test ./...` (root exit 0), `(cd reconcile && go test ./...)` (exit 0), `golangci-lint run` (0 issues), `go vet ./...` (clean) — zero failures.
+   2. ✅ 0 CRITICAL/HIGH findings after re-verification (vacuously satisfied); no NEEDS_REVIEW-flagged item unresolved.
+   3. ✅ `code-review/triaged-findings-medium-low.md` (23 rows) + `code-review/triage-summary.md` exist.
    **Report:**
    ```
    Phase-2 DoD Complete
-   Auto: {X}/5 | Task-Specific: {Y}/3
-   Manual Review: [ ] Code reviewed
+   Auto: 5/5 (test/vet/lint/build green; coverage+docs N/A — triage-only phase, no production code changed) | Task-Specific: 3/3
+   Manual Review: [ ] Code reviewed  (→ /execute-code-review)
    ```
 
-### 2.3 [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
-   **Scope:** All files changed during Phase 2 (all CRITICAL/HIGH fixes + handoff artifacts)
+### 2.3 [x] **Phase 2 - GATE: Integration & Exit Review (subagent)** — ✅ Phase gate passed (0 findings)
+
+   **Gate result (fresh hostile-integrator subagent, 2026-07-22):** CONTRACT EXIT ✅ (exactly 23 data rows, each 10 columns with GROUP trailing, no broken pipes; 25−2 hallucinated = 23 math sound; format matches reconciled `atcr-findings/v1` + GROUP that Task 07 consumes). CONFIG SURFACE ✅ (no `.atcr/config.yaml`/schema/config-key change; zero `.go` touched). INTEGRATION ✅ (no production code changed → codebase Phase 3 documents is byte-identical to Phase 1's reviewed state). PHASE-EXIT CONTRACT ✅ (no genuine deferred CRITICAL/HIGH; both HIGH re-classifications grounded — `open_other.go` symlink-swap REFUTED, `atomicwrite` HIGH→MEDIUM test gap; Task 02 stream confirmed genuinely CLEAN). REGRESSION ✅ (independently ran `go test -race ./...` → exit 0, no FAIL/DATA RACE/panic; zero production `.go` files changed). No CRITICAL/HIGH/MEDIUM/LOW.
+
+   **Scope:** All files changed during Phase 2 (`code-review/triaged-findings-medium-low.md`, `code-review/triage-summary.md`, `sprint-plan.md`; zero production `.go` fixes)
 
    **Spawn a fresh subagent** via the Agent tool. No memory of Phase 2's implementation.
 
@@ -404,16 +407,16 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings table (none):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | _(none)_ | | | |
 
    **Action Required:**
    - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
    - MEDIUM/LOW found -> Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
    - None found -> Note "Phase gate passed" and proceed to phase stop
+   → **Phase gate passed** (0 findings). Proceed to phase stop.
    **Duration:** 15-30 min
 
 ---
