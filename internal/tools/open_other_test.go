@@ -12,6 +12,11 @@ import (
 
 // TestOpenReadOnly_OtherPlatform_SymlinkDetected verifies the post-open inode
 // check rejects a path that is a symlink (TOCTOU guard for non-O_NOFOLLOW builds).
+// Note: os.SameFile is a generic identity check (inode-based), not symlink-specific,
+// so the file-replacement TOCTOU case (where preStat and postStat differ by something
+// other than a symlink) is structurally covered by the same guard exercised here, even
+// though only the symlink-substitution variant is tested directly. A timing-dependent
+// replacement test would be flaky and isn't added.
 func TestOpenReadOnly_OtherPlatform_SymlinkDetected(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "real.txt")
