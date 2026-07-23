@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 8 | 6 |
 | MEDIUM | 0 | 29 | 34 |
-| LOW | 0 | 44 | 23 |
+| LOW | 2 | 44 | 23 |
 
 
-**Last Modified:** 2026-07-22 | **Open Items:** 0 | **Deferred Items:** 81 | **Resolved Items:** 63 | **Total Items:** 144
+**Last Modified:** 2026-07-23 | **Open Items:** 2 | **Deferred Items:** 81 | **Resolved Items:** 63 | **Total Items:** 146
 
 ## Directory Structure
 
@@ -63,6 +63,13 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards �
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-23] From Sprint: epic-33.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | .planning/product/content/blog/benchmark-leaderboard-pick-your-reviewer.md:25 | Outline presents survived_skeptic_rate / cost_per_corroborated_finding_usd / latency_p50_ms as metrics `benchmark run` reports, but CHANGELOG 10.2 only confirms the run scorer folds category recall into corroboration_rate + findings_raised_avg; the other three are leaderboard-schema fields (10.0) populated via the export path. | At drafting time verify a real `benchmark run` scorecard populates those three fields, or soften wording to "reuses the public leaderboard schema fields". | GROUNDING | 15 | execute-epic-independent |
+| U | [ ] | LOW | .planning/product/content/blog/stop-paying-to-review-vendored-code.md:5 | FinOps/token-cost post is slotted into Publication Phase 3 (Enterprise Trust) while sibling cost post build-without-the-build-cost sits in Phase 2 (Education) — minor thematic placement inconsistency in the README schedule. | Move it to Phase 2 alongside the other FinOps/cost post, or leave as-is if the buyer-facing angle is intentional. | INTEGRATION | 5 | execute-epic-independent |
 
 ### [2026-07-22] From Sprint: 33.0_final_documentation_sweep
 
