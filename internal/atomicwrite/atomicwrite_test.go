@@ -28,6 +28,16 @@ func TestWriteGroup_WritesAllFiles(t *testing.T) {
 	assert.Equal(t, "beta\n", string(b))
 }
 
+func TestWriteGroup_FailsOnInvalidPath(t *testing.T) {
+	dir := t.TempDir()
+	invalidPath := filepath.Join(dir, "nonexistent", "f.json")
+
+	err := WriteGroup([]Entry{
+		{Path: invalidPath, Data: []byte("data\n")},
+	})
+	require.Error(t, err, "WriteGroup must fail when parent directory does not exist")
+}
+
 func TestWriteGroup_NoOpForEmpty(t *testing.T) {
 	require.NoError(t, WriteGroup(nil))
 	require.NoError(t, WriteGroup([]Entry{}))

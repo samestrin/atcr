@@ -25,6 +25,10 @@ func TestComputeCostUSD_SingleDivisionIsExact(t *testing.T) {
 		{0, 2},
 		{0, 5},
 		{0, 10},
+		{1, 0},
+		{5, 0},
+		{10, 5},
+		{100, 200},
 	}
 	for _, c := range cases {
 		want := (float64(c.tokensIn)*rateIn + float64(c.tokensOut)*rateOut) / 1_000_000.0

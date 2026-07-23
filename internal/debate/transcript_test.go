@@ -1,6 +1,7 @@
 package debate
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -22,10 +23,14 @@ func TestTranscript_RecordsTurnsAndRuling(t *testing.T) {
 
 func TestTranscript_DisabledWriterIsNoOp(t *testing.T) {
 	// An unwritable path yields a disabled writer whose methods never panic.
-	tr := OpenTranscript(filepath.Join(t.TempDir(), "nope", "transcript.jsonl"))
+	path := filepath.Join(t.TempDir(), "nope", "transcript.jsonl")
+	tr := OpenTranscript(path)
 	tr.RecordTurn(TurnEvent{Role: LabelJudge})
 	tr.RecordRuling(RulingEvent{Outcome: "overturn"})
 	assert.NoError(t, tr.Close())
+	// Verify the file was NOT created (disabled writer should not write).
+	_, err := os.Stat(path)
+	assert.True(t, os.IsNotExist(err), "disabled writer must not create the transcript file")
 }
 
 func TestTranscript_NilReceiverSafe(t *testing.T) {

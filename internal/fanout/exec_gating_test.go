@@ -27,4 +27,6 @@ func TestWireToolDefs_ExecGating(t *testing.T) {
 	assert.True(t, execNames["run_tests"], "exec agent must see run_tests")
 	assert.True(t, execNames["run_script"], "exec agent must see run_script")
 	assert.Greater(t, len(exec), len(readOnly))
+	// Verify exact count difference: exec adds exactly 2 tools (run_tests, run_script).
+	assert.Equal(t, len(readOnly)+2, len(exec), "exec mode must add exactly run_tests and run_script (+2 tools)")
 }

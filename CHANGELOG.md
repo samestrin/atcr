@@ -1,3 +1,20 @@
+## [33.0.0] - 2026-07-22
+
+Final pre-launch code review and documentation sweep: dogfooded atcr's own multi-agent reviewer against its production codebase, triaged and resolved all findings, and audited README/docs/CLI help for accuracy ahead of the repository going public.
+
+### Fixed
+
+- Reviewer pool parser no longer scrapes hallucinated findings out of fenced example blocks in agent review prose.
+- Reconcile now collapses byte-identical duplicate findings during clustering instead of double-counting them.
+- `repoRoot` now uses `Lstat` so a `.git`/`.atcr` symlink can no longer misidentify the repository root.
+- `openReadOnly` now rejects non-regular files instead of silently accepting them.
+
+### Changed
+
+- Audited and corrected `README.md`, `skill/SKILL.md`, and `docs/` against the finalized CLI surface; confirmed zero legacy persona-slug references remain and validated `docs/` for `atcr.dev` import.
+
+*Shipped via /init-plan + /execute-sprint + /execute-code-review (sprint 33.0)*
+
 ## [32.4.0] - 2026-07-22
 
 Harden `--auto-fix` against Indirect Sandbox Escape / Host Trust Transposition attacks by blocking writes to protected host-configuration paths and hardening every host git subprocess invocation.

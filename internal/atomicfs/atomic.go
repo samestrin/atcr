@@ -21,6 +21,14 @@ import (
 // zero-length or truncated file. This is intentional — the artifacts written
 // through here (review/reconcile/verify output) are regenerable, so crash
 // durability is deliberately out of scope and not worth the fsync cost.
+//
+// File mode is fixed at 0644 for every caller (reconcile/verify/payload/debate
+// artifact writers all want that), so mode changes are unsupported: an --auto-fix
+// diff that declares a different mode (e.g. an exec-bit +x) does NOT carry it
+// here, and the GitHub commit path hardcodes blob mode 100644 to match. This
+// silent mode-discard is deliberate, documented debt — see the matching notes at
+// internal/autofix/apply.go (FlagsForReview) and internal/security/pathguard.go
+// — not a bug to fix by threading a mode through this shared writer.
 func WriteFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")

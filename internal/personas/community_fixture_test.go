@@ -11,8 +11,9 @@ import (
 // resolves and passes every embedded community-library persona (AC 04-04): each
 // resolves its co-located community/<slug>.md template and
 // community/testdata/<slug>_fixture.patch fixture, renders cleanly with no
-// leftover template actions, and reports one passing fixture case — no longer the
-// pre-5.10 HasFixture:false short-circuit for non-built-in names.
+// leftover template actions, and reports at least one passing fixture case — no
+// longer the pre-5.10 HasFixture:false short-circuit for non-built-in names.
+// The assertion is >=1 (not exactly 1) to allow personas with multiple fixtures.
 func TestTemplateFixtureRunner_CommunityPersonasPass(t *testing.T) {
 	names := builtins.CommunityNames()
 	require.NotEmpty(t, names, "expected embedded community personas")
@@ -23,7 +24,7 @@ func TestTemplateFixtureRunner_CommunityPersonasPass(t *testing.T) {
 			require.NoError(t, err)
 			require.Truef(t, out.HasFixture, "community persona %q should resolve a fixture", name)
 			require.Equalf(t, out.Total, out.Passed, "community persona %q fixture must pass", name)
-			require.Equalf(t, 1, out.Passed, "community persona %q: expected exactly one passing fixture case", name)
+			require.GreaterOrEqualf(t, out.Passed, 1, "community persona %q: expected at least one passing fixture case", name)
 		})
 	}
 }

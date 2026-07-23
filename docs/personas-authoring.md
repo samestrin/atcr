@@ -237,7 +237,7 @@ binding: anthropic/claude-opus@stable   # OPTIONAL logical binding (Epic 19.7)
 
 **Families** — alias-covered families (Anthropic, OpenAI, Google, Moonshot tiers) bind to a provider-owned `~…-latest` alias the provider resolves server-side; the alias-less brands resolve by newest `created` timestamp under their catalog vendor prefix. Note `glm` keys the `z-ai/` catalog namespace — there is no `glm/` namespace.
 
-Implementation detail — the catalog schema (`id`, `canonical_slug`, `created`, `expiration_date`), the `~…-latest` alias behavior, and the `@stable` preview/deprecation heuristic are specified in the plan documentation: [openrouter-catalog-api.md](../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/openrouter-catalog-api.md) and [existing-resolver-patterns.md](../.planning/sprints/active/19.7_live_model_resolution/plan/documentation/existing-resolver-patterns.md).
+Implementation detail — the catalog schema (`id`, `canonical_slug`, `created`, `expiration_date`), the `~…-latest` alias behavior, and the `@stable` preview/deprecation heuristic are specified in the plan documentation: [openrouter-catalog-api.md](../.planning/sprints/completed/19.7_live_model_resolution/plan/documentation/openrouter-catalog-api.md) and [existing-resolver-patterns.md](../.planning/sprints/completed/19.7_live_model_resolution/plan/documentation/existing-resolver-patterns.md).
 
 See [personas-install.md](personas-install.md) for installing and using personas, and [registry.md](registry.md) for the full agent schema and routing semantics.
 

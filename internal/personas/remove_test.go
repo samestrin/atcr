@@ -18,4 +18,11 @@ func TestIsBuiltin_KnownAndUnknown(t *testing.T) {
 	if isBuiltin("") {
 		t.Errorf("isBuiltin(\"\") = true, want false")
 	}
+	// Community persona names are not builtins — they resolve from the embedded
+	// community/*.md library, not the builtin names slice.
+	for _, name := range builtins.CommunityNames() {
+		if isBuiltin(name) {
+			t.Errorf("isBuiltin(%q) = true, want false (community persona)", name)
+		}
+	}
 }

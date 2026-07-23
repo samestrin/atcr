@@ -19,6 +19,18 @@ func TestAnchorDir_CorruptLatestPointerSurfacesCause(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid review id")
 }
 
+func TestAnchorDir_BareReviewIdTreatedAsId(t *testing.T) {
+	// A bare review id (no path separator) must be validated and joined under
+	// .atcr/reviews/, never used verbatim as a path — even if it looks like a
+	// relative path that could plausibly be a directory.
+	isolate(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(".atcr", "reviews"), 0o755))
+	got, err := anchorDir("2026-06-11_x")
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(".atcr", "reviews", "2026-06-11_x"), got,
+		"bare review id must be treated as an id, not a path")
+}
+
 func TestAnchorDir_SeparatorDetectionIsPlatformUniform(t *testing.T) {
 	// The path-vs-id contract must not depend on filepath.Separator: a
 	// relative path written with either separator is an explicit path on

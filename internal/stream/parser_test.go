@@ -174,3 +174,23 @@ func TestParseModelOutput_EmptyAndProseOnly(t *testing.T) {
 	assert.Empty(t, ParseModelOutput(nil))
 	assert.Empty(t, ParseModelOutput([]byte("Just prose, no findings here.\n# a comment\n")))
 }
+
+// TestParseModelOutput_SkipsFencedExampleRows proves rows a model quotes inside a
+// markdown code fence — a sample findings table shown while explaining the format
+// — are not parsed as findings, even though they carry a leading severity token.
+// This is the hallucinated-example class: a fenced example citing files that do
+// not exist must never inflate the finding count.
+func TestParseModelOutput_SkipsFencedExampleRows(t *testing.T) {
+	data := "Here is my review.\n" +
+		"HIGH|real.go:10|a genuine problem|fix it|correctness|5|evidence\n" +
+		"For example, a findings row is formatted like:\n" +
+		"```\n" +
+		"CRITICAL|db.go:7|example only|do x|correctness|9|evidence\n" +
+		"HIGH|auth.go:3|example only|do y|security|9|evidence\n" +
+		"```\n" +
+		"That is the expected format.\n"
+	findings := ParseModelOutput([]byte(data))
+	require.Len(t, findings, 1, "only the real, unfenced finding is parsed")
+	assert.Equal(t, "real.go", findings[0].File, "the fenced example rows must be skipped")
+	assert.Equal(t, 10, findings[0].Line)
+}

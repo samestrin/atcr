@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"encoding/json"
 	"sort"
 	"time"
 )
@@ -90,7 +91,7 @@ type Summary struct {
 // against a fixed working tree. A nil Grouper keeps clustering a pure function of
 // the findings.
 func Reconcile(sources []Source, opts Options) Result {
-	clusters := ClusterWith(AllFindings(sources), opts.Grouper)
+	clusters := ClusterWith(collapseIdentical(AllFindings(sources)), opts.Grouper)
 
 	// First pass: dedupe every cluster into merge groups. The groups are collected
 	// across ALL clusters before any confidence is assigned because authority
@@ -239,6 +240,41 @@ func AllFindings(sources []Source) []Finding {
 	var out []Finding
 	for _, s := range sources {
 		out = append(out, s.Findings...)
+	}
+	return out
+}
+
+// collapseIdentical drops byte-identical duplicate findings — every field equal,
+// reviewer included — keeping the first occurrence, as a pre-pass before
+// clustering. A single source can emit the exact same row twice (e.g. a model that
+// quoted the same example line twice), and such a perfect duplicate is noise, not
+// corroboration: left in, it survives as a separate row in findings.txt,
+// findings.json, and report.md. This runs on the flattened findings before
+// ClusterWith so the one insertion point feeds all three output artifacts.
+//
+// It is deliberately conservative — only findings identical in ALL fields are
+// collapsed. A same-location finding that differs in text, or one from a different
+// reviewer, is legitimate independent signal and is left untouched (that merge is
+// dedupeCluster's job, which relies on the distinct rows surviving to here).
+func collapseIdentical(findings []Finding) []Finding {
+	if len(findings) < 2 {
+		return findings
+	}
+	seen := make(map[string]struct{}, len(findings))
+	out := make([]Finding, 0, len(findings))
+	for _, f := range findings {
+		key, err := json.Marshal(f)
+		if err != nil {
+			// A finding that will not marshal cannot be keyed; keep it rather than
+			// risk dropping a distinct finding on a serialization edge case.
+			out = append(out, f)
+			continue
+		}
+		if _, dup := seen[string(key)]; dup {
+			continue
+		}
+		seen[string(key)] = struct{}{}
+		out = append(out, f)
 	}
 	return out
 }

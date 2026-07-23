@@ -12,6 +12,11 @@ import (
 
 // TestOpenReadOnly_OtherPlatform_SymlinkDetected verifies the post-open inode
 // check rejects a path that is a symlink (TOCTOU guard for non-O_NOFOLLOW builds).
+// Note: os.SameFile is a generic identity check (inode-based), not symlink-specific,
+// so the file-replacement TOCTOU case (where preStat and postStat differ by something
+// other than a symlink) is structurally covered by the same guard exercised here, even
+// though only the symlink-substitution variant is tested directly. A timing-dependent
+// replacement test would be flaky and isn't added.
 func TestOpenReadOnly_OtherPlatform_SymlinkDetected(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "real.txt")
@@ -37,4 +42,21 @@ func TestOpenReadOnly_OtherPlatform_RegularFile(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, f)
 	_ = f.Close()
+}
+
+// TestOpenReadOnly_OtherPlatform_DirectoryRejected verifies that a directory
+// path is explicitly rejected, not opened as a readable *os.File. On non-unix
+// platforms without O_NOFOLLOW, OpenFile(O_RDONLY) succeeds on directories,
+// so openReadOnly must check IsRegular() after Lstat and refuse non-regular
+// files before opening.
+func TestOpenReadOnly_OtherPlatform_DirectoryRejected(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "subdir")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	f, err := openReadOnly(dir)
+	if f != nil {
+		_ = f.Close()
+	}
+	require.Error(t, err, "openReadOnly must reject directory paths on non-unix")
 }
