@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 8 | 6 |
-| MEDIUM | 0 | 28 | 12 |
-| LOW | 1 | 44 | 17 |
+| MEDIUM | 20 | 28 | 12 |
+| LOW | 4 | 44 | 17 |
 
 
-**Last Modified:** 2026-07-22 | **Open Items:** 1 | **Deferred Items:** 80 | **Resolved Items:** 35 | **Total Items:** 116
+**Last Modified:** 2026-07-22 | **Open Items:** 24 | **Deferred Items:** 80 | **Resolved Items:** 35 | **Total Items:** 139
 
 ## Directory Structure
 
@@ -63,6 +63,34 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards �
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
+
+### [2026-07-22] From Review: 33.0_final_documentation_sweep
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| 1 | [ ] | MEDIUM | cmd/atcr/anchor_test.go:20 | (TestAnchorDir_CorruptLatestPointerSurfacesCause) TestAnchorDir_SeparatorDetectionIsPlatformUniform only tests explicit paths; no test covers the bare review-id path (no separator) | Add a case for a bare review-id string like "2026-06-11_x" to verify it is treated as an id, not a path | testing | 10 | code-review | dax | HIGH |
+| 1 | [ ] | MEDIUM | cmd/atcr/debt_compact.go:23 | (newDebtCompactCmd) No test covers the Compact error path (return fmt.Errorf("compact: %w", err)) | Add a test where localdebt.Compact returns an error and assert the wrapped error message | testing | 15 | code-review | dax | HIGH |
+| 1 | [ ] | MEDIUM | cmd/atcr/debt_compact.go:29 | (runDebtCompact) No test covers the StoreFound==false branch where compact prints "No local TD store to compact." | Add a test case where Compact returns StoreFound==false and assert stdout message | testing | 15 | code-review | dax | HIGH |
+| 1 | [ ] | MEDIUM | cmd/atcr/root.go:19 | (repoRoot) os.Stat follows symlinks, so a .git symlink to an arbitrary directory bypasses the repo-root check and misidentifies the working directory as a repo root | Use os.Lstat and verify the marker is a real directory or explicitly resolve and validate the target path | correctness | 15 | code-review | brad,dax | HIGH |
+| 1 | [ ] | MEDIUM | cmd/atcr/root.go:22 | (repoRoot) repoRoot fallback to cwd when no .git or .atcr marker found is untested | Add a test in a temp dir with no markers asserting repoRoot returns cwd | testing | 10 | code-review | dax | HIGH |
+| 2 | [ ] | MEDIUM | internal/personas/remove_test.go:10 | (TestIsBuiltin_KnownAndUnknown) TestIsBuiltin_KnownAndUnknown tests builtin names but doesn't test community persona names (which should return false) | Add a community persona name (e.g. "community/go-concurrency") and assert isBuiltin returns false | testing | 5 | code-review | dax | HIGH |
+| 2 | [ ] | LOW | internal/personas/community_fixture_test.go:18 | (TestTemplateFixtureRunner_CommunityPersonasPass) TestTemplateFixtureRunner_CommunityPersonasPass asserts each community persona has exactly 1 passing fixture case; if a persona has multiple fixtures, this test will fail | Clarify in test name or comment that the expectation is exactly 1, or make it >=1 | testing | 5 | code-review | dax | HIGH |
+| 3 | [ ] | MEDIUM | internal/tools/open_other_test.go:17 | (TestOpenReadOnly_OtherPlatform_SymlinkDetected) TestOpenReadOnly_OtherPlatform_SymlinkDetected tests symlink detection but doesn't test the case where preStat and postStat differ by something other than symlink (e.g. file replaced) | This is hard to trigger but consider a comment acknowledging the limitation | testing | 5 | code-review | dax | HIGH |
+| 3 | [ ] | LOW | internal/tools/open_other.go:13 | (openReadOnly) Non-unix openReadOnly does not explicitly reject directory paths (Lstat+OpenFile(O_RDONLY)+SameFile all succeed for a directory, returning an *os.File a content-reader later fails on). NOTE: the reviewer's HIGH symlink-swap TOCTOU claim is REFUTED — preStat is captured by os.Lstat BEFORE OpenFile, so a swap in the window yields preStat!=postStat and os.SameFile rejects it; SameFile(pre-open Lstat, post-open Fstat) is the correct non-O_NOFOLLOW mitigation. | Optionally reject non-regular files: after Lstat, if !preStat.Mode().IsRegular() return an error before OpenFile | correctness | 10 | code-review | brad,mira | LOW |
+| 4 | [ ] | MEDIUM | reconcile/severity.go:18 | SeverityRank map keys are uppercase but NormalizeSeverity does ToUpper; future non-uppercase keys would cause silent lookup failures | Add a comment documenting that keys must be uppercase, or normalize on write | correctness | 10 | code-review | bruce,dax | HIGH |
+| 4 | [ ] | MEDIUM | reconcile/source_test.go:10 | (TestSource_JSONTagsUseSnakeCase) TestSource_JSONTagsUseSnakeCase only checks for "name" and "findings" keys; doesn't verify the full marshaled structure is valid | Add a round-trip test: marshal then unmarshal and compare | testing | 10 | code-review | dax | HIGH |
+| U | [ ] | MEDIUM | internal/atomicwrite/atomicwrite_test.go:1 | No test covers WriteGroup failure: what if a file path is invalid (e.g. directory in path doesn't exist)? | Add test with a path like filepath.Join(dir, "nonexistent", "f.json") and assert error | testing | 15 | code-review | dax | HIGH |
+| U | [ ] | MEDIUM | internal/astgroup/host_shared_test.go:24 | (TestGrouper_CloseDoesNotCloseHost) TestGrouper_CloseDoesNotCloseHost only tests the happy path after Close; no test verifies behavior when Close fails | Add a test where the Grouper's Close returns an error and verify host is still usable | testing | 10 | code-review | dax | HIGH |
+| U | [ ] | MEDIUM | internal/circuitbreaker/context.go:24 | (ProviderFromContext) ProviderFromContext type assertion fallback to "" when value is not a string is untested | Add test where context value is a non-string type (e.g. int) and assert returns "" | testing | 10 | code-review | dax | HIGH |
+| U | [ ] | MEDIUM | internal/debate/transcript_test.go:24 | (TestTranscript_DisabledWriterIsNoOp) TestTranscript_DisabledWriterIsNoOp tests unwritable path but doesn't verify the file was NOT created | Add assertion that the transcript file does not exist after Close | testing | 5 | code-review | dax | HIGH |
+| U | [ ] | MEDIUM | internal/history/reader_test.go:30 | (TestLoad_SkipsOversizedLine) TestLoad_SkipsOversizedLine tests oversized line skipping but doesn't test the case where the oversized line is the only line | Add test with a file containing only an oversized line and assert Load returns empty | testing | 10 | code-review | dax | HIGH |
+| U | [ ] | MEDIUM | internal/llmclient/rates_test.go:23 | (TestComputeCostUSD_SingleDivisionIsExact) TestComputeCostUSD_SingleDivisionIsExact only tests cases with tokensIn==0; no test with non-zero input tokens | Add cases with tokensIn > 0 to verify the formula with both dimensions | testing | 10 | code-review | dax | HIGH |
+| U | [ ] | MEDIUM | internal/payload/resolve_test.go:1 | TestValidMode only tests the three valid modes and three invalid; no test for edge cases like "diff " (trailing space) or " diff" (leading space) | Add cases with whitespace-padded valid mode strings and assert they return false | testing | 5 | code-review | dax | HIGH |
+| U | [ ] | MEDIUM | internal/registry/validate_test.go:18 | (TestValidateAgentYAML_ExtraFieldsAllowed) TestValidateAgentYAML_ExtraFieldsAllowed tests extra fields are allowed but doesn't test that required fields (provider, model) are actually enforced | Add a test with missing required fields and assert validation fails | testing | 10 | code-review | dax | HIGH |
+| U | [ ] | MEDIUM | internal/stream/severity.go:11 | SeverityRank is a var (not const) and the comment warns about concurrent writes, but no test verifies it's read-only after init | Add a test that writes to SeverityRank panic or are detected (e.g. with race detector) | concurrency | 10 | code-review | brad,dax | HIGH |
+| U | [ ] | MEDIUM | internal/verify/confidence_v2.go:20 | (confidenceV2) confidenceV2 delegates to reclib.ConfidenceForVerdict but no test in this package verifies the mapping for all verdict/v1Confidence combinations | Add a table-driven test with all combinations of v1Confidence (HIGH/MEDIUM/LOW) and verdict (confirmed/refuted/unverifiable) | testing | 15 | code-review | dax | HIGH |
+| U | [ ] | MEDIUM | internal/version/version.go:16 | Version is a mutable var with no test verifying it can be overridden at link time | Add a test that sets Version and verifies the value is used, or document that link-time override testing is out of scope | testing | 10 | code-review | dax | HIGH |
+| U | [ ] | LOW | internal/fanout/exec_gating_test.go:27 | (TestWireToolDefs_ExecGating) TestWireToolDefs_ExecGating asserts exec set is larger than read-only but doesn't verify exact count difference | Add assertion for exact expected count difference (should be +2 for run_tests and run_script) | testing | 5 | code-review | dax | HIGH |
 
 ### [2026-07-22] From Sprint: 32.4_workspace_integrity_sanitization
 
