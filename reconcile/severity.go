@@ -16,6 +16,11 @@ import "strings"
 // Read-only after init: the map is written once at package load and only read
 // thereafter. Concurrent consumers share this map, so a write would race — if
 // mutation is ever needed, copy it locally first.
+//
+// Keys must be UPPERCASE: NormalizeSeverity upper-cases input tokens before
+// lookup, so a lowercase key (e.g., "critical") would never match and would
+// cause silent lookup failures. TestSeverityRank_AllKeysUppercase enforces this
+// invariant.
 var SeverityRank = map[string]int{
 	"CRITICAL": 4,
 	"HIGH":     3,

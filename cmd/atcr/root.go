@@ -17,10 +17,10 @@ func repoRoot() (string, error) {
 		return "", err
 	}
 	for dir := cwd; ; dir = filepath.Dir(dir) {
-		if info, err := os.Stat(filepath.Join(dir, ".git")); err == nil && info.IsDir() {
+		if info, err := os.Lstat(filepath.Join(dir, ".git")); err == nil && info.IsDir() {
 			return dir, nil
 		}
-		if info, err := os.Stat(filepath.Join(dir, ".atcr")); err == nil && info.IsDir() {
+		if info, err := os.Lstat(filepath.Join(dir, ".atcr")); err == nil && info.IsDir() {
 			return dir, nil
 		}
 		parent := filepath.Dir(dir)

@@ -60,7 +60,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr reconcile` | Merge findings from all sources into reconciled artifacts |
 | `atcr verify` | Run adversarial skeptics over reconciled findings |
 | `atcr debate` | Cross-examine disputed findings (proposer/challenger/judge) |
-| `atcr report` | Render md, json, or checklist views over reconciled findings |
+| `atcr report` | Render md, json, checklist, sarif, axi views over reconciled findings |
 | `atcr quality-report` | Rank persona+model reviewer prompts by dismissal rate from the content-free local quality signal |
 | `atcr github` | Post reconciled findings to a GitHub pull request as a check run |
 | `atcr range` | Resolve the review range and print resolution JSON |
@@ -78,7 +78,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr debt` | Query and report on technical debt; `atcr debt resolve` lists and marks-resolved the public `.atcr/`-scoped local store, and the debt-resolve route autonomously fixes its items — see `debt-resolve/SKILL.md` |
 | `atcr history` | Show finding history over time as a markdown table |
 | `atcr audit-report` | Render a one-page compliance report for a PR's review runs |
-| `atcr config` | Read/update project config; `atcr config set telemetry <true\|false>` toggles the anonymous usage-ping opt-out |
+| `atcr config` | Update project config; `atcr config set <telemetry\|quality_signal> <true\|false>` toggles the anonymous usage-ping opt-out or the community quality-signal opt-in |
 | `atcr version` | Print the atcr version |
 
 <!-- Convention: one line per command, mirroring newRootCmd (cmd/atcr/main.go).

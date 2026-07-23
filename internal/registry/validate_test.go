@@ -22,3 +22,14 @@ role: reviewer
 	err := ValidateAgentYAML("extra-fields-persona", yaml)
 	assert.NoError(t, err, "community persona metadata fields outside the AgentConfig schema must not cause validation errors")
 }
+
+func TestValidateAgentYAML_MissingRequiredFields(t *testing.T) {
+	// Missing provider and model should fail validation.
+	yaml := []byte(`
+role: reviewer
+`)
+	err := ValidateAgentYAML("missing-required", yaml)
+	assert.Error(t, err, "missing provider and model must fail validation")
+	assert.Contains(t, err.Error(), "provider", "error must mention missing provider")
+	assert.Contains(t, err.Error(), "model", "error must mention missing model")
+}
