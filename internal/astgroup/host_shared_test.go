@@ -30,3 +30,22 @@ func TestGrouper_CloseDoesNotCloseHost(t *testing.T) {
 	_, err := h.Parser("go")
 	require.NoError(t, err, "Grouper.Close must not close the borrowed Host")
 }
+
+// TestGrouper_CloseClosesOwnedHost is the failure-path complement to
+// TestGrouper_CloseDoesNotCloseHost: a Grouper that OWNS its Host (the no-host
+// NewGrouper path sets ownsHost) must close that Host on Close, and Close must
+// stay idempotent. This exercises the ownsHost branch of Grouper.Close, which the
+// borrowed-host test never reaches — closing an owned Host is where Close can
+// surface the underlying runtime's error.
+func TestGrouper_CloseClosesOwnedHost(t *testing.T) {
+	h := NewHost()
+	g := &Grouper{host: h, ownsHost: true}
+
+	require.NoError(t, g.Close(), "closing an owned Grouper must succeed")
+
+	// The owned Host must be closed once its Grouper closes.
+	_, err := h.Parser("go")
+	require.Error(t, err, "Grouper.Close must close the Host it owns")
+
+	require.NoError(t, g.Close(), "a second Close on an owned Grouper must be idempotent")
+}
