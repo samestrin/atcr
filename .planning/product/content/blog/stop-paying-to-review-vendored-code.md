@@ -2,7 +2,7 @@
 
 **Status:** Draft
 **Target:** FinOps, DevOps, Engineering Managers watching an AI bill
-**Publication Phase:** 3 — Enterprise Trust & Security
+**Publication Phase:** 2 — Education & Architecture
 **Grounded in:** Epic 26.0 (`.gitignore` + repo-root `.atcrignore` review-payload exclusion; `--no-ignore`)
 
 ## The Hook
