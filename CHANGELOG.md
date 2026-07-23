@@ -1,3 +1,14 @@
+## [33.1.0] - 2026-07-23
+
+Launch content strategy: auto-generated a backlog of technical marketing blog outlines from the shipped feature set. Each outline is grounded in a real CHANGELOG entry (no vaporware) and slotted into the existing Awareness → Education → Enterprise Trust publication schedule.
+
+### Added
+
+- 10 net-new technical blog post outlines in `.planning/product/content/blog/`, each grounded in a shipped feature: the benchmark leaderboard (epics 10.x), deterministic finding dedup via AST-isomorphism + Kuhn-Munkres + DBSCAN (13.1/13.2), the community persona registry + `personas submit` (19.6/19.9), `--auto-fix` detection-to-PR (17.0), won't-fix/false-positive dismissal (24.0), live model resolution (19.7), the local Ollama zero-egress persona pack (27.0), the append-only audit ledger + sharded findings history (19.1/19.4), SARIF 2.1.0 output (25.0), and `.atcrignore` review-payload exclusion (26.0).
+- Extended `.planning/product/content/blog/README.md`'s publication schedule (Phase 2 Education, Phase 3 Enterprise Trust) with all 10 new outlines and their target audiences.
+
+*Shipped via /execute-epic (epic 33.1)*
+
 ## [33.0.0] - 2026-07-22
 
 Final pre-launch code review and documentation sweep: dogfooded atcr's own multi-agent reviewer against its production codebase, triaged and resolved all findings, and audited README/docs/CLI help for accuracy ahead of the repository going public.
