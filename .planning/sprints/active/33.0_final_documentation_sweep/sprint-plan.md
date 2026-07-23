@@ -561,7 +561,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 **Duration:** 1 day | **Items:** Task 6
 
-### 4.1 [ ] **🔧 Task 06: Website Compatibility Check — Validate `docs/` for Clean, Self-Contained `atcr.dev` Import**
+### 4.1 [x] **🔧 Task 06: Website Compatibility Check — Validate `docs/` for Clean, Self-Contained `atcr.dev` Import** — 29 files validated; 6 broken relative links fixed (archived sprint 19.7 `active/`→`completed/`: `personas-install.md` ×4, `personas-authoring.md` ×2); zero leading-`/` repo-root paths; all `../` cross-repo links intentional and resolving; code fences balanced + heading hierarchy clean (0 skips); index complete both directions (28=28, 0 orphans, 0 dups); two `http://localhost` config examples untouched. AC5 satisfied.
    **Task:** Validate all 29 `docs/` files are link-correct, self-contained, and cleanly formatted for `atcr.dev` import, run only after Tasks 4/5 have landed.
    **Priority:** P2 | **Effort:** S
    1. Confirm Task 4 and Task 5 are merged before starting.
@@ -575,8 +575,16 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    **Success Criteria:** (see [task-06](plan/tasks/task-06-website-compatibility-check.md))
    **Files:** `docs/README.md`, `docs/*.md` (remaining 28) | **Duration:** 1 day
 
-### 4.1.A [ ] **Adversarial Review (subagent): Task 6**
-   **Changed Files:** [LIST files edited in 4.1]
+### 4.1.A [x] **Adversarial Review (subagent): Task 6** — ✅ Passed (no CRITICAL/HIGH); 1 MEDIUM self-containment finding routed to TD-004
+   **Changed Files:** `docs/personas-install.md`, `docs/personas-authoring.md`
+
+   **Subagent findings (fresh context, independently re-ran full link sweep of all 29 docs + `git diff`, 2026-07-22):** LINK INTEGRITY ✅ (209 links / 177 relative-file links, 0 broken, 0 leading-slash). SCOPE ✅ (`git diff` shows ONLY the 6 `active/`→`completed/` path fixes — zero content/persona-naming bleed). FALSE FLAG ✅ (both `http://localhost` examples at `personas-install.md:331`, `providers.md:21` untouched). Raised MEDIUM + LOW that ~30 `../`-escaping links (the 6 `.planning/` refs + ~24 to `README/skill/examples/internal/.github/CHANGELOG/reconcile`) won't survive a standalone `atcr.dev` docs-only import.
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | MEDIUM | personas-install.md:225,231; personas-authoring.md:240 | 6 fixed links resolve on disk but point via `../` into internal `.planning/` planning artifacts — dead once `docs/` imported standalone into `atcr.dev`; reference non-public material | Website-import step rewrites/prunes; on-disk-in-atcr correct → **TD-004** |
+   | LOW | release-process.md, registry.md, skill-usage.md, external-migration.md, scorecard.md, logging.md, ci-integration.md, hermes-maintenance-agents.md, payload-modes.md | ~24 further `../` links escape docs/ to repo internals; resolve in atcr, break under standalone import; pre-existing | Website-import owner confirms link rewrite/prune → **TD-004** |
+
+   **Disposition:** No CRITICAL/HIGH. The `../` cross-repo links are the category Task 06 explicitly classifies as INTENTIONAL (task-06 step 3b + Risk Mitigation; `docs/README.md` states the website build consumes the index and handles these separately) — so the LOW is accepted-by-design, and the MEDIUM's remediation (rewriting/pruning links) is a content/website-build decision out of Task 06's link-integrity scope. Both consolidated into **TD-004** (website-import self-containment) per the 4.1.A MEDIUM/LOW→TD rule, rather than an out-of-scope content edit. Proceed.
 
    **Spawn a fresh subagent** via the Agent tool. No memory of Task 6's implementation.
 
@@ -604,19 +612,22 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 4.2 [ ] **Phase 4 DoD Check**
-   1. All 29 `docs/` files indexed with zero orphans in either direction.
-   2. Zero broken relative links across all 29 files.
-   3. Zero repo-root-relative link paths remain (excluding the two known legitimate `http://localhost` examples).
+### 4.2 [x] **Phase 4 DoD Check**
+   1. ✅ All 29 `docs/` files indexed with zero orphans in either direction (28 indexed = 28 on disk excluding the `README.md` index itself; 0 dead index links, 0 duplicates).
+   2. ✅ Zero broken relative links across all 29 files (independent re-sweep after fix; 6 archived-sprint links repaired).
+   3. ✅ Zero repo-root-relative (leading `/`) link paths remain; the two known `http://localhost` config examples untouched.
    **Report:**
    ```
    Phase-4 DoD Complete
-   Auto: {X}/5 | Task-Specific: {Y}/3
-   Manual Review: [ ] Code reviewed
+   Auto: 5/5 (test/vet/lint/build green from Phase 3 — zero production .go changed this phase; coverage N/A — docs-only) | Task-Specific: 3/3
+   Manual Review: [ ] Code reviewed  (→ /execute-code-review)
    ```
 
-### 4.3 [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
-   **Scope:** All files changed during Phase 4 (`docs/README.md`, any `docs/*.md` link fixes)
+### 4.3 [x] **Phase 4 - GATE: Integration & Exit Review (subagent)** — ✅ Phase gate passed (0 findings)
+
+   **Gate result (fresh hostile-integrator subagent, 2026-07-22):** CONTRACT EXIT ✅ (all in-`docs/` relative links resolve; the only external dependency is the accepted `../` cross-repo category, documented + captured in TD-004 — nothing outside that category left uncaptured). CONFIG SURFACE ✅ (N/A). INTEGRATION ✅ (`docs/` is in a stable finalized state for Phase 5 AC5 validation). PHASE-EXIT CONTRACT ✅ (all 29 files reachable, zero orphans either direction). REGRESSION ✅ (`git diff` shows only `active/`→`completed/` path-segment changes — zero content/persona-naming regression). No CRITICAL/HIGH/MEDIUM/LOW.
+
+   **Scope:** All files changed during Phase 4 (`docs/personas-install.md`, `docs/personas-authoring.md`, `sprint-plan.md`, `tech-debt-captured.md`)
 
    **Spawn a fresh subagent** via the Agent tool. No memory of Phase 4's implementation.
 
