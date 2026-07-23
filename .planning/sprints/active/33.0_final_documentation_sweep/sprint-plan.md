@@ -111,6 +111,20 @@ This is a **Technical Debt** plan (task-based, not user-story/TDD-element based)
 **Technical Approach:**
 - `atcr` builds green; `golangci-lint` at `/opt/homebrew/bin`; provider keys configured (validated in Phase 1). Task 4/Task 5 both edit shared files (`README.md`, `skill/SKILL.md`) — Phase 3 gate (3.5) checks for non-conflicting overlap.
 
+### Phase 5 Clarifications (recorded 2026-07-22)
+
+**Key Decisions:**
+- **Verification-only:** Task 08 re-runs every automated guard fresh against the final Tasks 1-7 state; any guard failure is recorded as a blocking finding and stops the sprint — no inline patching (task-08 step 7).
+- **Guard set:** `go test ./personas/... ./internal/personas/...` (AC3), `go vet ./...`, `golangci-lint run`, `go test -race ./...`, `(cd reconcile && go test ./...)`. `golangci-lint` at `/opt/homebrew/bin` — never silently skip.
+- **AC evidence:** Walk AC1-AC5 explicitly, citing a concrete evidence source (task record, file, or command output) for each; write a guard-by-guard + AC-by-AC pass/fail summary as the authoritative drift-analysis evidence.
+
+**Scope Boundaries:**
+- IN scope: fresh guard re-run, AC1-AC5 evidence walk, pass/fail summary, 5.1.A adversarial re-check, 5.2 DoD, 5.3 phase gate.
+- NOT in scope: new fixes, git-history secret remediation, the `atcr.dev` website repo, Epic 33.1/33.2 launch content.
+
+**Technical Approach:**
+- Phases 1-4 established ZERO production `.go` changes and green guards at each gate; Phase 5 re-confirms fresh against the current tree. `git status` checked first to avoid running against sibling-session uncommitted work.
+
 ---
 
 ## Sprint Conventions
@@ -663,7 +677,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 **Duration:** 1 day | **Items:** Task 8
 
-### 5.1 [ ] **🔧 Task 08: Final Verification Pass — Re-run Automated Guards End-to-End (Plan Definition-of-Done Gate)**
+### 5.1 [x] **🔧 Task 08: Final Verification Pass — Re-run Automated Guards End-to-End (Plan Definition-of-Done Gate)** — 5/5 guards green (persona/AC3 `ok`, `go vet` clean, `golangci-lint` 0 issues, `go test -race ./...` exit 0 zero races, reconcile submodule `ok`); AC1-AC5 all satisfied with cited evidence; zero production `.go` changed sprint-wide (`git diff main...HEAD -- '*.go'` empty). Summary: `code-review/final-verification-summary.md`. No blocking findings.
    **Task:** Re-run every automated guard fresh against the final Tasks 1-7 state, then explicitly walk AC1-AC5.
    **Priority:** P1 | **Effort:** S
    1. Confirm the working tree reflects the final state of Tasks 1-7.
@@ -678,8 +692,14 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    **Success Criteria:** (see [task-08](plan/tasks/task-08-final-verification-pass.md))
    **Files:** None (verification-only; any regression found is a new finding, not a fix) | **Duration:** 0.5 day
 
-### 5.1.A [ ] **Adversarial Review (subagent): Task 8**
-   **Changed Files:** None (verification-only task — review the verification record itself)
+### 5.1.A [x] **Adversarial Review (subagent): Task 8** — ✅ Passed (0 findings)
+
+   **Subagent findings (fresh context, independently re-ran all guards — 2026-07-22):** FRESHNESS ✅ (subagent re-ran every guard itself, did not trust the summary): root `go test -race ./...` exit 0 (no FAIL/panic/DATA RACE); `reconcile` submodule (separate go.mod) exit 0, both packages `ok` — actually run, not just root suite; persona/AC3 gate exit 0 (`TestNoRetiredSlugs`). SILENT SKIP ✅ (`golangci-lint` v2.12.2 at `/opt/homebrew/bin`, ran fresh → `0 issues`, exit 0 — NOT skipped). AC EVIDENCE ✅ (all cited artifacts exist: `findings.txt` = header + 25 rows matching "25 findings"; the two HIGH rows it cites — `open_other.go` symlink, `atomicwrite_test.go` — are exactly the ones triage re-classified; TD README has the 33.0 section at line 67 and TD-004 at line 123). SUBMODULE COVERAGE ✅. `git diff main...HEAD -- '*.go'` empty (zero production Go changed sprint-wide).
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | _(none)_ | | | |
+
+   **Result:** ✅ Adversarial review passed (no CRITICAL/HIGH/MEDIUM/LOW). Proceed.
 
    **Spawn a fresh subagent** via the Agent tool. No memory of Task 8's implementation.
 
@@ -707,19 +727,25 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
    - None found -> Note "Adversarial review passed" and proceed
 
-### 5.2 [ ] **Phase 5 DoD Check**
-   1. All 5 guards (persona/AC3, `go vet`, `golangci-lint`, `go test -race ./...`, `reconcile` submodule) pass with zero failures.
-   2. AC1-AC5 each explicitly confirmed with a cited evidence source.
-   3. Guard-by-guard and AC-by-AC pass/fail summary recorded.
+### 5.2 [x] **Phase 5 DoD Check**
+   1. ✅ All 5 guards pass with zero failures: persona/AC3 (`ok`), `go vet ./...` (clean), `golangci-lint run` (0 issues), `go test -race ./...` (exit 0, zero races), `(cd reconcile && go test ./...)` (exit 0). Independently re-verified by 5.1.A subagent.
+   2. ✅ AC1-AC5 each explicitly confirmed with a cited evidence source (see `code-review/final-verification-summary.md` AC-by-AC table).
+   3. ✅ Guard-by-guard and AC-by-AC pass/fail summary recorded at `code-review/final-verification-summary.md`.
    **Report:**
    ```
    Phase-5 DoD Complete
-   Auto: {X}/5 | Task-Specific: {Y}/3
-   Manual Review: [ ] Code reviewed
+   Auto: 5/5 (persona/vet/golangci-lint[0 issues]/race/reconcile green; coverage+docs N/A — verification-only phase, zero production .go changed) | Task-Specific: 3/3
+   Manual Review: [ ] Code reviewed  (→ /execute-code-review)
    ```
 
-### 5.3 [ ] **Phase 5 - GATE: Integration & Exit Review (subagent)**
+### 5.3 [x] **Phase 5 - GATE: Integration & Exit Review (subagent)** — ✅ Phase gate passed (0 findings)
+
+   **Gate result (fresh hostile-integrator subagent, 2026-07-22):** CONTRACT EXIT ✅ (all AC1-AC5 cited evidence artifacts verified to exist on disk — dogfood `findings.txt`, adversarial/triage files, `retired_slugs_test.go`, TD-004). CONFIG SURFACE ✅ (`config set <telemetry|quality_signal>` matches the code allowlist; every changed CLI-doc claim verified against the freshly-built binary — `report --format md,json,checklist,sarif,axi`, `quickstart --offline`, `quality-report` all present). INTEGRATION ✅ (no stale persona slugs as identifiers in changed docs; 6 archived-sprint link fixes `active/19.7`→`completed/19.7` all resolve; TD README new section exactly 23 rows, header math consistent Total 139=116+23 / Open 24=1+23, all rows captured-not-fixed consistent with zero-code-change posture). PHASE-EXIT CONTRACT ✅ (repo ready for Epic 33.1/33.2). REGRESSION ✅ (`git diff main...HEAD -- '*.go'` empty; `go test -race ./...` exit 0; reconcile submodule exit 0; `TestNoRetiredSlugs` green; `go vet` clean). No CRITICAL/HIGH/MEDIUM/LOW.
+
    **Scope:** The entire sprint's cumulative diff (Tasks 1-8)
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | _(none)_ | | | |
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the sprint's implementation.
 
@@ -754,10 +780,10 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 ## Final Phase: Validation
 
 ### Validation Checklist
-- [ ] All tests passing (T3): `go test -race ./...`, `(cd reconcile && go test ./...)`
-- [ ] Coverage meets threshold: `go test -coverprofile=coverage.out ./...` (≥80%)
-- [ ] Lint/format clean: `golangci-lint run`, `go vet ./...`
-- [ ] Build succeeds
+- [x] All tests passing (T3): `go test -race ./...` (exit 0, zero races), `(cd reconcile && go test ./...)` (exit 0)
+- [x] Coverage meets threshold: `go test -coverprofile=coverage.out ./...` → **89.3%** (≥80%)
+- [x] Lint/format clean: `golangci-lint run` (0 issues), `go vet ./...` (clean)
+- [x] Build succeeds: `go build ./...` (exit 0)
 
 ### Optional: Targeted Mutation Testing
 No mutation testing tool detected in this environment (`stryker-mutator` not in `package.json`; neither `mutmut` nor `cargo-mutants` available on PATH). Skip this step. **WARNING:** Do NOT run full codebase mutation - it can take hours. If a mutation tool becomes available later, target only the specific files fixed in Task 3 (CRITICAL/HIGH remediations), never the full codebase.
