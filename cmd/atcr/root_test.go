@@ -34,7 +34,11 @@ func TestRepoRoot_SymlinkToGitDirIsRejected(t *testing.T) {
 
 	// After the fix (os.Lstat), repoRoot skips the symlink and returns outer.
 	// Before the fix (os.Stat), repoRoot follows the symlink and returns inner.
-	require.Equal(t, outer, got, "repoRoot must skip .git symlink and walk up to the real repo root")
+	// Resolve symlinks in outer to match the path os.Getwd() returns (macOS
+	// symlinks /var to /private/var).
+	expectedOuter, err := filepath.EvalSymlinks(outer)
+	require.NoError(t, err)
+	require.Equal(t, expectedOuter, got, "repoRoot must skip .git symlink and walk up to the real repo root")
 }
 
 func TestRepoRoot_FallbackToCwdWhenNoMarker(t *testing.T) {
