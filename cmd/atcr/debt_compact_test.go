@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,6 +35,21 @@ func TestDebtCompact_NoStoreReportsNoOp(t *testing.T) {
 		"a no-op compaction must be distinguishable from a real fold")
 	assert.NotContains(t, out, "Compacted ",
 		"a no-op must not claim records were folded")
+}
+
+func TestDebtCompact_ErrorPathSurfacesWrappedError(t *testing.T) {
+	// When Compact's underlying localdebt call fails (e.g., the --dir path is
+	// unreachable because a parent component is a file, not a directory), the
+	// command must surface a wrapped error that begins with "compact: " —
+	// matching the fmt.Errorf("compact: %w", err) in runDebtCompact.
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+
+	storePath := filepath.Join(blocker, "store") // unreachable: "blocker" is a file
+	_, err := runDebt(t, "compact", "--dir", storePath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "compact:")
 }
 
 func TestDebtCompact_PerformsCompaction(t *testing.T) {
