@@ -1,9 +1,9 @@
 {
-  "skill": "design-sprint",
-  "args": "@.planning/plans/active/33.0_final_documentation_sweep/",
-  "invocation": "/design-sprint @.planning/plans/active/33.0_final_documentation_sweep/",
+  "skill": "execute-code-review",
+  "args": ".planning/sprints/active/33.0_final_documentation_sweep/ --multi-agent",
+  "invocation": "/execute-code-review .planning/sprints/active/33.0_final_documentation_sweep/ --multi-agent",
   "cwd": "/Users/samestrin/Documents/GitHub/atcr",
   "repo_root": "/Users/samestrin/Documents/GitHub/atcr",
-  "session_id": "ee16795b-99ad-4d5b-8df5-a3c5f78e4f3a",
-  "timestamp": "2026-07-22T22:04:35.102Z"
+  "session_id": "da14b660-dffa-408a-ab05-09c7bf90a90b",
+  "timestamp": "2026-07-23T02:32:19.807Z"
 }

@@ -11,19 +11,19 @@ Merge the two findings streams from Task 1 (`atcr reconcile` / `atcr report <id>
 
 ## Technical Implementation
 ### Steps
-1. Collect Task 1's output (the reconciled `atcr-findings/v1` 9-column stream produced by `atcr reconcile <id>` / rendered via `atcr report <id> --format md`, per `documentation/multi-agent-review-workflow.md`) and Task 2's output (manual adversarial findings at `.planning/plans/active/33.0_final_documentation_sweep/code-review/adversarial-findings.txt`, written in the same reconciled 9-column `atcr-findings/v1` format with `REVIEWERS=adversarial-pass`/`CONFIDENCE=HIGH` per Task 2 Step 7 — so both streams share one column shape and merge by direct concatenation, no format conversion needed). Merge both into one combined findings list, deduplicating any finding both passes independently caught (same `FILE:LINE` ±3 lines and same `PROBLEM` theme).
+1. Collect Task 1's output (the reconciled `atcr-findings/v1` 9-column stream produced by `atcr reconcile <id>` / rendered via `atcr report <id> --format md`, per `documentation/multi-agent-review-workflow.md`) and Task 2's output (manual adversarial findings at `.planning/sprints/active/33.0_final_documentation_sweep/code-review/adversarial-findings.txt`, written in the same reconciled 9-column `atcr-findings/v1` format with `REVIEWERS=adversarial-pass`/`CONFIDENCE=HIGH` per Task 2 Step 7 — so both streams share one column shape and merge by direct concatenation, no format conversion needed). Merge both into one combined findings list, deduplicating any finding both passes independently caught (same `FILE:LINE` ±3 lines and same `PROBLEM` theme).
 2. For each finding, verify/re-classify severity against actual impact rather than accepting the reviewer's raw label at face value: CRITICAL = exploitable security flaw, secret/credential exposure, or data-loss/correctness bug; HIGH = correctness or security bug with narrower blast radius; MEDIUM/LOW = style, minor performance, or non-blocking issues. Record any re-classification and its reasoning in the triage summary (Step 6).
 3. For every CRITICAL/HIGH finding, run the per-item resolution cycle documented in `documentation/technical-debt-triage-resolution.md` and `skill/debt-resolve/SKILL.md`: (0) pre-fix evaluation — confirm the finding still exists and has a clear, safely-scoped fix; (1) RED — write or confirm a failing test (or concrete reproduction) demonstrating the defect in the relevant co-located `*_test.go` file; (2) GREEN — apply the minimal fix in the cited file under `cmd/`, `internal/`, `reconcile/`, or `skill/`; (3) ADVERSARIAL — self-check the diff for test-only changes, weakened/deleted assertions, lint/type suppressions, or stubbed/empty bodies (non-overridable — if flagged, do not mark resolved, escalate for manual review instead); (4) REFACTOR — clean up names/dead scaffolding, re-run the test to confirm still green.
 4. Apply `.planning/specifications/coding-standards.md` to every fix: Go naming conventions, `error` as last return value, no ignored errors, `fmt.Errorf("doing action: %w", err)` wrapping. After each fix (or small batch), run `golangci-lint run` and `go vet ./...` to confirm no new lint/vet violations were introduced.
-5. For every MEDIUM/LOW finding, write it to `.planning/plans/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md` using the 9-column reconciled `atcr-findings/v1` format (`SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWERS|CONFIDENCE`) plus a suggested `GROUP` label per finding (e.g. by directory/category) — this is the handoff artifact Task 7 consumes to shard entries into `.planning/technical-debt/README.md`. Do not write directly into the TD README in this task; that write is Task 7's responsibility.
-6. Write `.planning/plans/active/33.0_final_documentation_sweep/code-review/triage-summary.md` documenting: total findings ingested, counts by final severity, any severity re-classifications with reasoning, the full list of CRITICAL/HIGH findings with the file/commit that fixed each, and the count/location of MEDIUM/LOW findings routed to the Step 5 artifact — this is the evidence trail closing AC1.
+5. For every MEDIUM/LOW finding, write it to `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md` using the 9-column reconciled `atcr-findings/v1` format (`SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWERS|CONFIDENCE`) plus a suggested `GROUP` label per finding (e.g. by directory/category) — this is the handoff artifact Task 7 consumes to shard entries into `.planning/technical-debt/README.md`. Do not write directly into the TD README in this task; that write is Task 7's responsibility.
+6. Write `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triage-summary.md` documenting: total findings ingested, counts by final severity, any severity re-classifications with reasoning, the full list of CRITICAL/HIGH findings with the file/commit that fixed each, and the count/location of MEDIUM/LOW findings routed to the Step 5 artifact — this is the evidence trail closing AC1.
 7. Run the full gate — `go test ./...`, `golangci-lint run`, `go vet ./...` — across the repository as the final check that all CRITICAL/HIGH fixes are complete and introduce no regressions.
 
 ## Files to Create/Modify
 - `cmd/**`, `internal/**`, `reconcile/**`, `skill/**` – fix files cited by CRITICAL/HIGH findings (exact paths determined by Task 1/Task 2 output; not enumerable ahead of the review run)
 - co-located `*_test.go` files for any CRITICAL/HIGH fix requiring a RED reproduction test
-- `.planning/plans/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md` – create (MEDIUM/LOW handoff artifact for Task 7)
-- `.planning/plans/active/33.0_final_documentation_sweep/code-review/triage-summary.md` – create (triage evidence trail for AC1)
+- `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md` – create (MEDIUM/LOW handoff artifact for Task 7)
+- `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triage-summary.md` – create (triage evidence trail for AC1)
 
 ## Documentation Links
 - [Technical Debt Triage & Resolution](../documentation/technical-debt-triage-resolution.md)
@@ -36,9 +36,9 @@ Merge the two findings streams from Task 1 (`atcr reconcile` / `atcr report <id>
 ## Success Criteria
 - [ ] All findings from Task 1 (multi-agent review) and Task 2 (adversarial pass) are merged, deduplicated, and classified by severity, with reviewer-assigned severity independently re-verified against actual impact.
 - [ ] Every CRITICAL and HIGH finding is fixed directly in the codebase (`cmd/`, `internal/`, `reconcile/`, `skill/`) following the RED → GREEN → ADVERSARIAL → REFACTOR cycle, with no item left NEEDS_REVIEW-flagged and unresolved.
-- [ ] Every MEDIUM and LOW finding is recorded in `code-review/triaged-findings-medium-low.md` with file/line, problem, fix, category, severity, and confidence — ready for Task 7 to shard into the TD README.
+- [ ] Every MEDIUM and LOW finding is recorded in `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md` with file/line, problem, fix, category, severity, and confidence — ready for Task 7 to shard into the TD README.
 - [ ] `go test ./...`, `golangci-lint run`, and `go vet ./...` all pass cleanly after all CRITICAL/HIGH fixes are applied.
-- [ ] `code-review/triage-summary.md` documents the full findings count, severity breakdown, and fix evidence, satisfying AC1's "all CRITICAL/HIGH findings are fixed and MEDIUM/LOW are captured as technical debt" clause.
+- [ ] `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triage-summary.md` documents the full findings count, severity breakdown, and fix evidence, satisfying AC1's "all CRITICAL/HIGH findings are fixed and MEDIUM/LOW are captured as technical debt" clause.
 
 ## Manual Code Review
 - [ ] Codebase has been reviewed
@@ -66,6 +66,6 @@ Merge the two findings streams from Task 1 (`atcr reconcile` / `atcr report <id>
 ## Definition of Done
 - All findings from Tasks 1–2 classified by verified severity.
 - Every CRITICAL/HIGH finding fixed in the codebase and passing its RED test, the ADVERSARIAL gate, and the full test/lint/vet suite.
-- Every MEDIUM/LOW finding captured in `code-review/triaged-findings-medium-low.md`, ready for Task 7.
-- `code-review/triage-summary.md` written as AC1 evidence.
+- Every MEDIUM/LOW finding captured in `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triaged-findings-medium-low.md`, ready for Task 7.
+- `.planning/sprints/active/33.0_final_documentation_sweep/code-review/triage-summary.md` written as AC1 evidence.
 - `go test ./...`, `golangci-lint run`, `go vet ./...` all pass with zero new failures.
