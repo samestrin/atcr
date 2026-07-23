@@ -22,7 +22,7 @@ The hard part is making that measurement reproducible. A benchmark you can't re-
 ATCR ships benchmarking as a first-class command, not a spreadsheet you maintain by hand.
 
 - **`atcr benchmark run --suite-path <dir>`** executes a suite of diffs — each with a planted defect and its `expected_categories` — straight through the real review pipeline, then scores every reviewer's findings against what it was supposed to catch.
-- The scorecard reports metrics that map to real trust, not raw volume: **`corroboration_rate`** (do other models agree with this reviewer?), **`survived_skeptic_rate`** (did the finding survive adversarial verification?), **`cost_per_corroborated_finding_usd`** (what did each *useful* finding actually cost?), and **`latency_p50_ms`**.
+- The scorecard reports metrics that map to real trust, not raw volume: **`corroboration_rate`** (do other models agree with this reviewer?), **`cost_per_corroborated_finding_usd`** (what did each *useful* finding actually cost?), and **`latency_p50_ms`**.
 - **`atcr benchmark verify`** prints a content-based reproducibility hash for the suite, so a run is provably the same suite every time.
 - **`atcr benchmark run --checkpoint <path>`** durably records each case's scored outcome before the next case starts. A transient failure halfway through a suite no longer forfeits the completed, already-paid-for work — re-running resumes from the first unscored case with *zero* additional LLM cost, and produces a byte-identical result to an uninterrupted run.
 
