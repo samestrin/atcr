@@ -70,3 +70,75 @@ jobs:
           # Default workflow token -- no new secret introduced. Sufficient for
           # publishing a Release to this same repository.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # After the public release publishes, notify the private atcr-enterprise repo so
+  # its unified-release workflow bumps its atcr dependency to this tag and ships a
+  # matching enterprise binary (Sprint 34.0 Task 05).
+  #
+  # Cross-repo auth is a GitHub App installed ONLY on atcr-enterprise, minting a
+  # short-lived, auto-rotating installation token here — no long-lived PAT to
+  # expire or rotate. Firing a repository_dispatch requires the App's Contents:
+  # write permission on the target repo (the endpoint's requirement; there is no
+  # narrower dispatch-only permission), so compromise of this public repo's App
+  # secrets is code-write-equivalent on the private repo — the App is installed on
+  # the single repo (repositories: atcr-enterprise) and these secrets must be
+  # treated as private-repo-write-sensitive. The job degrades to a no-op (never
+  # failing the release) if the App secrets are absent.
+  notify-enterprise:
+    name: Notify enterprise repo
+    needs: release
+    runs-on: [self-hosted, gauntlet]
+    permissions: {} # uses the App token, not GITHUB_TOKEN; needs no repo scope
+    env:
+      HAS_APP: ${{ secrets.ENTERPRISE_APP_ID != '' && secrets.ENTERPRISE_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Mint scoped token for atcr-enterprise
+        id: app-token
+        if: env.HAS_APP == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ENTERPRISE_APP_ID }}
+          private-key: ${{ secrets.ENTERPRISE_APP_PRIVATE_KEY }}
+          owner: samestrin
+          repositories: atcr-enterprise
+
+      - name: Fire repository_dispatch (atcr-released)
+        if: env.HAS_APP == 'true'
+        # curl (not gh) so the step needs no external CLI on the runner.
+        # SECURITY: the ref is validated and passed via env (never spliced into the
+        # shell body), and the App token is fed to curl over stdin (-H @-) so it
+        # never appears in the process argv on the self-hosted runner.
+        # --fail-with-body makes a non-2xx response exit non-zero -> failure().
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          REF: ${{ github.ref_name }}
+        run: |
+          case "$REF" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::unexpected ref_name for a release dispatch"; exit 1 ;;
+          esac
+          printf '{"event_type":"atcr-released","client_payload":{"tag":"%s"}}' "$REF" > payload.json
+          printf 'Authorization: Bearer %s\n' "$APP_TOKEN" | \
+            curl -sS --fail-with-body -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -H @- \
+              --data @payload.json \
+              https://api.github.com/repos/samestrin/atcr-enterprise/dispatches
+
+      - name: Skipped (App not configured)
+        if: env.HAS_APP != 'true'
+        run: echo "::notice::ENTERPRISE_APP_ID / ENTERPRISE_APP_PRIVATE_KEY not set — skipping enterprise dispatch (public release unaffected)."
+
+      - name: Telegram alert on failure
+        if: failure()
+        continue-on-error: true # a notification failure must not fail the run
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REF: ${{ github.ref_name }}
+        run: |
+          [ -n "$TG_TOKEN" ] || { echo "TELEGRAM_BOT_TOKEN unset; skipping alert"; exit 0; }
+          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TG_CHAT}" \
+            --data-urlencode "text=🚨 enterprise dispatch FAILED after atcr ${REF} release (run ${GITHUB_RUN_ID})." >/dev/null || true
