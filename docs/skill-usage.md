@@ -6,7 +6,7 @@ The skill is [`skill/SKILL.md`](../skill/SKILL.md) — a `/atcr <command>` dispa
 
 ## Prerequisites
 
-- The `atcr` binary on your `PATH` (`go build -o atcr ./cmd/atcr`, then move it onto `PATH`).
+- The `atcr` binary on your `PATH` — `go install github.com/samestrin/atcr/cmd/atcr@latest` (Go 1.25+), or build from source (`go build -o atcr ./cmd/atcr`), then move it onto `PATH`.
 - A configured registry (`~/.config/atcr/registry.yaml`) and project config (`.atcr/config.yaml`) — run `atcr init` to scaffold both. Even with a single pool agent (or none), the host review provides a second source.
 - For PR-reference input only: the `gh` CLI, authenticated (`gh auth status`).
 

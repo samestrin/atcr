@@ -11,6 +11,10 @@ This page documents the contract that backend integration relies on: the
 invocation, the output tree, the consumable findings formats, and the
 behavioral notes a caller must account for.
 
+## Installing atcr
+
+The caller needs the `atcr` binary on `PATH` before invoking either command below: `go install github.com/samestrin/atcr/cmd/atcr@latest` (Go 1.25+), or build from source (`go build -o atcr ./cmd/atcr`) for a pinned CI toolchain.
+
 ## Invocation
 
 Two commands, run from the repository under review (so atcr can validate each
