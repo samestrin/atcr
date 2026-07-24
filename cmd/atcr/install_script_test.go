@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -202,4 +203,30 @@ func scrubEnv(env []string, keys ...string) []string {
 		}
 	}
 	return out
+}
+
+// TestScrubEnv covers scrubEnv directly (it was previously exercised only
+// indirectly through test helpers): empty input, single key, multiple keys,
+// no-match, and the KEY= prefix boundary (GOPATHX must survive a GOPATH scrub).
+func TestScrubEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		env  []string
+		keys []string
+		want []string
+	}{
+		{"empty input", nil, []string{"GOPATH"}, nil},
+		{"single key scrubbed", []string{"GOPATH=/x", "HOME=/h"}, []string{"GOPATH"}, []string{"HOME=/h"}},
+		{"multiple keys scrubbed", []string{"GOPATH=/x", "GOBIN=/b", "HOME=/h"}, []string{"GOPATH", "GOBIN"}, []string{"HOME=/h"}},
+		{"no match keeps everything", []string{"HOME=/h", "PATH=/p"}, []string{"GOPATH"}, []string{"HOME=/h", "PATH=/p"}},
+		{"prefix-similar key not scrubbed", []string{"GOPATHX=/x", "GOPATH=/g"}, []string{"GOPATH"}, []string{"GOPATHX=/x"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := scrubEnv(tc.env, tc.keys...)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("scrubEnv(%v, %v) = %v, want %v", tc.env, tc.keys, got, tc.want)
+			}
+		})
+	}
 }
