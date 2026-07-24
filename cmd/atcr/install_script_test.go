@@ -22,12 +22,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // exact stderr line install.sh must print when the Go toolchain is absent.
@@ -78,6 +80,20 @@ func installScriptPath(t *testing.T) string {
 	return p
 }
 
+// goModCache resolves the shared module cache path. The subprocess is bounded
+// with a timeout: `go env` is local and fast, but an unbounded exec.Command
+// could block the test indefinitely in a broken toolchain environment.
+func goModCache(t *testing.T) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "go", "env", "GOMODCACHE").Output()
+	if err != nil {
+		t.Fatalf("resolving GOMODCACHE: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // TestInstallScriptExists confirms install.sh is present and executable.
 func TestInstallScriptExists(t *testing.T) {
 	p := installScriptPath(t)
@@ -102,10 +118,7 @@ func TestInstallScriptRealInstall(t *testing.T) {
 
 	// Share the real module cache so t.TempDir() cleanup never fights Go's
 	// read-only module cache under a temp GOPATH.
-	modCache, err := exec.Command("go", "env", "GOMODCACHE").Output()
-	if err != nil {
-		t.Fatalf("resolving GOMODCACHE: %v", err)
-	}
+	modCache := goModCache(t)
 
 	tmp := t.TempDir()
 	gopath := filepath.Join(tmp, "gopath")
@@ -116,7 +129,7 @@ func TestInstallScriptRealInstall(t *testing.T) {
 	// that deliberately excludes GOPATH/bin so the non-fatal warning path is exercised.
 	cmd.Env = append(scrubEnv(os.Environ(), "GOPATH", "GOBIN", "GOMODCACHE"),
 		"GOPATH="+gopath,
-		"GOMODCACHE="+strings.TrimSpace(string(modCache)),
+		"GOMODCACHE="+modCache,
 	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
