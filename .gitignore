@@ -12,6 +12,13 @@ dist/
 *.so
 *.dylib
 
+# Go workspace (local-only, never committed)
+# `go install` ignores go.work entirely, so a committed one would only affect local
+# builds and CI checkouts inconsistently. Kept local to preserve in-tree co-development
+# of the root module and ./reconcile after the replace directive is dropped (Sprint 33.2).
+go.work
+go.work.sum
+
 # Test and Coverage Artifacts
 *.out
 *.cover
