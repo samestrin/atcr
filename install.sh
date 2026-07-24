@@ -31,10 +31,10 @@ fi
 # 2. Install the latest published atcr binary (real, unsuppressed exit code + stderr).
 go install github.com/samestrin/atcr/cmd/atcr@latest
 
-# 3. Success guidance.
-echo "atcr installed. Next: run 'atcr doctor' to verify your setup, or 'atcr version'."
-
-# 4. Non-fatal PATH containment check — exact colon-delimited segment match, never substring.
+# 3. Non-fatal PATH containment check — exact colon-delimited segment match, never
+#    substring. Computed BEFORE the success guidance so "run atcr doctor" is only
+#    advised once PATH actually contains the install dir; otherwise the user is first
+#    shown how to fix PATH rather than told to run a command that is not yet callable.
 gobin="$(go env GOPATH)/bin"
 on_path=0
 # ${PATH:-} guards `set -u`: a stripped environment with PATH unset must not abort
@@ -44,6 +44,12 @@ IFS=':' read -ra segments <<<"${PATH:-}"
 for seg in "${segments[@]}"; do
   if [ "$seg" = "$gobin" ]; then on_path=1; break; fi
 done
+
+# 4. Success guidance — tailored to PATH status.
+echo "atcr installed."
 if [ "$on_path" -eq 0 ]; then
   echo "warning: $gobin is not on your PATH. Add it with: export PATH=\"$gobin:\$PATH\"" >&2
+  echo "Once it is on your PATH, run 'atcr doctor' to verify your setup, or 'atcr version'." >&2
+else
+  echo "Next: run 'atcr doctor' to verify your setup, or 'atcr version'."
 fi
