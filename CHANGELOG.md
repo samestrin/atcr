@@ -1,3 +1,23 @@
+## [33.2.0] - 2026-07-24
+
+Public launch: flipped the `atcr` repository from private to public and made `go install github.com/samestrin/atcr/cmd/atcr@latest` genuinely work for external developers, with the `reconcile` module published as a real versioned dependency and the finalized docs launched on atcr.dev.
+
+### Added
+
+- `install.sh`, a thin Go-toolchain-aware installer wrapper for `go install github.com/samestrin/atcr/cmd/atcr@latest`, with a real (unstubbed) integration test and a documented README Quickstart step.
+
+### Changed
+
+- Documented `go install` as the primary installation path in `docs/skill-usage.md` and `docs/code-review-backend.md`, and added a `git worktree` Pro-Tip to the README.
+- Hardened `install.sh`'s PATH detection to honor `GOBIN`, correctly segment a colon-delimited `GOPATH`, and normalize trailing slashes when comparing PATH segments.
+- Enforced the documented Go 1.25+ minimum toolchain version during `install.sh` preflight.
+
+### Fixed
+
+- Broadened `.gitignore`'s `.env` rule to `.env*` so all secret-file variants are excluded.
+
+*Shipped via /execute-sprint (sprint 33.2)*
+
 ## [33.1.0] - 2026-07-23
 
 Launch content strategy: auto-generated a backlog of technical marketing blog outlines from the shipped feature set. Each outline is grounded in a real CHANGELOG entry (no vaporware) and slotted into the existing Awareness → Education → Enterprise Trust publication schedule.

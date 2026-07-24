@@ -40,6 +40,8 @@ The deterministic Go reconciler — cluster → dedupe → merge → confidence 
 ```bash
 # 1. Install (Go 1.25+)
 go install github.com/samestrin/atcr/cmd/atcr@latest
+# ...or, from a clone, run the wrapper (same go install, plus a Go preflight + PATH check):
+./install.sh
 
 # 2. One-command onboarding: scaffold .atcr/ + set up the Synthetic provider
 atcr quickstart
@@ -236,5 +238,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 | Coverage | `go test -coverprofile=coverage.out ./...` |
 | Lint | `golangci-lint run` |
 | Vet | `go vet ./...` |
+
+> **Pro-Tip:** Use `git worktree` to work on multiple branches without disturbing your main checkout — e.g. `git worktree add ../atcr-feature-x feature-x` checks out `feature-x` into a sibling directory you can build/test in isolation, then `git worktree remove ../atcr-feature-x` cleans it up when done.
 
 Go 1.25+. Three direct dependencies: `spf13/cobra`, `gopkg.in/yaml.v3`, `modelcontextprotocol/go-sdk`.
