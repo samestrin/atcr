@@ -35,7 +35,12 @@ go install github.com/samestrin/atcr/cmd/atcr@latest
 #    substring. Computed BEFORE the success guidance so "run atcr doctor" is only
 #    advised once PATH actually contains the install dir; otherwise the user is first
 #    shown how to fix PATH rather than told to run a command that is not yet callable.
-gobin="$(go env GOPATH)/bin"
+# Resolve the real install target: GOBIN wins when set (that is where `go install`
+# writes the binary); otherwise fall back to GOPATH/bin.
+gobin="$(go env GOBIN)"
+if [ -z "$gobin" ]; then
+  gobin="$(go env GOPATH)/bin"
+fi
 on_path=0
 # ${PATH:-} guards `set -u`: a stripped environment with PATH unset must not abort
 # the colon-split. Empty segments (e.g. a trailing colon) never equal a non-empty
