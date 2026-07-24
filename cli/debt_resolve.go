@@ -21,7 +21,7 @@ import (
 var defaultDebtResolveDir = localdebt.DefaultDir(".")
 
 // resolveSeverities is the validated --severity enum, matching the set used
-// elsewhere in cmd/atcr/debt.go.
+// elsewhere in cli/debt.go.
 var resolveSeverities = map[string]bool{"CRITICAL": true, "HIGH": true, "MEDIUM": true, "LOW": true}
 
 // resolveStatuses is the validated --status enum for a mark action. Both values are
