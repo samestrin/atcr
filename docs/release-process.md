@@ -135,3 +135,57 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
    `goreleaser release --clean` and publishes the GitHub Release automatically —
    no further manual step is required. Watch the workflow run to confirm it
    succeeds.
+
+## Cutting a Reconcile Module Release
+
+The nested `./reconcile` module (extracted in Epic 8.0) is released in its own
+`reconcile/vX.Y.Z` tag namespace — **disjoint** from the app's bare `vX.Y.Z`
+namespace described above (a tag can never match both `v*` and `reconcile/v*`).
+For the app release, see [Cutting a Release](#cutting-a-release).
+
+Unlike the app release, there is **no goreleaser / GitHub Release step** for the
+module: the tag push plus its CI gate *is* the entire release. The tag makes the
+module fetchable through the public Go proxy; consuming code pins it via a normal
+`require github.com/samestrin/atcr/reconcile vX.Y.Z` in the root `go.mod`.
+
+**Precondition — the repository must be public.** `proxy.golang.org` returns 404
+for a private module, so `go install`/`go mod download` cannot resolve
+`github.com/samestrin/atcr/reconcile` until the repo is public (see Sprint 33.2 /
+TD-002). Do not cut a module tag against a private repo.
+
+1. **Confirm the module builds clean and `reconcile/go.mod` is unchanged.** From
+   an up-to-date `main`:
+
+   ```sh
+   ( cd reconcile && go build ./... && go test ./... )
+   ```
+
+   The tagged content is the `reconcile/` subtree at the tagged commit; verify it
+   is the intended state before tagging.
+
+2. **Cut the module tag.** From the commit whose `reconcile/` subtree you are
+   publishing:
+
+   ```sh
+   git tag reconcile/v0.1.1
+   git push origin reconcile/v0.1.1
+   ```
+
+   Substitute the actual version. Push **only** that single tag by name — do
+   _not_ use `git push --tags`, which would also push every app `v*` tag and fire
+   the app release workflow.
+
+3. **Let the module CI gate run.** The `reconcile/v*` tag push fires
+   [`reconcile-module.yml`](../.github/workflows/reconcile-module.yml) on the
+   `[self-hosted, gauntlet]` runner (`gofmt`, `golangci-lint`, `go test -race`
+   inside `./reconcile`). Confirm it is green with no `could not read Username`
+   or other module-fetch/auth error. That green run is the module release —
+   there is no further publish step.
+
+4. **(When bumping the consumed version) pin the new version in the root module.**
+   Update `require github.com/samestrin/atcr/reconcile vX.Y.Z` in the root
+   `go.mod`, run `go mod tidy` so `go.sum` records the real `h1:` hashes from the
+   proxy, and land the change through a normal PR to `main` (never a direct
+   push). The root [Go CI](../.github/workflows/ci.yml) run on that PR verifies
+   the whole repo builds against the real tagged module rather than a local
+   `replace`.
