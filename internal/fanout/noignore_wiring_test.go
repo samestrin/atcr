@@ -133,7 +133,7 @@ func TestPrepareReview_NoIgnoreWiring(t *testing.T) {
 	})
 }
 
-// TD cmd/atcr/resume.go:104 — NoIgnore is persisted in the manifest and recovered
+// TD cli/resume.go:104 — NoIgnore is persisted in the manifest and recovered
 // by PrepareResume from on-disk state, mirroring how scope is locked to the
 // original run. A resume request that does NOT set NoIgnore must still see the
 // ignored file, because the value comes from the manifest, not the resume request.

@@ -81,7 +81,7 @@
 // # Call-site scope
 //
 // The reconcile persistence hook (persistLocalDebt) is currently invoked only
-// from the CLI `atcr reconcile` path (cmd/atcr/reconcile.go). The MCP
+// from the CLI `atcr reconcile` path (cli/reconcile.go). The MCP
 // `atcr_reconcile` handler intentionally does NOT persist to this store today,
 // because the server operates on review artifact directories rather than a
 // checked-out repo root and lacks the resolved repo-root guard the hook needs.

@@ -13,7 +13,7 @@ import (
 // internal/scorecard/docs_test.go it is a doc-presence/content test: it verifies
 // required facts are present as literal substrings, not prose quality. The store
 // path, flag name, rotation shard, and cycle-stage names are checked against the
-// landed behavior in cmd/atcr/debt_resolve.go, cmd/atcr/reconcile.go, and
+// landed behavior in cli/debt_resolve.go, cli/reconcile.go, and
 // skill/debt-resolve/SKILL.md so the doc cannot silently drift from the code.
 func TestDocs_SkillUsageDocumentsDebtResolve(t *testing.T) {
 	root := repoRoot(t)

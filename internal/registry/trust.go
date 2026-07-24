@@ -218,7 +218,7 @@ func (e *untrustedProviderError) Unwrap() error { return ErrUntrustedProvider }
 //
 // userRegDir is the directory containing the user-level registry.yaml. The
 // trust store MUST live beside it (never under the project root) so that the
-// (registry path, trust store path) pairing cannot drift — see cmd/atcr/trust.go
+// (registry path, trust store path) pairing cannot drift — see cli/trust.go
 // which resolves the same pair independently.
 func (r *Registry) enforceProjectTrust(userRegDir string) error {
 	refs := r.projectProviders()

@@ -13,7 +13,7 @@ import (
 )
 
 // openRec builds an open (no-status) local-debt record with a stable id, mirroring
-// what the reconcile persistence hook writes (cmd/atcr/reconcile.go:181-196).
+// what the reconcile persistence hook writes (cli/reconcile.go:181-196).
 func openRec(runID, sev, file string, line int, problem string) localdebt.Record {
 	r := localdebt.Record{
 		SchemaVersion: localdebt.SchemaVersion,

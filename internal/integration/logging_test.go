@@ -104,7 +104,7 @@ func reviewReq(repo, base, head string) fanout.ReviewRequest {
 	}
 }
 
-// runCorrelatedReview drives a full review exactly as cmd/atcr/review.go does:
+// runCorrelatedReview drives a full review exactly as cli/review.go does:
 // it constructs the root logger over buf, runs PrepareReview, attaches the
 // review_id and a sink-level Redactor (rooted at the absolute repo path) to the
 // context logger, then runs ExecuteReview. It returns the resolved review id and
@@ -121,7 +121,7 @@ func runCorrelatedReview(t *testing.T, buf *bytes.Buffer, level, format string) 
 	prep, err := fanout.PrepareReview(ctx, twoAgentConfig(srv.URL), reviewReq(repo, base, head))
 	require.NoError(t, err)
 
-	// Mirror cmd/atcr/review.go: attach review_id (AC9), then enforce sink-level
+	// Mirror cli/review.go: attach review_id (AC9), then enforce sink-level
 	// redaction rooted at the absolute repo path (AC5/AC6).
 	ctx = log.NewContext(ctx, log.WithReviewID(log.FromContext(ctx), prep.ID))
 	redactRoot := prep.Repo

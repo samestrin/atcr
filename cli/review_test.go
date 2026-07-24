@@ -705,7 +705,7 @@ func TestReviewCmd_SyncCloud_AuthRejectionOverridesExit(t *testing.T) {
 }
 
 // TestReviewHelpDocumentsPreviewPrecedence pins the --preview precedence
-// documentation (TD cmd/atcr/review.go:runReview): --preview short-circuits at
+// documentation (TD cli/review.go:runReview): --preview short-circuits at
 // the very top of runReview — above the --resume/--force mutual-exclusion check
 // and the --auto-fix handling — so combining it with an action flag silently
 // ignores that flag. The flag's own usage string lives in flags.go (shared with

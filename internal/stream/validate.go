@@ -28,7 +28,7 @@ const PathNotFoundWarning = "file not found"
 //     indeterminate result must not masquerade as "file not found".
 //
 // root defaults to "." (the process working directory, which is the repo root
-// for every atcr entry point — the cmd/atcr reconcile/review/resume commands all
+// for every atcr entry point — the cli reconcile/review/resume commands all
 // thread Root="." into reconcile, the sole caller) when empty. A nil finding is
 // a no-op.
 //

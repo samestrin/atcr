@@ -222,7 +222,7 @@ func corruptDebtStore(t *testing.T) {
 }
 
 // TestQualityReport_DirFlagReadsExplicitStoreWithoutChdir pins the --dir parity
-// with `debt resolve`/`debt compact` (TD cmd/atcr/telemetry_report.go:62):
+// with `debt resolve`/`debt compact` (TD cli/telemetry_report.go:62):
 // quality-report must accept --dir pointing at an explicit fixture store so
 // md/json parity tests (and scripts driving all three commands) need no chdir.
 // The isolated CWD store stays empty, so rendered rows can only come from --dir.

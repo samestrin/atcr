@@ -84,7 +84,7 @@ func (e *engine) logger() *slog.Logger {
 // reviewContext detaches ctx for the background fan-out (so the run is not
 // cancelled when the handler returns) and seeds it with the server logger tagged
 // by review_id, so every fan-out log line for this review is greppable by
-// review_id (AC9). This mirrors the CLI review path (cmd/atcr/review.go
+// review_id (AC9). This mirrors the CLI review path (cli/review.go
 // correlateReviewID) for the MCP entry point; Phase 4 fan-out reads the logger
 // back via log.FromContext.
 //
@@ -410,7 +410,7 @@ func (e *engine) handleReport(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		// rather than failing the report.
 		//
 		// MCP/CLI parity: this embedded markdown radar is identical to the CLI's —
-		// both call report.RenderMarkdownWithDisagreements (cmd/atcr/report.go). The
+		// both call report.RenderMarkdownWithDisagreements (cli/report.go). The
 		// CLI's standalone --disagreements ranked view (RenderDisagreements /
 		// RenderDisagreementsJSON) is intentionally NOT exposed over MCP; MCP clients
 		// receive the radar markdown-embedded only. Any renderer-dedup work belongs

@@ -2,7 +2,7 @@
 // synthetic-provider manifest, the registry.yaml generator that turns it into a
 // working provider + agent roster, and the pure transform used by the scheduled
 // manifest-refresh job. All logic here is I/O-free so it stays unit-testable;
-// file writes and interactive prompts live in cmd/atcr/quickstart.go.
+// file writes and interactive prompts live in cli/quickstart.go.
 package quickstart
 
 import (
