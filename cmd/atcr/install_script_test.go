@@ -482,6 +482,44 @@ func TestInstallScriptHonorsGOBIN(t *testing.T) {
 	}
 }
 
+// TestInstallScriptGOPATHList sets GOPATH to a colon-delimited list and places the
+// FIRST element's bin (where go install actually writes) ON PATH, asserting install.sh
+// emits no spurious warning — i.e. it segments GOPATH rather than appending /bin to the
+// whole list. Skips on a known pre-public blocker.
+func TestInstallScriptGOPATHList(t *testing.T) {
+	script := installScriptPath(t)
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatalf("bash not found: %v", err)
+	}
+	modCache := goModCache(t)
+	tmp := t.TempDir()
+	gopathA := filepath.Join(tmp, "a")
+	gopathB := filepath.Join(tmp, "b")
+	binA := filepath.Join(gopathA, "bin")
+	if err := os.MkdirAll(binA, 0o755); err != nil {
+		t.Fatalf("creating GOPATH-A bin: %v", err)
+	}
+	cmd, cancel := installCmd(t, bash, script)
+	defer cancel()
+	cmd.Env = append(scrubEnv(os.Environ(), "GOPATH", "GOBIN", "GOMODCACHE", "PATH"),
+		"GOPATH="+gopathA+string(os.PathListSeparator)+gopathB,
+		"GOMODCACHE="+modCache,
+		"PATH="+binA+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+	out, _ := cmd.CombinedOutput()
+	combined := string(out)
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		if matchesKnownBlocker(combined) {
+			t.Skipf("skipping GOPATH-list assertion: repo not yet publicly installable\n%s", combined)
+		}
+		t.Fatalf("install.sh exited %d unexpectedly:\n%s", code, combined)
+	}
+	if strings.Contains(combined, "export PATH=") {
+		t.Errorf("no PATH warning expected when the first GOPATH element's bin (%s) is on PATH, got:\n%s", binA, combined)
+	}
+}
+
 // scrubEnv returns env with every KEY=... entry for the given keys removed.
 func scrubEnv(env []string, keys ...string) []string {
 	out := env[:0:0]
