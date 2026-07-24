@@ -25,9 +25,10 @@ qdrant_fts.db-shm
 qdrant_fts.db-wal
 
 # Environment and Local Settings
-.env
-.env.local
-.env.*.local
+# Broad glob so every .env variant (.env, .env.local, .env.production,
+# .env.*.local, .envrc, …) is ignored — narrow rules let a stray secrets file
+# (e.g. .env.production) slip through into a commit.
+.env*
 *.local.yaml
 *.local.yml
 
