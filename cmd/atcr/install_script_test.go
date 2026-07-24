@@ -145,7 +145,9 @@ func TestInstallScriptRealInstall(t *testing.T) {
 		t.Fatalf("install.sh exited %d with an unexpected failure:\n%s", code, combined)
 	}
 
-	// Success path: binary present at GOPATH/bin/atcr.
+	// Success path: keep the full install output for post-mortem debugging
+	// (visible with `go test -v`), then check the binary landed.
+	t.Logf("install.sh output:\n%s", combined)
 	bin := filepath.Join(gobin, "atcr")
 	if _, err := os.Stat(bin); err != nil {
 		t.Fatalf("expected installed binary at %s: %v\noutput:\n%s", bin, err, combined)
