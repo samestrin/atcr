@@ -370,6 +370,42 @@ func TestInstallScriptGracefulPathParsing(t *testing.T) {
 	}
 }
 
+// TestInstallScriptRejectsOldGo shadows `go` on PATH with a fake that reports
+// go1.20.0 for `go env GOVERSION`, and asserts install.sh fails the preflight
+// (non-zero exit) with the Go-1.25+ minimum message BEFORE attempting any install.
+// The fake errors on any call other than `env GOVERSION`, so a regression that
+// skipped the version gate and reached `go install` would surface as a different
+// (non-version) failure and still fail this test.
+func TestInstallScriptRejectsOldGo(t *testing.T) {
+	script := installScriptPath(t)
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatalf("bash not found: %v", err)
+	}
+	// Fake go: answers `go env GOVERSION` with an old version, errors otherwise.
+	fakeDir := t.TempDir()
+	fakeScript := "#!/usr/bin/env bash\n" +
+		"if [ \"$1\" = \"env\" ] && [ \"$2\" = \"GOVERSION\" ]; then echo go1.20.0; exit 0; fi\n" +
+		"echo \"fake-go: unexpected call: $*\" >&2; exit 97\n"
+	if err := os.WriteFile(filepath.Join(fakeDir, "go"), []byte(fakeScript), 0o755); err != nil {
+		t.Fatalf("writing fake go: %v", err)
+	}
+	cmd, cancel := installCmd(t, bash, script)
+	defer cancel()
+	// Prepend the fake-go dir so it shadows the real toolchain; keep the inherited
+	// PATH so bash/env/etc. stay reachable for the fake's own shebang.
+	cmd.Env = append(scrubEnv(os.Environ(), "PATH"),
+		"PATH="+fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, _ := cmd.CombinedOutput()
+	combined := string(out)
+	if cmd.ProcessState.ExitCode() == 0 {
+		t.Fatalf("expected non-zero exit for Go 1.20, got 0:\n%s", combined)
+	}
+	if !strings.Contains(combined, "requires Go 1.25+") {
+		t.Fatalf("expected the Go-1.25+ minimum error, got:\n%s", combined)
+	}
+}
+
 // scrubEnv returns env with every KEY=... entry for the given keys removed.
 func scrubEnv(env []string, keys ...string) []string {
 	out := env[:0:0]
