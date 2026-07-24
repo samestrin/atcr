@@ -38,7 +38,7 @@ const minSecretLen = 8
 // environment AFTER this call returns is therefore not added to the exact-value
 // scrub list and could appear verbatim in a later log line. This is acceptable
 // because every entry point resolves keys here before any provider call runs
-// (cmd/atcr review.go/resume.go via correlateAndRedact, the MCP handler via
+// (cli review.go/resume.go via correlateAndRedact, the MCP handler via
 // reviewContext), so the live scrub set always covers the keys the run uses.
 //
 // It also returns a list of human-readable warnings (never containing a value)

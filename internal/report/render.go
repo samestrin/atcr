@@ -266,7 +266,7 @@ func axiText(s string) string { return toonQuote(truncate(s, maxTextLen)) }
 // ReviewSummaryAXI is the run-level metadata carried by the --axi review/resume
 // summary payload: review identity plus per-attempt agent counts and a findings
 // total — the token-dense analogue of the human end-of-review summary block
-// (cmd/atcr/review_summary.go). It is deliberately distinct from the findings
+// (cli/review_summary.go). It is deliberately distinct from the findings
 // table renderAXI emits: a bare `atcr review --axi` runs no reconcile stage, so it
 // has a run summary but no findings list. The two payloads share this package's one
 // TOON encoder (toonQuote/axiDelim) rather than a second, divergent serializer

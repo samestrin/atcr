@@ -18,7 +18,7 @@ var monthRe = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)
 
 // DefaultDir returns the default local TD store directory (<root>/.atcr/debt). The
 // directory is never created here — Append creates it lazily on first write so a
-// suppressed run touches nothing. Root follows cmd/atcr/reconcile.go's Root: "."
+// suppressed run touches nothing. Root follows cli/reconcile.go's Root: "."
 // (CWD) convention; pass "." for the current repo root.
 func DefaultDir(root string) string {
 	return filepath.Join(root, debtSubdir)

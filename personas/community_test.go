@@ -607,7 +607,7 @@ func localModelToOllamaTag(model string) string {
 // tag cited in docs/personas-install.md, so adding or renaming a local persona
 // without documenting its pull command fails CI instead of shipping a guide the
 // user cannot follow. It is a zero-network doc-consistency check (mirrors the
-// cmd/atcr/docs_audit_test.go pattern); live-endpoint AC2 automation is
+// cli/docs_audit_test.go pattern); live-endpoint AC2 automation is
 // intentionally out of scope (it requires a running Ollama server).
 func TestLocalPersonasDocumentOllamaPullTag(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "docs", "personas-install.md"))

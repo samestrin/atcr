@@ -125,10 +125,10 @@ func TestSkill_NoAbsoluteOrClaudePaths(t *testing.T) {
 // files (host-review.md, ambiguity-adjudication.md, findings-format.md).
 // ---------------------------------------------------------------------------
 
-// dispatcherCommands mirrors the top-level commands registered in newRootCmd
-// (cmd/atcr/main.go:185-208) — the ground-truth command surface the /atcr
+// dispatcherCommands mirrors the top-level commands registered in NewRootCmdWithClient
+// (cli/main.go) — the ground-truth command surface the /atcr
 // dispatcher routing table must cover 1:1. If a command is added to or removed
-// from newRootCmd, update this list so the routing-table test catches drift
+// from NewRootCmdWithClient, update this list so the routing-table test catches drift
 // rather than letting the routing table silently diverge (AC 01-01, Edge Case 1).
 var dispatcherCommands = []string{
 	"review", "reconcile", "verify", "debate", "report", "quality-report", "github",

@@ -2,7 +2,7 @@
 // technical-debt store under .planning/technical-debt/items/. It is a thin,
 // deterministic layer on top of internal/tdmigrate: it reuses that package's
 // Item/Shard types, shard loader, and README<->shard migration rather than
-// re-implementing a parser. The atcr debt CLI (cmd/atcr/debt.go) is the only
+// re-implementing a parser. The atcr debt CLI (cli/debt.go) is the only
 // consumer today; the logic lives here so the whole surface is unit-testable
 // without spawning a process.
 package debt
