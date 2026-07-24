@@ -152,6 +152,16 @@ func goModCache(t *testing.T) string {
 	return strings.TrimSpace(string(out))
 }
 
+// installCmd builds the `bash install.sh` command under a 120s timeout so a hung
+// install (a network stall inside the real `go install`, or a wedged script) fails
+// the test loudly instead of blocking the run indefinitely. The caller must
+// defer the returned cancel().
+func installCmd(t *testing.T, bash, script string) (*exec.Cmd, context.CancelFunc) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	return exec.CommandContext(ctx, bash, script), cancel
+}
+
 // TestInstallScriptExists confirms install.sh is present and executable.
 func TestInstallScriptExists(t *testing.T) {
 	p := installScriptPath(t)
@@ -182,7 +192,8 @@ func TestInstallScriptRealInstall(t *testing.T) {
 	gopath := filepath.Join(tmp, "gopath")
 	gobin := filepath.Join(gopath, "bin")
 
-	cmd := exec.Command(bash, script)
+	cmd, cancel := installCmd(t, bash, script)
+	defer cancel()
 	// Isolated GOPATH (binary lands in GOPATH/bin), shared module cache, and a PATH
 	// that deliberately excludes GOPATH/bin so the non-fatal warning path is exercised.
 	cmd.Env = append(scrubEnv(os.Environ(), "GOPATH", "GOBIN", "GOMODCACHE"),
@@ -240,7 +251,8 @@ func TestInstallScriptMissingToolchain(t *testing.T) {
 	}
 
 	empty := t.TempDir() // a PATH dir containing neither go nor anything else
-	cmd := exec.Command(bash, script)
+	cmd, cancel := installCmd(t, bash, script)
+	defer cancel()
 	cmd.Env = append(scrubEnv(os.Environ(), "PATH"), "PATH="+empty)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -279,7 +291,8 @@ func TestInstallScriptPathCheck(t *testing.T) {
 	run := func(t *testing.T, gopath string, extraSegments ...string) string {
 		t.Helper()
 		segments := append(extraSegments, os.Getenv("PATH"))
-		cmd := exec.Command(bash, script)
+		cmd, cancel := installCmd(t, bash, script)
+		defer cancel()
 		cmd.Env = append(scrubEnv(os.Environ(), "GOPATH", "GOBIN", "GOMODCACHE", "PATH"),
 			"GOPATH="+gopath,
 			"GOMODCACHE="+modCache,
@@ -336,7 +349,8 @@ func TestInstallScriptGracefulPathParsing(t *testing.T) {
 	// Keep the toolchain reachable but append an empty trailing segment (trailing
 	// separator) and exclude gopath/bin so the warning path is exercised.
 	pathVal := os.Getenv("PATH") + string(os.PathListSeparator)
-	cmd := exec.Command(bash, script)
+	cmd, cancel := installCmd(t, bash, script)
+	defer cancel()
 	cmd.Env = append(scrubEnv(os.Environ(), "GOPATH", "GOBIN", "GOMODCACHE", "PATH"),
 		"GOPATH="+gopath,
 		"GOMODCACHE="+modCache,
