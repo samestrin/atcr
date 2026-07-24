@@ -6,10 +6,10 @@ name: Release
 # ./reconcile module has its own, on the disjoint reconcile/v* namespace
 # (.github/workflows/reconcile-module.yml).
 #
-# based_on: .github/workflows/ci.yml — reuses the [self-hosted, gauntlet] runner
-# and the Go 1.25 actions/setup-go setup verbatim; no new runners or Go versions
-# are provisioned. The one deliberate divergence is permissions: contents: write
-# (vs ci.yml's contents: read), because goreleaser publishes a GitHub Release.
+# based_on: .github/workflows/ci.yml — reuses the ubuntu-latest runner and the
+# Go 1.25 actions/setup-go setup verbatim. The one deliberate divergence is
+# permissions: contents: write (vs ci.yml's contents: read), because goreleaser
+# publishes a GitHub Release.
 
 on:
   push:
@@ -32,7 +32,7 @@ concurrency:
 jobs:
   release:
     name: GoReleaser Release
-    runs-on: [self-hosted, gauntlet]
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out code
@@ -48,12 +48,10 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25'
-          # gauntlet runners are persistent dedicated hardware, not ephemeral
-          # GitHub-hosted VMs -- see the matching rationale comment in ci.yml.
-          # setup-go's cache:true round-trips a ~2GB tarball through GitHub's
-          # network Actions Cache on every run despite the files already being
-          # present on local disk.
-          cache: false
+          # Cache on: these are ephemeral GitHub-hosted runners, so setup-go's
+          # module/build cache avoids re-downloading deps and recompiling from
+          # scratch on every run.
+          cache: true
 
       - name: Run GoReleaser
         # First real tag push publishes a PUBLIC, hard-to-retract GitHub Release.
@@ -87,7 +85,7 @@ jobs:
   notify-enterprise:
     name: Notify enterprise repo
     needs: release
-    runs-on: [self-hosted, gauntlet]
+    runs-on: ubuntu-latest
     permissions: {} # uses the App token, not GITHUB_TOKEN; needs no repo scope
     env:
       HAS_APP: ${{ secrets.ENTERPRISE_APP_ID != '' && secrets.ENTERPRISE_APP_PRIVATE_KEY != '' }}
@@ -107,7 +105,7 @@ jobs:
         # curl (not gh) so the step needs no external CLI on the runner.
         # SECURITY: the ref is validated and passed via env (never spliced into the
         # shell body), and the App token is fed to curl over stdin (-H @-) so it
-        # never appears in the process argv on the self-hosted runner.
+        # never appears in the process argv on the runner.
         # --fail-with-body makes a non-2xx response exit non-zero -> failure().
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}

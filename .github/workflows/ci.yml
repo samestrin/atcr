@@ -16,7 +16,7 @@ concurrency:
 jobs:
   ci:
     name: Go Lint & Test
-    runs-on: [self-hosted, gauntlet]
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out code
@@ -26,14 +26,10 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25'
-          # gauntlet runners are persistent dedicated hardware, not ephemeral
-          # GitHub-hosted VMs -- GOCACHE/GOMODCACHE already survive between jobs
-          # on local disk. actions/setup-go's cache:true instead round-trips a
-          # ~2GB tarball through GitHub's network Actions Cache on every run
-          # (confirmed via step logs: it re-downloads files already present
-          # locally, sometimes causing 10+ min stalls when concurrent jobs
-          # fight over the cache-save step).
-          cache: false
+          # Cache on: these are ephemeral GitHub-hosted runners, so setup-go's
+          # module/build cache (GOMODCACHE/GOCACHE via the Actions Cache) avoids
+          # re-downloading deps and recompiling from scratch on every run.
+          cache: true
 
       - name: Verify Formatted
         run: |
@@ -81,7 +77,7 @@ jobs:
   # runs on tag push in reconcile-module.yml.
   reconcile-module:
     name: Reconcile Module Test
-    runs-on: [self-hosted, gauntlet]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
 
@@ -97,8 +93,8 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25'
-          # see cache:false rationale in the `ci` job above
-          cache: false
+          # cache on for ephemeral hosted runners (see the `ci` job)
+          cache: true
 
       - name: Run Module Tests
         # root `go test ./...` does NOT cross ./reconcile's go.mod boundary
@@ -113,7 +109,7 @@ jobs:
   # TestEmbeddedParsersMatchManifest, so no wasm rebuild is needed here.
   braceparser-module:
     name: Brace Parser Module Test
-    runs-on: [self-hosted, gauntlet]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
 
@@ -129,8 +125,8 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.26'
-          # see cache:false rationale in the `ci` job above
-          cache: false
+          # cache on for ephemeral hosted runners (see the `ci` job)
+          cache: true
 
       - name: Run Module Tests
         run: go test ./...
