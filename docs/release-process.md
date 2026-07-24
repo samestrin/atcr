@@ -12,30 +12,40 @@ How `atcr` binaries are versioned, tagged, built, and published.
 ### The convention
 
 A release is cut by pushing a **bare `vX.Y.Z` git tag** — no prefix, no
-suffix (e.g. `v21.0.0`, not `release/v21.0.0` or `atcr-v21.0.0`).
+suffix (e.g. `v0.1.0`, not `release/v0.1.0` or `atcr-v0.1.0`).
 
-Each tag maps one-to-one onto the matching [`CHANGELOG.md`](../CHANGELOG.md)
-entry: the tag is the changelog heading with a `v` prepended.
+App release tags use **standard, independent semantic versioning starting at
+`v0.1.0`**, decoupled from the epic/sprint numbers that head
+[`CHANGELOG.md`](../CHANGELOG.md).
 
-| `CHANGELOG.md` heading      | Git tag   |
-|-----------------------------|-----------|
-| `## [20.1.0]` (latest today) | `v20.1.0` |
-| `## [21.0.0]` (next, anticipated) | `v21.0.0` |
+| Release                              | Git tag  |
+|--------------------------------------|----------|
+| First tagged release (Sprint 34.0)   | `v0.1.0` |
+| Subsequent patch / minor (pre-1.0)   | `v0.1.1` / `v0.2.0` / … |
 
-This formalizes an **epic-number-as-semver** scheme the changelog has already
-followed, unbroken, from its first entry (`## [1.0.0]`) through the current
-`## [20.1.0]` in [`CHANGELOG.md`](../CHANGELOG.md): each entry is versioned
-`MAJOR.MINOR.0` to match the epic that produced it. The tags formalize this
-existing history rather than starting an independent counter that would orphan
-20+ releases' worth of version numbers.
+**Why not epic-number-as-semver (the previous convention):** earlier drafts of
+this doc mapped each tag onto the matching `CHANGELOG.md` heading (`## [20.1.0]`
+→ `v20.1.0`), an "epic-number-as-semver" scheme. That is now **invalid for a
+tagged release**: as of Sprint 34.0 the `atcr` command tree is an importable Go
+module (`github.com/samestrin/atcr/cli`, consumed by the private
+`atcr-enterprise` repo). Under Go semantic-import versioning, any tag with a
+**major version ≥ 2** (`v20.1.0`, `v33.2.0`, …) requires a matching `/vN` suffix
+on the module path — which `github.com/samestrin/atcr` does not have — so such a
+tag cannot be `require`d by another module (`go` rejects it). The tag series
+therefore restarts at `v0.1.0` and stays in the import-compatible `v0.x` / `v1.x`
+range. Reaching `v2.0.0` later would require adding a `/v2` module-path suffix
+repo-wide — a deliberate, separate decision, not an automatic bump.
+
+The `CHANGELOG.md` epic/sprint headings (`## [1.0.0]` … `## [33.2.0]`) remain as
+the historical **development** changelog; they are no longer 1:1 with git tags.
 
 ### Forward-only — no retroactive backfill
 
-Although the changelog carries 20+ versioned entries, **no git tag has ever
-been cut** against any of them (`git tag -l 'v*'` returns nothing). The
-convention is **forward-only**: the first real tag is cut at or after the epic
-that stands this process up, and past changelog entries are **not**
-retroactively tagged. There is intentionally no `v1.0.0 … v20.1.0` backfill.
+**No git tag was ever cut** against any of the 20+ historical changelog entries
+(`git tag -l 'v*'` returned nothing before `v0.1.0`). The convention is
+**forward-only**: the tag series starts fresh at `v0.1.0` (Sprint 34.0), and the
+past epic-numbered changelog entries are **not** retroactively tagged. There is
+intentionally no `v1.0.0 … v33.2.0` backfill.
 
 ### Disjoint from the `reconcile/vX.Y.Z` module namespace
 
@@ -52,7 +62,7 @@ never fire it (lines 14-16):
 ```
 
 The two namespaces are provably disjoint: no tag can match both `v*` and
-`reconcile/v*`. An `atcr` app release (`v21.0.0`) triggers only the app release
+`reconcile/v*`. An `atcr` app release (`v0.1.0`) triggers only the app release
 workflow; a module release (`reconcile/v1.2.3`) triggers only the module gate.
 
 ### Build-time stamping contract (implemented by Task 02)
@@ -63,13 +73,13 @@ via goreleaser `-ldflags`. This section only *declares* the contract; the
 
 | Variable | Location | Value stamped from the tag `vX.Y.Z` | Rationale |
 |----------|----------|--------------------------------------|-----------|
-| `main.version` | [`cmd/atcr/version.go`](../cmd/atcr/version.go) | **`vX.Y.Z`** (v-prefixed) | `atcr --version` / `atcr version` reports `vX.Y.Z`, matching a `go install github.com/samestrin/atcr/cmd/atcr@vX.Y.Z` build. |
+| `github.com/samestrin/atcr/cli.version` | [`cli/version.go`](../cli/version.go) | **`vX.Y.Z`** (v-prefixed) | `atcr --version` / `atcr version` reports `vX.Y.Z`, matching a `go install github.com/samestrin/atcr/cmd/atcr@vX.Y.Z` build. (The `version` var moved from package `main` in `cmd/atcr` into the importable `cli` package in Sprint 34.0 Task 03; the `-ldflags -X` target moved with it.) |
 | `github.com/samestrin/atcr/internal/version.Version` | [`internal/version/version.go`](../internal/version/version.go) | **`X.Y.Z`** (v-stripped) | The public leaderboard submission envelope (Epic 10.0) reports the bare `X.Y.Z` form; it currently defaults to the neutral `"0.0.0"` placeholder. |
 
 Both targets **agree on the numeric `X.Y.Z`** portion of the tag — the leading
-`v` prefix is the only permitted difference between them. A tag of `v21.0.0`
-therefore yields `main.version = v21.0.0` and `internal/version.Version =
-21.0.0`.
+`v` prefix is the only permitted difference between them. A tag of `v0.1.0`
+therefore yields `cli.version = v0.1.0` and `internal/version.Version =
+0.1.0`.
 
 ## What Triggers a Release
 
@@ -97,10 +107,13 @@ responsibility as-is.
 
 Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v2@latest` or `brew install goreleaser`) — the project uses the v2 configuration line, matching [`.goreleaser.yaml`](../.goreleaser.yaml) and [`.github/workflows/release.yml`](../.github/workflows/release.yml).
 
-1. **Confirm the `CHANGELOG.md` entry exists.** Per the convention above, the
-   tag value is the changelog heading with a `v` prepended — e.g. a
-   `## [21.0.0]` heading in [`CHANGELOG.md`](../CHANGELOG.md) is released as tag
-   `v21.0.0`. Do not cut a tag that has no matching changelog entry.
+1. **Pick the next semver tag.** Per the convention above, app tags are
+   independent semver in the `v0.x` / `v1.x` range (starting at `v0.1.0`), **not**
+   the epic/sprint number. Increment from the latest `v*` tag
+   (`git tag -l 'v*' | sort -V | tail -1`) per the change's scope
+   (patch/minor/major, staying `< v2` unless the module path gains a `/vN`
+   suffix). Add or update the corresponding `CHANGELOG.md` release notes for the
+   cut; the changelog heading no longer has to equal the tag number.
 
 2. **Dry-run locally first (non-optional — run it for every cut).** From an
    up-to-date `main`, run:
@@ -111,9 +124,9 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
 
    This builds the full cross-platform matrix into `dist/` **without** pushing a
    tag or publishing anything. Confirm the build succeeds and that both `-X`
-   ldflags targets resolve and agree with each other — `main.version` reports
-   the v-prefixed form and `internal/version.Version` reports the v-stripped
-   form. Only a real tag build stamps the exact `vX.Y.Z`; the snapshot verifies
+   ldflags targets resolve and agree with each other — `cli.version`
+   (`github.com/samestrin/atcr/cli`) reports the v-prefixed form and
+   `internal/version.Version` reports the v-stripped form. Only a real tag build stamps the exact `vX.Y.Z`; the snapshot verifies
    the mechanism, not the final release number. The first real tag publishes a **public,
    hard-to-retract** GitHub Release, so this dry run is a required step, not a
    convenience.
@@ -121,8 +134,8 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
 3. **Cut the real tag.** From an up-to-date `main`:
 
    ```sh
-   git tag v21.0.0
-   git push origin v21.0.0
+   git tag v0.1.0
+   git push origin v0.1.0
    ```
 
    Substitute the actual version being released. Push **only** that single tag
