@@ -39,7 +39,10 @@ go install github.com/samestrin/atcr/cmd/atcr@latest
 # writes the binary); otherwise fall back to GOPATH/bin.
 gobin="$(go env GOBIN)"
 if [ -z "$gobin" ]; then
-  gobin="$(go env GOPATH)/bin"
+  # GOPATH may be a colon-delimited list; go install writes to the FIRST element's
+  # bin, so take that element rather than appending /bin to the whole list.
+  gopath="$(go env GOPATH)"
+  gobin="${gopath%%:*}/bin"
 fi
 on_path=0
 # ${PATH:-} guards `set -u`: a stripped environment with PATH unset must not abort
