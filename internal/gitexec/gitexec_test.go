@@ -131,7 +131,7 @@ var indirectNonGitExecFiles = map[string]bool{
 // package, so a silent revert to a bare call (which the AST scan below would also
 // catch as a new offender) additionally trips this positive check.
 var gitExecMigratedSites = []string{
-	"cmd/atcr/autofix.go",
+	"cli/autofix.go", // relocated from cmd/atcr in Sprint 34.0 Task 03 (CLI export seam)
 	"internal/fanout/review.go",
 	"internal/gitrange/resolver.go",
 	"internal/payload/diff.go",
