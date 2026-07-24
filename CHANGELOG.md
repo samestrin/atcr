@@ -6,6 +6,10 @@ First **git-tagged** release. The tag series restarts at `0.1.0` (independent se
 
 - Extracted the entire `cmd/atcr` command tree into a new importable, top-level package `github.com/samestrin/atcr/cli` (exporting `NewRootCmd`/`NewRootCmdWithClient` plus a single `cli.Main(ctx, stdout, stderr) int` entry point), reducing `cmd/atcr/main.go` to a thin shim. This lets a second binary — the private `atcr-enterprise` wrapper — build the identical CLI without vendoring `package main`, with zero behavior change to the public `atcr` binary (Sprint 34.0, Task 03).
 
+### Fixed
+
+- Updated stale `cmd/atcr/...` comment cross-references and the `newRootCmd` symbol name to `cli/...`/`NewRootCmdWithClient` in ~12 non-relocated files, closing out documentation drift left by the Sprint 34.0 CLI relocation.
+
 ## [33.2.0] - 2026-07-24
 
 Public launch: flipped the `atcr` repository from private to public and made `go install github.com/samestrin/atcr/cmd/atcr@latest` genuinely work for external developers, with the `reconcile` module published as a real versioned dependency and the finalized docs launched on atcr.dev.
