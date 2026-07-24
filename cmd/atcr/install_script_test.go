@@ -111,8 +111,11 @@ func TestInstallScriptRealInstall(t *testing.T) {
 		"GOPATH="+gopath,
 		"GOMODCACHE="+strings.TrimSpace(string(modCache)),
 	)
-	out, _ := cmd.CombinedOutput()
-	combined := string(out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	_ = cmd.Run()
+	combined := stdout.String() + stderr.String()
 	code := cmd.ProcessState.ExitCode()
 
 	if code != 0 {
@@ -127,9 +130,13 @@ func TestInstallScriptRealInstall(t *testing.T) {
 	if _, err := os.Stat(bin); err != nil {
 		t.Fatalf("expected installed binary at %s: %v\noutput:\n%s", bin, err, combined)
 	}
-	// Non-fatal PATH warning must appear because GOPATH/bin is not on PATH.
-	if !strings.Contains(combined, "export PATH=") {
-		t.Errorf("expected PATH-remediation warning (export PATH=...) in output:\n%s", combined)
+	// Non-fatal PATH warning must appear on stderr (install.sh prints it >&2)
+	// because GOPATH/bin is not on PATH — and never on stdout.
+	if !strings.Contains(stderr.String(), "export PATH=") {
+		t.Errorf("expected PATH-remediation warning (export PATH=...) on stderr:\n%s", stderr.String())
+	}
+	if strings.Contains(stdout.String(), "export PATH=") {
+		t.Errorf("PATH-remediation warning must not appear on stdout:\n%s", stdout.String())
 	}
 }
 
