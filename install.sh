@@ -21,7 +21,10 @@ echo "atcr installed. Next: run 'atcr doctor' to verify your setup, or 'atcr ver
 # 4. Non-fatal PATH containment check — exact colon-delimited segment match, never substring.
 gobin="$(go env GOPATH)/bin"
 on_path=0
-IFS=':' read -ra segments <<<"$PATH"
+# ${PATH:-} guards `set -u`: a stripped environment with PATH unset must not abort
+# the colon-split. Empty segments (e.g. a trailing colon) never equal a non-empty
+# gobin, so they are harmless to the containment result.
+IFS=':' read -ra segments <<<"${PATH:-}"
 for seg in "${segments[@]}"; do
   if [ "$seg" = "$gobin" ]; then on_path=1; break; fi
 done

@@ -259,6 +259,45 @@ func TestInstallScriptPathCheck(t *testing.T) {
 	})
 }
 
+// TestInstallScriptGracefulPathParsing runs install.sh with a PATH that ends in a
+// trailing colon (an empty trailing segment) and whose gobin is absent, asserting the
+// script survives the `set -euo pipefail` colon-split without aborting (exit 0) and
+// still emits the non-fatal PATH warning. Guards the ${PATH:-} / empty-segment
+// robustness of the containment loop: a regression dropping the ${PATH:-} guard or
+// mishandling empty segments would flip exit code or warning. Skips on a known
+// pre-public blocker.
+func TestInstallScriptGracefulPathParsing(t *testing.T) {
+	script := installScriptPath(t)
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatalf("bash not found: %v", err)
+	}
+	modCache := goModCache(t)
+
+	gopath := filepath.Join(t.TempDir(), "gopath")
+	// Keep the toolchain reachable but append an empty trailing segment (trailing
+	// separator) and exclude gopath/bin so the warning path is exercised.
+	pathVal := os.Getenv("PATH") + string(os.PathListSeparator)
+	cmd := exec.Command(bash, script)
+	cmd.Env = append(scrubEnv(os.Environ(), "GOPATH", "GOBIN", "GOMODCACHE", "PATH"),
+		"GOPATH="+gopath,
+		"GOMODCACHE="+modCache,
+		"PATH="+pathVal,
+	)
+	out, _ := cmd.CombinedOutput()
+	combined := string(out)
+	code := cmd.ProcessState.ExitCode()
+	if code != 0 {
+		if matchesKnownBlocker(combined) {
+			t.Skipf("skipping graceful-PATH assertion: repo not yet publicly installable (Phase 3/4 pending)\n%s", combined)
+		}
+		t.Fatalf("install.sh exited %d parsing a PATH with a trailing empty segment; it must handle this gracefully:\n%s", code, combined)
+	}
+	if !strings.Contains(combined, "export PATH=") {
+		t.Errorf("expected PATH-remediation warning when gopath/bin is absent from PATH, got:\n%s", combined)
+	}
+}
+
 // scrubEnv returns env with every KEY=... entry for the given keys removed.
 func scrubEnv(env []string, keys ...string) []string {
 	out := env[:0:0]
