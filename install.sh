@@ -12,6 +12,22 @@ if ! command -v go >/dev/null 2>&1; then
   exit 1
 fi
 
+# 1b. Enforce the documented Go 1.25+ minimum. The check above proves `go` exists but
+#     not that it is new enough; without this, an old toolchain fails later with a
+#     cryptic `go install` error instead of a clear, actionable message. Only a
+#     cleanly-parsed version below 1.25 is rejected — an unparseable or devel version
+#     (e.g. "go1.26-devel_...") is allowed through rather than risk blocking a valid
+#     toolchain.
+goversion="$(go env GOVERSION 2>/dev/null)"
+if [[ "$goversion" =~ ^go([0-9]+)\.([0-9]+) ]]; then
+  gmaj="${BASH_REMATCH[1]}"
+  gmin="${BASH_REMATCH[2]}"
+  if [ "$gmaj" -lt 1 ] || { [ "$gmaj" -eq 1 ] && [ "$gmin" -lt 25 ]; }; then
+    echo "error: Go ${goversion#go} is too old; atcr requires Go 1.25+. Upgrade from https://go.dev/dl/ and re-run this script." >&2
+    exit 1
+  fi
+fi
+
 # 2. Install the latest published atcr binary (real, unsuppressed exit code + stderr).
 go install github.com/samestrin/atcr/cmd/atcr@latest
 
