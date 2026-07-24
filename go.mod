@@ -35,8 +35,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-// reconcile is the extracted nested module (Epic 8.0). It is developed in-tree
-// via this replace directive; separate-repo publication follows extraction.
-require github.com/samestrin/atcr/reconcile v0.0.0
-
-replace github.com/samestrin/atcr/reconcile => ./reconcile
+require github.com/samestrin/atcr/reconcile v0.1.1
