@@ -406,6 +406,41 @@ func TestInstallScriptRejectsOldGo(t *testing.T) {
 	}
 }
 
+// TestInstallScriptPathGuidanceOrder asserts install.sh does not advise running
+// 'atcr doctor' as if immediately available when GOPATH/bin is NOT on PATH: the
+// "Next: run 'atcr doctor'" guidance is reserved for the on-PATH case, and the
+// off-PATH case leads with the PATH-remediation warning. Skips on a known blocker.
+func TestInstallScriptPathGuidanceOrder(t *testing.T) {
+	script := installScriptPath(t)
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatalf("bash not found: %v", err)
+	}
+	modCache := goModCache(t)
+	gopath := filepath.Join(t.TempDir(), "gopath")
+	cmd, cancel := installCmd(t, bash, script)
+	defer cancel()
+	// Inherited PATH excludes the temp gopath/bin -> off-PATH branch.
+	cmd.Env = append(scrubEnv(os.Environ(), "GOPATH", "GOBIN", "GOMODCACHE"),
+		"GOPATH="+gopath,
+		"GOMODCACHE="+modCache,
+	)
+	out, _ := cmd.CombinedOutput()
+	combined := string(out)
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		if matchesKnownBlocker(combined) {
+			t.Skipf("skipping guidance-order assertion: repo not yet publicly installable\n%s", combined)
+		}
+		t.Fatalf("install.sh exited %d unexpectedly:\n%s", code, combined)
+	}
+	if !strings.Contains(combined, "export PATH=") {
+		t.Errorf("expected PATH-remediation warning when off PATH, got:\n%s", combined)
+	}
+	if strings.Contains(combined, "Next: run 'atcr doctor'") {
+		t.Errorf("off-PATH install must not give the on-PATH 'Next: run atcr doctor' advice:\n%s", combined)
+	}
+}
+
 // scrubEnv returns env with every KEY=... entry for the given keys removed.
 func scrubEnv(env []string, keys ...string) []string {
 	out := env[:0:0]
