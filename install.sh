@@ -48,9 +48,13 @@ on_path=0
 # ${PATH:-} guards `set -u`: a stripped environment with PATH unset must not abort
 # the colon-split. Empty segments (e.g. a trailing colon) never equal a non-empty
 # gobin, so they are harmless to the containment result.
+# Normalize a single trailing slash so /foo/bin and /foo/bin/ compare equal. Matching
+# stays an EXACT per-segment comparison (never substring/prefix) so a partial-collision
+# segment like /foo/bin-partial still does not count as on-PATH.
+gobin="${gobin%/}"
 IFS=':' read -ra segments <<<"${PATH:-}"
 for seg in "${segments[@]}"; do
-  if [ "$seg" = "$gobin" ]; then on_path=1; break; fi
+  if [ "${seg%/}" = "$gobin" ]; then on_path=1; break; fi
 done
 
 # 4. Success guidance — tailored to PATH status.
