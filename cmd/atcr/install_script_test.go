@@ -63,9 +63,20 @@ func matchesKnownBlocker(output string) bool {
 		return false
 	}
 	for _, sig := range knownBlockerSignatures {
-		if strings.Contains(low, sig) {
-			return true
+		if !strings.Contains(low, sig) {
+			continue
 		}
+		// "replace directives" is a generic phrase that can be echoed incidentally
+		// (e.g. from a transitive dependency) alongside the always-printed module
+		// path. Go's actual pre-public refusal always frames it as "the go.mod file
+		// … contains … replace directives", so require that framing before treating
+		// a co-occurrence as this module's blocker. The other signatures embed
+		// enough context (an explicit auth prompt or the module path itself) that
+		// the modulePath guard already scopes them correctly.
+		if sig == "replace directives" && !strings.Contains(low, "go.mod file") {
+			continue
+		}
+		return true
 	}
 	return false
 }
