@@ -202,6 +202,63 @@ func TestInstallScriptMissingToolchain(t *testing.T) {
 	}
 }
 
+// TestInstallScriptPathCheck exercises install.sh's exact colon-segment PATH
+// containment check from both sides: an exact GOPATH/bin segment must suppress
+// the non-fatal warning, and a partial-collision segment (a superstring of
+// gobin that is not equal to it) must NOT — a regression reverting install.sh
+// to grep/substring matching would flip the second subtest, and a bug inverting
+// the on_path flag would flip the first. Skips on a known pre-public blocker.
+func TestInstallScriptPathCheck(t *testing.T) {
+	script := installScriptPath(t)
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatalf("bash not found: %v", err)
+	}
+	modCache := goModCache(t)
+
+	// run installs into an isolated GOPATH with PATH = extraSegments + the
+	// inherited PATH (toolchain stays reachable), returning combined output.
+	run := func(t *testing.T, gopath string, extraSegments ...string) string {
+		t.Helper()
+		segments := append(extraSegments, os.Getenv("PATH"))
+		cmd := exec.Command(bash, script)
+		cmd.Env = append(scrubEnv(os.Environ(), "GOPATH", "GOBIN", "GOMODCACHE", "PATH"),
+			"GOPATH="+gopath,
+			"GOMODCACHE="+modCache,
+			"PATH="+strings.Join(segments, string(os.PathListSeparator)),
+		)
+		out, _ := cmd.CombinedOutput()
+		combined := string(out)
+		if code := cmd.ProcessState.ExitCode(); code != 0 {
+			if matchesKnownBlocker(combined) {
+				t.Skipf("skipping PATH-check assertion: repo not yet publicly installable (Phase 3/4 pending)\n%s", combined)
+			}
+			t.Fatalf("install.sh exited %d with an unexpected failure:\n%s", code, combined)
+		}
+		return combined
+	}
+
+	t.Run("exact gobin segment suppresses PATH warning", func(t *testing.T) {
+		gopath := filepath.Join(t.TempDir(), "gopath")
+		gobin := filepath.Join(gopath, "bin")
+		combined := run(t, gopath, gobin)
+		if strings.Contains(combined, "export PATH=") {
+			t.Errorf("expected no PATH-remediation warning when GOPATH/bin is exactly on PATH, got:\n%s", combined)
+		}
+	})
+
+	t.Run("partial-collision segment does not suppress PATH warning", func(t *testing.T) {
+		gopath := filepath.Join(t.TempDir(), "gopath")
+		// A superstring of gobin that is not an exact PATH segment — substring
+		// matching would wrongly treat this as "on PATH".
+		partial := filepath.Join(gopath, "bin") + "-partial"
+		combined := run(t, gopath, partial)
+		if !strings.Contains(combined, "export PATH=") {
+			t.Errorf("expected PATH-remediation warning when PATH holds only a partial-collision segment, got:\n%s", combined)
+		}
+	})
+}
+
 // scrubEnv returns env with every KEY=... entry for the given keys removed.
 func scrubEnv(env []string, keys ...string) []string {
 	out := env[:0:0]
