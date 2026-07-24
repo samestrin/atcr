@@ -441,6 +441,47 @@ func TestInstallScriptPathGuidanceOrder(t *testing.T) {
 	}
 }
 
+// TestInstallScriptHonorsGOBIN sets GOBIN to a custom dir (distinct from GOPATH/bin),
+// keeps both off PATH, and asserts install.sh's PATH warning references the GOBIN
+// target — the dir `go install` actually writes to — not GOPATH/bin. Skips on a
+// known pre-public blocker.
+func TestInstallScriptHonorsGOBIN(t *testing.T) {
+	script := installScriptPath(t)
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatalf("bash not found: %v", err)
+	}
+	modCache := goModCache(t)
+	tmp := t.TempDir()
+	gobinDir := filepath.Join(tmp, "custom-gobin")
+	gopath := filepath.Join(tmp, "gopath")
+	if err := os.MkdirAll(gobinDir, 0o755); err != nil {
+		t.Fatalf("creating GOBIN dir: %v", err)
+	}
+	cmd, cancel := installCmd(t, bash, script)
+	defer cancel()
+	// Inherited PATH excludes both gobinDir and gopath/bin -> warning path.
+	cmd.Env = append(scrubEnv(os.Environ(), "GOPATH", "GOBIN", "GOMODCACHE"),
+		"GOPATH="+gopath,
+		"GOBIN="+gobinDir,
+		"GOMODCACHE="+modCache,
+	)
+	out, _ := cmd.CombinedOutput()
+	combined := string(out)
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		if matchesKnownBlocker(combined) {
+			t.Skipf("skipping GOBIN assertion: repo not yet publicly installable\n%s", combined)
+		}
+		t.Fatalf("install.sh exited %d unexpectedly:\n%s", code, combined)
+	}
+	if !strings.Contains(combined, gobinDir) {
+		t.Errorf("expected PATH warning to reference the GOBIN target %q, got:\n%s", gobinDir, combined)
+	}
+	if strings.Contains(combined, filepath.Join(gopath, "bin")) {
+		t.Errorf("PATH warning referenced GOPATH/bin instead of the GOBIN target:\n%s", combined)
+	}
+}
+
 // scrubEnv returns env with every KEY=... entry for the given keys removed.
 func scrubEnv(env []string, keys ...string) []string {
 	out := env[:0:0]
