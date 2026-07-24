@@ -70,6 +70,53 @@ func matchesKnownBlocker(output string) bool {
 	return false
 }
 
+// TestMatchesKnownBlocker pins the skip-guard's scoping. The load-bearing case is
+// "incidental replace directives": `go install …atcr@latest` always echoes the module
+// path while building, so a stray "replace directives" mention from a transitive
+// dependency co-occurs with the module path. Go's actual pre-public refusal always
+// frames it as "the go.mod file … contains … replace directives", so the guard must
+// require that framing rather than treating any co-occurrence as a blocker.
+func TestMatchesKnownBlocker(t *testing.T) {
+	cases := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{
+			name:   "own go.mod replace refusal is a blocker",
+			output: "go install github.com/samestrin/atcr/cmd/atcr@latest: github.com/samestrin/atcr@v0.0.0-000: the go.mod file for the module providing named packages contains one or more replace directives",
+			want:   true,
+		},
+		{
+			name:   "incidental replace directives from a transitive dep is not a blocker",
+			output: "go: downloading github.com/samestrin/atcr/cmd/atcr@latest\ngo: note: some transitive dep documents replace directives in its README",
+			want:   false,
+		},
+		{
+			name:   "private-repo auth failure is a blocker",
+			output: "go install github.com/samestrin/atcr/cmd/atcr@latest: fatal: could not read username for 'https://github.com': terminal prompts disabled",
+			want:   true,
+		},
+		{
+			name:   "proxy not-found for this module is a blocker",
+			output: "go install: github.com/samestrin/atcr/cmd/atcr@latest: not found: github.com/samestrin/atcr@latest",
+			want:   true,
+		},
+		{
+			name:   "failure without the module path is not a blocker",
+			output: "go: some other module: the go.mod file contains one or more replace directives",
+			want:   false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := matchesKnownBlocker(tc.output); got != tc.want {
+				t.Errorf("matchesKnownBlocker(%q) = %v, want %v", tc.output, got, tc.want)
+			}
+		})
+	}
+}
+
 // installScriptPath resolves the repo-root install.sh relative to this test file.
 func installScriptPath(t *testing.T) string {
 	t.Helper()
