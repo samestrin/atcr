@@ -136,6 +136,16 @@ func TestInstallScriptRealInstall(t *testing.T) {
 	if _, err := os.Stat(bin); err != nil {
 		t.Fatalf("expected installed binary at %s: %v\noutput:\n%s", bin, err, combined)
 	}
+	// Smoke-check the installed binary actually runs — os.Stat alone would pass on
+	// a zero-byte file, a stale leftover, or a broken artifact. `atcr version`
+	// prints "atcr version <ver>"; assert exit 0 plus that exact prefix.
+	verOut, err := exec.Command(bin, "version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("installed binary at %s failed to run `version`: %v\noutput:\n%s", bin, err, verOut)
+	}
+	if !strings.Contains(string(verOut), "atcr version ") {
+		t.Errorf("expected `atcr version` output to contain %q, got:\n%s", "atcr version ", verOut)
+	}
 	// Non-fatal PATH warning must appear on stderr (install.sh prints it >&2)
 	// because GOPATH/bin is not on PATH — and never on stdout.
 	if !strings.Contains(stderr.String(), "export PATH=") {
