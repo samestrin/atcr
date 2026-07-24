@@ -520,6 +520,42 @@ func TestInstallScriptGOPATHList(t *testing.T) {
 	}
 }
 
+// TestInstallScriptTrailingSlashPath places gobin on PATH WITH a trailing slash —
+// the same directory — and asserts install.sh normalizes it and suppresses the
+// warning. Trailing-slash tolerance must not weaken exact-segment matching: the
+// partial-collision case in TestInstallScriptPathCheck still guards that. Skips on a
+// known pre-public blocker.
+func TestInstallScriptTrailingSlashPath(t *testing.T) {
+	script := installScriptPath(t)
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatalf("bash not found: %v", err)
+	}
+	modCache := goModCache(t)
+	gopath := filepath.Join(t.TempDir(), "gopath")
+	gobin := filepath.Join(gopath, "bin")
+	cmd, cancel := installCmd(t, bash, script)
+	defer cancel()
+	// gobin appears on PATH with a trailing separator; the toolchain stays reachable
+	// via the inherited PATH.
+	cmd.Env = append(scrubEnv(os.Environ(), "GOPATH", "GOBIN", "GOMODCACHE", "PATH"),
+		"GOPATH="+gopath,
+		"GOMODCACHE="+modCache,
+		"PATH="+gobin+"/"+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+	out, _ := cmd.CombinedOutput()
+	combined := string(out)
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		if matchesKnownBlocker(combined) {
+			t.Skipf("skipping trailing-slash assertion: repo not yet publicly installable\n%s", combined)
+		}
+		t.Fatalf("install.sh exited %d unexpectedly:\n%s", code, combined)
+	}
+	if strings.Contains(combined, "export PATH=") {
+		t.Errorf("a trailing-slash gobin segment (%s/) should match and suppress the warning, got:\n%s", gobin, combined)
+	}
+}
+
 // scrubEnv returns env with every KEY=... entry for the given keys removed.
 func scrubEnv(env []string, keys ...string) []string {
 	out := env[:0:0]
