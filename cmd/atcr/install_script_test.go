@@ -21,6 +21,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,15 +145,21 @@ func TestInstallScriptMissingToolchain(t *testing.T) {
 	empty := t.TempDir() // a PATH dir containing neither go nor anything else
 	cmd := exec.Command(bash, script)
 	cmd.Env = append(scrubEnv(os.Environ(), "PATH"), "PATH="+empty)
-	out, _ := cmd.CombinedOutput()
-	combined := string(out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	_ = cmd.Run()
 	code := cmd.ProcessState.ExitCode()
 
 	if code == 0 {
-		t.Fatalf("expected non-zero exit when go is absent, got 0:\n%s", combined)
+		t.Fatalf("expected non-zero exit when go is absent, got 0:\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
 	}
-	if !strings.Contains(combined, wantPreflightMsg) {
-		t.Fatalf("expected exact preflight message %q, got:\n%s", wantPreflightMsg, combined)
+	// The preflight message must go to stderr (install.sh prints it >&2), never stdout.
+	if !strings.Contains(stderr.String(), wantPreflightMsg) {
+		t.Fatalf("expected exact preflight message %q on stderr, got:\n%s", wantPreflightMsg, stderr.String())
+	}
+	if strings.Contains(stdout.String(), wantPreflightMsg) {
+		t.Errorf("preflight message must not appear on stdout:\n%s", stdout.String())
 	}
 }
 
