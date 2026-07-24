@@ -50,6 +50,12 @@ var knownBlockerSignatures = []string{
 
 func matchesKnownBlocker(output string) bool {
 	low := strings.ToLower(output)
+	// The modulePath guard is load-bearing, not redundant: three of the four
+	// signatures ("replace directives", the two auth prompts) do not embed the
+	// module path, so without this guard a transitive dependency's failure with
+	// the same signature would be misclassified as a known pre-public blocker.
+	// It is redundant only for the "not found: github.com/samestrin/atcr"
+	// signature, which already embeds the path.
 	if !strings.Contains(low, modulePath) {
 		return false
 	}
