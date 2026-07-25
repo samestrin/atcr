@@ -13,6 +13,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/atomicwrite"
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
@@ -72,7 +73,7 @@ func Debate(ctx context.Context, repoRoot, reviewDir string, reg *registry.Regis
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		return llmclient.New(), disp, cleanup, nil
+		return hookobs.Wrap(ctx, llmclient.New()), disp, cleanup, nil
 	}
 	return runDebate(ctx, reviewDir, reg, opts, harness)
 }

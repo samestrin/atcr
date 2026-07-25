@@ -527,9 +527,12 @@ func TestGenerateFixes_StopsOnCanceledContext(t *testing.T) {
 
 // swapExecutorClient overrides the package executor-client seam and returns a
 // restore func, so an integration test can inject a scripted completer.
+// The seam now takes a context (so the client can be observed via
+// internal/hookobs); tests do not care about it, so the ctx-free factory they
+// pass is adapted here rather than churning every call site.
 func swapExecutorClient(fn func() executorCompleter) func() {
 	prev := newExecutorClient
-	newExecutorClient = fn
+	newExecutorClient = func(context.Context) executorCompleter { return fn() }
 	return func() { newExecutorClient = prev }
 }
 

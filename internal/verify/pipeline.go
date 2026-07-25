@@ -15,6 +15,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/atomicwrite"
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
@@ -123,7 +124,7 @@ func Verify(ctx context.Context, repoRoot, reviewDir string, reg *registry.Regis
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		return llmclient.New(), disp, cleanup, nil
+		return hookobs.Wrap(ctx, llmclient.New()), disp, cleanup, nil
 	}
 	return runVerify(ctx, reviewDir, reg, opts, harness)
 }
@@ -297,7 +298,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// snapshot harness nor the executor client is built (the scan here sees the final
 	// post-verification confidence, so a finding promoted to VERIFIED still qualifies).
 	if reg.Executor != nil && anyFixEligible(findings, reg.Executor) {
-		generateFixes(ctx, findings, reg.Executor, reg, newExecutorClient(), cc, disp, opts.SharedTimeoutSecs)
+		generateFixes(ctx, findings, reg.Executor, reg, newExecutorClient(ctx), cc, disp, opts.SharedTimeoutSecs)
 	}
 
 	// Build the complete verification.json from in-memory findings (no disk
