@@ -47,14 +47,19 @@ jobs:
           version: v2.12.2
 
       - name: Run Tests
-        # -race adds heavy overhead (internal/astgroup alone runs ~5x slower
-        # under it) and -coverprofile disables Go's test cache, so every PR
-        # push re-executes the entire suite uncached. Mirror reconcile-module.yml's
-        # existing PR-time precedent: fast plain `go test` for pull_request
-        # feedback, full -race + coverage gate on push (i.e. post-merge to main).
+        # -race now runs on pull_request too, because it no longer runs anywhere
+        # else before merge: .githooks/pre-push dropped it after `go test -race
+        # ./...` from a working checkout was observed corrupting the repository
+        # (rewritten branch ref, ~200 stray fixture commits, core.bare flipped).
+        # CI is the right home for it — the checkout is ephemeral, so the same
+        # failure mode is harmless here.
+        #
+        # The original concern was cost, and most of that was -coverprofile,
+        # which disables Go's test cache. Coverage is only consumed by the
+        # post-merge upload, so PRs get -race WITHOUT it and stay cached.
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            go test ./...
+            go test -race ./...
           else
             go test -v -race -coverprofile=coverage.out ./...
           fi
