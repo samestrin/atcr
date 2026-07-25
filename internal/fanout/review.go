@@ -12,6 +12,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/cache"
 	"github.com/samestrin/atcr/internal/gitexec"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -1296,6 +1297,24 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing st
 	return cache.Key(cache.HashText(prompt), model, tuning)
 }
 
+// codeContextFor recovers the per-file breakdown of an agent's payload text for
+// the model-invocation observation seam (Epic 35.0).
+//
+// It cannot fail: an unparseable or non-file-shaped payload yields nil, and an
+// observer reads that as "no code context". An audit helper must never be able
+// to fail the review it is observing.
+func codeContextFor(mode, payloadText string) []hookobs.CodeRef {
+	entries := payload.EntriesFromRenderedPayload(payload.PayloadMode(mode), payloadText)
+	if len(entries) == 0 {
+		return nil
+	}
+	refs := make([]hookobs.CodeRef, len(entries))
+	for i, e := range entries {
+		refs[i] = hookobs.CodeRef{Path: e.Path, Body: e.Body}
+	}
+	return refs
+}
+
 // renderAgent builds a fully-rendered review Agent for `name` over an explicit
 // payload text and its file-count/truncation metadata. buildSlots' bulk path
 // uses it for the whole-diff (bulk) payload; the chunked strategy (Epic 14.3)
@@ -1346,9 +1365,17 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, 
 		reservedOut = defaultMaxTokens
 	}
 	return Agent{
-		Name:             name,
-		Provider:         ac.Provider,
-		Prompt:           prompt,
+		Name:     name,
+		Provider: ac.Provider,
+		Prompt:   prompt,
+		// Recover the per-file breakdown of the payload THIS agent was sent
+		// (Epic 35.0). It is derived from payloadText — the pre-template payload
+		// — rather than from the rendered prompt, so it is unaffected by how a
+		// persona template wraps the diff. Deriving it here rather than
+		// threading structure through the chunker is exact because the chunker
+		// splits on file boundaries, and free because the recovered bodies are
+		// substrings of payloadText.
+		CodeContext:      codeContextFor(mode, payloadText),
 		PayloadMode:      mode,
 		Truncation:       trunc,
 		TimeoutSecs:      ac.EffectiveTimeoutSecs(cfg.Settings),
@@ -1450,6 +1477,9 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		Prompt:      primary.Prompt,
 		PayloadMode: primary.PayloadMode,
 		Truncation:  primary.Truncation,
+		// A fallback reviews the primary's already-sized/chunked payload, so it
+		// saw exactly the same files and inherits the primary's record of them.
+		CodeContext: primary.CodeContext,
 		TimeoutSecs: ac.EffectiveTimeoutSecs(cfg.Settings),
 		// Retry/backoff follow the fallback's OWN config (Epic 4.6), like
 		// TimeoutSecs: the fallback makes its own call to its own provider, so its

@@ -88,6 +88,25 @@ type ModelInvocation struct {
 	// building the request — so a config of https://user:pass@host/v1 is
 	// reported as https://host/v1.
 	BaseURL string
+	// CodeContext is the per-file breakdown of the payload this invocation was
+	// sent: the files that went to the model on this call, each paired with its
+	// slice of the payload verbatim.
+	//
+	// It is the structured view of content Prompt already carries as one blob.
+	// A consumer building an audit trail wants both — the prompt is what the
+	// model actually received, while this is what an auditor can query on
+	// ("which files went to which provider on this run"). The split is done by
+	// the same parser that builds the payload in the first place, so renames,
+	// binary-file markers, and multi-file boundaries are handled identically.
+	//
+	// It is per-invocation, not per-run: the chunked review strategy gives each
+	// call a different subset of the diff, and this reports that subset.
+	//
+	// It is nil when the call carried no attributable file payload — a
+	// tool-loop turn, a payload shape the parser cannot split, or a call made
+	// outside a review (verify, debate, benchmark). Nil is normal, not an
+	// error; fall back to Prompt when you need content regardless.
+	CodeContext []CodeRef
 	// Prompt is the single-shot prompt text. On a multi-turn tool-loop turn it
 	// is the invocation's base prompt; Messages carries that turn's history.
 	Prompt string
@@ -145,6 +164,21 @@ type ModelInvocation struct {
 	// still reported exactly once, with whatever partial data was recovered, so
 	// a consumer building an audit trail can account for it.
 	Err string
+}
+
+// CodeRef is one file's contribution to the payload an invocation was sent.
+//
+// SENSITIVE DATA. Body is source code, verbatim — the same content
+// ModelInvocation.Prompt carries, split per file. Everything that type says
+// about redacting before persisting applies here identically.
+type CodeRef struct {
+	// Path is the file the content came from, relative to the repository root.
+	// It is empty when the payload section could not be attributed to a single
+	// file (a combined/merge diff, say); the Body is still reported, because an
+	// unattributed record is worth more to an auditor than a missing one.
+	Path string
+	// Body is this file's slice of the payload, verbatim and untruncated.
+	Body string
 }
 
 // ModelMessage is one chat message in a multi-turn invocation. Content is
@@ -259,6 +293,7 @@ func (a observerAdapter) OnModelInvocation(ctx context.Context, in hookobs.Invoc
 		Duration:         in.Duration,
 		Err:              in.Err,
 	}
+	mi.CodeContext = adaptCodeRefs(in.CodeContext)
 	mi.ResponseToolCalls = adaptToolCalls(in.ResponseToolCalls)
 	if len(in.Messages) > 0 {
 		mi.Messages = make([]ModelMessage, len(in.Messages))
@@ -272,6 +307,25 @@ func (a observerAdapter) OnModelInvocation(ctx context.Context, in hookobs.Invoc
 		}
 	}
 	a.observer.OnModelInvocation(ctx, mi)
+}
+
+// adaptCodeRefs converts the internal code-ref shape into the exported one.
+//
+// It allocates a fresh slice rather than reslicing the internal one. The engine
+// shares a single backing array across every invocation an agent makes (and, on
+// the fallback path, across two agents), so handing it out directly would let
+// one observer's write reach another invocation's record — the same aliasing
+// hazard copyFloat64 exists for. The strings themselves are immutable and are
+// shared, so this stays O(number of files), not O(payload bytes).
+func adaptCodeRefs(refs []hookobs.CodeRef) []CodeRef {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]CodeRef, len(refs))
+	for i, r := range refs {
+		out[i] = CodeRef{Path: r.Path, Body: r.Body}
+	}
+	return out
 }
 
 // adaptToolCalls converts the internal tool-call shape into the exported one.

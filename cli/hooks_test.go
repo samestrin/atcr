@@ -125,7 +125,11 @@ func TestObserverAdapter_ConvertsEveryField(t *testing.T) {
 		Model:     "test/model-a",
 		Provider:  "openrouter",
 		BaseURL:   "https://gateway.example/v1",
-		Prompt:    "review this diff",
+		CodeContext: []hookobs.CodeRef{
+			{Path: "a.go", Body: "diff --git a/a.go b/a.go\n"},
+			{Path: "", Body: "diff --cc merged.go\n"},
+		},
+		Prompt: "review this diff",
 		Messages: []hookobs.Message{
 			{Role: "user", Content: "hi"},
 			{Role: "assistant", Content: "", ToolCalls: []hookobs.ToolCall{{ID: "c1", Name: "read_file", Arguments: `{"path":"a.go"}`}}},
@@ -155,7 +159,11 @@ func TestObserverAdapter_ConvertsEveryField(t *testing.T) {
 		Model:     "test/model-a",
 		Provider:  "openrouter",
 		BaseURL:   "https://gateway.example/v1",
-		Prompt:    "review this diff",
+		CodeContext: []CodeRef{
+			{Path: "a.go", Body: "diff --git a/a.go b/a.go\n"},
+			{Path: "", Body: "diff --cc merged.go\n"},
+		},
+		Prompt: "review this diff",
 		Messages: []ModelMessage{
 			{Role: "user", Content: "hi"},
 			{Role: "assistant", Content: "", ToolCalls: []ModelToolCall{{ID: "c1", Name: "read_file", Arguments: `{"path":"a.go"}`}}},
