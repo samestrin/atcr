@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/circuitbreaker"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -711,6 +712,10 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 		agentLogger.Warn("tools-enabled agent has no provider set; circuit breaker bypassed", "agent", a.Name)
 	}
 	ctx = circuitbreaker.NewContext(ctx, a.Provider)
+	// Same chokepoint, same reason: attach the agent identity so an audit
+	// observer can attribute an invocation to the persona that made it. Every
+	// path (single-shot, tool loop, verify) runs through here (Epic 35.0).
+	ctx = hookobs.WithCall(ctx, hookobs.Call{AgentName: a.Name})
 	agentLogger.Debug("invoking agent", "tools", a.Tools, "model", a.Invocation.Model, "max_retries", a.MaxRetries, "initial_backoff_ms", a.InitialBackoffMs)
 
 	// Metrics (Epic 4.4): count the agent invocation and time the whole dispatch

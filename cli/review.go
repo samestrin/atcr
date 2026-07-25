@@ -16,7 +16,7 @@ import (
 	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
-	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -410,6 +410,10 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// this correlated ctx, never cmd.Context() again.
 	secrets, secretWarnings := prep.SecretValues()
 	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, secrets...)
+	// Audit identity (Epic 35.0): stamp the review id and stage so an observer
+	// can group this run's invocations, including the --verify/--debate/
+	// --auto-fix stages, which refine Stage further downstream.
+	ctx = hookobs.WithCall(ctx, hookobs.Call{RunID: prep.ID, Stage: "review"})
 	for _, w := range secretWarnings {
 		log.FromContext(ctx).Debug(w)
 	}
@@ -424,7 +428,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// than one review against the shared DefaultRegistry).
 	metricsBaseline := snapshotSummaryMetrics(metrics.DefaultRegistry)
 
-	result, err = fanout.ExecuteReview(ctx, llmclient.New(), prep)
+	result, err = fanout.ExecuteReview(ctx, newCompleter(ctx), prep)
 
 	// Graceful interrupt (SIGINT/SIGTERM cancelled the root context): completed
 	// agents are already persisted by WritePool and the manifest is marked

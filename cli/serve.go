@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/mcp"
 	"github.com/spf13/cobra"
@@ -37,7 +36,7 @@ func newServeCmd() *cobra.Command {
 			// until the client disconnects (stdin EOF) or ctx is cancelled, drains
 			// in-flight background reviews, then returns nil for a clean exit 0.
 			logger := log.FromContext(cmd.Context())
-			return serveFn(cmd.Context(), ".", llmclient.New(), logger)
+			return serveFn(cmd.Context(), ".", newCompleter(cmd.Context()), logger)
 		},
 	}
 	return cmd

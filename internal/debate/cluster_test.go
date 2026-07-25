@@ -7,11 +7,14 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/hookobs"
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 )
@@ -516,4 +519,77 @@ func TestFilterMergedClusters_NilClusterIdxPassesThrough(t *testing.T) {
 	}, nil)
 	require.Len(t, out, 1, "nil clusterIdx must not suppress items")
 	assert.Equal(t, "gray item", out[0].Problem)
+}
+
+// ctxRecordingChat records the audit call identity on the ctx of the first turn
+// it serves, then answers with the scripted turns like fakeChatCompleter.
+type ctxRecordingChat struct {
+	inner *fakeChatCompleter
+	seen  *hookobs.Call
+	mu    sync.Mutex
+}
+
+func (c *ctxRecordingChat) record(ctx context.Context) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.seen.Stage == "" {
+		*c.seen = hookobs.CallFrom(ctx)
+	}
+}
+
+func (c *ctxRecordingChat) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	c.record(ctx)
+	return c.inner.Complete(ctx, inv)
+}
+
+func (c *ctxRecordingChat) Chat(ctx context.Context, inv llmclient.Invocation, m []llmclient.Message, td []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	c.record(ctx)
+	return c.inner.Chat(ctx, inv, m, td)
+}
+
+// TestRunDebate_StampsStageAndRunID: the audit seam's coverage claim for the
+// debate path rests on this stamping happening on the production code path, not
+// on a substring grep in another package's test.
+func TestRunDebate_StampsStageAndRunID(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "off by one in loop", "MEDIUM", "alice"),
+		grayFinding("a.go", 10, "loop boundary error causes overflow", "HIGH", "bob"),
+	}
+	cluster := grayCluster("amb-1", "a.go", 10,
+		"off by one in loop", "MEDIUM", "alice",
+		"loop boundary error causes overflow", "HIGH", "bob")
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	var seen hookobs.Call
+	cc := &ctxRecordingChat{inner: &fakeChatCompleter{turns: grayJudgeTurns("merge")}, seen: &seen}
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	assert.Equal(t, "debate", seen.Stage, "seat calls must be attributable to the debate stage")
+	assert.Equal(t, filepath.Base(dir), seen.RunID, "a standalone debate supplies its own run id")
+}
+
+// TestRunDebate_DoesNotStealAnOuterRunID: `atcr review --debate` stamps the
+// review id first; debate must refine only the stage. Under --output-dir the id
+// and the directory basename differ, so an overwrite would split one run's
+// records across two ids.
+func TestRunDebate_DoesNotStealAnOuterRunID(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "off by one in loop", "MEDIUM", "alice"),
+		grayFinding("a.go", 10, "loop boundary error causes overflow", "HIGH", "bob"),
+	}
+	cluster := grayCluster("amb-1", "a.go", 10,
+		"off by one in loop", "MEDIUM", "alice",
+		"loop boundary error causes overflow", "HIGH", "bob")
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	var seen hookobs.Call
+	cc := &ctxRecordingChat{inner: &fakeChatCompleter{turns: grayJudgeTurns("merge")}, seen: &seen}
+	outer := hookobs.WithCall(context.Background(), hookobs.Call{RunID: "2026-07-25_main", Stage: "review"})
+
+	_, err := runDebate(outer, dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	assert.Equal(t, "2026-07-25_main", seen.RunID, "debate must not resplit the review's records under the dir name")
+	assert.Equal(t, "debate", seen.Stage)
 }
