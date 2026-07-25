@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -113,38 +114,87 @@ func TestObserverAdapter_ConvertsEveryField(t *testing.T) {
 	obs := &recordingObserver{}
 	started := time.Now().UTC()
 
+	temp := 0.2
+	maxTok := 4096
+
 	observerAdapter{observer: obs}.OnModelInvocation(hookobs.Invocation{
-		Model:            "test/model-a",
-		Provider:         "openrouter",
-		BaseURL:          "https://gateway.example/v1",
-		Prompt:           "review this diff",
-		Messages:         []hookobs.Message{{Role: "user", Content: "hi"}, {Role: "assistant", Content: ""}},
-		Response:         "HIGH: a finding",
-		FinishReason:     "stop",
-		Truncated:        true,
-		PromptTokens:     11,
-		CompletionTokens: 7,
-		StartedAt:        started,
-		Duration:         3 * time.Second,
-		Err:              "boom",
+		Seq:       42,
+		RunID:     "2026-07-25_feat-x",
+		AgentName: "security-reviewer",
+		Stage:     "verify",
+		Model:     "test/model-a",
+		Provider:  "openrouter",
+		BaseURL:   "https://gateway.example/v1",
+		Prompt:    "review this diff",
+		Messages: []hookobs.Message{
+			{Role: "user", Content: "hi"},
+			{Role: "assistant", Content: "", ToolCalls: []hookobs.ToolCall{{ID: "c1", Name: "read_file", Arguments: `{"path":"a.go"}`}}},
+			{Role: "tool", Content: "contents", ToolCallID: "c1"},
+		},
+		Response:          "HIGH: a finding",
+		ResponseToolCalls: []hookobs.ToolCall{{ID: "c2", Name: "run_tests", Arguments: `{}`}},
+		FinishReason:      "stop",
+		Truncated:         true,
+		PromptTokens:      11,
+		CompletionTokens:  7,
+		CostUSD:           0.000123,
+		Temperature:       &temp,
+		MaxTokens:         &maxTok,
+		Attempts:          2,
+		StartedAt:         started,
+		Duration:          3 * time.Second,
+		Err:               "boom",
 	})
 
 	require.Len(t, obs.got, 1)
 	assert.Equal(t, ModelInvocation{
-		Model:            "test/model-a",
-		Provider:         "openrouter",
-		BaseURL:          "https://gateway.example/v1",
-		Prompt:           "review this diff",
-		Messages:         []ModelMessage{{Role: "user", Content: "hi"}, {Role: "assistant", Content: ""}},
-		Response:         "HIGH: a finding",
-		FinishReason:     "stop",
-		Truncated:        true,
-		PromptTokens:     11,
-		CompletionTokens: 7,
-		StartedAt:        started,
-		Duration:         3 * time.Second,
-		Err:              "boom",
+		Seq:       42,
+		RunID:     "2026-07-25_feat-x",
+		AgentName: "security-reviewer",
+		Stage:     "verify",
+		Model:     "test/model-a",
+		Provider:  "openrouter",
+		BaseURL:   "https://gateway.example/v1",
+		Prompt:    "review this diff",
+		Messages: []ModelMessage{
+			{Role: "user", Content: "hi"},
+			{Role: "assistant", Content: "", ToolCalls: []ModelToolCall{{ID: "c1", Name: "read_file", Arguments: `{"path":"a.go"}`}}},
+			{Role: "tool", Content: "contents", ToolCallID: "c1"},
+		},
+		Response:          "HIGH: a finding",
+		ResponseToolCalls: []ModelToolCall{{ID: "c2", Name: "run_tests", Arguments: `{}`}},
+		FinishReason:      "stop",
+		Truncated:         true,
+		PromptTokens:      11,
+		CompletionTokens:  7,
+		CostUSD:           0.000123,
+		Temperature:       &temp,
+		MaxTokens:         &maxTok,
+		Attempts:          2,
+		StartedAt:         started,
+		Duration:          3 * time.Second,
+		Err:               "boom",
 	}, obs.got[0])
+}
+
+// TestObserverAdapter_FieldCountsMatch is the guard that keeps the test above
+// honest. That test only catches an unmapped field if someone remembers to add
+// it to both literals; this one fails the moment the two structs drift, which
+// is the actual risk — a field added to the internal payload and silently never
+// surfaced to the consumer.
+func TestObserverAdapter_FieldCountsMatch(t *testing.T) {
+	assert.Equal(t,
+		reflect.TypeOf(hookobs.Invocation{}).NumField(),
+		reflect.TypeOf(ModelInvocation{}).NumField(),
+		"hookobs.Invocation and cli.ModelInvocation have drifted — map the new field in observerAdapter")
+	assert.Equal(t,
+		reflect.TypeOf(hookobs.Message{}).NumField(),
+		reflect.TypeOf(ModelMessage{}).NumField(),
+		"hookobs.Message and cli.ModelMessage have drifted")
+	assert.Equal(t,
+		reflect.TypeOf(hookobs.ToolCall{}).NumField(),
+		reflect.TypeOf(ModelToolCall{}).NumField(),
+		"hookobs.ToolCall and cli.ModelToolCall have drifted")
 }
 
 // TestObserverAdapter_NoMessagesStaysNil keeps single-shot records free of an

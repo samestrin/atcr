@@ -119,6 +119,9 @@ func Verify(ctx context.Context, repoRoot, reviewDir string, reg *registry.Regis
 	// Production harness: a real chat client plus a read-only snapshot dispatcher
 	// of repoRoot at the review's head SHA. Built lazily (only when a skeptic will
 	// run) so a no-work or no-eligible-skeptic verify does no git/provider I/O.
+	// Stage/run identity for audit observers (Epic 35.0): skeptic and fix-executor
+	// calls are attributed to this verify run rather than landing unlabelled.
+	ctx = hookobs.WithCall(ctx, hookobs.Call{Stage: "verify", RunID: filepath.Base(reviewDir)})
 	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
 		disp, cleanup, err := buildDispatcher(repoRoot, reviewDir, opts.ExecBackend, opts.ExecTestCmd, opts.ExecTimeout)
 		if err != nil {

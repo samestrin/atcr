@@ -68,6 +68,8 @@ type Result struct {
 // only errors returned are setup failures (missing reconciled findings, unreadable
 // artifacts).
 func Debate(ctx context.Context, repoRoot, reviewDir string, reg *registry.Registry, opts Options) (Result, error) {
+	// Stage/run identity for audit observers (Epic 35.0).
+	ctx = hookobs.WithCall(ctx, hookobs.Call{Stage: "debate", RunID: filepath.Base(reviewDir)})
 	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
 		disp, cleanup, err := buildDispatcher(repoRoot, reviewDir)
 		if err != nil {

@@ -391,7 +391,139 @@ func TestWrap_ChatRecordsMessageHistory(t *testing.T) {
 	require.Len(t, got, 3)
 	assert.Equal(t, Message{Role: "user", Content: "find bugs"}, got[0])
 	assert.Equal(t, Message{Role: "assistant", Content: ""}, got[1], "content:null flattens to empty")
-	assert.Equal(t, Message{Role: "tool", Content: "file contents"}, got[2])
+	assert.Equal(t, Message{Role: "tool", Content: "file contents", ToolCallID: "call_1"}, got[2],
+		"a tool result must keep the id linking it back to the call that produced it")
+}
+
+// TestWrap_ChatRecordsRequestedToolCalls: a tool-enabled agent's response is
+// frequently a tool call with no text, so a record carrying only Response would
+// show an empty exchange and lose which tool ran with which arguments.
+func TestWrap_ChatRecordsRequestedToolCalls(t *testing.T) {
+	srv := chatServer(t, http.StatusOK,
+		`{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[`+
+			`{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.go\"}"}}]},`+
+			`"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":1}}`)
+	inv := testInvocation(t, srv)
+	obs := &recordingObserver{}
+	ctx := observedCtx(obs, &bytes.Buffer{})
+
+	_, err := Wrap(ctx, llmclient.New()).Chat(ctx, inv,
+		[]llmclient.Message{{Role: "user", Content: strPtr("hi")}}, nil)
+	require.NoError(t, err)
+
+	require.Len(t, obs.calls(), 1)
+	require.Len(t, obs.calls()[0].ResponseToolCalls, 1)
+	assert.Equal(t, ToolCall{ID: "call_1", Name: "read_file", Arguments: `{"path":"a.go"}`},
+		obs.calls()[0].ResponseToolCalls[0])
+}
+
+// TestWrap_RecordsCallIdentity: without run/agent/stage an observer receives an
+// interleaved flat stream it cannot group into a per-run compliance record.
+func TestWrap_RecordsCallIdentity(t *testing.T) {
+	srv := chatServer(t, http.StatusOK, okCompletion)
+	inv := testInvocation(t, srv)
+	obs := &recordingObserver{}
+	ctx := WithCall(observedCtx(obs, &bytes.Buffer{}),
+		Call{RunID: "2026-07-25_feat-x", AgentName: "security-reviewer", Stage: "review"})
+
+	_, err := Wrap(ctx, llmclient.New()).Complete(ctx, inv)
+	require.NoError(t, err)
+
+	require.Len(t, obs.calls(), 1)
+	assert.Equal(t, "2026-07-25_feat-x", obs.calls()[0].RunID)
+	assert.Equal(t, "security-reviewer", obs.calls()[0].AgentName)
+	assert.Equal(t, "review", obs.calls()[0].Stage)
+}
+
+// TestWithCall_MergesAcrossLayers: cli contributes RunID/Stage, the engine
+// contributes AgentName, and verify/debate refine Stage. A later layer must not
+// erase an earlier layer's contribution, whatever the order.
+func TestWithCall_MergesAcrossLayers(t *testing.T) {
+	ctx := WithCall(context.Background(), Call{RunID: "run-1", Stage: "review"})
+	ctx = WithCall(ctx, Call{AgentName: "agent-a"})
+	ctx = WithCall(ctx, Call{Stage: "verify"})
+
+	got := callFrom(ctx)
+
+	assert.Equal(t, Call{RunID: "run-1", AgentName: "agent-a", Stage: "verify"}, got,
+		"empty fields must not overwrite; non-empty must win")
+}
+
+func TestWithCall_NilContext(t *testing.T) {
+	assert.NotPanics(t, func() { WithCall(nil, Call{RunID: "x"}) }) //nolint:staticcheck // nil ctx is the case under test
+	assert.Equal(t, Call{}, callFrom(nil))                          //nolint:staticcheck // SA1012: nil ctx is the case under test
+}
+
+// TestWrap_NilContext: cobra hands a nil context to a command that was never
+// executed, a condition the previous bare llmclient.New() call sites were
+// immune to.
+func TestWrap_NilContext(t *testing.T) {
+	client := llmclient.New()
+	var got Client
+	require.NotPanics(t, func() { got = Wrap(nil, client) }) //nolint:staticcheck // nil ctx is the case under test
+	assert.Same(t, client, got)
+}
+
+// TestWrap_RecordsSequence gives a consumer a total order over a stream that
+// concurrency and equal timestamps otherwise leave ambiguous.
+func TestWrap_RecordsSequence(t *testing.T) {
+	srv := chatServer(t, http.StatusOK, okCompletion)
+	inv := testInvocation(t, srv)
+	obs := &recordingObserver{}
+	ctx := observedCtx(obs, &bytes.Buffer{})
+	c := Wrap(ctx, llmclient.New())
+
+	for i := 0; i < 3; i++ {
+		_, err := c.Complete(ctx, inv)
+		require.NoError(t, err)
+	}
+
+	calls := obs.calls()
+	require.Len(t, calls, 3)
+	assert.Less(t, calls[0].Seq, calls[1].Seq, "sequence must be monotonic")
+	assert.Less(t, calls[1].Seq, calls[2].Seq)
+}
+
+// TestWrap_RecordsCostAndRequestParams: the rate table lives in an internal
+// package, so a separate module cannot compute cost itself — it has to arrive
+// on the payload or be forked downstream.
+func TestWrap_RecordsCostAndRequestParams(t *testing.T) {
+	srv := chatServer(t, http.StatusOK, okCompletion)
+	inv := testInvocation(t, srv)
+	temp := 0.2
+	maxTok := 4096
+	inv.Temperature = &temp
+	inv.MaxTokens = &maxTok
+	inv.Model = "anthropic/claude-sonnet-4.5"
+	obs := &recordingObserver{}
+	ctx := observedCtx(obs, &bytes.Buffer{})
+
+	_, err := Wrap(ctx, llmclient.New()).CompleteWithMeta(ctx, inv)
+	require.NoError(t, err)
+
+	require.Len(t, obs.calls(), 1)
+	got := obs.calls()[0]
+	require.NotNil(t, got.Temperature)
+	assert.InDelta(t, 0.2, *got.Temperature, 1e-9)
+	require.NotNil(t, got.MaxTokens)
+	assert.Equal(t, 4096, *got.MaxTokens)
+	assert.Positive(t, got.Attempts, "at least one wire attempt must be reported")
+	assert.Equal(t, llmclient.ComputeCostUSD("anthropic/claude-sonnet-4.5", 11, 7), got.CostUSD)
+}
+
+// TestWrap_UnknownModelCostIsZero: an unpriced model must report zero rather
+// than a fabricated figure.
+func TestWrap_UnknownModelCostIsZero(t *testing.T) {
+	srv := chatServer(t, http.StatusOK, okCompletion)
+	inv := testInvocation(t, srv)
+	obs := &recordingObserver{}
+	ctx := observedCtx(obs, &bytes.Buffer{})
+
+	_, err := Wrap(ctx, llmclient.New()).CompleteWithMeta(ctx, inv)
+	require.NoError(t, err)
+
+	require.Len(t, obs.calls(), 1)
+	assert.Zero(t, obs.calls()[0].CostUSD, "an unpriced model must not report an invented cost")
 }
 
 // TestWrap_ChatFiresPerTurn: the tool loop calls Chat repeatedly; each turn is

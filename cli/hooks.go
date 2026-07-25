@@ -28,6 +28,19 @@ import (
 // atcr-enterprise wrapper) for which internal/ types are unreachable by
 // construction.
 type ModelInvocation struct {
+	// Seq is a process-wide monotonic sequence number, assigned in emit order.
+	// Reviewer agents run concurrently and `atcr serve` runs concurrent detached
+	// reviews, so timestamps alone do not give a total order over the stream.
+	Seq int64
+	// RunID is the review id these invocations belong to (e.g.
+	// "2026-07-25_feat-x"), empty for a call made outside a review.
+	RunID string
+	// AgentName is the reviewer persona that made the call, empty when the call
+	// did not originate from the fan-out engine.
+	AgentName string
+	// Stage is which part of the pipeline made the call: "review", "resume",
+	// "verify", or "debate". Empty when not attributable.
+	Stage string
 	// Model is the provider-qualified model identifier as configured, e.g.
 	// "anthropic/claude-sonnet-4.5".
 	Model string
@@ -51,6 +64,10 @@ type ModelInvocation struct {
 	// provider returned only tool calls (an assistant turn with content:null),
 	// and when the invocation failed before producing content.
 	Response string
+	// ResponseToolCalls is the tool calls the assistant requested on this turn.
+	// A tool-enabled agent's response is frequently a tool call with no text at
+	// all, so Response alone would misreport the exchange.
+	ResponseToolCalls []ModelToolCall
 	// FinishReason is the provider's stop reason for the call ("stop",
 	// "length", "tool_calls", ...).
 	//
@@ -74,6 +91,18 @@ type ModelInvocation struct {
 	// which is graceful degradation rather than an error, and on failure paths.
 	PromptTokens     int
 	CompletionTokens int
+	// CostUSD is the estimated cost derived from the token counts above, using
+	// the same rate table atcr uses internally. It is computed here because that
+	// table is not importable from another module. Zero when the model is not in
+	// the table or the provider reported no usage.
+	CostUSD float64
+	// Temperature and MaxTokens are the sampling parameters the call was made
+	// with; nil means the provider's own default applied.
+	Temperature *float64
+	MaxTokens   *int
+	// Attempts is the number of HTTP round-trips the call took, retries
+	// included. Duration spans all of them.
+	Attempts int
 	// StartedAt is when the call was dispatched, in UTC.
 	StartedAt time.Time
 	// Duration is the wall-clock time the call took, including retries.
@@ -90,6 +119,20 @@ type ModelInvocation struct {
 type ModelMessage struct {
 	Role    string
 	Content string
+	// ToolCalls is present on an assistant turn that requested tools;
+	// ToolCallID ties a role:"tool" result back to the call that produced it.
+	ToolCalls  []ModelToolCall
+	ToolCallID string
+}
+
+// ModelToolCall is one model-requested tool invocation. Arguments is the tool's
+// argument object as JSON, normalised to the decoded form so it does not vary
+// with the provider's wire encoding (some send a JSON-encoded string, others a
+// bare object).
+type ModelToolCall struct {
+	ID        string
+	Name      string
+	Arguments string
 }
 
 // ModelInvocationObserver receives one call per model invocation.
@@ -118,9 +161,17 @@ type Hooks struct {
 	// --debate, and --auto-fix stages, plus the standalone `atcr verify` and
 	// `atcr debate` commands and their MCP tool equivalents.
 	//
-	// It does NOT cover `atcr doctor`, whose provider self-test builds its own
+	// Two documented gaps:
+	//
+	// `atcr doctor` is not covered — its provider self-test builds its own
 	// client through a separate interface in internal/doctor and never reaches
-	// this seam. A doctor run therefore produces no observations.
+	// this seam, so a doctor run produces no observations.
+	//
+	// A diff-cache hit produces no observation either, because no model call is
+	// made: the engine replays a stored reviewer output for an unchanged
+	// payload+model+persona. That content still reaches the deliverable, so a
+	// ledger built from these observations will have no entry for a replayed
+	// agent. Run with --no-cache when a complete per-run record matters.
 	ModelInvocation ModelInvocationObserver
 }
 
@@ -138,6 +189,10 @@ type observerAdapter struct {
 
 func (a observerAdapter) OnModelInvocation(in hookobs.Invocation) {
 	mi := ModelInvocation{
+		Seq:              in.Seq,
+		RunID:            in.RunID,
+		AgentName:        in.AgentName,
+		Stage:            in.Stage,
 		Model:            in.Model,
 		Provider:         in.Provider,
 		BaseURL:          in.BaseURL,
@@ -147,17 +202,39 @@ func (a observerAdapter) OnModelInvocation(in hookobs.Invocation) {
 		Truncated:        in.Truncated,
 		PromptTokens:     in.PromptTokens,
 		CompletionTokens: in.CompletionTokens,
+		CostUSD:          in.CostUSD,
+		Temperature:      in.Temperature,
+		MaxTokens:        in.MaxTokens,
+		Attempts:         in.Attempts,
 		StartedAt:        in.StartedAt,
 		Duration:         in.Duration,
 		Err:              in.Err,
 	}
+	mi.ResponseToolCalls = adaptToolCalls(in.ResponseToolCalls)
 	if len(in.Messages) > 0 {
 		mi.Messages = make([]ModelMessage, len(in.Messages))
 		for i, m := range in.Messages {
-			mi.Messages[i] = ModelMessage{Role: m.Role, Content: m.Content}
+			mi.Messages[i] = ModelMessage{
+				Role:       m.Role,
+				Content:    m.Content,
+				ToolCalls:  adaptToolCalls(m.ToolCalls),
+				ToolCallID: m.ToolCallID,
+			}
 		}
 	}
 	a.observer.OnModelInvocation(mi)
+}
+
+// adaptToolCalls converts the internal tool-call shape into the exported one.
+func adaptToolCalls(calls []hookobs.ToolCall) []ModelToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+	out := make([]ModelToolCall, len(calls))
+	for i, c := range calls {
+		out[i] = ModelToolCall{ID: c.ID, Name: c.Name, Arguments: c.Arguments}
+	}
+	return out
 }
 
 // withHooks attaches hooks to ctx so every client-construction site can find

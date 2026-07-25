@@ -12,6 +12,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/history"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -151,6 +152,8 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// via correlateAndRedact so the contract can't drift.
 	secrets, secretWarnings := prep.SecretValues()
 	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, secrets...)
+	// Audit identity (Epic 35.0), mirroring runReview.
+	ctx = hookobs.WithCall(ctx, hookobs.Call{RunID: prep.ID, Stage: "resume"})
 	for _, w := range secretWarnings {
 		log.FromContext(ctx).Debug(w)
 	}

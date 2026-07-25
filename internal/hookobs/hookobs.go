@@ -26,6 +26,7 @@ import (
 	"io"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/samestrin/atcr/internal/circuitbreaker"
@@ -38,19 +39,58 @@ import (
 // SENSITIVE DATA: Prompt and Response hold the model exchange verbatim. This
 // package applies no masking beyond stripping credentials from the endpoint.
 type Invocation struct {
-	Model            string
-	Provider         string
-	BaseURL          string
-	Prompt           string
-	Messages         []Message
-	Response         string
-	FinishReason     string
-	Truncated        bool
-	PromptTokens     int
-	CompletionTokens int
-	StartedAt        time.Time
-	Duration         time.Duration
-	Err              string
+	// Seq is a process-wide monotonic sequence number, assigned in emit order.
+	// The engine runs agents concurrently and `atcr serve` runs concurrent
+	// detached reviews, so wall-clock timestamps alone do not give a consumer a
+	// total order over an interleaved stream.
+	Seq int64
+	// RunID, AgentName, and Stage identify which unit of work this call belongs
+	// to. Without them an observer receives a flat interleaved stream it cannot
+	// group into a per-run record. Each is best-effort: a layer contributes what
+	// it knows, so a call made outside a review may carry none of them.
+	RunID     string
+	AgentName string
+	Stage     string
+
+	Model    string
+	Provider string
+	BaseURL  string
+	Prompt   string
+	Messages []Message
+	Response string
+	// ResponseToolCalls is the tool calls the assistant requested on this turn.
+	// A tool-enabled agent's "response" is frequently a tool call with no text
+	// at all, so a record omitting these would misreport the exchange.
+	ResponseToolCalls []ToolCall
+	FinishReason      string
+	Truncated         bool
+	PromptTokens      int
+	CompletionTokens  int
+	// CostUSD is the estimated cost from the provider-reported token counts. It
+	// is computed here because the rate table lives in an internal package that
+	// an external consumer cannot reach. Zero when the model is not in the rate
+	// table or the provider reported no usage.
+	CostUSD float64
+	// Temperature and MaxTokens are the sampling parameters the call was made
+	// with; nil means the provider default applied. A record of a model
+	// interaction that omits them cannot answer "what settings produced this".
+	Temperature *float64
+	MaxTokens   *int
+	// Attempts is the number of HTTP round-trips the call actually took,
+	// retries included. Duration spans all of them.
+	Attempts  int
+	StartedAt time.Time
+	Duration  time.Duration
+	Err       string
+}
+
+// ToolCall is one model-requested tool invocation, flattened for export.
+// Arguments is the tool's argument object as JSON, normalised to the decoded
+// form so it does not vary with the provider's encoding.
+type ToolCall struct {
+	ID        string
+	Name      string
+	Arguments string
 }
 
 // Message is one chat message in a multi-turn invocation, with a nil
@@ -58,6 +98,12 @@ type Invocation struct {
 type Message struct {
 	Role    string
 	Content string
+	// ToolCalls is present on an assistant turn that requested tools;
+	// ToolCallID ties a role:"tool" result back to the call that produced it.
+	// Without both, a multi-turn record cannot be reassembled into the exchange
+	// that actually happened.
+	ToolCalls  []ToolCall
+	ToolCallID string
 }
 
 // Observer receives one call per model invocation. Implementations must be safe
@@ -75,15 +121,64 @@ type state struct {
 
 type ctxKey struct{}
 
+// Call identifies the unit of work an invocation belongs to. Layers contribute
+// what they know — cli sets RunID and Stage, the fan-out engine sets AgentName,
+// verify/debate/the fix executor set Stage — and WithCall merges rather than
+// replaces so a later layer cannot erase an earlier one's contribution.
+type Call struct {
+	RunID     string
+	AgentName string
+	Stage     string
+}
+
+type callKey struct{}
+
+// WithCall merges c into any Call already on ctx. Empty fields do not overwrite
+// values already present, so ordering between layers does not matter.
+func WithCall(ctx context.Context, c Call) context.Context {
+	if ctx == nil {
+		return ctx
+	}
+	merged := callFrom(ctx)
+	if c.RunID != "" {
+		merged.RunID = c.RunID
+	}
+	if c.AgentName != "" {
+		merged.AgentName = c.AgentName
+	}
+	if c.Stage != "" {
+		merged.Stage = c.Stage
+	}
+	return context.WithValue(ctx, callKey{}, merged)
+}
+
+// callFrom returns the Call attached to ctx, or its zero value.
+func callFrom(ctx context.Context) Call {
+	if ctx == nil {
+		return Call{}
+	}
+	c, _ := ctx.Value(callKey{}).(Call)
+	return c
+}
+
+// seq assigns each observation a process-wide monotonic sequence number.
+var seq atomic.Int64
+
 // NewContext returns ctx carrying obs, to be picked up by Wrap wherever a
 // client is constructed. A nil observer is stored as-is and Wrap treats it as
 // "no observation", so callers need not branch.
 func NewContext(ctx context.Context, obs Observer, stderr io.Writer) context.Context {
+	if ctx == nil {
+		return ctx
+	}
 	return context.WithValue(ctx, ctxKey{}, state{observer: obs, stderr: stderr})
 }
 
 // fromContext returns the observer attached to ctx, if any.
 func fromContext(ctx context.Context) (state, bool) {
+	if ctx == nil {
+		return state{}, false
+	}
 	s, ok := ctx.Value(ctxKey{}).(state)
 	return s, ok
 }
@@ -143,12 +238,18 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 	if provider == "" {
 		provider = endpoint
 	}
+	c := callFrom(ctx)
 	return Invocation{
-		Model:     inv.Model,
-		Provider:  provider,
-		BaseURL:   endpoint,
-		Prompt:    inv.Prompt,
-		StartedAt: start.UTC(),
+		RunID:       c.RunID,
+		AgentName:   c.AgentName,
+		Stage:       c.Stage,
+		Model:       inv.Model,
+		Provider:    provider,
+		BaseURL:     endpoint,
+		Prompt:      inv.Prompt,
+		Temperature: inv.Temperature,
+		MaxTokens:   inv.MaxTokens,
+		StartedAt:   start.UTC(),
 	}
 }
 
@@ -194,6 +295,11 @@ func (o *observingClient) emit(mi Invocation) {
 // finish stamps duration and error onto the observation and emits it.
 func (o *observingClient) finish(mi Invocation, start time.Time, err error) {
 	mi.Duration = time.Since(start)
+	mi.Seq = seq.Add(1)
+	// Computed here rather than left to the consumer: the rate table lives in
+	// internal/llmclient, which a separate module cannot import, so a downstream
+	// ledger would otherwise have to fork and maintain a duplicate of it.
+	mi.CostUSD = llmclient.ComputeCostUSD(mi.Model, mi.PromptTokens, mi.CompletionTokens)
 	if err != nil {
 		mi.Err = err.Error()
 	}
@@ -223,6 +329,7 @@ func (o *observingClient) CompleteWithUsage(ctx context.Context, inv llmclient.I
 	mi.Response = content
 	mi.PromptTokens = usage.PromptTokens
 	mi.CompletionTokens = usage.CompletionTokens
+	mi.Attempts = len(records)
 	o.finish(mi, start, err)
 	return content, usage, records, err
 }
@@ -239,6 +346,7 @@ func (o *observingClient) CompleteWithMeta(ctx context.Context, inv llmclient.In
 	mi.Response = comp.Content
 	mi.PromptTokens = comp.Usage.PromptTokens
 	mi.CompletionTokens = comp.Usage.CompletionTokens
+	mi.Attempts = len(comp.CallRecords)
 	mi.Truncated = comp.Truncated
 	if comp.Truncated {
 		mi.FinishReason = "length"
@@ -263,6 +371,7 @@ func (o *observingClient) Chat(ctx context.Context, inv llmclient.Invocation,
 		if resp.Message.Content != nil {
 			mi.Response = *resp.Message.Content
 		}
+		mi.ResponseToolCalls = flattenToolCalls(resp.Message.ToolCalls)
 		mi.FinishReason = resp.FinishReason
 		mi.Truncated = resp.Truncated
 		mi.PromptTokens = resp.Usage.PromptTokens
@@ -280,10 +389,31 @@ func flattenMessages(messages []llmclient.Message) []Message {
 	}
 	out := make([]Message, len(messages))
 	for i, m := range messages {
-		out[i] = Message{Role: m.Role}
+		out[i] = Message{
+			Role:       m.Role,
+			ToolCalls:  flattenToolCalls(m.ToolCalls),
+			ToolCallID: m.ToolCallID,
+		}
 		if m.Content != nil {
 			out[i].Content = *m.Content
 		}
+	}
+	return out
+}
+
+// flattenToolCalls converts wire tool calls into the export shape. Arguments
+// are normalised through llmclient.ToolCallArguments because providers disagree
+// on the encoding — OpenAI-compatible ones send a JSON-encoded string, some
+// local ones a bare object. Passing the raw form through would make the ledger
+// column provider-dependent, so a consumer always receives the decoded JSON
+// object, which is also what the tool harness itself acts on.
+func flattenToolCalls(calls []llmclient.ToolCall) []ToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+	out := make([]ToolCall, len(calls))
+	for i, c := range calls {
+		out[i] = ToolCall{ID: c.ID, Name: c.Function.Name, Arguments: string(llmclient.ToolCallArguments(c))}
 	}
 	return out
 }
