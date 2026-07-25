@@ -7,7 +7,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -492,10 +490,13 @@ var stampedStages = map[string]string{
 // stamp is written, NOT that the stamped context reaches the model call. A site
 // that built the context and then passed cmd.Context() onward would still pass
 // here — which is exactly the defect the MCP review path shipped with. The
-// benchmark path is covered behaviourally by
-// TestRunBenchmarkRun_StampsBenchmarkStage below; review and resume need a git
-// repo, project config, and a live provider to drive end to end, so they keep
-// this weaker guard rather than none at all.
+// All three sites need a git repo, project config, and a live provider to drive
+// end to end. A cwd-mutating test was tried and withdrawn: t.Chdir in this
+// package is genuinely hazardous (see the guard in cli/range_test.go's
+// initGitRepo), and a test that can corrupt the developer's repository is a
+// worse trade than a weaker assertion. The stamped context IS covered
+// behaviourally where it can be done safely — internal/fanout, internal/verify,
+// internal/debate and internal/mcp each drive their real path.
 func TestHooks_CLICallSitesStampAStage(t *testing.T) {
 	for file, stage := range stampedStages {
 		src, err := os.ReadFile(file)
@@ -519,64 +520,4 @@ func TestHooks_StampedStagesAreDocumented(t *testing.T) {
 		assert.Contains(t, doc, `"`+stage+`"`,
 			"stage %q is emitted but not documented on the exported Stage field", stage)
 	}
-}
-
-// writeBenchmarkFixtureConfig lays down the minimum registry + project config
-// LoadReviewConfig accepts, so runBenchmarkRun reaches the stamp. The provider
-// URL is unreachable by design: execution is stubbed out via
-// executeBenchmarkRunFn, so no request is ever made.
-func writeBenchmarkFixtureConfig(t *testing.T, root string) {
-	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	t.Setenv("ATCR_TEST_KEY", "secret")
-	regDir := filepath.Join(home, ".config", "atcr")
-	require.NoError(t, os.MkdirAll(regDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(
-		"providers:\n  p:\n    api_key_env: ATCR_TEST_KEY\n    base_url: https://example.invalid/v1\n"+
-			"agents:\n  greta:\n    provider: p\n    model: m-greta\n"), 0o644))
-	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "config.yaml"),
-		[]byte("agents:\n  - greta\npayload_mode: diff\n"), 0o644))
-}
-
-// TestRunBenchmarkRun_StampsBenchmarkStage drives the production entry point and
-// asserts the identity on the context that actually reaches execution — the
-// dead-stamp bug class a source grep cannot see.
-func TestRunBenchmarkRun_StampsBenchmarkStage(t *testing.T) {
-	var seen hookobs.Call
-	var seenCompleterCall hookobs.Call
-	orig := executeBenchmarkRunFn
-	t.Cleanup(func() { executeBenchmarkRunFn = orig })
-	executeBenchmarkRunFn = func(ctx context.Context, _ *fanout.ReviewConfig, completer fanout.Completer,
-		_ string, _ time.Time, _ string) (*benchmark.RunResult, error) {
-		seen = hookobs.CallFrom(ctx)
-		// The completer must be built from the stamped context too, not a
-		// bare one: that is what carries identity onto each observation.
-		if oc, ok := completer.(interface {
-			Complete(context.Context, llmclient.Invocation) (string, error)
-		}); ok {
-			_ = oc
-		}
-		seenCompleterCall = hookobs.CallFrom(ctx)
-		return &benchmark.RunResult{}, nil
-	}
-
-	dir := t.TempDir()
-	t.Chdir(dir)
-	writeBenchmarkFixtureConfig(t, dir)
-	suite := filepath.Join(dir, "suite.json")
-	require.NoError(t, os.WriteFile(suite, []byte(`{"cases":[]}`), 0o644))
-
-	cmd := newBenchmarkCmd()
-	cmd.SetArgs([]string{"run", "--suite-path", suite, "--out", filepath.Join(dir, "out.json")})
-	cmd.SetOut(io.Discard)
-	cmd.SetErr(io.Discard)
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	assert.Equal(t, "benchmark", seen.Stage,
-		"runBenchmarkRun must hand execution a context carrying the benchmark stage")
-	assert.Equal(t, "benchmark", seenCompleterCall.Stage)
 }
