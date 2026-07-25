@@ -1,3 +1,20 @@
+## [0.2.0] - 2026-07-25
+
+Adds an exported model-invocation observation seam so an external module can build a compliant audit trail of AI interactions. **No breaking changes** — the release is purely additive, and behaviour with no hook registered is byte-for-byte identical to `0.1.0`.
+
+### Added
+
+- `cli.MainWithHooks(ctx, stdout, stderr, hooks) int` — `cli.Main` plus a caller-supplied observer bundle, running the identical lifecycle (signal handling, telemetry drain, exit-code mapping) because both entry points delegate to the same implementation rather than a forked copy. With a zero `cli.Hooks` no decorator is installed at all, so the fan-out engine receives the same `*llmclient.Client` it always has and every capability type-assertion resolves exactly as before.
+- `cli.Hooks`, `cli.ModelInvocationObserver`, `cli.ModelInvocation`, and `cli.ModelMessage` — the exported hook surface. Every field is a plain type: the intended consumer is a separate Go module (the private `atcr-enterprise` wrapper), for which anything under `internal/` is unreachable by Go's internal-package rule, so no `internal/` type may appear here. A test enforces that structurally.
+- Per invocation, an observer receives the model and provider identity, the endpoint, the exact prompt and response, the message history on multi-turn tool-loop turns, provider-reported prompt/completion token counts, the truncation signal, a UTC start timestamp, wall-clock duration, and the error message on failure. A failed invocation fires exactly once with whatever partial data was recovered, so a ledger can account for it.
+- Coverage spans every client built through the new seam: the review and resume fan-out, `benchmark`, the MCP server, `verify`'s skeptics, `verify`'s fix executor (`--auto-fix`), and `debate`'s seats — so `atcr review` including its `--verify`/`--debate`/`--auto-fix` stages, the standalone `atcr verify` and `atcr debate`, and their MCP tool equivalents. It does **not** cover `atcr doctor`, whose provider self-test uses a separate completer interface and never reaches the seam.
+
+### Security
+
+- **Consumer responsibility:** `ModelInvocation` carries the prompt and response verbatim — for atcr that means the diff hunks, file paths, and source lines under review. The core applies no masking or redaction, deliberately, since it cannot know what a given deployment considers secret. A consumer that persists or forwards these fields owns redacting them and the access controls of wherever they land. This is documented on the type. The surface is opt-in: nothing is exposed unless a caller uses `MainWithHooks` and registers an observer.
+- Credentials embedded in a configured provider URL (`https://user:pass@host/v1`) are stripped before the endpoint reaches an observer, matching what the client already does before building a request.
+- A panicking consumer hook is recovered at the seam, reported on stderr, and the run continues with an unchanged exit code — a third-party observer cannot alter the outcome of the run it is observing.
+
 ## [0.1.0] - 2026-07-24
 
 First **git-tagged** release. The tag series restarts at `0.1.0` (independent semantic versioning) so the `atcr` module is importable by other modules — under Go semantic-import versioning a `v2.0.0+` tag would require a `/vN` module-path suffix, which `github.com/samestrin/atcr` does not have. The epic-numbered entries below (`[1.0.0]`–`[33.2.0]`) are untagged historical **development** notes and are no longer 1:1 with git tags; see [docs/release-process.md](docs/release-process.md). No behavior change to the `atcr` binary versus `[33.2.0]`.

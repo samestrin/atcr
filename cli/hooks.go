@@ -182,11 +182,12 @@ func withHooks(ctx context.Context, hooks Hooks, stderr io.Writer) context.Conte
 // *llmclient.Client it always has and every capability type-assertion it makes
 // resolves exactly as before.
 //
-// Coverage: the observer fires for every model call that goes through a client
-// built by newCompleter or internal/hookobs.Wrap — the review and resume
-// fan-out, benchmark, the MCP server, verify's skeptics, verify's fix executor,
-// and debate's seats. It does NOT cover `atcr doctor`, whose self-test builds
-// its own client through a separate interface.
+// Coverage: the observer fires for `atcr review` — including its --verify,
+// --debate, and --auto-fix stages — plus `atcr review --resume`, `atcr verify`,
+// `atcr debate`, `atcr benchmark run`, and the equivalent MCP tools served by
+// `atcr serve`. It does NOT cover `atcr doctor`, whose provider self-test uses
+// a separate completer interface and never reaches this seam, so a doctor run
+// produces no observations.
 //
 // The intended caller is a wrapper binary that needs to observe model traffic
 // without vendoring the command tree:
