@@ -127,6 +127,13 @@ type Observer interface {
 type state struct {
 	observer Observer
 	stderr   io.Writer
+	// stderrMu serializes panic-path writes to stderr. It lives here rather
+	// than on the decorator because Wrap is called at several independent sites
+	// (cli, verify's pipeline and fix executor, debate), each producing its own
+	// decorator around the SAME caller-supplied writer. A per-decorator lock
+	// would leave those writing concurrently — under `atcr serve`, two parallel
+	// verify/debate tool calls do exactly that.
+	stderrMu *sync.Mutex
 }
 
 type ctxKey struct{}
@@ -197,7 +204,7 @@ func NewContext(ctx context.Context, obs Observer, stderr io.Writer) context.Con
 	if ctx == nil {
 		return ctx
 	}
-	return context.WithValue(ctx, ctxKey{}, state{observer: obs, stderr: stderr})
+	return context.WithValue(ctx, ctxKey{}, state{observer: obs, stderr: stderr, stderrMu: &sync.Mutex{}})
 }
 
 // fromContext returns the observer attached to ctx, if any.
@@ -230,7 +237,7 @@ func Wrap(ctx context.Context, client *llmclient.Client) Client {
 	if !ok || s.observer == nil {
 		return client
 	}
-	return &observingClient{inner: client, observer: s.observer, stderr: s.stderr}
+	return &observingClient{inner: client, observer: s.observer, stderr: s.stderr, stderrMu: s.stderrMu}
 }
 
 // observingClient decorates the real client, reporting each call exactly once —
@@ -249,9 +256,11 @@ type observingClient struct {
 	inner    *llmclient.Client
 	observer Observer
 	stderr   io.Writer
-	// mu serializes only the panic-path stderr write (see emit). It is never
-	// taken on the normal invocation path, so it adds no contention.
-	mu sync.Mutex
+	// stderrMu is shared with every other decorator built from the same
+	// NewContext (see state), so concurrent panic reports from different call
+	// sites cannot interleave or race on one writer. It is never taken on the
+	// normal invocation path, so it adds no contention.
+	stderrMu *sync.Mutex
 }
 
 var _ Client = (*observingClient)(nil)
@@ -334,8 +343,10 @@ func (o *observingClient) emit(mi Invocation) {
 		if o.stderr == nil {
 			return
 		}
-		o.mu.Lock()
-		defer o.mu.Unlock()
+		if o.stderrMu != nil {
+			o.stderrMu.Lock()
+			defer o.stderrMu.Unlock()
+		}
 		_, _ = fmt.Fprintf(o.stderr, "atcr: audit hook panicked, continuing without it: %v\n", r)
 	}()
 	o.observer.OnModelInvocation(mi)
@@ -427,6 +438,7 @@ func (o *observingClient) Chat(ctx context.Context, inv llmclient.Invocation,
 			mi.Response = *resp.Message.Content
 		}
 		mi.ResponseToolCalls = flattenToolCalls(resp.Message.ToolCalls)
+		mi.Attempts = len(resp.CallRecords)
 		mi.FinishReason = resp.FinishReason
 		mi.Truncated = resp.Truncated
 		mi.PromptTokens = resp.Usage.PromptTokens

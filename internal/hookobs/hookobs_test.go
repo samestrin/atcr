@@ -747,6 +747,10 @@ func TestWrap_AttemptsReportedOnEveryPath(t *testing.T) {
 			_, err := c.CompleteWithMeta(ctx, inv)
 			return err
 		}},
+		{"Chat", func(c Client, ctx context.Context, inv llmclient.Invocation) error {
+			_, err := c.Chat(ctx, inv, []llmclient.Message{{Role: "user", Content: strPtr("hi")}}, nil)
+			return err
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := chatServer(t, http.StatusOK, okCompletion)
@@ -760,4 +764,34 @@ func TestWrap_AttemptsReportedOnEveryPath(t *testing.T) {
 			assert.Equal(t, 1, obs.calls()[0].Attempts, "one wire attempt must be reported on every path")
 		})
 	}
+}
+
+// TestWrap_ConcurrentPanicsAcrossDecorators: Wrap is called at several
+// independent sites (cli, verify's pipeline and its fix executor, debate), each
+// producing its own decorator around the SAME caller-supplied stderr. Under
+// `atcr serve` two parallel verify/debate tool calls do exactly that, so the
+// panic-path lock has to be shared through the context rather than owned by
+// each decorator. Under -race this fails if it is not.
+func TestWrap_ConcurrentPanicsAcrossDecorators(t *testing.T) {
+	srv := chatServer(t, http.StatusOK, okCompletion)
+	inv := testInvocation(t, srv)
+	var stderr bytes.Buffer
+	ctx := observedCtx(&recordingObserver{panicOnCall: true}, &stderr)
+
+	// Two decorators from one NewContext, as the real call sites produce.
+	a := Wrap(ctx, llmclient.New())
+	b := Wrap(ctx, llmclient.New())
+	require.NotSame(t, a, b, "the sites build independent decorators")
+
+	const n = 8
+	var wg sync.WaitGroup
+	wg.Add(2 * n)
+	for i := 0; i < n; i++ {
+		go func() { defer wg.Done(); _, _ = a.Complete(ctx, inv) }()
+		go func() { defer wg.Done(); _, _ = b.Complete(ctx, inv) }()
+	}
+	wg.Wait()
+
+	assert.Equal(t, 2*n, bytes.Count(stderr.Bytes(), []byte("audit hook")),
+		"every recovered panic must be reported exactly once across all decorators")
 }

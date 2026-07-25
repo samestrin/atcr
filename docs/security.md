@@ -153,3 +153,73 @@ Together these ensure an LLM-generated patch cannot silently plant a host-execut
 trigger, cannot hijack an `atcr` git call through a poisoned system/global/repo
 config, and cannot slip an executable-bit or build-script change past human review
 unremarked.
+
+---
+
+## Embedding hooks: the model-invocation observation seam
+
+`atcr` v0.2.0 added `cli.MainWithHooks`, an exported entry point that lets an
+embedding binary observe every model invocation. It exists so a wrapper — such
+as a private enterprise build — can construct a compliance audit trail without
+vendoring the command tree or reaching into `internal/`.
+
+It is worth understanding as a data-egress surface, because that is what it is.
+
+### It is opt-in and off by default
+
+Nothing is observed unless a caller deliberately builds against the `cli`
+package, calls `MainWithHooks` instead of `Main`, and registers an observer. The
+stock `atcr` binary calls `Main`, registers nothing, and installs no observer —
+its behaviour, exit codes, signal handling, and telemetry drain are byte-for-byte
+what they were before the seam existed. There is no flag, environment variable,
+or config key that can turn observation on for a binary that did not compile it
+in.
+
+### What a registered observer receives
+
+Per model invocation: the run id, reviewer persona, and pipeline stage; the model
+and provider identity; the exact prompt and response; the full message history
+and requested tool calls on multi-turn (tool-enabled) turns; provider-reported
+token counts, estimated cost, and sampling parameters; HTTP attempt count,
+timing, and any error.
+
+**The payload is not limited to the diff under review.** For tool-enabled agents
+the message history contains `role:"tool"` results, which are the raw output of
+the agent's tools: whole file contents from anywhere in the repository,
+directory listings, grep hits, and — where script execution is enabled — command
+stdout that may contain environment-derived values. Treat the whole payload as
+source-code-sensitive.
+
+The one thing deliberately scrubbed is credentials embedded in a configured
+provider URL: `https://user:pass@host/v1` reaches an observer as
+`https://host/v1`, matching what the client does before building a request. API
+keys are never part of the payload; they are resolved from the environment at
+invocation time and never logged.
+
+### Where the boundary of responsibility sits
+
+The core applies no masking, redaction, or truncation, deliberately — a generic
+review tool cannot know which values a given deployment considers secret. Any
+consumer that persists, forwards, or logs these fields owns redacting them, the
+access controls of wherever they land, and the retention obligations that follow.
+
+A consumer hook cannot alter the run it observes: sampling parameters are
+snapshotted rather than aliased, and a panicking observer is recovered at the
+seam, reported on stderr, and the run continues with an unchanged exit code.
+
+### Coverage, and two gaps worth knowing
+
+Observed: `atcr review` including its `--verify`, `--debate`, and `--auto-fix`
+stages; `atcr review --resume`; the standalone `atcr verify` and `atcr debate`;
+`atcr benchmark run`; and the equivalent tools served by `atcr serve`.
+
+Not observed:
+
+- **`atcr doctor`** — its provider self-test uses a separate completer interface
+  and never reaches the seam.
+- **Diff-cache hits** — a cached reviewer output is replayed without a model
+  call, so nothing is observed even though the content reaches the deliverable.
+  Run with `--no-cache` when a complete per-run record matters.
+
+See the godoc on `cli.Hooks`, `cli.ModelInvocation`, and `cli.MainWithHooks` for
+the field-level contract.

@@ -113,7 +113,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// cases, so without a stage those records are unattributable in a stream
 	// shared with real review work.
 	benchCtx := hookobs.WithCall(cmd.Context(), hookobs.Call{Stage: "benchmark"})
-	rr, err := executeBenchmarkRun(benchCtx, cfg, newCompleter(benchCtx), suitePath, time.Now().UTC(), checkpoint)
+	rr, err := executeBenchmarkRunFn(benchCtx, cfg, newCompleter(benchCtx), suitePath, time.Now().UTC(), checkpoint)
 	if err != nil {
 		return err
 	}

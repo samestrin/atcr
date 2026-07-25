@@ -35,6 +35,12 @@ import (
 // contract export relies on. Each case's review artifacts are written under a temp
 // directory that is removed before the function returns; only the scored findings
 // flow into the result, so the temp path never affects output.
+// executeBenchmarkRunFn is the benchmark execution seam, exposed as a package
+// var so a test can substitute a recorder and assert what runBenchmarkRun hands
+// it — notably the audit call identity on the context (Epic 35.0). Same pattern
+// as serveFn. Production always uses executeBenchmarkRun.
+var executeBenchmarkRunFn = executeBenchmarkRun
+
 func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time, checkpointPath string) (*benchmark.RunResult, error) {
 	m, err := benchmark.Load(suitePath)
 	if err != nil {

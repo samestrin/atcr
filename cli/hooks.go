@@ -13,9 +13,21 @@ import (
 // ModelInvocation is one observed model call: the request that went out, the
 // response that came back, and the telemetry surrounding it.
 //
-// SENSITIVE DATA. Prompt and Response carry the model exchange verbatim, which
-// for atcr means the diff hunks, file paths, and source lines under review — and
-// anything a reviewer persona template interpolated into the prompt. This type
+// SENSITIVE DATA. Four fields carry the model exchange verbatim, and the
+// exposure is wider than "the diff under review":
+//
+//   - Prompt and Response hold the single-shot exchange: diff hunks, file
+//     paths, and source lines, plus anything a reviewer persona template
+//     interpolated into the prompt.
+//   - Messages holds the multi-turn history for tool-enabled agents, which
+//     includes role:"tool" results. Those are the raw output of the agent's
+//     tools — whole file contents from anywhere in the repository (not only the
+//     reviewed diff), directory listings, grep hits, and for script execution
+//     the command's stdout, which can contain environment-derived secrets.
+//   - ResponseToolCalls holds the arguments the model asked those tools to run
+//     with, revealing the paths and patterns it probed.
+//
+// Bounding your redaction to "the diff" will therefore under-redact. This type
 // applies no masking, redaction, or truncation of its own, deliberately: the
 // public core stays generic and cannot know which values a given deployment
 // considers secret. A consumer that persists, forwards, or logs these fields is
@@ -69,11 +81,12 @@ type ModelInvocation struct {
 	// call (e.g. "openrouter"). It falls back to BaseURL when the call runs
 	// outside the engine and no provider was attached.
 	Provider string
-	// BaseURL is the provider endpoint the request was sent to. Any userinfo
-	// credentials embedded in the configured URL are stripped before the value
-	// reaches this field, matching what the client does before building the
-	// request — so a config of https://user:pass@host/v1 is reported as
-	// https://host/v1.
+	// BaseURL is the configured provider base URL. The request itself goes to
+	// this value plus the chat-completions path, which the client appends. Any
+	// userinfo credentials embedded in the configured URL are stripped before
+	// the value reaches this field, matching what the client does before
+	// building the request — so a config of https://user:pass@host/v1 is
+	// reported as https://host/v1.
 	BaseURL string
 	// Prompt is the single-shot prompt text. On a multi-turn tool-loop turn it
 	// is the invocation's base prompt; Messages carries that turn's history.
@@ -173,8 +186,13 @@ type ModelInvocationObserver interface {
 // MainWithHooks(ctx, stdout, stderr, Hooks{}) behaves identically to Main.
 //
 // It is a struct rather than a bare interface so future observation points can
-// be added as new fields without breaking existing consumers.
+// be added as new fields without breaking existing consumers. The unexported
+// field enforces that: it makes a positional literal (cli.Hooks{obs}) a compile
+// error, so every consumer must use keyed fields and a later field addition
+// cannot break them.
 type Hooks struct {
+	_ struct{}
+
 	// ModelInvocation observes model calls. Coverage is every client built
 	// through internal/hookobs.Wrap: the review and resume fan-out, benchmark,
 	// the MCP server, verify's skeptics, verify's fix executor (--auto-fix),
@@ -196,9 +214,9 @@ type Hooks struct {
 	ModelInvocation ModelInvocationObserver
 }
 
-// hooksKey/withHooks are gone: the context carrier now lives in
-// internal/hookobs, because internal/verify and internal/debate also construct
-// clients and cannot import cli (cli imports them). See that package's doc.
+// The context carrier itself lives in internal/hookobs, not here, because
+// internal/verify, internal/debate, internal/fanout and internal/mcp also need
+// it and cannot import cli (cli imports them). See that package's doc.
 
 // observerAdapter converts the low-level observation into the exported shape
 // and forwards it to the consumer's observer. It is the only place the two
