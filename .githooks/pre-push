@@ -6,7 +6,30 @@
 # Mirrors the GitHub "Go Lint & Test" and reconcile-module workflows so failures
 # surface locally first.
 
+# Git exports GIT_DIR (and friends) into a hook's environment, and GIT_DIR
+# OVERRIDES `git -C <dir>`. Any git command the gates below run therefore
+# retargets at THIS repository — including test fixtures that correctly scope
+# themselves with -C to a temp directory. That is not hypothetical: it rewrote a
+# feature branch's ref and discarded nine commits, stacked ~200 stray fixture
+# commits onto another branch, and flipped core.bare to true, all silently.
+#
+# Unsetting these is the fix. Keep it first, before anything that shells out.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR
+unset GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+
 fail=0
+
+# Repository integrity tripwire. The test suite is not supposed to be able to
+# modify this repository; when it has, it did so silently and the damage was
+# only noticed later. Snapshot the things that were actually corrupted, and
+# refuse to push if any of them moved while the gates ran.
+integrity_snapshot() {
+  printf '%s|%s|%s' \
+    "$(git rev-parse HEAD 2>/dev/null)" \
+    "$(git symbolic-ref -q HEAD 2>/dev/null)" \
+    "$(git config --get core.bare 2>/dev/null)"
+}
+integrity_before="$(integrity_snapshot)"
 
 echo "pre-push: golangci-lint run"
 if command -v golangci-lint >/dev/null 2>&1; then
@@ -18,9 +41,15 @@ else
   echo "pre-push: golangci-lint not installed — skipping locally (CI still enforces it)"
 fi
 
-echo "pre-push: go test -race ./..."
-if ! go test -race ./...; then
-  echo "pre-push FAILED: go test -race"
+# NOT -race. `go test -race ./...` run from a working checkout has been observed
+# writing git fixtures into the live repository: it rewrote a feature branch's
+# ref (discarding nine commits), stacked ~200 fixture commits onto another, and
+# flipped core.bare to true. The plain suite has never reproduced any of it. The
+# -race gate now runs in CI on pull_request, where the checkout is ephemeral and
+# damage is impossible. See the integrity check below, and epic 45.0.
+echo "pre-push: go test ./..."
+if ! go test ./...; then
+  echo "pre-push FAILED: go test"
   fail=1
 fi
 
@@ -28,6 +57,16 @@ echo "pre-push: (cd reconcile && go test ./...)"
 if ! (cd reconcile && go test ./...); then
   echo "pre-push FAILED: reconcile go test"
   fail=1
+fi
+
+integrity_after="$(integrity_snapshot)"
+if [ "$integrity_before" != "$integrity_after" ]; then
+  echo "pre-push FATAL: the gates above modified this repository."
+  echo "  before: $integrity_before"
+  echo "  after:  $integrity_after"
+  echo "  Your commits are almost certainly still in the reflog: git reflog"
+  echo "  Do NOT push until you understand what changed. See epic 45.0."
+  exit 1
 fi
 
 if [ "$fail" -ne 0 ]; then
