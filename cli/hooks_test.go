@@ -448,3 +448,67 @@ func TestHooks_DoctorExemptionIsStillAccurate(t *testing.T) {
 		}
 	}
 }
+
+// --- identity stamping at the cli call sites -------------------------------
+
+// TestNewCompleter_CarriesCallIdentity: cli stamps the run id and stage before
+// building the completer, and the decorator must resolve that identity per
+// invocation. This is what ties a record back to the review that produced it.
+func TestNewCompleter_CarriesCallIdentity(t *testing.T) {
+	srv := chatServer(t, http.StatusOK, okCompletion)
+	t.Setenv("ATCR_HOOKS_TEST_KEY", "sk-test-not-a-real-key")
+	obs := &recordingObserver{}
+	ctx := withHooks(context.Background(), Hooks{ModelInvocation: obs}, &bytes.Buffer{})
+	ctx = hookobs.WithCall(ctx, hookobs.Call{RunID: "2026-07-25_feat-x", Stage: "resume"})
+
+	_, err := newCompleter(ctx).Complete(ctx, llmclient.Invocation{
+		BaseURL:   srv.URL,
+		APIKeyEnv: "ATCR_HOOKS_TEST_KEY",
+		Model:     "test/model-a",
+	})
+	require.NoError(t, err)
+
+	require.Len(t, obs.got, 1)
+	assert.Equal(t, "2026-07-25_feat-x", obs.got[0].RunID)
+	assert.Equal(t, "resume", obs.got[0].Stage)
+}
+
+// stampedStages lists the cli call sites that must attach a stage, with the
+// value each is documented to use on cli.Hooks.ModelInvocation. A site that
+// stops stamping (or stamps an undocumented value) makes its model calls
+// unattributable in an audit ledger, which is invisible at runtime.
+var stampedStages = map[string]string{
+	"review.go":    "review",
+	"resume.go":    "resume",
+	"benchmark.go": "benchmark",
+}
+
+// TestHooks_CLICallSitesStampAStage checks each cli entry point stamps the
+// stage it is documented to. The review and resume paths need a git repo,
+// config, and a provider to drive end to end, so this asserts the stamp is
+// present at the source rather than leaving these three sites with no guard at
+// all — the gap that let the MCP review path ship unstamped.
+func TestHooks_CLICallSitesStampAStage(t *testing.T) {
+	for file, stage := range stampedStages {
+		src, err := os.ReadFile(file)
+		require.NoError(t, err, "call site %s no longer exists", file)
+		assert.Contains(t, string(src), `hookobs.Call{`,
+			"%s must stamp audit call identity", file)
+		assert.Contains(t, string(src), `Stage: "`+stage+`"`,
+			"%s must stamp the documented stage %q", file, stage)
+	}
+}
+
+// TestHooks_StampedStagesAreDocumented keeps the enumeration on
+// cli.Hooks.ModelInvocation in step with what the code actually emits, so a
+// consumer switching on Stage is not surprised by an undocumented value.
+func TestHooks_StampedStagesAreDocumented(t *testing.T) {
+	src, err := os.ReadFile("hooks.go")
+	require.NoError(t, err)
+	doc := string(src)
+
+	for _, stage := range []string{"review", "resume", "verify", "autofix", "debate", "benchmark"} {
+		assert.Contains(t, doc, `"`+stage+`"`,
+			"stage %q is emitted but not documented on the exported Stage field", stage)
+	}
+}

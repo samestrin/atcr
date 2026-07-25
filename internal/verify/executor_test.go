@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	reclib "github.com/samestrin/atcr/reconcile"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -1191,4 +1193,67 @@ func TestGenerateFixes_SelfDeclineReasonSanitized(t *testing.T) {
 	assert.NotContains(t, findings[0].FixWarning, declineMarker, "the raw decline sentinel must not leak into FixWarning")
 	assert.NotContains(t, findings[0].FixWarning, "\n", "the decline reason must be newline-flattened")
 	assert.Contains(t, findings[0].FixWarning, "executor declined:", "it is still recorded as a decline")
+}
+
+// TestNewExecutorClient_WrapsForObservation covers the production seam itself
+// rather than the test adapter. swapExecutorClient deliberately adapts a
+// ctx-free factory for the existing tests, which means every other test in this
+// package bypasses the real body — so without this, replacing hookobs.Wrap with
+// a bare llmclient.New() would leave the suite green while silently removing
+// --auto-fix from the audit trail.
+func TestNewExecutorClient_WrapsForObservation(t *testing.T) {
+	observed := hookobs.NewContext(context.Background(), stubObserver{}, io.Discard)
+
+	wrapped := newExecutorClient(observed)
+	bare := newExecutorClient(context.Background())
+
+	_, wrappedIsRaw := wrapped.(*llmclient.Client)
+	assert.False(t, wrappedIsRaw, "an observed context must yield a decorated executor client")
+	_, bareIsRaw := bare.(*llmclient.Client)
+	assert.True(t, bareIsRaw, "with no observer the executor must get the untouched client")
+}
+
+// stubObserver satisfies hookobs.Observer without recording anything; the test
+// above asserts on the decoration, not on emissions.
+type stubObserver struct{}
+
+func (stubObserver) OnModelInvocation(hookobs.Invocation) {}
+
+// TestRunVerify_StampsAutofixStage: the fix executor generates patches that get
+// applied to the repo, which is a materially different action from a skeptic
+// reading and judging. A compliance record must distinguish them, and the only
+// thing that makes that possible is this stamp — which nothing else exercises,
+// since the executor receives its own context rather than the one the skeptics
+// see.
+func TestRunVerify_StampsAutofixStage(t *testing.T) {
+	var seen hookobs.Call
+	restore := swapExecutorClient(func() executorCompleter { return &ctxRecordingExecutor{seen: &seen} })
+	defer restore()
+
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "sqli", Confidence: "HIGH",
+			Reviewers: []string{"rev"}, Evidence: "Found by rev; confidence HIGH"},
+	})
+
+	_, err := runVerify(context.Background(), dir, execRegistry("MEDIUM"), Options{}, scriptedHarness(`{}`))
+	require.NoError(t, err)
+
+	assert.Equal(t, "autofix", seen.Stage,
+		"fix-generation calls must be distinguishable from skeptic calls in an audit record")
+}
+
+// ctxRecordingExecutor records the audit identity on the ctx of the first
+// fix-generation call it serves.
+type ctxRecordingExecutor struct {
+	seen *hookobs.Call
+	mu   sync.Mutex
+}
+
+func (c *ctxRecordingExecutor) Complete(ctx context.Context, _ llmclient.Invocation) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.seen.Stage == "" {
+		*c.seen = hookobs.CallFrom(ctx)
+	}
+	return "a fix", nil
 }
