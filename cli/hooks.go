@@ -38,8 +38,20 @@ type ModelInvocation struct {
 	// by Seq; do not treat the order records arrive in (or are appended to a
 	// ledger in) as the sequence.
 	Seq int64
-	// RunID is the review id these invocations belong to (e.g.
-	// "2026-07-25_feat-x"), empty for a call made outside a review.
+	// RunID identifies the review these invocations belong to (e.g.
+	// "2026-07-25_feat-x"). Empty for a call made outside a review.
+	//
+	// It is the review id when the invoking layer knows it, and the review
+	// directory's basename otherwise. Those are the same value on the default
+	// layout, but they diverge under --output-dir, where the directory is the
+	// operator's path and the id stays the derived ReviewID. Within one process
+	// the outermost layer wins, so a review that chains into --verify/--debate/
+	// --auto-fix keeps one id across every stage. Across processes it cannot:
+	// `atcr review --output-dir out/foo` followed by a separate `atcr verify
+	// out/foo` reports the id for the first and "foo" for the second, because
+	// the second process has no way to recover the id. Group on RunID, but do
+	// not assume two stages of the same review always share one when
+	// --output-dir is in play.
 	RunID string
 	// AgentName is the reviewer persona that made the call, empty when the call
 	// did not originate from the fan-out engine.
