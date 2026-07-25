@@ -9,7 +9,6 @@ import (
 
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
-	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/spf13/cobra"
 )
@@ -109,7 +108,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	rr, err := executeBenchmarkRun(cmd.Context(), cfg, llmclient.New(), suitePath, time.Now().UTC(), checkpoint)
+	rr, err := executeBenchmarkRun(cmd.Context(), cfg, newCompleter(cmd.Context()), suitePath, time.Now().UTC(), checkpoint)
 	if err != nil {
 		return err
 	}

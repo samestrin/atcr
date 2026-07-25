@@ -80,7 +80,19 @@ func drainTelemetry(client *telemetry.Client, timeout time.Duration) {
 // both cmd/atcr's shim and the private atcr-enterprise wrapper own the final
 // os.Exit. The enterprise wrapper instead calls NewRootCmdWithClient directly
 // when it needs to inject EnterpriseHooks before execution.
+// It is defined as MainWithHooks with no hooks registered: both entry points
+// share this one lifecycle implementation (runMain) rather than a forked copy,
+// which is what makes the "no behaviour change when hooks are unset" guarantee
+// structural instead of a promise (AC 01-03, Sprint 1.0 / Epic 35.0).
 func Main(ctx context.Context, stdout, stderr io.Writer) int {
+	return runMain(ctx, stdout, stderr)
+}
+
+// runMain is the single CLI lifecycle implementation shared by Main and
+// MainWithHooks. Hooks, when registered, travel on ctx (see hooks.go) and are
+// read at the point the fan-out completer is constructed, so this function is
+// unaware of them.
+func runMain(ctx context.Context, stdout, stderr io.Writer) int {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
