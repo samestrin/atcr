@@ -46,7 +46,7 @@ fi
 # ref (discarding nine commits), stacked ~200 fixture commits onto another, and
 # flipped core.bare to true. The plain suite has never reproduced any of it. The
 # -race gate now runs in CI on pull_request, where the checkout is ephemeral and
-# damage is impossible. See the integrity check below, and epic 46.0.
+# damage is impossible. See the integrity check below, and epic 45.0.
 echo "pre-push: go test ./..."
 if ! go test ./...; then
   echo "pre-push FAILED: go test"
@@ -65,7 +65,7 @@ if [ "$integrity_before" != "$integrity_after" ]; then
   echo "  before: $integrity_before"
   echo "  after:  $integrity_after"
   echo "  Your commits are almost certainly still in the reflog: git reflog"
-  echo "  Do NOT push until you understand what changed. See epic 46.0."
+  echo "  Do NOT push until you understand what changed. See epic 45.0."
   exit 1
 fi
 
