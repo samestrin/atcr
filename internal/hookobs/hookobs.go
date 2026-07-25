@@ -62,6 +62,12 @@ type Invocation struct {
 	AgentName string
 	Stage     string
 
+	// CodeContext is the per-file payload this invocation was sent, split by
+	// the canonical payload parser. It is nil when the call carried no
+	// file-shaped payload — a tool-loop turn, a non-diff payload mode the
+	// parser cannot attribute, or a call made outside a review.
+	CodeContext []CodeRef
+
 	Model    string
 	Provider string
 	BaseURL  string
@@ -92,6 +98,19 @@ type Invocation struct {
 	StartedAt time.Time
 	Duration  time.Duration
 	Err       string
+}
+
+// CodeRef is one file's contribution to the payload an invocation was sent:
+// the path it came from and that file's slice of the payload verbatim.
+//
+// Body is a substring of the rendered payload, not a copy, so carrying these
+// through the engine costs no additional allocation.
+//
+// SENSITIVE DATA: Body is source code. It is the same content the prompt
+// carries, structured — see Invocation's warning.
+type CodeRef struct {
+	Path string
+	Body string
 }
 
 // ToolCall is one model-requested tool invocation, flattened for export.
@@ -150,6 +169,10 @@ type Call struct {
 	RunID     string
 	AgentName string
 	Stage     string
+	// CodeContext is the per-file payload the unit of work was built over. Only
+	// the fan-out engine sets it, at the same chokepoint as AgentName, because
+	// only it knows which slice of the diff this agent received.
+	CodeContext []CodeRef
 }
 
 type callKey struct{}
@@ -168,6 +191,9 @@ type callKey struct{}
 //   - Stage is INNERMOST-WINS: inner layers legitimately refine it, so a
 //     review that chains into --verify reports "verify" for those calls.
 //   - AgentName is INNERMOST-WINS: only the fan-out engine sets it.
+//   - CodeContext is INNERMOST-WINS, for the same reason as AgentName: only the
+//     fan-out engine sets it, and a chunked agent's slice of the diff is more
+//     specific than anything an outer layer could supply.
 //
 // An empty field never overwrites a set one, so a layer contributing nothing
 // cannot erase what an earlier layer knew.
@@ -184,6 +210,9 @@ func WithCall(ctx context.Context, c Call) context.Context {
 	}
 	if c.Stage != "" {
 		merged.Stage = c.Stage
+	}
+	if len(c.CodeContext) > 0 {
+		merged.CodeContext = c.CodeContext
 	}
 	return context.WithValue(ctx, callKey{}, merged)
 }
@@ -282,6 +311,7 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 		RunID:       c.RunID,
 		AgentName:   c.AgentName,
 		Stage:       c.Stage,
+		CodeContext: c.CodeContext,
 		Model:       inv.Model,
 		Provider:    provider,
 		BaseURL:     endpoint,
