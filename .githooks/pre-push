@@ -6,6 +6,17 @@
 # Mirrors the GitHub "Go Lint & Test" and reconcile-module workflows so failures
 # surface locally first.
 
+# Git exports GIT_DIR (and friends) into a hook's environment, and GIT_DIR
+# OVERRIDES `git -C <dir>`. Any git command the gates below run therefore
+# retargets at THIS repository — including test fixtures that correctly scope
+# themselves with -C to a temp directory. That is not hypothetical: it rewrote a
+# feature branch's ref and discarded nine commits, stacked ~200 stray fixture
+# commits onto another branch, and flipped core.bare to true, all silently.
+#
+# Unsetting these is the fix. Keep it first, before anything that shells out.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR
+unset GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+
 fail=0
 
 # Repository integrity tripwire. The test suite is not supposed to be able to
