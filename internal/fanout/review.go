@@ -981,6 +981,72 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			agentScopeConstraint = capScopeConstraintPlan(scopeConstraint, int(planCap))
 		}
 
+		// DESIGN NOTE (Sprint 35.0, Phase 1 Decision 2 — pinned so Phase 5 task 5.2
+		// does not re-litigate it). The baseline (--all / --dir) fan-out gains a NEW
+		// branch here, a SIBLING to the reviewStrategyChunked branch below — NOT a
+		// modification of it. chunkDiff/diff-marker parsing stays completely
+		// untouched: baseline chunks are []FileEntry groups from
+		// internal/payload/fullrepo.go's partitionByBudget (task 2.8) and never pass
+		// through chunkDiff (verified 2026-07-24: chunkDiff splits on `diff --git`
+		// markers only, which raw file contents lack). Resolves AC 06-01
+		// (06-01-chunk-persona-fanout-completeness.md) and AC 06-02
+		// (06-02-per-persona-source-merge-collapse.md) without contradiction:
+		//
+		//   Slot construction (AC 06-01 HP1, Story-Specific DoD): one Slot per
+		//     (persona × chunk) pair — for a C-chunk repo and this persona, add C
+		//     slots. So a 3-chunk / 2-persona baseline scan yields exactly 6 slots
+		//     (C × P), never C + P. Each chunk-slot's Primary is renderAgent'd over
+		//     that chunk's payload text, structurally mirroring the reviewStrategy-
+		//     Chunked loop's `for _, ct := range chunks { ... slots = append(...) }`.
+		//
+		//   Unchanged persona name (AC 06-01 DoD, AC 06-02 HP1): every chunk-slot
+		//     keeps this persona's plain configured `name` (Primary.Name), so
+		//     mergeChunkResults' group-by-Agent collapse and the 14.2 consensus
+		//     filter's per-persona counting see the persona as ONE voice with N
+		//     chunk-results, not N distinct voices. The collapse key must never
+		//     drift from the plain name (Phase 5 task 5.3's top risk).
+		//
+		//   Per-chunk fallback chain (AC 06-01 EC1): each of this persona's chunk-
+		//     slots resolves its fallback chain independently via buildChain(name,
+		//     primary) (review.go:934) so a fallback reviews the SAME chunk as the
+		//     primary it substitutes for — never a different chunk. buildChain is
+		//     reused verbatim; it already attaches identical chains for the bulk and
+		//     chunked paths.
+		//
+		//   Serial-lane duration (AC 06-01 EC2): the serialAgents map (review.go:
+		//     650-655) is keyed by this persona's unchanged plain name, so a serial-
+		//     lane persona's N chunk-results merge to a duration equal to the SUM of
+		//     the N per-chunk durations (not the max) via mergeResultGroup's existing
+		//     serial semantics — no baseline-specific duration logic.
+		//
+		//   Fail-fast on unknown agent (AC 06-01 ES1): the baseline branch runs
+		//     inside this same `add` closure, so an agent name absent from
+		//     cfg.Registry.Agents aborts the whole review before any chunk dispatch
+		//     with `agent "<name>" not found in registry`, matching diff-mode.
+		//
+		//   maxChunksPerAgent cap (AC 06-01 ES2): the chunker.go:99 cap (64) carries
+		//     over unmodified — partitionByBudget's chunk count is deterministically
+		//     bounded (task 1.1 note), and the (persona × chunk) slot count per
+		//     persona is capped consistently rather than spawning unbounded slots.
+		//     The resulting total slot count is logged pre-dispatch for cost
+		//     visibility (AC 06-01 Performance / Throughput).
+		//
+		//   Collapse reuse — ZERO modification (AC 06-02 HP1/HP2, EC1-EC4, ES1):
+		//     baseline (persona × chunk) Result values flow through the SAME
+		//     unconditional `results = mergeChunkResults(results, serialAgents)` call
+		//     (review.go:656) that diff-mode already runs — no new call site.
+		//     mergeChunkResults / mergeResultGroup (chunker.go:154 / :196) and
+		//     writePool (artifacts.go:106) need NO changes for baseline provenance:
+		//     same-name results collapse to exactly personaCount source dirs (not
+		//     C × P), findings union across chunks, any-chunk-succeeded => Status OK,
+		//     FallbackUsed/FallbackModel union+modal, token/telemetry accumulate, and
+		//     writePool's duplicate-agent-directory guard is never tripped BECAUSE
+		//     collapse already ran (AC 06-02 ES1 is a regression assertion, not new
+		//     code). Single-chunk baseline scans (AC 06-01 HP2) fall through to the
+		//     bulk one-slot-per-persona path exactly like a single-chunk diff.
+		//
+		// Phase 5 task 5.2 implements this branch against AC 06-01's RED tests (5.1).
+
 		// Chunked strategy (Epic 14.3): bin-pack this persona's diff into multiple
 		// context-limited calls, one Slot per chunk. Every chunk-slot keeps the
 		// SAME persona name, so mergeChunkResults collapses their results into one
