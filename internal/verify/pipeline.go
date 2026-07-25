@@ -15,6 +15,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/atomicwrite"
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
@@ -123,7 +124,7 @@ func Verify(ctx context.Context, repoRoot, reviewDir string, reg *registry.Regis
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		return llmclient.New(), disp, cleanup, nil
+		return hookobs.Wrap(ctx, llmclient.New()), disp, cleanup, nil
 	}
 	return runVerify(ctx, reviewDir, reg, opts, harness)
 }
@@ -136,6 +137,13 @@ type harnessFunc func() (fanout.ChatCompleter, Dispatcher, func(), error)
 
 func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, opts Options, newHarness harnessFunc) (Result, error) {
 	start := time.Now()
+
+	// Stage/run identity for audit observers (Epic 35.0): skeptic and
+	// fix-executor calls are attributed to this verify run rather than landing
+	// unlabelled. RunID is outermost-wins, so a review that chained into
+	// --verify keeps its own id and this basename applies only to a standalone
+	// `atcr verify`.
+	ctx = hookobs.WithCall(ctx, hookobs.Call{Stage: "verify", RunID: filepath.Base(reviewDir)})
 
 	findings, err := reconcile.ReadReconciledFindings(reviewDir)
 	if err != nil {
@@ -297,7 +305,11 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// snapshot harness nor the executor client is built (the scan here sees the final
 	// post-verification confidence, so a finding promoted to VERIFIED still qualifies).
 	if reg.Executor != nil && anyFixEligible(findings, reg.Executor) {
-		generateFixes(ctx, findings, reg.Executor, reg, newExecutorClient(), cc, disp, opts.SharedTimeoutSecs)
+		// The fix executor generates patches that get applied to the repo, which
+		// is a materially different action from a skeptic reading and judging;
+		// a compliance record must be able to tell them apart.
+		fixCtx := hookobs.WithCall(ctx, hookobs.Call{Stage: "autofix"})
+		generateFixes(fixCtx, findings, reg.Executor, reg, newExecutorClient(fixCtx), cc, disp, opts.SharedTimeoutSecs)
 	}
 
 	// Build the complete verification.json from in-memory findings (no disk

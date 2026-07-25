@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -38,7 +39,7 @@ type metaCompleter interface {
 // newExecutorClient builds the production executor completer. It is a package-level
 // seam (rather than a runVerify parameter) so the executor wiring does not churn
 // runVerify's many call sites; tests override it via swapExecutorClient.
-var newExecutorClient = func() executorCompleter { return llmclient.New() }
+var newExecutorClient = func(ctx context.Context) executorCompleter { return hookobs.Wrap(ctx, llmclient.New()) }
 
 // fanoutRunner is the interface satisfied by *fanout.Engine. The package-level
 // newFanoutEngine seam lets tests inject a fake that returns zero results to

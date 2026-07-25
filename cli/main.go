@@ -78,9 +78,23 @@ func drainTelemetry(client *telemetry.Client, timeout time.Duration) {
 // command tree, drains telemetry, and maps the result to a process exit code.
 // It returns the code rather than calling os.Exit so it stays testable and so
 // both cmd/atcr's shim and the private atcr-enterprise wrapper own the final
-// os.Exit. The enterprise wrapper instead calls NewRootCmdWithClient directly
-// when it needs to inject EnterpriseHooks before execution.
+// os.Exit.
+//
+// A caller that needs to observe model invocations (the private atcr-enterprise
+// wrapper's audit gateway) uses MainWithHooks instead — see hooks.go. Main and
+// MainWithHooks share one lifecycle implementation (runMain) rather than a
+// forked copy, which is what makes "no behaviour change when hooks are unset" a
+// structural property rather than a promise: Main attaches no hooks context, so
+// no decorator is ever installed on this path (Epic 35.0).
 func Main(ctx context.Context, stdout, stderr io.Writer) int {
+	return runMain(ctx, stdout, stderr)
+}
+
+// runMain is the single CLI lifecycle implementation shared by Main and
+// MainWithHooks. Hooks, when registered, travel on ctx (see hooks.go) and are
+// read at the point the fan-out completer is constructed, so this function is
+// unaware of them.
+func runMain(ctx context.Context, stdout, stderr io.Writer) int {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

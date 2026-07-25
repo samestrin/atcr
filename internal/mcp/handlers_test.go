@@ -7,11 +7,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/report"
@@ -737,4 +739,64 @@ func TestReportHandler_SarifParity(t *testing.T) {
 	wire := callOK[ReportResult](t, cs, ToolReport, map[string]any{"id_or_path": id, "format": "sarif"})
 	assert.Equal(t, report.FormatSarif, wire.Format)
 	assert.Equal(t, res.Content, wire.Content)
+}
+
+// ctxRecordingCompleter captures the audit call identity from the context the
+// detached fan-out actually runs under, then signals so the test can proceed.
+type ctxRecordingCompleter struct {
+	entered chan struct{}
+	once    sync.Once
+	mu      sync.Mutex
+	seen    hookobs.Call
+}
+
+func (c *ctxRecordingCompleter) Complete(ctx context.Context, _ llmclient.Invocation) (string, error) {
+	c.mu.Lock()
+	c.seen = hookobs.CallFrom(ctx)
+	c.mu.Unlock()
+	c.once.Do(func() { close(c.entered) })
+	return "HIGH: a finding", nil
+}
+
+func (c *ctxRecordingCompleter) call() hookobs.Call {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.seen
+}
+
+// TestHandleReview_StampsAuditIdentity covers the one identity site that
+// previously shipped missing entirely. `atcr serve` runs concurrent detached
+// reviews in a single process against the same persona roster, so without the
+// run id an observer cannot tell two in-flight reviews apart — the agent name
+// repeats and only the sequence differs.
+func TestHandleReview_StampsAuditIdentity(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	root, base, head := gitRepo(t)
+	writeReviewConfig(t, root)
+
+	rec := &ctxRecordingCompleter{entered: make(chan struct{})}
+	_, eng, err := buildServer(root, rec, nil)
+	require.NoError(t, err)
+
+	_, res, err := eng.handleReview(context.Background(), nil, ReviewArgs{Base: base, Head: head})
+	require.NoError(t, err)
+	require.Equal(t, runningStatus, res.Status)
+
+	select {
+	case <-rec.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("detached fan-out never started")
+	}
+	// Let the detached fan-out finish before the test returns: it writes into
+	// the temp root, and t.TempDir's cleanup races a goroutine still writing.
+	if eng.shutdownCancel != nil {
+		eng.shutdownCancel()
+	}
+	eng.bg.Wait()
+
+	got := rec.call()
+	assert.Equal(t, res.ReviewID, got.RunID,
+		"a detached review's invocations must carry the review id that identifies them")
+	assert.Equal(t, "review", got.Stage)
+	assert.NotEmpty(t, got.AgentName, "the fan-out engine must still attach the persona")
 }

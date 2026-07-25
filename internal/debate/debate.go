@@ -13,6 +13,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/atomicwrite"
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
@@ -72,7 +73,7 @@ func Debate(ctx context.Context, repoRoot, reviewDir string, reg *registry.Regis
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		return llmclient.New(), disp, cleanup, nil
+		return hookobs.Wrap(ctx, llmclient.New()), disp, cleanup, nil
 	}
 	return runDebate(ctx, reviewDir, reg, opts, harness)
 }
@@ -85,6 +86,11 @@ type harnessFunc func() (fanout.ChatCompleter, Dispatcher, func(), error)
 
 func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, opts Options, newHarness harnessFunc) (Result, error) {
 	start := time.Now()
+
+	// Stage/run identity for audit observers (Epic 35.0). RunID is
+	// outermost-wins, so this basename applies only to a standalone
+	// `atcr debate`; a chained run keeps the review's id.
+	ctx = hookobs.WithCall(ctx, hookobs.Call{Stage: "debate", RunID: filepath.Base(reviewDir)})
 	cfg := ResolveConfig(reg.Debate)
 	if opts.SingleModel {
 		cfg.AllowSingleModel = true

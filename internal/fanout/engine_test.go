@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -585,4 +586,69 @@ func TestRun_MaxParallelDrainsUnderCancellation(t *testing.T) {
 	}
 	assert.LessOrEqual(t, after, before+2,
 		"goroutine count must not permanently increase after Run — WaitGroup drain guarantee")
+}
+
+// ctxRecordingCompleter records the audit call identity from the context of
+// each invocation, so a test can assert what invokeAgent stamped.
+type ctxRecordingCompleter struct {
+	mu   sync.Mutex
+	seen []hookobs.Call
+}
+
+func (c *ctxRecordingCompleter) Complete(ctx context.Context, _ llmclient.Invocation) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.seen = append(c.seen, hookobs.CallFrom(ctx))
+	return "HIGH: a finding", nil
+}
+
+func (c *ctxRecordingCompleter) calls() []hookobs.Call {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]hookobs.Call, len(c.seen))
+	copy(out, c.seen)
+	return out
+}
+
+// TestInvokeAgent_StampsAgentIdentity covers the chokepoint that attributes a
+// model call to the persona that made it (Epic 35.0). Without it an audit
+// observer receives a stream in which every reviewer's invocations are
+// indistinguishable — the fan-out engine is the only layer that knows the agent
+// name, so nothing downstream can recover it.
+func TestInvokeAgent_StampsAgentIdentity(t *testing.T) {
+	t.Parallel()
+	rec := &ctxRecordingCompleter{}
+	e := NewEngine(rec)
+
+	res := e.invokeAgent(context.Background(), Agent{
+		Name:       "security-reviewer",
+		Invocation: llmclient.Invocation{Model: "test/model-a", Prompt: "p"},
+	})
+	require.Empty(t, res.Err)
+
+	calls := rec.calls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, "security-reviewer", calls[0].AgentName,
+		"invokeAgent must attribute the call to its agent")
+}
+
+// TestInvokeAgent_PreservesOuterCallIdentity: the engine contributes only the
+// agent name. The run id and stage come from the layer above (cli, verify,
+// debate) and must survive, or a record cannot be tied back to its review.
+func TestInvokeAgent_PreservesOuterCallIdentity(t *testing.T) {
+	t.Parallel()
+	rec := &ctxRecordingCompleter{}
+	e := NewEngine(rec)
+	ctx := hookobs.WithCall(context.Background(), hookobs.Call{RunID: "2026-07-25_main", Stage: "review"})
+
+	res := e.invokeAgent(ctx, Agent{
+		Name:       "security-reviewer",
+		Invocation: llmclient.Invocation{Model: "test/model-a", Prompt: "p"},
+	})
+	require.Empty(t, res.Err)
+
+	calls := rec.calls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, hookobs.Call{RunID: "2026-07-25_main", AgentName: "security-reviewer", Stage: "review"},
+		calls[0], "the engine must add the agent name without disturbing run or stage")
 }
