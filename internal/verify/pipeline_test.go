@@ -11,10 +11,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -1100,4 +1102,73 @@ func TestRunVerify_OneConfirmOneRefuteTieNamesBothParticipants(t *testing.T) {
 	assert.Equal(t, "unverifiable", vf.Findings[0].Verdict, "a 1 confirmed + 1 refuted split is a tie")
 	assert.Equal(t, "s2, skep", vf.Findings[0].Skeptic, "a tie names every participant in selection order")
 	assert.Equal(t, "m-s2, m-skep", vf.Findings[0].Model, "a tie attributes every participant's model")
+}
+
+// TestRunVerify_StampsStageAndRunID asserts the identity the verify pipeline
+// puts on the context that every skeptic and the fix executor inherit.
+func TestRunVerify_StampsStageAndRunID(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+
+	// Asserted through a completer that records the ctx it is invoked with:
+	// that is the ctx every skeptic and the fix executor actually inherit.
+	var seen hookobs.Call
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return &ctxRecordingChat{seen: &seen}, okDispatcher(), nil, nil
+	}
+
+	_, err := runVerify(context.Background(), dir, skepticRegistry(), Options{}, harness)
+	require.NoError(t, err)
+
+	assert.Equal(t, "verify", seen.Stage, "skeptic calls must be attributable to the verify stage")
+	assert.Equal(t, filepath.Base(dir), seen.RunID, "a standalone verify supplies its own run id")
+}
+
+// TestRunVerify_DoesNotStealAnOuterRunID: `atcr review --verify` stamps the
+// review id first; verify must refine only the stage. Under --output-dir the
+// review id and the directory basename genuinely differ, so an overwrite here
+// would split one run's records across two ids.
+func TestRunVerify_DoesNotStealAnOuterRunID(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+
+	var seen hookobs.Call
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return &ctxRecordingChat{seen: &seen}, okDispatcher(), nil, nil
+	}
+	outer := hookobs.WithCall(context.Background(), hookobs.Call{RunID: "2026-07-25_main", Stage: "review"})
+
+	_, err := runVerify(outer, dir, skepticRegistry(), Options{}, harness)
+	require.NoError(t, err)
+
+	assert.Equal(t, "2026-07-25_main", seen.RunID, "verify must not resplit the review's records under the dir name")
+	assert.Equal(t, "verify", seen.Stage)
+}
+
+// ctxRecordingChat records the call identity on the context of the first turn
+// it serves, then answers like finalChat.
+type ctxRecordingChat struct {
+	seen *hookobs.Call
+	mu   sync.Mutex
+}
+
+func (c *ctxRecordingChat) record(ctx context.Context) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.seen.Stage == "" {
+		*c.seen = hookobs.CallFrom(ctx)
+	}
+}
+
+func (c *ctxRecordingChat) Complete(ctx context.Context, _ llmclient.Invocation) (string, error) {
+	c.record(ctx)
+	return `{}`, nil
+}
+
+func (c *ctxRecordingChat) Chat(ctx context.Context, _ llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	c.record(ctx)
+	content := `{}`
+	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &content}, FinishReason: "stop"}, nil
 }

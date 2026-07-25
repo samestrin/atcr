@@ -443,7 +443,7 @@ func TestWithCall_MergesAcrossLayers(t *testing.T) {
 	ctx = WithCall(ctx, Call{AgentName: "agent-a"})
 	ctx = WithCall(ctx, Call{Stage: "verify"})
 
-	got := callFrom(ctx)
+	got := CallFrom(ctx)
 
 	assert.Equal(t, Call{RunID: "run-1", AgentName: "agent-a", Stage: "verify"}, got,
 		"empty fields must not overwrite; non-empty must win")
@@ -451,7 +451,7 @@ func TestWithCall_MergesAcrossLayers(t *testing.T) {
 
 func TestWithCall_NilContext(t *testing.T) {
 	assert.NotPanics(t, func() { WithCall(nil, Call{RunID: "x"}) }) //nolint:staticcheck // nil ctx is the case under test
-	assert.Equal(t, Call{}, callFrom(nil))                          //nolint:staticcheck // SA1012: nil ctx is the case under test
+	assert.Equal(t, Call{}, CallFrom(nil))                          //nolint:staticcheck // SA1012: nil ctx is the case under test
 }
 
 // TestWrap_NilContext: cobra hands a nil context to a command that was never
@@ -645,4 +645,119 @@ func TestWrap_ConcurrentPanickingObserver(t *testing.T) {
 
 	assert.Equal(t, n, bytes.Count(stderr.Bytes(), []byte("audit hook")),
 		"every recovered panic must be reported exactly once, without interleaving")
+}
+
+// --- merge rules across layers --------------------------------------------
+
+// TestWithCall_RunIDIsOutermostWins is the regression test for a correlation
+// split that only appears on a supported flag combination. cli stamps the
+// derived review id; verify and debate stamp the review directory's basename.
+// Those coincide on the default layout, but `--output-dir out/foo` keeps the
+// operator's path while the id stays the derived ReviewID — so an inner
+// overwrite would file one run's review-stage and verify-stage records under
+// two different ids, which is exactly the correlation failure RunID exists to
+// prevent. The default path masks it, so it needs its own test.
+func TestWithCall_RunIDIsOutermostWins(t *testing.T) {
+	ctx := WithCall(context.Background(), Call{RunID: "2026-07-25_main", Stage: "review"})
+	ctx = WithCall(ctx, Call{RunID: "foo", Stage: "verify"}) // inner layer, dir basename
+
+	got := CallFrom(ctx)
+
+	assert.Equal(t, "2026-07-25_main", got.RunID,
+		"an inner layer must not resplit one run's records under a second id")
+	assert.Equal(t, "verify", got.Stage, "the inner layer must still refine the stage")
+}
+
+// TestWithCall_InnerRunIDAppliesWhenNoOuter covers standalone `atcr verify` /
+// `atcr debate`, where no outer layer supplied an id.
+func TestWithCall_InnerRunIDAppliesWhenNoOuter(t *testing.T) {
+	ctx := WithCall(context.Background(), Call{RunID: "2026-07-25_main", Stage: "verify"})
+
+	assert.Equal(t, "2026-07-25_main", CallFrom(ctx).RunID)
+}
+
+// TestWithCall_StageChainRetainsRunID walks the real review→verify→autofix
+// chain and asserts the whole chain stays correlated under one id.
+func TestWithCall_StageChainRetainsRunID(t *testing.T) {
+	ctx := WithCall(context.Background(), Call{RunID: "run-1", Stage: "review"})
+	ctx = WithCall(ctx, Call{AgentName: "security-reviewer"})
+	verifyCtx := WithCall(ctx, Call{RunID: "some-dir", Stage: "verify"})
+	fixCtx := WithCall(verifyCtx, Call{Stage: "autofix"})
+
+	for name, c := range map[string]Call{"review": CallFrom(ctx), "verify": CallFrom(verifyCtx), "autofix": CallFrom(fixCtx)} {
+		assert.Equal(t, "run-1", c.RunID, "%s stage lost the run correlation", name)
+	}
+	assert.Equal(t, "verify", CallFrom(verifyCtx).Stage)
+	assert.Equal(t, "autofix", CallFrom(fixCtx).Stage)
+}
+
+// --- observer isolation ----------------------------------------------------
+
+// TestWrap_SamplingParamsAreSnapshotNotAliased: for fan-out agents these
+// pointers belong to the loaded registry config and are shared by every
+// invocation of that agent for the process's lifetime. Handing the raw pointer
+// to an observer would let it write through and reconfigure every subsequent
+// model call, breaking the guarantee that an observer cannot alter the run it
+// is observing.
+func TestWrap_SamplingParamsAreSnapshotNotAliased(t *testing.T) {
+	srv := chatServer(t, http.StatusOK, okCompletion)
+	inv := testInvocation(t, srv)
+	sharedTemp := 0.2
+	sharedMax := 4096
+	inv.Temperature = &sharedTemp
+	inv.MaxTokens = &sharedMax
+	obs := &recordingObserver{}
+	ctx := observedCtx(obs, &bytes.Buffer{})
+
+	_, err := Wrap(ctx, llmclient.New()).CompleteWithMeta(ctx, inv)
+	require.NoError(t, err)
+
+	require.Len(t, obs.calls(), 1)
+	got := obs.calls()[0]
+	require.NotNil(t, got.Temperature)
+	require.NotNil(t, got.MaxTokens)
+	assert.NotSame(t, &sharedTemp, got.Temperature, "must be a snapshot, not an alias into shared config")
+	assert.NotSame(t, &sharedMax, got.MaxTokens)
+
+	// A hostile (or merely careless) observer writing through the pointer must
+	// not reconfigure the caller's config.
+	*got.Temperature = 1.9
+	*got.MaxTokens = 1
+	assert.InDelta(t, 0.2, sharedTemp, 1e-9, "an observer must not be able to alter the run's sampling config")
+	assert.Equal(t, 4096, sharedMax)
+}
+
+// TestWrap_AttemptsReportedOnEveryPath: Attempts is documented without
+// qualification, so a path reporting 0 would read as "no transmission
+// occurred" in the ledger the field was added for.
+func TestWrap_AttemptsReportedOnEveryPath(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(c Client, ctx context.Context, inv llmclient.Invocation) error
+	}{
+		{"Complete", func(c Client, ctx context.Context, inv llmclient.Invocation) error {
+			_, err := c.Complete(ctx, inv)
+			return err
+		}},
+		{"CompleteWithUsage", func(c Client, ctx context.Context, inv llmclient.Invocation) error {
+			_, _, _, err := c.CompleteWithUsage(ctx, inv)
+			return err
+		}},
+		{"CompleteWithMeta", func(c Client, ctx context.Context, inv llmclient.Invocation) error {
+			_, err := c.CompleteWithMeta(ctx, inv)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := chatServer(t, http.StatusOK, okCompletion)
+			inv := testInvocation(t, srv)
+			obs := &recordingObserver{}
+			ctx := observedCtx(obs, &bytes.Buffer{})
+
+			require.NoError(t, tc.call(Wrap(ctx, llmclient.New()), ctx, inv))
+
+			require.Len(t, obs.calls(), 1)
+			assert.Equal(t, 1, obs.calls()[0].Attempts, "one wire attempt must be reported on every path")
+		})
+	}
 }

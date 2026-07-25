@@ -19,6 +19,7 @@ import (
 	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/payload"
@@ -254,6 +255,11 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		}
 		rctx, cancel := e.withShutdownCancel(e.reviewContext(ctx, prep.ID, secrets...))
 		defer cancel()
+		// Audit identity (Epic 35.0). Concurrent detached reviews share this
+		// process and run the same persona roster, so without the run id an
+		// observer cannot tell two in-flight reviews apart — the agent name
+		// repeats and only the sequence differs.
+		rctx = hookobs.WithCall(rctx, hookobs.Call{RunID: prep.ID, Stage: "review"})
 		if _, err := fanout.ExecuteReview(rctx, e.completer, prep); err != nil {
 			e.logger().Error("review fan-out finished with errors", "review_id", prep.ID, "error", err)
 		}

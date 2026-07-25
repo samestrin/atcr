@@ -68,8 +68,6 @@ type Result struct {
 // only errors returned are setup failures (missing reconciled findings, unreadable
 // artifacts).
 func Debate(ctx context.Context, repoRoot, reviewDir string, reg *registry.Registry, opts Options) (Result, error) {
-	// Stage/run identity for audit observers (Epic 35.0).
-	ctx = hookobs.WithCall(ctx, hookobs.Call{Stage: "debate", RunID: filepath.Base(reviewDir)})
 	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
 		disp, cleanup, err := buildDispatcher(repoRoot, reviewDir)
 		if err != nil {
@@ -88,6 +86,11 @@ type harnessFunc func() (fanout.ChatCompleter, Dispatcher, func(), error)
 
 func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, opts Options, newHarness harnessFunc) (Result, error) {
 	start := time.Now()
+
+	// Stage/run identity for audit observers (Epic 35.0). RunID is
+	// outermost-wins, so this basename applies only to a standalone
+	// `atcr debate`; a chained run keeps the review's id.
+	ctx = hookobs.WithCall(ctx, hookobs.Call{Stage: "debate", RunID: filepath.Base(reviewDir)})
 	cfg := ResolveConfig(reg.Debate)
 	if opts.SingleModel {
 		cfg.AllowSingleModel = true

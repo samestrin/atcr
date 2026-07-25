@@ -28,9 +28,15 @@ import (
 // atcr-enterprise wrapper) for which internal/ types are unreachable by
 // construction.
 type ModelInvocation struct {
-	// Seq is a process-wide monotonic sequence number, assigned in emit order.
-	// Reviewer agents run concurrently and `atcr serve` runs concurrent detached
-	// reviews, so timestamps alone do not give a total order over the stream.
+	// Seq is a process-wide monotonic sequence number assigned when the call
+	// completes. Reviewer agents run concurrently and `atcr serve` runs
+	// concurrent detached reviews, so timestamps alone do not give a total
+	// order over the stream.
+	//
+	// Delivery order may differ from Seq order: two concurrent calls can take
+	// sequence numbers and then reach the observer in the opposite order. Sort
+	// by Seq; do not treat the order records arrive in (or are appended to a
+	// ledger in) as the sequence.
 	Seq int64
 	// RunID is the review id these invocations belong to (e.g.
 	// "2026-07-25_feat-x"), empty for a call made outside a review.
@@ -39,7 +45,10 @@ type ModelInvocation struct {
 	// did not originate from the fan-out engine.
 	AgentName string
 	// Stage is which part of the pipeline made the call: "review", "resume",
-	// "verify", or "debate". Empty when not attributable.
+	// "verify", "autofix", "debate", or "benchmark". Empty when not
+	// attributable. A review that chains into --verify/--debate/--auto-fix
+	// reports the inner stage for those calls while keeping the review's RunID,
+	// so one run's records stay correlated across stages.
 	Stage string
 	// Model is the provider-qualified model identifier as configured, e.g.
 	// "anthropic/claude-sonnet-4.5".

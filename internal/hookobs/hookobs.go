@@ -8,6 +8,11 @@
 // its fix executor, and internal/debate's seats each construct their own client
 // and call providers directly. Those packages cannot import cli — cli imports
 // them — so the context key and the decorator have to live below all of them.
+// internal/fanout imports it too, to stamp the agent identity at the same
+// chokepoint that attaches the circuit-breaker provider. The layering rule is
+// therefore not "leaf" but "imports nothing above llmclient and
+// circuitbreaker", which keeps it usable from any current or future call site
+// without a cycle.
 //
 // The payoff is that observation resolves from the context at the point a
 // client is built, rather than being threaded through every call site as a
@@ -39,10 +44,15 @@ import (
 // SENSITIVE DATA: Prompt and Response hold the model exchange verbatim. This
 // package applies no masking beyond stripping credentials from the endpoint.
 type Invocation struct {
-	// Seq is a process-wide monotonic sequence number, assigned in emit order.
-	// The engine runs agents concurrently and `atcr serve` runs concurrent
-	// detached reviews, so wall-clock timestamps alone do not give a consumer a
-	// total order over an interleaved stream.
+	// Seq is a process-wide monotonic sequence number assigned when the call
+	// completes. The engine runs agents concurrently and `atcr serve` runs
+	// concurrent detached reviews, so wall-clock timestamps alone do not give a
+	// consumer a total order over an interleaved stream.
+	//
+	// Delivery order may differ from Seq order: two concurrent calls can take
+	// sequence numbers and then reach the observer in the opposite order. Sort
+	// by Seq; do not treat the order records arrive in (or are appended in) as
+	// the sequence.
 	Seq int64
 	// RunID, AgentName, and Stage identify which unit of work this call belongs
 	// to. Without them an observer receives a flat interleaved stream it cannot
@@ -133,14 +143,29 @@ type Call struct {
 
 type callKey struct{}
 
-// WithCall merges c into any Call already on ctx. Empty fields do not overwrite
-// values already present, so ordering between layers does not matter.
+// WithCall merges c into any Call already on ctx. The three fields merge with
+// deliberately different rules, because they answer different questions:
+//
+//   - RunID is OUTERMOST-WINS: once set it is never overwritten. The outermost
+//     layer knows the real review id; inner layers only have the review
+//     directory to work from, and those diverge under --output-dir (the id
+//     stays the derived ReviewID while the directory is the operator's path).
+//     Letting an inner layer overwrite would split one review's records across
+//     two ids — the exact correlation failure this field exists to prevent.
+//     An inner layer's RunID still applies when there is no outer one, which is
+//     the standalone `atcr verify` / `atcr debate` case.
+//   - Stage is INNERMOST-WINS: inner layers legitimately refine it, so a
+//     review that chains into --verify reports "verify" for those calls.
+//   - AgentName is INNERMOST-WINS: only the fan-out engine sets it.
+//
+// An empty field never overwrites a set one, so a layer contributing nothing
+// cannot erase what an earlier layer knew.
 func WithCall(ctx context.Context, c Call) context.Context {
 	if ctx == nil {
 		return ctx
 	}
-	merged := callFrom(ctx)
-	if c.RunID != "" {
+	merged := CallFrom(ctx)
+	if merged.RunID == "" {
 		merged.RunID = c.RunID
 	}
 	if c.AgentName != "" {
@@ -152,8 +177,9 @@ func WithCall(ctx context.Context, c Call) context.Context {
 	return context.WithValue(ctx, callKey{}, merged)
 }
 
-// callFrom returns the Call attached to ctx, or its zero value.
-func callFrom(ctx context.Context) Call {
+// CallFrom returns the Call attached to ctx, or its zero value. Exported so the
+// layers that stamp identity can be tested against the production path.
+func CallFrom(ctx context.Context) Call {
 	if ctx == nil {
 		return Call{}
 	}
@@ -238,7 +264,7 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 	if provider == "" {
 		provider = endpoint
 	}
-	c := callFrom(ctx)
+	c := CallFrom(ctx)
 	return Invocation{
 		RunID:       c.RunID,
 		AgentName:   c.AgentName,
@@ -247,10 +273,33 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 		Provider:    provider,
 		BaseURL:     endpoint,
 		Prompt:      inv.Prompt,
-		Temperature: inv.Temperature,
-		MaxTokens:   inv.MaxTokens,
+		Temperature: copyFloat64(inv.Temperature),
+		MaxTokens:   copyInt(inv.MaxTokens),
 		StartedAt:   start.UTC(),
 	}
+}
+
+// copyFloat64 and copyInt snapshot a sampling parameter instead of aliasing it.
+// For fan-out agents these pointers belong to the loaded registry config and are
+// shared by every invocation of that agent for the life of the process, so
+// handing the raw pointer to an observer would both give it a value that can
+// change under it and let it write through to reconfigure every subsequent
+// model call — breaking the guarantee that an observer cannot alter the run it
+// is observing.
+func copyFloat64(p *float64) *float64 {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+func copyInt(p *int) *int {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
 }
 
 // scrubUserinfo strips any user:password embedded in a configured base URL.
@@ -311,9 +360,15 @@ func (o *observingClient) Complete(ctx context.Context, inv llmclient.Invocation
 	start := time.Now()
 	mi := o.base(ctx, inv, start)
 
-	content, err := o.inner.Complete(ctx, inv)
+	// Routed through CompleteWithUsage rather than Complete so Attempts is
+	// populated here too — the inner Complete delegates to it anyway and
+	// discards the extras, so this is the same call with nothing thrown away.
+	content, usage, records, err := o.inner.CompleteWithUsage(ctx, inv)
 
 	mi.Response = content
+	mi.PromptTokens = usage.PromptTokens
+	mi.CompletionTokens = usage.CompletionTokens
+	mi.Attempts = len(records)
 	o.finish(mi, start, err)
 	return content, err
 }

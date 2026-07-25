@@ -9,6 +9,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/spf13/cobra"
 )
@@ -108,7 +109,11 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	rr, err := executeBenchmarkRun(cmd.Context(), cfg, newCompleter(cmd.Context()), suitePath, time.Now().UTC(), checkpoint)
+	// Audit identity (Epic 35.0): a benchmark drives many models over many
+	// cases, so without a stage those records are unattributable in a stream
+	// shared with real review work.
+	benchCtx := hookobs.WithCall(cmd.Context(), hookobs.Call{Stage: "benchmark"})
+	rr, err := executeBenchmarkRun(benchCtx, cfg, newCompleter(benchCtx), suitePath, time.Now().UTC(), checkpoint)
 	if err != nil {
 		return err
 	}
