@@ -1217,7 +1217,7 @@ func TestNewExecutorClient_WrapsForObservation(t *testing.T) {
 // above asserts on the decoration, not on emissions.
 type stubObserver struct{}
 
-func (stubObserver) OnModelInvocation(hookobs.Invocation) {}
+func (stubObserver) OnModelInvocation(context.Context, hookobs.Invocation) {}
 
 // TestRunVerify_StampsAutofixStage: the fix executor generates patches that get
 // applied to the repo, which is a materially different action from a skeptic

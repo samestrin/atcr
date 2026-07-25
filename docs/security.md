@@ -206,6 +206,11 @@ access controls of wherever they land, and the retention obligations that follow
 A consumer hook cannot alter the run it observes: sampling parameters are
 snapshotted rather than aliased, and a panicking observer is recovered at the
 seam, reported on stderr, and the run continues with an unchanged exit code.
+There is no error return, by design — an audit problem must never change the
+outcome of a command that has nothing to do with auditing. A deployment that
+requires "no audit, no run" must enforce that before invoking the CLI. The
+observer does receive the invocation's context, so a sink performing I/O can
+honour the run's cancellation and deadline.
 
 ### Coverage, and two gaps worth knowing
 

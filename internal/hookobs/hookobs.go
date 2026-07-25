@@ -118,8 +118,12 @@ type Message struct {
 
 // Observer receives one call per model invocation. Implementations must be safe
 // for concurrent use: the fan-out engine runs reviewer agents in parallel.
+//
+// The context is the one the model call itself was made with, so an observer
+// doing I/O (writing to a network sink, say) can honour the run's cancellation
+// and deadline rather than outliving it.
 type Observer interface {
-	OnModelInvocation(Invocation)
+	OnModelInvocation(context.Context, Invocation)
 }
 
 // state is what travels on the context. stderr is carried alongside the
@@ -328,7 +332,7 @@ func scrubUserinfo(rawURL string) string {
 
 // emit reports one observation, containing any consumer panic. A broken hook
 // must never change the outcome of the run it is observing.
-func (o *observingClient) emit(mi Invocation) {
+func (o *observingClient) emit(ctx context.Context, mi Invocation) {
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -349,11 +353,11 @@ func (o *observingClient) emit(mi Invocation) {
 		}
 		_, _ = fmt.Fprintf(o.stderr, "atcr: audit hook panicked, continuing without it: %v\n", r)
 	}()
-	o.observer.OnModelInvocation(mi)
+	o.observer.OnModelInvocation(ctx, mi)
 }
 
 // finish stamps duration and error onto the observation and emits it.
-func (o *observingClient) finish(mi Invocation, start time.Time, err error) {
+func (o *observingClient) finish(ctx context.Context, mi Invocation, start time.Time, err error) {
 	mi.Duration = time.Since(start)
 	mi.Seq = seq.Add(1)
 	// Computed here rather than left to the consumer: the rate table lives in
@@ -363,7 +367,7 @@ func (o *observingClient) finish(mi Invocation, start time.Time, err error) {
 	if err != nil {
 		mi.Err = err.Error()
 	}
-	o.emit(mi)
+	o.emit(ctx, mi)
 }
 
 // Complete observes the plain single-shot path.
@@ -380,7 +384,7 @@ func (o *observingClient) Complete(ctx context.Context, inv llmclient.Invocation
 	mi.PromptTokens = usage.PromptTokens
 	mi.CompletionTokens = usage.CompletionTokens
 	mi.Attempts = len(records)
-	o.finish(mi, start, err)
+	o.finish(ctx, mi, start, err)
 	return content, err
 }
 
@@ -396,7 +400,7 @@ func (o *observingClient) CompleteWithUsage(ctx context.Context, inv llmclient.I
 	mi.PromptTokens = usage.PromptTokens
 	mi.CompletionTokens = usage.CompletionTokens
 	mi.Attempts = len(records)
-	o.finish(mi, start, err)
+	o.finish(ctx, mi, start, err)
 	return content, usage, records, err
 }
 
@@ -417,7 +421,7 @@ func (o *observingClient) CompleteWithMeta(ctx context.Context, inv llmclient.In
 	if comp.Truncated {
 		mi.FinishReason = "length"
 	}
-	o.finish(mi, start, err)
+	o.finish(ctx, mi, start, err)
 	return comp, err
 }
 
@@ -444,7 +448,7 @@ func (o *observingClient) Chat(ctx context.Context, inv llmclient.Invocation,
 		mi.PromptTokens = resp.Usage.PromptTokens
 		mi.CompletionTokens = resp.Usage.CompletionTokens
 	}
-	o.finish(mi, start, err)
+	o.finish(ctx, mi, start, err)
 	return resp, err
 }
 

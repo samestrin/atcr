@@ -24,7 +24,7 @@ type recordingObserver struct {
 	panicOnCall bool
 }
 
-func (r *recordingObserver) OnModelInvocation(mi Invocation) {
+func (r *recordingObserver) OnModelInvocation(_ context.Context, mi Invocation) {
 	if r.panicOnCall {
 		panic("observer boom")
 	}
@@ -794,4 +794,59 @@ func TestWrap_ConcurrentPanicsAcrossDecorators(t *testing.T) {
 
 	assert.Equal(t, 2*n, bytes.Count(stderr.Bytes(), []byte("audit hook")),
 		"every recovered panic must be reported exactly once across all decorators")
+}
+
+// ctxObserver records the context it was handed, so a test can prove the
+// invocation's context reaches the observer rather than a detached one.
+type ctxObserver struct {
+	mu  sync.Mutex
+	got context.Context
+}
+
+func (o *ctxObserver) OnModelInvocation(ctx context.Context, _ Invocation) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.got = ctx
+}
+
+// TestWrap_PassesInvocationContextToObserver: the context parameter exists so an
+// observer doing I/O — appending to a ledger, POSTing to a collector — can
+// honour the run's cancellation and deadline. Handing over a detached or
+// background context would make it decorative.
+func TestWrap_PassesInvocationContextToObserver(t *testing.T) {
+	srv := chatServer(t, http.StatusOK, okCompletion)
+	inv := testInvocation(t, srv)
+	obs := &ctxObserver{}
+	type marker struct{}
+	ctx := context.WithValue(NewContext(context.Background(), obs, &bytes.Buffer{}), marker{}, "present")
+
+	_, err := Wrap(ctx, llmclient.New()).Complete(ctx, inv)
+	require.NoError(t, err)
+
+	obs.mu.Lock()
+	got := obs.got
+	obs.mu.Unlock()
+	require.NotNil(t, got, "the observer must receive a context")
+	assert.Equal(t, "present", got.Value(marker{}),
+		"the observer must receive the invocation's own context, not a detached one")
+}
+
+// TestWrap_ObserverSeesCancellation is the practical consequence: a run that was
+// cancelled must be visible to an observer, so a network sink can abort rather
+// than outlive the run it is recording.
+func TestWrap_ObserverSeesCancellation(t *testing.T) {
+	srv := chatServer(t, http.StatusOK, okCompletion)
+	inv := testInvocation(t, srv)
+	obs := &ctxObserver{}
+	ctx, cancel := context.WithCancel(NewContext(context.Background(), obs, &bytes.Buffer{}))
+
+	_, err := Wrap(ctx, llmclient.New()).Complete(ctx, inv)
+	require.NoError(t, err)
+	cancel()
+
+	obs.mu.Lock()
+	got := obs.got
+	obs.mu.Unlock()
+	require.NotNil(t, got)
+	assert.Error(t, got.Err(), "cancelling the run must be observable through the context the observer was given")
 }

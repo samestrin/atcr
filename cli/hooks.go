@@ -174,11 +174,21 @@ type ModelToolCall struct {
 // The fan-out engine runs reviewer agents concurrently, so implementations MUST
 // be safe for concurrent use. Implementations should also return promptly:
 // OnModelInvocation runs inline on the invocation path, so time spent here is
-// time added to the review. A panic is recovered at the seam, reported on
-// stderr, and the run continues unaffected — but do not rely on that as an
-// error-handling strategy.
+// time added to the review.
+//
+// The context is the one the model call itself was made with. An observer that
+// performs I/O — appending to a ledger, POSTing to a collector — should use it,
+// so a cancelled or timed-out run cancels the observer's work too instead of
+// leaving it to outlive the run.
+//
+// There is deliberately no error return. An observer cannot fail the run it is
+// observing: a panic is recovered at the seam, reported on stderr, and
+// execution continues with an unchanged exit code. An audit problem must never
+// change the outcome of a command that has nothing to do with auditing. If your
+// compliance posture requires "no audit, no run", enforce it before invoking
+// the CLI, not from inside the hook.
 type ModelInvocationObserver interface {
-	OnModelInvocation(ModelInvocation)
+	OnModelInvocation(context.Context, ModelInvocation)
 }
 
 // Hooks is the set of observers an embedding binary can register. The zero
@@ -226,7 +236,7 @@ type observerAdapter struct {
 	observer ModelInvocationObserver
 }
 
-func (a observerAdapter) OnModelInvocation(in hookobs.Invocation) {
+func (a observerAdapter) OnModelInvocation(ctx context.Context, in hookobs.Invocation) {
 	mi := ModelInvocation{
 		Seq:              in.Seq,
 		RunID:            in.RunID,
@@ -261,7 +271,7 @@ func (a observerAdapter) OnModelInvocation(in hookobs.Invocation) {
 			}
 		}
 	}
-	a.observer.OnModelInvocation(mi)
+	a.observer.OnModelInvocation(ctx, mi)
 }
 
 // adaptToolCalls converts the internal tool-call shape into the exported one.
@@ -308,8 +318,14 @@ func withHooks(ctx context.Context, hooks Hooks, stderr io.Writer) context.Conte
 // The intended caller is a wrapper binary that needs to observe model traffic
 // without vendoring the command tree:
 //
+//	type auditGateway struct{ ... }
+//
+//	func (g auditGateway) OnModelInvocation(ctx context.Context, mi cli.ModelInvocation) {
+//		g.record(ctx, mi) // redact before persisting — see ModelInvocation
+//	}
+//
 //	func main() {
-//		hooks := cli.Hooks{ModelInvocation: myAuditGateway{}}
+//		hooks := cli.Hooks{ModelInvocation: auditGateway{}}
 //		os.Exit(cli.MainWithHooks(context.Background(), os.Stdout, os.Stderr, hooks))
 //	}
 //

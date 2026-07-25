@@ -35,7 +35,7 @@ type recordingObserver struct {
 	got []ModelInvocation
 }
 
-func (r *recordingObserver) OnModelInvocation(mi ModelInvocation) {
+func (r *recordingObserver) OnModelInvocation(_ context.Context, mi ModelInvocation) {
 	r.got = append(r.got, mi)
 }
 
@@ -119,7 +119,7 @@ func TestObserverAdapter_ConvertsEveryField(t *testing.T) {
 	temp := 0.2
 	maxTok := 4096
 
-	observerAdapter{observer: obs}.OnModelInvocation(hookobs.Invocation{
+	observerAdapter{observer: obs}.OnModelInvocation(context.Background(), hookobs.Invocation{
 		Seq:       42,
 		RunID:     "2026-07-25_feat-x",
 		AgentName: "security-reviewer",
@@ -204,7 +204,7 @@ func TestObserverAdapter_FieldCountsMatch(t *testing.T) {
 func TestObserverAdapter_NoMessagesStaysNil(t *testing.T) {
 	obs := &recordingObserver{}
 
-	observerAdapter{observer: obs}.OnModelInvocation(hookobs.Invocation{Model: "m"})
+	observerAdapter{observer: obs}.OnModelInvocation(context.Background(), hookobs.Invocation{Model: "m"})
 
 	require.Len(t, obs.got, 1)
 	assert.Nil(t, obs.got[0].Messages)
