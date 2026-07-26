@@ -351,6 +351,46 @@ func withHooks(ctx context.Context, hooks Hooks, stderr io.Writer) context.Conte
 	return hookobs.NewContext(ctx, observerAdapter{observer: hooks.ModelInvocation}, stderr)
 }
 
+// shutdownSignalKey is the context key carrying the process-wide shutdown
+// channel. Its own type keeps it from colliding with any other package's keys.
+type shutdownSignalKey struct{}
+
+// withShutdownSignal attaches the process shutdown channel to ctx. Unexported:
+// the channel is created and closed by runMain's signal handling, and a caller
+// that could attach its own would be able to fake a shutdown the process is not
+// actually performing.
+func withShutdownSignal(ctx context.Context, ch <-chan struct{}) context.Context {
+	return context.WithValue(ctx, shutdownSignalKey{}, ch)
+}
+
+// ShutdownSignal returns a channel closed when the process begins a graceful
+// shutdown, or nil when ctx carries no such signal.
+//
+// It exists because context cancellation alone cannot tell a hook WHY it was
+// cancelled. The context handed to an observer is the per-agent context, which
+// is also cancelled by that agent's own `--timeout` on an otherwise healthy
+// run. An observer that treats every cancelled context as a shutdown will
+// abandon work for ordinary per-agent timeouts; one that treats none of them as
+// a shutdown will hold the process open past the graceful-shutdown budget. This
+// channel is the distinction: it closes only when a signal actually arrived.
+//
+// A returned nil channel blocks forever in a select, so an observer written
+// against this API degrades to "always wait" when it is absent — the behaviour
+// before this signal existed — rather than to a new failure mode.
+//
+// The intended use bounds cleanup without truncating it on a healthy run:
+//
+//	select {
+//	case err := <-done:
+//		// delivered
+//	case <-cli.ShutdownSignal(ctx):
+//		// shutting down: stop waiting, report the record as unconfirmed
+//	}
+func ShutdownSignal(ctx context.Context) <-chan struct{} {
+	ch, _ := ctx.Value(shutdownSignalKey{}).(<-chan struct{})
+	return ch
+}
+
 // MainWithHooks is Main with caller-supplied observers. It runs the identical
 // lifecycle — signal handling, telemetry drain, exit-code mapping — because it
 // IS the same code path: both entry points delegate to runMain, neither wraps
