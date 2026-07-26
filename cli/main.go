@@ -104,7 +104,19 @@ func runMain(ctx context.Context, stdout, stderr io.Writer) int {
 	// dropped if it arrives before the goroutine blocks on the channel.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	handleSignals(sigCh, cancel, stderr)
+
+	// Publish the shutdown moment separately from cancellation. A hook observing
+	// a cancelled context cannot tell a shutdown from an ordinary per-agent
+	// --timeout, because the context it receives is the agent's; this channel
+	// closes only when a signal actually arrived. Closed alongside cancel() so a
+	// consumer bounding its own cleanup sees the shutdown at the same instant the
+	// engine does. See ShutdownSignal in hooks.go.
+	shutdownCh := make(chan struct{})
+	ctx = withShutdownSignal(ctx, (<-chan struct{})(shutdownCh))
+	handleSignals(sigCh, func() {
+		close(shutdownCh)
+		cancel()
+	}, stderr)
 
 	telemetryClient := telemetry.New(defaultTelemetryEndpoint)
 	root := NewRootCmdWithClient(telemetryClient)
