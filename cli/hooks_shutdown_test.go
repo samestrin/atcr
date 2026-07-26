@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"io"
 	"os"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -71,11 +73,14 @@ func TestShutdownSignal_SurvivesDerivedContexts(t *testing.T) {
 // TestHandleSignals_ClosesShutdownBeforeGrace verifies the wiring runMain uses:
 // the channel closes when a signal arrives, at the same point the root context
 // is cancelled, and before the grace period elapses.
+//
+// It uses the package's stubForceExit helper with a short grace so the handler
+// goroutine finishes promptly, and then WAITS for it to finish. Both matter: the
+// goroutine reads gracefulShutdownTimeout and forceExit after cancelling, so a
+// test that returned while it was still parked would let t.Cleanup restore those
+// package vars underneath a live reader — a data race, not a flake.
 func TestHandleSignals_ClosesShutdownBeforeGrace(t *testing.T) {
-	origTimeout, origExit := gracefulShutdownTimeout, forceExit
-	t.Cleanup(func() { gracefulShutdownTimeout, forceExit = origTimeout, origExit })
-	gracefulShutdownTimeout = time.Hour // never reached in this test
-	forceExit = func(int) {}
+	code := stubForceExit(t, 15*time.Millisecond)
 
 	shutdownCh := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -85,7 +90,7 @@ func TestHandleSignals_ClosesShutdownBeforeGrace(t *testing.T) {
 	handleSignals(sigCh, func() {
 		close(shutdownCh)
 		cancel()
-	}, os.Stderr)
+	}, io.Discard)
 
 	select {
 	case <-shutdownCh:
@@ -105,4 +110,10 @@ func TestHandleSignals_ClosesShutdownBeforeGrace(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("a signal must also cancel the root context")
 	}
+
+	// Drain the handler goroutine before returning, so cleanup cannot restore
+	// forceExit/gracefulShutdownTimeout while it is still reading them.
+	require.Eventually(t, func() bool { return atomic.LoadInt32(code) == 1 },
+		2*time.Second, 5*time.Millisecond,
+		"the grace period should elapse and force exit once the stub timeout passes")
 }
