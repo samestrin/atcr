@@ -85,6 +85,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
 	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
 	cmd.Flags().Bool("no-ignore", false, "review files matched by the repo-root .gitignore/.atcrignore that are normally filtered out of the payload")
+	cmd.Flags().String("dir", "", "review every non-ignored, git-tracked file under this repo-root-relative directory as a scoped baseline scan (no diff range; mutually exclusive with --base/--head/--merge-commit/--all)")
 	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
 	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
 	cmd.Flags().Bool("axi", false, "emit a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption; diagnostics and progress stay on stderr (Agent eXperience Interface)")
@@ -325,13 +326,23 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	autoFix := boolFlag(cmd, "auto-fix")
 	var afBackend autoFixBackend
 
-	// --all (Sprint 35.0, Story 1) is a full-repository baseline scan: it has no
-	// diff range, so branch before gitrange.Resolve and skip range resolution
-	// entirely when set. A zero-valued Resolution stands in so the downstream
-	// request builder never dereferences nil; the baseline dispatch to
-	// PrepareReviewFromRepo runs below. When --all is unset the existing
-	// range-resolution path runs unchanged.
-	baseline := cmd.Flags().Changed("all")
+	// --dir (Sprint 35.0, Story 2) scopes a baseline scan to a subtree. Validate
+	// the path against the repo root here — before any payload work — so a bad path
+	// is a usage error (exit 2); returns the canonical repo-root-relative scope (""
+	// when unset). The mutual-exclusion check (PreRunE) has already run, so a --dir
+	// combined with a range flag or --all never reaches this point.
+	dirScope, err := validateDirFlag(cmd, ".")
+	if err != nil {
+		return err
+	}
+
+	// --all (Sprint 35.0, Story 1) and --dir (Story 2) are both full-repository /
+	// subtree baseline scans: they have no diff range, so branch before
+	// gitrange.Resolve and skip range resolution entirely when either is set. A
+	// zero-valued Resolution stands in so the downstream request builder never
+	// dereferences nil; the baseline dispatch to PrepareReviewFromRepo runs below.
+	// When neither is set the existing range-resolution path runs unchanged.
+	baseline := cmd.Flags().Changed("all") || cmd.Flags().Changed("dir")
 	// --auto-fix needs a base branch to open its fix PR against, which it derives
 	// from the resolved range's DefaultBranch. A baseline scan resolves no range,
 	// so auto-fix would fail only AFTER a full (paid) repo review and reconcile —
@@ -400,6 +411,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		Force:          boolFlag(cmd, "force"),
 		NoCache:        boolFlag(cmd, "no-cache"),
 		NoIgnore:       boolFlag(cmd, "no-ignore"),
+		Dir:            dirScope,
 		SprintPlanPath: sprintPlanPath(cmd),
 		PRNumber:       prNumberFromFlags(cmd),
 	}

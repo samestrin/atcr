@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -245,4 +247,100 @@ func TestReviewAllFlag_PreservesPriorPreRunE(t *testing.T) {
 	err := cmd.PreRunE(cmd, nil)
 	require.Error(t, err, "range validation must survive addBaselineFlags")
 	assert.Equal(t, exitUsage, exitCode(err))
+}
+
+// dirCmd builds a throwaway command with just --dir registered so
+// validateDirFlag can be unit-tested independently of the full review command
+// wiring. (AC 02-01)
+func dirCmd(t *testing.T, args ...string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "review"}
+	cmd.Flags().String("dir", "", "")
+	require.NoError(t, cmd.ParseFlags(args))
+	return cmd
+}
+
+// TestReviewDirFlag_Registered covers AC 02-01 Story-Specific DoD: `--dir` is a
+// string flag on `atcr review`, defaulting to "" (unset = not a directory scan).
+func TestReviewDirFlag_Registered(t *testing.T) {
+	cmd := newReviewCmd()
+	f := cmd.Flags().Lookup("dir")
+	require.NotNil(t, f, "--dir must be registered on `atcr review`")
+	assert.Equal(t, "string", f.Value.Type())
+	assert.Equal(t, "", f.DefValue)
+}
+
+// TestValidateDirFlag_HappyPaths covers AC 02-01 Happy Path 1-2 and Edge Cases
+// 1-4: valid single/nested paths, trailing-slash and leading-`./` normalization,
+// `--dir .` accepted as the whole repo root, and an absolute-but-inside-root path
+// normalized to its repo-root-relative form.
+func TestValidateDirFlag_HappyPaths(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "fanout"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "payload", "testdata"), 0o755))
+	cases := []struct {
+		name, arg, want string
+	}{
+		{"single-segment", "internal/fanout", "internal/fanout"},
+		{"nested-multi-segment", "internal/payload/testdata", "internal/payload/testdata"},
+		{"trailing-slash", "internal/fanout/", "internal/fanout"},
+		{"dot-repo-root", ".", "."},
+		{"leading-dot-slash", "./internal/fanout", "internal/fanout"},
+		{"absolute-inside-root", filepath.Join(root, "internal", "fanout"), "internal/fanout"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := dirCmd(t, "--dir", tc.arg)
+			scope, err := validateDirFlag(cmd, root)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, scope)
+		})
+	}
+}
+
+// TestValidateDirFlag_Unset covers the not-a-dir-scan case: an unsupplied --dir
+// yields an empty scope and no error (the whole-repo / non-`--dir` path).
+func TestValidateDirFlag_Unset(t *testing.T) {
+	root := t.TempDir()
+	cmd := dirCmd(t) // --dir not supplied
+	scope, err := validateDirFlag(cmd, root)
+	require.NoError(t, err)
+	assert.Equal(t, "", scope, "unset --dir yields an empty scope")
+}
+
+// TestValidateDirFlag_Errors covers AC 02-01 Error Scenarios 1-4: non-existent,
+// file-not-directory, outside-root, and empty --dir values each fail with a
+// distinct, coded (exit 2) usage error.
+func TestValidateDirFlag_Errors(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "file.go"), []byte("x"), 0o644))
+	cases := []struct {
+		name, arg, wantMsg string
+	}{
+		{"not-exist", "does/not/exist", `--dir path "does/not/exist" does not exist`},
+		{"not-a-directory", "file.go", `--dir path "file.go" is not a directory`},
+		{"outside-root-rel", "../other-repo", `--dir path "../other-repo" resolves outside the repository root`},
+		{"empty", "", `--dir must not be empty`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := dirCmd(t, "--dir", tc.arg)
+			_, err := validateDirFlag(cmd, root)
+			require.Error(t, err)
+			assert.Equal(t, exitUsage, exitCode(err), "must exit 2 (usageError)")
+			assert.Contains(t, err.Error(), tc.wantMsg)
+		})
+	}
+}
+
+// TestValidateDirFlag_OutsideRootAbsolute covers AC 02-01 Error Scenario 3 via an
+// absolute path that resolves outside the repo root (a path-traversal guard).
+func TestValidateDirFlag_OutsideRootAbsolute(t *testing.T) {
+	root := t.TempDir()
+	cmd := dirCmd(t, "--dir", "/etc")
+	_, err := validateDirFlag(cmd, root)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "resolves outside the repository root")
 }

@@ -99,6 +99,15 @@ type ReviewRequest struct {
 	// can be reviewed on demand. Defaulting false keeps filtering active for
 	// callers that do not opt out (e.g. the MCP handler).
 	NoIgnore bool
+	// Dir, when non-empty, scopes a baseline (--dir <path>) scan to a subtree: only
+	// git-tracked files whose repo-root-relative path is Dir or nested under it (as a
+	// full path-segment prefix) enter the payload (Sprint 35.0, Story 2). It is a
+	// slash-normalized, repo-root-relative, validated scope (or "." for the whole
+	// repo). Empty means an unscoped whole-repository scan (--all) or a diff review.
+	// The scope filter lives in internal/payload/fullrepo.go; this field only carries
+	// the validated value there. Defaulting empty preserves the whole-repo/diff
+	// behavior for callers that do not set it (e.g. the MCP handler).
+	Dir string
 	// SprintPlanPath, when non-empty, points at a markdown sprint/epic plan whose
 	// content is wrapped in a SCOPE CONSTRAINT block and prepended to every
 	// reviewer's payload, immediately before the diff (Epic 12.2). It scopes the

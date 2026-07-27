@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -136,6 +138,53 @@ func previewFlagSet(cmd *cobra.Command) bool {
 // indirection.
 func addQualitySignalFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("preview", false, "print the exact content-free quality-signal payload that would be transmitted, then exit without sending anything (needs no opt-in and makes no network call)")
+}
+
+// validateDirFlag validates the Sprint 35.0 `--dir <path>` scoped-baseline flag
+// against the repository root and returns the canonical scope: a slash-normalized,
+// repo-root-relative, cleaned path (or "." for the whole-repo degenerate case).
+// An unset --dir returns ("", nil) — not a directory scan. Every rejection is a
+// usageError (exit 2) surfaced before any payload work begins (AC 02-01):
+//   - empty value → "--dir must not be empty"
+//   - resolves outside root (../ escape or an absolute path outside) → rejected via
+//     a lexical filepath.Rel guard, mirroring --output-dir's path-traversal defense
+//   - does-not-exist / not-a-directory → distinct messages via a single os.Stat
+//
+// root is the repository root the CLI runs against (".", resolved to CWD). The
+// escape check is lexical (filepath.Rel on cleaned absolute paths), matching how
+// outputDirFromFlags guards --output-dir; existence/type come from os.Stat.
+func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
+	if !cmd.Flags().Changed("dir") {
+		return "", nil
+	}
+	raw, _ := cmd.Flags().GetString("dir")
+	if strings.TrimSpace(raw) == "" {
+		return "", usageError(errors.New("review failed: --dir must not be empty"))
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", usageError(fmt.Errorf("review failed: resolving repository root for --dir: %w", err))
+	}
+	cand := raw
+	if !filepath.IsAbs(cand) {
+		cand = filepath.Join(absRoot, cand)
+	}
+	cand = filepath.Clean(cand)
+	rel, err := filepath.Rel(absRoot, cand)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", usageError(fmt.Errorf("review failed: --dir path %q resolves outside the repository root", raw))
+	}
+	fi, err := os.Stat(cand)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", usageError(fmt.Errorf("review failed: --dir path %q does not exist", raw))
+		}
+		return "", usageError(fmt.Errorf("review failed: --dir path %q: %w", raw, err))
+	}
+	if !fi.IsDir() {
+		return "", usageError(fmt.Errorf("review failed: --dir path %q is not a directory", raw))
+	}
+	return filepath.ToSlash(rel), nil
 }
 
 // validateRangeFlags checks the declared relationships between --base,

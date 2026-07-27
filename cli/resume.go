@@ -92,8 +92,12 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		// the original review ran (baseline-ness comes from the manifest, not this flag),
 		// so accepting --all here would silently ignore it (Sprint 35.0 phase-2 gate LOW).
 		"all": "--all starts a fresh full-repository review; a resume continues the original review's mode",
+		// --dir selects a fresh scoped baseline scan; like --all, the scope comes from
+		// the resumed review's manifest, not this flag, so accepting it here would
+		// silently ignore it (Sprint 35.0, Story 2 — same fresh-only rationale as --all).
+		"dir": "--dir starts a fresh scoped baseline review; a resume continues the original review's mode",
 	}
-	for _, f := range []string{"auto-fix", "debate", "single-model", "exec", "all"} {
+	for _, f := range []string{"auto-fix", "debate", "single-model", "exec", "all", "dir"} {
 		if cmd.Flags().Changed(f) {
 			return usageError(fmt.Errorf("--resume does not support --%s; %s", f, resumeStandalone[f]))
 		}
