@@ -104,6 +104,7 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 	// every mode. Reading its blob to measure churn would pull the whole binary
 	// into memory for a decision that cannot change anything.
 	if bin, err := g.isBinary(base, head, f.pathspec()...); err != nil || bin {
+		g.log().Debug("payload: skipping escalation analysis", "path", f.path, "binary", bin, "error", err)
 		return fileContext{}, false
 	}
 	// Every hunk, deletions included: a rewrite that mostly removes code is
@@ -111,10 +112,12 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 	// the head-side ranges alone cannot see it.
 	hunks, err := g.allHunkRanges(base, head, f.pathspec()...)
 	if err != nil {
+		g.log().Debug("payload: skipping escalation analysis, hunk range parse failed", "path", f.path, "error", err)
 		return fileContext{}, false
 	}
 	churn, _, err := g.churnLines(base, head, f.path)
 	if err != nil {
+		g.log().Debug("payload: skipping escalation analysis, churn lookup failed", "path", f.path, "error", err)
 		return fileContext{}, false
 	}
 	src, err := g.headContentMemo(base, head, f.path)
