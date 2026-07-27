@@ -58,9 +58,11 @@ type rangeState struct {
 	lineRanges map[string][]lineRange // head path -> head-side changed ranges
 	headSrc    map[string]string      // head path -> full HEAD blob (one `git show` each)
 	// churn is the head path -> added+deleted line count from the SAME
-	// `--numstat -M` process that fills binary. Deletions are counted here and
-	// nowhere else: the head-side line ranges drop pure-deletion hunks (they mark
-	// no head lines), so a deletion-driven rewrite is invisible to them.
+	// `--numstat -M` process that fills binary. The HEAD-SIDE changed-line
+	// ranges (parseHeadRanges) drop pure-deletion hunks — they mark no head
+	// lines — so churn is the only source of deleted-line VOLUME.
+	// parseAllHunkRanges separately preserves deletion hunks for the hunk-count
+	// and adjacency signals.
 	churn map[string]int
 
 	// diffPathspec holds the trailing `-- …` pathspec args applied to every
