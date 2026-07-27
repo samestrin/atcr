@@ -344,3 +344,44 @@ func TestValidateDirFlag_OutsideRootAbsolute(t *testing.T) {
 	assert.Equal(t, exitUsage, exitCode(err))
 	assert.Contains(t, err.Error(), "resolves outside the repository root")
 }
+
+// TestValidateDirFlag_RejectsSymlinkEscape is the 3.2.A HIGH regression: a symlink
+// INSIDE the repo root whose real target is OUTSIDE root must be rejected. A purely
+// lexical containment guard accepts it (rel == "link", no "../"); the guard must
+// symlink-resolve the candidate (os.Stat follows the link) so the escape is caught.
+// AC 02-01 Security / Story 2 Risk Analysis (path traversal/symlink escape).
+func TestValidateDirFlag_RejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir() // a directory outside the repo root
+	link := filepath.Join(root, "escape")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+	cmd := dirCmd(t, "--dir", "escape")
+	_, err := validateDirFlag(cmd, root)
+	require.Error(t, err, "a --dir symlink whose target escapes root must be rejected")
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "resolves outside the repository root")
+}
+
+// TestValidateDirFlag_AcceptsSymlinkedRootAbsolutePath is the 3.2.A MEDIUM
+// regression: when the repo root is reached through a symlink and an absolute --dir
+// is supplied in the RESOLVED namespace, containment must still accept it (both
+// operands are symlink-resolved before comparison), matching the spec's
+// "absolute path INSIDE root" acceptance case on macOS (/var -> /private/var).
+func TestValidateDirFlag_AcceptsSymlinkedRootAbsolutePath(t *testing.T) {
+	realRoot := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(realRoot, "internal", "fanout"), 0o755))
+	// A symlink standing in for the repo root; the CLI's root arg points at the link
+	// while the user supplies the resolved absolute path (the cross-namespace case).
+	linkRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.Symlink(realRoot, linkRoot); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(realRoot, "internal", "fanout"))
+	require.NoError(t, err)
+	cmd := dirCmd(t, "--dir", resolved)
+	scope, err := validateDirFlag(cmd, linkRoot)
+	require.NoError(t, err, "an in-root absolute path in resolved form must be accepted through a symlinked root")
+	assert.Equal(t, "internal/fanout", scope)
+}

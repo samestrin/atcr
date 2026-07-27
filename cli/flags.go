@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/samestrin/atcr/internal/validation"
 )
 
 // addRangeFlags declares the shared review-range flags on cmd and installs a
@@ -146,13 +148,24 @@ func addQualitySignalFlags(cmd *cobra.Command) {
 // An unset --dir returns ("", nil) — not a directory scan. Every rejection is a
 // usageError (exit 2) surfaced before any payload work begins (AC 02-01):
 //   - empty value → "--dir must not be empty"
-//   - resolves outside root (../ escape or an absolute path outside) → rejected via
-//     a lexical filepath.Rel guard, mirroring --output-dir's path-traversal defense
+//   - resolves outside root (../ escape, an absolute path outside, OR a symlink
+//     whose real target escapes) → "resolves outside the repository root"
 //   - does-not-exist / not-a-directory → distinct messages via a single os.Stat
 //
-// root is the repository root the CLI runs against (".", resolved to CWD). The
-// escape check is lexical (filepath.Rel on cleaned absolute paths), matching how
-// outputDirFromFlags guards --output-dir; existence/type come from os.Stat.
+// root is the repository root the CLI runs against (".", resolved to CWD).
+//
+// SECURITY (AC 02-01, Story 2 Risk Analysis — path traversal/symlink escape): the
+// containment guard resolves symlinks on BOTH the root and the candidate before
+// comparing (filepath.EvalSymlinks), then filepath.Rel — os.Stat follows symlinks,
+// so a purely lexical guard would accept a symlink inside root whose real target
+// escapes (e.g. repo/link -> /etc). Resolving both operands also fixes the macOS
+// false-rejection where root is reached through a symlink (/var -> /private/var)
+// but an absolute --dir is supplied in resolved form. This genuinely mirrors
+// --output-dir's defense: the same symlink-resolution discipline as resolveRedactRoot
+// plus a validation.FilePath system-directory denylist (as outputDirFromFlags runs).
+// A non-existent candidate cannot be symlink-resolved, so the guard falls back to a
+// lexical Rel for that case (which still catches a ../ escape) before os.Stat
+// reports "does not exist".
 func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
 	if !cmd.Flags().Changed("dir") {
 		return "", nil
@@ -170,10 +183,27 @@ func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
 		cand = filepath.Join(absRoot, cand)
 	}
 	cand = filepath.Clean(cand)
-	rel, err := filepath.Rel(absRoot, cand)
+
+	// Containment: resolve symlinks on both operands (matching resolveRedactRoot's
+	// discipline) so a symlink escape is caught and a symlinked root does not
+	// falsely reject an in-root absolute path. Fall back to a lexical Rel when the
+	// candidate does not resolve (does not exist yet) — that still catches a ../
+	// escape, and os.Stat below surfaces the does-not-exist case with its own message.
+	realRoot := absRoot
+	if rr, rerr := filepath.EvalSymlinks(absRoot); rerr == nil {
+		realRoot = rr
+	}
+	relBase, relTarget := realRoot, cand
+	if rc, rcerr := filepath.EvalSymlinks(cand); rcerr == nil {
+		relTarget = rc
+	} else {
+		relBase = absRoot // candidate unresolved → compare lexically against the unresolved root
+	}
+	rel, err := filepath.Rel(relBase, relTarget)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", usageError(fmt.Errorf("review failed: --dir path %q resolves outside the repository root", raw))
 	}
+
 	fi, err := os.Stat(cand)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -184,6 +214,19 @@ func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
 	if !fi.IsDir() {
 		return "", usageError(fmt.Errorf("review failed: --dir path %q is not a directory", raw))
 	}
+
+	// Defense-in-depth system-directory denylist, mirroring outputDirFromFlags'
+	// validation.FilePath(abs) guard. relTarget is the symlink-resolved candidate
+	// (guaranteed to exist and to be inside realRoot by the containment check above),
+	// so this only ever trips for a repo pathologically rooted under a system dir.
+	if err := validation.FilePath(relTarget); err != nil {
+		return "", usageError(fmt.Errorf("review failed: --dir path %q: %w", raw, err))
+	}
+
+	// Canonical scope: repo-root-relative, slash-normalized. At this point the
+	// candidate exists and is a directory, so rel came from the resolved branch and
+	// equals the logical subtree path git ls-files emits (symlinks affect only the
+	// shared prefix). "." for the whole-repo degenerate case.
 	return filepath.ToSlash(rel), nil
 }
 
