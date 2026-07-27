@@ -199,8 +199,13 @@ func MaxFuncCyclomatic(root Node) int {
 			if c := Cyclomatic(n); c > max {
 				max = c
 			}
-			// Keep descending: a funclit nested in a func is its own unit, and a
-			// method on a nested type still surfaces here.
+			// Keep descending: a funclit not nested under a func (e.g. one
+			// assigned to a package-level var) is still measured as its own
+			// unit, and a method on a nested type still surfaces here. Note a
+			// parent func ABSORBS its closures' complexity: Cyclomatic sums
+			// branch nodes over the whole subtree, so a func whose branches
+			// all live in nested funclits scores them as its own (matching
+			// gocyclo).
 		}
 		for i := range n.Children {
 			walk(n.Children[i])
