@@ -220,6 +220,26 @@ func warnLogger() (*slog.Logger, *bytes.Buffer) {
 	return slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})), &buf
 }
 
+// TD-009 (Sprint 35.0 hardening): an index file past the size ceiling degrades to
+// a full scan with a Warn, instead of an unbounded os.ReadFile allocation ahead of
+// any parse/validate step. A file AT the ceiling is still parsed.
+func TestFileHashLoad_OverCapDegradesToFullScanWithWarn(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "idx.json")
+	require.NoError(t, os.WriteFile(path, []byte(strings.Repeat("x", 256)), 0o644))
+
+	restore := maxFileHashIndexBytes
+	maxFileHashIndexBytes = 64
+	defer func() { maxFileHashIndexBytes = restore }()
+
+	logger, buf := warnLogger()
+	idx := Load(path, logger)
+	require.NotNil(t, idx)
+	assert.Empty(t, idx.Paths(), "an over-cap index degrades to an empty index (full scan)")
+	assert.Contains(t, buf.String(), "level=WARN")
+	assert.Contains(t, buf.String(), "size ceiling", "the Warn names the over-cap cause")
+}
+
 // AC 04-03 Happy Path 1: a missing index file → empty index, no error, and NO
 // Warn/Error line (the routine first-run state; Debug at most).
 func TestFileHashLoad_MissingIsSilentEmpty(t *testing.T) {

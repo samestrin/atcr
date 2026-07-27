@@ -3,6 +3,7 @@ package payload
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -76,25 +77,60 @@ func newFileHashIndex() *FileHashIndex {
 	return &FileHashIndex{entries: make(map[string]fileHashEntry)}
 }
 
+// maxFileHashIndexBytes is the size ceiling for the on-disk file-hash index
+// (TD-009): Load slurps the whole file before validation, so a pathologically
+// large or corrupted .atcr/index/file-hashes.json would otherwise force an
+// unbounded allocation ahead of any parse/validate step. Past the ceiling Load
+// degrades to an empty index (full scan) with a Warn, same as corruption. 64 MiB
+// is ~400k+ entries at ~150 bytes each — far beyond any real repository's tracked
+// set. A var (not a const) so tests can pin the boundary with small fixtures.
+var maxFileHashIndexBytes int64 = 64 << 20
+
 // Load reads the index at path. It NEVER returns an error and NEVER returns nil: a
-// missing, empty, unreadable, or corrupt/wrong-shape file degrades to an empty index
-// (a full scan), mirroring loadGitignore/loadAtcrignore's graceful-degradation
-// convention (ignore.go). The logger is used to record that degradation (Debug for
-// the routine missing/empty cases, Warn for corruption) — see AC 04-03; a nil logger
-// is tolerated (logging is skipped). The signature takes a logger, unlike the
-// sprint-plan's abbreviated `Load(path) *FileHashIndex`, because the corrupt-index
-// case must emit a discoverable Warn line and the whole payload package already
-// threads *slog.Logger for exactly this purpose.
+// missing, empty, unreadable, corrupt/wrong-shape, or over-cap file degrades to an
+// empty index (a full scan), mirroring loadGitignore/loadAtcrignore's
+// graceful-degradation convention (ignore.go). The logger is used to record that
+// degradation (Debug for the routine missing/empty cases, Warn for corruption or an
+// over-cap file) — see AC 04-03; a nil logger is tolerated (logging is skipped).
+// The signature takes a logger, unlike the sprint-plan's abbreviated
+// `Load(path) *FileHashIndex`, because the corrupt-index case must emit a
+// discoverable Warn line and the whole payload package already threads
+// *slog.Logger for exactly this purpose.
 func Load(path string, logger *slog.Logger) *FileHashIndex {
 	idx := newFileHashIndex()
 
-	data, err := os.ReadFile(path)
+	// TD-009: stat before reading so an over-cap file never triggers an unbounded
+	// allocation — degrade to a full scan with a Warn, identical to corruption.
+	if fi, err := os.Stat(path); err == nil && fi.Size() > maxFileHashIndexBytes {
+		if logger != nil {
+			logger.Warn("payload: file-hash index exceeds the size ceiling, ignoring it and running a full scan (it will be rebuilt)", "path", path, "size", fi.Size(), "max", maxFileHashIndexBytes)
+		}
+		return idx
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		// Missing is the routine first-run state — Debug at most, never Warn/Error
 		// (AC 04-03 Happy Path 1). Any other read error (e.g. permissions) is equally
 		// non-fatal: degrade to a full scan.
 		if logger != nil && !os.IsNotExist(err) {
 			logger.Debug("payload: file-hash index unreadable, running a full scan", "path", path, "err", err)
+		}
+		return idx
+	}
+	defer func() { _ = f.Close() }()
+	// Bound the read independently of the pre-read stat so a file that grows
+	// between stat and read still cannot exceed the cap (the same "+1 over-read,
+	// then recheck" pair ingest.go's readCapped uses).
+	data, err := io.ReadAll(io.LimitReader(f, maxFileHashIndexBytes+1))
+	if err != nil {
+		if logger != nil {
+			logger.Debug("payload: file-hash index unreadable, running a full scan", "path", path, "err", err)
+		}
+		return idx
+	}
+	if int64(len(data)) > maxFileHashIndexBytes {
+		if logger != nil {
+			logger.Warn("payload: file-hash index exceeds the size ceiling, ignoring it and running a full scan (it will be rebuilt)", "path", path, "max", maxFileHashIndexBytes)
 		}
 		return idx
 	}
