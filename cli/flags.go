@@ -150,11 +150,11 @@ func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
 	}
 	raw, _ := cmd.Flags().GetString("dir")
 	if strings.TrimSpace(raw) == "" {
-		return "", usageError(errors.New("review failed: --dir must not be empty"))
+		return "", usageError(errors.New("--dir must not be empty"))
 	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		return "", usageError(fmt.Errorf("review failed: resolving repository root for --dir: %w", err))
+		return "", usageError(fmt.Errorf("resolving repository root for --dir: %w", err))
 	}
 	cand := raw
 	if !filepath.IsAbs(cand) {
@@ -179,18 +179,18 @@ func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
 	}
 	rel, err := filepath.Rel(relBase, relTarget)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", usageError(fmt.Errorf("review failed: --dir path %q resolves outside the repository root", raw))
+		return "", usageError(fmt.Errorf("--dir path %q resolves outside the repository root", raw))
 	}
 
 	fi, err := os.Stat(cand)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", usageError(fmt.Errorf("review failed: --dir path %q does not exist", raw))
+			return "", usageError(fmt.Errorf("--dir path %q does not exist", raw))
 		}
-		return "", usageError(fmt.Errorf("review failed: --dir path %q: %w", raw, err))
+		return "", usageError(fmt.Errorf("--dir path %q: %w", raw, err))
 	}
 	if !fi.IsDir() {
-		return "", usageError(fmt.Errorf("review failed: --dir path %q is not a directory", raw))
+		return "", usageError(fmt.Errorf("--dir path %q is not a directory", raw))
 	}
 
 	// Defense-in-depth system-directory denylist, mirroring outputDirFromFlags'
@@ -198,7 +198,7 @@ func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
 	// (guaranteed to exist and to be inside realRoot by the containment check above),
 	// so this only ever trips for a repo pathologically rooted under a system dir.
 	if err := validation.FilePath(relTarget); err != nil {
-		return "", usageError(fmt.Errorf("review failed: --dir path %q: %w", raw, err))
+		return "", usageError(fmt.Errorf("--dir path %q: %w", raw, err))
 	}
 
 	// Canonical scope: repo-root-relative, slash-normalized. At this point the
