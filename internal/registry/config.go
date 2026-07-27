@@ -688,7 +688,9 @@ func (r *Registry) validatePayloadEscalation() []error {
 	pe := r.PayloadEscalation
 	var errs []error
 	if pe.ChurnRatio != nil {
-		if *pe.ChurnRatio < 0 {
+		if math.IsNaN(*pe.ChurnRatio) || math.IsInf(*pe.ChurnRatio, 0) {
+			errs = append(errs, fmt.Errorf("payload_escalation.churn_ratio must be a finite number, got %v", *pe.ChurnRatio))
+		} else if *pe.ChurnRatio < 0 {
 			errs = append(errs, fmt.Errorf("payload_escalation.churn_ratio must be >= 0 (0 = disabled), got %v", *pe.ChurnRatio))
 		} else if *pe.ChurnRatio > 1 {
 			errs = append(errs, fmt.Errorf("payload_escalation.churn_ratio must be <= 1.0 (it is a fraction of a file's lines), got %v", *pe.ChurnRatio))
