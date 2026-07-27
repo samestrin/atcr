@@ -694,7 +694,14 @@ func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIg
 		return nil, fmt.Errorf("%w (mode files, dropped %d file(s))", ErrPayloadFullyDropped, len(trunc.FilesDropped))
 	}
 	if trunc.Truncated {
-		log.FromContext(ctx).Warn("full-repo scan: byte budget truncated the review payload; reviewing a subset of the repository",
+		// TD-012: do NOT claim "reviewing a subset of the repository" — the
+		// baseline fan-out chunks the full pre-budget Entries via
+		// PartitionByBudget, which drops nothing, so every enumerated file is
+		// still reviewed across per-model chunks; the global budget only bounds
+		// the concatenated payload text / per-chunk sizing. (The sole exception
+		// is the over-window bulk fall-through, where an agent reviews the kept
+		// subset — see the write-back EXCEPTION note in PrepareReviewFromRepo.)
+		log.FromContext(ctx).Warn("full-repo scan: byte budget truncated the concatenated payload text; every enumerated file is still reviewed across per-model chunks",
 			"kept", len(kept), "dropped", len(trunc.FilesDropped), "files_dropped", trunc.FilesDropped)
 	}
 	var totalLen int
