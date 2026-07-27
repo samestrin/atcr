@@ -17,6 +17,7 @@ func TestPayloadEscalation_AbsentBlockIsAllUnset(t *testing.T) {
 	require.Nil(t, r.PayloadEscalation.HunkGapLines)
 	require.Nil(t, r.PayloadEscalation.MinCyclomatic)
 	require.Nil(t, r.PayloadEscalation.MaxFiles)
+	require.Nil(t, r.PayloadEscalation.MaxSkeletonLines)
 }
 
 func TestPayloadEscalation_ParsesFromYAML(t *testing.T) {
@@ -123,7 +124,7 @@ func TestPayloadEscalation_ValidateAcceptsZeroAndDefaults(t *testing.T) {
 	// Zero is the documented "disable this signal" value, and 1.0 is a legal
 	// churn ratio (every line changed) — neither is an error.
 	r := Registry{PayloadEscalation: PayloadEscalationConfig{
-		ChurnRatio: &zeroF, MinHunks: &zero, HunkGapLines: &zero, MinCyclomatic: &zero, MaxFiles: &zero,
+		ChurnRatio: &zeroF, MinHunks: &zero, HunkGapLines: &zero, MinCyclomatic: &zero, MaxFiles: &zero, MaxSkeletonLines: &zero,
 	}}
 	require.NoError(t, r.validate())
 
