@@ -36,11 +36,11 @@ var branchKinds = map[string]bool{
 // whose line range falls outside src is skipped rather than clamped — a
 // tree/source mismatch means the skeleton would be wrong, and a missing entry is
 // safer than a misleading one.
-func FileSkeleton(root Node, src []byte) []SkeletonEntry {
+func FileSkeleton(root Node, src string) []SkeletonEntry {
 	if len(root.Children) == 0 || len(src) == 0 {
 		return nil
 	}
-	lines := strings.Split(string(src), "\n")
+	lines := strings.Split(src, "\n")
 
 	var entries []SkeletonEntry
 	for _, ch := range root.Children {

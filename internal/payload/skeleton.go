@@ -153,7 +153,7 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 		return ctx, true
 	}
 	ctx.signals.cyclomatic = astgroup.MaxFuncCyclomatic(root)
-	ctx.skeleton = renderSkeleton(toSkeletonEntries(astgroup.FileSkeleton(root, []byte(src))), g.escalation.MaxSkeletonLines)
+	ctx.skeleton = renderSkeleton(toSkeletonEntries(astgroup.FileSkeleton(root, src)), g.escalation.MaxSkeletonLines)
 	return ctx, true
 }
 

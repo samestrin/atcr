@@ -66,7 +66,7 @@ func headersOf(entries []SkeletonEntry) []string {
 func TestFileSkeleton_ExtractsTopLevelHeaders(t *testing.T) {
 	root := parseGoForSkeleton(t, skeletonSrc)
 
-	entries := FileSkeleton(root, []byte(skeletonSrc))
+	entries := FileSkeleton(root, skeletonSrc)
 
 	// Import declarations are excluded: they carry no structural signal a
 	// reviewer needs and would be pure noise in every skeleton.
@@ -83,7 +83,7 @@ func TestFileSkeleton_ExtractsTopLevelHeaders(t *testing.T) {
 func TestFileSkeleton_CarriesKindNameAndLine(t *testing.T) {
 	root := parseGoForSkeleton(t, skeletonSrc)
 
-	entries := FileSkeleton(root, []byte(skeletonSrc))
+	entries := FileSkeleton(root, skeletonSrc)
 	require.NotEmpty(t, entries)
 
 	byName := map[string]SkeletonEntry{}
@@ -116,7 +116,7 @@ func TestFileSkeleton_MethodsIncludeReceiver(t *testing.T) {
 	src := "package p\n\ntype T struct{}\n\nfunc (t *T) Do(x int) error { return nil }\n"
 	root := parseGoForSkeleton(t, src)
 
-	entries := FileSkeleton(root, []byte(src))
+	entries := FileSkeleton(root, src)
 
 	require.Contains(t, headersOf(entries), "func (t *T) Do(x int) error")
 }
@@ -125,8 +125,8 @@ func TestFileSkeleton_EmptyAndNoDeclarations(t *testing.T) {
 	src := "package p\n"
 	root := parseGoForSkeleton(t, src)
 
-	require.Empty(t, FileSkeleton(root, []byte(src)))
-	require.Empty(t, FileSkeleton(Node{}, nil))
+	require.Empty(t, FileSkeleton(root, src))
+	require.Empty(t, FileSkeleton(Node{}, ""))
 }
 
 func TestFileSkeleton_NodeRangeOutsideSourceIsSkipped(t *testing.T) {
@@ -138,7 +138,7 @@ func TestFileSkeleton_NodeRangeOutsideSourceIsSkipped(t *testing.T) {
 		Children: []Node{{Kind: "func", Name: "Ghost", StartLine: 400, EndLine: 420}},
 	}
 
-	require.Empty(t, FileSkeleton(root, []byte("package p\n")))
+	require.Empty(t, FileSkeleton(root, "package p\n"))
 }
 
 func TestFileSkeleton_CRLFSourceHasNoStrayCarriageReturn(t *testing.T) {
@@ -147,7 +147,7 @@ func TestFileSkeleton_CRLFSourceHasNoStrayCarriageReturn(t *testing.T) {
 	src := "package p\r\n\r\nfunc A(x int) error {\r\n\treturn nil\r\n}\r\n"
 	root := parseGoForSkeleton(t, src)
 
-	entries := FileSkeleton(root, []byte(src))
+	entries := FileSkeleton(root, src)
 
 	require.Equal(t, []string{"func A(x int) error"}, headersOf(entries))
 	for _, e := range entries {
@@ -162,7 +162,7 @@ func TestFileSkeleton_BodylessFuncKeepsFullSignature(t *testing.T) {
 	src := "package p\n\nfunc add(x, y int) int\n\nvar (\n\tA = 1\n)\n"
 	root := parseGoForSkeleton(t, src)
 
-	require.Equal(t, []string{"func add(x, y int) int", "var ("}, headersOf(FileSkeleton(root, []byte(src))))
+	require.Equal(t, []string{"func add(x, y int) int", "var ("}, headersOf(FileSkeleton(root, src)))
 }
 
 func TestFileSkeleton_HeadersAreSingleLine(t *testing.T) {
@@ -171,7 +171,7 @@ func TestFileSkeleton_HeadersAreSingleLine(t *testing.T) {
 	// payload section marker.
 	root := parseGoForSkeleton(t, skeletonSrc)
 
-	for _, e := range FileSkeleton(root, []byte(skeletonSrc)) {
+	for _, e := range FileSkeleton(root, skeletonSrc) {
 		require.NotContains(t, e.Header, "\n", "header %q must be single-line", e.Header)
 	}
 }
@@ -312,5 +312,5 @@ type Alias = map[string]struct{}
 		"func New() chan struct{}",
 		"func M() map[string]struct{ A int }",
 		"type Alias = map[string]struct{}",
-	}, headersOf(FileSkeleton(root, []byte(src))))
+	}, headersOf(FileSkeleton(root, src)))
 }
