@@ -37,38 +37,16 @@ func addRangeFlags(cmd *cobra.Command) {
 	}
 }
 
-// addBaselineFlags declares the Sprint 35.0 baseline-scan flag (`--all`) on cmd
-// and chains a PreRunE enforcing that it never combines with a diff range: a
-// full-repository scan has no base..head range, so `--all` with any of
-// --base/--head/--merge-commit is a coded usage error (exit 2). Chaining is
-// prev-first (a previously-installed hook runs before this one) so the range
-// validator installed by addRangeFlags still fires — the two hooks compose rather
-// than clobber, matching addRangeFlags/addSyncCloudFlags.
+// addBaselineFlags declares the Sprint 35.0 baseline-scan flag (`--all`) on cmd.
+// It installs NO PreRunE of its own: the mutual-exclusion validation (--all/--dir
+// vs a diff range) is owned by the shared validateRangeFlags installed via
+// addRangeFlags (Sprint 35.0 task 3.8 consolidated it there so the baseline message
+// wins over the range checks — TD-001). Adding a pass-through PreRunE wrapper here
+// would be dead indirection, matching addQualitySignalFlags' convention. The --dir
+// string flag is registered directly on the review command (it is review-only,
+// unlike --all's shared-helper registration).
 func addBaselineFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("all", false, "review every non-ignored, git-tracked file as a full-repository baseline scan (no diff range; mutually exclusive with --base/--head/--merge-commit)")
-	prev := cmd.PreRunE
-	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
-		if prev != nil {
-			if err := prev(cmd, args); err != nil {
-				return err
-			}
-		}
-		return validateBaselineFlags(cmd)
-	}
-}
-
-// validateBaselineFlags rejects `--all` combined with any diff-range flag. It
-// keys on Changed() (not GetBool) so an explicit `--all=false` still registers as
-// supplied — the presence idiom the story mandates — and mirrors validateRangeFlags'
-// usageError style so a conflict maps to exit 2 without a panic.
-func validateBaselineFlags(cmd *cobra.Command) error {
-	if !cmd.Flags().Changed("all") {
-		return nil
-	}
-	if cmd.Flags().Changed("base") || cmd.Flags().Changed("head") || cmd.Flags().Changed("merge-commit") {
-		return usageError(errors.New("--all cannot be combined with --base/--head/--merge-commit: a full-repository scan has no diff range"))
-	}
-	return nil
 }
 
 // defaultCloudEndpoint is the compiled-in --sync-cloud destination. It is a
@@ -230,12 +208,32 @@ func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
 	return filepath.ToSlash(rel), nil
 }
 
-// validateRangeFlags checks the declared relationships between --base,
-// --head, and --merge-commit.
+// validateRangeFlags checks the declared relationships between --base, --head, and
+// --merge-commit, and owns the shared baseline mutual-exclusion (Sprint 35.0): a
+// review has exactly one scoping mode — a diff range, a full-repo --all scan, or a
+// scoped --dir scan. The baseline checks run FIRST, before the range-relationship
+// checks, so when --all/--dir is present the accurate baseline message wins over
+// the range validator's "--head requires --base" attribution (TD-001) — this is
+// the shared exclusion check AC 02-03 specifies, replacing the separate
+// validateBaselineFlags. Keying on Changed() (not GetBool/GetString) means an
+// explicit --all=false still counts as supplied, the presence idiom Story 1
+// mandates. Changed() on a flag a host command never registered (e.g. --all/--dir
+// on `reconcile`, which shares addRangeFlags) safely returns false, so the baseline
+// checks are inert there.
 func validateRangeFlags(cmd *cobra.Command) error {
 	base := cmd.Flags().Changed("base")
 	head := cmd.Flags().Changed("head")
 	mergeCommit := cmd.Flags().Changed("merge-commit")
+	all := cmd.Flags().Changed("all")
+	dir := cmd.Flags().Changed("dir")
+
+	// Baseline exclusions first (TD-001: accurate message wins over range checks).
+	if dir && (base || head || mergeCommit || all) {
+		return usageError(errors.New("--dir cannot be combined with --base/--head/--merge-commit/--all: a scoped baseline scan has no diff range"))
+	}
+	if all && (base || head || mergeCommit) {
+		return usageError(errors.New("--all cannot be combined with --base/--head/--merge-commit: a full-repository scan has no diff range"))
+	}
 
 	if head && !base {
 		return usageError(errors.New("--head requires --base"))

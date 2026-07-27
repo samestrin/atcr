@@ -364,6 +364,73 @@ func TestValidateDirFlag_RejectsSymlinkEscape(t *testing.T) {
 	assert.Contains(t, err.Error(), "resolves outside the repository root")
 }
 
+// --- AC 02-03: --dir / --all mutual exclusion --------------------------------
+
+// TestReviewDirFlag_AloneSucceeds covers AC 02-03 Happy Path 1: `--dir` with no
+// range flags and no `--all` passes PreRunE.
+func TestReviewDirFlag_AloneSucceeds(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--dir", "internal/fanout"}))
+	require.NotNil(t, cmd.PreRunE)
+	assert.NoError(t, cmd.PreRunE(cmd, nil))
+}
+
+// TestReviewDirFlag_MutualExclusion covers AC 02-03 Error Scenarios 1-3 and Edge
+// Case 1: `--dir` combined with any of --base/--head/--merge-commit/--all is a
+// usage error (exit 2), fired in PreRunE before any path-value validation.
+func TestReviewDirFlag_MutualExclusion(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"dir+base", []string{"--dir", "internal/fanout", "--base", "main"}}, // EC1: --base alone (no --head) still rejected
+		{"dir+head", []string{"--dir", "internal/fanout", "--head", "x"}},
+		{"dir+merge-commit", []string{"--dir", "internal/fanout", "--merge-commit", "abc123"}},
+		{"dir+all", []string{"--dir", "internal/fanout", "--all"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newReviewCmd()
+			require.NoError(t, cmd.ParseFlags(tc.args))
+			require.NotNil(t, cmd.PreRunE)
+			err := cmd.PreRunE(cmd, nil)
+			require.Error(t, err, "%v must be rejected", tc.args)
+			assert.Equal(t, exitUsage, exitCode(err), "must exit 2 (usageError)")
+			assert.Contains(t, err.Error(), "--dir cannot be combined with --base/--head/--merge-commit/--all")
+		})
+	}
+}
+
+// TestReviewDirFlag_ExclusionBeforePathValidation covers AC 02-03 Edge Case 2: the
+// mutual-exclusion error (PreRunE) fires before AC 02-01's path-value validation,
+// so `--dir does/not/exist --all` yields the exclusion error, not "does not exist".
+func TestReviewDirFlag_ExclusionBeforePathValidation(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--dir", "does/not/exist", "--all"}))
+	require.NotNil(t, cmd.PreRunE)
+	err := cmd.PreRunE(cmd, nil)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "--dir cannot be combined with")
+	assert.NotContains(t, err.Error(), "does not exist", "mutual exclusion must fire before path validation")
+}
+
+// TestReviewAllFlag_BaselineMessageWinsOverRange is the TD-001 fix: when `--all`
+// is combined with a partial range flag (`--head` without `--base`), the baseline
+// "--all cannot be combined with..." message must win over the range validator's
+// "--head requires --base" attribution. The combination was always rejected; this
+// pins the correct, less-misleading message once the shared exclusion check owns it.
+func TestReviewAllFlag_BaselineMessageWinsOverRange(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--all", "--head", "foo"}))
+	require.NotNil(t, cmd.PreRunE)
+	err := cmd.PreRunE(cmd, nil)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "--all cannot be combined with --base/--head/--merge-commit")
+	assert.NotContains(t, err.Error(), "--head requires --base", "baseline message must win when --all is present (TD-001)")
+}
+
 // TestValidateDirFlag_AcceptsSymlinkedRootAbsolutePath is the 3.2.A MEDIUM
 // regression: when the repo root is reached through a symlink and an absolute --dir
 // is supplied in the RESOLVED namespace, containment must still accept it (both
