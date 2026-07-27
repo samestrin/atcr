@@ -118,23 +118,49 @@ func Load(path string, logger *slog.Logger) *FileHashIndex {
 		}
 		return newFileHashIndex()
 	}
+	// A bare JSON `null` unmarshals into a nil map with no error — neither the routine
+	// missing/empty file nor a valid path-keyed object, so it is wrong-shape and must
+	// Warn like the array case, not degrade silently (4.8.A LOW).
+	if parsed == nil {
+		if logger != nil {
+			logger.Warn("payload: file-hash index is not an object, ignoring it and running a full scan (it will be rebuilt)", "path", path)
+		}
+		return newFileHashIndex()
+	}
 	// Structural validation (AC 04-03 Edge Case 3b): valid JSON of the right TYPE can
-	// still be the wrong SHAPE — an entry missing its required "sha256:<hex>" hash
-	// (hand-edited, or a foreign object that happens to unmarshal into the map). Treat
-	// it identically to corruption: Warn + empty + rebuild, never a silently-accepted
-	// zero-valued entry that would look "recorded" while matching nothing.
+	// still be the wrong SHAPE — an entry whose hash is not the required, full
+	// "sha256:<64-hex>" digest cache.HashText produces (missing, truncated, or non-hex,
+	// e.g. hand-edited or a foreign object that happens to unmarshal into the map).
+	// Treat it identically to corruption: Warn + empty + rebuild, never a
+	// silently-accepted malformed entry that would look "recorded" while matching
+	// nothing (4.8.A LOW: prefix-only was too lax).
 	for p, e := range parsed {
-		if !strings.HasPrefix(e.Hash, "sha256:") {
+		if !isCanonicalDigest(e.Hash) {
 			if logger != nil {
 				logger.Warn("payload: file-hash index has an invalid entry, ignoring the index and running a full scan (it will be rebuilt)", "path", path, "entry", p)
 			}
 			return newFileHashIndex()
 		}
 	}
-	if parsed != nil {
-		idx.entries = parsed
-	}
+	idx.entries = parsed
 	return idx
+}
+
+// isCanonicalDigest reports whether s is exactly the "sha256:<64 lowercase hex>"
+// string cache.HashText emits — the shape every legitimately-written index entry
+// carries. Anything else (empty, truncated, uppercase, non-hex) is a wrong-shape
+// entry that must trigger the graceful rebuild path rather than be trusted.
+func isCanonicalDigest(s string) bool {
+	const prefix = "sha256:"
+	if len(s) != len(prefix)+64 || !strings.HasPrefix(s, prefix) {
+		return false
+	}
+	for _, r := range s[len(prefix):] {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // Unchanged reports whether path has a recorded entry whose hash equals the supplied

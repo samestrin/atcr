@@ -300,6 +300,41 @@ func TestFileHashLoad_MissingRequiredFieldTreatedAsCorrupt(t *testing.T) {
 	assert.Contains(t, buf.String(), "level=WARN", "wrong-shape must be observably distinct (Warn), not silent")
 }
 
+// AC 04-03 Edge Case 3 (hardening, 4.8.A): a bare JSON `null` and an entry with a
+// truncated/non-hex hash are both wrong-shape → Warn + empty, not silent acceptance.
+func TestFileHashLoad_NullAndMalformedHashTreatedAsCorrupt(t *testing.T) {
+	cases := map[string]string{
+		"bare null":      `null`,
+		"empty digest":   `{"a.go": {"hash": "sha256:", "last_reviewed_run_id": "r"}}`,
+		"truncated hex":  `{"a.go": {"hash": "sha256:abc", "last_reviewed_run_id": "r"}}`,
+		"non-hex digest": `{"a.go": {"hash": "sha256:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", "last_reviewed_run_id": "r"}}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "idx.json")
+			require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+			logger, buf := warnLogger()
+			idx := Load(path, logger)
+			assert.Empty(t, idx.Paths(), "wrong-shape index must degrade to a full scan")
+			assert.Contains(t, buf.String(), "level=WARN")
+		})
+	}
+}
+
+// A well-formed index with a canonical cache.HashText digest loads cleanly (guards
+// against isCanonicalDigest being over-strict and rejecting valid entries).
+func TestFileHashLoad_CanonicalDigestAccepted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "idx.json")
+	src := newFileHashIndex()
+	src.Record("a.go", cache.HashText("hello\n"), "run-1")
+	require.NoError(t, src.Save(path))
+
+	logger, buf := warnLogger()
+	got := Load(path, logger)
+	assert.Equal(t, []string{"a.go"}, got.Paths())
+	assert.Empty(t, buf.String(), "a valid index must not Warn")
+}
+
 // Nil-receiver safety (used by AC 04-02's skip filter when --fresh disables loading):
 // a nil *FileHashIndex reports every path as unrecorded/changed and never panics.
 func TestFileHashIndex_NilReceiverSafe(t *testing.T) {
