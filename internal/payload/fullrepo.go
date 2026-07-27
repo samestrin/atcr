@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -87,11 +88,40 @@ func readTrackedFile(root, rel string) (FileEntry, error) {
 		}
 		return FileEntry{Path: rel, Size: int64(len(target)), Body: target}, nil
 	}
+	// Defense-in-depth rooted read (AC 01-02 Security): resolve every symlink in the
+	// path and refuse a read whose real target escapes root, before os.ReadFile
+	// follows it. Lstat only protects the leaf; an intermediate directory git tracked
+	// as a real dir may since have been replaced by a symlink pointing outside root.
+	if err := ensureWithinRoot(root, abs, rel); err != nil {
+		return FileEntry{}, err
+	}
 	data, err := os.ReadFile(abs)
 	if err != nil {
 		return FileEntry{}, fmt.Errorf("full-repo scan: reading tracked file %q: %w", rel, err)
 	}
 	return FileEntry{Path: rel, Size: int64(len(data)), Body: string(data)}, nil
+}
+
+// ensureWithinRoot rejects a regular-file read whose real (symlink-resolved) path
+// lands outside root. It mirrors ingest.go's rejectDiffSymlinkEscape but roots at a
+// caller-supplied directory instead of os.Getwd(): both root and the target are
+// symlink-resolved before comparison so the check holds on platforms whose temp /
+// working dirs sit behind a symlink (macOS /var -> /private/var). A target that does
+// not resolve surfaces as a read error naming the path (Error Scenario 2 parity).
+func ensureWithinRoot(root, abs, rel string) error {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("full-repo scan: resolving repository root: %w", err)
+	}
+	realAbs, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return fmt.Errorf("full-repo scan: reading tracked file %q: %w", rel, err)
+	}
+	r, err := filepath.Rel(realRoot, realAbs)
+	if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("full-repo scan: refusing tracked file %q: resolves outside the repository root via a symlink", rel)
+	}
+	return nil
 }
 
 // partitionByBudget groups an already-enumerated, already-ignore-filtered

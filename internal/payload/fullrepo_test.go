@@ -174,6 +174,35 @@ func TestEnumerateRepoFiles_UntrackedExcluded(t *testing.T) {
 	assert.False(t, present, "untracked notes.txt must be absent")
 }
 
+// AC 01-02 Security Considerations: a read must stay rooted at root. If an
+// intermediate working-tree directory (tracked as a real dir at commit time) is
+// later replaced by a symlink pointing OUTSIDE root, reading a file "under" it must
+// be refused, not followed — otherwise a full-repo scan could exfiltrate arbitrary
+// files. Mirrors the rejectDiffSymlinkEscape defense-in-depth pattern.
+func TestEnumerateRepoFiles_RejectsIntermediateSymlinkEscape(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "internal/foo.go", "package internal\n")
+	commitAll(t, dir, "init")
+
+	// Replace the tracked `internal` directory with a symlink to an outside dir
+	// that also contains foo.go with sensitive content. `git ls-files` still reports
+	// internal/foo.go (index unchanged), but the working-tree read now escapes root.
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "foo.go"), []byte("SECRET-OUTSIDE\n"), 0o644))
+	require.NoError(t, os.RemoveAll(filepath.Join(dir, "internal")))
+	if err := os.Symlink(outside, filepath.Join(dir, "internal")); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard())
+	require.Error(t, err, "a read that escapes root via a symlink must be refused")
+	assert.Contains(t, err.Error(), "outside the repository root")
+	// The sensitive outside content must never appear in the (aborted) result.
+	for _, e := range entries {
+		assert.NotContains(t, e.Body, "SECRET-OUTSIDE")
+	}
+}
+
 // AC 01-02 Error Scenario 2: a tracked file that fails to read mid-walk (removed
 // from the working tree after enumeration) surfaces a wrapped error naming the path.
 func TestEnumerateRepoFiles_ReadFailureMidWalk(t *testing.T) {
