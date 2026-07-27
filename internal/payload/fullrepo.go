@@ -198,6 +198,12 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 	paths := filterByScope(idx.Paths(), scope)
 	entries := make([]FileEntry, 0, len(paths))
 	for _, rel := range paths {
+		// TD-003: ctx bounded the git ls-files inside BuildFileIndex but nothing
+		// bounded this loop — honor cancellation mid-walk so a cancelled/timed-out
+		// context interrupts enumeration of a very large repository.
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("full-repo scan: enumeration interrupted: %w", err)
+		}
 		if matcher.match(rel) {
 			continue // .gitignore/.atcrignore parity with diff-mode
 		}

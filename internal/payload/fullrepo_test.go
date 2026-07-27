@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/cache"
 	"github.com/samestrin/atcr/internal/log"
@@ -457,6 +458,27 @@ func TestReadTrackedFile_OverCapSentinel(t *testing.T) {
 	e, err := readTrackedFile(dir, "atcap.bin")
 	require.NoError(t, err, "a file at exactly the cap is accepted")
 	assert.Equal(t, strings.Repeat("y", 16), e.Body)
+}
+
+// TD-003 (Sprint 35.0 hardening): a cancelled context interrupts the per-file
+// read loop instead of enumerating the whole repository first. The custom ctx
+// reports Err()=Canceled but never closes Done(), so the git ls-files inside
+// BuildFileIndex still succeeds and the loop's own ctx check is what fires.
+type cancelErrContext struct{ context.Context }
+
+func (cancelErrContext) Err() error                  { return context.Canceled }
+func (cancelErrContext) Done() <-chan struct{}       { return nil }
+func (cancelErrContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+
+func TestEnumerateRepoFiles_ContextCancelInterruptsReadLoop(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", "package a\n")
+	write(t, dir, "b.go", "package b\n")
+	commitAll(t, dir, "seed")
+
+	ctx := cancelErrContext{context.Background()}
+	_, err := enumerateRepoFiles(ctx, dir, log.Discard(), false, "")
+	require.ErrorIs(t, err, context.Canceled, "a cancelled ctx must interrupt the read loop")
 }
 
 // --- AC 02-02: path-segment scope filter (--dir) -----------------------------
