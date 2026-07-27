@@ -76,6 +76,27 @@ func TestBuildEntries_AboveCapRestoresConstantProcessCount(t *testing.T) {
 	}
 }
 
+// An operator who disables every signal individually — 0 is the documented
+// "off" for churn_ratio, min_hunks, hunk_gap_lines, min_cyclomatic, and
+// max_skeleton_lines — but leaves max_files at its default must pay NO
+// analysis cost: with nothing that can fire and no skeleton to render, the
+// analyze pass could only produce the base mode and an empty skeleton.
+func TestBuildEntries_ZeroedSignalsSkipAnalysis(t *testing.T) {
+	zeroed := DefaultEscalationConfig()
+	zeroed.ChurnRatio = 0
+	zeroed.MinHunks = 0
+	zeroed.HunkGapLines = 0
+	zeroed.MinCyclomatic = 0
+	zeroed.MaxSkeletonLines = 0
+	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
+		disabled := gitProcessCount(t, mode, 4, EscalationConfig{})
+		signalsOff := gitProcessCount(t, mode, 4, zeroed)
+		assert.Equalf(t, disabled, signalsOff,
+			"mode %s: with every signal zeroed the analyze pass must not run (disabled baseline: %d, zeroed signals: %d)",
+			mode, disabled, signalsOff)
+	}
+}
+
 // A single range combining every change kind — modified, added, deleted,
 // renamed (with edit), and binary — must split cleanly: each file's body is
 // attributed to the right path with no cross-contamination, in every mode.
