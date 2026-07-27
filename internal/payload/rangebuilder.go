@@ -175,5 +175,5 @@ func (b *RangeBuilder) ReleaseModeCaches() {
 // The review layer records it in the manifest so a reader can tell "nothing was
 // complex enough to escalate" apart from "escalation never ran".
 func (b *RangeBuilder) EscalationDegraded() bool {
-	return b.g.escalationDegraded
+	return b.g.forRange(b.base, b.head).escalationDegraded
 }

@@ -175,11 +175,6 @@ type gitRunner struct {
 	// newGitRunner behaves exactly as it did before escalation existed.
 	escalation EscalationConfig
 
-	// escalationDegraded records that the change set exceeded escalation.MaxFiles
-	// and the whole pass was skipped, so the manifest can disclose it rather than
-	// leaving a reader to wonder why nothing escalated.
-	escalationDegraded bool
-
 	// state holds the whole-range caches for the current base..head pair.
 	// Access only via forRange, which resets state when the range changes.
 	state rangeState

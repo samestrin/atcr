@@ -126,7 +126,7 @@ func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) (
 	// and loses nothing by it, so it never reports a degradation regardless of
 	// change-set size.
 	if mode != ModeFiles && len(files) > 0 && g.escalation.MaxFiles > 0 && !g.escalation.Enabled(len(files)) {
-		g.escalationDegraded = true
+		g.forRange(base, head).escalationDegraded = true
 		g.logger.Warn("payload: per-file escalation and AST skeletons disabled for this run",
 			"changed_files", len(files), "max_files", g.escalation.MaxFiles)
 	}
