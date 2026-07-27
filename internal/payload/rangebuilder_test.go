@@ -193,6 +193,33 @@ func TestRangeBuilder_BlocksModeGroundingSpawnsOneDiffWithoutEscalation(t *testi
 		"without escalation, grounding after blocks mode spawns exactly one --unified=0 subprocess")
 }
 
+// Diff mode reaches the same analyzeFile -> allHunkRanges -> zeroCtxChunks path
+// as blocks mode, so grounding after a diff-mode payload build must likewise
+// reuse the zero-context cache and spawn NO extra --unified=0 subprocess.
+func TestRangeBuilder_DiffModeGroundingReusesZeroContext(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	write(t, dir, "b.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	write(t, dir, "b.go", goFileV2)
+	head := commitAll(t, dir, "v2")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	// Diff mode builds via plainChunks; the escalation pass also populates
+	// zeroCtx while measuring each file's hunks.
+	_, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	afterPayload := rb.g.execCount
+
+	cl, err := rb.BuildChangedLines()
+	require.NoError(t, err)
+	require.Len(t, cl, 2, "both changed files present in grounding data")
+
+	assert.Equal(t, afterPayload, rb.g.execCount,
+		"grounding after a diff-mode payload build must reuse the zero-context cache the escalation pass already populated")
+}
+
 // Once every payload mode's entries are materialized, the per-mode diff chunk
 // caches (function-context, plain -U10, raw) and the parsed line-range cache are
 // dead weight: grounding reads only the zero-context diff and the --name-status
