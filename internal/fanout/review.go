@@ -261,9 +261,19 @@ func (p *PreparedReview) CommitBaselineIndex(runID string) error {
 		b.preIndex.Record(path, hash, runID)
 	}
 	if b.scope == "" || b.scope == "." {
-		keep := make(map[string]struct{}, len(b.tracked))
-		for _, tp := range b.tracked {
-			keep[tp] = struct{}{}
+		// A nil tracked set means the TrackedInScope keep-set walk hit a transient
+		// git failure (it degrades to nil). Pass nil through to Trim so its
+		// nil-keep contract — "keep everything; a git hiccup must not wipe the
+		// index" — holds. Building an empty-but-non-nil keep map here would read
+		// as "nothing tracked, trim all" and delete every entry, including the
+		// files just Record()'d above. A non-nil-but-empty tracked set (the walk
+		// succeeded; nothing is tracked in scope) still trims everything.
+		var keep map[string]struct{}
+		if b.tracked != nil {
+			keep = make(map[string]struct{}, len(b.tracked))
+			for _, tp := range b.tracked {
+				keep[tp] = struct{}{}
+			}
 		}
 		b.preIndex.Trim(keep)
 	}
