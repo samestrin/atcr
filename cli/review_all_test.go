@@ -152,6 +152,25 @@ func TestReviewAll_ResumeRejectsFreshFlag(t *testing.T) {
 	require.NotContains(t, out, "only applies to --verify", "stale single-meaning rejection reason")
 }
 
+// TD (resume.go): runResume fail-closes on every fresh-only mode flag except
+// --base/--head/--merge-commit. On a baseline resume the range-resolution block
+// is skipped (m.Baseline), so those flags were silently ignored — the one
+// mode-flag class slipping the net. A baseline resume must reject them like the
+// other fresh-only flags; a non-baseline resume still consumes/validates them.
+func TestReviewAll_BaselineResumeRejectsRangeFlags(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all"))
+
+	code, out := execCmdCapture(t, "review", "--resume", "latest", "--base", "main")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "--resume does not support --base")
+}
+
 // AC 01-05 Happy Path 3: `atcr reconcile <id>` and `atcr report <id>` work
 // unmodified against an --all-produced review directory (provenance-agnostic).
 func TestReviewAll_ReconcileAndReportWorkOnBaselineOutput(t *testing.T) {
