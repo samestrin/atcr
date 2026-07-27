@@ -100,18 +100,29 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		return usageError(err)
 	}
 
-	base, _ := cmd.Flags().GetString("base")
-	head, _ := cmd.Flags().GetString("head")
-	mergeCommit, _ := cmd.Flags().GetString("merge-commit")
-	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
+	// Read the manifest before resolving a git range: a baseline (--all/--dir) review
+	// has no range, so re-resolving one and validating it against the manifest's empty
+	// Base/Head would always fail ErrRangeChanged (Sprint 35.0). For a baseline review
+	// resume with a zero Range; PrepareResume rebuilds its payload from the repo walker.
+	m, err := fanout.ReadManifest(dir)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return interruptedBeforeFanout(cmd)
-		}
 		return usageError(fmt.Errorf("resume failed: %w", err))
 	}
-	if res == nil {
-		return usageError(errors.New("resume failed: git range returned no result"))
+	res := &gitrange.Resolution{}
+	if !m.Baseline {
+		base, _ := cmd.Flags().GetString("base")
+		head, _ := cmd.Flags().GetString("head")
+		mergeCommit, _ := cmd.Flags().GetString("merge-commit")
+		res, err = gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
+		if err != nil {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return interruptedBeforeFanout(cmd)
+			}
+			return usageError(fmt.Errorf("resume failed: %w", err))
+		}
+		if res == nil {
+			return usageError(errors.New("resume failed: git range returned no result"))
+		}
 	}
 
 	cfg, err := fanout.LoadReviewConfig(".", cliOverrides(cmd))

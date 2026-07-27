@@ -97,6 +97,32 @@ func TestReviewAll_FailOnGate(t *testing.T) {
 	assert.Equal(t, 1, code, "a surviving CRITICAL must fail the high gate on the --all path")
 }
 
+// AC 01-05 Edge Case 3: an interrupted `--all` review is resumable via the existing
+// resume machinery. A baseline manifest records an empty git range, so resume must
+// skip range re-resolution/validation (else ErrRangeChanged, exit 2) and rebuild the
+// payload from the repo walker so the pending agent reviews the same whole-repo scan
+// the completed agents saw (Sprint 35.0 task 2.14.A HIGH fix).
+func TestReviewAll_BaselineReviewIsResumable(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce", "kai")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all"))
+	dir := latestReviewDir(t)
+
+	// Simulate an interrupted run: drop one agent's completed source so resume has a
+	// pending agent to finish.
+	kaiDir := filepath.Join(dir, "sources", "pool", "raw", "agent", "kai")
+	require.DirExists(t, kaiDir)
+	require.NoError(t, os.RemoveAll(kaiDir))
+
+	code := execCmd(t, "review", "--resume", "latest")
+	require.Equal(t, 0, code, "a baseline review must be resumable (no ErrRangeChanged)")
+	assert.FileExists(t, filepath.Join(kaiDir, "findings.txt"), "the pending baseline agent must be re-reviewed via the repo payload")
+}
+
 // AC 01-05 Happy Path 3: `atcr reconcile <id>` and `atcr report <id>` work
 // unmodified against an --all-produced review directory (provenance-agnostic).
 func TestReviewAll_ReconcileAndReportWorkOnBaselineOutput(t *testing.T) {

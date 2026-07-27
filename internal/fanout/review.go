@@ -275,7 +275,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode, rb)
+	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode, rb, false)
 }
 
 // finalizePreparedReview is the shared scaffold-and-assemble tail of the two
@@ -286,7 +286,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 // diff cache. payloadMode is recorded as the manifest's PayloadMode (the
 // configured mode for the git path, "diff" for the ingestion path); the range
 // provenance comes from req.Range, which the ingestion caller leaves empty.
-func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, payloads map[string]modePayload, perAgentMode map[string]string, slots []Slot, payloadMode string, rb *payload.RangeBuilder) (*PreparedReview, error) {
+func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, payloads map[string]modePayload, perAgentMode map[string]string, slots []Slot, payloadMode string, rb *payload.RangeBuilder, baseline bool) (*PreparedReview, error) {
 	// Derive the id unconditionally: for --output-dir the id is provenance-only
 	// (written to the manifest and PreparedReview.ID but not used for the path),
 	// while for --id and the default derived case the id IS the path component.
@@ -376,6 +376,7 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		DefaultBranch:   req.Range.DefaultBranch,
 		CommitCount:     req.Range.CommitCount,
 		PayloadMode:     payloadMode,
+		Baseline:        baseline, // full-repo/dir scan; resume keys on this to skip range validation
 		MaxParallel:     cfg.Settings.MaxParallel,
 		TimeoutSecs:     cfg.Settings.TimeoutSecs,
 		PerAgentPayload: perAgentMode,
@@ -505,13 +506,39 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if err := validateReviewRequest(cfg, req); err != nil {
 		return nil, err
 	}
-	entries, err := payload.BuildRepoEntries(ctx, req.Repo, log.FromContext(ctx), req.NoIgnore)
+	payloads, err := buildRepoPayloads(ctx, cfg, req.Repo, req.NoIgnore)
 	if err != nil {
-		return nil, err // non-repo / read failure propagates (AC 01-04 ES2)
+		return nil, err
 	}
-	// Zero reviewable tracked files must refuse before scaffolding, mirroring
-	// PrepareReview/PrepareReviewFromDiff so a no-op run never creates a directory
-	// or repoints .atcr/latest (AC 01-04 Edge Case 3 / Error Scenario 1).
+	scopeConstraint, scopeWarn := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes)
+	if scopeWarn != "" {
+		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
+	}
+	filesMode := string(payload.ModeFiles)
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, filesMode, scopeConstraint, true)
+	if err != nil {
+		return nil, err
+	}
+	// No git range → no RangeBuilder: computeGroundingData's range-less early return
+	// disables grounding (not applicable to a baseline scan).
+	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, filesMode, nil, true)
+}
+
+// buildRepoPayloads assembles the single files-mode whole-repo payload for a
+// baseline (--all / --dir) review. It is shared by PrepareReviewFromRepo (fresh)
+// and PrepareResume (baseline resume) so a resumed baseline agent sees exactly the
+// payload the completed agents saw — the resume "pending agents review what
+// completed agents reviewed" invariant, applied to the tracked-repository scan
+// instead of a git-range diff. Returns a map keyed to the "files" mode.
+//
+// Errors mirror the diff/range prepare paths: a non-repo / read failure propagates
+// verbatim (AC 01-04 ES2); zero reviewable files is ErrNoReviewableContent (Edge
+// Case 3) before any scaffolding; an all-dropped byte budget is ErrPayloadFullyDropped.
+func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIgnore bool) (map[string]modePayload, error) {
+	entries, err := payload.BuildRepoEntries(ctx, repo, log.FromContext(ctx), noIgnore)
+	if err != nil {
+		return nil, err
+	}
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("%w: the repository contains no reviewable tracked files", ErrNoReviewableContent)
 	}
@@ -532,26 +559,11 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	for _, e := range kept {
 		b.WriteString(e.Body)
 	}
-	// A baseline payload is full file contents, so it rides the existing "files"
-	// mode: force it for every agent (like the diff path forces "diff") so a roster
-	// whose default mode is blocks/diff still resolves cleanly. Entries keeps the raw
-	// pre-budget files so buildSlots re-sheds them per agent against each model's
-	// window (Epic 19.10 F2), identical to buildPayloads.
-	filesMode := string(payload.ModeFiles)
-	payloads := map[string]modePayload{
-		filesMode: {Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc},
-	}
-	scopeConstraint, scopeWarn := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes)
-	if scopeWarn != "" {
-		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
-	}
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, filesMode, scopeConstraint, true)
-	if err != nil {
-		return nil, err
-	}
-	// No git range → no RangeBuilder: computeGroundingData's range-less early return
-	// disables grounding (not applicable to a baseline scan).
-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, filesMode, nil)
+	// Entries keeps the raw pre-budget files so buildSlots re-sheds them per agent
+	// against each model's window (Epic 19.10 F2), identical to buildPayloads.
+	return map[string]modePayload{
+		string(payload.ModeFiles): {Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc},
+	}, nil
 }
 
 func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, diffText string) (*PreparedReview, error) {
@@ -618,7 +630,7 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	}
 	// Diff-ingestion has no git range, so no RangeBuilder: computeGroundingData's
 	// range-less early return handles it (grounding not applicable).
-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, diffMode, nil)
+	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, diffMode, nil, false)
 }
 
 // runEngine wires the optional read-only tool harness for p's tool-enabled slots

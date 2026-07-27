@@ -272,8 +272,13 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := ValidateResumeRange(m, req.Range); err != nil {
-		return nil, nil, err
+	// A baseline (--all/--dir) review has no git range, so the range guard is skipped
+	// for it (ValidateResumeRange would always fail against its empty Base/Head).
+	// Diff reviews keep the lock so a resume against a moved working tree fails closed.
+	if !m.Baseline {
+		if err := ValidateResumeRange(m, req.Range); err != nil {
+			return nil, nil, err
+		}
 	}
 	configured := rosterNames(cfg.Project)
 	if err := ValidateResumeRoster(m, configured); err != nil {
@@ -284,7 +289,22 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	// thread --no-ignore, and even if it did, the value must come from the original
 	// run so pending agents are filtered exactly as the completed agents were —
 	// locked to on-disk state like the range, roster, and scope (Epic 26.0 TD).
-	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, m.NoIgnore)
+	//
+	// A baseline review rebuilds the whole-repository payload via the repo walker
+	// (the SAME buildRepoPayloads the fresh --all path uses) rather than a git-range
+	// build, so resumed baseline agents review exactly the tracked-file scan the
+	// completed agents saw (Sprint 35.0). rb stays nil → grounding is range-less.
+	var (
+		payloads  map[string]modePayload
+		rb        *payload.RangeBuilder
+		forceMode string
+	)
+	if m.Baseline {
+		payloads, err = buildRepoPayloads(ctx, cfg, req.Repo, m.NoIgnore)
+		forceMode = string(payload.ModeFiles)
+	} else {
+		payloads, rb, err = buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, m.NoIgnore)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -297,7 +317,10 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	if err != nil {
 		return nil, nil, err
 	}
-	slots, _, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint, false)
+	// forceMode is "files" for a baseline review (every agent reviews the whole-repo
+	// payload, mirroring the fresh --all path) and "" for a diff review (each agent
+	// keeps its configured mode). The empty case is the pre-existing behavior.
+	slots, _, err := buildSlots(cfg, payloads, req.Range, forceMode, scopeConstraint, false)
 	if err != nil {
 		return nil, nil, err
 	}
