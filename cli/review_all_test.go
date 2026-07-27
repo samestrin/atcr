@@ -2,9 +2,13 @@ package cli
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/fanout"
@@ -482,4 +486,50 @@ func TestReviewFreshForce_DiffModeNoOp(t *testing.T) {
 
 	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^", "--head", "HEAD", "--fresh", "--force"))
 	assert.NoFileExists(t, payload.FileHashIndexPath("."), "a diff-range --fresh --force review must not touch the baseline index")
+}
+
+// failOnMarkerProvider returns 500 for any request whose body contains marker and a
+// finding otherwise — so exactly one baseline chunk (the one carrying marker) fails
+// while the rest succeed.
+func failOnMarkerProvider(t *testing.T, marker string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), marker) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		content := "CRITICAL|a.txt:1|Unchecked call|Guard it|security|15|evidence"
+		resp := map[string]any{"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": content}}}}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// Sprint 35.0 Phase 5 (task 5.6, 5.5.A MEDIUM): when a baseline scan fans out into
+// multiple chunks and one chunk FAILS (the persona still reports StatusOK via
+// any-chunk-succeeded), the incremental hash-index write-back is SKIPPED entirely —
+// recording the reviewed set would stamp the unreviewed (failed-chunk) files too, so
+// they'd be silently skipped next run. Fail-open: no index write → next run re-scans.
+func TestReviewAll_PartialChunkFailureSkipsIndexWrite(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	// An oversized file (own chunk) carrying a marker the provider fails on; the small
+	// files (a.txt/b.go/internal/c.go) share a separate chunk that succeeds. One persona
+	// → one failed chunk under an OK persona → Summary.UnreviewedChunks > 0.
+	big := []byte("FAILME\n")
+	big = append(big, make([]byte, 80_000)...)
+	require.NoError(t, os.WriteFile("fail.txt", big, 0o644))
+	gitRun(t, "add", "-A")
+	gitRun(t, "commit", "-qm", "add fail.txt")
+	srv := failOnMarkerProvider(t, "FAILME")
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	// The run still exits 0 (the persona succeeded on at least one chunk).
+	require.Equal(t, 0, execCmd(t, "review", "--all"))
+	// But because a chunk went unreviewed, the write-back was skipped: no index on disk.
+	assert.NoFileExists(t, payload.FileHashIndexPath("."),
+		"a baseline run with an unreviewed chunk must NOT persist the hash index, or the unreviewed files would be skipped-though-unreviewed next run")
 }
