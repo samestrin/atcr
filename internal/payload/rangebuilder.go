@@ -118,12 +118,16 @@ func (b *RangeBuilder) BuildEntries(mode PayloadMode) ([]FileEntry, error) {
 
 // BuildChangedLines returns the grounding changed-lines map for the range,
 // reusing the builder's memoized --name-status and zero-context diff. Reuse
-// always elides validateRange and the --name-status process; the --unified=0
-// zero-context diff is elided only when a zeroCtx-consuming payload mode (files)
-// already ran on this builder — the default blocks mode does not populate the
-// zero-context cache, so grounding after a blocks-mode build spawns one
-// --unified=0 subprocess (validateRange + --name-status stay elided). Mirrors
-// the package-level BuildChangedLines; the fail-open contract (a git error
+// always elides validateRange and the --name-status process. Files mode
+// consumes the zero-context diff directly, and with escalation enabled (the
+// default) a diff/blocks-mode build populates the zero-context cache as a side
+// effect of hunk-range measurement — so grounding after those builds elides
+// the --unified=0 process entirely (pinned by
+// TestRangeBuilder_BlocksModeGroundingReusesZeroContext). The residual +1
+// --unified=0 subprocess returns only when escalation is disabled, pinned by
+// TestRangeBuilder_BlocksModeGroundingSpawnsOneDiffWithoutEscalation.
+// (validateRange + --name-status stay elided either way.) Mirrors the
+// package-level BuildChangedLines; the fail-open contract (a git error
 // disables the grounding gate) lives at the fan-out caller.
 func (b *RangeBuilder) BuildChangedLines() (ChangedLines, error) {
 	if !b.inUse.CompareAndSwap(0, 1) {
