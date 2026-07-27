@@ -481,6 +481,25 @@ func TestEnumerateRepoFiles_ContextCancelInterruptsReadLoop(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled, "a cancelled ctx must interrupt the read loop")
 }
 
+// TD-007 (Sprint 35.0 hardening): a --dir scope matching zero tracked files while
+// the repo HAS tracked files elsewhere yields a scope-specific diagnostic, not the
+// generic "no reviewable content" an entirely empty repository produces.
+func TestEnumerateRepoFiles_ScopeZeroMatchDiagnostic(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", "package a\n")
+	commitAll(t, dir, "seed")
+
+	_, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "does-not-exist")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `--dir "does-not-exist" matched no tracked files`)
+
+	// Whole-repo scopes keep the old contract: empty set, no error, so the
+	// caller's generic no-reviewable-content guard fires.
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, ".")
+	require.NoError(t, err)
+	assert.NotEmpty(t, entries)
+}
+
 // --- AC 02-02: path-segment scope filter (--dir) -----------------------------
 
 // TestFilterByScope_WholeRepoWhenEmptyOrDot covers AC 02-01 Edge Case 2 / AC 02-02:

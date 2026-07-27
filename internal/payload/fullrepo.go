@@ -169,6 +169,9 @@ func filterByScope(paths []string, scope string) []string {
 //     nil-pointer panic (AC 01-02 Edge Case 2 / Error Scenario 1).
 //   - A repo with zero tracked files returns an empty, non-nil slice with no
 //     error, so the caller surfaces "no reviewable content" upstream (Edge Case 1).
+//   - A non-empty --dir scope matching ZERO tracked files (while the repo has
+//     tracked files elsewhere) is a scope-specific error naming the scope
+//     (TD-007), so it is never confused with an empty repository.
 //   - Untracked working-tree files are excluded by construction: the candidate set
 //     is git ls-files only (Edge Case 5), an explicit non-goal of this epic.
 //   - Enumeration order is unspecified (FileIndex.Paths() iterates a map);
@@ -195,7 +198,18 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 	// Scope filter (--dir <path>, AC 02-02) sits between FileIndex construction and
 	// the read/ignore loop: narrow the tracked-path set to the requested subtree
 	// before any file is read or ignore-matched. "" / "." = whole repo.
-	paths := filterByScope(idx.Paths(), scope)
+	tracked := idx.Paths()
+	paths := filterByScope(tracked, scope)
+	// TD-007: a scoped scan matching ZERO tracked files while the repo has tracked
+	// files elsewhere gets a scope-specific diagnostic — otherwise the caller
+	// surfaces the generic "no reviewable tracked files" message, the same one an
+	// entirely empty repository produces. The normalization mirrors filterByScope's
+	// (inlined here so the whole-repo "" / "." test sees the same form it does).
+	if len(paths) == 0 && len(tracked) > 0 {
+		if normalized := strings.TrimRight(strings.ReplaceAll(scope, `\`, "/"), "/"); normalized != "" && normalized != "." {
+			return nil, fmt.Errorf("full-repo scan: --dir %q matched no tracked files", normalized)
+		}
+	}
 	entries := make([]FileEntry, 0, len(paths))
 	for _, rel := range paths {
 		// TD-003: ctx bounded the git ls-files inside BuildFileIndex but nothing
