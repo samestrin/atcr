@@ -210,6 +210,53 @@ func Keep() {}
 		"bare grouped decl openers must be filtered, leaving only real signal")
 }
 
+func TestFileSkeleton_IdentifierEndingInStructKeywordIsNotInlineType(t *testing.T) {
+	// opensInlineType must match `struct`/`interface` as whole tokens, not as a
+	// trailing SUBSTRING. `*astruct` ends in "struct" but is an ordinary named
+	// type: mistaking its body brace for an inline type makes matchingBrace eat
+	// the whole function body, bodyBraceIndex returns -1, and declHeader would
+	// leak raw body code (and a truncated `}` string literal) into the header.
+	src := `package p
+
+type astruct struct{ x int }
+type myinterface interface{ M() }
+
+func A(k string) *astruct {
+	if k == "}" {
+		return nil
+	}
+	return &astruct{}
+}
+
+func B() myinterface {
+	return nil
+}
+
+func C() astruct { return astruct{} }
+`
+	root := parseGoForSkeleton(t, src)
+
+	require.Equal(t, []string{
+		"type astruct struct{ x int }",
+		"type myinterface interface{ M() }",
+		"func A(k string) *astruct",
+		"func B() myinterface",
+		"func C() astruct",
+	}, headersOf(FileSkeleton(root, src)))
+}
+
+func TestOpensInlineType_RequiresWholeTokenKeyword(t *testing.T) {
+	// Whole-token keyword preceded by a non-identifier byte (or start-of-text)
+	// is a real inline type; a keyword that is the tail of a longer identifier
+	// is not.
+	require.True(t, opensInlineType("func Any() interface"))
+	require.True(t, opensInlineType("func New() chan struct"))
+	require.True(t, opensInlineType("func F() *struct"))
+	require.True(t, opensInlineType("struct"))
+	require.False(t, opensInlineType("func N() *astruct"))
+	require.False(t, opensInlineType("func B() myinterface"))
+}
+
 func TestCyclomatic_CountsBranchNodesPlusOne(t *testing.T) {
 	root := parseGoForSkeleton(t, skeletonSrc)
 
